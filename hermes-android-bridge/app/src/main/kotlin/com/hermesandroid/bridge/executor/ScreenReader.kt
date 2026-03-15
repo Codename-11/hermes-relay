@@ -13,21 +13,25 @@ object ScreenReader {
 
         return service.windows
             .flatMap { window -> window.root?.let { listOf(it) } ?: emptyList() }
-            .map { root -> buildNode(root, includeBounds) }
+            .mapIndexed { i, root -> buildNode(root, includeBounds, "$i") }
     }
 
-    private fun buildNode(info: AccessibilityNodeInfo, includeBounds: Boolean): ScreenNode {
-        val rect = if (includeBounds) {
-            val r = android.graphics.Rect()
-            info.getBoundsInScreen(r)
-            NodeBounds(r.left, r.top, r.right, r.bottom)
-        } else null
+    private fun buildNode(info: AccessibilityNodeInfo, includeBounds: Boolean, path: String = "0"): ScreenNode {
+        // Always get bounds for stable ID generation
+        val r = android.graphics.Rect()
+        info.getBoundsInScreen(r)
+        val rect = if (includeBounds) NodeBounds(r.left, r.top, r.right, r.bottom) else null
 
-        val nodeId = "${info.packageName ?: "?"}_${info.className ?: "?"}_${info.hashCode()}"
+        // Stable ID: path in tree + bounds (survives re-reads unlike hashCode)
+        val nodeId = "${info.packageName ?: "?"}_${info.className ?: "?"}_${path}_${r.left}_${r.top}_${r.right}_${r.bottom}"
 
         val children = (0 until info.childCount)
-            .mapNotNull { info.getChild(it) }
-            .map { buildNode(it, includeBounds) }
+            .mapNotNull { i ->
+                val child = info.getChild(i) ?: return@mapNotNull null
+                val node = buildNode(child, includeBounds, "${path}_$i")
+                child.recycle()
+                node
+            }
 
         return ScreenNode(
             nodeId = nodeId,

@@ -39,13 +39,14 @@ object ActionExecutor {
                 .addStroke(GestureDescription.StrokeDescription(path, 0, 50))
                 .build()
             var done = false
+            var success = false
             service.dispatchGesture(gesture, object : android.accessibilityservice.AccessibilityService.GestureResultCallback() {
-                override fun onCompleted(gestureDescription: GestureDescription) { done = true }
-                override fun onCancelled(gestureDescription: GestureDescription) { done = true }
+                override fun onCompleted(gestureDescription: GestureDescription) { success = true; done = true }
+                override fun onCancelled(gestureDescription: GestureDescription) { success = false; done = true }
             }, null)
             var waited = 0
             while (!done && waited < 2000) { delay(50); waited += 50 }
-            return@wakeForAction ActionResult(true, "Tapped ($x, $y)")
+            return@wakeForAction ActionResult(success, if (success) "Tapped ($x, $y)" else "Tap gesture cancelled")
         }
 
         ActionResult(false, "Provide either (x, y) or nodeId")
@@ -238,24 +239,32 @@ object ActionExecutor {
     private fun findNodeById(nodeId: String): AccessibilityNodeInfo? {
         val service = BridgeAccessibilityService.instance ?: return null
         return service.windows
-            .flatMap { it.root?.let { r -> listOf(r) } ?: emptyList() }
-            .flatMap { root -> flattenNodeInfos(root) }
-            .firstOrNull { node ->
-                val id = "${node.packageName}_${node.className}_${node.hashCode()}"
-                id == nodeId
+            .flatMapIndexed { wi, window ->
+                window.root?.let { findNodeByIdInTree(it, nodeId, "$wi") } ?: emptyList()
             }
+            .firstOrNull()
     }
 
-    private fun flattenNodeInfos(root: AccessibilityNodeInfo): List<AccessibilityNodeInfo> {
-        val result = mutableListOf<AccessibilityNodeInfo>()
-        val queue = ArrayDeque<AccessibilityNodeInfo>()
-        queue.add(root)
-        while (queue.isNotEmpty()) {
-            val node = queue.removeFirst()
-            result.add(node)
-            for (i in 0 until node.childCount) node.getChild(i)?.let { queue.add(it) }
+    /** DFS search matching the stable ID format from ScreenReader.buildNode */
+    private fun findNodeByIdInTree(
+        info: AccessibilityNodeInfo, targetId: String, path: String
+    ): List<AccessibilityNodeInfo> {
+        val r = android.graphics.Rect()
+        info.getBoundsInScreen(r)
+        val id = "${info.packageName ?: "?"}_${info.className ?: "?"}_${path}_${r.left}_${r.top}_${r.right}_${r.bottom}"
+        if (id == targetId) return listOf(info)
+        val results = mutableListOf<AccessibilityNodeInfo>()
+        for (i in 0 until info.childCount) {
+            val child = info.getChild(i) ?: continue
+            val found = findNodeByIdInTree(child, targetId, "${path}_$i")
+            if (found.isNotEmpty()) {
+                results.addAll(found)
+                break
+            } else {
+                child.recycle()
+            }
         }
-        return result
+        return results
     }
 
     private fun findInTree(

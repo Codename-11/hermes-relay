@@ -32,7 +32,9 @@ fun Application.configureRouting() {
 
         get("/screen") {
             val bounds = call.request.queryParameters["bounds"] == "true"
-            val tree = ScreenReader.readCurrentScreen(bounds)
+            val tree = withContext(Dispatchers.Main) {
+                ScreenReader.readCurrentScreen(bounds)
+            }
             call.respond(mapOf("tree" to tree, "count" to countNodes(tree)))
         }
 
@@ -116,18 +118,23 @@ fun Application.configureRouting() {
         }
 
         get("/apps") {
-            val apps = ActionExecutor.getInstalledApps()
+            val apps = withContext(Dispatchers.Main) {
+                ActionExecutor.getInstalledApps()
+            }
             call.respond(mapOf("apps" to apps, "count" to apps.size))
         }
 
         get("/current_app") {
-            val service = BridgeAccessibilityService.instance
-            val windows = service?.windows
-            val foreground = windows?.firstOrNull()?.root
-            call.respond(mapOf(
-                "package" to (foreground?.packageName ?: "unknown"),
-                "className" to (foreground?.className ?: "unknown")
-            ))
+            val result = withContext(Dispatchers.Main) {
+                val service = BridgeAccessibilityService.instance
+                val windows = service?.windows
+                val foreground = windows?.firstOrNull()?.root
+                mapOf(
+                    "package" to (foreground?.packageName ?: "unknown"),
+                    "className" to (foreground?.className ?: "unknown")
+                )
+            }
+            call.respond(result)
         }
     }
 }

@@ -33,9 +33,10 @@ object WakeLockManager {
         }
     }
 
+    @Synchronized
     private fun acquireWakeLock() {
         val pm = powerManager ?: return
-        wakeLock?.release()
+        wakeLock?.takeIf { it.isHeld }?.release()
         @Suppress("DEPRECATION")
         wakeLock = pm.newWakeLock(
             PowerManager.FULL_WAKE_LOCK or
@@ -45,6 +46,7 @@ object WakeLockManager {
         ).apply { acquire(10_000) }
     }
 
+    @Synchronized
     private fun releaseWakeLock() {
         try {
             wakeLock?.takeIf { it.isHeld }?.release()
