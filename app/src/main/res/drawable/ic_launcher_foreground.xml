@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Hermes Companion foreground icon — Wing-H monogram
+    Viewport 108x108, content within 72dp safe zone (18dp inset).
+    Coordinates scaled from 512 SVG viewport: factor = 108/512 = 0.2109375
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Left vertical of the H -->
+    <path
+        android:fillColor="#6B35E8"
+        android:pathData="
+            M39.66,31.22
+            L44.72,31.22
+            L44.72,76.78
+            L39.66,76.78
+            Z"/>
+
+    <!-- Right vertical of the H -->
+    <path
+        android:fillColor="#6B35E8"
+        android:pathData="
+            M63.28,31.22
+            L68.34,31.22
+            L68.34,76.78
+            L63.28,76.78
+            Z"/>
+
+    <!-- Crossbar of the H -->
+    <path
+        android:fillColor="#6B35E8"
+        android:pathData="
+            M44.72,51.47
+            L63.28,51.47
+            L63.28,56.53
+            L44.72,56.53
+            Z"/>
+
+    <!-- Left wing — primary feather (longest) -->
+    <path
+        android:fillColor="#6B35E8"
+        android:pathData="
+            M44.72,51.47
+            L44.72,48.94
+            L21.09,40.50
+            L20.25,43.88
+            Z"/>
+
+    <!-- Left wing — secondary feather -->
+    <path
+        android:pathData="
+            M44.72,53.16
+            L44.72,51.05
+            L24.47,46.0
+            L23.63,49.37
+            Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="23.63"
+                android:startY="49.37"
+                android:endX="44.72"
+                android:endY="51.05"
+                android:startColor="#9B6BF0"
+                android:endColor="#6B35E8"/>
+        </aapt:attr>
+    </path>
+
+    <!-- Left wing — tertiary feather -->
+    <path
+        android:fillAlpha="0.8"
+        android:pathData="
+            M44.72,55.69
+            L44.72,53.58
+            L27.84,50.63
+            L27.42,53.58
+            Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="27.42"
+                android:startY="53.58"
+                android:endX="44.72"
+                android:endY="53.58"
+                android:startColor="#9B6BF0"
+                android:endColor="#6B35E8"/>
+        </aapt:attr>
+    </path>
+
+    <!-- Right wing — primary feather (longest) -->
+    <path
+        android:fillColor="#6B35E8"
+        android:pathData="
+            M63.28,51.47
+            L63.28,48.94
+            L86.91,40.50
+            L87.75,43.88
+            Z"/>
+
+    <!-- Right wing — secondary feather -->
+    <path
+        android:pathData="
+            M63.28,53.16
+            L63.28,51.05
+            L83.53,46.0
+            L84.38,49.37
+            Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="63.28"
+                android:startY="51.05"
+                android:endX="84.38"
+                android:endY="49.37"
+                android:startColor="#6B35E8"
+                android:endColor="#9B6BF0"/>
+        </aapt:attr>
+    </path>
+
+    <!-- Right wing — tertiary feather -->
+    <path
+        android:fillAlpha="0.8"
+        android:pathData="
+            M63.28,55.69
+            L63.28,53.58
+            L80.16,50.63
+            L80.58,53.58
+            Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="63.28"
+                android:startY="53.58"
+                android:endX="80.58"
+                android:endY="53.58"
+                android:startColor="#6B35E8"
+                android:endColor="#9B6BF0"/>
+        </aapt:attr>
+    </path>
+</vector>

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!--
+    Hermes Companion Logo
+    Wing-H monogram: geometric "H" with wing strokes extending from the crossbar.
+    Safe zone: content within ~66% of viewBox (centered 170–342).
+  -->
+  <defs>
+    <linearGradient id="wingGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#9B6BF0"/>
+      <stop offset="100%" stop-color="#6B35E8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Left vertical of the H -->
+  <path d="M188 148 L212 148 L212 364 L188 364 Z" fill="#6B35E8"/>
+
+  <!-- Right vertical of the H -->
+  <path d="M300 148 L324 148 L324 364 L300 364 Z" fill="#6B35E8"/>
+
+  <!-- Crossbar of the H -->
+  <path d="M212 244 L300 244 L300 268 L212 268 Z" fill="#6B35E8"/>
+
+  <!-- Left wing — three swept-back feather strokes extending from the crossbar -->
+  <!-- Primary feather (longest, topmost) -->
+  <path d="M212 244 L212 232 L100 192 L96 208 Z" fill="#6B35E8"/>
+  <!-- Secondary feather (middle) -->
+  <path d="M212 252 L212 242 L116 218 L112 234 Z" fill="url(#wingGrad)"/>
+  <!-- Tertiary feather (shortest, bottom) -->
+  <path d="M212 264 L212 254 L132 240 L130 254 Z" fill="url(#wingGrad)" opacity="0.8"/>
+
+  <!-- Right wing — mirrored -->
+  <!-- Primary feather (longest, topmost) -->
+  <path d="M300 244 L300 232 L412 192 L416 208 Z" fill="#6B35E8"/>
+  <!-- Secondary feather (middle) -->
+  <path d="M300 252 L300 242 L396 218 L400 234 Z" fill="url(#wingGrad)"/>
+  <!-- Tertiary feather (shortest, bottom) -->
+  <path d="M300 264 L300 254 L380 240 L382 254 Z" fill="url(#wingGrad)" opacity="0.8"/>
+</svg>

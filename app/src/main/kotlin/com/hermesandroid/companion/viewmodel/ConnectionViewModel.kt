@@ -37,7 +37,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val multiplexer = ChannelMultiplexer()
     val chatHandler = ChatHandler()
     private val connectionManager = ConnectionManager(multiplexer)
-    val authManager = AuthManager(application, multiplexer)
+    val authManager = AuthManager(application, multiplexer, viewModelScope)
 
     // Connection state
     val connectionState: StateFlow<ConnectionState> = connectionManager.connectionState
