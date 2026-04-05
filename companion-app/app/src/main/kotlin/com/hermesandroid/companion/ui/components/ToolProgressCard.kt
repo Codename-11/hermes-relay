@@ -178,3 +178,33 @@ fun ToolProgressCard(
         }
     }
 }
+
+@androidx.compose.ui.tooling.preview.Preview(showBackground = true)
+@Composable
+private fun ToolProgressCardPreview() {
+    com.hermesandroid.companion.ui.theme.HermesCompanionTheme {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(16.dp)
+        ) {
+            ToolProgressCard(
+                toolCall = ToolCall(
+                    name = "android_read_screen",
+                    args = """{"include_invisible": false}""",
+                    result = null,
+                    success = null,
+                    isComplete = false
+                )
+            )
+            ToolProgressCard(
+                toolCall = ToolCall(
+                    name = "android_tap_text",
+                    args = """{"text": "Continue"}""",
+                    result = "Tapped element at (540, 1200)",
+                    success = true,
+                    isComplete = true
+                )
+            )
+        }
+    }
+}

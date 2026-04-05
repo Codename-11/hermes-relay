@@ -105,3 +105,27 @@ private fun formatTimestamp(timestamp: Long): String {
     val formatter = SimpleDateFormat("HH:mm", Locale.getDefault())
     return formatter.format(Date(timestamp))
 }
+
+@androidx.compose.ui.tooling.preview.Preview(showBackground = true)
+@Composable
+private fun MessageBubblePreview() {
+    com.hermesandroid.companion.ui.theme.HermesCompanionTheme {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(16.dp)) {
+            MessageBubble(
+                message = ChatMessage(
+                    id = "1", role = MessageRole.USER,
+                    content = "Tell me about the weather today",
+                    timestamp = System.currentTimeMillis()
+                )
+            )
+            MessageBubble(
+                message = ChatMessage(
+                    id = "2", role = MessageRole.ASSISTANT,
+                    content = "I'd be happy to help! Let me check the current weather conditions for you.",
+                    timestamp = System.currentTimeMillis(),
+                    isStreaming = true
+                )
+            )
+        }
+    }
+}
