@@ -258,13 +258,13 @@ The relay is a new Python service that runs alongside the Hermes gateway. It own
 
 ```
 hermes-android/
-├── companion-relay/
+├── companion_relay/
 │   ├── relay.py           # Main WSS server (aiohttp)
 │   ├── auth.py            # Pairing, token management
 │   ├── channels/
 │   │   ├── chat.py        # Proxies to Hermes WebAPI
-│   │   ├── terminal.py    # PTY/tmux management
-│   │   └── bridge.py      # Existing bridge protocol
+│   │   ├── terminal.py    # PTY/tmux management (stub)
+│   │   └── bridge.py      # Existing bridge protocol (stub)
 │   ├── config.py          # Relay configuration
 │   └── requirements.txt
 ```

@@ -1,16 +1,15 @@
 # Hermes Companion
 
-> Give your AI agent hands — and a first-party mobile client.
+> Native Android client for the Hermes agent platform.
 
-**Status:** Pre-MVP — scaffolding + upstream bridge  
-**Repo:** [Codename-11/hermes-android](https://github.com/Codename-11/hermes-android) (private)  
-**Upstream:** [raulvidis/hermes-android](https://github.com/raulvidis/hermes-android) (forked)
+**Status:** MVP — Phase 0 + Phase 1 complete  
+**Repo:** [Codename-11/hermes-android](https://github.com/Codename-11/hermes-android) (private)
 
 ---
 
 ## What This Is
 
-A native Android companion app for the [Hermes agent platform](https://github.com/NousResearch/hermes-agent). Three capabilities in one app:
+A native Android companion app for [Hermes agent](https://github.com/NousResearch/hermes-agent). Three capabilities in one app:
 
 | Channel | Direction | What |
 |---------|-----------|------|
@@ -43,73 +42,89 @@ One persistent WSS connection. One pairing flow. Three multiplexed channels.
 
 ```
 hermes-android/
-├── hermes-android-bridge/     # Android app (Kotlin + Jetpack Compose)
-│   ├── app/src/main/kotlin/   # Source — 12 Kotlin files
-│   ├── build.gradle.kts       # App-level build config
-│   └── settings.gradle.kts    # Project settings
-├── companion-relay/           # Server-side relay (Python) — TBD
-├── hermes-android-plugin/     # Hermes agent plugin (14 android_* tools)
-├── tools/                     # Standalone Python toolset (dev/test)
-├── tests/                     # Python tests
-├── skills/                    # Agent skills for Android interaction
-├── docs/                      # Project documentation
-│   ├── spec.md                # Full specification (protocol, UI, phases)
-│   ├── decisions.md           # Architecture decisions & rationale
-│   ├── security.md            # Security model
-│   └── plan.md                # Original build plan
-├── CLAUDE.md                  # Agent handoff & conventions
-├── AGENTS.md                  # Hermes agent context (tool patterns)
+├── app/                       # Android app module (Kotlin + Jetpack Compose)
+├── build.gradle.kts           # Root Gradle config
+├── settings.gradle.kts
+├── gradle/                    # Wrapper + version catalog
+├── gradlew / gradlew.bat
+├── scripts/                   # Dev helper scripts
+├── companion_relay/           # WSS relay server (Python + aiohttp)
+├── plugin/                    # Hermes agent plugin (14 android_* tools)
+├── docs/                      # Spec, decisions, security
+├── .github/workflows/         # CI + release pipelines
+├── CLAUDE.md                  # Agent development context
+├── AGENTS.md                  # Tool usage patterns
 └── DEVLOG.md                  # Development log
 ```
 
 ## Quick Start
 
-### Build the Android app
+### Open in Android Studio
+
+1. **File > Open** → select the repo root (`hermes-android/`)
+2. Wait for Gradle sync
+3. Click **Run** (Shift+F10) to deploy to emulator or connected device
+
+### Dev Scripts
 
 ```bash
-cd hermes-android-bridge
-./gradlew assembleDebug
-adb install app/build/outputs/apk/debug/app-debug.apk
+scripts/dev.bat build      # Build debug APK
+scripts/dev.bat install    # Build + install to connected device
+scripts/dev.bat run        # Build + install + launch + logcat
+scripts/dev.bat test       # Run unit tests
+scripts/dev.bat lint       # Run lint checks
+scripts/dev.bat clean      # Clean build outputs
+scripts/dev.bat devices    # List connected devices
+scripts/dev.bat relay      # Start companion relay (dev mode)
 ```
 
-### Install as Hermes plugin
+### Wireless Debugging (Android)
+
+1. **Settings > Developer Options > Wireless debugging** → enable
+2. Tap **Pair device with pairing code**
+3. Run: `scripts/dev.bat wireless <ip:port> <pairing-code>`
+4. Then: `adb connect <ip:port>` (main wireless debugging port)
+
+### Start Companion Relay
 
 ```bash
-mkdir -p ~/.hermes/plugins
-cp -r hermes-android-plugin ~/.hermes/plugins/hermes-android
-# Restart hermes — /plugins should show: ✓ hermes-android v0.2.0 (14 tools)
+pip install -r companion_relay/requirements.txt
+python -m companion_relay --no-ssl --log-level DEBUG
 ```
 
-### Connect
+### Install as Hermes Plugin
 
-1. Open Hermes Bridge on phone → note the 6-char pairing code
-2. Tell your agent: `Connect to my phone, code is <CODE>`
+```bash
+cp -r plugin ~/.hermes/plugins/hermes-android
+# Restart hermes — /plugins should show: ✓ hermes-android (14 tools)
+```
 
 ## Tech Stack
 
 | Component | Stack |
 |-----------|-------|
-| **Android App** | Kotlin 2.0+, Jetpack Compose, Material 3, OkHttp WSS |
-| **Companion Relay** | Python 3.11+, aiohttp, libtmux |
-| **Serialization** | kotlinx.serialization (replacing Gson) |
-| **Terminal** | xterm.js in WebView |
+| **Android App** | Kotlin 2.0, Jetpack Compose, Material 3, OkHttp WSS |
+| **Companion Relay** | Python 3.11+, aiohttp |
+| **Serialization** | kotlinx.serialization |
+| **Build** | AGP 8.13, Gradle 8.13, JVM toolchain 17 |
+| **CI/CD** | GitHub Actions (lint → build → test → APK artifact) |
 | **Min SDK** | 26 (Android 8.0) |
 
-## Development
+## Current State
 
-See [docs/spec.md](docs/spec.md) for the full specification — protocol details, UI layouts, implementation phases.
+- **Phase 0** — Complete: Compose scaffold, WSS connection manager, channel multiplexer, auth flow
+- **Phase 1** — Complete: companion relay, chat channel proxy, streaming chat UI, profile selector
+- **Phase 2** — Next: terminal channel (xterm.js + tmux)
+- **Phase 3** — Next: bridge channel migration
 
-See [docs/decisions.md](docs/decisions.md) for architecture decisions and rationale.
+See [docs/spec.md](docs/spec.md) for the full specification and [docs/decisions.md](docs/decisions.md) for architecture rationale.
 
-See [CLAUDE.md](CLAUDE.md) for agent development conventions and handoff context.
+## Related Projects
 
-## MVP Scope
+- [hermes-agent](https://github.com/NousResearch/hermes-agent) — the agent platform
+- [ARC](https://github.com/Codename-11/ARC) — CI/CD patterns reference
+- [ClawPort](https://github.com/Codename-11/clawport-ui) — web dashboard
 
-**Phase 0** — Project setup: Compose scaffold, WSS connection manager, channel multiplexer, basic auth  
-**Phase 1** — Chat channel: companion relay, WebAPI proxy, streaming chat UI, profile selector
+---
 
-See [docs/spec.md § 7-8](docs/spec.md) for the full phase breakdown.
-
-## License
-
-Private repository. See upstream for original license.
+*Originally forked from [raulvidis/hermes-android](https://github.com/raulvidis/hermes-android).*

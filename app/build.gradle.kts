@@ -49,6 +49,10 @@ android {
     }
 }
 
+kotlin {
+    jvmToolchain(17)
+}
+
 dependencies {
     // Compose BOM
     val composeBom = platform(libs.compose.bom)

@@ -2,18 +2,15 @@
 
 ## Overview
 This extension adds Android device control to hermes-agent via the `android` toolset.
-It communicates with a bridge app running on an Android device over HTTP.
+It communicates with a companion app running on an Android device over WSS.
 
 ## Setup
-1. Install the bridge APK on the Android device
-2. Grant the bridge app Accessibility Service permission in Settings > Accessibility
+1. Install the companion APK on the Android device (build via `scripts/dev.bat build`)
+2. Grant the app Accessibility Service permission in Settings > Accessibility
 3. Grant SYSTEM_ALERT_WINDOW permission
-4. Set ANDROID_BRIDGE_URL in ~/.hermes/.env:
-   - Same WiFi: `ANDROID_BRIDGE_URL=http://192.168.x.x:8765`
-   - USB (recommended): run `adb forward tcp:8765 tcp:8765` then use `http://localhost:8765`
-5. Install the Python package: `pip install -e ./hermes-android`
-6. Add to hermes-agent model_tools.py _modules: `"tools.android_tool"`
-7. Add "android" toolset to toolsets.py
+4. Start the companion relay: `python -m companion_relay --no-ssl`
+5. Install the plugin: `cp -r plugin ~/.hermes/plugins/hermes-android`
+6. Restart hermes-agent
 
 ## Tool usage patterns
 
