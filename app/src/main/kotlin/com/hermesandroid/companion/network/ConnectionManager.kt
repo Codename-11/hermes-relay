@@ -1,5 +1,6 @@
 package com.hermesandroid.companion.network
 
+import android.util.Log
 import com.hermesandroid.companion.network.models.Envelope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -48,13 +49,43 @@ class ConnectionManager(
     private val _connectionState = MutableStateFlow(ConnectionState.Disconnected)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
 
+    /** When true, allows ws:// connections for local dev/testing. */
+    private val _insecureMode = MutableStateFlow(false)
+    val insecureMode: StateFlow<Boolean> = _insecureMode.asStateFlow()
+
+    /** True when the current connection is using ws:// instead of wss:// */
+    private val _isInsecureConnection = MutableStateFlow(false)
+    val isInsecureConnection: StateFlow<Boolean> = _isInsecureConnection.asStateFlow()
+
     companion object {
+        private const val TAG = "ConnectionManager"
         private const val MAX_BACKOFF_MS = 30_000L
         private const val BASE_BACKOFF_MS = 1_000L
     }
 
+    fun setInsecureMode(enabled: Boolean) {
+        _insecureMode.value = enabled
+        if (enabled) {
+            Log.w(TAG, "⚠ INSECURE MODE ENABLED — ws:// connections allowed. Do NOT use in production.")
+        }
+    }
+
     fun connect(url: String) {
-        require(url.startsWith("wss://")) { "Only wss:// connections are supported" }
+        val isInsecure = url.startsWith("ws://") && !url.startsWith("wss://")
+        if (isInsecure && !_insecureMode.value) {
+            Log.e(TAG, "Blocked ws:// connection — insecure mode is disabled. Use wss:// or enable insecure mode in Settings.")
+            return
+        }
+        if (!url.startsWith("ws://") && !url.startsWith("wss://")) {
+            Log.e(TAG, "Invalid URL scheme — must start with ws:// or wss://")
+            return
+        }
+
+        _isInsecureConnection.value = isInsecure
+        if (isInsecure) {
+            Log.w(TAG, "⚠ Connecting over INSECURE ws:// to: $url")
+        }
+
         serverUrl = url
         shouldReconnect = true
         reconnectAttempt = 0
@@ -66,6 +97,7 @@ class ConnectionManager(
         webSocket?.close(1000, "Client disconnect")
         webSocket = null
         _connectionState.value = ConnectionState.Disconnected
+        _isInsecureConnection.value = false
     }
 
     fun send(envelope: Envelope) {
@@ -96,7 +128,6 @@ class ConnectionManager(
                     val envelope = json.decodeFromString<Envelope>(text)
                     multiplexer.route(envelope)
                 } catch (e: Exception) {
-                    // Malformed message — log and ignore
                     e.printStackTrace()
                 }
             }

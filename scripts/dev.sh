@@ -52,6 +52,18 @@ case "${1:-help}" in
     echo "Starting companion relay..."
     python -m companion_relay --no-ssl --log-level DEBUG
     ;;
+  certs)
+    echo "Generating dev TLS certificates..."
+    "$(dirname "$0")/gen-dev-cert.sh" "${2:-localhost}"
+    ;;
+  relay-tls)
+    echo "Starting companion relay with dev TLS..."
+    if [ ! -f certs/dev.crt ]; then
+      echo "No dev certs found. Generating..."
+      ./scripts/gen-dev-cert.sh localhost
+    fi
+    python -m companion_relay --ssl-cert certs/dev.crt --ssl-key certs/dev.key --log-level DEBUG
+    ;;
   help|*)
     echo "Hermes Companion Dev Scripts"
     echo ""
@@ -63,6 +75,8 @@ case "${1:-help}" in
     echo "  clean      Clean build outputs"
     echo "  devices    List connected devices"
     echo "  wireless   Pair for wireless debugging"
-    echo "  relay      Start companion relay (dev mode)"
+    echo "  relay      Start companion relay (dev mode, no TLS)"
+    echo "  certs      Generate dev TLS certificates"
+    echo "  relay-tls  Start companion relay with dev TLS"
     ;;
 esac

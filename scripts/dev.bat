@@ -13,6 +13,8 @@ if "%1"=="lint" goto lint
 if "%1"=="clean" goto clean
 if "%1"=="devices" goto devices
 if "%1"=="relay" goto relay
+if "%1"=="certs" goto certs
+if "%1"=="relay-tls" goto relay-tls
 if "%1"=="help" goto help
 goto help
 
@@ -60,6 +62,20 @@ echo Starting companion relay...
 python -m companion_relay --no-ssl --log-level DEBUG
 goto end
 
+:certs
+echo Generating dev TLS certificates...
+call "%~dp0\gen-dev-cert.bat" %2
+goto end
+
+:relay-tls
+echo Starting companion relay with dev TLS...
+if not exist "certs\dev.crt" (
+    echo No dev certs found. Generating...
+    call "%~dp0\gen-dev-cert.bat" localhost
+)
+python -m companion_relay --ssl-cert certs/dev.crt --ssl-key certs/dev.key --log-level DEBUG
+goto end
+
 :help
 echo Hermes Companion Dev Scripts
 echo.
@@ -70,7 +86,9 @@ echo   test       Run unit tests
 echo   lint       Run lint checks
 echo   clean      Clean build outputs
 echo   devices    List connected devices
-echo   relay      Start companion relay (dev mode)
+echo   relay      Start companion relay (dev mode, no TLS)
+echo   certs      Generate dev TLS certificates
+echo   relay-tls  Start companion relay with dev TLS
 goto end
 
 :end

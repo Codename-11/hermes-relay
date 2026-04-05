@@ -45,8 +45,8 @@ private const val LAST_PAGE = PAGE_COUNT - 1
 
 @Composable
 fun OnboardingScreen(
-    onComplete: () -> Unit,
-    onSkipToSettings: () -> Unit
+    onComplete: (serverUrl: String) -> Unit,
+    onSkipToSettings: (serverUrl: String) -> Unit
 ) {
     val pagerState = rememberPagerState(pageCount = { PAGE_COUNT })
     val coroutineScope = rememberCoroutineScope()
@@ -73,7 +73,7 @@ fun OnboardingScreen(
                     enter = fadeIn(),
                     exit = fadeOut()
                 ) {
-                    TextButton(onClick = onSkipToSettings) {
+                    TextButton(onClick = { onSkipToSettings(serverUrl) }) {
                         Text(
                             text = "Skip to Settings",
                             style = MaterialTheme.typography.labelSmall,
@@ -85,7 +85,7 @@ fun OnboardingScreen(
                 Spacer(modifier = Modifier.width(8.dp))
 
                 // Skip button - always visible
-                TextButton(onClick = onComplete) {
+                TextButton(onClick = { onComplete(serverUrl) }) {
                     Text(
                         text = "Skip",
                         style = MaterialTheme.typography.bodyMedium,
@@ -111,7 +111,7 @@ fun OnboardingScreen(
                         4 -> ConnectPage(
                             serverUrl = serverUrl,
                             onServerUrlChange = { serverUrl = it },
-                            onGetStarted = onComplete
+                            onGetStarted = { onComplete(serverUrl) }
                         )
                     }
                 }
@@ -147,7 +147,7 @@ fun OnboardingScreen(
                     }
                 } else {
                     Button(
-                        onClick = onComplete,
+                        onClick = { onComplete(serverUrl) },
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(text = "Get Started")
@@ -240,8 +240,8 @@ private fun ConnectPage(
 private fun OnboardingScreenPreview() {
     HermesCompanionTheme {
         OnboardingScreen(
-            onComplete = {},
-            onSkipToSettings = {}
+            onComplete = { _ -> },
+            onSkipToSettings = { _ -> }
         )
     }
 }
@@ -251,8 +251,8 @@ private fun OnboardingScreenPreview() {
 private fun OnboardingScreenDarkPreview() {
     HermesCompanionTheme(themePreference = "dark") {
         OnboardingScreen(
-            onComplete = {},
-            onSkipToSettings = {}
+            onComplete = { _ -> },
+            onSkipToSettings = { _ -> }
         )
     }
 }

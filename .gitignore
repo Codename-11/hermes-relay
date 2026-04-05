@@ -38,5 +38,8 @@ dist/
 .env
 *.env.local
 
+# TLS dev certificates
+certs/
+
 # Local tools
 .subframe/

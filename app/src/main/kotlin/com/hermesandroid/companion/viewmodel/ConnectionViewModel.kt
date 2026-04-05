@@ -2,6 +2,7 @@ package com.hermesandroid.companion.viewmodel
 
 import android.app.Application
 import android.net.Uri
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.lifecycle.AndroidViewModel
@@ -27,6 +28,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     companion object {
         private val KEY_SERVER_URL = stringPreferencesKey("server_url")
         private val KEY_THEME = stringPreferencesKey("theme")
+        private val KEY_INSECURE_MODE = booleanPreferencesKey("insecure_mode")
         private const val DEFAULT_URL = "wss://localhost:8767"
     }
 
@@ -42,6 +44,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // Connection state
     val connectionState: StateFlow<ConnectionState> = connectionManager.connectionState
     val authState: StateFlow<AuthState> = authManager.authState
+    val insecureMode: StateFlow<Boolean> = connectionManager.insecureMode
+    val isInsecureConnection: StateFlow<Boolean> = connectionManager.isInsecureConnection
 
     // Server URL
     private val _serverUrl = MutableStateFlow(DEFAULT_URL)
@@ -80,8 +84,11 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             // Load onboarding state
             _onboardingCompleted.value = dataManager.isOnboardingCompleted()
 
-            // Load saved server URL
+            // Load saved preferences
             application.companionDataStore.data.collect { preferences ->
+                // Restore insecure mode
+                val insecure = preferences[KEY_INSECURE_MODE] ?: false
+                connectionManager.setInsecureMode(insecure)
                 val savedUrl = preferences[KEY_SERVER_URL]
                 if (savedUrl != null) {
                     _serverUrl.value = savedUrl
@@ -121,6 +128,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().companionDataStore.edit { preferences ->
                 preferences[KEY_THEME] = theme
+            }
+        }
+    }
+
+    fun setInsecureMode(enabled: Boolean) {
+        connectionManager.setInsecureMode(enabled)
+        viewModelScope.launch {
+            getApplication<Application>().companionDataStore.edit { preferences ->
+                preferences[KEY_INSECURE_MODE] = enabled
             }
         }
     }

@@ -15,7 +15,7 @@
         <activity
             android:name=".CompanionActivity"
             android:exported="true"
-            android:theme="@style/Theme.HermesCompanion">
+            android:theme="@style/Theme.HermesCompanion.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

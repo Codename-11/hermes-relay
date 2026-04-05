@@ -53,6 +53,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Switch
 import com.hermesandroid.companion.auth.AuthState
 import com.hermesandroid.companion.network.ConnectionState
 import com.hermesandroid.companion.viewmodel.ConnectionViewModel
@@ -67,6 +69,8 @@ fun SettingsScreen(
     val serverUrl by connectionViewModel.serverUrl.collectAsState()
     val pairingCode by connectionViewModel.pairingCode.collectAsState()
     val theme by connectionViewModel.theme.collectAsState()
+    val insecureMode by connectionViewModel.insecureMode.collectAsState()
+    val isInsecureConnection by connectionViewModel.isInsecureConnection.collectAsState()
 
     var urlInput by remember(serverUrl) { mutableStateOf(serverUrl) }
     val clipboardManager = LocalClipboardManager.current
@@ -119,12 +123,14 @@ fun SettingsScreen(
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        val canConnect = connectionState == ConnectionState.Disconnected &&
+                            (urlInput.startsWith("wss://") ||
+                                (insecureMode && urlInput.startsWith("ws://")))
                         Button(
                             onClick = {
                                 connectionViewModel.connect(urlInput)
                             },
-                            enabled = connectionState == ConnectionState.Disconnected &&
-                                urlInput.startsWith("wss://")
+                            enabled = canConnect
                         ) {
                             Text("Connect")
                         }
@@ -162,6 +168,55 @@ fun SettingsScreen(
                                 ConnectionState.Disconnected -> "Disconnected"
                             },
                             style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+
+                    // Insecure connection warning
+                    if (isInsecureConnection && connectionState == ConnectionState.Connected) {
+                        HorizontalDivider()
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Warning,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "Insecure connection — traffic is not encrypted",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+
+                    HorizontalDivider()
+
+                    // Insecure mode toggle
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Allow insecure connections",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = "Enable ws:// for local dev/testing only",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = insecureMode,
+                            onCheckedChange = { connectionViewModel.setInsecureMode(it) }
                         )
                     }
                 }

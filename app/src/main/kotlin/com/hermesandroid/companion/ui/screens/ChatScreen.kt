@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -149,40 +150,77 @@ fun ChatScreen(
             }
         }
 
-        // Message list
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            item { Spacer(modifier = Modifier.height(8.dp)) }
-
-            items(messages, key = { it.id }) { message ->
-                MessageBubble(message = message)
-
-                // Show tool progress cards for messages with tool calls
-                message.toolCalls.forEach { toolCall ->
-                    Spacer(modifier = Modifier.height(4.dp))
-                    ToolProgressCard(toolCall = toolCall)
-                }
-            }
-
-            // Streaming indicator
-            if (isStreaming) {
-                item {
-                    Text(
-                        text = "...",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 12.dp, top = 4.dp)
+        // Message list or empty state
+        if (messages.isEmpty() && !isStreaming) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        imageVector = Icons.Filled.Chat,
+                        contentDescription = null,
+                        modifier = Modifier.size(48.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                     )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "No messages yet",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Send a message to start chatting with your agent",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                    if (connectionState != ConnectionState.Connected) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Connect to your server first",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                 }
             }
+        } else {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                item { Spacer(modifier = Modifier.height(8.dp)) }
 
-            item { Spacer(modifier = Modifier.height(8.dp)) }
+                items(messages, key = { it.id }) { message ->
+                    MessageBubble(message = message)
+
+                    // Show tool progress cards for messages with tool calls
+                    message.toolCalls.forEach { toolCall ->
+                        Spacer(modifier = Modifier.height(4.dp))
+                        ToolProgressCard(toolCall = toolCall)
+                    }
+                }
+
+                // Streaming indicator
+                if (isStreaming) {
+                    item {
+                        Text(
+                            text = "...",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 12.dp, top = 4.dp)
+                        )
+                    }
+                }
+
+                item { Spacer(modifier = Modifier.height(8.dp)) }
+            }
         }
 
         // Input bar

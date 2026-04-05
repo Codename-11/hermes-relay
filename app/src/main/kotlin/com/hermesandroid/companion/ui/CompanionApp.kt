@@ -128,13 +128,15 @@ fun CompanionApp() {
             ) {
                 composable(Screen.Onboarding.route) {
                     OnboardingScreen(
-                        onComplete = {
+                        onComplete = { serverUrl ->
+                            connectionViewModel.updateServerUrl(serverUrl)
                             connectionViewModel.completeOnboarding()
                             navController.navigate(Screen.Chat.route) {
                                 popUpTo(Screen.Onboarding.route) { inclusive = true }
                             }
                         },
-                        onSkipToSettings = {
+                        onSkipToSettings = { serverUrl ->
+                            connectionViewModel.updateServerUrl(serverUrl)
                             connectionViewModel.completeOnboarding()
                             navController.navigate(Screen.Settings.route) {
                                 popUpTo(Screen.Onboarding.route) { inclusive = true }

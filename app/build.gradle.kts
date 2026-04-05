@@ -94,6 +94,9 @@ dependencies {
     // DataStore
     implementation(libs.datastore.preferences)
 
+    // Splash Screen
+    implementation(libs.splashscreen)
+
     // Testing
     testImplementation(libs.junit)
     androidTestImplementation(libs.compose.ui.test.junit4)
