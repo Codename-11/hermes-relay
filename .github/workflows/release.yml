@@ -1,0 +1,60 @@
+# Hermes Companion — Release Pipeline
+#
+# Triggered when a version tag (v*) is pushed.
+# Validates the tag matches the app version, builds a release APK,
+# and creates a GitHub Release with the artifact attached.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    name: Build & Publish Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Required for creating GitHub Releases
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # Extract versionName from build.gradle.kts and compare with the git tag
+      - name: Validate version matches tag
+        working-directory: companion-app
+        run: |
+          # Extract versionName from app/build.gradle.kts
+          VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+
+          echo "App versionName: $VERSION_NAME"
+          echo "Tag version:     $TAG_VERSION"
+
+          if [ "$VERSION_NAME" != "$TAG_VERSION" ]; then
+            echo "::error::Version mismatch! Tag $TAG_VERSION does not match app versionName $VERSION_NAME"
+            exit 1
+          fi
+
+          echo "Version validated: $VERSION_NAME"
+
+      - name: Build release APK
+        working-directory: companion-app
+        run: ./gradlew assembleRelease
+
+      # Create a GitHub Release with auto-generated release notes
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: companion-app/app/build/outputs/apk/release/*.apk
+          generate_release_notes: true

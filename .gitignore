@@ -21,12 +21,18 @@ venv/
 .DS_Store
 Thumbs.db
 
-# Android build outputs
+# Android build outputs — upstream bridge
 hermes-android-bridge/app/build/
 hermes-android-bridge/build/
 hermes-android-bridge/.gradle/
 hermes-android-bridge/local.properties
 hermes-android-bridge/gradle/wrapper/gradle-wrapper.jar
+
+# Android build outputs — companion app
+companion-app/app/build/
+companion-app/build/
+companion-app/.gradle/
+companion-app/local.properties
 
 # Environment
 .env
