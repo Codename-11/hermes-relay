@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Minimal theme — Compose handles all theming via Material 3 -->
+    <style name="Theme.HermesCompanion" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
