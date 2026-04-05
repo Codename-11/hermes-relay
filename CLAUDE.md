@@ -84,17 +84,16 @@ Chat goes through WebAPI (not directly to gateway). Terminal goes through tmux. 
 - **Don't put documentation in root** — long-form docs go in `docs/`
 - **Don't forget DEVLOG.md** — update it
 
-## Team Workflow (omx / Agent Team)
+## Development Workflow
 
-This project uses `ralplan` → `team` → `ralph` workflow:
-1. **ralplan** — read CLAUDE.md + docs/spec.md, produce an implementation plan
-2. **team** — distribute tasks across agents (one per major component)
-3. **ralph** — each agent executes independently, commits to a branch
+Use Claude Code (local) or Codex to implement. Read this file + docs/spec.md first, then work through phases.
 
-Suggested task split for MVP:
-- **Agent 1:** Compose scaffold + navigation + WSS connection manager + channel multiplexer
-- **Agent 2:** Companion relay (Python) — WSS server, auth, chat channel proxy
-- **Agent 3:** Chat UI (Compose) — message list, streaming, tool cards, profile selector
+**Suggested task order for MVP:**
+1. Compose scaffold + navigation + WSS connection manager + channel multiplexer
+2. Companion relay (Python) — WSS server, auth, chat channel proxy
+3. Chat UI (Compose) — message list, streaming, tool cards, profile selector
+
+Each can be a separate session or delegated to subagents if using Claude Code's task delegation.
 
 ## Integration Points
 
