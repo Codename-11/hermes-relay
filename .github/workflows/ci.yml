@@ -3,8 +3,8 @@
 # Runs on every push to main and on pull requests targeting main.
 # Pipeline: lint -> build + test (parallel) -> upload artifacts
 #
-# Android: Kotlin + Jetpack Compose (companion-app/)
-# Python:  aiohttp relay server (companion-relay/)
+# Android: Kotlin + Jetpack Compose (root Gradle project)
+# Python:  aiohttp relay server (companion_relay/)
 
 name: CI
 
@@ -36,13 +36,11 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      # gradle/actions/setup-gradle handles caching automatically
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
       # Prefer ktlintCheck if configured; fall back to Android lint
       - name: Run lint checks
-        working-directory: companion-app
         run: |
           if ./gradlew tasks --all 2>/dev/null | grep -q "ktlintCheck"; then
             echo "Running ktlintCheck..."
@@ -73,14 +71,13 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build debug APK
-        working-directory: companion-app
         run: ./gradlew assembleDebug
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: debug-apk
-          path: companion-app/app/build/outputs/apk/debug/*.apk
+          path: app/build/outputs/apk/debug/*.apk
           retention-days: 14
 
   # ──────────────────────────────────────────────
@@ -104,7 +101,6 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Run unit tests
-        working-directory: companion-app
         run: ./gradlew test
 
       # Upload test reports even if tests fail, for debugging
@@ -113,7 +109,7 @@ jobs:
         if: always()
         with:
           name: test-reports
-          path: companion-app/app/build/reports/tests/
+          path: app/build/reports/tests/
           retention-days: 7
 
   # ──────────────────────────────────────────────
@@ -132,11 +128,11 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r companion-relay/requirements.txt
+        run: pip install -r companion_relay/requirements.txt
 
       - name: Syntax check
-        run: python -m py_compile companion-relay/relay.py
+        run: python -m py_compile companion_relay/relay.py
 
       # TODO: Add pytest step when relay tests exist
       # - name: Run tests
-      #   run: pytest companion-relay/tests/
+      #   run: pytest companion_relay/tests/

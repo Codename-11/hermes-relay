@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="app_name">Hermes Bridge</string>
-    <string name="accessibility_description">Hermes Bridge accessibility service — allows hermes-agent to read and interact with the Android screen.</string>
-</resources>

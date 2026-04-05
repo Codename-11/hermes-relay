@@ -32,7 +32,6 @@ jobs:
 
       # Extract versionName from build.gradle.kts and compare with the git tag
       - name: Validate version matches tag
-        working-directory: companion-app
         run: |
           # Extract versionName from app/build.gradle.kts
           VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
@@ -49,12 +48,11 @@ jobs:
           echo "Version validated: $VERSION_NAME"
 
       - name: Build release APK
-        working-directory: companion-app
         run: ./gradlew assembleRelease
 
       # Create a GitHub Release with auto-generated release notes
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: companion-app/app/build/outputs/apk/release/*.apk
+          files: app/build/outputs/apk/release/*.apk
           generate_release_notes: true

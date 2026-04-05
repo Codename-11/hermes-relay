@@ -1,6 +1,0 @@
-#!/bin/sh
-# Gradle wrapper script — the actual gradle-wrapper.jar is downloaded by Android Studio
-# on first import. If building from CLI, run: gradle wrapper --gradle-version 8.6
-APP_HOME=$( cd "${0%/*}" && pwd -P )
-CLASSPATH=$APP_HOME/gradle/wrapper/gradle-wrapper.jar
-exec java -classpath "$CLASSPATH" org.gradle.wrapper.GradleWrapperMain "$@"
