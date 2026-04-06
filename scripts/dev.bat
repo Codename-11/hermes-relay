@@ -1,5 +1,5 @@
 @echo off
-REM Hermes Companion — dev helper scripts (Windows)
+REM Hermes Relay — dev helper scripts (Windows)
 REM Usage: scripts\dev.bat <command>
 
 cd /d "%~dp0\.."
@@ -28,14 +28,14 @@ goto end
 echo Building and installing to connected device...
 call gradlew.bat installDebug
 echo Launching app...
-adb shell am start -n com.hermesandroid.companion/.CompanionActivity
+adb shell am start -n com.hermesandroid.relay/.MainActivity
 goto end
 
 :run
 echo Building, installing, and launching...
 call gradlew.bat installDebug
-adb shell am start -n com.hermesandroid.companion/.CompanionActivity
-adb logcat -s HermesCompanion:* --format=brief
+adb shell am start -n com.hermesandroid.relay/.MainActivity
+adb logcat -s HermesRelay:* --format=brief
 goto end
 
 :test
@@ -58,8 +58,8 @@ adb devices -l
 goto end
 
 :relay
-echo Starting companion relay...
-python -m companion_relay --no-ssl --log-level DEBUG
+echo Starting relay server...
+python -m relay_server --no-ssl --log-level DEBUG
 goto end
 
 :certs
@@ -68,16 +68,16 @@ call "%~dp0\gen-dev-cert.bat" %2
 goto end
 
 :relay-tls
-echo Starting companion relay with dev TLS...
+echo Starting relay server with dev TLS...
 if not exist "certs\dev.crt" (
     echo No dev certs found. Generating...
     call "%~dp0\gen-dev-cert.bat" localhost
 )
-python -m companion_relay --ssl-cert certs/dev.crt --ssl-key certs/dev.key --log-level DEBUG
+python -m relay_server --ssl-cert certs/dev.crt --ssl-key certs/dev.key --log-level DEBUG
 goto end
 
 :help
-echo Hermes Companion Dev Scripts
+echo Hermes Relay Dev Scripts
 echo.
 echo   build      Build debug APK
 echo   install    Build + install to connected device
@@ -86,9 +86,9 @@ echo   test       Run unit tests
 echo   lint       Run lint checks
 echo   clean      Clean build outputs
 echo   devices    List connected devices
-echo   relay      Start companion relay (dev mode, no TLS)
+echo   relay      Start relay server (dev mode, no TLS)
 echo   certs      Generate dev TLS certificates
-echo   relay-tls  Start companion relay with dev TLS
+echo   relay-tls  Start relay server with dev TLS
 goto end
 
 :end

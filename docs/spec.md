@@ -1,4 +1,4 @@
-# Hermes Companion — Android App
+# Hermes Relay — Android App
 
 ## Specification v1.0
 
@@ -11,7 +11,7 @@
 
 ## 1. What This Is
 
-A **native Android companion app** for the Hermes agent platform. Not just remote phone control — a full bidirectional interface between you and your Hermes server from anywhere.
+A **native Android app** for the Hermes agent platform. Not just remote phone control — a full bidirectional interface between you and your Hermes server from anywhere.
 
 Three capabilities in one app:
 
@@ -66,7 +66,7 @@ One persistent WSS connection. One pairing flow. Three multiplexed channels.
 │            Hermes Server (Docker-Server)               │
 │                   │                                    │
 │  ┌────────────────┴───────────────────┐               │
-│  │      Companion Relay (Python)       │               │
+│  │      Relay Server (Python)          │               │
 │  │      Port 8767 (WSS)               │               │
 │  │                                     │               │
 │  │  ┌─────────┐ ┌────────┐ ┌───────┐ │               │
@@ -108,19 +108,25 @@ Connection lifecycle, auth, keepalive.
 | `pong` | Both | `{ ts }` |
 
 #### Channel: `chat`
-Agent conversation — maps to Hermes WebAPI SSE events.
+**Note:** Chat now connects directly to the Hermes API Server via HTTP/SSE (see Section 6.2). The relay server is not involved in chat. The SSE event types from the Hermes API are:
 
-| Type | Direction | Payload |
-|------|-----------|---------|
-| `chat.send` | App → Server | `{ profile, session_id?, message, attachments[]? }` |
-| `chat.session` | Server → App | `{ session_id, title, model }` |
-| `chat.delta` | Server → App | `{ session_id, message_id, delta }` |
-| `chat.tool.started` | Server → App | `{ tool_name, preview, args }` |
-| `chat.tool.completed` | Server → App | `{ tool_name, result_preview, success }` |
-| `chat.completed` | Server → App | `{ session_id, message_id, content, api_calls }` |
-| `chat.error` | Server → App | `{ message }` |
-| `chat.sessions.list` | App → Server | `{ profile? }` |
-| `chat.sessions` | Server → App | `{ sessions[] }` |
+| Event | Direction | Payload |
+|-------|-----------|---------|
+| `session.created` | Server → App | `{ session_id, run_id, title? }` |
+| `run.started` | Server → App | `{ session_id, run_id, user_message: { id, role, content } }` |
+| `message.started` | Server → App | `{ session_id, run_id, message: { id, role } }` |
+| `assistant.delta` | Server → App | `{ session_id, run_id, message_id, delta }` |
+| `tool.progress` | Server → App | `{ session_id, run_id, message_id, delta }` |
+| `tool.pending` | Server → App | `{ session_id, run_id, tool_name, call_id }` |
+| `tool.started` | Server → App | `{ session_id, run_id, tool_name, call_id, preview?, args }` |
+| `tool.completed` | Server → App | `{ session_id, run_id, tool_call_id, tool_name, args, result_preview }` |
+| `tool.failed` | Server → App | `{ session_id, run_id, call_id, tool_name, error }` |
+| `assistant.completed` | Server → App | `{ session_id, run_id, message_id, content, completed, partial, interrupted }` |
+| `run.completed` | Server → App | `{ session_id, run_id, message_id, completed, partial, interrupted, api_calls? }` |
+| `error` | Server → App | `{ message, error }` |
+| `done` | Server → App | `{ session_id, run_id, state: "final" }` |
+
+Session management uses the REST API (`GET/POST /api/sessions`, `PATCH/DELETE /api/sessions/{id}`).
 
 #### Channel: `terminal`
 PTY streaming — raw terminal I/O.
@@ -187,7 +193,7 @@ Biometric gate on the app side for terminal access (fingerprint/face).
 - **Min SDK:** 26 (Android 8.0)
 - **Target SDK:** 35
 
-### Server (Companion Relay)
+### Server (Relay)
 - **Language:** Python 3.11+
 - **Framework:** aiohttp (matches existing relay)
 - **Terminal:** `asyncio` + `pty` module for PTY, `libtmux` for session management
@@ -250,7 +256,7 @@ Bottom navigation bar with 4 tabs:
 
 ---
 
-## 6. Server: Companion Relay
+## 6. Server: Relay
 
 The relay is a new Python service that runs alongside the Hermes gateway. It owns the WSS connection to the phone and routes messages to the appropriate backend.
 
@@ -258,7 +264,7 @@ The relay is a new Python service that runs alongside the Hermes gateway. It own
 
 ```
 hermes-android/
-├── companion_relay/
+├── relay_server/
 │   ├── relay.py           # Main WSS server (aiohttp)
 │   ├── auth.py            # Pairing, token management
 │   ├── channels/
@@ -269,19 +275,66 @@ hermes-android/
 │   └── requirements.txt
 ```
 
-### 6.2 Chat Channel Router
+### 6.2 Chat — Direct API Connection
 
-Proxies messages to the Hermes WebAPI SSE endpoint:
+Chat connects directly from the Android app to the Hermes API Server, bypassing the relay server entirely. This uses the Hermes Sessions API:
 
-```python
-# App sends: { channel: "chat", type: "chat.send", payload: { message: "..." } }
-# Relay:
-#   1. POST /api/sessions/{id}/chat/stream to WebAPI
-#   2. Consume SSE events
-#   3. Re-emit as WebSocket messages to phone
+```
+1. POST /api/sessions → create session → get session_id
+2. POST /api/sessions/{session_id}/chat/stream → send message, get SSE stream
+         Authorization: Bearer <API_SERVER_KEY>   (optional)
+         Accept: text/event-stream
+         Content-Type: application/json
+         
+         { "message": "Hello", "system_message": "..." }
+
+Response: SSE stream with typed events:
+         event: session.created
+         data: {"session_id":"...","run_id":"...","title":"..."}
+
+         event: run.started
+         data: {"session_id":"...","run_id":"...","user_message":{"id":"...","role":"user","content":"Hello"}}
+
+         event: message.started
+         data: {"session_id":"...","run_id":"...","message":{"id":"...","role":"assistant"}}
+
+         event: assistant.delta
+         data: {"session_id":"...","run_id":"...","message_id":"...","delta":"Hello"}
+
+         event: tool.progress
+         data: {"session_id":"...","run_id":"...","message_id":"...","delta":"thinking..."}
+
+         event: tool.pending
+         data: {"session_id":"...","run_id":"...","tool_name":"terminal","call_id":"..."}
+
+         event: tool.started
+         data: {"session_id":"...","run_id":"...","tool_name":"terminal","call_id":"...","preview":"...","args":{...}}
+
+         event: tool.completed
+         data: {"session_id":"...","run_id":"...","tool_call_id":"...","tool_name":"terminal","args":{...},"result_preview":"..."}
+
+         event: tool.failed
+         data: {"session_id":"...","run_id":"...","call_id":"...","tool_name":"terminal","error":"..."}
+
+         event: assistant.completed
+         data: {"session_id":"...","run_id":"...","message_id":"...","content":"...","completed":true,"partial":false,"interrupted":false}
+
+         event: run.completed
+         data: {"session_id":"...","run_id":"...","message_id":"...","completed":true,"partial":false,"interrupted":false,"api_calls":3}
+
+         event: error
+         data: {"message":"error description","error":"..."}
+
+         event: done
+         data: {"session_id":"...","run_id":"...","state":"final"}
 ```
 
-This means the chat channel gets full streaming, tool progress, and all the rich events that the WebAPI already provides — we just bridge SSE → WebSocket.
+Key classes:
+- **HermesApiClient** — OkHttp-based HTTP/SSE client for direct API communication
+- **ChatHandler** — processes streaming deltas and tool call events into ChatMessage state
+- **ChatViewModel** — orchestrates send/stream/cancel lifecycle
+
+The relay server is **not involved** in chat. It remains for bridge and terminal channels only.
 
 ### 6.3 Terminal Channel
 
@@ -298,9 +351,9 @@ Uses `asyncio.create_subprocess_exec` with PTY for non-blocking I/O. tmux gives 
 
 ### 6.4 Bridge Channel
 
-Wraps the existing relay protocol. When the agent calls `android_*` tools, the tool handler routes through the companion relay's bridge channel to the phone.
+Wraps the existing relay protocol. When the agent calls `android_*` tools, the tool handler routes through the relay server's bridge channel to the phone.
 
-**Change from upstream:** The bridge channel is now part of the multiplexed WSS connection instead of a separate `ws://` relay on port 8766. The plugin's `android_relay.py` gets updated to route through the companion relay.
+**Change from upstream:** The bridge channel is now part of the multiplexed WSS connection instead of a separate `ws://` relay on port 8766. The plugin's `android_relay.py` gets updated to route through the relay server.
 
 ---
 
@@ -321,7 +374,7 @@ Wraps the existing relay protocol. When the agent calls `android_*` tools, the t
 ### Phase 1 — Chat Channel (MVP)
 **Priority: P0**
 
-- [ ] Server: Companion relay with chat channel router
+- [ ] Server: Relay with chat channel router
 - [ ] Server: Proxy to Hermes WebAPI `/api/sessions/{id}/chat/stream`
 - [ ] Server: SSE → WebSocket bridge
 - [ ] App: Chat UI (message list, input bar, streaming text)
@@ -345,7 +398,7 @@ Wraps the existing relay protocol. When the agent calls `android_*` tools, the t
 **Priority: P1**
 
 - [ ] Migrate upstream bridge protocol into multiplexed WSS
-- [ ] Update `android_relay.py` to route through companion relay
+- [ ] Update `android_relay.py` to route through relay server
 - [ ] App: Bridge status UI
 - [ ] App: Permission management (accessibility, overlay)
 - [ ] App: Activity log (recent agent commands)
@@ -391,7 +444,7 @@ Deliverables:
 2. WSS connection manager with channel multiplexing
 3. Basic pairing/auth flow
 4. Chat tab: send message → get streaming response
-5. Server: companion relay with chat channel routing
+5. Server: relay with chat channel routing
 6. GitHub Actions: build APK
 
 Non-goals for tonight:

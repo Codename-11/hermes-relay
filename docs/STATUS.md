@@ -1,4 +1,4 @@
-# Hermes Companion — Feature Status
+# Hermes Relay — Feature Status
 
 > Single source of truth for what's done, what's in progress, and what's next.
 > Update this file as features are completed.
@@ -21,7 +21,7 @@
 
 ## Phase 1 — Chat Channel ◐
 
-### Server (Companion Relay)
+### Server (Relay)
 - [x] aiohttp WSS server on port 8767
 - [x] Pairing code auth (10min expiry, one-time use)
 - [x] Session token auth (30-day expiry)
@@ -70,7 +70,7 @@
 ## Phase 3 — Bridge Channel ☐
 
 - [ ] Migrate upstream bridge protocol into multiplexed WSS
-- [ ] Update `android_relay.py` to route through companion relay
+- [ ] Update `android_relay.py` to route through relay server
 - [ ] App: Bridge status UI (connected, latency, battery)
 - [ ] App: Permission management (accessibility, overlay)
 - [ ] App: Activity log (recent agent commands)

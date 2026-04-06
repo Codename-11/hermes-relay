@@ -1,29 +1,28 @@
-# Hermes Companion — Claude Code Context
+# Hermes Relay — Claude Code Context
 
 > Read this before touching code. Then read docs/spec.md and docs/decisions.md.
 
 ## What This Is
 
-A native Android companion app for Hermes agent. Three multiplexed channels (chat, terminal, bridge) over a single WSS connection. The app is Kotlin + Jetpack Compose. The server relay is Python + aiohttp.
+A native Android app for Hermes agent. Chat connects directly to the Hermes API Server. Bridge and terminal channels use a relay server over WSS. The app is Kotlin + Jetpack Compose. The server relay is Python + aiohttp.
 
-**Current state:** MVP Phase 0 + Phase 1 complete. The Android app has a working Compose scaffold with chat UI, WSS connection manager, channel multiplexer, and auth flow. The companion relay proxies chat to the Hermes WebAPI. Terminal and bridge channels are stubbed for Phase 2/3.
+**Current state:** MVP Phase 0 + Phase 1 complete with direct API chat. The Android app connects to the Hermes API Server (`/api/sessions/{id}/chat/stream`) for chat via HTTP/SSE. The relay server handles bridge (Phase 3) and terminal (Phase 2) via WSS. Auth uses optional Bearer token for API, pairing code for relay.
 
 ## Architecture
 
 ```
-Phone (WSS) → Companion Relay (:8767) → Hermes WebAPI (:8642)
-                                      → tmux/PTY (Phase 2)
-                                      → Bridge relay (Phase 3)
+Phone (HTTP/SSE) → Hermes API Server (:8642)   [chat — direct, OpenAI-compatible]
+Phone (WSS)      → Relay Server (:8767)          [bridge, terminal]
 ```
 
-Chat goes through WebAPI (not directly to gateway). Terminal goes through tmux. Bridge wraps existing relay protocol. See docs/decisions.md for why.
+Chat goes directly to the API server using the Hermes Sessions API (`/api/sessions/{id}/chat/stream`) with SSE streaming. The API key (Bearer token) is optional — most local setups run without one. Terminal will go through tmux via the relay. Bridge wraps existing relay protocol. See docs/decisions.md for why.
 
 ## Repository Layout
 
 ```
 hermes-android/                  ← Android Studio opens this root
 ├── app/                         ← Android app module (Compose)
-│   ├── src/main/kotlin/com/hermesandroid/companion/
+│   ├── src/main/kotlin/com/hermesandroid/relay/
 │   │   ├── ui/                  # Screens, components, theme
 │   │   ├── network/             # ConnectionManager, ChannelMultiplexer, handlers
 │   │   ├── auth/                # AuthManager (pairing + tokens)
@@ -34,7 +33,7 @@ hermes-android/                  ← Android Studio opens this root
 ├── settings.gradle.kts
 ├── gradle/                      ← Wrapper (8.13) + version catalog
 ├── scripts/                     ← Dev scripts (build, install, run, test, relay)
-├── companion_relay/             ← Python WSS relay server
+├── relay_server/             ← Python WSS relay server
 │   ├── relay.py                 # Main aiohttp WSS server
 │   ├── auth.py                  # Pairing + session management
 │   ├── channels/                # chat.py, terminal.py (stub), bridge.py (stub)
@@ -59,9 +58,9 @@ hermes-android/                  ← Android Studio opens this root
 ### Code Style — Android (Kotlin)
 - **Jetpack Compose** — no XML layouts. Material 3 / Material You.
 - **kotlinx.serialization** — not Gson. Type-safe, faster.
-- **OkHttp** for WebSocket — supports `wss://` natively
+- **OkHttp** for WebSocket + SSE — `okhttp` for WSS relay, `okhttp-sse` for API streaming
 - **Single-activity** — Compose Navigation for all routing
-- **Package:** `com.hermesandroid.companion`
+- **Package:** `com.hermesandroid.relay`
 - **Min SDK 26, Target SDK 35, Compile SDK 36**
 - **Kotlin 2.0+**, JVM toolchain 17
 
@@ -86,12 +85,13 @@ hermes-android/                  ← Android Studio opens this root
 |------|-----|
 | `docs/spec.md` | Full specification — protocol, UI layouts, phases, dependencies |
 | `docs/decisions.md` | Architecture decisions — framework choice, channel design, auth model |
-| `app/src/main/kotlin/.../ui/CompanionApp.kt` | Main scaffold — bottom nav, navigation |
-| `app/src/main/kotlin/.../network/ConnectionManager.kt` | WSS connection with auto-reconnect |
-| `app/src/main/kotlin/.../network/ChannelMultiplexer.kt` | Envelope routing by channel |
+| `app/src/main/kotlin/.../ui/RelayApp.kt` | Main scaffold — bottom nav, navigation |
+| `app/src/main/kotlin/.../network/HermesApiClient.kt` | Direct HTTP/SSE client for Hermes API Server |
+| `app/src/main/kotlin/.../network/ConnectionManager.kt` | WSS connection with auto-reconnect (relay) |
+| `app/src/main/kotlin/.../network/ChannelMultiplexer.kt` | Envelope routing by channel (relay) |
+| `app/src/main/kotlin/.../network/handlers/ChatHandler.kt` | Chat message state + streaming event processing |
 | `app/src/main/kotlin/.../ui/screens/ChatScreen.kt` | Chat UI — streaming messages, tool cards |
-| `companion_relay/relay.py` | Main relay server |
-| `companion_relay/channels/chat.py` | Chat channel — SSE→WS proxy |
+| `relay_server/relay.py` | Relay server (bridge/terminal only) |
 | `AGENTS.md` | Tool usage patterns for the `android_*` toolset |
 
 ## What NOT to Do
@@ -110,7 +110,7 @@ hermes-android/                  ← Android Studio opens this root
 scripts/dev.bat build      # Build debug APK
 scripts/dev.bat run        # Build + install + launch + logcat
 scripts/dev.bat test       # Run unit tests
-scripts/dev.bat relay      # Start companion relay (dev mode, no SSL)
+scripts/dev.bat relay      # Start relay server (dev mode, no SSL)
 ```
 
 Open repo root in Android Studio for Compose previews and device deployment.

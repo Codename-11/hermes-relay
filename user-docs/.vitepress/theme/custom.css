@@ -1,0 +1,407 @@
+/* ==========================================================================
+   Hermes Relay — Nothing-Inspired Documentation Theme
+
+   Shared DNA with ARC docs (arc-cli.dev):
+   Fonts: Space Grotesk (body/UI) + Space Mono (code/labels)
+   Brand: #7C3AED (purple) — single accent
+   Dark: OLED black (#000), neutral gray surfaces (#111, #1A1A1A)
+   Light: Off-white (#F5F5F5), white surfaces
+   No gradients. No shadows. No blur. Flat + border separation.
+   ========================================================================== */
+
+/* ── Shared Tokens ─────────────────────────────────────────────────────── */
+
+:root {
+  /* Brand — purple */
+  --vp-c-brand-1: #9B6BF0;
+  --vp-c-brand-2: #7C3AED;
+  --vp-c-brand-3: #6B35E8;
+  --vp-c-brand-soft: rgba(124, 58, 237, 0.14);
+
+  /* Fonts — same as ARC */
+  --vp-font-family-base: 'Space Grotesk', 'DM Sans', system-ui, sans-serif;
+  --vp-font-family-mono: 'Space Mono', 'JetBrains Mono', 'SF Mono', monospace;
+
+  /* Nothing border tokens */
+  --nd-border: #222222;
+  --nd-border-visible: #333333;
+}
+
+/* ── Dark Mode — neutral grays ───────────────────────────────────────── */
+
+.dark {
+  --vp-c-bg: #000000;
+  --vp-c-bg-alt: #111111;
+  --vp-c-bg-elv: #1A1A1A;
+  --vp-c-bg-soft: #111111;
+
+  --vp-c-divider: #222222;
+  --vp-c-gutter: #111111;
+
+  --vp-c-text-1: #E8E8E8;
+  --vp-c-text-2: #999999;
+  --vp-c-text-3: #666666;
+}
+
+/* ── Light Mode — warm off-white ─────────────────────────────────────── */
+
+html:not(.dark) {
+  --vp-c-bg: #F5F5F5;
+  --vp-c-bg-alt: #FFFFFF;
+  --vp-c-bg-elv: #FFFFFF;
+  --vp-c-bg-soft: #F0F0F0;
+
+  --vp-c-divider: #E8E8E8;
+  --vp-c-gutter: #F0F0F0;
+
+  --vp-c-text-1: #1A1A1A;
+  --vp-c-text-2: #666666;
+  --vp-c-text-3: #999999;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   NAVIGATION — solid bg, no blur, mono uppercase labels
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.VPNavBar {
+  border-bottom: 1px solid var(--nd-border) !important;
+}
+
+.dark .VPNavBar {
+  background: #000000 !important;
+  backdrop-filter: none !important;
+}
+
+html:not(.dark) .VPNavBar {
+  background: #F5F5F5 !important;
+  border-bottom-color: #E8E8E8 !important;
+  backdrop-filter: none !important;
+}
+
+/* All nav links: mono uppercase — instrument panel labels */
+.VPNavBarMenuLink,
+.VPNavBarMenuLink .text,
+.VPNavBarMenuGroup .text {
+  font-family: var(--vp-font-family-mono) !important;
+  font-size: 12px !important;
+  letter-spacing: 0.06em !important;
+  text-transform: uppercase !important;
+}
+
+/* Nav bar title (logo + name) */
+.VPNavBarTitle .title {
+  font-family: var(--vp-font-family-mono) !important;
+  font-size: 13px !important;
+  letter-spacing: 0.1em !important;
+  text-transform: uppercase !important;
+}
+
+/* Search box: align with Nothing aesthetic */
+.VPNavBarSearch .DocSearch-Button {
+  border: 1px solid var(--nd-border-visible) !important;
+  background: transparent !important;
+  border-radius: 4px !important;
+}
+
+.dark .VPNavBarSearch .DocSearch-Button {
+  border-color: var(--nd-border-visible) !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   HERO — restrained, type-driven
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Brand name: solid color, no gradient */
+.VPHero .name {
+  color: var(--vp-c-brand-1) !important;
+  background: none !important;
+  -webkit-background-clip: unset !important;
+  background-clip: unset !important;
+  -webkit-text-fill-color: var(--vp-c-brand-1) !important;
+}
+
+.VPHero .text {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.VPHero .tagline {
+  color: var(--vp-c-text-2);
+  max-width: 520px;
+  line-height: 1.6;
+}
+
+/* Hero image — flat, border separation */
+.VPHero .image-container .image-bg {
+  display: none !important;
+}
+
+.VPHero .image-container img,
+.VPHero .image-container .VPImage {
+  border: none !important;
+  border-radius: 0 !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   FEATURE CARDS — subtle border, hover border only
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.VPFeature {
+  border: 1px solid var(--nd-border) !important;
+  background: var(--vp-c-bg) !important;
+  border-radius: 8px !important;
+  transition: border-color 0.2s cubic-bezier(0.25, 0.1, 0.25, 1) !important;
+}
+
+html:not(.dark) .VPFeature {
+  border-color: #E8E8E8 !important;
+  background: #FFFFFF !important;
+}
+
+.VPFeature:hover {
+  border-color: var(--nd-border-visible) !important;
+}
+
+.VPFeature .title {
+  font-weight: 500 !important;
+  letter-spacing: -0.01em;
+}
+
+.VPFeature .details {
+  font-size: 14px !important;
+  line-height: 1.6 !important;
+  color: var(--vp-c-text-2) !important;
+}
+
+/* Feature card icons — size and tint */
+.VPFeature .VPImage {
+  width: 40px !important;
+  height: 40px !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   BUTTONS — pill shape, mono uppercase, mechanical
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.VPButton {
+  border-radius: 999px !important;
+  font-family: var(--vp-font-family-mono) !important;
+  font-size: 13px !important;
+  letter-spacing: 0.04em !important;
+  text-transform: uppercase !important;
+}
+
+.VPButton.brand {
+  background-color: var(--vp-c-brand-2) !important;
+  border-color: var(--vp-c-brand-2) !important;
+  color: #ffffff !important;
+  font-weight: 500 !important;
+  transition: opacity 0.2s cubic-bezier(0.25, 0.1, 0.25, 1) !important;
+}
+
+.VPButton.brand:hover {
+  opacity: 0.85 !important;
+  background-color: var(--vp-c-brand-2) !important;
+  border-color: var(--vp-c-brand-2) !important;
+}
+
+.VPButton.alt {
+  border-color: var(--nd-border-visible) !important;
+  background: transparent !important;
+  transition: border-color 0.2s cubic-bezier(0.25, 0.1, 0.25, 1) !important;
+}
+
+html:not(.dark) .VPButton.alt {
+  border-color: #CCCCCC !important;
+}
+
+.VPButton.alt:hover {
+  border-color: var(--vp-c-text-2) !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   SIDEBAR — clean, group titles as instrument labels
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.VPSidebar {
+  background: var(--vp-c-bg) !important;
+}
+
+.dark .VPSidebar {
+  border-right: 1px solid var(--nd-border) !important;
+}
+
+html:not(.dark) .VPSidebar {
+  border-right: 1px solid #E8E8E8 !important;
+}
+
+.VPSidebarItem.is-active > .item > .link > .text {
+  color: var(--vp-c-brand-1) !important;
+}
+
+/* Sidebar group titles: mono uppercase labels */
+.VPSidebarItem.is-group > .item .text {
+  font-family: var(--vp-font-family-mono) !important;
+  font-size: 11px !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+  color: var(--vp-c-text-3) !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   CODE BLOCKS — near-black, border separation
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.vp-code-group .tabs label.active {
+  color: var(--vp-c-brand-1) !important;
+}
+
+.dark .vp-doc div[class*='language-'] {
+  background: #0A0A0A !important;
+  border: 1px solid var(--nd-border);
+  border-radius: 4px;
+}
+
+html:not(.dark) .vp-doc div[class*='language-'] {
+  background: #FFFFFF !important;
+  border: 1px solid #E8E8E8;
+  border-radius: 4px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   TABLES — instrument-panel headers
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.vp-doc table {
+  border-collapse: collapse;
+}
+
+.vp-doc tr {
+  border-color: var(--vp-c-divider) !important;
+}
+
+.vp-doc th {
+  background: var(--vp-c-bg-alt);
+  font-family: var(--vp-font-family-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--vp-c-text-2);
+  font-weight: 400;
+}
+
+.vp-doc td {
+  font-size: 14px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   INLINE CODE
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.dark .vp-doc :not(pre) > code {
+  background: #1A1A1A;
+  color: #C4B5FD;
+}
+
+html:not(.dark) .vp-doc :not(pre) > code {
+  background: #F0F0F0;
+  color: #5B21B6;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   BADGES / TIPS / WARNINGS — restrained
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.VPBadge.tip {
+  background-color: var(--vp-c-brand-soft) !important;
+  color: #C4B5FD !important;
+  font-family: var(--vp-font-family-mono) !important;
+  font-size: 11px !important;
+  letter-spacing: 0.04em !important;
+  text-transform: uppercase !important;
+}
+
+.dark .vp-doc .custom-block.tip {
+  border-color: rgba(124, 58, 237, 0.3);
+  background: rgba(124, 58, 237, 0.04);
+}
+
+.dark .vp-doc .custom-block.warning {
+  background: rgba(234, 179, 8, 0.04);
+}
+
+html:not(.dark) .vp-doc .custom-block.tip {
+  border-color: rgba(124, 58, 237, 0.3);
+  background: rgba(124, 58, 237, 0.04);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   FOOTER
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.VPFooter {
+  border-top: 1px solid var(--nd-border) !important;
+}
+
+html:not(.dark) .VPFooter {
+  border-top-color: #E8E8E8 !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   SCROLLBAR — thin, mechanical
+   ══════════════════════════════════════════════════════════════════════════ */
+
+::-webkit-scrollbar { width: 4px; }
+.dark ::-webkit-scrollbar-track { background: #000000; }
+.dark ::-webkit-scrollbar-thumb { background: var(--nd-border-visible); border-radius: 2px; }
+.dark ::-webkit-scrollbar-thumb:hover { background: #666666; }
+html:not(.dark) ::-webkit-scrollbar-track { background: #F5F5F5; }
+html:not(.dark) ::-webkit-scrollbar-thumb { background: #CCCCCC; border-radius: 2px; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   DOC FOOTER CTA — per-page links
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.doc-footer-cta {
+  margin-top: 48px;
+  padding-top: 24px;
+  font-family: var(--vp-font-family-mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--vp-c-text-3);
+}
+
+.doc-footer-cta hr {
+  border: none;
+  border-top: 1px solid var(--nd-border);
+  margin-bottom: 16px;
+}
+
+html:not(.dark) .doc-footer-cta hr {
+  border-top-color: #E8E8E8;
+}
+
+.doc-footer-cta a {
+  color: var(--vp-c-brand-1);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   CONTENT TYPOGRAPHY — precision spacing
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.vp-doc h1 { letter-spacing: -0.02em; }
+.vp-doc h2 { letter-spacing: -0.01em; padding-bottom: 8px; }
+.vp-doc h3 { letter-spacing: -0.005em; }
+
+.vp-doc p,
+.vp-doc li {
+  line-height: 1.7;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   MOTION — subtle ease-out only, no spring/bounce
+   ══════════════════════════════════════════════════════════════════════════ */
+
+* {
+  transition-timing-function: cubic-bezier(0.25, 0.1, 0.25, 1) !important;
+}

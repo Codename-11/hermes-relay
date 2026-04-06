@@ -2,13 +2,13 @@
 
 ## Overview
 This extension adds Android device control to hermes-agent via the `android` toolset.
-It communicates with a companion app running on an Android device over WSS.
+It communicates with the Hermes Relay app running on an Android device over WSS.
 
 ## Setup
-1. Install the companion APK on the Android device (build via `scripts/dev.bat build`)
+1. Install the Hermes Relay APK on the Android device (build via `scripts/dev.bat build`)
 2. Grant the app Accessibility Service permission in Settings > Accessibility
 3. Grant SYSTEM_ALERT_WINDOW permission
-4. Start the companion relay: `python -m companion_relay --no-ssl`
+4. Start the relay server: `python -m relay_server --no-ssl`
 5. Install the plugin: `cp -r plugin ~/.hermes/plugins/hermes-android`
 6. Restart hermes-agent
 

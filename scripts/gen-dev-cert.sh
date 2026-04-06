@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generate a self-signed TLS certificate for dev use with the companion relay.
+# Generate a self-signed TLS certificate for dev use with the relay server.
 # Outputs: certs/dev.crt and certs/dev.key
 # Usage: ./scripts/gen-dev-cert.sh [hostname]
 
@@ -29,7 +29,7 @@ echo "  Valid for: $DAYS days"
 echo "  SANs: $HOSTNAME, localhost, 127.0.0.1, 10.0.2.2 (Android emulator host)"
 echo ""
 echo "Start relay with TLS:"
-echo "  python -m companion_relay --ssl-cert certs/dev.crt --ssl-key certs/dev.key"
+echo "  python -m relay_server --ssl-cert certs/dev.crt --ssl-key certs/dev.key"
 echo ""
 echo "To trust on Android emulator:"
 echo "  adb push certs/dev.crt /sdcard/dev.crt"

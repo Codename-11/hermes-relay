@@ -1,0 +1,137 @@
+# Architecture Decisions
+
+Key technical choices and the reasoning behind them.
+
+## ADR-1: Kotlin + Jetpack Compose
+
+**Chosen over:** React Native, Flutter, Kotlin + XML
+
+### Why Compose
+
+- 80% of the app is native Android services (AccessibilityService, PTY, foreground services, biometrics). Cross-platform frameworks would need Kotlin native modules for all of that, plus a bridge layer.
+- Compose is declarative like React — same mental model (state to UI), different syntax.
+- Material 3 / Material You theming is first-class.
+- OkHttp WebSocket supports `wss://` natively. No bridge layer to debug.
+- Single language (Kotlin) for the entire app.
+
+### Why not React Native
+
+Native modules needed for AccessibilityService, foreground service, biometric auth, EncryptedSharedPreferences, and MediaProjection. That's most of the app in Kotlin anyway, plus JS bridge overhead. Only makes sense if the UI were 80%+ of the codebase — here it's roughly 20%.
+
+### Why not Flutter
+
+Same native bridge problem, but with Dart instead of familiar React/JS patterns. Smaller Android-specific ecosystem for security and biometric libraries.
+
+---
+
+## ADR-2: Single WSS Connection with Channel Multiplexing
+
+**Decision:** One WebSocket connection carries all relay channels (terminal, bridge) via typed message envelopes.
+
+### Rationale
+
+Simpler connection management, single auth flow, single reconnect handler. Mobile networks are flaky — one connection is easier to keep alive than three.
+
+### Trade-off
+
+If one channel floods (e.g., terminal output), it could delay others. Mitigated by terminal output batching (16ms frames) and priority queuing.
+
+---
+
+## ADR-3: Relay Server as Separate Service
+
+**Decision:** Python relay service on port 8767, separate from the bridge relay (8766) and the Hermes gateway.
+
+### Rationale
+
+- The existing bridge relay is single-purpose. Extending it risks breaking upstream compatibility.
+- Separate service means independent deployment and restart cycles.
+- Future option to merge into gateway as a platform adapter if it stabilizes.
+
+---
+
+## ADR-4: Chat via Direct API, Not Relay Proxy
+
+**Decision:** Chat connects directly from the Android app to the Hermes API Server via HTTP/SSE. The relay server is only used for bridge and terminal channels.
+
+### Original Approach
+
+Chat was originally proxied through the relay server, which converted SSE responses to WebSocket envelopes.
+
+### Why Direct API Won
+
+- The relay was an unnecessary middleman — it just converted SSE to WebSocket.
+- Every other Hermes frontend (Open WebUI, ClawPort, LobeChat) connects directly.
+- The Sessions API (`/api/sessions/{id}/chat/stream`) provides SSE streaming with rich event types.
+- Simpler, lower latency, removes relay as single point of failure for chat.
+
+### Result
+
+```
+Phone (HTTP/SSE) → Hermes API Server (:8642)   [chat — direct]
+Phone (WSS)      → Relay Server (:8767)          [terminal]
+Phone (WSS)      → Bridge Relay (:8766)          [bridge]
+```
+
+Auth uses optional Bearer token (`API_SERVER_KEY`). Most local setups run without one.
+
+---
+
+## ADR-5: xterm.js in WebView for Terminal
+
+**Decision:** Use xterm.js in a local WebView, not a native Compose canvas renderer.
+
+### Rationale
+
+- xterm.js is battle-tested — handles all ANSI escape sequences, Unicode, colors, scrollback.
+- A native Compose terminal renderer would take weeks for inferior rendering.
+- The WebView is a single composable in an otherwise fully native app.
+
+---
+
+## ADR-6: tmux for Terminal Sessions
+
+**Decision:** Terminal channel attaches to tmux sessions, not raw PTY.
+
+### Rationale
+
+- Persistence — disconnect and reconnect without losing state.
+- Named sessions for multiple contexts.
+- Shared sessions — agent and user can see the same terminal.
+
+---
+
+## ADR-7: Pairing Code Auth for Relay
+
+**Decision:** Initial pairing via 6-char code, then long-lived session token.
+
+### Rationale
+
+- Pairing codes are user-friendly — no pre-shared secrets.
+- Session tokens avoid re-pairing on every restart.
+- Tokens stored in EncryptedSharedPreferences (AES-256-GCM, Android Keystore-backed).
+- Codes use unambiguous characters: `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (no 0/O/1/I).
+
+---
+
+## ADR-8: Biometric Gate for Terminal Only
+
+**Decision:** Biometric/PIN required before terminal access. Chat and bridge don't require it.
+
+### Rationale
+
+- Terminal = shell access to your server — highest privilege.
+- Chat is conversational — no more dangerous than a chat app.
+- Bridge is agent-controlled, not user-controlled — gating behind biometrics adds no security.
+
+---
+
+## Deferrals
+
+| Feature | Reason | When |
+|---------|--------|------|
+| iOS support | Android-first, platform-specific APIs | v2+ |
+| Multi-device | Single-device simplifies auth and state | Future |
+| Voice mode | Depends on Hermes TTS/STT maturity | Future |
+| File transfer | Terminal tools work as a workaround | Future |
+| Gateway adapter | WebAPI proxy works well, adapter is overengineering for now | If WebAPI becomes limiting |

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hermes Companion — dev helper scripts
+# Hermes Relay — dev helper scripts
 # Usage: ./scripts/dev.sh <command>
 
 set -euo pipefail
@@ -15,13 +15,13 @@ case "${1:-help}" in
     echo "Building and installing to connected device..."
     ./gradlew installDebug
     echo "Launching app..."
-    adb shell am start -n com.hermesandroid.companion/.CompanionActivity
+    adb shell am start -n com.hermesandroid.relay/.MainActivity
     ;;
   run)
     echo "Building, installing, and launching..."
     ./gradlew installDebug
-    adb shell am start -n com.hermesandroid.companion/.CompanionActivity
-    adb logcat -s HermesCompanion:* --format=brief
+    adb shell am start -n com.hermesandroid.relay/.MainActivity
+    adb logcat -s HermesRelay:* --format=brief
     ;;
   test)
     echo "Running unit tests..."
@@ -49,23 +49,23 @@ case "${1:-help}" in
     echo "  (Use the port from the main Wireless debugging screen, not the pairing port)"
     ;;
   relay)
-    echo "Starting companion relay..."
-    python -m companion_relay --no-ssl --log-level DEBUG
+    echo "Starting relay server..."
+    python -m relay_server --no-ssl --log-level DEBUG
     ;;
   certs)
     echo "Generating dev TLS certificates..."
     "$(dirname "$0")/gen-dev-cert.sh" "${2:-localhost}"
     ;;
   relay-tls)
-    echo "Starting companion relay with dev TLS..."
+    echo "Starting relay server with dev TLS..."
     if [ ! -f certs/dev.crt ]; then
       echo "No dev certs found. Generating..."
       ./scripts/gen-dev-cert.sh localhost
     fi
-    python -m companion_relay --ssl-cert certs/dev.crt --ssl-key certs/dev.key --log-level DEBUG
+    python -m relay_server --ssl-cert certs/dev.crt --ssl-key certs/dev.key --log-level DEBUG
     ;;
   help|*)
-    echo "Hermes Companion Dev Scripts"
+    echo "Hermes Relay Dev Scripts"
     echo ""
     echo "  build      Build debug APK"
     echo "  install    Build + install to connected device"
@@ -75,8 +75,8 @@ case "${1:-help}" in
     echo "  clean      Clean build outputs"
     echo "  devices    List connected devices"
     echo "  wireless   Pair for wireless debugging"
-    echo "  relay      Start companion relay (dev mode, no TLS)"
+    echo "  relay      Start relay server (dev mode, no TLS)"
     echo "  certs      Generate dev TLS certificates"
-    echo "  relay-tls  Start companion relay with dev TLS"
+    echo "  relay-tls  Start relay server with dev TLS"
     ;;
 esac

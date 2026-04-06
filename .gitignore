@@ -43,3 +43,8 @@ certs/
 
 # Local tools
 .subframe/
+
+# VitePress
+user-docs/.vitepress/cache/
+user-docs/.vitepress/dist/
+node_modules/

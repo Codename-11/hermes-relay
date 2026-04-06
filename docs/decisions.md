@@ -1,4 +1,4 @@
-# Hermes Companion — Decisions & Implementation Guide
+# Hermes Relay — Decisions & Implementation Guide
 
 > Finalized: 2026-04-05
 >
@@ -45,7 +45,7 @@
 
 **Trade-off:** If one channel floods (e.g., terminal output), it could delay others. Mitigated by: terminal output batching (16ms frames), priority queuing (system > chat > terminal > bridge).
 
-### 2. Companion Relay as Separate Service (Port 8767)
+### 2. Relay Server as Separate Service (Port 8767)
 
 **Decision:** New Python relay service, separate from the existing bridge relay (8766) and the Hermes gateway.
 
@@ -56,14 +56,29 @@
 
 **Alternative considered:** Adding as a gateway platform adapter. Deferred — too coupled to gateway lifecycle for MVP.
 
-### 3. Chat via WebAPI, Not Direct Gateway
+### 3. Chat via Direct API, Not Relay Proxy
 
-**Decision:** Chat channel proxies through the Hermes WebAPI (`/api/sessions/*/chat/stream`), not directly into the gateway runner.
+**Decision:** ~~Chat channel proxies through the relay to the WebAPI.~~ **Updated:** Chat now connects directly from the Android app to the Hermes API Server via the Sessions API (`/api/sessions/{id}/chat/stream`) with HTTP/SSE. The relay server is only used for bridge and terminal channels.
 
-**Why:**
+**Why (original relay approach):**
 - WebAPI already handles session management, agent creation, SSE streaming, tool progress events.
-- Gateway integration would require implementing a new platform adapter (like Discord/Telegram). Much more work.
+- Gateway integration would require implementing a new platform adapter. Much more work.
 - WebAPI is stable, documented, and used by ClawPort.
+
+**Why direct API (updated 2026-04-05):**
+- The relay was an unnecessary middleman for chat — it just converted SSE to WebSocket envelopes.
+- Every other Hermes frontend (Open WebUI, ClawPort, LobeChat, etc.) connects directly to the API server.
+- The Hermes API Server exposes a Sessions API (`/api/sessions/{id}/chat/stream`) with SSE streaming and rich event types (session.created, run.started, message.started, assistant.delta, tool.progress, tool.pending/started/completed/failed, assistant.completed, run.completed, done).
+- Direct connection is simpler, removes the relay as a single point of failure for chat, and reduces latency.
+- The relay remains for bridge (device control) and terminal (tmux/PTY) which require custom bidirectional protocols.
+
+**Architecture:**
+```
+Phone (HTTP/SSE) → Hermes API Server (:8642)   [chat — direct]
+Phone (WSS)      → Relay Server (:8767)          [bridge, terminal]
+```
+
+**Auth:** Optional Bearer token (`API_SERVER_KEY`) stored in EncryptedSharedPreferences on device. Most local Hermes setups don't require a key.
 
 ### 4. xterm.js in WebView for Terminal
 
@@ -110,9 +125,9 @@
 |---------|--------|------|
 | iOS support | Android-first, platform-specific APIs | v2+ |
 | Multi-device | Single-device simplifies auth and state | Phase 6 |
-| On-device model | Complexity, unclear value for companion use case | Phase 6 |
+| On-device model | Complexity, unclear value for relay use case | Phase 6 |
 | Voice mode | Depends on Hermes TTS/STT maturity | Phase 6 |
-| Notification listener | Not needed for companion app core | Phase 6 |
+| Notification listener | Not needed for app core | Phase 6 |
 | File transfer | Can use agent tools (terminal) as workaround | Phase 6 |
 | Gateway platform adapter | WebAPI proxy works well, adapter is overengineering for now | If WebAPI becomes limiting |
 

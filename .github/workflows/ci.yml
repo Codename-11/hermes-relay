@@ -1,10 +1,10 @@
-# Hermes Companion — CI Pipeline
+# Hermes Relay — CI Pipeline
 #
 # Runs on every push to main and on pull requests targeting main.
 # Pipeline: lint -> build + test (parallel) -> upload artifacts
 #
 # Android: Kotlin + Jetpack Compose (root Gradle project)
-# Python:  aiohttp relay server (companion_relay/)
+# Python:  aiohttp relay server (relay_server/)
 
 name: CI
 
@@ -128,11 +128,11 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r companion_relay/requirements.txt
+        run: pip install -r relay_server/requirements.txt
 
       - name: Syntax check
-        run: python -m py_compile companion_relay/relay.py
+        run: python -m py_compile relay_server/relay.py
 
       # TODO: Add pytest step when relay tests exist
       # - name: Run tests
-      #   run: pytest companion_relay/tests/
+      #   run: pytest relay_server/tests/

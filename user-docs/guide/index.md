@@ -1,0 +1,34 @@
+# What is Hermes Relay?
+
+Hermes Relay is a native Android app for [Hermes Agent](https://hermes-agent.nousresearch.com). Chat with your agent, manage sessions, and — in future phases — control your phone via the device bridge and access a remote terminal.
+
+## Connection Model
+
+```
+Phone (HTTP/SSE) → Hermes API Server (:8642)   [chat — direct]
+Phone (WSS)      → Relay Server (:8767)          [bridge, terminal — future]
+```
+
+Chat connects directly to the Hermes API Server using the Sessions API with SSE streaming. The relay server handles bridge and terminal channels only.
+
+## Current Status
+
+| Feature | Status |
+|---------|--------|
+| Chat (direct API) | Complete |
+| Session management | Complete |
+| Markdown + syntax highlighting | Complete |
+| Reasoning display | Complete |
+| Personality picker | Complete |
+| Token tracking | Complete |
+| Tool progress cards | Complete |
+| Terminal (remote shell) | Phase 2 |
+| Bridge (device control) | Phase 3 |
+
+## Quick Links
+
+- [Installation & Setup](/guide/getting-started) — Get the app running
+- [Chat Guide](/guide/chat) — Using the chat interface
+- [Sessions](/guide/sessions) — Managing conversations
+- [Features](/features/) — All features at a glance
+- [Architecture](/architecture/) — How it works under the hood

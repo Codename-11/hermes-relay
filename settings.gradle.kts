@@ -22,5 +22,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "hermes-companion"
+rootProject.name = "hermes-relay"
 include(":app")

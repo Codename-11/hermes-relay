@@ -1,5 +1,5 @@
 @echo off
-REM Generate self-signed TLS cert for dev use with companion relay
+REM Generate self-signed TLS cert for dev use with relay server
 REM Requires: openssl (comes with Git for Windows)
 REM Outputs: certs\dev.crt and certs\dev.key
 
@@ -25,4 +25,4 @@ echo   Cert: %CERT_DIR%\dev.crt
 echo   Key:  %CERT_DIR%\dev.key
 echo.
 echo Start relay with TLS:
-echo   python -m companion_relay --ssl-cert certs/dev.crt --ssl-key certs/dev.key
+echo   python -m relay_server --ssl-cert certs/dev.crt --ssl-key certs/dev.key

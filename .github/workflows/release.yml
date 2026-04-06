@@ -1,4 +1,4 @@
-# Hermes Companion — Release Pipeline
+# Hermes Relay — Release Pipeline
 #
 # Triggered when a version tag (v*) is pushed.
 # Validates the tag matches the app version, builds a release APK,
@@ -50,9 +50,18 @@ jobs:
       - name: Build release APK
         run: ./gradlew assembleRelease
 
-      # Create a GitHub Release with auto-generated release notes
+      # Generate SHA256 checksum for the APK
+      - name: Generate checksum
+        run: |
+          cd app/build/outputs/apk/release
+          sha256sum *.apk > SHA256SUMS.txt
+
+      # Create a GitHub Release using RELEASE_NOTES.md as the body
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/release/*.apk
-          generate_release_notes: true
+          files: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/apk/release/SHA256SUMS.txt
+          body_path: RELEASE_NOTES.md
+          prerelease: ${{ contains(github.ref_name, '-') }}

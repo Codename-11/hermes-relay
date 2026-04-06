@@ -1,5 +1,5 @@
 name: hermes-android
 version: 0.2.0
-description: "Remote Android device control — read screen, tap, type, open apps, take screenshots via the Hermes Bridge companion app"
+description: "Remote Android device control — read screen, tap, type, open apps, take screenshots via the Hermes Relay app"
 author: raulvidis
 requires_env: []

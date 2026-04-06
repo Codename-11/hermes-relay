@@ -1,16 +1,19 @@
 [versions]
-agp = "8.8.2"
+agp = "8.13.2"
 kotlin = "2.0.21"
 compose-bom = "2024.12.01"
 navigation-compose = "2.8.5"
 okhttp = "4.12.0"
 kotlinx-serialization = "1.7.3"
+kotlinx-coroutines = "1.9.0"
+mockk = "1.13.13"
 security-crypto = "1.1.0-alpha06"
 lifecycle = "2.8.7"
 activity-compose = "1.9.3"
 core-ktx = "1.15.0"
 datastore = "1.1.1"
 splashscreen = "1.0.1"
+markdown-renderer = "0.30.0"
 
 [libraries]
 # Compose BOM
@@ -40,6 +43,11 @@ core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "core-ktx
 
 # Networking
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+okhttp-sse = { group = "com.squareup.okhttp3", name = "okhttp-sse", version.ref = "okhttp" }
+
+# Markdown rendering
+markdown-renderer-m3 = { group = "com.mikepenz", name = "multiplatform-markdown-renderer-m3", version.ref = "markdown-renderer" }
+markdown-renderer-code = { group = "com.mikepenz", name = "multiplatform-markdown-renderer-code", version.ref = "markdown-renderer" }
 
 # Serialization
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
@@ -55,6 +63,8 @@ splashscreen = { group = "androidx.core", name = "core-splashscreen", version.re
 
 # Testing
 junit = { group = "junit", name = "junit", version = "4.13.2" }
+mockk = { group = "io.mockk", name = "mockk", version.ref = "mockk" }
+kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
 compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
 compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
 
