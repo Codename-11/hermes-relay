@@ -43,7 +43,7 @@ jobs:
           cache-dependency-path: user-docs/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
         working-directory: user-docs
 
       - name: Build VitePress site
