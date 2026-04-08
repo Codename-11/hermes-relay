@@ -94,7 +94,7 @@ export default defineConfig({
     ],
 
     footer: {
-      message: 'Built for <a href="https://hermes-agent.nousresearch.com">Hermes Agent</a> by <a href="https://axiom-labs.cloud">Axiom-Labs</a>',
+      message: 'Built for <a href="https://hermes-agent.nousresearch.com">Hermes Agent</a> by <a href="https://codename-11.dev">Axiom-Labs</a>',
       copyright: 'MIT License',
     },
 

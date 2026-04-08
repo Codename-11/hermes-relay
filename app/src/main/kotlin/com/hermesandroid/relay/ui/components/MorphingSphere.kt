@@ -16,16 +16,24 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.nativeCanvas
 import android.graphics.Paint
 import android.graphics.Typeface
+import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.floor
 import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * ASCII art sphere inspired by the AMP Code CLI.
+ * ASCII morphing sphere inspired by the Amp Code "Supernova" orb.
  *
- * Renders rows of monospace characters (`. : - = + * # % @`) arranged
- * in a sphere shape. Characters cycle organically over time and the
- * sphere boundary subtly morphs. Pure Compose Canvas — no OpenGL.
+ * Renders a sphere from monospace characters with:
+ * - Noise-distorted perimeter (organic, blobby boundary)
+ * - Glow/debris layer beyond the edge (characters bleed outward)
+ * - Zone-based character density (core: @#%*+ / edge: =:- / glow: .:-)
+ * - FBM procedural noise for organic motion (not simple sine waves)
+ * - 3D diffuse lighting for depth
+ * - Green ↔ purple color pulse
+ *
+ * Pure Compose Canvas — no OpenGL, no external noise libraries.
  */
 @Composable
 fun MorphingSphere(
@@ -53,11 +61,12 @@ fun MorphingSphere(
         label = "colorPulse"
     )
 
-    val density = " .:-=+*#%@"
-    // Monospace chars are ~1.8x taller than wide. Use more columns to compensate
-    // so the sphere appears circular, not egg-shaped.
-    val cols = 52
-    val rows = 30
+    // Characters ordered by visual density: space (empty) → @ (densest)
+    val chars = " .:-=+*#%@"
+
+    // Grid sized to fit sphere + glow region
+    val cols = 58
+    val rows = 34
 
     val paint = remember {
         Paint().apply {
@@ -70,97 +79,194 @@ fun MorphingSphere(
         val canvasW = size.width
         val canvasH = size.height
 
-        // Size each character cell to fit the grid centered in the canvas
         val cellW = canvasW / cols
         val cellH = canvasH / rows
-        // Size characters to fill cells tightly — less gap between rows
         val charSize = (cellW * 0.95f).coerceAtMost(cellH * 0.85f)
         paint.textSize = charSize
 
-        // Sphere is centered in the grid
         val cx = cols / 2f
         val cy = rows / 2f
-
-        // Character cell aspect ratio (width / height) — monospace chars are tall
         val charAspect = cellW / cellH
 
-        // Radius in row-units (vertical). The sphere is measured in rows,
-        // and column-extent is scaled by charAspect to make it circular on screen.
-        val baseRadius = (rows / 2f) * 0.85f
-
-        // Color pulse: interpolate green → purple
-        val pulse = (sin(colorPhase) * 0.5f + 0.5f) // 0..1
-        val r = lerp(0.25f, 0.61f, pulse) // green→purple R
-        val g = lerp(0.85f, 0.42f, pulse) // green→purple G
-        val b = lerp(0.40f, 0.94f, pulse) // green→purple B
+        // Sphere radius (smaller than grid to leave room for glow)
+        val maxRadiusFromRows = (rows / 2f) * 0.72f
+        val maxRadiusFromCols = (cols / 2f) * charAspect * 0.72f
+        val baseRadius = minOf(maxRadiusFromRows, maxRadiusFromCols)
 
         val t = time
 
+        // Color pulse: green ↔ purple
+        val pulse = (sin(colorPhase) * 0.5f + 0.5f)
+        val colR = lerp(0.25f, 0.61f, pulse)
+        val colG = lerp(0.85f, 0.42f, pulse)
+        val colB = lerp(0.40f, 0.94f, pulse)
+
         for (row in 0 until rows) {
-            val ny = (row - cy) / baseRadius // normalized Y: -1..1
-
-            // Sphere radius at this Y slice (circle equation)
-            val sliceRadiusSq = 1f - ny * ny
-            if (sliceRadiusSq <= 0f) continue
-            val sliceRadius = sqrt(sliceRadiusSq)
-
-            // Subtle boundary morph per row
-            val morph = 1f + 0.03f * sin(t * 0.5f + row * 0.4f) +
-                         0.02f * sin(t * 0.3f + row * 0.7f)
-
-            // Slice radius in column-units, corrected for character aspect ratio
-            val sliceCols = sliceRadius * baseRadius * morph / charAspect
-
             for (col in 0 until cols) {
-                val dx = col - cx // distance from center in columns
-                if (kotlin.math.abs(dx) > sliceCols) continue
+                // Position relative to center (aspect-corrected so sphere is circular)
+                val dx = (col - cx) * charAspect
+                val dy = (row - cy)
+                val dist = sqrt(dx * dx + dy * dy)
+                val angle = atan2(dy, dx)
 
-                // Normalized X on sphere surface (corrected for aspect)
-                val nxNorm = dx * charAspect / baseRadius
-                // Approximate Z from sphere surface: z = sqrt(1 - x² - y²)
-                val zSq = 1f - nxNorm * nxNorm - ny * ny
-                val nz = if (zSq > 0f) sqrt(zSq) else 0f
+                // --- Noise-distorted perimeter ---
+                // Sample FBM at this angle to get organic radius variation.
+                // The angle is scaled and offset by time so the distortion evolves.
+                val perimeterNoise = fbm(
+                    angle * 1.8f + t * 0.08f,
+                    angle * 0.7f + t * 0.12f
+                ) * 2f - 1f // remap 0..1 → -1..1
+                val distortedRadius = baseRadius * (1f + perimeterNoise * 0.18f)
 
-                // Simple diffuse lighting (light from upper-right-front)
-                val lightDot = (nxNorm * 0.3f + ny * (-0.4f) + nz * 0.86f)
-                    .coerceIn(0f, 1f)
+                // Glow extends 35% beyond the distorted edge
+                val glowRadius = distortedRadius * 1.35f
 
-                // Map brightness to ASCII density (boosted for denser fill)
-                val brightness = lightDot * 0.6f + 0.3f // higher ambient = denser characters
+                // How deep into the sphere (1 = center, 0 = edge, <0 = outside)
+                val normalizedDist = dist / distortedRadius
 
-                // Time-based character cycling: shift the character selection
-                val charNoise = sin(t * 0.4f + col * 1.3f + row * 0.9f) * 0.12f +
-                                sin(t * 0.25f + col * 0.7f - row * 1.1f) * 0.08f
-                val charIndex = ((brightness + charNoise) * (density.length - 1))
-                    .toInt().coerceIn(0, density.length - 1)
+                if (dist > glowRadius) continue // beyond glow — skip
 
-                val ch = density[charIndex]
-                if (ch == ' ') continue
-
-                // Position on canvas
                 val px = col * cellW
                 val py = row * cellH + cellH * 0.8f // baseline offset
 
-                // Brightness-based alpha: brighter chars more opaque
-                val alpha = (brightness * 0.6f + 0.35f).coerceIn(0.3f, 0.95f)
+                if (normalizedDist <= 1f) {
+                    // ── INSIDE SPHERE ──────────────────────────────
 
-                // Edge fade: only the very outermost characters fade slightly
-                val edgeDist = kotlin.math.abs(dx) / sliceCols
-                val edgeFade = if (edgeDist > 0.92f) 0.5f + 0.5f * (1f - (edgeDist - 0.92f) / 0.08f) else 1f
+                    // Approximate sphere normal for 3D lighting
+                    val nx = dx / distortedRadius
+                    val ny2 = dy / distortedRadius
+                    val nzSq = (1f - nx * nx - ny2 * ny2).coerceAtLeast(0f)
+                    val nz = sqrt(nzSq)
 
-                paint.color = android.graphics.Color.argb(
-                    (alpha * edgeFade * 255).toInt().coerceIn(0, 255),
-                    (r * 255).toInt(),
-                    (g * 255).toInt(),
-                    (b * 255).toInt()
-                )
+                    // Diffuse light from upper-right-front
+                    val light = (nx * 0.3f + ny2 * (-0.4f) + nz * 0.86f)
+                        .coerceIn(0f, 1f)
+                    val brightness = light * 0.55f + 0.35f
 
-                drawContext.canvas.nativeCanvas.drawText(
-                    ch.toString(), px, py, paint
-                )
+                    // Noise-based character variation (organic, non-periodic)
+                    val charNoise = fbm(
+                        col * 0.25f + t * 0.18f,
+                        row * 0.25f + t * 0.13f,
+                        octaves = 2
+                    ) * 0.3f - 0.15f
+
+                    val charIdx = ((brightness + charNoise) * (chars.length - 1))
+                        .toInt().coerceIn(1, chars.length - 1)
+                    val ch = chars[charIdx]
+
+                    // Smooth edge fade (wider transition zone for softer boundary)
+                    val edgeFade = when {
+                        normalizedDist > 0.85f -> {
+                            val t2 = (normalizedDist - 0.85f) / 0.15f
+                            1f - t2 * t2 // quadratic falloff
+                        }
+                        else -> 1f
+                    }
+
+                    val alpha = ((brightness * 0.55f + 0.4f) * edgeFade)
+                        .coerceIn(0f, 0.95f)
+
+                    // Intensity-based color: brighter regions are slightly more vivid
+                    val intensityBoost = brightness * 0.2f
+                    paint.color = android.graphics.Color.argb(
+                        (alpha * 255).toInt().coerceIn(0, 255),
+                        ((colR + intensityBoost) * 255).toInt().coerceIn(0, 255),
+                        ((colG + intensityBoost * 0.5f) * 255).toInt().coerceIn(0, 255),
+                        ((colB + intensityBoost) * 255).toInt().coerceIn(0, 255)
+                    )
+
+                    drawContext.canvas.nativeCanvas.drawText(ch.toString(), px, py, paint)
+
+                } else {
+                    // ── GLOW / DEBRIS ZONE ─────────────────────────
+                    // Characters bleed past the sphere boundary, fading with distance
+
+                    // How far past the edge (0 = at edge, 1 = at glow limit)
+                    val glowT = (dist - distortedRadius) / (glowRadius - distortedRadius)
+                    val glowFalloff = (1f - glowT).coerceIn(0f, 1f)
+
+                    // Noise-driven sparsity: only render some debris positions
+                    val sparsityNoise = fbm(
+                        angle * 3.5f + t * 0.25f,
+                        dist * 0.4f + t * 0.08f,
+                        octaves = 2
+                    )
+                    // More sparse further from edge
+                    val sparsityThreshold = 0.35f + glowT * 0.25f
+                    if (sparsityNoise < sparsityThreshold) continue
+
+                    // Debris uses light characters only
+                    val debrisChars = "-:. "
+                    val debrisIdx = ((1f - glowFalloff) * (debrisChars.length - 1))
+                        .toInt().coerceIn(0, debrisChars.length - 1)
+                    val ch = debrisChars[debrisIdx]
+                    if (ch == ' ') continue
+
+                    // Exponential falloff for glow alpha
+                    val alpha = glowFalloff * glowFalloff * 0.55f
+
+                    paint.color = android.graphics.Color.argb(
+                        (alpha * 255).toInt().coerceIn(0, 255),
+                        (colR * 255).toInt().coerceIn(0, 255),
+                        (colG * 255).toInt().coerceIn(0, 255),
+                        (colB * 255).toInt().coerceIn(0, 255)
+                    )
+
+                    drawContext.canvas.nativeCanvas.drawText(ch.toString(), px, py, paint)
+                }
             }
         }
     }
+}
+
+// ── Procedural noise ─────────────────────────────────────────────────
+// Hash-based value noise with FBM layering. Lightweight alternative to
+// OpenSimplex — no lookup tables, no external libraries. The hash gives
+// pseudo-random values per integer lattice point, smoothNoise interpolates
+// between them with a smooth-step curve, and fbm layers multiple octaves
+// for fractal detail.
+
+/** Integer lattice hash → pseudo-random float in 0..1 */
+private fun hash(x: Int, y: Int): Float {
+    var h = x * 374761393 + y * 668265263
+    h = (h xor (h ushr 13)) * 1274126177
+    h = h xor (h ushr 16)
+    return (h and 0x7fffffff) / 2147483647f
+}
+
+/** Smooth interpolated noise at any 2D point */
+private fun smoothNoise(x: Float, y: Float): Float {
+    val xi = floor(x).toInt()
+    val yi = floor(y).toInt()
+    val xf = x - xi
+    val yf = y - yi
+    // Hermite smooth-step for artifact-free interpolation
+    val u = xf * xf * (3f - 2f * xf)
+    val v = yf * yf * (3f - 2f * yf)
+
+    val n00 = hash(xi, yi)
+    val n10 = hash(xi + 1, yi)
+    val n01 = hash(xi, yi + 1)
+    val n11 = hash(xi + 1, yi + 1)
+
+    return lerp(
+        lerp(n00, n10, u),
+        lerp(n01, n11, u),
+        v
+    )
+}
+
+/** Fractal Brownian Motion — layers noise at increasing frequency/decreasing amplitude */
+private fun fbm(x: Float, y: Float, octaves: Int = 3): Float {
+    var value = 0f
+    var amplitude = 0.5f
+    var frequency = 1f
+    for (i in 0 until octaves) {
+        value += amplitude * smoothNoise(x * frequency, y * frequency)
+        amplitude *= 0.5f
+        frequency *= 2f
+    }
+    return value
 }
 
 private fun lerp(a: Float, b: Float, t: Float): Float = a + (b - a) * t

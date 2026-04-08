@@ -206,7 +206,7 @@ Hermes Relay is built for [Hermes Agent](https://github.com/NousResearch/hermes-
 
 ## License
 
-[MIT](LICENSE) — Copyright (c) 2026 [Axiom-Labs](https://axiom-labs.cloud)
+[MIT](LICENSE) — Copyright (c) 2026 [Axiom-Labs](https://codename-11.dev)
 
 ---
 
