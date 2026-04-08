@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Hermes Relay connects to user-configured servers on arbitrary LAN IPs/hostnames.
+    Cleartext (HTTP) is permitted because most local Hermes installs don't use TLS
+    and Android's network-security-config doesn't support IP range restrictions.
+
+    Security is enforced at the application layer instead:
+    - "Allow insecure connections" toggle in Settings (default: off for relay WSS)
+    - Visible warning badge when connected over http:// or ws://
+    - Users are encouraged to set up TLS for production deployments
+
+    The app makes NO connections to external services — only user-configured endpoints.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

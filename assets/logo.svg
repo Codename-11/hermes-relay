@@ -14,10 +14,8 @@
     <!-- Background -->
     <rect width="512" height="512" fill="#1A1A2E" rx="112"/>
 
-    <!-- GHOST LAYER: Original Winged H (Scaled up by 1.35) -->
+    <!-- GHOST LAYER: V-crossbar + diagonal feathers (scaled 1.35x, no verticals) -->
     <g transform="translate(256, 256) scale(1.35) translate(-256, -256)" stroke="url(#ghostGradDark)" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" fill="none">
-        <path d="M 192 140 L 192 396"/>
-        <path d="M 320 140 L 320 396"/>
         <path d="M 112 188 L 192 268 L 320 268 L 400 188"/>
         <path d="M 112 116 L 192 196"/>
         <path d="M 400 116 L 320 196"/>

@@ -5,10 +5,21 @@ This extension adds Android device control to hermes-agent via the `android` too
 It communicates with the Hermes Relay app running on an Android device over WSS.
 
 ## Setup
+
+### Quick start (relay + plugin)
+
+```bash
+pip install aiohttp pyyaml && python -m relay_server --no-ssl   # start relay
+cp -r plugin ~/.hermes/plugins/hermes-android                    # install plugin
+```
+
+Then restart hermes-agent. See [docs/relay-server.md](docs/relay-server.md) for Docker, systemd, TLS, and configuration options.
+
+### Full setup
 1. Install the Hermes Relay APK on the Android device (build via `scripts/dev.bat build`)
 2. Grant the app Accessibility Service permission in Settings > Accessibility
 3. Grant SYSTEM_ALERT_WINDOW permission
-4. Start the relay server: `python -m relay_server --no-ssl`
+4. Start the relay server: `pip install aiohttp pyyaml && python -m relay_server --no-ssl`
 5. Install the plugin: `cp -r plugin ~/.hermes/plugins/hermes-android`
 6. Restart hermes-agent
 

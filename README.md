@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT"></a>
   <a href="https://developer.android.com"><img src="https://img.shields.io/badge/Platform-Android-green.svg" alt="Android"></a>
-  <a href="https://github.com/Codename-11/hermes-android/actions/workflows/ci.yml"><img src="https://github.com/Codename-11/hermes-android/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/Codename-11/hermes-relay/actions/workflows/ci.yml"><img src="https://github.com/Codename-11/hermes-relay/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://developer.android.com/about/versions/oreo"><img src="https://img.shields.io/badge/Min%20SDK-26-brightgreen.svg" alt="Min SDK 26"></a>
 </p>
 
@@ -37,34 +37,46 @@ A native Android app for [Hermes Agent](https://github.com/NousResearch/hermes-a
 
 Chat connects directly to the Hermes API Server (`/api/sessions/{id}/chat/stream`). Terminal and bridge use a WebSocket relay with channel multiplexing.
 
-## Architecture
+## Server Components
+
+The app talks to two server-side services. Only the first is required.
+
+| Component | Required? | What |
+|-----------|-----------|------|
+| **Hermes API Server** (`:8642`) | Yes | Chat, sessions, profiles, skills. Part of `hermes gateway`. |
+| **Relay Server** (`:8767`) | Only for terminal/bridge | WSS server for interactive terminal and device bridge. |
 
 ```
-Phone (HTTP/SSE) → Hermes API Server (:8642)   [chat — direct]
-Phone (WSS)      → Relay Server (:8767)          [terminal]
-Phone (WSS)      → Bridge Relay (:8766)          [bridge]
+Phone (HTTP/SSE) --> Hermes API Server (:8642)   [chat — direct]
+Phone (WSS)      --> Relay Server (:8767)         [terminal, bridge]
 ```
 
-Chat bypasses the relay entirely — same direct connection used by Open WebUI, ClawPort, and other Hermes frontends. Auth is via optional Bearer token (`API_SERVER_KEY`). The relay handles channels that need persistent bidirectional communication.
+Chat connects directly to the Hermes API Server — same pattern used by Open WebUI, ClawPort, and other Hermes frontends. The relay server is a separate lightweight Python service for features that need persistent bidirectional communication. See [docs/relay-server.md](docs/relay-server.md) for details.
 
 ## Features
 
 | Layer | Capabilities |
 |-------|-------------|
-| **Chat** | Direct API streaming (SSE), session management, auto-titles, personality picker (8 styles) |
-| **Rendering** | Full markdown, syntax-highlighted code blocks (Atom theme), reasoning display |
-| **Tools** | Rich progress cards with type-specific icons, arguments, duration, error display |
+| **Chat** | Direct API streaming (SSE), session management, auto-titles, message queuing, file attachments, personality picker, agent name on bubbles, slash command autocomplete, QR code pairing |
+| **Slash Commands** | 29 gateway commands + dynamic personality commands + server skill discovery (`GET /api/skills`). Searchable command palette with category filtering. |
+| **Personalities** | Dynamic from `GET /api/config` (`config.agent.personalities`). Picker shows server default + all configured. Agent name displayed on chat bubbles. `/personality <name>` slash commands. |
+| **Rendering** | Full markdown, syntax-highlighted code blocks (Atom theme), reasoning display, animated streaming dots |
+| **Tools** | Configurable display (Off/Compact/Detailed). Rich progress cards with type-specific icons, auto-expand/collapse, duration |
+| **Analytics** | Stats for Nerds — TTFT, completion times, token usage, peak/slowest times, health latency, stream success rates. Canvas bar charts. Reset button. |
 | **Tokens** | Per-message input/output counts and estimated cost |
+| **Animation** | ASCII morphing sphere on empty chat, ambient fullscreen mode (toggle in header), 15% opacity behind messages (toggleable). Settings: sphere on/off, behind messages on/off. |
+| **UX** | Animated splash screen, chat empty state with suggestion chips, haptic feedback, app context prompt, configurable limits (attachment size, message length) |
 | **Security** | EncryptedSharedPreferences (AES-256-GCM), HTTPS enforced, cleartext only for localhost |
 | **Connectivity** | Network monitoring, auto-reconnect, capability detection (enhanced/portable/disconnected) |
 
 ## Repository Structure
 
 ```
-hermes-android/
+hermes-relay/
 ├── app/                       # Android app (Kotlin + Jetpack Compose)
 ├── relay_server/              # WSS relay server (Python + aiohttp)
 ├── plugin/                    # Hermes agent plugin (14 android_* tools)
+├── skills/                    # Hermes agent skills (QR pairing)
 ├── user-docs/                 # VitePress documentation site
 ├── docs/                      # Spec, decisions, security
 ├── scripts/                   # Dev helper scripts
@@ -84,21 +96,69 @@ hermes-android/
 
 ```bash
 scripts/dev.bat build      # Build debug APK
+scripts/dev.bat release    # Build signed release APK
+scripts/dev.bat bundle     # Build release AAB for Google Play
 scripts/dev.bat run        # Build + install + launch + logcat
 scripts/dev.bat test       # Run unit tests
+scripts/dev.bat version    # Show current version
 scripts/dev.bat relay      # Start relay server (dev, no TLS)
 scripts/dev.bat devices    # List connected devices
 scripts/dev.bat wireless   # Pair for wireless debugging
 ```
 
-### Start Relay Server
+### Android Studio Workflow
+
+| Action | Shortcut | What it does | Wipes data? |
+|--------|----------|-------------|-------------|
+| **Gradle Sync** | Toolbar elephant icon | Reads `build.gradle.kts` + `libs.versions.toml`, resolves dependencies. No compilation. | No |
+| **Assemble** | Build > Make Project | Compile → DEX → package APK. Does not deploy. | No |
+| **Run** | Shift+F10 | Assemble + install + launch on device/emulator | No (upgrade install) |
+| **Apply Changes** | Ctrl+F10 | Hot-patch changed code, restart Activity. ViewModels survive. | No |
+| **Apply Code Changes** | Ctrl+Shift+F10 | Patch method bodies only, no restart | No |
+
+To **wipe app data**: emulator app icon long-press > App Info > Storage > Clear Data, or `adb shell pm clear com.hermesandroid.relay`.
+
+**Versioning** lives in `gradle/libs.versions.toml` (`appVersionName`, `appVersionCode`) — the single source of truth read by `build.gradle.kts`.
+
+### Relay Server (optional — for terminal/bridge)
 
 ```bash
-pip install -r relay_server/requirements.txt
-python -m relay_server --no-ssl --log-level DEBUG
+pip install aiohttp pyyaml && python -m relay_server --no-ssl
 ```
 
-### Install as Hermes Plugin
+Or with Docker:
+
+```bash
+docker build -t hermes-relay relay_server/ && docker run -d --network host --name hermes-relay hermes-relay
+```
+
+Or as a systemd service:
+
+```bash
+sudo cp relay_server/hermes-relay.service /etc/systemd/system/
+sudo systemctl enable --now hermes-relay
+```
+
+See [docs/relay-server.md](docs/relay-server.md) for TLS, configuration, and full setup.
+
+### QR Code Pairing (optional)
+
+Generate a QR code on your server that the app can scan to auto-configure:
+
+```bash
+# Install the skill + script
+cp -r skills/hermes-pairing-qr ~/.hermes/skills/hermes-pairing-qr
+cp skills/hermes-pairing-qr/hermes-pair ~/.local/bin/hermes-pair
+chmod +x ~/.local/bin/hermes-pair
+sudo apt install qrencode
+
+# Generate QR
+hermes-pair
+```
+
+Scan it in the app (Settings > Scan QR, or during onboarding). See [skills/hermes-pairing-qr/SKILL.md](skills/hermes-pairing-qr/SKILL.md) for details.
+
+### Hermes Plugin (optional — for bridge/device control)
 
 ```bash
 cp -r plugin ~/.hermes/plugins/hermes-android
@@ -116,12 +176,12 @@ cp -r plugin ~/.hermes/plugins/hermes-android
 | **CI/CD** | GitHub Actions (lint, build, test, APK artifact) |
 | **Min SDK** | 26 (Android 8.0) / Target SDK 35 |
 
-## Current State
+## Current State — v0.1.0
 
 | Phase | Status | Scope |
 |-------|--------|-------|
-| **Phase 0** | Complete | Compose scaffold, WSS connection, channel multiplexer, auth |
-| **Phase 1** | Complete | Direct API chat, sessions, markdown, tools, personalities, tokens |
+| **Phase 0** | Complete | Compose scaffold, WSS connection, channel multiplexer, auth, splash screen |
+| **Phase 1** | Complete | Direct API chat, sessions, markdown, tools, personalities, slash commands, command palette, analytics, QR pairing, tool display config |
 | **Phase 2** | Next | Terminal channel (xterm.js + tmux) |
 | **Phase 3** | Next | Bridge channel (AccessibilityService) |
 
@@ -133,17 +193,16 @@ See [docs/spec.md](docs/spec.md) for the full specification and [docs/decisions.
 |---|---|
 | [Specification](docs/spec.md) | Full spec — protocol, UI, phases, dependencies |
 | [Architecture Decisions](docs/decisions.md) | ADRs — framework, channels, auth, terminal |
+| [Relay Server](docs/relay-server.md) | Setup, config, Docker, systemd — everything for the relay |
+| [Upstream Contributions](docs/upstream-contributions.md) | Potential improvements to propose to hermes-agent |
 | [Security](docs/security.md) | Auth flow, encryption, network security |
+| [Privacy](docs/privacy.md) | Data handling, local storage, no telemetry |
 | [Changelog](CHANGELOG.md) | Release history |
 | [Dev Log](DEVLOG.md) | Session-by-session development notes |
 
-## Related Projects
+## Hermes Agent
 
-| Project | What |
-|---------|------|
-| [Hermes Agent](https://github.com/NousResearch/hermes-agent) | The agent platform (gateway, WebAPI, plugins) |
-| [ARC](https://github.com/Codename-11/ARC) | Agent Runtime Control — unified CLI for agent tools |
-| [ClawPort](https://github.com/Codename-11/clawport-ui) | Web dashboard for Hermes Agent |
+Hermes Relay is built for [Hermes Agent](https://github.com/NousResearch/hermes-agent) — an open-source AI agent platform by [Nous Research](https://nousresearch.com). See the [Hermes Agent docs](https://hermes-agent.nousresearch.com) for server setup, gateway configuration, and plugin development.
 
 ## License
 

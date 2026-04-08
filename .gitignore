@@ -48,3 +48,11 @@ certs/
 user-docs/.vitepress/cache/
 user-docs/.vitepress/dist/
 node_modules/
+package.json
+package-lock.json
+
+# Local upstream reference
+hermes-agent-upstream/
+
+# Kotlin compiler cache
+.kotlin/

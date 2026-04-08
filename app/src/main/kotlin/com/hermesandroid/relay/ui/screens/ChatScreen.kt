@@ -1,0 +1,1086 @@
+package com.hermesandroid.relay.ui.screens
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.ChatBubble
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.WifiOff
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Surface
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberDrawerState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.purpleGlow
+import com.hermesandroid.relay.ui.theme.radialNavyBackground
+import com.hermesandroid.relay.network.ChatMode
+import com.hermesandroid.relay.network.ConnectivityObserver
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material3.SmallFloatingActionButton
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarDuration
+import android.util.Base64
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.ui.platform.LocalContext
+import com.hermesandroid.relay.data.Attachment
+import com.hermesandroid.relay.ui.components.CommandPalette
+import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
+import com.hermesandroid.relay.ui.components.CommandRow
+import com.hermesandroid.relay.ui.components.CompactToolCall
+import com.hermesandroid.relay.ui.components.InlineAutocomplete
+import com.hermesandroid.relay.ui.components.MessageBubble
+import com.hermesandroid.relay.ui.components.MorphingSphere
+import com.hermesandroid.relay.ui.components.PersonalityPicker
+import com.hermesandroid.relay.ui.components.SessionDrawerContent
+import com.hermesandroid.relay.ui.components.SlashCommand
+import com.hermesandroid.relay.ui.components.StreamingDots
+import com.hermesandroid.relay.ui.components.ToolProgressCard
+import com.hermesandroid.relay.viewmodel.ChatViewModel
+import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import kotlinx.coroutines.launch
+
+private const val DEFAULT_CHAR_LIMIT = 4096
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+fun ChatScreen(
+    chatViewModel: ChatViewModel,
+    connectionViewModel: ConnectionViewModel,
+    maxBubbleWidth: Dp = 300.dp
+) {
+    val messages by chatViewModel.messages.collectAsState()
+    val isStreaming by chatViewModel.isStreaming.collectAsState()
+    val chatReady by connectionViewModel.chatReady.collectAsState()
+    val apiReachable by connectionViewModel.apiServerReachable.collectAsState()
+    val chatMode by connectionViewModel.chatMode.collectAsState()
+    val error by chatViewModel.error.collectAsState()
+    val sessions by chatViewModel.sessions.collectAsState()
+    val currentSessionId by chatViewModel.currentSessionId.collectAsState()
+    val isLoadingHistory by chatViewModel.isLoadingHistory.collectAsState()
+    val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
+    val personalityNames by chatViewModel.personalityNames.collectAsState()
+    val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
+    val serverModelName by chatViewModel.serverModelName.collectAsState()
+    val networkStatus by connectionViewModel.networkStatus.collectAsState()
+    val showThinking by connectionViewModel.showThinking.collectAsState()
+    val toolDisplay by connectionViewModel.toolDisplay.collectAsState()
+
+    val availableSkills by chatViewModel.availableSkills.collectAsState()
+    val queuedMessages by chatViewModel.queuedMessages.collectAsState()
+    val pendingAttachments by chatViewModel.pendingAttachments.collectAsState()
+    val maxAttachmentMb by connectionViewModel.maxAttachmentMb.collectAsState()
+    val charLimit by connectionViewModel.maxMessageLength.collectAsState()
+
+    // Animation settings
+    val animationEnabled by connectionViewModel.animationEnabled.collectAsState()
+    val animationBehindChat by connectionViewModel.animationBehindChat.collectAsState()
+    var ambientMode by remember { mutableStateOf(false) } // fullscreen sphere, hides chat
+
+    var inputText by remember { mutableStateOf("") }
+    var showCommandPalette by remember { mutableStateOf(false) }
+    var showAgentInfo by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+    val clipboardManager = LocalClipboardManager.current
+    val haptic = LocalHapticFeedback.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
+
+    // File picker for attachments (any file type)
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        for (uri in uris) {
+            try {
+                val contentResolver = context.contentResolver
+                val mimeType = contentResolver.getType(uri) ?: "application/octet-stream"
+                val fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "file"
+                val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: continue
+                val maxSize = maxAttachmentMb * 1024 * 1024
+                if (bytes.size > maxSize) {
+                    Toast.makeText(context, "File too large (max $maxAttachmentMb MB)", Toast.LENGTH_SHORT).show()
+                    continue
+                }
+                val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                chatViewModel.addAttachment(
+                    Attachment(
+                        contentType = mimeType,
+                        content = base64,
+                        fileName = fileName,
+                        fileSize = bytes.size.toLong()
+                    )
+                )
+            } catch (e: Exception) {
+                Toast.makeText(context, "Failed to read file", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // Scroll-to-bottom FAB visibility
+    val showScrollToBottom by remember {
+        derivedStateOf {
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            messages.isNotEmpty() && lastVisible < messages.size - 2
+        }
+    }
+
+    // Build all commands dynamically: built-in + personalities + server skills
+    val allCommands by remember(availableSkills, personalityNames) {
+        derivedStateOf {
+            // Built-in hermes gateway commands (from hermes_cli/commands.py)
+            // Only includes commands available via gateway (not cli_only)
+            val builtIn = listOf(
+                // Session
+                SlashCommand("/new", "Start a new session", "session"),
+                SlashCommand("/retry", "Retry the last message", "session"),
+                SlashCommand("/undo", "Remove the last exchange", "session"),
+                SlashCommand("/title", "Set a title for this session", "session"),
+                SlashCommand("/branch", "Branch/fork the current session", "session"),
+                SlashCommand("/compress", "Compress conversation context", "session"),
+                SlashCommand("/rollback", "List or restore checkpoints", "session"),
+                SlashCommand("/stop", "Kill running background processes", "session"),
+                SlashCommand("/resume", "Resume a previous session", "session"),
+                SlashCommand("/background", "Run a prompt in the background", "session"),
+                SlashCommand("/btw", "Side question using session context", "session"),
+                SlashCommand("/queue", "Queue a prompt for the next turn", "session"),
+                SlashCommand("/approve", "Approve a pending command", "session"),
+                SlashCommand("/deny", "Deny a pending command", "session"),
+                // Configuration
+                SlashCommand("/model", "Switch model for this session", "configuration"),
+                SlashCommand("/provider", "Show available providers", "configuration"),
+                SlashCommand("/personality", "Set a predefined personality", "configuration"),
+                SlashCommand("/verbose", "Cycle tool progress display", "configuration"),
+                SlashCommand("/yolo", "Toggle auto-approve mode", "configuration"),
+                SlashCommand("/reasoning", "Set reasoning effort level", "configuration"),
+                SlashCommand("/voice", "Toggle voice mode", "configuration"),
+                SlashCommand("/reload-mcp", "Reload MCP servers", "configuration"),
+                // Info
+                SlashCommand("/help", "Show available commands", "info"),
+                SlashCommand("/status", "Show session info", "info"),
+                SlashCommand("/usage", "Show token usage", "info"),
+                SlashCommand("/insights", "Usage analytics", "info"),
+                SlashCommand("/commands", "Browse all commands", "info"),
+                SlashCommand("/profile", "Show active profile", "info"),
+                SlashCommand("/update", "Update Hermes Agent", "info"),
+            )
+
+            // Dynamic personality commands from server
+            val personalities = personalityNames.map { name ->
+                SlashCommand(
+                    command = "/personality $name",
+                    description = name.replaceFirstChar { it.uppercase() } + " personality",
+                    category = "personality"
+                )
+            }
+
+            // Server skills from GET /api/skills
+            val skills = availableSkills.map { skill ->
+                SlashCommand(
+                    command = "/${skill.name}",
+                    description = skill.description ?: "Skill",
+                    category = skill.category ?: "uncategorized"
+                )
+            }
+
+            builtIn + personalities + skills
+        }
+    }
+
+    // Inline autocomplete — filters as user types "/"
+    val filteredCommands by remember(inputText, allCommands) {
+        derivedStateOf {
+            if (inputText.startsWith("/") && !inputText.contains(" ")) {
+                val query = inputText.lowercase()
+                allCommands.filter { it.command.lowercase().startsWith(query) }.take(8)
+            } else {
+                emptyList()
+            }
+        }
+    }
+    val showAutocomplete by remember(filteredCommands, inputText) {
+        derivedStateOf {
+            inputText.startsWith("/") && filteredCommands.isNotEmpty()
+        }
+    }
+
+    // Refresh sessions when screen appears and API is ready
+    LaunchedEffect(chatReady) {
+        if (chatReady) {
+            chatViewModel.refreshSessions()
+        }
+    }
+
+    // Auto-scroll to bottom when new messages arrive or content streams in
+    val lastMessage = messages.lastOrNull()
+    LaunchedEffect(messages.size, lastMessage?.content?.length, lastMessage?.isStreaming) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.size - 1)
+        }
+    }
+
+    // Haptic on stream complete
+    LaunchedEffect(isStreaming) {
+        if (!isStreaming && messages.isNotEmpty()) {
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        }
+    }
+
+    // Haptic on error
+    LaunchedEffect(error) {
+        if (error != null) {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        }
+    }
+
+    // Agent display name — used in header and info dialog
+    val agentDisplayName = remember(selectedPersonality, defaultPersonality) {
+        val name = if (selectedPersonality == "default" && defaultPersonality.isNotBlank()) {
+            defaultPersonality
+        } else {
+            selectedPersonality
+        }
+        name.replaceFirstChar { it.uppercase() }
+    }
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            SessionDrawerContent(
+                sessions = sessions,
+                currentSessionId = currentSessionId,
+                onNewChat = {
+                    chatViewModel.createNewChat()
+                    scope.launch { drawerState.close() }
+                },
+                onSelectSession = { sessionId ->
+                    chatViewModel.switchSession(sessionId)
+                    scope.launch { drawerState.close() }
+                },
+                onDeleteSession = { sessionId ->
+                    chatViewModel.deleteSession(sessionId)
+                },
+                onRenameSession = { sessionId, title ->
+                    chatViewModel.renameSession(sessionId, title)
+                }
+            )
+        }
+    ) {
+        val isDarkTheme = isSystemInDarkTheme()
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .radialNavyBackground(isDarkTheme = isDarkTheme)
+                .imePadding()
+        ) {
+            // Top bar — messaging app style with avatar, name, model subtitle
+            TopAppBar(
+                navigationIcon = {
+                    IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                        Icon(Icons.Filled.Menu, contentDescription = "Sessions")
+                    }
+                },
+                title = {
+                    val isConnecting = !apiReachable && chatMode != ChatMode.DISCONNECTED
+                    val statusText = when {
+                        apiReachable -> "Connected"
+                        isConnecting -> "Connecting..."
+                        else -> "Disconnected"
+                    }
+                    val statusColor = when {
+                        apiReachable -> Color(0xFF4CAF50)
+                        isConnecting -> Color(0xFFFFA726)
+                        else -> MaterialTheme.colorScheme.error
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.clickable { showAgentInfo = true }
+                    ) {
+                        // Avatar with status dot overlay
+                        Box(modifier = Modifier.size(36.dp)) {
+                            Surface(
+                                modifier = Modifier.size(36.dp),
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primary
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(
+                                        text = if (agentDisplayName.isNotBlank()) {
+                                            agentDisplayName.first().uppercase()
+                                        } else "H",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                }
+                            }
+                            ConnectionStatusBadge(
+                                isConnected = apiReachable,
+                                isConnecting = isConnecting,
+                                modifier = Modifier
+                                    .size(10.dp)
+                                    .align(Alignment.BottomEnd),
+                                size = 10.dp
+                            )
+                        }
+
+                        // Name + Hermes Agent + model + status
+                        Column {
+                            Text(
+                                text = if (agentDisplayName.isNotBlank()) agentDisplayName else "Hermes",
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1
+                            )
+                            Text(
+                                text = buildString {
+                                    append("Hermes Agent")
+                                    if (serverModelName.isNotBlank()) {
+                                        append(" · $serverModelName")
+                                    }
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
+                            )
+                            Text(
+                                text = statusText,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = statusColor,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                },
+                actions = {
+                    // Ambient mode toggle (show/hide sphere visualization)
+                    if (animationEnabled) {
+                        IconButton(onClick = { ambientMode = !ambientMode }) {
+                            Icon(
+                                imageVector = if (ambientMode) Icons.Filled.ChatBubble else Icons.Filled.AutoAwesome,
+                                contentDescription = if (ambientMode) "Show chat" else "Ambient mode",
+                                tint = if (ambientMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    // Personality picker
+                    PersonalityPicker(
+                        selected = selectedPersonality,
+                        personalities = personalityNames,
+                        defaultName = defaultPersonality,
+                        onSelect = { chatViewModel.selectPersonality(it) }
+                    )
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                )
+            )
+
+            // Offline banner
+            AnimatedVisibility(
+                visible = networkStatus is ConnectivityObserver.Status.Lost ||
+                    networkStatus is ConnectivityObserver.Status.Unavailable
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.errorContainer)
+                        .padding(8.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Filled.WifiOff,
+                        contentDescription = "No internet",
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        "No internet connection",
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+
+            // Error banner with retry
+            AnimatedVisibility(visible = error != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = error ?: "",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 2,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                    TextButton(onClick = { chatViewModel.retryLastMessage() }) {
+                        Text("Retry")
+                    }
+                    TextButton(onClick = { chatViewModel.clearError() }) {
+                        Text("Dismiss")
+                    }
+                }
+            }
+
+            // Loading history indicator
+            if (isLoadingHistory) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(modifier = Modifier.size(8.dp))
+                    Text(
+                        text = "Loading messages...",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            // Ambient mode: fullscreen sphere visualization
+            if (ambientMode && animationEnabled) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    MorphingSphere(modifier = Modifier.fillMaxSize())
+                }
+            }
+            // Message list or empty state
+            else if (messages.isEmpty() && !isStreaming && !isLoadingHistory) {
+                val suggestions = listOf(
+                    "What can you do?",
+                    "Help me code",
+                    "Explain something"
+                )
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(horizontal = 32.dp)
+                    ) {
+                        Spacer(modifier = Modifier.weight(0.15f))
+
+                        // ASCII sphere (constrained to square aspect)
+                        if (animationEnabled) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(1f)
+                                    .weight(0.7f, fill = false)
+                            ) {
+                                MorphingSphere(modifier = Modifier.fillMaxSize())
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+
+                        Text(
+                            text = "Start a conversation",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+
+                        if (!chatReady) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Configure API server in Settings",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(20.dp))
+
+                        // Suggestion chips
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            suggestions.forEach { suggestion ->
+                                AssistChip(
+                                    onClick = { inputText = suggestion },
+                                    label = {
+                                        Text(
+                                            text = suggestion,
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    },
+                                    colors = AssistChipDefaults.assistChipColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                                        labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.weight(0.15f))
+                    }
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                ) {
+                    // Ambient sphere behind messages
+                    if (animationEnabled && animationBehindChat && !ambientMode) {
+                        MorphingSphere(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .alpha(0.15f)
+                        )
+                    }
+
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        item { Spacer(modifier = Modifier.height(8.dp).animateItem()) }
+
+                        items(messages.size, key = { messages[it].id }) { index ->
+                            val message = messages[index]
+
+                            // Skip empty bubbles (content stripped by annotation parser, no tool calls)
+                            if (message.content.isBlank() && message.toolCalls.isEmpty() && !message.isStreaming) return@items
+
+                            val isFirstInGroup = index == 0 || messages[index - 1].role != message.role
+                            val isLastInGroup = index == messages.size - 1 || messages[index + 1].role != message.role
+
+                            // Date separator
+                            if (index == 0 || !isSameDay(messages[index - 1].timestamp, message.timestamp)) {
+                                DateSeparator(timestamp = message.timestamp)
+                            }
+
+                            MessageBubble(
+                                message = message,
+                                modifier = Modifier
+                                    .padding(top = if (isFirstInGroup) 6.dp else 1.dp)
+                                    .animateItem(),
+                                maxBubbleWidth = maxBubbleWidth,
+                                showThinking = showThinking,
+                                isFirstInGroup = isFirstInGroup,
+                                isLastInGroup = isLastInGroup,
+                                onCopyMessage = { text ->
+                                    clipboardManager.setText(AnnotatedString(text))
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar(
+                                            message = "Copied to clipboard",
+                                            duration = SnackbarDuration.Short
+                                        )
+                                    }
+                                }
+                            )
+
+                            if (toolDisplay != "off") {
+                                message.toolCalls.forEach { toolCall ->
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    when (toolDisplay) {
+                                        "compact" -> CompactToolCall(toolCall = toolCall)
+                                        else -> ToolProgressCard(toolCall = toolCall)
+                                    }
+                                }
+                            }
+                        }
+
+                        if (isStreaming) {
+                            item {
+                                StreamingDots(
+                                    modifier = Modifier
+                                        .padding(start = 12.dp, top = 4.dp)
+                                        .animateItem()
+                                )
+                            }
+                        }
+
+                        item { Spacer(modifier = Modifier.height(8.dp).animateItem()) }
+                    }
+
+                    // Scroll-to-bottom FAB
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = showScrollToBottom,
+                        enter = fadeIn() + slideInVertically { it },
+                        exit = fadeOut() + slideOutVertically { it },
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(16.dp)
+                    ) {
+                        SmallFloatingActionButton(
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                scope.launch { listState.animateScrollToItem(messages.size - 1) }
+                            },
+                            containerColor = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Icon(
+                                Icons.Filled.KeyboardArrowDown,
+                                contentDescription = "Scroll to bottom"
+                            )
+                        }
+                    }
+
+                    // Copy feedback snackbar
+                    SnackbarHost(
+                        hostState = snackbarHostState,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 8.dp)
+                    )
+                }
+            }
+
+            // Inline slash command autocomplete
+            AnimatedVisibility(visible = showAutocomplete) {
+                InlineAutocomplete(
+                    commands = filteredCommands,
+                    onSelect = { cmd ->
+                        val base = cmd.command.split(" ").first()
+                        inputText = if (cmd.command.contains(" ")) cmd.command + " " else "$base "
+                    },
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
+            }
+
+            // Queue indicator
+            AnimatedVisibility(visible = queuedMessages.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "${queuedMessages.size} message${if (queuedMessages.size > 1) "s" else ""} queued",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    TextButton(
+                        onClick = { chatViewModel.clearQueue() },
+                        modifier = Modifier.height(28.dp)
+                    ) {
+                        Text(
+                            "Clear",
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                }
+            }
+
+            // Attachment preview strip
+            AnimatedVisibility(visible = pendingAttachments.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    pendingAttachments.forEachIndexed { index, attachment ->
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            tonalElevation = 2.dp,
+                            modifier = Modifier.height(56.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(start = 8.dp, end = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                if (attachment.isImage) {
+                                    // Decode and show thumbnail
+                                    val bitmap = remember(attachment.content) {
+                                        try {
+                                            val bytes = Base64.decode(attachment.content, Base64.DEFAULT)
+                                            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                                        } catch (_: Exception) { null }
+                                    }
+                                    if (bitmap != null) {
+                                        val imageBitmap = remember(bitmap) {
+                                            bitmap.asImageBitmap()
+                                        }
+                                        Image(
+                                            bitmap = imageBitmap,
+                                            contentDescription = attachment.fileName,
+                                            modifier = Modifier
+                                                .size(40.dp)
+                                                .clip(RoundedCornerShape(4.dp))
+                                        )
+                                    } else {
+                                        Icon(Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(24.dp))
+                                    }
+                                } else {
+                                    Icon(Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(24.dp))
+                                }
+                                Column(modifier = Modifier.widthIn(max = 100.dp)) {
+                                    Text(
+                                        text = attachment.fileName ?: "File",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = formatFileSize(attachment.fileSize ?: 0),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { chatViewModel.removeAttachment(index) },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Close,
+                                        contentDescription = "Remove",
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Input bar with character limit
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.Bottom
+            ) {
+                // Attach file button
+                IconButton(
+                    onClick = { filePickerLauncher.launch(arrayOf("*/*")) },
+                    modifier = Modifier.padding(bottom = 4.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Add,
+                        contentDescription = "Attach file",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                // Command palette button
+                IconButton(
+                    onClick = { showCommandPalette = true },
+                    modifier = Modifier.padding(bottom = 4.dp)
+                ) {
+                    Text(
+                        text = "/",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                OutlinedTextField(
+                    value = inputText,
+                    onValueChange = { if (it.length <= charLimit) inputText = it },
+                    modifier = Modifier.weight(1f),
+                    placeholder = {
+                        Text(if (isStreaming && inputText.isBlank()) "Queue a message..." else "Message...")
+                    },
+                    maxLines = 4,
+                    enabled = chatReady,
+                    supportingText = if (inputText.length > charLimit - 200) {
+                        {
+                            Text(
+                                "${inputText.length}/$charLimit",
+                                color = if (inputText.length >= charLimit) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                }
+                            )
+                        }
+                    } else null
+                )
+
+                // Stop button — visible during streaming
+                AnimatedVisibility(visible = isStreaming) {
+                    IconButton(onClick = { chatViewModel.cancelStream() }) {
+                        Icon(
+                            imageVector = Icons.Filled.Stop,
+                            contentDescription = "Stop streaming",
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+
+                // Send button — always visible, queues during streaming
+                val hasContent = inputText.isNotBlank() || pendingAttachments.isNotEmpty()
+                val sendEnabled = hasContent && chatReady
+                Box(
+                    modifier = if (sendEnabled && isDarkTheme && !isStreaming) {
+                        Modifier.purpleGlow(
+                            radius = 24.dp,
+                            alpha = 0.35f,
+                            isDarkTheme = true
+                        )
+                    } else Modifier
+                ) {
+                    IconButton(
+                        onClick = {
+                            if (hasContent) {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                chatViewModel.sendMessage(inputText.ifBlank { "[attachment]" })
+                                inputText = ""
+                            }
+                        },
+                        enabled = sendEnabled
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Send,
+                            contentDescription = if (isStreaming) "Queue message" else "Send message",
+                            tint = if (sendEnabled) {
+                                if (isStreaming) MaterialTheme.colorScheme.tertiary
+                                else MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    // Command palette bottom sheet
+    if (showCommandPalette) {
+        CommandPalette(
+            commands = allCommands,
+            onSelect = { cmd ->
+                val base = cmd.command.split(" ").first()
+                inputText = if (cmd.command.contains(" ")) cmd.command + " " else "$base "
+                showCommandPalette = false
+            },
+            onDismiss = { showCommandPalette = false }
+        )
+    }
+
+    // Agent info dialog — shown when tapping the header
+    if (showAgentInfo) {
+        val currentSession = sessions.find { it.sessionId == currentSessionId }
+
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showAgentInfo = false },
+            title = {
+                Text(
+                    text = if (agentDisplayName.isNotBlank()) agentDisplayName else "Hermes Agent"
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (serverModelName.isNotBlank()) {
+                        Row {
+                            Text("Model", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(80.dp))
+                            Text(serverModelName, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                    Row {
+                        Text("Status", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(80.dp))
+                        Text(
+                            text = when {
+                                apiReachable -> "Connected"
+                                chatMode != ChatMode.DISCONNECTED -> "Connecting..."
+                                else -> "Disconnected"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = when {
+                                apiReachable -> Color(0xFF4CAF50)
+                                chatMode != ChatMode.DISCONNECTED -> Color(0xFFFFA726)
+                                else -> MaterialTheme.colorScheme.error
+                            }
+                        )
+                    }
+                    Row {
+                        Text("Personality", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(80.dp))
+                        Text(
+                            text = if (selectedPersonality == "default") {
+                                "${defaultPersonality.replaceFirstChar { it.uppercase() }} (default)"
+                            } else {
+                                selectedPersonality.replaceFirstChar { it.uppercase() }
+                            },
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                    if (currentSession != null) {
+                        HorizontalDivider()
+                        Row {
+                            Text("Session", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(80.dp))
+                            Text(currentSession.title ?: currentSession.sessionId.take(12), style = MaterialTheme.typography.bodyMedium)
+                        }
+                        Row {
+                            Text("Messages", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(80.dp))
+                            Text("${messages.size}", style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showAgentInfo = false }) {
+                    Text("Close")
+                }
+            }
+        )
+    }
+}
+
+// --- Helper functions ---
+
+private fun formatFileSize(bytes: Long): String = when {
+    bytes < 1024 -> "${bytes} B"
+    bytes < 1024 * 1024 -> "${bytes / 1024} KB"
+    else -> "${"%.1f".format(bytes / (1024.0 * 1024.0))} MB"
+}
+
+private fun isSameDay(ts1: Long, ts2: Long): Boolean {
+    val d1 = java.time.Instant.ofEpochMilli(ts1).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+    val d2 = java.time.Instant.ofEpochMilli(ts2).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+    return d1 == d2
+}
+
+@Composable
+private fun DateSeparator(timestamp: Long) {
+    val today = java.time.LocalDate.now()
+    val messageDate = java.time.Instant.ofEpochMilli(timestamp)
+        .atZone(java.time.ZoneId.systemDefault())
+        .toLocalDate()
+
+    val label = when {
+        messageDate == today -> "Today"
+        messageDate == today.minusDays(1) -> "Yesterday"
+        messageDate.year == today.year -> messageDate.format(
+            java.time.format.DateTimeFormatter.ofPattern("EEE, MMM d")
+        )
+        else -> messageDate.format(
+            java.time.format.DateTimeFormatter.ofPattern("MMM d, yyyy")
+        )
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        ) {
+            Text(
+                text = label,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}

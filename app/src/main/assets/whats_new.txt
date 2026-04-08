@@ -1,0 +1,32 @@
+v0.1.0 — First Release
+
+Chat
+• Direct API chat via SSE streaming
+• Markdown rendering — code blocks, bold, italic, links
+• Session management — create, switch, rename, delete
+• Message history with auto-titles
+• Reasoning display (collapsible thinking blocks)
+• Personality picker with dynamic server personalities
+• Command palette — 29+ commands + server skills
+• Token & cost tracking per message
+• File attachments — images, documents, any file type
+• Message queuing — send while agent is streaming
+
+Animation
+• ASCII morphing sphere on empty chat screen
+• Ambient mode — fullscreen sphere (toggle in header)
+• Subtle sphere behind messages at 15% opacity
+• Animation controls in Settings > Appearance
+
+App
+• Material You theming (light/dark/auto)
+• QR code pairing for quick setup
+• Stats for Nerds — response times, health metrics
+• Offline detection with reconnect
+• Developer Options — tap version 7x to unlock experimental features
+• Configurable limits — attachment size, message length
+
+Security
+• API keys in EncryptedSharedPreferences
+• Network security config for localhost
+• Feature gating for unfinished features

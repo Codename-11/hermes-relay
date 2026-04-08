@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitepress'
 
 export default defineConfig({
+  base: '/hermes-relay/',
   title: 'Hermes Relay',
   description: 'Android app for Hermes Agent — chat, control, and connect from your phone',
 
@@ -60,7 +61,7 @@ export default defineConfig({
             { text: 'Direct API Connection', link: '/features/direct-api' },
             { text: 'Markdown Rendering', link: '/features/markdown' },
             { text: 'Reasoning Display', link: '/features/reasoning' },
-            { text: 'Personalities', link: '/features/personalities' },
+            { text: 'Profiles & Personalities', link: '/features/personalities' },
             { text: 'Token Tracking', link: '/features/tokens' },
             { text: 'Tool Progress', link: '/features/tools' },
           ],
@@ -73,6 +74,7 @@ export default defineConfig({
             { text: 'Overview', link: '/architecture/' },
             { text: 'Decisions', link: '/architecture/decisions' },
             { text: 'Security', link: '/architecture/security' },
+            { text: 'Privacy', link: '/architecture/privacy' },
           ],
         },
       ],

@@ -39,8 +39,8 @@ features:
       src: /icons/personalities.svg
       width: 40
       height: 40
-    title: Personality Picker
-    details: 8 built-in styles — concise, creative, technical, and more.
+    title: Personalities & Command Palette
+    details: Dynamic personalities from the server. Searchable command palette with 29 gateway commands, personality switching, and 90+ server skills.
   - icon:
       src: /icons/tokens.svg
       width: 40

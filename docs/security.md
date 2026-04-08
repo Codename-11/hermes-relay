@@ -52,6 +52,15 @@ There is no persistent log of what commands the agent executed on the phone.
 4. **Monitor the phone**: Keep the status overlay enabled to see when the bridge is active
 5. **Don't pair on public WiFi**: The unencrypted connection is vulnerable to interception
 
+## Privacy
+
+See [docs/privacy.md](privacy.md) for the full privacy and data handling policy. Key points:
+
+- **No external data transmission** — the app connects only to your self-hosted Hermes servers
+- **Local-only analytics** — Stats for Nerds counters are stored in DataStore on-device, never sent externally
+- **Encrypted credential storage** — API keys and session tokens use EncryptedSharedPreferences (AES-256-GCM, hardware-backed Android Keystore)
+- **No tracking, ads, or third-party SDKs**
+
 ## Reporting Security Issues
 
 If you find a security vulnerability, please open an issue on GitHub or contact the maintainers directly. Do not exploit vulnerabilities on other people's devices.

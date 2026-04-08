@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -6,26 +8,60 @@ plugins {
 }
 
 android {
-    namespace = "com.hermesandroid.companion"
+    namespace = "com.hermesandroid.relay"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.hermesandroid.companion"
+        applicationId = "com.hermesandroid.relay"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = libs.versions.appVersionCode.get().toInt()
+        versionName = libs.versions.appVersionName.get()
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Feature flags — DEV_MODE enables all experimental features in debug builds
+        buildConfigField("boolean", "DEV_MODE", "false")
+    }
+
+    signingConfigs {
+        create("release") {
+            val localProps = rootProject.file("local.properties")
+            val props: Properties? = if (localProps.exists()) {
+                Properties().apply { localProps.inputStream().use { stream -> load(stream) } }
+            } else null
+
+            storeFile = file(
+                System.getenv("HERMES_KEYSTORE_PATH")
+                    ?: props?.getProperty("hermes.keystore.path")
+                    ?: "/nonexistent"
+            )
+            storePassword = System.getenv("HERMES_KEYSTORE_PASSWORD")
+                ?: props?.getProperty("hermes.keystore.password") ?: ""
+            keyAlias = System.getenv("HERMES_KEY_ALIAS")
+                ?: props?.getProperty("hermes.key.alias") ?: ""
+            keyPassword = System.getenv("HERMES_KEY_PASSWORD")
+                ?: props?.getProperty("hermes.key.password") ?: ""
+        }
     }
 
     buildTypes {
+        debug {
+            buildConfigField("boolean", "DEV_MODE", "true")
+        }
         release {
             isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Use release signing if keystore exists, otherwise fall back to debug signing
+            val releaseSigningConfig = signingConfigs.getByName("release")
+            signingConfig = if (releaseSigningConfig.storeFile?.exists() == true) {
+                releaseSigningConfig
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 
@@ -40,11 +76,18 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     sourceSets {
         getByName("main") {
             kotlin.srcDirs("src/main/kotlin")
+        }
+        getByName("test") {
+            kotlin.srcDirs("src/test/kotlin")
+        }
+        getByName("androidTest") {
+            kotlin.srcDirs("src/androidTest/kotlin")
         }
     }
 }
@@ -84,6 +127,25 @@ dependencies {
 
     // Networking
     implementation(libs.okhttp)
+    implementation(libs.okhttp.sse)
+
+    // Markdown rendering
+    implementation(libs.markdown.renderer.m3)
+    implementation(libs.markdown.renderer.code)
+
+    // QR Code scanning (ML Kit + CameraX)
+    implementation(libs.mlkit.barcode)
+    implementation(libs.camera.core)
+    implementation(libs.camera.camera2)
+    implementation(libs.camera.lifecycle)
+    implementation(libs.camera.view)
+
+    // Haze (glassmorphism blur)
+    implementation(libs.haze)
+    implementation(libs.haze.materials)
+
+    // Window size class for responsive layout
+    implementation("androidx.compose.material3:material3-window-size-class")
 
     // Serialization
     implementation(libs.kotlinx.serialization.json)
@@ -99,6 +161,9 @@ dependencies {
 
     // Testing
     testImplementation(libs.junit)
+    testImplementation(libs.mockk)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.kotlinx.serialization.json)
     androidTestImplementation(libs.compose.ui.test.junit4)
     debugImplementation(libs.compose.ui.tooling)
     debugImplementation(libs.compose.ui.test.manifest)

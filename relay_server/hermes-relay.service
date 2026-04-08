@@ -1,0 +1,31 @@
+[Unit]
+Description=Hermes Relay Server (WSS bridge for Android app)
+Documentation=https://github.com/Codename-11/hermes-relay/blob/main/docs/relay-server.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bailey
+Group=bailey
+WorkingDirectory=/home/bailey/hermes-relay
+ExecStart=/usr/bin/python3 -m relay_server --no-ssl
+Restart=on-failure
+RestartSec=5
+
+# Environment — uncomment and edit as needed
+# Environment=RELAY_PORT=8767
+# Environment=RELAY_WEBAPI_URL=http://localhost:8642
+# Environment=RELAY_SSL_CERT=/etc/hermes-relay/cert.pem
+# Environment=RELAY_SSL_KEY=/etc/hermes-relay/key.pem
+# Environment=RELAY_LOG_LEVEL=INFO
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/tmp
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

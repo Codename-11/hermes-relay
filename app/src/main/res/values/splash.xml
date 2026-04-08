@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.HermesCompanion.Splash" parent="Theme.SplashScreen">
+    <style name="Theme.HermesRelay.Splash" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/dark_background</item>
-        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
-        <item name="postSplashScreenTheme">@style/Theme.HermesCompanion</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icon_animated</item>
+        <item name="windowSplashScreenIconBackgroundColor">@color/splash_icon_bg</item>
+        <item name="postSplashScreenTheme">@style/Theme.HermesRelay</item>
     </style>
 </resources>

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Animated splash icon: scales in with overshoot + fades in -->
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/splash_icon">
+    <target
+        android:name="main_group"
+        android:animation="@animator/splash_anim"/>
+</animated-vector>

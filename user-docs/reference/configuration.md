@@ -21,7 +21,9 @@ Available in **Settings > Chat**.
 |---------|---------|-------------|
 | Show reasoning | `true` | Display thinking/reasoning blocks above responses |
 | Show token usage | `true` | Display input/output token counts and estimated cost |
-| Personality | `default` | Active personality for new messages |
+| App context prompt | `true` | Send system message telling agent user is on mobile |
+| Tool call display | `Detailed` | How tool calls appear: Off, Compact, or Detailed |
+| Personality | Server default | Active personality from `config.agent.personalities` via `GET /api/config` |
 
 ## Appearance Settings
 
@@ -40,10 +42,25 @@ These are managed automatically by the app.
 |-----|-------------|
 | Last active session | Session ID to resume on app restart |
 | Onboarding complete | Whether the user has completed initial setup |
+| Last seen version | Version string for What's New auto-show |
+
+## Analytics (In-Memory)
+
+The Stats for Nerds section in Settings shows performance data collected in-memory. This data is **not persisted** and resets on app restart. No data is sent off-device.
+
+| Metric | Description |
+|--------|-------------|
+| TTFT | Time to first token (ms) |
+| Completion time | Total response time (ms) |
+| Token usage | Input/output tokens per message |
+| Health latency | API health check round-trip time (ms) |
+| Stream success rate | Percentage of streams that completed without error |
 
 ## Server-Side Configuration
 
-The Hermes API Server is configured via `~/.hermes/.env`:
+### Hermes API Server
+
+The API server is part of `hermes gateway` and configured via `~/.hermes/.env`:
 
 ```bash
 # Required for Hermes Relay
@@ -51,12 +68,31 @@ API_SERVER_ENABLED=true
 # API_SERVER_KEY=your-secret-key  # Optional — only set if exposing to network
 API_SERVER_HOST=0.0.0.0
 API_SERVER_PORT=8642
-
-# Optional: Relay Server (for bridge/terminal)
-# RELAY_SERVER_PORT=8767
-# RELAY_SERVER_SSL_CERT=/path/to/cert.pem
-# RELAY_SERVER_SSL_KEY=/path/to/key.pem
 ```
+
+### Relay Server
+
+The relay server is a **separate service** (not part of hermes-agent) that handles terminal and bridge channels over WSS. Only needed if you use those features.
+
+**Quick start:**
+
+```bash
+pip install aiohttp pyyaml && python -m relay_server --no-ssl
+```
+
+**Environment variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RELAY_HOST` | `0.0.0.0` | Bind address |
+| `RELAY_PORT` | `8767` | Listen port |
+| `RELAY_SSL_CERT` | — | TLS certificate path |
+| `RELAY_SSL_KEY` | — | TLS private key path |
+| `RELAY_WEBAPI_URL` | `http://localhost:8642` | Hermes API Server URL |
+| `RELAY_HERMES_CONFIG` | `~/.hermes/config.yaml` | Hermes config (for profile loading) |
+| `RELAY_LOG_LEVEL` | `INFO` | Logging level |
+
+For Docker, systemd, and TLS setup, see [docs/relay-server.md](https://github.com/Codename-11/hermes-relay/blob/main/docs/relay-server.md).
 
 ## Network Security Config
 

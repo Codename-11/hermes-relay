@@ -1,11 +1,10 @@
 # Hermes Relay — Android App
 
-## Specification v1.0
+## Specification v1.1
 
-**Status:** Draft — ready for MVP  
-**Repo:** [Codename-11/hermes-android](https://github.com/Codename-11/hermes-android) (private)  
-**Upstream:** [raulvidis/hermes-android](https://github.com/raulvidis/hermes-android) (forked)  
-**Updated:** 2026-04-05
+**Status:** v0.1.0 — Phase 0 + Phase 1 complete  
+**Repo:** [Codename-11/hermes-relay](https://github.com/Codename-11/hermes-relay)  
+**Updated:** 2026-04-07
 
 ---
 
@@ -78,7 +77,7 @@ One persistent WSS connection. One pairing flow. Three multiplexed channels.
 │  ┌───────┴───┐  ┌───┴──┐  ┌──┴──────────────┐      │
 │  │ WebAPI    │  │ tmux │  │AccessibilityServ.│      │
 │  │ /api/...  │  │ PTY  │  │(on phone)        │      │
-│  │ (FastAPI) │  │      │  │                  │      │
+│  │ (aiohttp) │  │      │  │                  │      │
 │  └───────────┘  └──────┘  └──────────────────┘      │
 └──────────────────────────────────────────────────────┘
 ```
@@ -228,11 +227,13 @@ Bottom navigation bar with 4 tabs:
 ```
 
 ### Chat Tab
-- **Session list** (left drawer or top sheet on mobile) — grouped by agent profile
-- **Chat view** — message bubbles, streaming text, collapsible tool call cards
-- **Input bar** — text field, attachment button (images), send
-- **Profile selector** — switch between Victor, Mizu, etc.
-- Displays: streaming delta text, tool progress cards (expandable), thinking indicators
+- **Session drawer** (swipe from left or hamburger icon) — session list with title, timestamp, message count. Create, switch, rename, delete.
+- **Chat view** — message bubbles with markdown rendering, streaming text, tool call cards (Off/Compact/Detailed display modes)
+- **Input bar** — text field with 4096 char limit, `/` palette button, send button, stop button during streaming. Inline autocomplete on `/` keystroke + full searchable command palette (bottom sheet). Commands sourced from: 29 gateway built-ins, dynamic personalities from `config.agent.personalities`, and server skills from `GET /api/skills`.
+- **Empty state** — Logo + "Start a conversation" + suggestion chips that populate input
+- **Personality picker** — personalities fetched from `GET /api/config` (`config.agent.personalities`). Shows server default (from `config.display.personality`) + all configured. Active personality name shown on assistant chat bubbles.
+- **Streaming dots** — animated pulsing 3-dot indicator replaces static "streaming..." text
+- Displays: streaming delta text, tool progress cards (auto-expand while running, auto-collapse on complete), thinking/reasoning blocks (collapsible), per-message token counts + cost
 
 ### Terminal Tab
 - **Full-screen terminal emulator** (xterm.js in WebView)
@@ -248,11 +249,12 @@ Bottom navigation bar with 4 tabs:
 - **Quick actions** — screenshot, screen read (manual triggers for testing)
 
 ### Settings Tab
-- **Server connection** — URL, pairing code, reconnect
-- **Security** — biometric toggle, token management, certificate info
+- **API Server** — URL, API key, health check indicator
+- **Relay Server** — URL, pairing code, connection status
+- **Chat** — Show reasoning toggle, show token usage toggle, app context prompt toggle, tool call display (Off/Compact/Detailed), Stats for Nerds (analytics charts)
 - **Appearance** — theme (auto/light/dark), dynamic colors toggle
-- **Profiles** — manage agent profiles visible in chat
-- **About** — version, upstream info, licenses
+- **Data** — Backup, restore, reset with confirmation dialogs
+- **About** — logo on dark background, dynamic version from BuildConfig, Source + Docs link buttons, credits. What's New dialog.
 
 ---
 
@@ -329,10 +331,21 @@ Response: SSE stream with typed events:
          data: {"session_id":"...","run_id":"...","state":"final"}
 ```
 
+Additional API endpoints used:
+```
+3. GET /api/sessions → list all sessions
+4. PATCH /api/sessions/{session_id} → rename session
+5. DELETE /api/sessions/{session_id} → delete session
+6. GET /api/sessions/{session_id}/messages → fetch message history
+7. GET /api/config → personalities (for personality picker, `config.agent.personalities`)
+8. GET /api/skills → available skills (for command palette + autocomplete)
+```
+
 Key classes:
-- **HermesApiClient** — OkHttp-based HTTP/SSE client for direct API communication
+- **HermesApiClient** — OkHttp-based HTTP/SSE client for direct API communication (chat, sessions, skills, config)
 - **ChatHandler** — processes streaming deltas and tool call events into ChatMessage state
-- **ChatViewModel** — orchestrates send/stream/cancel lifecycle
+- **ChatViewModel** — orchestrates send/stream/cancel lifecycle, slash command handling
+- **AppAnalytics** — singleton tracking TTFT, completion times, token usage, health latency, stream success rates
 
 The relay server is **not involved** in chat. It remains for bridge and terminal channels only.
 
@@ -362,7 +375,7 @@ Wraps the existing relay protocol. When the agent calls `android_*` tools, the t
 ### Phase 0 — Project Setup (MVP Night 1)
 **Priority: P0 — do first**
 
-- [ ] Create private GitHub repo `Codename-11/hermes-android` (or rename fork)
+- [ ] Create private GitHub repo `Codename-11/hermes-relay` (or rename fork)
 - [ ] Set up Kotlin + Jetpack Compose project (replace upstream XML layout)
 - [ ] Gradle config: Kotlin 2.0+, Compose BOM, Material 3, OkHttp, kotlinx.serialization
 - [ ] Basic Compose scaffold: bottom nav, 4 tabs, placeholder screens
@@ -473,11 +486,12 @@ Non-goals for tonight:
 
 | Surface | How We Connect |
 |---------|---------------|
-| **WebAPI** | HTTP to `localhost:8642/api/sessions/*/chat/stream` (SSE) |
+| **WebAPI chat** | HTTP to `localhost:8642/api/sessions/*/chat/stream` (SSE) |
+| **WebAPI sessions** | `GET/POST/PATCH/DELETE /api/sessions` for CRUD |
+| **Personalities** | `GET /api/config` → `config.agent.personalities` for picker + command palette |
+| **Server skills** | `GET /api/skills` — dynamic skill discovery for command palette + autocomplete |
 | **Plugin system** | `register_tool()` via `ctx` for `android_*` tools |
-| **Gateway** | Chat channel proxies through WebAPI, not directly to gateway |
-| **Agent profiles** | Read from `config.yaml` to populate profile selector |
-| **Sessions** | Use WebAPI `/api/sessions` for CRUD |
+| **Gateway** | Chat channel goes through WebAPI, not directly to gateway |
 | **Memory/Skills** | Accessible through agent chat (no direct API needed for MVP) |
 
 ---

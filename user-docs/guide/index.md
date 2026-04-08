@@ -11,7 +11,7 @@ Phone (WSS)      → Relay Server (:8767)          [bridge, terminal — future]
 
 Chat connects directly to the Hermes API Server using the Sessions API with SSE streaming. The relay server handles bridge and terminal channels only.
 
-## Current Status
+## Current Status — v0.1.0
 
 | Feature | Status |
 |---------|--------|
@@ -19,9 +19,13 @@ Chat connects directly to the Hermes API Server using the Sessions API with SSE 
 | Session management | Complete |
 | Markdown + syntax highlighting | Complete |
 | Reasoning display | Complete |
-| Personality picker | Complete |
+| Personality picker + agent name on bubbles | Complete |
+| Command palette + inline autocomplete | Complete |
+| QR code pairing | Complete |
 | Token tracking | Complete |
-| Tool progress cards | Complete |
+| Tool progress cards (Off/Compact/Detailed) | Complete |
+| In-app analytics (Stats for Nerds) | Complete |
+| Animated splash screen | Complete |
 | Terminal (remote shell) | Phase 2 |
 | Bridge (device control) | Phase 3 |
 

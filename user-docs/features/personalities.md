@@ -1,28 +1,39 @@
 # Personalities
 
-Hermes Relay includes 8 built-in personalities that change the agent's communication style without affecting its capabilities.
+Hermes Relay fetches available personalities from the Hermes API Server and lets you switch between them.
 
-## Available Personalities
+## Personality Picker
 
-| Personality | Description |
-|-------------|-------------|
-| **Default** | Standard assistant — balanced and helpful |
-| **Concise** | Brief, direct answers with minimal elaboration |
-| **Creative** | Imaginative, expressive, uses metaphors and analogies |
-| **Technical** | Precise, detailed, uses proper terminology |
-| **Teacher** | Educational tone, explains step-by-step, asks guiding questions |
-| **Formal** | Professional, polished language |
-| **Pirate** | Arr! Nautical vocabulary and seafaring spirit |
-| **Kawaii** | Cute, enthusiastic, uses emoticons |
+The picker in the chat top bar shows all personalities configured on your server (from `GET /api/config` → `config.agent.personalities`). The server's default personality (from `config.display.personality`) is shown first.
 
-## How to Switch
+### How to Switch
 
-Tap the personality chip in the chat top bar. A dropdown shows all available options. The selected personality applies to the next message you send and all subsequent messages in the session.
+Tap the personality chip in the top bar. A dropdown shows the default plus all configured personalities. When you select a non-default personality, its system prompt is sent with each chat request — the server applies it to the agent.
 
-## How It Works
+### Agent Name on Bubbles
 
-The personality is sent as a system prompt modifier with each chat request. It adjusts the agent's tone and style but does not limit what it can do — tool use, code generation, and all other capabilities remain available regardless of personality.
+Assistant messages display the active personality name above the chat bubble, so you always know which personality is responding.
 
-## Per-Session
+### How It Works
 
-Each session remembers its selected personality. Switching sessions restores the personality that was active in that session.
+Personalities are defined server-side in `~/.hermes/config.yaml` under `agent.personalities`. Each is a name and a system prompt string. The app fetches the full list and sends the selected personality's system prompt via the `system_message` field in chat requests. The server's default personality applies automatically when no override is sent.
+
+## Personality Slash Commands
+
+Type `/personality <name>` in the chat input to switch personalities. The autocomplete dropdown shows all available personality commands with descriptions.
+
+### How to Discover
+
+Type `/personality` in the chat input — autocomplete shows all available options. The list includes both built-in Hermes personalities and any custom ones configured on your server.
+
+## Adding Custom Personalities
+
+Add new personalities to your Hermes server config (`~/.hermes/config.yaml`):
+
+```yaml
+agent:
+  personalities:
+    my-agent: "You are a custom agent with specific behavior..."
+```
+
+Restart the gateway and the new personality appears in the app's picker automatically — no app update needed.

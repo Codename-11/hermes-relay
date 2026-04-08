@@ -2,7 +2,15 @@
 
 ## Sending Messages
 
-Type your message in the input field and tap the send button (or press Enter on a hardware keyboard). Messages stream in real-time via Server-Sent Events.
+Type your message in the input field and tap the send button (or press Enter on a hardware keyboard). Messages stream in real-time via Server-Sent Events. There is a 4096 character limit with a counter shown near the limit. Haptic feedback fires on send.
+
+## Empty State
+
+When no messages exist, the chat shows a logo with "Start a conversation" and suggestion chips. Tapping a chip populates the input field.
+
+## Streaming
+
+While the assistant is responding, animated pulsing dots indicate active streaming. A stop button appears next to the input field — tap it to cancel the current stream. Haptic feedback fires when the stream completes.
 
 ## Markdown
 
@@ -14,33 +22,46 @@ Assistant responses render with full markdown support:
 
 ## Copying Messages
 
-Long-press any message bubble to copy its text to your clipboard.
+Long-press any message bubble to copy its text to your clipboard. Haptic feedback confirms the copy.
 
-## Canceling Streams
+## Slash Commands
 
-While the assistant is responding, a stop button appears next to the input field. Tap it to cancel the current stream.
+Two ways to discover and use commands:
+
+### Inline Autocomplete
+Type `/` in the input field to see a filtered autocomplete popup. It narrows as you type and shows up to 8 matches with descriptions.
+
+### Command Palette
+Tap the **`/`** button next to the input field to open a full searchable command palette. Browse by category, search by name or description, and tap to insert.
+
+### Command Sources
+All commands are fetched dynamically from the server where possible:
+
+- **Session commands**: `/new`, `/retry`, `/undo`, `/branch`, `/compress`, `/resume`, etc. — hermes gateway built-ins
+- **Configuration**: `/model`, `/personality`, `/reasoning`, `/yolo`, `/verbose`, `/voice`
+- **Info**: `/help`, `/status`, `/usage`, `/insights`, `/commands`
+- **Personalities**: generated from server config (`config.agent.personalities`) — `/personality victor`, `/personality creative`, etc.
+- **Skills**: dynamically fetched from `GET /api/skills` — 90+ server skills grouped by category (creative, devops, research, etc.)
 
 ## Tool Execution
 
-When the agent uses tools (terminal commands, web search, file operations), you'll see tool progress cards with:
-- Tool-type-specific icons
-- Expandable argument and result details
-- Completion duration
+When the agent uses tools (terminal commands, web search, file operations), tool calls are displayed based on your display mode setting (**Settings > Chat > Tool call display**):
+
+| Mode | Behavior |
+|------|----------|
+| **Off** | Tool calls hidden |
+| **Compact** | Inline one-line display with tool name and status |
+| **Detailed** | Full progress cards with icons, arguments, duration, results |
+
+In Detailed mode, tool cards auto-expand while the tool is running and auto-collapse when complete. Tap to expand/collapse manually.
 
 ## Personalities
 
-The personality picker in the top bar lets you switch the agent's communication style. Available personalities:
+The personality picker in the top bar shows personalities fetched from the Hermes API Server (`GET /api/config` → `config.agent.personalities`). The server's default personality is shown first, followed by all configured alternatives.
 
-| Personality | Style |
-|-------------|-------|
-| Default | Standard assistant |
-| Concise | Brief and direct |
-| Creative | Imaginative and expressive |
-| Technical | Precise and detailed |
-| Teacher | Educational, step-by-step |
-| Formal | Professional tone |
-| Pirate | Arr, matey! |
-| Kawaii | Cute and enthusiastic |
+When you select a personality, its system prompt is sent with each chat request. The active personality name appears above assistant message bubbles.
+
+You can also switch via `/personality <name>` slash commands in the chat input.
 
 ## Reasoning Display
 
@@ -52,3 +73,7 @@ Each assistant message shows token usage below the timestamp:
 - Input tokens sent
 - Output tokens received
 - Estimated cost
+
+## App Context Prompt
+
+When enabled (**Settings > Chat > App context prompt**), a system message is sent with each request telling the agent the user is on mobile. This helps the agent tailor responses for a mobile interface. Enabled by default.
