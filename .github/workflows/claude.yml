@@ -52,7 +52,7 @@ jobs:
       id-token: write
       actions: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 1
       - uses: anthropics/claude-code-action@v1
@@ -87,7 +87,7 @@ jobs:
       id-token: write
       actions: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - uses: anthropics/claude-code-action@v1
@@ -122,7 +122,7 @@ jobs:
       id-token: write
       actions: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 1
       - uses: anthropics/claude-code-action@v1
