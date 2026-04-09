@@ -45,9 +45,9 @@ These endpoints work on our hermes-agent v0.7.0 but are **not in the upstream so
 | `GET /api/config` | Server config (personalities, model) | No fallback — personality picker empty |
 
 **Tool call rendering paths:**
-1. **Runs API** (`/v1/runs`) — Best for tool display. Emits `tool.started`/`tool.completed` as real SSE events → rendered as ToolProgressCards.
-2. **Sessions/Chat Completions** — Tool progress injected as inline markdown (`` `💻 terminal` ``). The `ChatHandler` annotation parser detects these patterns and converts them to ToolCall objects client-side.
-3. **Annotation parser** (`ChatHandler.parseAnnotationLine`) — Fallback for any endpoint. Matches backtick-wrapped emoji+tool_name patterns. If your Hermes version uses a different format, check `adb logcat -s HermesApiClient` for raw SSE events and update the regex.
+1. **Runs API** (`/v1/runs`) — Best for tool display. Emits `tool.started`/`tool.completed` as real SSE events → rendered as ToolProgressCards in real-time.
+2. **Sessions API** (`/api/sessions/{id}/chat/stream`) — Does NOT emit structured tool events during streaming. Tool calls are stored server-side as `tool_calls` JSON on each message. On stream complete, `ChatViewModel.onCompleteCb` reloads message history via `getMessages()` → `loadMessageHistory()` to get proper message boundaries + tool call cards. This is the "session_end reload" pattern.
+3. **Annotation parser** (`ChatHandler.parseAnnotationLine` + `finalizeAnnotations`) — Fallback for servers that inject inline markdown annotations (`` `💻 terminal` ``). Parses during streaming + reconciliation pass on stream end. If your Hermes version uses a different format, check `adb logcat -s HermesApiClient` for raw SSE events and update the regex.
 
 ## Key Instructions
 - **Always verify upstream before assuming an endpoint exists.** Check `gateway/platforms/api_server.py` in hermes-agent. If an endpoint isn't there, document it as non-standard and implement a fallback.
@@ -82,7 +82,7 @@ hermes-android/                  ← Android Studio opens this root
 │   ├── skills/                  # Agent skills
 │   └── tests/
 ├── skills/                      ← Installable Hermes skills
-│   └── hermes-pairing-qr/      # QR code pairing (hermes-pair script + SKILL.md)
+│   └── hermes-pairing-qr/      # (DEPRECATED) QR pairing — use `hermes pair` from the plugin instead
 ├── docs/                        ← spec, decisions, security
 └── .github/workflows/           ← CI + release
 ```
@@ -153,8 +153,10 @@ hermes-android/                  ← Android Studio opens this root
 | `relay_server/hermes-relay.service` | Systemd unit file for persistent deployment |
 | `docs/relay-server.md` | Relay server setup, config, Docker, systemd, TLS reference |
 | `app/src/main/kotlin/.../ui/components/QrPairingScanner.kt` | QR code scanner + Hermes pairing payload parser |
-| `skills/hermes-pairing-qr/SKILL.md` | QR pairing skill for hermes-agent (install to ~/.hermes/skills/) |
-| `skills/hermes-pairing-qr/hermes-pair` | QR code generator script (install to ~/.local/bin/) |
+| `plugin/pair.py` | QR pairing logic (pure-Python, uses segno) — replaces deprecated bash script |
+| `plugin/cli.py` | Registers `hermes pair` CLI sub-command via v0.8.0 plugin CLI API |
+| `skills/hermes-pairing-qr/SKILL.md` | (DEPRECATED) QR pairing skill — use `hermes pair` from the plugin instead |
+| `skills/hermes-pairing-qr/hermes-pair` | (DEPRECATED) QR generator script — use `hermes pair` from the plugin instead |
 | `AGENTS.md` | Tool usage patterns for the `android_*` toolset |
 | `docs/mcp-tooling.md` | MCP server setup — android-tools-mcp + mobile-mcp |
 

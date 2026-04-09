@@ -2,6 +2,14 @@
 
 Hermes Relay is a native Android app for [Hermes Agent](https://hermes-agent.nousresearch.com). Chat with your agent, manage sessions, and — in future phases — control your phone via the device bridge and access a remote terminal.
 
+## Quick Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
+```
+
+This installs the server-side plugin. Grab the Android app from [GitHub Releases](https://github.com/Codename-11/hermes-relay/releases), then run `hermes pair` to generate a pairing QR. See [Installation & Setup](/guide/getting-started) for the full walkthrough.
+
 ## Connection Model
 
 ```

@@ -17,59 +17,119 @@
 </p>
 
 <p align="center">
-  <a href="https://hermes-agent.nousresearch.com">Hermes Agent</a> ·
-  <a href="docs/spec.md">Specification</a> ·
-  <a href="docs/decisions.md">Architecture Decisions</a> ·
-  <a href="CHANGELOG.md">Changelog</a>
+  <a href="https://codename-11.github.io/hermes-relay/">Documentation</a> ·
+  <a href="https://github.com/Codename-11/hermes-relay/releases">Releases</a> ·
+  <a href="CHANGELOG.md">Changelog</a> ·
+  <a href="https://hermes-agent.nousresearch.com">Hermes Agent</a>
 </p>
 
 ---
 
-## What is Hermes Relay?
+## Quick Start
 
-A native Android app for [Hermes Agent](https://github.com/NousResearch/hermes-agent). Three channels in one app:
+Two steps: install the Android app on your phone, then install the plugin on your Hermes server.
 
-| Channel | Protocol | What |
-|---------|----------|------|
-| **Chat** | HTTP/SSE | Stream conversations directly to the Hermes API Server |
-| **Terminal** | WSS | Secure remote shell access via tmux (Phase 2) |
-| **Bridge** | WSS | Agent controls the phone — taps, types, screenshots (Phase 3) |
+### 1. Install the Android app
 
-Chat connects directly to the Hermes API Server (`/api/sessions/{id}/chat/stream`). Terminal and bridge use a WebSocket relay with channel multiplexing.
+<!-- TODO: Uncomment when Play Store listing is live
+<a href="https://play.google.com/store/apps/details?id=com.hermesandroid.relay"><img src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" alt="Get it on Google Play" height="80"></a>
+-->
 
-## Server Components
+- **Google Play** — coming soon
+- **APK** — download from [GitHub Releases](https://github.com/Codename-11/hermes-relay/releases)
 
-The app talks to two server-side services. Only the first is required.
+### 2. Install the server plugin (one-liner)
 
-| Component | Required? | What |
-|-----------|-----------|------|
-| **Hermes API Server** (`:8642`) | Yes | Chat, sessions, profiles, skills. Part of `hermes gateway`. |
-| **Relay Server** (`:8767`) | Only for terminal/bridge | WSS server for interactive terminal and device bridge. |
+On the machine running your Hermes agent:
 
-```
-Phone (HTTP/SSE) --> Hermes API Server (:8642)   [chat — direct]
-Phone (WSS)      --> Relay Server (:8767)         [terminal, bridge]
+```bash
+curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
 ```
 
-Chat connects directly to the Hermes API Server — same pattern used by Open WebUI, ClawPort, and other Hermes frontends. The relay server is a separate lightweight Python service for features that need persistent bidirectional communication. See [docs/relay-server.md](docs/relay-server.md) for details.
+This installs the `hermes-android` plugin — 14 `android_*` device control tools plus the `hermes pair` CLI command. After restarting hermes, generate a pairing QR code:
+
+```bash
+hermes pair
+```
+
+Scan it from the Android app's onboarding screen and you're connected. The command also prints the server URL and API key as plain text, so you can pair manually if your terminal can't render QR blocks.
+
+**Requirements:** Android 8.0+ (SDK 26), [hermes-agent](https://github.com/NousResearch/hermes-agent) v0.8.0+ (for the `hermes pair` CLI), Python 3.11+.
+
+## What It Does
+
+Talk to your Hermes agent from anywhere. Direct API streaming, session history, tool visualization — all native on Android.
+
+| Channel | What | Status |
+|---------|------|--------|
+| **Chat** | Stream conversations to Hermes via HTTP/SSE | Available |
+| **Terminal** | Secure remote shell via tmux | Phase 2 |
+| **Bridge** | Agent controls the phone — taps, types, screenshots | Phase 3 |
 
 ## Features
 
-| Layer | Capabilities |
-|-------|-------------|
-| **Chat** | Direct API streaming (SSE), session management, auto-titles, message queuing, file attachments, personality picker, agent name on bubbles, slash command autocomplete, QR code pairing |
-| **Slash Commands** | 29 gateway commands + dynamic personality commands + server skill discovery (`GET /api/skills`). Searchable command palette with category filtering. |
-| **Personalities** | Dynamic from `GET /api/config` (`config.agent.personalities`). Picker shows server default + all configured. Agent name displayed on chat bubbles. `/personality <name>` slash commands. |
-| **Rendering** | Full markdown, syntax-highlighted code blocks (Atom theme), reasoning display, animated streaming dots |
-| **Tools** | Configurable display (Off/Compact/Detailed). Rich progress cards with type-specific icons, auto-expand/collapse, duration |
-| **Analytics** | Stats for Nerds — TTFT, completion times, token usage, peak/slowest times, health latency, stream success rates. Canvas bar charts. Reset button. |
-| **Tokens** | Per-message input/output counts and estimated cost |
-| **Animation** | ASCII morphing sphere on empty chat, ambient fullscreen mode (toggle in header), 15% opacity behind messages (toggleable). Settings: sphere on/off, behind messages on/off. |
-| **UX** | Animated splash screen, chat empty state with suggestion chips, haptic feedback, app context prompt, configurable limits (attachment size, message length) |
-| **Security** | EncryptedSharedPreferences (AES-256-GCM), HTTPS enforced, cleartext only for localhost |
-| **Connectivity** | Network monitoring, auto-reconnect, capability detection (enhanced/portable/disconnected) |
+- **Streaming chat** — Direct SSE to the Hermes API Server with real-time markdown rendering
+- **Session management** — Create, switch, rename, delete chat sessions
+- **Tool visualization** — See agent tool calls as they execute (compact or detailed cards)
+- **Personalities** — Switch between agent personalities with a picker
+- **Slash commands** — 29+ gateway commands, searchable command palette
+- **File attachments** — Send images, documents, any file type
+- **Message queuing** — Send messages while the agent is still streaming
+- **Analytics** — Stats for Nerds with TTFT, token usage, stream health
+- **Security** — Encrypted local storage (AES-256-GCM), HTTPS enforced
+- **QR pairing** — Scan a QR code to auto-configure your server connection
 
-## Repository Structure
+## Getting Started
+
+1. **Install the app** from the link above
+2. **Enter your Hermes server URL** (e.g. `http://192.168.1.100:8642`) during onboarding
+3. **Start chatting** — the app connects directly to the Hermes API Server
+
+For detailed setup, server configuration, and feature guides, see the **[full documentation](https://codename-11.github.io/hermes-relay/)**.
+
+## How It Works
+
+```
+Phone (HTTP/SSE) --> Hermes API Server (:8642)   [chat — direct]
+Phone (WSS)      --> Relay Server (:8767)         [terminal, bridge — future]
+```
+
+Chat connects directly to the Hermes API Server — same pattern used by Open WebUI and other Hermes frontends. The relay server is a separate lightweight Python service for terminal and bridge channels (coming in Phase 2/3).
+
+## Documentation
+
+| | |
+|---|---|
+| **[User Guide](https://codename-11.github.io/hermes-relay/)** | **Getting started, features, configuration — start here** |
+| [Architecture](https://codename-11.github.io/hermes-relay/architecture/) | How the app works under the hood |
+| [API Reference](https://codename-11.github.io/hermes-relay/reference/api.html) | Hermes API endpoints used by the app |
+| [Specification](docs/spec.md) | Full spec — protocol, UI, phases, dependencies |
+| [Architecture Decisions](docs/decisions.md) | ADRs — framework, channels, auth, terminal |
+| [Changelog](CHANGELOG.md) | Release history |
+
+---
+
+## Development
+
+### Quick Start
+
+1. **File > Open** the repo root in Android Studio
+2. Wait for Gradle sync
+3. **Run** (Shift+F10) to deploy to emulator or device
+
+### Dev Scripts
+
+```bash
+scripts/dev.bat build      # Build debug APK
+scripts/dev.bat release    # Build signed release APK
+scripts/dev.bat bundle     # Build release AAB for Google Play
+scripts/dev.bat run        # Build + install + launch + logcat
+scripts/dev.bat test       # Run unit tests
+scripts/dev.bat version    # Show current version
+scripts/dev.bat relay      # Start relay server (dev, no TLS)
+```
+
+### Repository Structure
 
 ```
 hermes-relay/
@@ -84,43 +144,18 @@ hermes-relay/
 └── gradle/                    # Wrapper (8.13) + version catalog
 ```
 
-## Quick Start
+### Tech Stack
 
-### Open in Android Studio
+| Component | Stack |
+|-----------|-------|
+| **Android App** | Kotlin 2.0, Jetpack Compose, Material 3, OkHttp |
+| **Relay Server** | Python 3.11+, aiohttp |
+| **Serialization** | kotlinx.serialization |
+| **Build** | AGP 9, Gradle 8.13, JVM toolchain 17 |
+| **CI/CD** | GitHub Actions (lint, build, test, APK artifact) |
+| **Min SDK** | 26 (Android 8.0) / Target SDK 35 |
 
-1. **File > Open** the repo root
-2. Wait for Gradle sync
-3. **Run** (Shift+F10) to deploy to emulator or device
-
-### Dev Scripts
-
-```bash
-scripts/dev.bat build      # Build debug APK
-scripts/dev.bat release    # Build signed release APK
-scripts/dev.bat bundle     # Build release AAB for Google Play
-scripts/dev.bat run        # Build + install + launch + logcat
-scripts/dev.bat test       # Run unit tests
-scripts/dev.bat version    # Show current version
-scripts/dev.bat relay      # Start relay server (dev, no TLS)
-scripts/dev.bat devices    # List connected devices
-scripts/dev.bat wireless   # Pair for wireless debugging
-```
-
-### Android Studio Workflow
-
-| Action | Shortcut | What it does | Wipes data? |
-|--------|----------|-------------|-------------|
-| **Gradle Sync** | Toolbar elephant icon | Reads `build.gradle.kts` + `libs.versions.toml`, resolves dependencies. No compilation. | No |
-| **Assemble** | Build > Make Project | Compile → DEX → package APK. Does not deploy. | No |
-| **Run** | Shift+F10 | Assemble + install + launch on device/emulator | No (upgrade install) |
-| **Apply Changes** | Ctrl+F10 | Hot-patch changed code, restart Activity. ViewModels survive. | No |
-| **Apply Code Changes** | Ctrl+Shift+F10 | Patch method bodies only, no restart | No |
-
-To **wipe app data**: emulator app icon long-press > App Info > Storage > Clear Data, or `adb shell pm clear com.hermesandroid.relay`.
-
-**Versioning** lives in `gradle/libs.versions.toml` (`appVersionName`, `appVersionCode`) — the single source of truth read by `build.gradle.kts`.
-
-### Relay Server (optional — for terminal/bridge)
+### Relay Server (optional — terminal/bridge only)
 
 ```bash
 pip install aiohttp pyyaml && python -m relay_server --no-ssl
@@ -132,73 +167,19 @@ Or with Docker:
 docker build -t hermes-relay relay_server/ && docker run -d --network host --name hermes-relay hermes-relay
 ```
 
-Or as a systemd service:
+See [docs/relay-server.md](docs/relay-server.md) for TLS, systemd, and full setup.
 
-```bash
-sudo cp relay_server/hermes-relay.service /etc/systemd/system/
-sudo systemctl enable --now hermes-relay
-```
+### Hermes Plugin (for contributors)
 
-See [docs/relay-server.md](docs/relay-server.md) for TLS, configuration, and full setup.
-
-### QR Code Pairing (optional)
-
-Generate a QR code on your server that the app can scan to auto-configure:
-
-```bash
-# Install the skill + script
-cp -r skills/hermes-pairing-qr ~/.hermes/skills/hermes-pairing-qr
-cp skills/hermes-pairing-qr/hermes-pair ~/.local/bin/hermes-pair
-chmod +x ~/.local/bin/hermes-pair
-sudo apt install qrencode
-
-# Generate QR
-hermes-pair
-```
-
-Scan it in the app (Settings > Scan QR, or during onboarding). See [skills/hermes-pairing-qr/SKILL.md](skills/hermes-pairing-qr/SKILL.md) for details.
-
-### Hermes Plugin (optional — for bridge/device control)
+End users should install via the [one-liner](#2-install-the-server-plugin-one-liner) at the top. For local development from a clone:
 
 ```bash
 cp -r plugin ~/.hermes/plugins/hermes-android
-# Restart hermes — /plugins should show: hermes-android (14 tools)
+# Or symlink for live edits:
+ln -s "$PWD/plugin" ~/.hermes/plugins/hermes-android
 ```
 
-## Tech Stack
-
-| Component | Stack |
-|-----------|-------|
-| **Android App** | Kotlin 2.0, Jetpack Compose, Material 3, OkHttp |
-| **Relay Server** | Python 3.11+, aiohttp |
-| **Serialization** | kotlinx.serialization |
-| **Build** | AGP 8.13, Gradle 8.13, JVM toolchain 17 |
-| **CI/CD** | GitHub Actions (lint, build, test, APK artifact) |
-| **Min SDK** | 26 (Android 8.0) / Target SDK 35 |
-
-## Current State — v0.1.0
-
-| Phase | Status | Scope |
-|-------|--------|-------|
-| **Phase 0** | Complete | Compose scaffold, WSS connection, channel multiplexer, auth, splash screen |
-| **Phase 1** | Complete | Direct API chat, sessions, markdown, tools, personalities, slash commands, command palette, analytics, QR pairing, tool display config |
-| **Phase 2** | Next | Terminal channel (xterm.js + tmux) |
-| **Phase 3** | Next | Bridge channel (AccessibilityService) |
-
-See [docs/spec.md](docs/spec.md) for the full specification and [docs/decisions.md](docs/decisions.md) for architecture rationale.
-
-## Documentation
-
-| | |
-|---|---|
-| [Specification](docs/spec.md) | Full spec — protocol, UI, phases, dependencies |
-| [Architecture Decisions](docs/decisions.md) | ADRs — framework, channels, auth, terminal |
-| [Relay Server](docs/relay-server.md) | Setup, config, Docker, systemd — everything for the relay |
-| [Upstream Contributions](docs/upstream-contributions.md) | Potential improvements to propose to hermes-agent |
-| [Security](docs/security.md) | Auth flow, encryption, network security |
-| [Privacy](docs/privacy.md) | Data handling, local storage, no telemetry |
-| [Changelog](CHANGELOG.md) | Release history |
-| [Dev Log](DEVLOG.md) | Session-by-session development notes |
+Then restart hermes and run `hermes pair` to test the CLI command. The 14 `android_*` tools register regardless of hermes-agent version; the `hermes pair` CLI requires v0.8.0+.
 
 ## Hermes Agent
 

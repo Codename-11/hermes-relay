@@ -3,7 +3,44 @@
 ## Prerequisites
 
 - Android device or emulator (API 26+ / Android 8.0+)
-- A running [Hermes Agent](https://hermes-agent.nousresearch.com) instance with the API server enabled
+- A running [Hermes Agent](https://hermes-agent.nousresearch.com) instance (v0.8.0+ recommended) with the API server enabled
+- Python 3.11+ on the server (for the pairing plugin)
+
+## Quick Start
+
+Three commands get you from zero to connected:
+
+### 1. Install the Android app
+
+Download the latest APK from [GitHub Releases](https://github.com/Codename-11/hermes-relay/releases), or wait for the Play Store listing.
+
+### 2. Install the server plugin
+
+On the machine running your Hermes agent:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
+```
+
+This installs the `hermes-android` plugin into `~/.hermes/plugins/hermes-android` and pulls in its Python dependencies (`requests`, `aiohttp`, `segno`). Restart hermes to load it.
+
+::: tip What you get
+The plugin registers **14 `android_*` device control tools** (tap, type, read screen, screenshot, open apps, etc.) plus the **`hermes pair` CLI command** for generating pairing QR codes. No separate skill install, no `qrencode` binary needed.
+:::
+
+### 3. Pair your phone
+
+On the server, run:
+
+```bash
+hermes pair
+```
+
+This prints a QR code **and** the plain-text connection details (server URL, API key). Scan the QR from the app's onboarding screen — or type the URL and key in manually if your terminal can't render QR blocks. The text fallback is always shown, so this works even inside Hermes's Rich TUI panel and over SSH sessions with limited charsets.
+
+::: warning Security
+The QR code contains your API key in plaintext. Don't screenshot or share it. The terminal output is equally sensitive.
+:::
 
 ## Hermes Server Setup
 
@@ -17,60 +54,32 @@ API_SERVER_PORT=8642
 ```
 
 ::: tip API key is optional for local setups
-If you're running Hermes on the same machine (or connecting via `localhost`), you can leave `API_SERVER_KEY` unset. The key is only needed when exposing the API server over the network. If you do set one, you'll enter the same value in the app during onboarding.
+If you're running Hermes on the same machine (or connecting via `localhost`), you can leave `API_SERVER_KEY` unset. The key is only needed when exposing the API server over the network. If you do set one, `hermes pair` reads it automatically.
 :::
 
-## Install the App
+## Manual Install (from source)
 
-### From Source
+If you prefer to build the app yourself:
 
 ```bash
 git clone https://github.com/Codename-11/hermes-relay.git
 cd hermes-relay
 scripts/dev.bat build    # Build debug APK
-scripts/dev.bat run      # Build + install + launch
+scripts/dev.bat run      # Build + install + launch (requires connected device)
 ```
 
-### From Release
+## Manual Pairing
 
-Download the latest APK from [GitHub Releases](https://github.com/Codename-11/hermes-relay/releases).
-
-## First Launch
+If you don't want to use QR pairing, you can enter connection details by hand during the app's onboarding flow:
 
 1. The app opens with an onboarding flow
-2. On the **Connect** page, either:
-   - **Scan a QR code** — tap "Scan QR Code" and point at a Hermes pairing QR (see below)
-   - **Enter manually** — type your API Server URL (e.g., `http://192.168.1.100:8642`) and API Key
-3. Tap **Test Connection** to verify
-4. Optionally enter a **Relay URL** for future Bridge/Terminal features
-5. Tap **Get Started**
+2. On the **Connect** page, tap **Enter manually**
+3. Type your API Server URL (e.g., `http://192.168.1.100:8642`) and API Key
+4. Tap **Test Connection** to verify
+5. Optionally enter a **Relay URL** for future Bridge/Terminal features
+6. Tap **Get Started**
 
-### QR Code Pairing (Recommended)
-
-The fastest way to connect. On your Hermes server, run:
-
-```bash
-hermes-pair
-```
-
-This generates a QR code in your terminal containing your server URL and API key. Scan it with the app to auto-fill everything.
-
-::: tip Install the pairing skill
-If `hermes-pair` isn't available, install it from the hermes-relay repo:
-```bash
-cp skills/hermes-pairing-qr/hermes-pair ~/.local/bin/hermes-pair
-chmod +x ~/.local/bin/hermes-pair
-sudo apt install qrencode
-```
-Or install the full skill so your agent can generate QR codes on demand:
-```bash
-cp -r skills/hermes-pairing-qr ~/.hermes/skills/hermes-pairing-qr
-```
-:::
-
-::: warning Security
-The QR code contains your API key in plaintext. Don't screenshot or share it.
-:::
+The `hermes pair` command always prints these same values as plain text alongside the QR code, so you can copy them directly.
 
 ## Relay Server (Optional)
 
