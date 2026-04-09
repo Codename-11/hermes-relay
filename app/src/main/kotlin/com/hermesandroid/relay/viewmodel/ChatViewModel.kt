@@ -385,7 +385,10 @@ class ChatViewModel : ViewModel() {
 
         // Shared callbacks for both endpoints
         val onMessageStartedCb = { serverMsgId: String ->
-            // Server assigned a new message ID for this turn — update tracking
+            // Replace the placeholder's ID so subsequent deltas/tool calls attach
+            // to it instead of creating a duplicate orphan bubble with streaming dots.
+            // Only replaces empty+streaming messages (the placeholder), not completed turns.
+            handler.replaceMessageId(currentMessageId, serverMsgId)
             currentMessageId = serverMsgId
         }
         val onTextDeltaCb = { delta: String ->
@@ -415,7 +418,21 @@ class ChatViewModel : ViewModel() {
             handler.onStreamComplete(currentMessageId)
             AppAnalytics.onStreamComplete(lastInputTokens, lastOutputTokens)
             activeStream = null
-            drainQueue()
+
+            // Sessions endpoint doesn't emit structured tool events during streaming —
+            // tool calls are only available as JSON on the stored messages. Reload the
+            // server-authoritative history to get proper message boundaries + tool_calls.
+            val sid = handler.currentSessionId.value
+            if (sid != null && streamingEndpoint == "sessions") {
+                viewModelScope.launch {
+                    val serverMessages = client.getMessages(sid)
+                    handler.loadMessageHistory(serverMessages)
+                    drainQueue()
+                }
+                Unit
+            } else {
+                drainQueue()
+            }
         }
         val onUsageCb = { usage: UsageInfo? ->
             if (usage != null) {

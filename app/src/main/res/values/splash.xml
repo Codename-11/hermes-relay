@@ -2,8 +2,9 @@
 <resources>
     <style name="Theme.HermesRelay.Splash" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/dark_background</item>
-        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icon_animated</item>
-        <item name="windowSplashScreenIconBackgroundColor">@color/splash_icon_bg</item>
+        <!-- Blank icon — system splash is just dark screen, sphere intro handles branding -->
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_blank</item>
+        <item name="windowSplashScreenIconBackgroundColor">@color/dark_background</item>
         <item name="postSplashScreenTheme">@style/Theme.HermesRelay</item>
     </style>
 </resources>

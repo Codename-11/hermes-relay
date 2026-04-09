@@ -191,8 +191,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     // Parse tool annotations from text markers toggle
     val parseToolAnnotations: StateFlow<Boolean> = application.relayDataStore.data
-        .map { it[KEY_PARSE_TOOL_ANNOTATIONS] ?: true }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+        .map { it[KEY_PARSE_TOOL_ANNOTATIONS] ?: false }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     fun setParseToolAnnotations(enabled: Boolean) {
         viewModelScope.launch {

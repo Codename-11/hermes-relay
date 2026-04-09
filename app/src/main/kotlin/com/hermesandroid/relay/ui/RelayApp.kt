@@ -1,9 +1,23 @@
 package com.hermesandroid.relay.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Code
@@ -36,7 +50,9 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.hermesandroid.relay.ui.components.MorphingSphere
 import com.hermesandroid.relay.ui.components.WhatsNewDialog
+import kotlinx.coroutines.delay
 import com.hermesandroid.relay.ui.onboarding.OnboardingScreen
 import com.hermesandroid.relay.ui.screens.BridgeScreen
 import com.hermesandroid.relay.ui.screens.ChatScreen
@@ -130,6 +146,13 @@ fun RelayApp() {
     val themePreference by connectionViewModel.theme.collectAsState()
 
     HermesRelayTheme(themePreference = themePreference) {
+        // Brief sphere intro after system splash fades
+        var introComplete by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) {
+            delay(3000L) // show sphere intro for 3s
+            introComplete = true
+        }
+
         val navController = rememberNavController()
 
         val startDestination = if (onboardingCompleted) Screen.Chat.route else Screen.Onboarding.route
@@ -138,12 +161,16 @@ fun RelayApp() {
         val isOnboarding = navBackStackEntry?.destination?.route == Screen.Onboarding.route
 
         val isDarkTheme = isSystemInDarkTheme()
+        val density = LocalDensity.current
+        val imeBottom = WindowInsets.ime.getBottom(density)
+        val isKeyboardVisible = imeBottom > 0
 
+        Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
-            contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0),
+            contentWindowInsets = WindowInsets(0),
             bottomBar = {
-                if (!isOnboarding) {
+                if (!isOnboarding && !isKeyboardVisible) {
                     NavigationBar(
                         containerColor = if (isDarkTheme) {
                             Color(0xFF1A1A2E).copy(alpha = 0.9f)
@@ -252,5 +279,44 @@ fun RelayApp() {
                 }
             }
         }
+
+        // Sphere intro overlay — fades out after 1.5s to reveal main UI
+        AnimatedVisibility(
+            visible = !introComplete && onboardingCompleted,
+            enter = fadeIn(tween(300)),
+            exit = fadeOut(tween(600))
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF1A1A2E)),
+                contentAlignment = Alignment.Center
+            ) {
+                // Sphere fills background
+                MorphingSphere(modifier = Modifier.fillMaxSize())
+
+                // Branding overlaid at bottom third
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 120.dp)
+                ) {
+                    Text(
+                        text = "Hermes Relay",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = Color.White.copy(alpha = 0.9f)
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "agent interface",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.5f),
+                        letterSpacing = 2.sp
+                    )
+                }
+            }
+        }
+        } // end Box
     }
 }

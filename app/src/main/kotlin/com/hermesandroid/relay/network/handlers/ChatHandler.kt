@@ -61,7 +61,7 @@ class ChatHandler {
     }
 
     /** Whether to parse tool annotations from assistant text (for servers that don't emit tool events). */
-    var parseToolAnnotations: Boolean = true
+    var parseToolAnnotations: Boolean = false
 
     /** Active personality/agent name — set by ChatViewModel before each stream. Included on new assistant messages. */
     var activeAgentName: String? = null
@@ -118,6 +118,21 @@ class ChatHandler {
 
     fun clearMessages() {
         _messages.value = emptyList()
+    }
+
+    /**
+     * Replace a placeholder message's ID with the server-assigned ID.
+     * Only acts on empty, streaming messages to avoid renaming completed turns
+     * during multi-turn agent runs.
+     */
+    fun replaceMessageId(oldId: String, newId: String) {
+        _messages.update { messages ->
+            messages.map { msg ->
+                if (msg.id == oldId && msg.content.isBlank() && msg.isStreaming) {
+                    msg.copy(id = newId)
+                } else msg
+            }
+        }
     }
 
     fun clearError() {
@@ -560,6 +575,94 @@ class ChatHandler {
         keysToRemove.forEach { activeAnnotationTools.remove(it) }
     }
 
+    /**
+     * Post-stream reconciliation: re-scan the final message content for any
+     * annotation text that survived the real-time stripping (due to
+     * update-ordering races between onTextDelta and stripLineFromContent).
+     *
+     * Also marks any still-active annotation tool calls as completed, since
+     * the stream is over and they'll never get a closing annotation.
+     *
+     * This is the "session_end hook" — called once from [onStreamComplete].
+     */
+    private fun finalizeAnnotations(messageId: String) {
+        _messages.update { messages ->
+            messages.map { msg ->
+                if (msg.id != messageId || msg.role != MessageRole.ASSISTANT) return@map msg
+
+                val existingToolNames = msg.toolCalls.map { it.name }.toSet()
+                val newToolCalls = mutableListOf<ToolCall>()
+                var cleaned = msg.content
+
+                // Re-scan every line for annotation patterns that weren't stripped
+                for (rawLine in msg.content.lines()) {
+                    val trimmed = rawLine.trim()
+                    if (trimmed.isEmpty()) continue
+
+                    val toolName = matchAnnotationToolName(trimmed) ?: continue
+
+                    // Strip the raw line (preserving surrounding structure)
+                    cleaned = cleaned
+                        .replace("\n$rawLine\n", "\n")
+                        .replace("\n$rawLine", "")
+                        .replace("$rawLine\n", "")
+                        .replace(rawLine, "")
+
+                    // If no tool call was created during streaming, add one now
+                    if (toolName !in existingToolNames &&
+                        newToolCalls.none { it.name == toolName }
+                    ) {
+                        newToolCalls.add(
+                            ToolCall(
+                                id = "finalized-${toolName.replace(" ", "_")}-${System.currentTimeMillis()}",
+                                name = toolName,
+                                args = null,
+                                result = null,
+                                success = true,
+                                isComplete = true
+                            )
+                        )
+                    }
+                }
+
+                // Mark any in-progress annotation tool calls as completed
+                // (the stream ended, so they'll never get a closing annotation)
+                val reconciledCalls = msg.toolCalls.map { call ->
+                    if (!call.isComplete && call.id?.startsWith("annotation-") == true) {
+                        call.copy(success = true, isComplete = true, completedAt = System.currentTimeMillis())
+                    } else call
+                }
+
+                val finalCalls = reconciledCalls + newToolCalls
+                val finalContent = cleaned.trim()
+
+                if (finalCalls == msg.toolCalls && finalContent == msg.content) return@map msg
+                msg.copy(content = finalContent, toolCalls = finalCalls)
+            }
+        }
+    }
+
+    /**
+     * Extract the tool name from an annotation line, regardless of whether
+     * it's a start, complete, or failure annotation. Returns null if the
+     * line doesn't match any annotation pattern.
+     */
+    private fun matchAnnotationToolName(line: String): String? {
+        toolAnnotationBacktickRegex.find(line)?.let {
+            return it.groupValues[2].trim().ifEmpty { null }
+        }
+        toolAnnotationVerboseStartRegex.find(line)?.let {
+            return it.groupValues[2].trim().ifEmpty { null }
+        }
+        toolAnnotationVerboseCompleteRegex.find(line)?.let {
+            return it.groupValues[2].trim().ifEmpty { null }
+        }
+        toolAnnotationVerboseFailedRegex.find(line)?.let {
+            return it.groupValues[2].trim().ifEmpty { null }
+        }
+        return null
+    }
+
     fun onToolCallStart(messageId: String, toolCallId: String, toolName: String) {
         _isStreaming.value = true
 
@@ -667,6 +770,11 @@ class ChatHandler {
                 }
             }
         }
+
+        // Clean up any surviving annotation text from this turn
+        if (parseToolAnnotations) {
+            finalizeAnnotations(messageId)
+        }
         // Note: do NOT set _isStreaming to false — the run is still active
     }
 
@@ -691,6 +799,12 @@ class ChatHandler {
                     msg
                 }
             }
+        }
+
+        // Post-stream reconciliation: re-scan final content for any annotation
+        // text that survived real-time stripping (update-ordering races)
+        if (parseToolAnnotations) {
+            finalizeAnnotations(messageId)
         }
     }
 

@@ -426,7 +426,7 @@ fun SettingsScreen(
                             }
                             Text(
                                 text = if (isSessionsMode) {
-                                    "Detect tool usage from text markers when server doesn't send tool events"
+                                    "Detect tool usage from text markers. May delay message display until stream completes."
                                 } else {
                                     "Only available in Sessions mode — Runs already provides structured tool events"
                                 },
@@ -1070,16 +1070,16 @@ fun SettingsScreen(
                             modifier = Modifier.weight(1f)
                         ) {
                             Icon(
-                                imageVector = Icons.Outlined.Code,
+                                painter = painterResource(R.drawable.ic_github),
                                 contentDescription = null,
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.size(6.dp))
-                            Text("Source")
+                            Text("GitHub")
                         }
                         OutlinedButton(
                             onClick = {
-                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://hermes-agent.nousresearch.com"))
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://codename-11.github.io/hermes-relay/"))
                                 context.startActivity(intent)
                             },
                             modifier = Modifier.weight(1f)
@@ -1090,7 +1090,27 @@ fun SettingsScreen(
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.size(6.dp))
-                            Text("Docs")
+                            Text("App Docs")
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://hermes-agent.nousresearch.com"))
+                                context.startActivity(intent)
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Code,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.size(6.dp))
+                            Text("Hermes Docs")
                         }
                     }
 

@@ -86,6 +86,8 @@ import com.hermesandroid.relay.ui.theme.radialNavyBackground
 import com.hermesandroid.relay.network.ChatMode
 import com.hermesandroid.relay.network.ConnectivityObserver
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.fadeIn
@@ -112,6 +114,7 @@ import com.hermesandroid.relay.ui.components.CompactToolCall
 import com.hermesandroid.relay.ui.components.InlineAutocomplete
 import com.hermesandroid.relay.ui.components.MessageBubble
 import com.hermesandroid.relay.ui.components.MorphingSphere
+import com.hermesandroid.relay.ui.components.SphereState
 import com.hermesandroid.relay.ui.components.PersonalityPicker
 import com.hermesandroid.relay.ui.components.SessionDrawerContent
 import com.hermesandroid.relay.ui.components.SlashCommand
@@ -119,6 +122,7 @@ import com.hermesandroid.relay.ui.components.StreamingDots
 import com.hermesandroid.relay.ui.components.ToolProgressCard
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private const val DEFAULT_CHAR_LIMIT = 4096
@@ -157,6 +161,43 @@ fun ChatScreen(
     val animationEnabled by connectionViewModel.animationEnabled.collectAsState()
     val animationBehindChat by connectionViewModel.animationBehindChat.collectAsState()
     var ambientMode by remember { mutableStateOf(false) } // fullscreen sphere, hides chat
+
+    // Sphere state with debounced Thinking→Streaming (min 1.5s in Thinking)
+    val rawSphereState by remember {
+        derivedStateOf {
+            when {
+                error != null -> SphereState.Error
+                isStreaming -> {
+                    val lastMsg = messages.lastOrNull()
+                    if (lastMsg?.isThinkingStreaming == true) SphereState.Thinking
+                    else SphereState.Streaming
+                }
+                else -> SphereState.Idle
+            }
+        }
+    }
+    var sphereState by remember { mutableStateOf(SphereState.Idle) }
+    LaunchedEffect(rawSphereState) {
+        if (sphereState == SphereState.Thinking && rawSphereState == SphereState.Streaming) {
+            delay(1500L) // hold Thinking for minimum 1.5s
+        }
+        sphereState = rawSphereState
+    }
+
+    // Streaming intensity: ramps up when streaming, decays when idle
+    val streamingIntensity by animateFloatAsState(
+        targetValue = if (isStreaming) 0.7f else 0f,
+        animationSpec = tween(if (isStreaming) 1000 else 2000),
+        label = "streamIntensity"
+    )
+
+    // Tool call burst: spikes on active tool calls, slow decay
+    val hasActiveToolCalls = messages.lastOrNull()?.toolCalls?.any { !it.isComplete } == true
+    val toolCallBurst by animateFloatAsState(
+        targetValue = if (hasActiveToolCalls) 1f else 0f,
+        animationSpec = tween(if (hasActiveToolCalls) 200 else 1200),
+        label = "toolBurst"
+    )
 
     var inputText by remember { mutableStateOf("") }
     var showCommandPalette by remember { mutableStateOf(false) }
@@ -541,7 +582,12 @@ fun ChatScreen(
                         .fillMaxWidth(),
                     contentAlignment = Alignment.Center
                 ) {
-                    MorphingSphere(modifier = Modifier.fillMaxSize())
+                    MorphingSphere(
+                        modifier = Modifier.fillMaxSize(),
+                        state = sphereState,
+                        intensity = streamingIntensity,
+                        toolCallBurst = toolCallBurst
+                    )
                 }
             }
             // Message list or empty state
@@ -572,7 +618,12 @@ fun ChatScreen(
                                     .aspectRatio(1f)
                                     .weight(0.7f, fill = false)
                             ) {
-                                MorphingSphere(modifier = Modifier.fillMaxSize())
+                                MorphingSphere(
+                                    modifier = Modifier.fillMaxSize(),
+                                    state = if (error != null) SphereState.Error else SphereState.Idle,
+                                    intensity = streamingIntensity,
+                                    toolCallBurst = toolCallBurst
+                                )
                             }
 
                             Spacer(modifier = Modifier.height(8.dp))
@@ -632,7 +683,10 @@ fun ChatScreen(
                         MorphingSphere(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .alpha(0.15f)
+                                .alpha(0.65f),
+                            state = sphereState,
+                            intensity = streamingIntensity,
+                            toolCallBurst = toolCallBurst
                         )
                     }
 
