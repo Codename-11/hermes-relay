@@ -38,6 +38,7 @@ export default defineConfig({
       { text: 'Architecture', link: '/architecture/' },
       { text: 'Reference', link: '/reference/api' },
       { text: 'GitHub', link: 'https://github.com/NousResearch/hermes-agent' },
+      { text: 'Privacy', link: '/privacy' },
     ],
 
     sidebar: {
