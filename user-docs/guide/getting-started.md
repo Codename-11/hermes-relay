@@ -16,7 +16,7 @@ Three commands get you from zero to connected:
 
 ### 1. Install the Android app
 
-Download the latest APK from [GitHub Releases](https://github.com/Codename-11/hermes-relay/releases), or wait for the Play Store listing.
+Download the latest APK from [GitHub Releases](https://github.com/Codename-11/hermes-relay/releases/latest), or wait for the Play Store listing. See [Sideload APK](#sideload-apk) below for step-by-step install and integrity-verification instructions.
 
 ### 2. Install the server plugin
 
@@ -60,6 +60,68 @@ API_SERVER_PORT=8642
 ::: tip API key is optional for local setups
 If you're running Hermes on the same machine (or connecting via `localhost`), you can leave `API_SERVER_KEY` unset. The key is only needed when exposing the API server over the network. If you do set one, `hermes pair` reads it automatically.
 :::
+
+## Sideload APK
+
+If you'd rather not use Google Play, you can install the signed APK directly from GitHub Releases. This works on any Android 8.0+ device.
+
+### 1. Download the APK
+
+Head to [github.com/Codename-11/hermes-relay/releases/latest](https://github.com/Codename-11/hermes-relay/releases/latest) and grab **`app-release.apk`** from the assets list.
+
+::: warning Download the .apk, not the .aab
+Each release also ships an `app-release.aab` file. That's the Android App Bundle format Google Play uses internally — it **won't install directly** on your device. Always pick `app-release.apk` for sideloading.
+:::
+
+### 2. Allow installs from your browser (first time only)
+
+Android blocks APKs from unknown sources by default. Before the install prompt appears, you'll need to grant permission to whichever app you used to download the file (usually Chrome, Firefox, or your Files app):
+
+- **Settings → Apps → Special app access → Install unknown apps**
+- Pick the browser or file manager you downloaded the APK with
+- Toggle **Allow from this source**
+
+The exact wording varies by OEM (Samsung calls it "Install unknown apps", Pixel calls it "Install unknown apps", older versions use "Security → Unknown sources"), but the idea is the same.
+
+### 3. Install it
+
+Open the downloaded APK from your Downloads notification or the Files app, then tap **Install**. The first launch will walk you through onboarding and pairing.
+
+### 4. Verify integrity (optional but recommended)
+
+Every release ships a `SHA256SUMS.txt` file alongside the APK. Compare the checksum of your download against it before installing:
+
+**macOS / Linux / Git Bash:**
+
+```bash
+sha256sum app-release.apk
+# Compare the output against the matching line in SHA256SUMS.txt
+```
+
+**Windows PowerShell:**
+
+```powershell
+Get-FileHash -Algorithm SHA256 app-release.apk
+# Compare the Hash column against the matching line in SHA256SUMS.txt
+```
+
+If the hashes don't match, **don't install** — redownload and try again.
+
+### 5. Verify the signing certificate (advanced)
+
+The APK is signed with the Codename-11 release keystore. If you want to confirm the signature matches the one Google Play pins to the app, check the SHA256 fingerprint of the certificate:
+
+- **Subject:** `CN=Bailey Dixon, Codename-11`
+- **SHA256 fingerprint:**
+  ```
+  A9:A4:2D:94:20:8B:94:B3:68:5B:01:93:E3:94:9B:90:50:AD:80:60:56:E7:16:3C:FC:E5:11:AF:68:0D:79:4B
+  ```
+
+You can inspect it yourself with:
+
+```bash
+keytool -printcert -jarfile app-release.apk
+```
 
 ## Manual Install (from source)
 

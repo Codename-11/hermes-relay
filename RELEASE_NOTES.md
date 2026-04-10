@@ -2,6 +2,13 @@
 
 First release — a native Android client for the Hermes agent platform with direct API chat, session management, and a full Material 3 Compose UI.
 
+## Download
+
+- **Most people**: grab **`app-release.apk`** below and sideload it. See the [sideload guide](https://codename-11.github.io/hermes-relay/guide/getting-started.html#sideload-apk) for step-by-step instructions.
+- **Google Play users**: the app is currently on Internal testing — production rollout coming soon.
+- **`app-release.aab`** is the Google Play format — *not* installable directly. It's here for auditors who want to cross-reference what's on Play Store.
+- **Verify integrity** with `SHA256SUMS.txt` before installing.
+
 ## Highlights
 
 - **Direct API chat** — connects to your Hermes API Server via SSE streaming
@@ -20,10 +27,6 @@ First release — a native Android client for the Hermes agent platform with dir
 - **Configurable limits** — adjustable attachment size and message length in Settings
 - **In-app analytics** — Stats for Nerds with response times, token usage, peak times, reset
 
-## Install
-
-Download from Google Play or install the APK from the release assets below.
-
 ## Requirements
 
 - Android 8.0+ (API 26)
@@ -36,6 +39,6 @@ Download from Google Play or install the APK from the release assets below.
 - Push notifications
 - Agent-initiated image rendering (MEDIA: tags)
 
-## Feedback
+## Found a bug? Let us know!
 
-- Issues: https://github.com/Codename-11/hermes-relay/issues
+This is an indie project and every report helps. If something feels off, broken, or just weird, [open an issue](https://github.com/Codename-11/hermes-relay/issues/new) — we read every one.

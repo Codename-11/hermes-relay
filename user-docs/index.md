@@ -11,7 +11,7 @@ hero:
       link: /guide/getting-started
     - theme: alt
       text: View on GitHub
-      link: https://github.com/NousResearch/hermes-agent
+      link: https://github.com/Codename-11/hermes-relay
 
 features:
   - icon:

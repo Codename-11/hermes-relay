@@ -20,7 +20,7 @@ export default {
           h('hr'),
           h('p', {
             innerHTML:
-              `<strong>[?]</strong> <a href="https://github.com/NousResearch/hermes-agent/discussions">Questions</a> · <strong>[!]</strong> <a href="https://github.com/NousResearch/hermes-agent/issues/new">Report Issue</a> · <strong>[+]</strong> <a href="${withBase('/guide/getting-started')}">Get Started</a>`,
+              `<strong>[?]</strong> <a href="https://github.com/Codename-11/hermes-relay/discussions">Ask a Question</a> · <strong>[!]</strong> <a href="https://github.com/Codename-11/hermes-relay/issues/new">Found a Bug?</a> · <strong>[+]</strong> <a href="${withBase('/guide/getting-started')}">Get Started</a>`,
           }),
         ]),
     });

@@ -161,7 +161,10 @@ scripts\dev.bat version
 ### 2. Update release notes and changelog
 
 - `RELEASE_NOTES.md` — body of the GitHub Release for this version
-  (rewritten each release; the workflow uses this as-is).
+  (rewritten each release; the workflow uses this as-is). Keep the
+  **Download** section near the top — it tells users to grab
+  `app-release.apk` (not the `.aab`) and links to the sideload guide.
+  The v0.1.0 body is a good template.
 - `CHANGELOG.md` — cumulative history; append a new section.
 
 ### 3. Build and verify locally
@@ -239,6 +242,17 @@ Promote via the Play Console UI or `gradlew promoteReleaseArtifact`.
 ### 7. After release
 
 - Verify the GitHub Release has APK, AAB, and `SHA256SUMS.txt` attached.
+- Confirm the release body includes the **Download** section that tells
+  users which asset to grab. If you kept the structure from
+  `RELEASE_NOTES.md` this will already be baked in. If for some reason
+  it's missing, edit the body with:
+  ```bash
+  gh release view vX.Y.Z --repo Codename-11/hermes-relay --json body --jq .body > /tmp/body.md
+  # edit /tmp/body.md to add/fix the Download section
+  gh release edit vX.Y.Z --repo Codename-11/hermes-relay --notes-file /tmp/body.md
+  ```
+  (This step was only needed as a retrofit for v0.1.0 — v0.1.1+ inherit
+  the Download section automatically from `RELEASE_NOTES.md`.)
 - Confirm Play Console shows the new versionCode on the target track.
 - Update `DEVLOG.md` with a short entry for the release.
 

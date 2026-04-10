@@ -50,7 +50,7 @@ export default defineConfig({
       { text: 'Features', link: '/features/' },
       { text: 'Architecture', link: '/architecture/' },
       { text: 'Reference', link: '/reference/api' },
-      { text: 'GitHub', link: 'https://github.com/NousResearch/hermes-agent' },
+      { text: 'GitHub', link: 'https://github.com/Codename-11/hermes-relay' },
       { text: 'Privacy', link: '/privacy' },
     ],
 
@@ -104,7 +104,7 @@ export default defineConfig({
     },
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/NousResearch/hermes-agent' },
+      { icon: 'github', link: 'https://github.com/Codename-11/hermes-relay' },
     ],
 
     footer: {

@@ -64,6 +64,42 @@ async function copy(key: string, text: string) {
     <p class="install-cta">
       <a :href="withBase('/guide/getting-started')" class="install-cta-link">Full setup guide →</a>
     </p>
+
+    <div class="install-extras">
+      <div class="install-extra-card">
+        <h3>Sideload the APK</h3>
+        <p>
+          Prefer not to use Google Play? Grab <code>app-release.apk</code> from the latest GitHub Release and install it directly. The <code>.aab</code> file is a Google Play format — make sure you download the <code>.apk</code>.
+        </p>
+        <p class="install-extra-actions">
+          <a
+            href="https://github.com/Codename-11/hermes-relay/releases/latest"
+            class="install-cta-link"
+            target="_blank"
+            rel="noopener"
+          >Download APK →</a>
+          <a
+            :href="withBase('/guide/getting-started') + '#sideload-apk'"
+            class="install-extra-secondary"
+          >Sideload guide</a>
+        </p>
+      </div>
+
+      <div class="install-extra-card">
+        <h3>Found a bug? We'd love to hear about it.</h3>
+        <p>
+          This is an indie project and every report helps. If something feels off, broken, or just weird, open an issue — we read every one.
+        </p>
+        <p class="install-extra-actions">
+          <a
+            href="https://github.com/Codename-11/hermes-relay/issues/new"
+            class="install-cta-link"
+            target="_blank"
+            rel="noopener"
+          >Open an issue →</a>
+        </p>
+      </div>
+    </div>
   </section>
 </template>
 
@@ -171,5 +207,55 @@ async function copy(key: string, text: string) {
 .install-cta-link:hover {
   background: var(--vp-c-brand-1);
   color: var(--vp-c-white);
+}
+.install-extras {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+  max-width: 720px;
+  margin: 2.5rem auto 0;
+}
+@media (min-width: 720px) {
+  .install-extras {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.install-extra-card {
+  background: var(--vp-c-bg-alt);
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  padding: 1.25rem 1.25rem 1rem;
+}
+.install-extra-card h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1.05rem;
+  border-top: none;
+  padding-top: 0;
+}
+.install-extra-card p {
+  color: var(--vp-c-text-2);
+  font-size: 0.9rem;
+  margin: 0.5rem 0;
+}
+.install-extra-card code {
+  font-size: 0.8125rem;
+}
+.install-extra-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.9rem !important;
+}
+.install-extra-secondary {
+  font-size: 0.85rem;
+  color: var(--vp-c-text-2);
+  text-decoration: none;
+  border-bottom: 1px dashed var(--vp-c-divider);
+  transition: color 0.2s, border-color 0.2s;
+}
+.install-extra-secondary:hover {
+  color: var(--vp-c-brand-1);
+  border-bottom-color: var(--vp-c-brand-1);
 }
 </style>

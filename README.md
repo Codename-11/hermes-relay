@@ -39,8 +39,19 @@ Two steps: install the Android app on your phone, then install the plugin on you
 <a href="https://play.google.com/store/apps/details?id=com.hermesandroid.relay"><img src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" alt="Get it on Google Play" height="80"></a>
 -->
 
-- **Google Play** — coming soon
-- **APK** — download from [GitHub Releases](https://github.com/Codename-11/hermes-relay/releases)
+- **Google Play** — coming soon (currently on Internal testing)
+- **APK** — download from [GitHub Releases](https://github.com/Codename-11/hermes-relay/releases/latest)
+
+#### Sideload APK (GitHub Releases)
+
+Prefer not to wait for Google Play? Grab the signed APK directly:
+
+1. Download **`app-release.apk`** from [the latest release](https://github.com/Codename-11/hermes-relay/releases/latest) (not `app-release.aab` — that's the Google Play format).
+2. On your phone: **Settings → Apps → Special app access → Install unknown apps** and allow your browser (first time only).
+3. Open the APK from your downloads and tap **Install**.
+4. Optionally verify integrity against `SHA256SUMS.txt` from the same release (`sha256sum` on macOS/Linux, `Get-FileHash -Algorithm SHA256` on Windows).
+
+Full walkthrough, including signing-certificate fingerprint: [Sideload guide](https://codename-11.github.io/hermes-relay/guide/getting-started.html#sideload-apk).
 
 ### 2. Install the server plugin (one-liner)
 
@@ -189,6 +200,10 @@ Then restart hermes and run `hermes pair` to test the CLI command. The 14 `andro
 ## Hermes Agent
 
 Hermes-Relay is built for [Hermes Agent](https://github.com/NousResearch/hermes-agent) — an open-source AI agent platform by [Nous Research](https://nousresearch.com). See the [Hermes Agent docs](https://hermes-agent.nousresearch.com) for server setup, gateway configuration, and plugin development.
+
+## Found a bug? Let us know!
+
+This is an indie project and every report helps shape where it goes next. If something feels off, broken, or just weird — [open an issue](https://github.com/Codename-11/hermes-relay/issues/new). We read every one, and even a one-line "this didn't work on my Pixel 7" is genuinely useful.
 
 ## License
 
