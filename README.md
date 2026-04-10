@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/logo.svg" alt="Hermes Relay" width="120">
+  <img src="assets/logo.svg" alt="Hermes-Relay" width="120">
 </p>
 
-<h1 align="center">Hermes Relay</h1>
+<h1 align="center">Hermes-Relay</h1>
 
 <p align="center">
   Native Android client for the Hermes agent platform.<br>
@@ -21,6 +21,10 @@
   <a href="https://github.com/Codename-11/hermes-relay/releases">Releases</a> ·
   <a href="CHANGELOG.md">Changelog</a> ·
   <a href="https://hermes-agent.nousresearch.com">Hermes Agent</a>
+</p>
+
+<p align="center">
+  <video src="https://github.com/Codename-11/hermes-relay/raw/main/assets/chat_demo.mp4" poster="https://github.com/Codename-11/hermes-relay/raw/main/assets/chat_demo_poster.jpg" autoplay loop muted playsinline width="280"></video>
 </p>
 
 ---
@@ -69,6 +73,7 @@ Talk to your Hermes agent from anywhere. Direct API streaming, session history, 
 ## Features
 
 - **Streaming chat** — Direct SSE to the Hermes API Server with real-time markdown rendering
+- **Smooth auto-scroll** — Live-follow streaming responses with a "scrolled up to read" pause/resume gesture
 - **Session management** — Create, switch, rename, delete chat sessions
 - **Tool visualization** — See agent tool calls as they execute (compact or detailed cards)
 - **Personalities** — Switch between agent personalities with a picker
@@ -183,7 +188,7 @@ Then restart hermes and run `hermes pair` to test the CLI command. The 14 `andro
 
 ## Hermes Agent
 
-Hermes Relay is built for [Hermes Agent](https://github.com/NousResearch/hermes-agent) — an open-source AI agent platform by [Nous Research](https://nousresearch.com). See the [Hermes Agent docs](https://hermes-agent.nousresearch.com) for server setup, gateway configuration, and plugin development.
+Hermes-Relay is built for [Hermes Agent](https://github.com/NousResearch/hermes-agent) — an open-source AI agent platform by [Nous Research](https://nousresearch.com). See the [Hermes Agent docs](https://hermes-agent.nousresearch.com) for server setup, gateway configuration, and plugin development.
 
 ## License
 

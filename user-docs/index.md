@@ -2,12 +2,9 @@
 layout: home
 
 hero:
-  name: Hermes Relay
+  name: Hermes-Relay
   text: Your AI agent, in your pocket
   tagline: Chat, control, and connect — a native Android app for Hermes Agent
-  image:
-    src: /logo.svg
-    alt: Hermes Relay
   actions:
     - theme: brand
       text: Get Started
@@ -66,70 +63,3 @@ features:
     title: Secure by Default
     details: EncryptedSharedPreferences for keys. Network config enforces HTTPS.
 ---
-
-<div class="install-section">
-
-## Install in 30 seconds
-
-One line installs the server plugin into your Hermes agent. After restarting hermes, run `hermes pair` to generate a QR code the Android app can scan.
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
-```
-
-Then:
-
-```bash
-hermes pair
-```
-
-<p class="install-note">Installs the 14 <code>android_*</code> device control tools and the <code>hermes pair</code> CLI command. Requires hermes-agent v0.8.0+ and Python 3.11+.</p>
-
-<p class="install-cta">
-  <a href="/guide/getting-started" class="install-cta-link">Full setup guide →</a>
-</p>
-
-</div>
-
-<style scoped>
-.install-section {
-  max-width: 960px;
-  margin: 4rem auto 2rem;
-  padding: 0 24px;
-}
-.install-section h2 {
-  text-align: center;
-  border-top: none;
-  margin-top: 0;
-  padding-top: 0;
-  font-size: 2rem;
-}
-.install-section > p {
-  text-align: center;
-  color: var(--vp-c-text-2);
-  max-width: 640px;
-  margin: 1rem auto;
-}
-.install-note {
-  font-size: 0.875rem;
-  color: var(--vp-c-text-3);
-}
-.install-cta {
-  text-align: center;
-  margin-top: 2rem;
-}
-.install-cta-link {
-  display: inline-block;
-  padding: 0.5rem 1.25rem;
-  border-radius: 20px;
-  border: 1px solid var(--vp-c-brand-1);
-  color: var(--vp-c-brand-1);
-  font-weight: 500;
-  text-decoration: none !important;
-  transition: all 0.2s;
-}
-.install-cta-link:hover {
-  background: var(--vp-c-brand-1);
-  color: var(--vp-c-white);
-}
-</style>

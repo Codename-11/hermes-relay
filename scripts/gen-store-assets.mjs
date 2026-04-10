@@ -87,7 +87,7 @@ const featureSvg = `
   <text x="512" y="295" text-anchor="middle"
         font-family="'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif"
         font-size="48" font-weight="700" fill="#FFFFFF" letter-spacing="2">
-    Hermes Relay
+    Hermes-Relay
   </text>
 
   <!-- Tagline -->

@@ -1,6 +1,6 @@
 # Tool Progress
 
-When the Hermes agent executes tools during a conversation, Hermes Relay displays tool call information to keep you informed about what the agent is doing.
+When the Hermes agent executes tools during a conversation, Hermes-Relay displays tool call information to keep you informed about what the agent is doing.
 
 ## Display Modes
 

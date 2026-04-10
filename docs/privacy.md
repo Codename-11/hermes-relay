@@ -1,6 +1,6 @@
 # Privacy & Data Handling
 
-Hermes Relay is a self-hosted AI agent companion app. It connects exclusively to your own servers — there are no cloud services, accounts, or third-party backends involved.
+Hermes-Relay is a self-hosted AI agent companion app. It connects exclusively to your own servers — there are no cloud services, accounts, or third-party backends involved.
 
 ## No External Data Transmission
 
@@ -52,7 +52,7 @@ From Settings, users can:
 
 ## Open Source
 
-Hermes Relay is MIT licensed. All source code is publicly available and auditable at [GitHub](https://github.com/Codename-11/hermes-relay).
+Hermes-Relay is MIT licensed. All source code is publicly available and auditable at [GitHub](https://github.com/Codename-11/hermes-relay).
 
 ## Stats for Nerds
 

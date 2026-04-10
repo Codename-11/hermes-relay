@@ -1,4 +1,4 @@
-# Hermes Relay — Docs Deployment
+# Hermes-Relay — Docs Deployment
 #
 # Builds VitePress docs and deploys to GitHub Pages.
 # Triggers on pushes to main that change user-docs/ content,

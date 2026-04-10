@@ -1,4 +1,4 @@
-# Hermes Relay v0.1.0
+# Hermes-Relay v0.1.0
 
 First release — a native Android client for the Hermes agent platform with direct API chat, session management, and a full Material 3 Compose UI.
 

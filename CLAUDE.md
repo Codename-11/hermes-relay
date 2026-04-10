@@ -1,4 +1,4 @@
-# Hermes Relay — Claude Code Context
+# Hermes-Relay — Claude Code Context
 
 > Read this before touching code. Then read docs/spec.md and docs/decisions.md.
 

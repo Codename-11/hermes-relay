@@ -1,6 +1,6 @@
 # Reasoning Display
 
-When the AI model uses extended thinking (Claude with thinking enabled, o1-style reasoning), Hermes Relay displays the reasoning process in a collapsible block above the response.
+When the AI model uses extended thinking (Claude with thinking enabled, o1-style reasoning), Hermes-Relay displays the reasoning process in a collapsible block above the response.
 
 ## How It Works
 

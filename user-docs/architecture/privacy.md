@@ -1,6 +1,6 @@
 # Privacy & Data Handling
 
-Hermes Relay is a self-hosted app. It connects only to your own servers — no cloud accounts, no third-party backends.
+Hermes-Relay is a self-hosted app. It connects only to your own servers — no cloud accounts, no third-party backends.
 
 ## What stays on your phone
 

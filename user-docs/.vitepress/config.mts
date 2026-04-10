@@ -2,7 +2,7 @@ import { defineConfig } from 'vitepress'
 
 export default defineConfig({
   base: '/hermes-relay/',
-  title: 'Hermes Relay',
+  title: 'Hermes-Relay',
   description: 'Android app for Hermes Agent — chat, control, and connect from your phone',
 
   head: [
@@ -12,12 +12,12 @@ export default defineConfig({
 
     // Open Graph
     ['meta', { property: 'og:type', content: 'website' }],
-    ['meta', { property: 'og:title', content: 'Hermes Relay — Android App for Hermes Agent' }],
+    ['meta', { property: 'og:title', content: 'Hermes-Relay — Android App for Hermes Agent' }],
     ['meta', { property: 'og:description', content: 'Chat, control, and connect — a native Android app for Hermes Agent. Direct API streaming, session management, tool visualization.' }],
 
     // Twitter Card
     ['meta', { name: 'twitter:card', content: 'summary' }],
-    ['meta', { name: 'twitter:title', content: 'Hermes Relay' }],
+    ['meta', { name: 'twitter:title', content: 'Hermes-Relay' }],
     ['meta', { name: 'twitter:description', content: 'Native Android app for Hermes Agent' }],
 
     // Theme
@@ -46,7 +46,7 @@ export default defineConfig({
         {
           text: 'Getting Started',
           items: [
-            { text: 'What is Hermes Relay?', link: '/guide/' },
+            { text: 'What is Hermes-Relay?', link: '/guide/' },
             { text: 'Installation & Setup', link: '/guide/getting-started' },
             { text: 'Chat', link: '/guide/chat' },
             { text: 'Sessions', link: '/guide/sessions' },

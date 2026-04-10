@@ -54,7 +54,7 @@ class ChatViewModel : ViewModel() {
 
     companion object {
         /** Brief app context sent as system_message when enabled in settings. */
-        const val APP_CONTEXT_PROMPT = "The user is chatting via the Hermes Relay Android app. Keep responses mobile-friendly and concise when possible."
+        const val APP_CONTEXT_PROMPT = "The user is chatting via the Hermes-Relay Android app. Keep responses mobile-friendly and concise when possible."
     }
 
     // Server-side personality selection

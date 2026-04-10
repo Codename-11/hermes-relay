@@ -1,4 +1,4 @@
-# Hermes Relay — Release Pipeline
+# Hermes-Relay — Release Pipeline
 #
 # Triggered when a version tag (v*) is pushed.
 # Validates the tag matches the app version in libs.versions.toml,

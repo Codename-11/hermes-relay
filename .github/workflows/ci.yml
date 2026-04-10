@@ -1,4 +1,4 @@
-# Hermes Relay — CI Pipeline
+# Hermes-Relay — CI Pipeline
 #
 # Runs on every push to main and on pull requests targeting main.
 # Pipeline: lint -> build + test (parallel) -> upload artifacts

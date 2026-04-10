@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hermes Relay — dev helper scripts
+# Hermes-Relay — dev helper scripts
 # Usage: ./scripts/dev.sh <command>
 
 set -euo pipefail
@@ -65,7 +65,7 @@ case "${1:-help}" in
     python -m relay_server --ssl-cert certs/dev.crt --ssl-key certs/dev.key --log-level DEBUG
     ;;
   help|*)
-    echo "Hermes Relay Dev Scripts"
+    echo "Hermes-Relay Dev Scripts"
     echo ""
     echo "  build      Build debug APK"
     echo "  install    Build + install to connected device"

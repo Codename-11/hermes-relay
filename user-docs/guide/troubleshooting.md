@@ -28,5 +28,5 @@
 
 ## App crashes on startup
 
-- Clear app data: Settings > Apps > Hermes Relay > Clear Data
+- Clear app data: Settings > Apps > Hermes-Relay > Clear Data
 - Re-enter your API server URL and key during onboarding

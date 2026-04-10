@@ -1,6 +1,6 @@
 # Hermes API Reference
 
-Hermes Relay communicates with the Hermes API Server using the following endpoints. If the server is configured with `API_SERVER_KEY`, requests must include a Bearer token in the `Authorization` header. Most local setups don't require a key.
+Hermes-Relay communicates with the Hermes API Server using the following endpoints. If the server is configured with `API_SERVER_KEY`, requests must include a Bearer token in the `Authorization` header. Most local setups don't require a key.
 
 ## Base URL
 

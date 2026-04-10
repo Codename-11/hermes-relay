@@ -1,4 +1,4 @@
-# Hermes Relay — Decisions & Implementation Guide
+# Hermes-Relay — Decisions & Implementation Guide
 
 > Updated: 2026-04-06
 >

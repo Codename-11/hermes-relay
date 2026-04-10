@@ -1,6 +1,6 @@
 # Relay Server
 
-The relay server is a lightweight Python WSS service that enables **terminal** (remote shell) and **bridge** (agent-driven phone control) features in Hermes Relay. Chat does not use the relay — it connects directly to the Hermes API Server.
+The relay server is a lightweight Python WSS service that enables **terminal** (remote shell) and **bridge** (agent-driven phone control) features in Hermes-Relay. Chat does not use the relay — it connects directly to the Hermes API Server.
 
 ## Do I Need It?
 

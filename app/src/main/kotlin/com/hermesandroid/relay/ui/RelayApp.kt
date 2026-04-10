@@ -19,7 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Settings
@@ -68,7 +68,7 @@ sealed class Screen(
     val icon: ImageVector
 ) {
     data object Onboarding : Screen("onboarding", "Onboarding", Icons.Filled.Settings)
-    data object Chat : Screen("chat", "Chat", Icons.Filled.Chat)
+    data object Chat : Screen("chat", "Chat", Icons.AutoMirrored.Filled.Chat)
     data object Terminal : Screen("terminal", "Terminal", Icons.Filled.Code)
     data object Bridge : Screen("bridge", "Bridge", Icons.Filled.PhoneAndroid)
     data object Settings : Screen("settings", "Settings", Icons.Filled.Settings)
@@ -303,7 +303,7 @@ fun RelayApp() {
                         .padding(bottom = 120.dp)
                 ) {
                     Text(
-                        text = "Hermes Relay",
+                        text = "Hermes-Relay",
                         style = MaterialTheme.typography.headlineMedium,
                         color = Color.White.copy(alpha = 0.9f)
                     )

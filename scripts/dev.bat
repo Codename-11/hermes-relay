@@ -1,5 +1,5 @@
 @echo off
-REM Hermes Relay — dev helper scripts (Windows)
+REM Hermes-Relay — dev helper scripts (Windows)
 REM Usage: scripts\dev.bat <command>
 
 cd /d "%~dp0\.."
@@ -88,7 +88,7 @@ set "VER=%VER: =%"
 set "VER=%VER:"=%"
 set "CODE=%CODE: =%"
 set "CODE=%CODE:"=%"
-echo Hermes Relay v%VER% (versionCode %CODE%)
+echo Hermes-Relay v%VER% (versionCode %CODE%)
 goto end
 
 :relay
@@ -111,7 +111,7 @@ python -m relay_server --ssl-cert certs/dev.crt --ssl-key certs/dev.key --log-le
 goto end
 
 :help
-echo Hermes Relay Dev Scripts
+echo Hermes-Relay Dev Scripts
 echo.
 echo   build      Build debug APK
 echo   release    Build signed release APK

@@ -1,4 +1,4 @@
-# Hermes Relay — Feature Status
+# Hermes-Relay — Feature Status
 
 > Single source of truth for what's done, what's in progress, and what's next.
 > Update this file as features are completed.

@@ -34,7 +34,7 @@ def register(ctx):
             handler_fn=pair_command,
             description=(
                 "Reads API server config (host, port, key) and renders a scannable "
-                "QR code in the terminal. Use to connect Hermes Relay Android or any "
+                "QR code in the terminal. Use to connect Hermes-Relay Android or any "
                 "mobile client to your gateway."
             ),
         )

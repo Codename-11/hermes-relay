@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hermes Relay — one-line installer for the server-side plugin.
+# Hermes-Relay — one-line installer for the server-side plugin.
 #
 # Installs the `hermes-android` plugin (14 android_* device tools + the
 # `hermes pair` QR pairing CLI) into your local hermes-agent plugin directory.
@@ -8,7 +8,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
 #
 # After install, restart hermes and run:
-#   hermes pair         # generate a QR code for the Hermes Relay Android app
+#   hermes pair         # generate a QR code for the Hermes-Relay Android app
 #   /plugins            # verify 14 android_* tools are registered
 #
 set -euo pipefail
@@ -31,7 +31,7 @@ command -v git >/dev/null 2>&1 || die "git is required but not installed"
 command -v python3 >/dev/null 2>&1 || die "python3 is required but not installed"
 
 echo ""
-echo "  Hermes Relay — Server Plugin Installer"
+echo "  Hermes-Relay — Server Plugin Installer"
 echo "  ----------------------------------------"
 echo "  Target: $PLUGIN_DIR"
 echo ""
@@ -72,12 +72,12 @@ install_pkg "segno"
 
 # ── Done ────────────────────────────────────────────────────────────────
 echo ""
-echo "  [OK] Hermes Relay plugin installed."
+echo "  [OK] Hermes-Relay plugin installed."
 echo ""
 echo "  Next steps:"
 echo "    1. Restart hermes"
 echo "    2. Run:  hermes pair"
-echo "    3. Scan the QR code with the Hermes Relay Android app"
+echo "    3. Scan the QR code with the Hermes-Relay Android app"
 echo ""
 echo "  Requires hermes-agent v0.8.0+ for the 'hermes pair' CLI command."
 echo "  On older versions the 14 android_* tools still register."

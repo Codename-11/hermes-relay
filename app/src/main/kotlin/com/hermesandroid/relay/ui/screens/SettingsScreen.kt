@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.ui.screens
 
+import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
@@ -75,10 +76,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -126,7 +127,7 @@ fun SettingsScreen(
     var isTesting by remember { mutableStateOf(false) }
     var showWhatsNew by remember { mutableStateOf(false) }
     var showQrScanner by remember { mutableStateOf(false) }
-    val clipboardManager = LocalClipboardManager.current
+    val clipboard = LocalClipboard.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -330,6 +331,32 @@ fun SettingsScreen(
                         Switch(
                             checked = showThinkingSetting,
                             onCheckedChange = { connectionViewModel.setShowThinking(it) }
+                        )
+                    }
+
+                    HorizontalDivider()
+
+                    // Smooth auto-scroll toggle
+                    val smoothAutoScroll by connectionViewModel.smoothAutoScroll.collectAsState()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Smooth auto-scroll",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = "Follow new messages while streaming. Scroll up to pause; tap the arrow or scroll back to the bottom to resume.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = smoothAutoScroll,
+                            onCheckedChange = { connectionViewModel.setSmoothAutoScroll(it) }
                         )
                     }
 
@@ -752,7 +779,18 @@ fun SettingsScreen(
                         )
 
                         IconButton(onClick = {
-                            clipboardManager.setText(AnnotatedString(pairingCode))
+                            // setClipEntry is suspend in the new Compose Clipboard
+                            // API — wrap in the existing scope.launch.
+                            scope.launch {
+                                clipboard.setClipEntry(
+                                    ClipEntry(
+                                        ClipData.newPlainText(
+                                            "Pairing code",
+                                            pairingCode
+                                        )
+                                    )
+                                )
+                            }
                         }) {
                             Icon(
                                 imageVector = Icons.Filled.ContentCopy,
@@ -986,13 +1024,13 @@ fun SettingsScreen(
                     ) {
                         Image(
                             painter = painterResource(R.drawable.ic_launcher_foreground),
-                            contentDescription = "Hermes Relay",
+                            contentDescription = "Hermes-Relay",
                             modifier = Modifier.size(80.dp)
                         )
                     }
 
                     Text(
-                        text = "Hermes Relay",
+                        text = "Hermes-Relay",
                         style = MaterialTheme.typography.titleLarge,
                         textAlign = TextAlign.Center
                     )

@@ -1,4 +1,4 @@
-# Play Store Listing — Hermes Relay v0.1.0
+# Play Store Listing — Hermes-Relay v0.1.0
 
 > Temporary reference for Google Play Console submission. Delete after listing is live.
 
@@ -8,13 +8,13 @@ Native Android client for your self-hosted Hermes AI agent
 
 ## Full Description
 
-**Hermes Relay** is a native Android client for the Hermes agent platform. Connect to your self-hosted Hermes AI agent and chat in real time — directly from your phone.
+**Hermes-Relay** is a native Android client for the Hermes agent platform. Connect to your self-hosted Hermes AI agent and chat in real time — directly from your phone.
 
 Built for developers and AI enthusiasts who run their own Hermes agent instance. This is not a hosted AI service — it's a companion app for your own infrastructure.
 
 ━━━ HOW IT WORKS ━━━
 
-Hermes Relay connects directly to your Hermes API Server over HTTP/SSE for real-time streaming chat. Point it at your server, optionally scan a QR code to auto-configure, and start talking to your agent.
+Hermes-Relay connects directly to your Hermes API Server over HTTP/SSE for real-time streaming chat. Point it at your server, optionally scan a QR code to auto-configure, and start talking to your agent.
 
 ━━━ FEATURES ━━━
 
@@ -67,7 +67,7 @@ An animated 3D character sphere greets you on the empty chat screen. Toggle ambi
 
 ━━━ OPEN SOURCE ━━━
 
-Hermes Relay is MIT licensed. Source code, documentation, and issue tracking available on GitHub.
+Hermes-Relay is MIT licensed. Source code, documentation, and issue tracking available on GitHub.
 
 This app is a community project and is not affiliated with or endorsed by NousResearch.
 

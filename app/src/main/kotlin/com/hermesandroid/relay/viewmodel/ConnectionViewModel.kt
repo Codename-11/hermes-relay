@@ -57,6 +57,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Animation
         private val KEY_ANIMATION_ENABLED = booleanPreferencesKey("animation_enabled")
         private val KEY_ANIMATION_BEHIND_CHAT = booleanPreferencesKey("animation_behind_chat")
+
+        // Chat scroll behavior
+        private val KEY_SMOOTH_AUTO_SCROLL = booleanPreferencesKey("smooth_auto_scroll")
     }
 
     // --- Core networking components ---
@@ -223,6 +226,23 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { prefs ->
                 prefs[KEY_ANIMATION_BEHIND_CHAT] = enabled
+            }
+        }
+    }
+
+    // Smooth auto-scroll during chat streaming.
+    // When enabled, the chat list smoothly follows new tokens, tool cards, and
+    // reasoning deltas as they stream in — but only while the user is at the
+    // bottom of the conversation. Scrolling up to read history disables the
+    // auto-follow until the user returns to the bottom (or taps the FAB).
+    val smoothAutoScroll: StateFlow<Boolean> = application.relayDataStore.data
+        .map { it[KEY_SMOOTH_AUTO_SCROLL] ?: true }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    fun setSmoothAutoScroll(enabled: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_SMOOTH_AUTO_SCROLL] = enabled
             }
         }
     }

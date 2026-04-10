@@ -1,5 +1,5 @@
 name: hermes-android
 version: 0.3.0
-description: "Remote Android device control + QR pairing — read screen, tap, type, open apps, take screenshots via the Hermes Relay app. Includes `hermes pair` CLI for one-step setup."
+description: "Remote Android device control + QR pairing — read screen, tap, type, open apps, take screenshots via the Hermes-Relay app. Includes `hermes pair` CLI for one-step setup."
 author: Axiom Labs
 requires_env: []

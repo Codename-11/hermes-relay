@@ -1,18 +1,18 @@
 ---
 layout: page
 title: Privacy Policy
-description: Privacy policy for the Hermes Relay Android app
+description: Privacy policy for the Hermes-Relay Android app
 ---
 
 # Privacy Policy
 
-**Hermes Relay** · Effective date: April 8, 2026
+**Hermes-Relay** · Effective date: April 8, 2026
 
-Hermes Relay is a native Android app that connects to your self-hosted [Hermes Agent](https://github.com/NousResearch/hermes-agent) server. This policy describes how the app handles your data.
+Hermes-Relay is a native Android app that connects to your self-hosted [Hermes Agent](https://github.com/NousResearch/hermes-agent) server. This policy describes how the app handles your data.
 
 ## Summary
 
-Hermes Relay does not collect, transmit, or share any personal data with third parties. The app connects only to servers that you configure. There are no accounts, no cloud services, and no analytics sent externally.
+Hermes-Relay does not collect, transmit, or share any personal data with third parties. The app connects only to servers that you configure. There are no accounts, no cloud services, and no analytics sent externally.
 
 ## Data Storage
 
@@ -47,7 +47,7 @@ No access to contacts, location, microphone, storage, or other sensitive data.
 
 ## Third-Party Services
 
-Hermes Relay includes **no** third-party SDKs, advertising, tracking, or analytics services. The app is built entirely with first-party Android components (Jetpack Compose, OkHttp, AndroidX).
+Hermes-Relay includes **no** third-party SDKs, advertising, tracking, or analytics services. The app is built entirely with first-party Android components (Jetpack Compose, OkHttp, AndroidX).
 
 ::: info Note
 Your Hermes server may connect to AI providers (OpenAI, Anthropic, etc.) server-side. That network activity is outside the scope of this app and governed by your server's configuration.
@@ -65,7 +65,7 @@ Uninstalling the app removes all stored data from your device.
 
 ## Children's Privacy
 
-Hermes Relay is not directed at children under 13. We do not knowingly collect information from children.
+Hermes-Relay is not directed at children under 13. We do not knowingly collect information from children.
 
 ## Changes to This Policy
 
@@ -77,4 +77,4 @@ Questions about this policy: [GitHub Issues](https://github.com/Codename-11/herm
 
 ## Open Source
 
-Hermes Relay is [MIT licensed](https://github.com/Codename-11/hermes-relay). All source code is publicly auditable.
+Hermes-Relay is [MIT licensed](https://github.com/Codename-11/hermes-relay). All source code is publicly auditable.

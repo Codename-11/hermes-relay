@@ -1,6 +1,6 @@
 # Direct API Connection
 
-Hermes Relay connects directly to the Hermes API Server for chat, bypassing the relay server entirely.
+Hermes-Relay connects directly to the Hermes API Server for chat, bypassing the relay server entirely.
 
 ## How It Works
 

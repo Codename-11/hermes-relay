@@ -1,10 +1,10 @@
-# Hermes Relay Server
+# Hermes-Relay Server
 
-Setup and run the Hermes Relay Server for the Hermes Relay Android app.
+Setup and run the Hermes-Relay Server for the Hermes-Relay Android app.
 
 ## What It Is
 
-A lightweight Python WSS server that bridges the Hermes Relay Android app to server-side features that need persistent bidirectional communication: **terminal** (remote shell via tmux) and **bridge** (agent-driven phone control). Chat does not use the relay — it connects directly to the Hermes API Server.
+A lightweight Python WSS server that bridges the Hermes-Relay Android app to server-side features that need persistent bidirectional communication: **terminal** (remote shell via tmux) and **bridge** (agent-driven phone control). Chat does not use the relay — it connects directly to the Hermes API Server.
 
 ## When You Need It
 

@@ -1,6 +1,6 @@
 # Relay Server
 
-The relay server is a lightweight Python service that bridges the Hermes Relay Android app to server-side features requiring persistent bidirectional communication.
+The relay server is a lightweight Python service that bridges the Hermes-Relay Android app to server-side features requiring persistent bidirectional communication.
 
 ## When You Need It
 

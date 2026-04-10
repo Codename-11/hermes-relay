@@ -1,6 +1,6 @@
 # Token & Cost Tracking
 
-Hermes Relay displays token usage and estimated cost for each assistant message, giving you visibility into API consumption.
+Hermes-Relay displays token usage and estimated cost for each assistant message, giving you visibility into API consumption.
 
 ## What's Displayed
 

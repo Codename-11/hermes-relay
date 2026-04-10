@@ -232,7 +232,7 @@ def pair_command(args) -> None:
         png_path = render_qr_png(payload)
         if png_path:
             print(f"  PNG: {png_path}")
-        print("  Scan with the Hermes Relay Android app.")
+        print("  Scan with the Hermes-Relay Android app.")
 
     print("  WARNING: This contains your API key. Do not share screenshots.\n")
 

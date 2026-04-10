@@ -10,7 +10,7 @@ metadata:
 
 # Android Device Control
 
-You can control an Android phone remotely using the `android_*` tools. The phone runs the **Hermes Relay** app which exposes an HTTP API. You communicate with it over the network — no USB, no ADB, no physical connection needed.
+You can control an Android phone remotely using the `android_*` tools. The phone runs the **Hermes-Relay** app which exposes an HTTP API. You communicate with it over the network — no USB, no ADB, no physical connection needed.
 
 ## How It Works
 

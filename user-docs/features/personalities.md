@@ -1,6 +1,6 @@
 # Personalities
 
-Hermes Relay fetches available personalities from the Hermes API Server and lets you switch between them.
+Hermes-Relay fetches available personalities from the Hermes API Server and lets you switch between them.
 
 ## Personality Picker
 

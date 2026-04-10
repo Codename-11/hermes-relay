@@ -1,4 +1,4 @@
-# Hermes Relay — Android App
+# Hermes-Relay — Android App
 
 ## Specification v1.1
 
@@ -251,7 +251,7 @@ Bottom navigation bar with 4 tabs:
 ### Settings Tab
 - **API Server** — URL, API key, health check indicator
 - **Relay Server** — URL, pairing code, connection status
-- **Chat** — Show reasoning toggle, show token usage toggle, app context prompt toggle, tool call display (Off/Compact/Detailed), Stats for Nerds (analytics charts)
+- **Chat** — Show reasoning toggle, smooth auto-scroll toggle (live-follow streaming, default on), show token usage toggle, app context prompt toggle, tool call display (Off/Compact/Detailed), Stats for Nerds (analytics charts)
 - **Appearance** — theme (auto/light/dark), dynamic colors toggle
 - **Data** — Backup, restore, reset with confirmation dialogs
 - **About** — logo on dark background, dynamic version from BuildConfig, Source + Docs link buttons, credits. What's New dialog.

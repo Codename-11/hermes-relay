@@ -102,7 +102,7 @@ If the host is `0.0.0.0`, `127.0.0.1`, or `localhost`, the script auto-detects t
 
 ## How the Android App Consumes It
 
-The Hermes Relay Android app detects a Hermes QR by checking for `"hermes":1` in the scanned JSON. On detection:
+The Hermes-Relay Android app detects a Hermes QR by checking for `"hermes":1` in the scanned JSON. On detection:
 
 1. Builds the server URL: `http(s)://host:port` based on the `tls` flag
 2. Populates the API Server URL and API Key fields

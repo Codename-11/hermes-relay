@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Hermes Relay connects to user-configured servers on arbitrary LAN IPs/hostnames.
+    Hermes-Relay connects to user-configured servers on arbitrary LAN IPs/hostnames.
     Cleartext (HTTP) is permitted because most local Hermes installs don't use TLS
     and Android's network-security-config doesn't support IP range restrictions.
 

@@ -40,7 +40,7 @@ class OnboardingFlowTest {
         setOnboardingContent()
 
         composeTestRule
-            .onNodeWithText("Hermes Relay")
+            .onNodeWithText("Hermes-Relay")
             .assertIsDisplayed()
     }
 
@@ -93,8 +93,8 @@ class OnboardingFlowTest {
     fun canNavigateForward_throughAllPages() {
         setOnboardingContent()
 
-        // Page 1: Hermes Relay (Welcome)
-        composeTestRule.onNodeWithText("Hermes Relay").assertIsDisplayed()
+        // Page 1: Hermes-Relay (Welcome)
+        composeTestRule.onNodeWithText("Hermes-Relay").assertIsDisplayed()
         composeTestRule.onNodeWithText("Next").performClick()
         composeTestRule.waitForIdle()
 
@@ -158,7 +158,7 @@ class OnboardingFlowTest {
         // Go back to page 1
         composeTestRule.onNodeWithText("Back").performClick()
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithText("Hermes Relay").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Hermes-Relay").assertIsDisplayed()
     }
 
     // --- Page 5: Connect page ---

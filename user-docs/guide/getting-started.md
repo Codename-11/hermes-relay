@@ -98,6 +98,37 @@ After starting the relay, enter the **Relay URL** in the app's onboarding or Set
 
 ## Verify Connection
 
+Once you're connected, the chat looks like this — streaming responses, tool cards, markdown rendering, and the personality picker all live:
+
+<div class="demo-video-wrap">
+  <video
+    :src="$withBase('/chat_demo.mp4')"
+    :poster="$withBase('/chat_demo_poster.jpg')"
+    controls
+    muted
+    loop
+    playsinline
+    preload="metadata"
+  />
+</div>
+
+<style scoped>
+.demo-video-wrap {
+  display: flex;
+  justify-content: center;
+  margin: 1.5rem 0 2rem;
+}
+.demo-video-wrap video {
+  max-width: 320px;
+  width: 100%;
+  height: auto;
+  border-radius: 16px;
+  box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.5),
+              0 0 0 1px var(--vp-c-divider);
+  background: #000;
+}
+</style>
+
 After onboarding, the chat header shows the agent name with an animated green pulse on the avatar when the API server is reachable. If the dot is red (no pulse), check:
 
 - Is the Hermes agent running? (`hermes gateway`)

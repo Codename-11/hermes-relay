@@ -1,5 +1,5 @@
 [Unit]
-Description=Hermes Relay Server (WSS bridge for Android app)
+Description=Hermes-Relay Server (WSS bridge for Android app)
 Documentation=https://github.com/Codename-11/hermes-relay/blob/main/docs/relay-server.md
 After=network-online.target
 Wants=network-online.target

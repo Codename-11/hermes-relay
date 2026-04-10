@@ -1,8 +1,8 @@
-# Hermes WebAPI Reference — For Hermes Relay Chat Integration
+# Hermes WebAPI Reference — For Hermes-Relay Chat Integration
 
 > This document is the authoritative reference for how the Hermes WebAPI works.
 > Use this when implementing chat, sessions, streaming, thinking, and tool-use
-> features in the Hermes Relay Android app.
+> features in the Hermes-Relay Android app.
 
 ## Architecture Overview
 

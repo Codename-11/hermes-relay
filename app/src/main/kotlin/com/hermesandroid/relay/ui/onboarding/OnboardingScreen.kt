@@ -267,7 +267,7 @@ private fun WelcomePage() {
     val context = LocalContext.current
     OnboardingPage(
         icon = Icons.Outlined.RocketLaunch,
-        title = "Hermes Relay",
+        title = "Hermes-Relay",
         description = "Your Hermes agent, in your pocket."
     ) {
         Spacer(modifier = Modifier.height(12.dp))

@@ -1,6 +1,6 @@
 # Configuration
 
-Hermes Relay stores its settings using Android's DataStore and EncryptedSharedPreferences. This page documents the available configuration options.
+Hermes-Relay stores its settings using Android's DataStore and EncryptedSharedPreferences. This page documents the available configuration options.
 
 ## Onboarding Settings
 
@@ -63,7 +63,7 @@ The Stats for Nerds section in Settings shows performance data collected in-memo
 The API server is part of `hermes gateway` and configured via `~/.hermes/.env`:
 
 ```bash
-# Required for Hermes Relay
+# Required for Hermes-Relay
 API_SERVER_ENABLED=true
 # API_SERVER_KEY=your-secret-key  # Optional — only set if exposing to network
 API_SERVER_HOST=0.0.0.0

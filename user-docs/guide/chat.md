@@ -12,6 +12,16 @@ When no messages exist, the chat shows a logo with "Start a conversation" and su
 
 While the assistant is responding, animated pulsing dots indicate active streaming. A stop button appears next to the input field — tap it to cancel the current stream. Haptic feedback fires when the stream completes.
 
+## Smooth Auto-Scroll
+
+While the assistant is responding, the chat list smoothly follows new tokens, reasoning deltas, and tool cards as they stream in. The behavior is designed to feel like a live transcript:
+
+- **At the bottom?** New content scrolls into view automatically. The viewport stays pinned to the latest token, even while the message bubble grows tall with reasoning blocks and tool execution cards.
+- **Scrolled up to read history?** Auto-follow pauses. You won't be yanked back while you're reading.
+- **Want to resume?** Either scroll back to the bottom manually or tap the floating arrow button that appears when there's new content below. Both restore live-follow immediately.
+
+You can disable this behavior under **Settings > Chat > Smooth auto-scroll** if you'd rather scroll manually. It's enabled by default.
+
 ## Markdown
 
 Assistant responses render with full markdown support:
