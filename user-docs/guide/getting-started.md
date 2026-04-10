@@ -1,3 +1,7 @@
+<script setup>
+import { withBase } from 'vitepress'
+</script>
+
 # Installation & Setup
 
 ## Prerequisites
@@ -102,8 +106,8 @@ Once you're connected, the chat looks like this — streaming responses, tool ca
 
 <div class="demo-video-wrap">
   <video
-    :src="$withBase('/chat_demo.mp4')"
-    :poster="$withBase('/chat_demo_poster.jpg')"
+    :src="withBase('/chat_demo.mp4')"
+    :poster="withBase('/chat_demo_poster.jpg')"
     controls
     muted
     loop
