@@ -195,6 +195,20 @@ scripts/dev.bat relay      # Start relay server (dev mode, no SSL)
 
 Open repo root in Android Studio for Compose previews and device deployment.
 
+### Release Process
+
+See [RELEASE.md](RELEASE.md) for the full release recipe — versioning conventions, keystore setup, Play Console upload (manual + automated via `gradle-play-publisher`), GitHub release workflow, and troubleshooting.
+
+Quick reference:
+- **Version source of truth**: `gradle/libs.versions.toml` (`appVersionName`, `appVersionCode`)
+- **SemVer with optional prereleases**: `v0.1.0`, `v0.1.1`, `v0.2.0-beta.1`, `v1.0.0-rc.1`
+- **`appVersionCode` is monotonic** — always increment, even across prereleases (Play Console rejects collisions)
+- **Build AAB locally**: `scripts/dev.bat bundle` → `app/build/outputs/bundle/release/app-release.aab`
+- **Verify signing**: `keytool -list -printcert -jarfile <aab>` — must NOT show `CN=Android Debug`
+- **Cut a release**: bump version → commit → `git tag vMAJOR.MINOR.PATCH` → `git push origin <tag>` → CI builds APK + AAB and creates GitHub Release
+- **Required GitHub Secrets** for signed CI builds: `HERMES_KEYSTORE_BASE64`, `HERMES_KEYSTORE_PASSWORD`, `HERMES_KEY_ALIAS`, `HERMES_KEY_PASSWORD` (without these the workflow still runs but produces debug-signed artifacts that Play Console will reject)
+- **Optional automated upload**: `gradlew publishReleaseBundle --track=internal` (requires `play-service-account.json` at repo root, gitignored)
+
 ## Integration Points
 
 | Surface | Standard Endpoint | Non-Standard Fallback |

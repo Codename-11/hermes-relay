@@ -4,6 +4,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
+    alias(libs.plugins.play.publisher)
 }
 
 android {
@@ -85,6 +86,18 @@ android {
             kotlin.srcDirs("src/androidTest/kotlin")
         }
     }
+}
+
+// Google Play Publisher — optional automated upload to Play Console.
+// The plugin adds tasks like `publishReleaseBundle` that talk to the Play
+// Developer API. Requires a service account JSON at <repo-root>/play-service-account.json.
+// Normal builds (assembleRelease, bundleRelease) work without it; only the
+// publish tasks require it. See RELEASE.md for service account setup.
+play {
+    serviceAccountCredentials.set(rootProject.file("play-service-account.json"))
+    track.set("internal")
+    defaultToAppBundles.set(true)
+    releaseStatus.set(com.github.triplet.gradle.androidpublisher.ReleaseStatus.DRAFT)
 }
 
 kotlin {

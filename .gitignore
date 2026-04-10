@@ -59,3 +59,7 @@ assets/screenshots/
 
 # Kotlin compiler cache
 .kotlin/
+
+# Release signing & Play Store credentials — never commit these
+play-service-account.json
+keystore.properties

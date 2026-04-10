@@ -81,13 +81,26 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
 
-      - name: Build release APK
-        run: ./gradlew assembleRelease
-
-      - name: Generate checksum
+      - name: Decode release keystore
+        env:
+          HERMES_KEYSTORE_BASE64: ${{ secrets.HERMES_KEYSTORE_BASE64 }}
+        if: env.HERMES_KEYSTORE_BASE64 != ''
         run: |
-          cd app/build/outputs/apk/release
-          sha256sum *.apk > SHA256SUMS.txt
+          echo "$HERMES_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          echo "HERMES_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+
+      - name: Build release artifacts (APK + AAB)
+        env:
+          HERMES_KEYSTORE_PASSWORD: ${{ secrets.HERMES_KEYSTORE_PASSWORD }}
+          HERMES_KEY_ALIAS: ${{ secrets.HERMES_KEY_ALIAS }}
+          HERMES_KEY_PASSWORD: ${{ secrets.HERMES_KEY_PASSWORD }}
+        run: ./gradlew bundleRelease assembleRelease
+
+      - name: Generate checksums
+        run: |
+          cd app/build/outputs
+          sha256sum apk/release/*.apk bundle/release/*.aab > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -97,4 +110,22 @@ jobs:
           prerelease: ${{ contains(needs.validate.outputs.version, '-') }}
           files: |
             app/build/outputs/apk/release/*.apk
-            app/build/outputs/apk/release/SHA256SUMS.txt
+            app/build/outputs/bundle/release/*.aab
+            app/build/outputs/SHA256SUMS.txt
+
+      - name: Release summary
+        env:
+          HERMES_KEYSTORE_BASE64: ${{ secrets.HERMES_KEYSTORE_BASE64 }}
+        run: |
+          echo "## Release v${{ needs.validate.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$HERMES_KEYSTORE_BASE64" ]; then
+            echo "✅ **Signed with release keystore** — suitable for Play Store upload" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "⚠️ **Debug-signed** (no \`HERMES_KEYSTORE_BASE64\` secret) — NOT suitable for Play Store. Add the secret in repo settings to enable release signing." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Artifacts" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          ls -la app/build/outputs/apk/release/ app/build/outputs/bundle/release/ >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
