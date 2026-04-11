@@ -813,8 +813,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     fun setInsecureAckComplete(reason: String) {
         viewModelScope.launch {
-            PairingPreferences.setInsecureAckSeen(application, true)
-            PairingPreferences.setInsecureReason(application, reason)
+            val ctx = getApplication<Application>()
+            PairingPreferences.setInsecureAckSeen(ctx, true)
+            PairingPreferences.setInsecureReason(ctx, reason)
         }
     }
 
