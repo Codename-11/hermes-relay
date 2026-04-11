@@ -171,6 +171,25 @@ class AuthManager(
         _pairingCode.value = normalized
     }
 
+    /**
+     * Apply a server-issued code AND wipe any existing session token in one
+     * atomic step. Used by the manual-code entry dialog — the user may
+     * already be in [AuthState.Paired] with a stale token, and
+     * [authenticate] would otherwise reuse that token instead of consuming
+     * the new code. Avoids the race between [clearSession]'s async code
+     * regeneration and [applyServerIssuedCode]'s mirror write.
+     */
+    fun applyServerIssuedCodeAndReset(code: String) {
+        val normalized = code.trim().uppercase()
+        if (normalized.isEmpty()) return
+        serverIssuedCode = normalized
+        _pairingCode.value = normalized
+        _authState.value = AuthState.Unpaired
+        scope.launch {
+            prefs().edit().remove(KEY_SESSION_TOKEN).apply()
+        }
+    }
+
     override fun onMessage(envelope: Envelope) {
         when (envelope.type) {
             "auth.ok" -> handleAuthOk(envelope)
