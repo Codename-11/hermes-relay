@@ -128,6 +128,7 @@ fun SettingsScreen(
     val apiReachable by connectionViewModel.apiServerReachable.collectAsState()
     val relayUrl by connectionViewModel.relayUrl.collectAsState()
     val pairingCode by connectionViewModel.pairingCode.collectAsState()
+    val apiKeyPresent by connectionViewModel.authManager.apiKeyPresent.collectAsState()
     val theme by connectionViewModel.theme.collectAsState()
     val insecureMode by connectionViewModel.insecureMode.collectAsState()
     val isInsecureConnection by connectionViewModel.isInsecureConnection.collectAsState()
@@ -176,6 +177,20 @@ fun SettingsScreen(
     // Feature flags
     val devOptionsUnlocked by FeatureFlags.devOptionsUnlocked(context).collectAsState(initial = FeatureFlags.isDevBuild)
     val relayEnabled by FeatureFlags.relayEnabled(context).collectAsState(initial = FeatureFlags.isDevBuild)
+
+    // "Stale" = we have a paired session token but the WS is not currently
+    // open. Happens after backgrounding, network flaps, or manual disconnect.
+    // Shown as amber "Stale — tap to reconnect" instead of red "Disconnected"
+    // because the fix is a single reconnect, not a re-pair.
+    val isRelayStale = authState is AuthState.Paired &&
+        relayConnectionState == ConnectionState.Disconnected
+
+    // Auto-reconnect when entering the Settings screen in a stale state.
+    // Keeps 90% of users out of the contradictory "Paired + Disconnected"
+    // state without requiring a manual tap.
+    LaunchedEffect(Unit) {
+        connectionViewModel.reconnectIfStale()
+    }
 
     // Connection section expand state — seeded from the current pair/reach
     // status on first composition, then driven by the user. rememberSaveable
@@ -318,17 +333,31 @@ fun SettingsScreen(
                         ConnectionStatusRow(
                             label = "Relay",
                             isConnected = relayConnectionState == ConnectionState.Connected,
+                            // Treat "stale" as the amber in-flight state so
+                            // the row renders in amber instead of red — a
+                            // tap will bring it back, no re-pair needed.
                             isConnecting = relayConnectionState == ConnectionState.Connecting ||
-                                relayConnectionState == ConnectionState.Reconnecting,
-                            statusText = when (relayConnectionState) {
-                                ConnectionState.Connected -> "Connected"
-                                ConnectionState.Connecting -> "Connecting..."
-                                ConnectionState.Reconnecting -> "Reconnecting..."
-                                ConnectionState.Disconnected -> "Disconnected"
+                                relayConnectionState == ConnectionState.Reconnecting ||
+                                isRelayStale,
+                            statusText = when {
+                                relayConnectionState == ConnectionState.Connected -> "Connected"
+                                relayConnectionState == ConnectionState.Connecting -> "Connecting..."
+                                relayConnectionState == ConnectionState.Reconnecting -> "Reconnecting..."
+                                isRelayStale -> "Stale — tap to reconnect"
+                                else -> "Disconnected"
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { showRelayInfoSheet = true }
+                                .clickable {
+                                    // When stale, the primary affordance is
+                                    // reconnect. Otherwise fall through to
+                                    // the info bottom sheet.
+                                    if (isRelayStale) {
+                                        connectionViewModel.connectRelay()
+                                    } else {
+                                        showRelayInfoSheet = true
+                                    }
+                                }
                         )
 
                         ConnectionStatusRow(
@@ -347,12 +376,22 @@ fun SettingsScreen(
                         )
                     }
 
-                    // Secondary actions — only shown when paired
+                    // Secondary actions — only shown when paired. Promotes
+                    // Reconnect to primary when the session is stale so the
+                    // user has an explicit button if they don't realize the
+                    // status row itself is tappable.
                     if (authState is AuthState.Paired) {
                         HorizontalDivider()
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
+                            if (isRelayStale) {
+                                Button(
+                                    onClick = { connectionViewModel.connectRelay() }
+                                ) {
+                                    Text("Reconnect")
+                                }
+                            }
                             OutlinedButton(
                                 onClick = { connectionViewModel.clearSession() }
                             ) {
@@ -393,9 +432,20 @@ fun SettingsScreen(
                     value = apiKeyInput,
                     onValueChange = { apiKeyInput = it },
                     label = { Text("API Key (optional)") },
-                    placeholder = { Text("Leave empty if not configured") },
+                    placeholder = {
+                        Text(
+                            if (apiKeyPresent) "•••• already set (leave blank to keep)"
+                            else "Leave empty if not configured"
+                        )
+                    },
                     supportingText = {
-                        Text("Only needed if Hermes is configured with API_SERVER_KEY")
+                        Text(
+                            if (apiKeyPresent && apiKeyInput.isBlank()) {
+                                "A key is already stored — leave blank to keep it, or type to replace"
+                            } else {
+                                "Only needed if Hermes is configured with API_SERVER_KEY"
+                            }
+                        )
                     },
                     singleLine = true,
                     visualTransformation = if (apiKeyVisible) {

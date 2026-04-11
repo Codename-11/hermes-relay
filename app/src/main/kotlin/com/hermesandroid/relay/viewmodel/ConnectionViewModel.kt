@@ -535,6 +535,24 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         connectionManager.disconnect()
     }
 
+    /**
+     * If we have a paired session token but the WS isn't currently open,
+     * kick the relay connection back up. Called on Settings screen entry
+     * and from the "Reconnect" button / tap-to-reconnect action on the
+     * Relay status row.
+     *
+     * No-op when not paired, already connected, connecting, or reconnecting —
+     * avoids duplicate connect calls that would interrupt an in-flight auth.
+     */
+    fun reconnectIfStale() {
+        val paired = authState.value is AuthState.Paired
+        val disconnected = relayConnectionState.value == ConnectionState.Disconnected
+        val hasUrl = _relayUrl.value.isNotBlank()
+        if (paired && disconnected && hasUrl) {
+            connectionManager.connect(_relayUrl.value)
+        }
+    }
+
     fun updateRelayUrl(url: String) {
         _relayUrl.value = url
         viewModelScope.launch {

@@ -307,12 +307,9 @@ fun ApiServerInfoSheet(
     val chatMode by connectionViewModel.chatMode.collectAsState()
     val streamingEndpoint by connectionViewModel.streamingEndpoint.collectAsState()
 
-    // We can't read the API key directly from a composable (it's suspend),
-    // so we infer "set" from whether the client was built with one by
-    // checking reachability + the known endpoint path — simpler: treat as
-    // "Yes (hidden)" if we were able to build a client at all.
-    val apiClient by connectionViewModel.apiClient.collectAsState()
-    val apiKeyPresent = apiClient != null // not a perfect proxy, but avoids a suspend call
+    // Reactive flag from AuthManager — updated whenever setApiKey/clearApiKey
+    // runs and seeded from stored prefs on init.
+    val apiKeyPresent by connectionViewModel.authManager.apiKeyPresent.collectAsState()
 
     var testing by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<String?>(null) }

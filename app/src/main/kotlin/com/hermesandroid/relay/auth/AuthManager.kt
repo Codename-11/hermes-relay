@@ -89,6 +89,15 @@ class AuthManager(
     private val _profiles = MutableStateFlow<List<String>>(emptyList())
     val profiles: StateFlow<List<String>> = _profiles.asStateFlow()
 
+    /**
+     * Whether an API key is currently stored in SharedPreferences. Updated
+     * reactively by [setApiKey] / [clearApiKey] so the UI can render
+     * "API key: already set — leave blank to keep" without having to call
+     * the suspend [getApiKey] from a composable body.
+     */
+    private val _apiKeyPresent = MutableStateFlow(false)
+    val apiKeyPresent: StateFlow<Boolean> = _apiKeyPresent.asStateFlow()
+
     init {
         // Register as system channel handler for auth messages
         multiplexer.registerHandler("system", this)
@@ -99,6 +108,8 @@ class AuthManager(
             if (existingToken != null) {
                 _authState.value = AuthState.Paired(existingToken)
             }
+            // Seed API key presence flag from stored prefs
+            _apiKeyPresent.value = !prefs().getString(KEY_API_KEY, null).isNullOrBlank()
         }
     }
 
@@ -219,13 +230,16 @@ class AuthManager(
         val trimmed = key.trim()
         if (trimmed.isBlank()) {
             prefs().edit().remove(KEY_API_KEY).apply()
+            _apiKeyPresent.value = false
         } else {
             prefs().edit().putString(KEY_API_KEY, trimmed).apply()
+            _apiKeyPresent.value = true
         }
     }
 
     suspend fun clearApiKey() {
         prefs().edit().remove(KEY_API_KEY).apply()
+        _apiKeyPresent.value = false
     }
 
     val isPaired: Boolean

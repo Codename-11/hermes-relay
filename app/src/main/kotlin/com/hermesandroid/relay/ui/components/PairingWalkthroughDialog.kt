@@ -23,8 +23,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
@@ -66,8 +69,10 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import android.widget.Toast
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.Dispatchers
@@ -103,12 +108,38 @@ fun PairingWalkthroughDialog(
     val initialApiUrl by connectionViewModel.apiServerUrl.collectAsState()
     val initialRelayUrl by connectionViewModel.relayUrl.collectAsState()
     val initialInsecure by connectionViewModel.insecureMode.collectAsState()
+    // Reactive flag for whether an API key is already stored. Lets us show
+    // "already set — leave blank to keep" instead of falsely claiming the
+    // key is missing when the user simply hasn't retyped it this session.
+    val apiKeyPresent by connectionViewModel.authManager.apiKeyPresent.collectAsState()
+
+    val context = LocalContext.current
 
     var currentStep by remember { mutableStateOf(0) }
 
     var apiUrl by remember { mutableStateOf(initialApiUrl) }
     var apiKey by remember { mutableStateOf("") }
     var apiKeyVisible by remember { mutableStateOf(false) }
+
+    // --- QR scan shortcut state ------------------------------------------
+    // The walkthrough doesn't only support manual entry — tapping "Scan QR"
+    // on step 1 launches the camera, parses a Hermes pairing payload, fills
+    // every walkthrough field from it, and jumps straight to the final
+    // review + pair step. Users who can't scan keep using the manual flow.
+    var showScanner by remember { mutableStateOf(false) }
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            showScanner = true
+        } else {
+            Toast.makeText(
+                context,
+                "Camera permission needed to scan QR codes",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
     var apiTesting by remember { mutableStateOf(false) }
     var apiTestResult by remember { mutableStateOf<StepResult?>(null) }
 
@@ -243,6 +274,7 @@ fun PairingWalkthroughDialog(
                             apiKey = apiKey,
                             onApiKeyChange = { apiKey = it },
                             apiKeyVisible = apiKeyVisible,
+                            apiKeyPresent = apiKeyPresent,
                             onToggleApiKeyVisibility = { apiKeyVisible = !apiKeyVisible },
                             testing = apiTesting,
                             result = apiTestResult,
@@ -261,6 +293,11 @@ fun PairingWalkthroughDialog(
                                         StepResult.Error("Unreachable — check URL and port")
                                     }
                                 }
+                            },
+                            onScanClick = {
+                                cameraPermissionLauncher.launch(
+                                    android.Manifest.permission.CAMERA
+                                )
                             },
                         )
 
@@ -309,7 +346,8 @@ fun PairingWalkthroughDialog(
 
                         3 -> PairAndVerifyStep(
                             apiUrl = apiUrl,
-                            apiKeySet = apiKey.isNotBlank(),
+                            apiKeySet = apiKey.isNotBlank() || apiKeyPresent,
+                            apiKeyIsNew = apiKey.isNotBlank(),
                             relayUrl = relayUrl,
                             pairingCode = trimmedCode,
                             inProgress = pairingInProgress,
@@ -341,6 +379,35 @@ fun PairingWalkthroughDialog(
                 }
             }
         }
+    }
+
+    // QR scanner overlay — rendered outside the Dialog's Scaffold so it
+    // takes over the full window. On successful scan we fill every
+    // walkthrough field from the payload and jump straight to step 4
+    // (Pair & Verify) for the user to confirm and pair.
+    if (showScanner) {
+        QrPairingScanner(
+            onPairingDetected = { payload ->
+                apiUrl = payload.serverUrl
+                if (payload.key.isNotBlank()) {
+                    apiKey = payload.key
+                }
+                apiTestResult = null
+                payload.relay?.let { relay ->
+                    relayUrl = relay.url
+                    if (relay.url.startsWith("ws://")) {
+                        insecureAllowed = true
+                    }
+                    pairingCode = relay.code.uppercase()
+                    relayTestResult = null
+                }
+                showScanner = false
+                // Jump straight to the review + pair step — the user can
+                // still tap Back if they want to tweak anything.
+                currentStep = 3
+            },
+            onDismiss = { showScanner = false }
+        )
     }
 }
 
@@ -483,10 +550,12 @@ private fun ApiServerStep(
     apiKey: String,
     onApiKeyChange: (String) -> Unit,
     apiKeyVisible: Boolean,
+    apiKeyPresent: Boolean,
     onToggleApiKeyVisibility: () -> Unit,
     testing: Boolean,
     result: StepResult?,
     onTest: () -> Unit,
+    onScanClick: () -> Unit,
 ) {
     StepBody {
         Text(
@@ -498,6 +567,47 @@ private fun ApiServerStep(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+
+        // QR scan shortcut — fills every field (API + relay + code) from
+        // a single scan and jumps straight to the review + pair step.
+        OutlinedButton(
+            onClick = onScanClick,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(
+                imageVector = Icons.Filled.QrCodeScanner,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text("Scan pairing QR — auto-fills everything")
+        }
+
+        // "or" divider between scan shortcut and manual entry
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(1.dp)
+                    .background(MaterialTheme.colorScheme.outlineVariant)
+            )
+            Text(
+                text = "  or enter manually  ",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(1.dp)
+                    .background(MaterialTheme.colorScheme.outlineVariant)
+            )
+        }
 
         OutlinedTextField(
             value = apiUrl,
@@ -516,6 +626,9 @@ private fun ApiServerStep(
             value = apiKey,
             onValueChange = onApiKeyChange,
             label = { Text("API Key (optional)") },
+            placeholder = {
+                Text(if (apiKeyPresent) "•••• already set (leave blank to keep)" else "")
+            },
             singleLine = true,
             visualTransformation = if (apiKeyVisible) {
                 VisualTransformation.None
@@ -535,7 +648,13 @@ private fun ApiServerStep(
                 }
             },
             supportingText = {
-                Text("Only needed if Hermes is configured with API_SERVER_KEY")
+                Text(
+                    if (apiKeyPresent && apiKey.isBlank()) {
+                        "A key is already stored — leave blank to keep it, or type a new one to replace"
+                    } else {
+                        "Only needed if Hermes is configured with API_SERVER_KEY"
+                    }
+                )
             },
             keyboardOptions = KeyboardOptions(
                 imeAction = ImeAction.Done,
@@ -732,6 +851,7 @@ private fun PairingCodeStep(
 private fun PairAndVerifyStep(
     apiUrl: String,
     apiKeySet: Boolean,
+    apiKeyIsNew: Boolean,
     relayUrl: String,
     pairingCode: String,
     inProgress: Boolean,
@@ -762,7 +882,14 @@ private fun PairAndVerifyStep(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 SummaryRow("API Server", apiUrl.ifBlank { "—" })
-                SummaryRow("API Key", if (apiKeySet) "Set" else "Not set")
+                SummaryRow(
+                    "API Key",
+                    when {
+                        apiKeyIsNew -> "New key (hidden)"
+                        apiKeySet -> "Already set (unchanged)"
+                        else -> "Not set"
+                    }
+                )
                 SummaryRow("Relay Server", relayUrl.ifBlank { "—" })
                 SummaryRow("Pairing Code", pairingCode.ifBlank { "—" })
             }
