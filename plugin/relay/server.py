@@ -38,6 +38,7 @@ from .channels.bridge import BridgeHandler
 from .channels.chat import ChatHandler
 from .channels.terminal import TerminalHandler
 from .config import RelayConfig
+from .media import MediaRegistrationError, MediaRegistry
 
 logger = logging.getLogger("hermes_relay")
 
@@ -55,6 +56,14 @@ class RelayServer:
         self.pairing = PairingManager()
         self.sessions = SessionManager()
         self.rate_limiter = RateLimiter()
+
+        # Media registry — inbound media from tools (screenshots, etc.)
+        self.media = MediaRegistry(
+            max_entries=config.media_lru_cap,
+            ttl_seconds=config.media_ttl_seconds,
+            max_size_bytes=config.media_max_size_mb * 1024 * 1024,
+            allowed_roots=config.media_allowed_roots or None,
+        )
 
         # Channel handlers
         self.chat = ChatHandler(webapi_url=config.webapi_url)
@@ -169,6 +178,127 @@ async def handle_pairing_register(request: web.Request) -> web.Response:
 
     logger.info("Pre-registered pairing code via /pairing/register: %s", code.upper())
     return web.json_response({"ok": True, "code": code.upper()})
+
+
+# ── Media handlers ───────────────────────────────────────────────────────────
+
+
+async def handle_media_register(request: web.Request) -> web.Response:
+    """Register a local file with the MediaRegistry and return an opaque token.
+
+    Loopback-only — mirrors the ``/pairing/register`` trust model. Only a
+    process running on the same host as the relay (e.g. a Hermes tool
+    function) can mint media tokens.
+
+    POST /media/register {"path": "/abs/path.png", "content_type": "image/png",
+                          "file_name": "screenshot.png"}
+      → 200 {"ok": true, "token": "...", "expires_at": <epoch seconds>}
+      → 400 {"ok": false, "error": "<validation message>"}
+      → 403 loopback gate
+    """
+    remote = request.remote or ""
+    if remote not in ("127.0.0.1", "::1"):
+        logger.warning(
+            "Rejected /media/register from non-loopback peer %s", remote
+        )
+        raise web.HTTPForbidden(
+            text="/media/register is restricted to localhost callers",
+        )
+
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return web.json_response(
+            {"ok": False, "error": "invalid JSON body"}, status=400
+        )
+
+    if not isinstance(payload, dict):
+        return web.json_response(
+            {"ok": False, "error": "body must be a JSON object"}, status=400
+        )
+
+    path = payload.get("path")
+    content_type = payload.get("content_type")
+    file_name = payload.get("file_name")
+
+    server: RelayServer = request.app["server"]
+    try:
+        entry = await server.media.register(
+            path=path,
+            content_type=content_type,
+            file_name=file_name,
+        )
+    except MediaRegistrationError as exc:
+        logger.info("Media registration rejected: %s", exc)
+        return web.json_response(
+            {"ok": False, "error": str(exc)}, status=400
+        )
+
+    return web.json_response(
+        {
+            "ok": True,
+            "token": entry.token,
+            "expires_at": entry.expires_at,
+        }
+    )
+
+
+async def handle_media_get(request: web.Request) -> web.StreamResponse:
+    """Serve a previously-registered media file by opaque token.
+
+    Authenticated via bearer token against the relay's SessionManager —
+    every phone with a valid relay session token can fetch media,
+    invalid/missing token is 401.
+
+    GET /media/{token}
+      → 200 file bytes
+      → 401 missing/invalid bearer
+      → 404 token not found / expired
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise web.HTTPUnauthorized(
+            text="Authorization: Bearer <session_token> required",
+        )
+
+    bearer = auth_header[len("Bearer ") :].strip()
+    if not bearer:
+        raise web.HTTPUnauthorized(text="empty bearer token")
+
+    server: RelayServer = request.app["server"]
+    session = server.sessions.get_session(bearer)
+    if session is None:
+        logger.info(
+            "Media fetch rejected: invalid bearer token from %s",
+            request.remote or "unknown",
+        )
+        raise web.HTTPUnauthorized(text="invalid or expired session token")
+
+    token = request.match_info["token"]
+    entry = await server.media.get(token)
+    if entry is None:
+        raise web.HTTPNotFound(text="media token not found or expired")
+
+    headers = {
+        "Content-Type": entry.content_type,
+        "Cache-Control": "private, max-age=3600",
+    }
+    if entry.file_name:
+        # Quote the filename to survive weird characters. RFC 6266 inline
+        # disposition with quoted filename is the broadest-compat form.
+        safe_name = entry.file_name.replace('"', "")
+        headers["Content-Disposition"] = f'inline; filename="{safe_name}"'
+    else:
+        headers["Content-Disposition"] = "inline"
+
+    logger.debug(
+        "Serving media token=%s... path=%s size=%d to session=%s...",
+        token[:8],
+        entry.path,
+        entry.size,
+        bearer[:8],
+    )
+    return web.FileResponse(entry.path, headers=headers)
 
 
 # ── WebSocket handler ────────────────────────────────────────────────────────
@@ -484,6 +614,8 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_get("/health", handle_health)
     app.router.add_post("/pairing", handle_pairing)
     app.router.add_post("/pairing/register", handle_pairing_register)
+    app.router.add_post("/media/register", handle_media_register)
+    app.router.add_get("/media/{token}", handle_media_get)
 
     # Cleanup on shutdown
     app.on_shutdown.append(_on_app_shutdown)

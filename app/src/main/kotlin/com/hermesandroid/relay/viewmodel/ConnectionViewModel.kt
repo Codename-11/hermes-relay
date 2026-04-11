@@ -11,6 +11,7 @@ import androidx.lifecycle.viewModelScope
 import com.hermesandroid.relay.auth.AuthManager
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.DataManager
+import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.relayDataStore
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.ConnectivityObserver
@@ -18,7 +19,12 @@ import com.hermesandroid.relay.network.ChatMode
 import com.hermesandroid.relay.network.ConnectionManager
 import com.hermesandroid.relay.network.ConnectionState
 import com.hermesandroid.relay.network.HermesApiClient
+import com.hermesandroid.relay.network.RelayHttpClient
 import com.hermesandroid.relay.network.handlers.ChatHandler
+import com.hermesandroid.relay.util.MediaCacheWriter
+import okhttp3.OkHttpClient
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -28,6 +34,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.Request
 
 class ConnectionViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -72,6 +80,57 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     // Data management
     val dataManager = DataManager(application)
+
+    // --- Inbound media pipeline ------------------------------------------------
+    //
+    // Three singletons that together let tool output emit `MEDIA:hermes-relay://<token>`
+    // markers which the phone turns into inline attachments:
+    //   - [mediaSettingsRepo] exposes user-tunable limits (max size, cache cap, etc.)
+    //   - [mediaCacheWriter]  writes fetched bytes to `cacheDir/hermes-media/` and
+    //                         hands out `content://` URIs via the FileProvider.
+    //   - [relayHttpClient]   pulls bytes from `GET /media/<token>` on the relay
+    //                         using the same session token as the WSS channel.
+    //
+    // These are owned by the ConnectionViewModel so they share lifetime with the
+    // rest of the networking stack and get torn down on onCleared().
+    val mediaSettingsRepo = MediaSettingsRepository(application)
+
+    val mediaCacheWriter = MediaCacheWriter(
+        context = application,
+        cachedMediaCapMbProvider = {
+            // Read from the current DataStore snapshot — the repo exposes a Flow,
+            // but the writer calls this from a suspend context synchronously
+            // during cache() and we want the latest value without blocking. Use
+            // a tiny cached state that the DataStore collect loop updates.
+            _cachedMediaCapMb
+        }
+    )
+
+    /** Mirrored cap (MB) kept in sync with DataStore so [mediaCacheWriter] reads cheaply. */
+    @Volatile
+    private var _cachedMediaCapMb: Int = MediaSettingsRepository.DEFAULT_CACHED_MEDIA_CAP_MB
+
+    /**
+     * Shared OkHttp instance for the relay HTTP client. Separate from the one
+     * inside [HermesApiClient] so API-server and relay connections don't
+     * interfere, but configured the same way (long read timeout to handle
+     * slow mobile connections + large files).
+     */
+    private val relayOkHttp: OkHttpClient = OkHttpClient.Builder()
+        .readTimeout(2, TimeUnit.MINUTES)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .build()
+
+    val relayHttpClient = RelayHttpClient(
+        okHttpClient = relayOkHttp,
+        relayUrlProvider = { _relayUrl.value },
+        sessionTokenProvider = {
+            // AuthManager holds the paired session token in EncryptedSharedPrefs.
+            // Pull it out via the authState StateFlow snapshot — if we're not
+            // paired yet, return null and the fetch fails with a clean error.
+            (authManager.authState.value as? AuthState.Paired)?.token
+        }
+    )
 
     // --- Relay connection state ---
     val relayConnectionState: StateFlow<ConnectionState> = connectionManager.connectionState
@@ -350,6 +409,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 }
             }
         }
+
+        // Mirror the media cache cap into a plain volatile field so the
+        // cache writer can read it synchronously from its enforceCap() loop.
+        viewModelScope.launch {
+            mediaSettingsRepo.settings.collect { settings ->
+                _cachedMediaCapMb = settings.cachedMediaCapMb
+            }
+        }
     }
 
     // --- API Server methods ---
@@ -384,6 +451,44 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             val reachable = client?.checkHealth() == true
             _apiServerReachable.value = reachable
             onResult(reachable)
+        }
+    }
+
+    /**
+     * Probe the relay server's /health endpoint over plain HTTP(S) — derived
+     * from the ws(s) URL by swapping the scheme and dropping the WS path.
+     * Lets us report "relay reachable" without going through the full WSS
+     * handshake (which would require a pairing code + auth round-trip).
+     *
+     * Used by the pairing walkthrough wizard and Manual configuration's
+     * "Test relay" button.
+     */
+    fun testRelayReachability(wsUrl: String, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                try {
+                    val trimmed = wsUrl.trim()
+                    if (trimmed.isBlank()) return@withContext false
+                    val uri = java.net.URI(trimmed)
+                    val scheme = when (uri.scheme) {
+                        "ws" -> "http"
+                        "wss" -> "https"
+                        else -> return@withContext false
+                    }
+                    val port = if (uri.port > 0) uri.port
+                        else if (scheme == "https") 443 else 80
+                    val healthUrl = "$scheme://${uri.host}:$port/health"
+                    val client = OkHttpClient.Builder()
+                        .connectTimeout(3, TimeUnit.SECONDS)
+                        .readTimeout(3, TimeUnit.SECONDS)
+                        .build()
+                    val request = Request.Builder().url(healthUrl).get().build()
+                    client.newCall(request).execute().use { it.isSuccessful }
+                } catch (_: Exception) {
+                    false
+                }
+            }
+            onResult(ok)
         }
     }
 

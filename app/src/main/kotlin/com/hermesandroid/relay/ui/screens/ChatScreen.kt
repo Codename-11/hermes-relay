@@ -843,8 +843,13 @@ fun ChatScreen(
                         items(messages.size, key = { messages[it].id }) { index ->
                             val message = messages[index]
 
-                            // Skip empty bubbles (content stripped by annotation parser, no tool calls)
-                            if (message.content.isBlank() && message.toolCalls.isEmpty() && !message.isStreaming) return@items
+                            // Skip empty bubbles (content stripped by annotation parser, no tool calls,
+                            // no attachments). Attachments keep the bubble alive for inbound media.
+                            if (message.content.isBlank() &&
+                                message.toolCalls.isEmpty() &&
+                                message.attachments.isEmpty() &&
+                                !message.isStreaming
+                            ) return@items
 
                             val isFirstInGroup = index == 0 || messages[index - 1].role != message.role
                             val isLastInGroup = index == messages.size - 1 || messages[index + 1].role != message.role
@@ -863,6 +868,12 @@ fun ChatScreen(
                                 showThinking = showThinking,
                                 isFirstInGroup = isFirstInGroup,
                                 isLastInGroup = isLastInGroup,
+                                onAttachmentRetry = { msgId, idx ->
+                                    chatViewModel.manualFetchAttachment(msgId, idx)
+                                },
+                                onAttachmentManualFetch = { msgId, idx ->
+                                    chatViewModel.manualFetchAttachment(msgId, idx)
+                                },
                                 onCopyMessage = { text ->
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     // The new Clipboard API is suspend-based, so the

@@ -36,6 +36,15 @@ class RelayConfig:
     profiles: list[dict[str, Any]] = field(default_factory=list)
     terminal_shell: str | None = None
 
+    # Media registry (inbound media for screenshot / attachment tools)
+    media_max_size_mb: int = 100
+    media_ttl_seconds: int = 86400
+    media_lru_cap: int = 500
+    # Extra allowed roots beyond the automatic tmp+workspace defaults.
+    # MediaRegistry always appends these on top of its own defaults — they
+    # do not replace the base list.
+    media_allowed_roots: list[str] = field(default_factory=list)
+
     @classmethod
     def from_env(cls) -> RelayConfig:
         """Build config from environment variables, falling back to defaults."""
@@ -51,6 +60,47 @@ class RelayConfig:
             log_level=os.getenv("RELAY_LOG_LEVEL", cls.log_level),
             terminal_shell=os.getenv("RELAY_TERMINAL_SHELL") or None,
         )
+
+        # ── Media knobs ─────────────────────────────────────────────────
+        media_max_size = os.getenv("RELAY_MEDIA_MAX_SIZE_MB")
+        if media_max_size:
+            try:
+                config.media_max_size_mb = int(media_max_size)
+            except ValueError:
+                logger.warning(
+                    "Invalid RELAY_MEDIA_MAX_SIZE_MB=%r — using default %d",
+                    media_max_size,
+                    config.media_max_size_mb,
+                )
+
+        media_ttl = os.getenv("RELAY_MEDIA_TTL_SECONDS")
+        if media_ttl:
+            try:
+                config.media_ttl_seconds = int(media_ttl)
+            except ValueError:
+                logger.warning(
+                    "Invalid RELAY_MEDIA_TTL_SECONDS=%r — using default %d",
+                    media_ttl,
+                    config.media_ttl_seconds,
+                )
+
+        media_lru = os.getenv("RELAY_MEDIA_LRU_CAP")
+        if media_lru:
+            try:
+                config.media_lru_cap = int(media_lru)
+            except ValueError:
+                logger.warning(
+                    "Invalid RELAY_MEDIA_LRU_CAP=%r — using default %d",
+                    media_lru,
+                    config.media_lru_cap,
+                )
+
+        media_roots = os.getenv("RELAY_MEDIA_ALLOWED_ROOTS")
+        if media_roots:
+            config.media_allowed_roots = [
+                r.strip() for r in media_roots.split(os.pathsep) if r.strip()
+            ]
+
         config.profiles = _load_profiles(config.hermes_config_path)
         return config
 

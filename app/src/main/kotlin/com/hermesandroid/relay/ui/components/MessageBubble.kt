@@ -24,16 +24,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.sp
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.MessageRole
@@ -51,7 +48,18 @@ fun MessageBubble(
     showThinking: Boolean = true,
     isFirstInGroup: Boolean = true,
     isLastInGroup: Boolean = true,
-    onCopyMessage: (String) -> Unit = {}
+    onCopyMessage: (String) -> Unit = {},
+    /**
+     * Invoked when the user taps a FAILED inbound attachment card.
+     * `attachmentIndex` is the position in [ChatMessage.attachments] so the
+     * ViewModel can re-fetch the exact placeholder that needs re-trying.
+     */
+    onAttachmentRetry: (messageId: String, attachmentIndex: Int) -> Unit = { _, _ -> },
+    /**
+     * Invoked when the user taps a LOADING+"Tap to download" placeholder
+     * (the cellular deferral case).
+     */
+    onAttachmentManualFetch: (messageId: String, attachmentIndex: Int) -> Unit = { _, _ -> }
 ) {
     val isUser = message.role == MessageRole.USER
     val isSystem = message.role == MessageRole.SYSTEM
@@ -151,46 +159,22 @@ fun MessageBubble(
                     }
                 }
 
-                // Attachments
+                // Attachments — dispatched through the unified InboundAttachmentCard
+                // so outbound and inbound attachments share the same render pipeline.
+                // Outbound attachments (user-authored) always have state=LOADED so
+                // they route straight to the LOADED branch; inbound attachments (via
+                // MEDIA markers) cycle through LOADING → LOADED / FAILED as the
+                // background fetch progresses.
                 if (message.attachments.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(4.dp))
-                    message.attachments.forEach { attachment ->
-                        if (attachment.isImage) {
-                            val imageBitmap = remember(attachment.content) {
-                                try {
-                                    val bytes = android.util.Base64.decode(attachment.content, android.util.Base64.DEFAULT)
-                                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                                        ?.asImageBitmap()
-                                } catch (_: Exception) { null as androidx.compose.ui.graphics.ImageBitmap? }
-                            }
-                            if (imageBitmap != null) {
-                                androidx.compose.foundation.Image(
-                                    bitmap = imageBitmap,
-                                    contentDescription = attachment.fileName,
-                                    modifier = Modifier
-                                        .widthIn(max = maxBubbleWidth - 24.dp)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .padding(vertical = 2.dp),
-                                    contentScale = androidx.compose.ui.layout.ContentScale.FillWidth
-                                )
-                            }
-                        } else {
-                            Row(
-                                modifier = Modifier.padding(vertical = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Text(
-                                    text = "\uD83D\uDCC4",
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                Text(
-                                    text = attachment.fileName ?: attachment.contentType,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = textColor.copy(alpha = 0.8f)
-                                )
-                            }
-                        }
+                    message.attachments.forEachIndexed { index, attachment ->
+                        InboundAttachmentCard(
+                            attachment = attachment,
+                            onRetry = { onAttachmentRetry(message.id, index) },
+                            onManualFetch = { onAttachmentManualFetch(message.id, index) },
+                            maxWidth = maxBubbleWidth - 24.dp,
+                            modifier = Modifier.padding(vertical = 2.dp)
+                        )
                     }
                 }
 

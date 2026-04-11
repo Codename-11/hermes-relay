@@ -1,0 +1,284 @@
+"""Media registry — opaque-token file serving for media-producing tools.
+
+The screenshot tool (and any future media-producing tool) POSTs to a
+loopback-only register endpoint on the relay, gets back an opaque token,
+and emits ``MEDIA:hermes-relay://<token>`` in chat. The phone parses that
+marker and GETs the bytes from a bearer-auth'd route on the same relay.
+
+Design notes:
+
+* **Opaque tokens** (``secrets.token_urlsafe(16)``) — never leak filesystem
+  paths over the wire.
+* **Path sandboxing** — every registered path must be absolute, must
+  ``os.path.realpath`` under at least one of the allowed roots, must exist,
+  must be a regular file, and must fit under the size cap.
+* **Allowed roots** — default to ``tempfile.gettempdir()`` plus the Hermes
+  workspace (env ``HERMES_WORKSPACE`` or ``~/.hermes/workspace/``) plus any
+  extra roots the operator supplies via ``RELAY_MEDIA_ALLOWED_ROOTS``
+  (``os.pathsep``-separated). Additional roots passed to the constructor
+  are appended.
+* **TTL** — 24h default (matches scroll-back-within-a-day use case).
+* **LRU cap** — 500 entries default; oldest is evicted on overflow.
+
+All mutators take an :class:`asyncio.Lock` — aiohttp handlers run in a
+single loop, but the lock is cheap insurance and also keeps the contract
+obvious for any future multi-worker or background-cleanup refactor.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import secrets
+import tempfile
+import time
+from collections import OrderedDict
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Iterable
+
+logger = logging.getLogger("hermes_relay.media")
+
+
+class MediaRegistrationError(ValueError):
+    """Raised when a media registration request fails validation.
+
+    Subclass of :class:`ValueError` so aiohttp handlers can distinguish
+    "bad input" from "server bug" cleanly.
+    """
+
+
+@dataclass
+class _MediaEntry:
+    """One registered media file."""
+
+    token: str
+    path: str
+    content_type: str
+    size: int
+    file_name: str | None
+    created_at: float
+    expires_at: float
+    last_accessed: float = field(default_factory=time.time)
+
+    @property
+    def is_expired(self) -> bool:
+        return time.time() > self.expires_at
+
+
+def _default_allowed_roots() -> list[str]:
+    """Build the default list of allowed roots at init time.
+
+    Order:
+      1. ``tempfile.gettempdir()``
+      2. ``$HERMES_WORKSPACE`` or ``~/.hermes/workspace/`` if either exists
+      3. Entries from ``RELAY_MEDIA_ALLOWED_ROOTS`` (``os.pathsep``-split)
+
+    All paths are resolved via ``os.path.realpath`` so symlinks in the
+    allowlist itself don't create surprises.
+    """
+    roots: list[str] = [os.path.realpath(tempfile.gettempdir())]
+
+    workspace_env = os.environ.get("HERMES_WORKSPACE")
+    if workspace_env:
+        roots.append(os.path.realpath(workspace_env))
+    else:
+        default_ws = Path.home() / ".hermes" / "workspace"
+        # Include the path whether or not it currently exists — register()
+        # will fail if the file inside it doesn't exist.
+        roots.append(os.path.realpath(str(default_ws)))
+
+    extra = os.environ.get("RELAY_MEDIA_ALLOWED_ROOTS", "")
+    if extra:
+        for item in extra.split(os.pathsep):
+            item = item.strip()
+            if item:
+                roots.append(os.path.realpath(item))
+
+    # De-dupe while preserving order
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for r in roots:
+        if r not in seen:
+            seen.add(r)
+            deduped.append(r)
+    return deduped
+
+
+class MediaRegistry:
+    """In-memory registry of media entries keyed by opaque token.
+
+    Access pattern is fully async — all mutations go through an
+    :class:`asyncio.Lock`. Callers must ``await`` every method.
+    """
+
+    def __init__(
+        self,
+        max_entries: int = 500,
+        ttl_seconds: int = 24 * 60 * 60,
+        max_size_bytes: int = 100 * 1024 * 1024,
+        allowed_roots: Iterable[str] | None = None,
+    ) -> None:
+        self.max_entries = max_entries
+        self.ttl_seconds = ttl_seconds
+        self.max_size_bytes = max_size_bytes
+
+        base_roots = _default_allowed_roots()
+        if allowed_roots is not None:
+            for r in allowed_roots:
+                if r:
+                    resolved = os.path.realpath(r)
+                    if resolved not in base_roots:
+                        base_roots.append(resolved)
+        self.allowed_roots: list[str] = base_roots
+
+        self._entries: "OrderedDict[str, _MediaEntry]" = OrderedDict()
+        self._lock = asyncio.Lock()
+
+        logger.info(
+            "MediaRegistry initialized (max_entries=%d, ttl=%ds, "
+            "max_size=%d bytes, roots=%s)",
+            max_entries,
+            ttl_seconds,
+            max_size_bytes,
+            self.allowed_roots,
+        )
+
+    # ── Public API ──────────────────────────────────────────────────────
+
+    async def register(
+        self,
+        path: str,
+        content_type: str,
+        file_name: str | None = None,
+    ) -> _MediaEntry:
+        """Validate ``path`` and register a new media entry.
+
+        Raises :class:`MediaRegistrationError` with a clear message on any
+        validation failure (bad path, not under allowed roots, missing,
+        oversized, not a regular file).
+        """
+        if not path or not isinstance(path, str):
+            raise MediaRegistrationError("missing or invalid 'path'")
+        if not content_type or not isinstance(content_type, str):
+            raise MediaRegistrationError("missing or invalid 'content_type'")
+
+        if not os.path.isabs(path):
+            raise MediaRegistrationError(f"path must be absolute: {path!r}")
+
+        real_path = os.path.realpath(path)
+
+        if not self._is_under_allowed_root(real_path):
+            raise MediaRegistrationError(
+                f"path is not under an allowed root: {path!r}"
+            )
+
+        if not os.path.exists(real_path):
+            raise MediaRegistrationError(f"path does not exist: {path!r}")
+
+        if not os.path.isfile(real_path):
+            raise MediaRegistrationError(f"path is not a regular file: {path!r}")
+
+        try:
+            size = os.path.getsize(real_path)
+        except OSError as exc:
+            raise MediaRegistrationError(
+                f"could not stat {path!r}: {exc}"
+            ) from exc
+
+        if size > self.max_size_bytes:
+            raise MediaRegistrationError(
+                f"file too large ({size} bytes, max {self.max_size_bytes})"
+            )
+
+        token = secrets.token_urlsafe(16)
+        now = time.time()
+        entry = _MediaEntry(
+            token=token,
+            path=real_path,
+            content_type=content_type,
+            size=size,
+            file_name=file_name,
+            created_at=now,
+            expires_at=now + self.ttl_seconds,
+            last_accessed=now,
+        )
+
+        async with self._lock:
+            self._cleanup_locked()
+            self._entries[token] = entry
+            # Evict oldest while over cap
+            while len(self._entries) > self.max_entries:
+                evicted_token, evicted = self._entries.popitem(last=False)
+                logger.info(
+                    "MediaRegistry LRU eviction: token=%s... path=%s",
+                    evicted_token[:8],
+                    evicted.path,
+                )
+
+        logger.info(
+            "Registered media token=%s... path=%s size=%d type=%s",
+            token[:8],
+            real_path,
+            size,
+            content_type,
+        )
+        return entry
+
+    async def get(self, token: str) -> _MediaEntry | None:
+        """Look up a token. Returns None on miss or expiry.
+
+        Updates ``last_accessed`` and moves the entry to the end of the
+        LRU order on hit.
+        """
+        if not token:
+            return None
+        async with self._lock:
+            self._cleanup_locked()
+            entry = self._entries.get(token)
+            if entry is None:
+                return None
+            if entry.is_expired:
+                del self._entries[token]
+                logger.info(
+                    "MediaRegistry expired on read: token=%s...", token[:8]
+                )
+                return None
+            entry.last_accessed = time.time()
+            self._entries.move_to_end(token)
+            return entry
+
+    async def cleanup(self) -> int:
+        """Public wrapper around ``_cleanup_locked``. Returns pruned count."""
+        async with self._lock:
+            return self._cleanup_locked()
+
+    async def size(self) -> int:
+        """Return the current number of registered entries."""
+        async with self._lock:
+            return len(self._entries)
+
+    # ── Internals ───────────────────────────────────────────────────────
+
+    def _is_under_allowed_root(self, real_path: str) -> bool:
+        """Return True if ``real_path`` lives under any allowed root."""
+        for root in self.allowed_roots:
+            try:
+                common = os.path.commonpath([real_path, root])
+            except ValueError:
+                # commonpath raises ValueError on mixed drives (Windows) —
+                # treat as "not under this root" and keep checking.
+                continue
+            if common == root:
+                return True
+        return False
+
+    def _cleanup_locked(self) -> int:
+        """Prune expired entries. Caller must hold ``self._lock``."""
+        expired = [k for k, v in self._entries.items() if v.is_expired]
+        for k in expired:
+            del self._entries[k]
+        if expired:
+            logger.debug("MediaRegistry cleaned up %d expired entries", len(expired))
+        return len(expired)

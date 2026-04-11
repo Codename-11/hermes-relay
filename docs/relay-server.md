@@ -87,6 +87,10 @@ All settings can be configured via environment variables. These override CLI def
 | `RELAY_WEBAPI_URL` | `http://localhost:8642` | Hermes API Server base URL |
 | `RELAY_HERMES_CONFIG` | `~/.hermes/config.yaml` | Hermes config path (for profile loading) |
 | `RELAY_LOG_LEVEL` | `INFO` | Python logging level |
+| `RELAY_MEDIA_MAX_SIZE_MB` | `100` | Per-file size cap on `POST /media/register`. Files larger than this are rejected. |
+| `RELAY_MEDIA_TTL_SECONDS` | `86400` | How long a registered media entry stays valid before the registry evicts it. Matches the within-a-day scrollback use case — see ADR 14. |
+| `RELAY_MEDIA_LRU_CAP` | `500` | Maximum in-memory entries in the media registry. Oldest is evicted on register-overflow. |
+| `RELAY_MEDIA_ALLOWED_ROOTS` | — | Additional sandbox roots for `POST /media/register` (colon/`os.pathsep`-separated absolute paths). Extends the auto-derived defaults (`tempfile.gettempdir()` + `HERMES_WORKSPACE` or `~/.hermes/workspace/`), not replaces them. |
 
 ## TLS / Production
 
@@ -120,6 +124,8 @@ See [`docs/spec.md` §3.3](spec.md) for the full auth flow and the QR wire forma
 | `/health` | GET | Returns `{status, version, clients, sessions}` JSON. |
 | `/pairing` | POST | Generate a new relay-side pairing code. Returns `{"code": "ABC123"}`. Unrestricted (intended for host-local callers). |
 | `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code so it can appear in a QR payload before the phone scans it. Request body: `{"code": "ABCD12"}`. Response: `{"ok": true, "code": "ABCD12"}`. Returns HTTP 403 for any `request.remote` other than `127.0.0.1` / `::1` — only a process running on the same host as the relay can inject codes. Used by `/hermes-relay-pair` / `hermes-pair`. |
+| `/media/register` | POST | **Loopback only.** Register a file path with the in-memory `MediaRegistry` and receive an opaque token. Used by host-local tools (`android_screenshot` etc.) to make a file fetchable by the paired phone without leaking the filesystem path. Request body: `{"path": "/abs/path", "content_type": "image/jpeg", "file_name": "screenshot.jpg"}`. Response: `{"ok": true, "token": "<url-safe-16>", "expires_at": <unix>}`. Returns 403 for non-loopback callers, 400 on validation failure (relative path, missing file, oversized, outside allowed roots, etc). Path sandboxing is enforced server-side — see ADR 14. |
+| `/media/{token}` | GET | Stream the bytes of a previously-registered file. Requires `Authorization: Bearer <session_token>` (same token the WSS channel uses; validated against `SessionManager`). Response has the registered `Content-Type` plus `Content-Disposition: inline; filename="..."` when a file name was provided. Returns 401 without auth or with an invalid bearer, 404 if the token is unknown or expired. The client never sees the underlying path — the token is the only handle. |
 
 ## Health Check
 

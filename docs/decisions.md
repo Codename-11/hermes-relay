@@ -329,6 +329,74 @@ Key data classes: `MessageEvent` (inbound), `SendResult` (outbound), `SessionSou
 - `plugin/pair.py` — shared implementation
 - `~/.hermes/hermes-agent/website/docs/user-guide/features/skills.md` — upstream skill distribution spec
 
+### 14. Inbound Media via Plugin-Owned Relay Endpoint, Not Upstream Gateway (2026-04-11)
+
+**Decision:** Agent-initiated media (screenshots, and any future file-producing tool) is delivered to the phone via a new loopback-register + bearer-fetch pair of routes on our own relay server (`POST /media/register` → `GET /media/{token}`), not by relying on hermes-agent's upstream `extract_media()` / `send_document()` machinery. Tools emit a `MEDIA:hermes-relay://<token>` marker in their chat response text; the phone parses the marker out of the SSE stream and fetches bytes out-of-band over authenticated HTTPS.
+
+**Why:**
+- **Upstream doesn't solve this on the HTTP API surface.** Verification against `~/AppData/Local/Temp/hermes-agent/gateway/platforms/api_server.py` shows `APIServerAdapter.send()` is an explicit no-op with the comment `"API server uses HTTP request/response, not send()"`. `_write_sse_chat_completion` (api_server.py:651-757) streams raw `stream_q` deltas straight into SSE `content` chunks — it never invokes `extract_media()` and never routes deltas through `GatewayStreamConsumer` (which would at least strip `MEDIA:` tags via `_MEDIA_RE` at `stream_consumer.py:188`). The upstream `extract_media()` / `send_document()` calls at `gateway/run.py:4570`, `4747`, `4349` are only reachable from **non-streaming** paths (background tasks, cron, batch) and push-style platform adapters (Telegram, Feishu, WeChat, Slack), all of which override `send_document` with real platform APIs. The pull-based HTTP adapter inherits the base class default, which falls back to `self.send(chat_id, f"📎 File: {file_path}")` — which is the no-op. So `MEDIA:/tmp/...` has always passed through our chat stream as literal text.
+- **Inline base64 in tool output was the obvious alternative but blows up LLM context.** A 1280×720 JPEG is ~135 KB base64, and every subsequent turn's context window has to re-ingest the bytes. Scales badly for video or multiple attachments per turn. Opaque tokens are ~25 chars and add essentially zero context cost.
+- **No upstream PR in scope.** Fixing this properly upstream would mean implementing `send_document` on `APIServerAdapter` (likely via a side-channel SSE event or a new attachment field on the chat-completion chunk shape). That's a community-scoped API change, and user explicitly wanted an in-plugin workaround, not a fork.
+- **Our relay is already the right place.** The plugin's relay server (`plugin/relay/server.py`) is a service we already own, already has HTTP routes (`/health`, `/pairing`, `/pairing/register`), already uses `SessionManager` for bearer-auth'd channels, and already lives on the phone's trust boundary (paired via the same QR). Adding file-serving doesn't create a new security surface or a new credential store — it reuses both.
+
+**How it works:**
+
+```
+Agent tool              Hermes API Server       Relay (:8767)         Phone
+──────────              ─────────────────       ─────────────         ─────
+android_screenshot()
+  │
+  ├─ write bytes to /tmp/...
+  ├─ POST /media/register  ─────────────────▶   MediaRegistry
+  │  (loopback only)                            ◀── {"token": "xyz"}
+  │
+  └─ returns "MEDIA:hermes-relay://xyz" ──▶ stream_q
+                              │
+                              └─ SSE content chunk ────────────────▶ ChatHandler
+                                                                     scanForMediaMarkers
+                                                                     parseAnnotationLine
+                                                                     strips line, fires
+                                                                     onMediaAttachmentRequested
+
+                                              GET /media/xyz  ◀───── RelayHttpClient
+                                              Authorization:         (Bearer = existing
+                                                Bearer <session>      session_token)
+                                              ──── bytes + ─────▶   MediaCacheWriter
+                                              Content-Type          → cacheDir/hermes-media/
+                                              Content-Disposition   → FileProvider URI
+                                                                    → InboundAttachmentCard
+```
+
+**Trust model:**
+- `/media/register` is **loopback-only** — 403 for any `request.remote` other than `127.0.0.1` / `::1`. Only a process running on the same host as the relay can inject files. Same pattern as `/pairing/register`.
+- `/media/{token}` requires `Authorization: Bearer <session_token>` — the same session token issued at pairing and stored in Android's `EncryptedSharedPreferences`. A LAN attacker who sniffed a token in cleartext insecure mode would also need a valid session token to use it, which they don't have unless they scanned the QR (same trust level as the WSS channel itself). Tokens are `secrets.token_urlsafe(16)` = 128 bits of entropy.
+- **Path is never exposed to the client.** The register endpoint holds the token → path mapping server-side. Clients present only the token on GET, so the fetch endpoint has zero path-traversal surface. Path sandboxing lives entirely on the register side: `os.path.realpath()` must resolve under an allowed root (default: `tempfile.gettempdir()` + `HERMES_WORKSPACE` or `~/.hermes/workspace/` + any `RELAY_MEDIA_ALLOWED_ROOTS` entries), the file must exist, must be a regular file, and must fit under the configured size cap.
+
+**Resource bounds:**
+- **TTL: 24 hours** (default, `RELAY_MEDIA_TTL_SECONDS`) — chosen to match within-a-day session scrollback, the actual human use case. Going longer buys nothing since `SessionManager` is in-memory and any relay restart invalidates all tokens regardless. Going shorter breaks same-day scrollback.
+- **LRU cap: 500 entries** (default, `RELAY_MEDIA_LRU_CAP`) — prevents runaway memory/disk under screenshot spam. Eviction is oldest-first via `OrderedDict.move_to_end` on every `get()`.
+- **Per-file size cap: 100 MB** (default, `RELAY_MEDIA_MAX_SIZE_MB`) — guards `/media/register` against accidentally registering a 10 GB file.
+
+**Fallback when the relay isn't running:**
+The tool calls `register_media()` with a 5-second timeout. On any failure (connection refused, non-200, timeout) it logs a warning and returns the legacy bare-path form `MEDIA:/tmp/...`. The phone's `ChatHandler` has a second regex for this form and renders a `⚠️ Image unavailable — relay offline` placeholder via a FAILED `Attachment`. No regression versus the pre-fix behavior; the placeholder is just a tidier user-facing signal than raw marker text.
+
+**Trade-off: session replay across relay restarts doesn't work.** If the user scrolls back into a session from yesterday and the relay has restarted since, the tokens stored in the persisted message text are stale and `/media/{token}` returns 404. The phone renders a FAILED placeholder. Acceptable for MVP — the alternative (phone-side persistent cache indexed by token or content hash) is meaningful new plumbing and the right layer for durability, but out of scope. Filed as a follow-up in DEVLOG.
+
+**Trade-off: auto-fetch-threshold slider is persisted but not enforced today.** The user-facing Settings → Inbound media section exposes a "auto-fetch threshold" knob (0–50 MB), but the actual fetch path only checks the cellular toggle + the max-size cap. Real threshold enforcement would need either a HEAD preflight (to reject before downloading) or accept the post-hoc waste. Kept the slider as a forward-compatibility placeholder; actual wiring is a follow-up.
+
+**Alternative rejected: inline base64 in tool output.** Would be simpler (no new endpoint, no phone-side fetcher) but every attachment would bloat the LLM context window on every subsequent turn. For a single screenshot that's ~135 KB of base64; for any non-trivial use case the costs compound. User explicitly rejected this during the design discussion.
+
+**Alternative rejected: patch upstream `api_server.py`.** Would be architecturally cleaner — route deltas through `GatewayStreamConsumer` so `_MEDIA_RE` strips the tags, then implement `send_document` via a side-channel SSE event. But it's a community-scoped API change, and user explicitly scoped us to "work with existing/documented methods ideally; if we have to work-around we need to follow our existing path within our plugin/etc." Recorded in `docs/upstream-contributions.md` as a possible future PR.
+
+**References:**
+- `plugin/relay/media.py` — `MediaRegistry`, `_MediaEntry`, `MediaRegistrationError`
+- `plugin/relay/server.py` → `handle_media_register`, `handle_media_get`
+- `plugin/relay/client.py` → `register_media()` (stdlib urllib, 5s timeout)
+- `plugin/tools/android_tool.py::android_screenshot` — first consumer
+- `app/src/main/kotlin/.../network/RelayHttpClient.kt` — phone fetcher
+- `app/src/main/kotlin/.../network/handlers/ChatHandler.kt` → `scanForMediaMarkers`, `finalizeMediaMarkers`
+- `app/src/main/kotlin/.../ui/components/InboundAttachmentCard.kt` — Discord-style rendering
+
 ---
 
 ## CI/CD Patterns (from ARC)

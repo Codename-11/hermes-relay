@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -34,6 +35,7 @@ import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -42,8 +44,20 @@ import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import com.hermesandroid.relay.data.FeatureFlags
+import com.hermesandroid.relay.data.MediaSettings
+import com.hermesandroid.relay.data.MediaSettingsRepository
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.input.ImeAction
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.flow.first
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -60,12 +74,14 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -91,7 +107,11 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.network.ConnectionState
+import com.hermesandroid.relay.ui.components.ApiServerInfoSheet
 import com.hermesandroid.relay.ui.components.ConnectionStatusRow
+import com.hermesandroid.relay.ui.components.PairingWalkthroughDialog
+import com.hermesandroid.relay.ui.components.RelayInfoSheet
+import com.hermesandroid.relay.ui.components.SessionInfoSheet
 import com.hermesandroid.relay.ui.components.QrPairingScanner
 import com.hermesandroid.relay.ui.components.StatsForNerds
 import com.hermesandroid.relay.ui.components.WhatsNewDialog
@@ -128,6 +148,27 @@ fun SettingsScreen(
     var isTesting by remember { mutableStateOf(false) }
     var showWhatsNew by remember { mutableStateOf(false) }
     var showQrScanner by remember { mutableStateOf(false) }
+    var showManualCodeDialog by remember { mutableStateOf(false) }
+    var manualCodeInput by remember { mutableStateOf("") }
+    var manualPairingInProgress by remember { mutableStateOf(false) }
+    var manualPairingError by remember { mutableStateOf<String?>(null) }
+    var manualPairingAttempt by remember { mutableStateOf(0) }
+
+    // Tap-for-info sheets — mirror the chat "tap agent name" overlay
+    // pattern so users can dig into what each Connection status row means.
+    var showSessionInfoSheet by remember { mutableStateOf(false) }
+    var showApiInfoSheet by remember { mutableStateOf(false) }
+    var showRelayInfoSheet by remember { mutableStateOf(false) }
+
+    // Full-screen guided pairing walkthrough — 4-step wizard triggered from
+    // the Connection card, for users setting up from scratch.
+    var showPairingWalkthrough by remember { mutableStateOf(false) }
+
+    // Manual config: pairing code input + relay reachability test state.
+    // Lives outside the walkthrough for power users who want a direct path.
+    var manualConfigCodeInput by remember { mutableStateOf("") }
+    var relayTestInProgress by remember { mutableStateOf(false) }
+    var relayTestResult by remember { mutableStateOf<Boolean?>(null) }
     val clipboard = LocalClipboard.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -232,13 +273,45 @@ fun SettingsScreen(
                         Text("Scan Pairing QR")
                     }
 
+                    // Secondary: guided 4-step walkthrough for users who
+                    // want a stepper-driven setup (or can't scan the QR).
+                    OutlinedButton(
+                        onClick = { showPairingWalkthrough = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Route,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.size(8.dp))
+                        Text("Guided setup")
+                    }
+
+                    // Tertiary: quick re-pair for power users who already
+                    // have URLs set and just need to enter a fresh code.
+                    TextButton(
+                        onClick = {
+                            manualCodeInput = ""
+                            showManualCodeDialog = true
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Already configured? Enter code only")
+                    }
+
                     HorizontalDivider()
 
-                    // Unified status summary
+                    // Unified status summary. Each row is tappable to open a
+                    // detail bottom sheet — same pattern as chat's
+                    // tap-agent-name info overlay.
                     ConnectionStatusRow(
                         label = "API Server",
                         isConnected = apiReachable,
-                        statusText = if (apiReachable) "Reachable" else "Unreachable"
+                        statusText = if (apiReachable) "Reachable" else "Unreachable",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showApiInfoSheet = true }
                     )
 
                     if (relayEnabled) {
@@ -252,7 +325,10 @@ fun SettingsScreen(
                                 ConnectionState.Connecting -> "Connecting..."
                                 ConnectionState.Reconnecting -> "Reconnecting..."
                                 ConnectionState.Disconnected -> "Disconnected"
-                            }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showRelayInfoSheet = true }
                         )
 
                         ConnectionStatusRow(
@@ -264,7 +340,10 @@ fun SettingsScreen(
                                 is AuthState.Pairing -> "Pairing..."
                                 is AuthState.Unpaired -> "Unpaired"
                                 is AuthState.Failed -> "Failed: ${(authState as AuthState.Failed).reason}"
-                            }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showSessionInfoSheet = true }
                         )
                     }
 
@@ -386,9 +465,10 @@ fun SettingsScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    // Connect/Disconnect
+                    // Connect / Disconnect / Test reachability
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         val canConnect = relayConnectionState == ConnectionState.Disconnected &&
                             (relayUrlInput.startsWith("wss://") ||
@@ -404,6 +484,55 @@ fun SettingsScreen(
                             enabled = relayConnectionState != ConnectionState.Disconnected
                         ) {
                             Text("Disconnect")
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                relayTestInProgress = true
+                                relayTestResult = null
+                                connectionViewModel.testRelayReachability(relayUrlInput) { ok ->
+                                    relayTestInProgress = false
+                                    relayTestResult = ok
+                                }
+                            },
+                            enabled = relayUrlInput.isNotBlank() && !relayTestInProgress
+                        ) {
+                            Text("Test")
+                        }
+                    }
+
+                    // Test reachability result row — probes /health without
+                    // requiring a pairing code, so users can validate the URL
+                    // before committing to a full Connect.
+                    when {
+                        relayTestInProgress -> {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Text(
+                                    text = "Probing /health…",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        relayTestResult == true -> {
+                            Text(
+                                text = "✓ Relay reachable",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF4CAF50)
+                            )
+                        }
+                        relayTestResult == false -> {
+                            Text(
+                                text = "✗ Unreachable — check URL, port, and that the relay is running",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
                         }
                     }
 
@@ -451,6 +580,55 @@ fun SettingsScreen(
                             checked = insecureMode,
                             onCheckedChange = { connectionViewModel.setInsecureMode(it) }
                         )
+                    }
+
+                    HorizontalDivider()
+
+                    // Direct pairing — enter the server-issued code and pair
+                    // without going through the dialog/walkthrough. The same
+                    // applyServerIssuedCodeAndReset path; just inline here
+                    // for power users who already have everything set.
+                    Text(
+                        text = "Pairing code",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = manualConfigCodeInput,
+                        onValueChange = { manualConfigCodeInput = it.uppercase() },
+                        label = { Text("Code from hermes-pair / /hermes-relay-pair") },
+                        placeholder = { Text("e.g. ABC123") },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(
+                            fontFamily = FontFamily.Monospace
+                        ),
+                        keyboardOptions = KeyboardOptions(
+                            imeAction = ImeAction.Done,
+                            autoCorrectEnabled = false
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    val trimmedManualCode = manualConfigCodeInput.trim().uppercase()
+                    val manualCodeValid = trimmedManualCode.length in 4..12 &&
+                        trimmedManualCode.all { it.isLetterOrDigit() }
+
+                    Button(
+                        onClick = {
+                            connectionViewModel.authManager
+                                .applyServerIssuedCodeAndReset(trimmedManualCode)
+                            connectionViewModel.disconnectRelay()
+                            connectionViewModel.connectRelay(relayUrlInput)
+                            Toast.makeText(
+                                context,
+                                "Pairing — check Session status",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        },
+                        enabled = manualCodeValid && relayUrlInput.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Pair now")
                     }
                 }
             }
@@ -822,6 +1000,14 @@ fun SettingsScreen(
                     }
                 }
             }
+
+            // ── Inbound media section ───────────────────────────────────────
+            //
+            // Controls how the app handles files fetched from the relay when
+            // the agent emits `MEDIA:hermes-relay://<token>` markers (e.g.
+            // screenshots, audio transcripts, generated docs). All four knobs
+            // live in MediaSettingsRepository.
+            InboundMediaSection(connectionViewModel = connectionViewModel)
 
             // Theme section
             Text(
@@ -1261,6 +1447,256 @@ fun SettingsScreen(
         WhatsNewDialog(onDismiss = { showWhatsNew = false })
     }
 
+    // Guided pairing walkthrough — full-screen 4-step wizard
+    if (showPairingWalkthrough) {
+        PairingWalkthroughDialog(
+            connectionViewModel = connectionViewModel,
+            onDismiss = { showPairingWalkthrough = false }
+        )
+    }
+
+    // Connection info bottom sheets — tap-to-reveal details for each row
+    // in Settings → Connection. Mirrors the chat tap-agent-name overlay
+    // pattern.
+    if (showSessionInfoSheet) {
+        SessionInfoSheet(
+            connectionViewModel = connectionViewModel,
+            onDismiss = { showSessionInfoSheet = false }
+        )
+    }
+    if (showApiInfoSheet) {
+        ApiServerInfoSheet(
+            connectionViewModel = connectionViewModel,
+            onDismiss = { showApiInfoSheet = false }
+        )
+    }
+    if (showRelayInfoSheet) {
+        RelayInfoSheet(
+            connectionViewModel = connectionViewModel,
+            onDismiss = { showRelayInfoSheet = false }
+        )
+    }
+
+    // Manual pairing-code entry dialog — fallback for users who can't scan
+    // the QR (headless server, tiny terminal, bad lighting). Mirrors the QR
+    // scanner's applyServerIssuedCode path; URLs are still configured via
+    // Manual configuration below. Tracks pairing progress/error inline so
+    // the user gets clear feedback without having to scroll to the Session
+    // status row.
+    if (showManualCodeDialog) {
+        val relayUrlBlank = relayUrlInput.isBlank()
+        val trimmedCode = manualCodeInput.trim().uppercase()
+        val codeValid = trimmedCode.length in 4..12 &&
+            trimmedCode.all { it.isLetterOrDigit() }
+        val canSubmit = codeValid && !relayUrlBlank && !manualPairingInProgress
+
+        val focusRequester = remember { FocusRequester() }
+        val haptic = LocalHapticFeedback.current
+
+        // Auto-focus the code field the moment the dialog opens so the soft
+        // keyboard pops immediately. One-shot per open — re-opens will get
+        // a fresh FocusRequester via remember.
+        LaunchedEffect(showManualCodeDialog) {
+            focusRequester.requestFocus()
+        }
+
+        // Extract "host:port" from the relay URL for a compact display —
+        // the full wss://foo.example.com:8767/ws wraps awkwardly in the
+        // dialog's narrow text area.
+        val relayHostLabel = remember(relayUrlInput) {
+            try {
+                val uri = java.net.URI(relayUrlInput.trim())
+                val host = uri.host ?: relayUrlInput
+                if (uri.port > 0) "$host:${uri.port}" else host
+            } catch (_: Exception) {
+                relayUrlInput
+            }
+        }
+
+        // Shared submit action — used by both the Pair button and the IME
+        // Go action so "Done" on the keyboard submits like tapping Pair.
+        val submitPairing = {
+            manualPairingError = null
+            manualPairingInProgress = true
+            manualPairingAttempt += 1
+            // Atomic reset avoids the race between clearSession's async
+            // code regeneration and applyServerIssuedCode's mirror write,
+            // and forces authenticate() to use the new code instead of a
+            // stale session token.
+            connectionViewModel.authManager
+                .applyServerIssuedCodeAndReset(trimmedCode)
+            connectionViewModel.disconnectRelay()
+            connectionViewModel.connectRelay(relayUrlInput)
+        }
+
+        // Observe the authState transition after each Pair attempt. Keyed on
+        // the attempt counter so retrying cancels and restarts the watcher.
+        LaunchedEffect(manualPairingAttempt) {
+            if (manualPairingAttempt == 0) return@LaunchedEffect
+            try {
+                val terminal = withTimeout(15_000) {
+                    connectionViewModel.authState.first {
+                        it is AuthState.Paired || it is AuthState.Failed
+                    }
+                }
+                when (terminal) {
+                    is AuthState.Paired -> {
+                        manualPairingInProgress = false
+                        manualPairingError = null
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        showManualCodeDialog = false
+                        Toast.makeText(
+                            context,
+                            "Paired successfully",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                    is AuthState.Failed -> {
+                        manualPairingInProgress = false
+                        manualPairingError = "Server rejected code: ${terminal.reason}"
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    }
+                    else -> {
+                        manualPairingInProgress = false
+                    }
+                }
+            } catch (_: TimeoutCancellationException) {
+                manualPairingInProgress = false
+                manualPairingError =
+                    "No response from relay. Check the Relay URL and that the server is running."
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            } catch (e: Exception) {
+                manualPairingInProgress = false
+                manualPairingError = "Error: ${e.message ?: "unknown"}"
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            }
+        }
+
+        AlertDialog(
+            onDismissRequest = {
+                if (!manualPairingInProgress) showManualCodeDialog = false
+            },
+            title = { Text("Enter pairing code") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = "Type the code printed by `hermes-pair` or `/hermes-relay-pair`.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    OutlinedTextField(
+                        value = manualCodeInput,
+                        onValueChange = {
+                            manualCodeInput = it.uppercase()
+                            // Clear stale error as soon as the user edits
+                            if (manualPairingError != null) manualPairingError = null
+                        },
+                        label = { Text("Pairing code") },
+                        placeholder = { Text("e.g. ABC123") },
+                        singleLine = true,
+                        enabled = !manualPairingInProgress,
+                        isError = manualPairingError != null,
+                        textStyle = MaterialTheme.typography.headlineSmall.copy(
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = MaterialTheme.typography.headlineSmall.fontSize * 0.15
+                        ),
+                        keyboardOptions = KeyboardOptions(
+                            imeAction = ImeAction.Go,
+                            autoCorrectEnabled = false
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onGo = { if (canSubmit) submitPairing() }
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(focusRequester)
+                    )
+
+                    when {
+                        manualPairingError != null -> {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Warning,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = manualPairingError!!,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                        manualPairingInProgress -> {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Text(
+                                    text = "Connecting to relay and pairing…",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        relayUrlBlank -> {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    text = "Relay URL not set. Configure it first, then come back.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                                TextButton(
+                                    onClick = {
+                                        showManualCodeDialog = false
+                                        manualConfigExpanded = true
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 0.dp)
+                                ) {
+                                    Text("Open Manual configuration")
+                                }
+                            }
+                        }
+                        else -> {
+                            Text(
+                                text = "Will connect to: $relayHostLabel",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = canSubmit,
+                    onClick = { submitPairing() }
+                ) {
+                    Text(
+                        if (manualPairingError != null) "Retry"
+                        else if (manualPairingInProgress) "Pairing…"
+                        else "Pair"
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showManualCodeDialog = false },
+                    enabled = !manualPairingInProgress
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     // QR Scanner overlay
     if (showQrScanner) {
         QrPairingScanner(
@@ -1560,5 +1996,235 @@ private fun SettingsExpandableCard(
                 }
             }
         }
+    }
+}
+
+/**
+ * Settings section for inbound media (files fetched from the relay via
+ * `MEDIA:hermes-relay://<token>` markers in tool output).
+ *
+ * Four user-tunable knobs backed by [MediaSettingsRepository] + a button to
+ * wipe the on-disk cache. Sliders intentionally use discrete integer steps
+ * so the user can't land on fractional MB values that would read awkwardly
+ * in the attachment cards.
+ */
+@Composable
+private fun InboundMediaSection(connectionViewModel: ConnectionViewModel) {
+    val isDarkTheme = isSystemInDarkTheme()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val repo = connectionViewModel.mediaSettingsRepo
+    val cacheWriter = connectionViewModel.mediaCacheWriter
+
+    val settings by repo.settings.collectAsState(
+        initial = MediaSettings(
+            maxInboundSizeMb = MediaSettingsRepository.DEFAULT_MAX_INBOUND_MB,
+            autoFetchThresholdMb = MediaSettingsRepository.DEFAULT_AUTO_FETCH_THRESHOLD_MB,
+            autoFetchOnCellular = MediaSettingsRepository.DEFAULT_AUTO_FETCH_ON_CELLULAR,
+            cachedMediaCapMb = MediaSettingsRepository.DEFAULT_CACHED_MEDIA_CAP_MB
+        )
+    )
+
+    var currentCacheBytes by remember { mutableStateOf(0L) }
+    LaunchedEffect(Unit) {
+        currentCacheBytes = runCatching { cacheWriter.currentSizeBytes() }.getOrDefault(0L)
+    }
+
+    Text(
+        text = "Inbound media",
+        style = MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.primary
+    )
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .gradientBorder(
+                shape = RoundedCornerShape(12.dp),
+                isDarkTheme = isDarkTheme
+            ),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Text(
+                text = "Controls how the app handles files sent by tool results (screenshots, PDFs, etc.) over the relay.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            // Max inbound attachment size — 5..100 MB in 5 MB steps
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Max inbound attachment size",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        text = "${settings.maxInboundSizeMb} MB",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Slider(
+                    value = settings.maxInboundSizeMb.toFloat(),
+                    onValueChange = { scope.launch { repo.setMaxInboundSize(it.toInt()) } },
+                    valueRange = 5f..100f,
+                    steps = 18 // (100 - 5) / 5 - 1
+                )
+                Text(
+                    text = "Files larger than this are rejected after download.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            HorizontalDivider()
+
+            // Auto-fetch threshold — 0..50 MB
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Auto-fetch threshold",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        text = "${settings.autoFetchThresholdMb} MB",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Slider(
+                    value = settings.autoFetchThresholdMb.toFloat(),
+                    onValueChange = { scope.launch { repo.setAutoFetchThreshold(it.toInt()) } },
+                    valueRange = 0f..50f,
+                    steps = 49
+                )
+                Text(
+                    text = "Files at or below this size are fetched automatically on Wi-Fi.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            HorizontalDivider()
+
+            // Auto-fetch on cellular switch
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Auto-fetch on cellular",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        text = "When off, media over cellular shows a tap-to-download card instead of auto-downloading.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = settings.autoFetchOnCellular,
+                    onCheckedChange = { scope.launch { repo.setAutoFetchOnCellular(it) } }
+                )
+            }
+
+            HorizontalDivider()
+
+            // Cached media cap — 50..500 MB in 25 MB steps
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Cached media cap",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        text = "${settings.cachedMediaCapMb} MB",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Slider(
+                    value = settings.cachedMediaCapMb.toFloat(),
+                    onValueChange = { scope.launch { repo.setCachedMediaCap(it.toInt()) } },
+                    valueRange = 50f..500f,
+                    steps = 17 // (500 - 50) / 25 - 1
+                )
+                Text(
+                    text = "Oldest files are evicted when the cache exceeds this limit.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            HorizontalDivider()
+
+            // Clear cache button
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Clear cached media",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        text = "Currently using ${formatBytesHuman(currentCacheBytes)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                OutlinedButton(
+                    onClick = {
+                        scope.launch {
+                            val freed = runCatching { cacheWriter.clear() }.getOrDefault(0L)
+                            currentCacheBytes = runCatching { cacheWriter.currentSizeBytes() }.getOrDefault(0L)
+                            Toast.makeText(
+                                context,
+                                "Freed ${formatBytesHuman(freed)}",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                ) {
+                    Text("Clear")
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Human-readable byte count for the inbound-media Settings UI. Keeps the
+ * logic out of the composable so it stays cheap on recomposition.
+ */
+private fun formatBytesHuman(bytes: Long): String {
+    if (bytes <= 0) return "0 B"
+    val kb = bytes / 1024.0
+    val mb = kb / 1024.0
+    val gb = mb / 1024.0
+    return when {
+        gb >= 1.0 -> "%.2f GB".format(gb)
+        mb >= 1.0 -> "%.1f MB".format(mb)
+        kb >= 1.0 -> "%.0f KB".format(kb)
+        else -> "$bytes B"
     }
 }

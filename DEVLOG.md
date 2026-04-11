@@ -1,5 +1,78 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-11 — Inbound Media Pipeline (agent → phone, Discord-style file rendering)
+
+**Done:**
+- **Root cause surfaced.** The `android_screenshot` tool has always returned `MEDIA:/tmp/...` in its response text, assuming hermes-agent's gateway would extract and deliver the file as a native attachment. Upstream verification against `gateway/platforms/api_server.py` showed `APIServerAdapter.send()` is an explicit no-op (`"API server uses HTTP request/response, not send()"`) and `_write_sse_chat_completion` streams raw deltas without ever invoking `extract_media()`. The upstream extract-media / send_document machinery (`gateway/run.py:4570`, `4747`) is wired for push platforms only (Telegram, Feishu, WeChat). On our HTTP pull adapter, the `MEDIA:` tag has always passed through to the phone as literal text. No existing upstream path exists for delivering files over the HTTP API surface without a platform-adapter PR.
+- **Workaround landed: plugin-owned file-serving on the relay.** Added a `MediaRegistry` and two new routes to the plugin's existing relay server. Media-producing tools POST to a loopback-only `POST /media/register` with a file path + content type, get back an opaque `secrets.token_urlsafe(16)` token, and emit `MEDIA:hermes-relay://<token>` in their chat response text instead of the bare path. The phone's `ChatHandler` parses the marker out of the SSE stream, fires a ViewModel callback, and `RelayHttpClient` fetches the bytes over `GET /media/{token}` with `Authorization: Bearer <session_token>` (reusing the existing `SessionManager`). Bytes land in `cacheDir/hermes-media/`, get shared via `FileProvider` (`${applicationId}.fileprovider`), and render inline via a new `InboundAttachmentCard` component. Result: zero LLM context bloat (token is ~25 chars), no upstream fork, no new auth model.
+- **Registry design.** In-memory `OrderedDict` LRU with `asyncio.Lock` for thread-safety. Defaults: **24-hour TTL** (chosen to cover within-a-day session scrollback — the real human use case; anything longer is wasted since SessionManager is in-memory and relay restarts invalidate all tokens regardless), **500-entry LRU cap** (prevents runaway memory/disk under screenshot spam), **100 MB file-size cap** (guards against `/media/register` being handed a 10 GB file). Path sandboxing: file must be absolute, `os.path.realpath()` resolve under an allowed root (default: `tempfile.gettempdir()` + `HERMES_WORKSPACE` or `~/.hermes/workspace/` + any `RELAY_MEDIA_ALLOWED_ROOTS` entries), exist, be a regular file, and fit under the size cap. The token → path mapping is held server-side — the client only ever presents an opaque token on GET, so there's zero path-traversal surface on the fetch endpoint.
+- **Fallback when relay isn't running.** The tool calls `register_media()` via stdlib `urllib.request` with a 5s timeout; on any failure (relay down, connection refused, non-200 response) it returns the legacy `MEDIA:<tmp_path>` form with a logger warning. The phone's `ChatHandler` recognizes the bare-path form via a second regex and fires `onUnavailableMediaMarker`, which inserts a FAILED `Attachment` placeholder rendering `⚠️ Image unavailable — relay offline`. No regression versus today's behavior; the placeholder is just tidier than raw marker text.
+- **Discord-style rendering on the phone.** New `AttachmentState { LOADING, LOADED, FAILED }` and `AttachmentRenderMode { IMAGE, VIDEO, AUDIO, PDF, TEXT, GENERIC }` on the existing `Attachment` data class. `InboundAttachmentCard` dispatches by `(state × renderMode)`: images render inline from the cached URI (decoded via `BitmapFactory.decodeByteArray` + `asImageBitmap`, matching the existing outbound-attachment render path — no Coil/Glide added); video/audio/pdf/text/generic render as tap-to-open file cards that fire `ACTION_VIEW` with `FLAG_GRANT_READ_URI_PERMISSION`. The same component now handles outbound attachments too (they default to `state=LOADED`), so `MessageBubble.kt` no longer has a separate outbound-only render branch.
+- **Cellular gate.** If `autoFetchOnCellular == false` (default) and the device is on a cellular network, the attachment stays in LOADING state with `errorMessage = "Tap to download"` — the user taps to trigger `manualFetchAttachment()`, which re-issues the fetch ignoring the cellular gate. Encoded via existing enum + errorMessage slot rather than adding a new state value to keep the data class surface small.
+- **Dedup.** `ChatHandler.dispatchedMediaMarkers` is a per-session set that prevents double-firing between real-time streaming scans (`scanForMediaMarkers` called from `onTextDelta`) and the post-stream reconciliation pass (`finalizeMediaMarkers` called from `onTurnComplete` / `onStreamComplete`). Marker parsing runs unconditionally — not gated on the `parseToolAnnotations` feature flag.
+- **Settings UI.** New "Inbound media" subsection in Settings (between Chat and Appearance) exposes four DataStore-backed knobs: max inbound attachment size (5–100 MB, default 25), auto-fetch threshold (0–50 MB, default 2 — *persisted but not currently enforced; only the cellular toggle gates fetches today, with the threshold reserved for forward-compatibility*), auto-fetch on cellular (default off), and cached media cap (50–500 MB, default 200) with a "Clear cached media" button that calls `MediaCacheWriter.clear()` and shows a Toast with the freed byte count. LRU eviction on the cache is by file mtime.
+- **Auth parity.** The media GET endpoint uses the same relay session token that gates the WSS channel itself — no stronger, no weaker. User raised the question of whether the media endpoint needed its own auth given that chat is optionally unauthenticated; answer is the relay session token (issued at pairing, stored in `EncryptedSharedPreferences`) is a separate and always-required credential, so `/media/<token>` inherits exactly the WSS trust level and adds unguessable per-file entropy on top. Opt-in insecure (ws://) mode intentionally does nothing to strengthen this — it matches the existing "trusted LAN" assumption for local dev.
+- **Tests.** 11 registry tests (happy path, expiry, LRU eviction, LRU reorder on get, relative path rejection, nonexistent path rejection, directory rejection, outside-allowed-roots rejection, symlink-escape rejection [skipped on Windows without symlink priv], oversized rejection, empty content_type rejection) + 8 route tests (`/media/register` non-loopback 403, happy path 200, validation 400, bad JSON 400; `/media/{token}` no auth 401, bad bearer 401, valid + streamed 200, expired 404, unknown 404). Uses `unittest.IsolatedAsyncioTestCase` + `aiohttp.test_utils.AioHTTPTestCase` (no pytest-asyncio dep required).
+
+**Why this wasn't Option A (inline base64 in tool output):**
+- Inline base64 bloats the LLM context on every call (~135 KB per 1080p screenshot, growing with history), matters for video/audio scalability, and forces the agent to pay for bytes it's just routing to the phone. User explicitly rejected that tradeoff.
+- Option B (plugin-owned file endpoint) decouples the wire format from the file bytes: tokens are ~25 chars, bytes flow out-of-band over a separate authenticated HTTP channel. Costs: new endpoint surface area, new phone-side fetch path, FileProvider plumbing — but all of it lives in files we already own.
+
+**Files created:**
+
+*Server (Python):*
+- `plugin/relay/media.py` — `MediaRegistry`, `_MediaEntry`, `MediaRegistrationError`, `_default_allowed_roots()`
+- `plugin/relay/client.py` — stdlib `urllib.request`-based `register_media()` + `_post_loopback()` helper (kept separate from `plugin/pair.py`'s existing `register_relay_code` to avoid weakening that function's narrower error surface)
+- `plugin/tests/test_media_registry.py` — 11 tests, `unittest.IsolatedAsyncioTestCase`
+- `plugin/tests/test_relay_media_routes.py` — 8 tests, `aiohttp.test_utils.AioHTTPTestCase`
+
+*Phone (Kotlin):*
+- `app/src/main/kotlin/com/hermesandroid/relay/network/RelayHttpClient.kt` — OkHttp GET, ws→http URL rewrite, Content-Disposition filename parse, Result<FetchedMedia>
+- `app/src/main/kotlin/com/hermesandroid/relay/data/MediaSettings.kt` — DataStore-backed `MediaSettings` + `MediaSettingsRepository`
+- `app/src/main/kotlin/com/hermesandroid/relay/util/MediaCacheWriter.kt` — LRU-capped cache at `cacheDir/hermes-media/`, FileProvider URI generation, MIME→ext map
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/components/InboundAttachmentCard.kt` — single component dispatching on `state × renderMode`
+- `app/src/main/res/xml/file_provider_paths.xml` — `<cache-path name="hermes-media" path="hermes-media/"/>`
+
+**Files modified:**
+
+*Server:*
+- `plugin/relay/config.py` — 4 new fields (`media_max_size_mb`, `media_ttl_seconds`, `media_lru_cap`, `media_allowed_roots`), `from_env()` parsing
+- `plugin/relay/server.py` — `self.media = MediaRegistry(...)` in `RelayServer.__init__`, `handle_media_register` + `handle_media_get` + route registration in `create_app`
+- `plugin/tools/android_tool.py` — `android_screenshot()` calls `register_media()` → emits `hermes-relay://<token>` on success, falls back to bare path with a `logging.warning` on failure
+- `plugin/android_tool.py` — identical change to the top-level duplicate copy
+
+*Phone:*
+- `app/src/main/AndroidManifest.xml` — `<provider>` for `androidx.core.content.FileProvider` with authority `${applicationId}.fileprovider`
+- `app/src/main/kotlin/com/hermesandroid/relay/data/ChatMessage.kt` — `AttachmentState` + `AttachmentRenderMode` enums, extended `Attachment` with `state`/`errorMessage`/`relayToken`/`cachedUri`, `textLikeMimes` companion, `renderMode` computed property
+- `app/src/main/kotlin/com/hermesandroid/relay/network/handlers/ChatHandler.kt` — `mediaRelayRegex` + `mediaBarePathRegex`, `onMediaAttachmentRequested` + `onUnavailableMediaMarker` as `var` callbacks (not ctor params), `mediaLineBuffer` + `dispatchedMediaMarkers` dedupe set, `scanForMediaMarkers` called unconditionally from `onTextDelta`, `finalizeMediaMarkers` called from `onTurnComplete`/`onStreamComplete`, `mutateMessage` helper exposed so the ViewModel can flip attachment state on the private `_messages` StateFlow
+- `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/ChatViewModel.kt` — new `initializeMedia(context, relayHttpClient, mediaSettingsRepo, mediaCacheWriter)`, `onMediaAttachmentRequested`, `performFetch`, `manualFetchAttachment`, `onUnavailableMediaMarker`, `MEDIA_TAP_TO_DOWNLOAD` companion constant
+- `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/ConnectionViewModel.kt` — owns media singletons (`mediaSettingsRepo`, `mediaCacheWriter`, `relayHttpClient`), shared `OkHttpClient`, `_cachedMediaCapMb` mirror loop so the writer's cap lambda is synchronous
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/RelayApp.kt` — `chatViewModel.initializeMedia(...)` wired inside the existing `LaunchedEffect(apiClient)` block
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/components/MessageBubble.kt` — replaced outbound-only attachment rendering with `attachments.forEachIndexed { InboundAttachmentCard(...) }`, added `onAttachmentRetry` + `onAttachmentManualFetch` params
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/screens/ChatScreen.kt` — empty-bubble skip now respects `attachments.isNotEmpty()`, wires `manualFetchAttachment` to both retry + manual-fetch slots
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/screens/SettingsScreen.kt` — new `InboundMediaSection(connectionViewModel)` composable between Chat and Appearance (coexists with the other team's unified Connection section; no collision)
+
+**Files NOT touched** (other team owns them or out-of-scope): `AuthManager.kt` (other team added `applyServerIssuedCodeAndReset` for the manual-code-entry dialog), `ConnectionInfoSheet.kt` (other team's new bottom-sheet component for Connection rows), `plugin/pair.py`, anything under `relay_server/` (thin shim — untouched), any upstream hermes-agent code.
+
+**Next:**
+- Wire the auto-fetch threshold slider to the actual fetch logic — currently only the cellular toggle gates fetches, and the threshold is persisted-but-unused as a forward-compatibility placeholder. Real enforcement would need either a HEAD preflight to get the size before committing to the fetch, or we accept the post-hoc reject (byte-count comparison after the body lands, wasted bytes on oversize).
+- Phone-side persistence of fetched media so session replay works across relay restarts. Currently the `FileProvider` cache is opaque to `ChatHandler` — if the user scrolls back into a session from yesterday, the tokens in the stored message text are stale (relay registry is in-memory) and the fetch 404s. Phone-side token-or-hash-indexed cache would survive this.
+- Consider wiring the same pipeline into any future tools that want to emit files (voice, plots, reports). The `MediaRegistry` + `register_media()` helper is tool-agnostic — only `android_screenshot` uses it today.
+- Unit-test coverage for the Kotlin side: `ChatHandler` marker parsing, `RelayHttpClient` URL-rewrite, `MediaCacheWriter` LRU eviction. The Python side has 19 tests; the Kotlin side currently has none for the media pipeline.
+- Possible upstream contribution to `hermes-agent`: make `gateway/platforms/api_server.py`'s `_write_sse_chat_completion` route deltas through `GatewayStreamConsumer` so the `_MEDIA_RE` stripper in `gateway/stream_consumer.py:188` engages. That would at least keep raw `MEDIA:` tags out of the chat display for other HTTP-API clients that don't implement their own phone-side parser. Would not solve the actual file-delivery problem (still no `send_document` impl) but would at least stop the leakage. Track in `docs/upstream-contributions.md`.
+
+**Blockers:**
+- None. The feature is ready for on-device testing.
+
+**Test plan (for on-device smoke):**
+- Start relay (`scripts/dev.bat relay` or equivalent), pair phone, open chat.
+- Invoke a tool that produces a screenshot (e.g., via an agent command that triggers `android_screenshot`). Verify the screenshot renders inline as an image, not as raw text.
+- Kill the relay mid-session, trigger another screenshot, verify the `⚠️ Image unavailable — relay offline` placeholder renders.
+- In Settings → Inbound media: adjust the max-size slider, toggle cellular, hit "Clear cached media", verify toast with freed bytes.
+- Tap a non-image attachment (test with a PDF tool result if available) and verify `ACTION_VIEW` opens an external app with a valid `content://` URI.
+
+---
+
 ## 2026-04-11 — Install Flow Canonicalization (external_dirs + pip install -e + skill category layout)
 
 **Done:**

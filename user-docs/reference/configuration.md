@@ -29,6 +29,26 @@ Available in **Settings > Chat**.
 | Tool call display | `Detailed` | How tool calls appear: Off, Compact, or Detailed |
 | Personality | Server default | Active personality from `config.agent.personalities` via `GET /api/config` |
 
+## Inbound Media Settings
+
+Available in **Settings > Inbound media**. Controls how the app fetches and caches files the agent sends back through chat (screenshots from `android_screenshot`, and any future media-producing tool). Requires a running relay — files are served out-of-band by `plugin/relay/` via the new `POST /media/register` + `GET /media/{token}` routes, so the agent only needs to emit a `MEDIA:hermes-relay://<token>` marker in its chat response and the app handles the fetch + render. Bytes land in the app's cache directory and are shared with external viewers via `FileProvider` (authority `${applicationId}.fileprovider`).
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Max inbound attachment size | `25 MB` | Hard cap on fetches. The app downloads the body, and if it exceeds this cap the attachment flips to FAILED with a "File too large" message. Range: 5–100 MB. |
+| Auto-fetch threshold | `2 MB` | *Persisted but not enforced today — forward-compatibility placeholder.* Intended to be a soft ceiling above which the app shows "Tap to download" instead of auto-fetching. Currently only the cellular toggle + the hard max cap are enforced. Range: 0–50 MB. |
+| Auto-fetch on cellular | `off` | When off + the device is on a cellular network, attachments stay in LOADING state with a "Tap to download" affordance rather than auto-downloading. When on, cellular is treated the same as Wi-Fi. |
+| Cached media cap | `200 MB` | Maximum total size of `cacheDir/hermes-media/`. Oldest files (by mtime) are evicted when the cache would exceed this. Range: 50–500 MB. |
+| Clear cached media | — | Button. Deletes every file in `cacheDir/hermes-media/` and shows a toast with the freed byte count. |
+
+**What works:** Images render inline (same path as outbound attachments — `BitmapFactory.decodeByteArray` + `asImageBitmap`, no Coil/Glide added). Video / audio / PDF / text / generic files render as tap-to-open file cards that fire `ACTION_VIEW` with `FLAG_GRANT_READ_URI_PERMISSION` against the `FileProvider` URI.
+
+**What doesn't work yet:**
+- Session replay across relay restarts. The `MediaRegistry` is in-memory on the relay side, so tokens stored in persisted message history become stale when the relay restarts. Scrolling back into a prior session renders a `⚠️ Image unavailable` placeholder for any stale token. Phone-side persistent caching (indexed by token or content hash) is the planned fix; filed as a follow-up.
+- Auto-fetch threshold enforcement (see table above).
+
+**If the relay isn't running** when a tool emits a media marker, the tool falls back to the legacy bare-path form (`MEDIA:/tmp/...`). The app recognizes this form and renders an inline `⚠️ Image unavailable — relay offline` card instead of raw marker text.
+
 ## Appearance Settings
 
 Available in **Settings > Appearance**.
@@ -103,6 +123,10 @@ python -m plugin.relay --no-ssl
 | `RELAY_LOG_LEVEL` | `INFO` | Logging level |
 | `RELAY_TERMINAL_SHELL` | _auto (`$SHELL`)_ | Absolute path to the shell spawned for terminal sessions |
 | `RELAY_PAIRING_CODE` | — | Pre-register a pairing code at startup (same effect as `--pairing-code`) |
+| `RELAY_MEDIA_MAX_SIZE_MB` | `100` | Per-file size cap on `POST /media/register` (MediaRegistry, used for inbound media delivery — see ADR 14) |
+| `RELAY_MEDIA_TTL_SECONDS` | `86400` | How long a registered media entry stays valid before the registry evicts it |
+| `RELAY_MEDIA_LRU_CAP` | `500` | Max entries in the media registry before oldest-eviction kicks in |
+| `RELAY_MEDIA_ALLOWED_ROOTS` | — | Additional absolute directory roots allowed on `/media/register` (colon-separated on Unix, `os.pathsep` on other platforms). Extends the auto-derived defaults (`tempfile.gettempdir()` + `HERMES_WORKSPACE` or `~/.hermes/workspace/`). |
 
 **Pairing alphabet:** As of 2026-04-11, the relay accepts any 6-character code from `A-Z / 0-9` (36 chars). The earlier "no ambiguous 0/O/1/I" 32-char restriction was dropped once the pairing flow became QR + HTTP — the phone-side generator in `AuthManager.kt` uses the full alphabet, and the restriction silently rejected roughly one in eight valid codes.
 

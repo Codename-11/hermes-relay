@@ -1,19 +1,28 @@
 package com.hermesandroid.relay.viewmodel
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hermesandroid.relay.data.AppAnalytics
 import com.hermesandroid.relay.data.Attachment
+import com.hermesandroid.relay.data.AttachmentState
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
+import com.hermesandroid.relay.data.MediaSettings
+import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.network.HermesApiClient
+import com.hermesandroid.relay.network.RelayHttpClient
 import com.hermesandroid.relay.network.handlers.ChatHandler
 import com.hermesandroid.relay.network.models.SkillInfo
 import com.hermesandroid.relay.network.models.UsageInfo
+import com.hermesandroid.relay.util.MediaCacheWriter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import okhttp3.sse.EventSource
@@ -26,6 +35,28 @@ class ChatViewModel : ViewModel() {
     private var activeStream: EventSource? = null
     private var intentionallyCancelled = false
     private var firstTokenNotified = false
+
+    // --- Media dependencies (wired via initializeMedia from RelayApp) ---
+    private var relayHttpClient: RelayHttpClient? = null
+    private var mediaSettingsRepo: MediaSettingsRepository? = null
+    private var mediaCacheWriter: MediaCacheWriter? = null
+    private var appContext: Context? = null
+
+    /**
+     * Marker used in [Attachment.errorMessage] when a fetch is deferred to
+     * manual download (cellular + auto-fetch-on-cellular off). The UI uses
+     * [Attachment.state] == [AttachmentState.LOADING] plus this exact string
+     * to render a "Tap to download" CTA instead of a spinner.
+     *
+     * Encoded as a plain string rather than a new enum value to keep the data
+     * class surface small — the UI already switches on (state, errorMessage)
+     * for the FAILED/LOADED cases.
+     */
+    companion object {
+        /** Brief app context sent as system_message when enabled in settings. */
+        const val APP_CONTEXT_PROMPT = "The user is chatting via the Hermes-Relay Android app. Keep responses mobile-friendly and concise when possible."
+        const val MEDIA_TAP_TO_DOWNLOAD = "Tap to download"
+    }
 
     /** Callback to persist session ID — set by RelayApp */
     var onSessionChanged: ((String?) -> Unit)? = null
@@ -50,11 +81,6 @@ class ChatViewModel : ViewModel() {
 
     fun clearAttachments() {
         _pendingAttachments.value = emptyList()
-    }
-
-    companion object {
-        /** Brief app context sent as system_message when enabled in settings. */
-        const val APP_CONTEXT_PROMPT = "The user is chatting via the Hermes-Relay Android app. Keep responses mobile-friendly and concise when possible."
     }
 
     // Server-side personality selection
@@ -126,6 +152,38 @@ class ChatViewModel : ViewModel() {
         this.chatHandler = chatHandler
         fetchSkills()
         fetchPersonalities()
+    }
+
+    /**
+     * Wire inbound-media dependencies. Called from [RelayApp][com.hermesandroid.relay.ui.RelayApp]
+     * once after the singleton services are constructed.
+     *
+     * Separated from [initialize] because the media pipeline doesn't require
+     * an active API client to be meaningful — the fetch path is independent
+     * of chat streaming state and uses a different auth token entirely.
+     *
+     * Safe to call multiple times (rewires the ChatHandler callbacks).
+     */
+    fun initializeMedia(
+        context: Context,
+        relayHttpClient: RelayHttpClient,
+        mediaSettingsRepo: MediaSettingsRepository,
+        mediaCacheWriter: MediaCacheWriter
+    ) {
+        this.appContext = context.applicationContext
+        this.relayHttpClient = relayHttpClient
+        this.mediaSettingsRepo = mediaSettingsRepo
+        this.mediaCacheWriter = mediaCacheWriter
+
+        // Wire ChatHandler callbacks so streaming media markers flow here.
+        chatHandler?.let { handler ->
+            handler.onMediaAttachmentRequested = { messageId, token ->
+                onMediaAttachmentRequested(messageId, token)
+            }
+            handler.onUnavailableMediaMarker = { messageId, originalPath ->
+                onUnavailableMediaMarker(messageId, originalPath)
+            }
+        }
     }
 
     fun fetchSkills() {
@@ -525,6 +583,248 @@ class ChatViewModel : ViewModel() {
     fun retryLastMessage() {
         val lastMsg = chatHandler?.lastSentMessage?.value ?: return
         sendMessage(lastMsg)
+    }
+
+    // --- Inbound media handling ------------------------------------------------
+
+    /**
+     * Invoked when ChatHandler parses a `MEDIA:hermes-relay://<token>` marker.
+     *
+     * Flow:
+     *  1. Insert a LOADING placeholder attachment on the matching assistant
+     *     message so the user sees something immediately.
+     *  2. Read current media settings (auto-fetch cap, cellular gate).
+     *  3. If on cellular AND auto-fetch-on-cellular is off → leave the
+     *     LOADING placeholder in place with [MEDIA_TAP_TO_DOWNLOAD] in
+     *     [Attachment.errorMessage]. The UI renders a "Tap to download" CTA.
+     *  4. Otherwise → kick off a background fetch, enforce the max size cap,
+     *     cache the bytes via [MediaCacheWriter], and update the attachment
+     *     to LOADED (or FAILED on any error).
+     *
+     * Note: the matching happens by (messageId + relayToken). If the same
+     * token shows up twice (e.g. reconciliation pass finds it after real-time
+     * already dispatched) the ChatHandler dedupes via dispatchedMediaMarkers
+     * so we shouldn't see duplicate calls here.
+     */
+    fun onMediaAttachmentRequested(messageId: String, token: String) {
+        val handler = chatHandler ?: return
+        val relay = relayHttpClient
+        val repo = mediaSettingsRepo
+        val cache = mediaCacheWriter
+
+        // 1. Insert LOADING placeholder.
+        val placeholder = Attachment(
+            contentType = "application/octet-stream",
+            content = "",
+            state = AttachmentState.LOADING,
+            relayToken = token
+        )
+        appendAttachmentToMessage(handler, messageId, placeholder)
+
+        if (relay == null || repo == null || cache == null) {
+            // Media dependencies not wired yet — flip to FAILED so the UI
+            // doesn't spin forever on a placeholder with no fetch in flight.
+            updateAttachmentByToken(handler, messageId, token) { att ->
+                att.copy(
+                    state = AttachmentState.FAILED,
+                    errorMessage = "Media pipeline not ready"
+                )
+            }
+            return
+        }
+
+        viewModelScope.launch {
+            val settings = repo.settings.first()
+
+            // 2. Cellular gate.
+            if (isOnCellular() && !settings.autoFetchOnCellular) {
+                updateAttachmentByToken(handler, messageId, token) { att ->
+                    att.copy(
+                        state = AttachmentState.LOADING,
+                        errorMessage = MEDIA_TAP_TO_DOWNLOAD
+                    )
+                }
+                return@launch
+            }
+
+            // 3. Fetch + cache.
+            performFetch(handler, messageId, token, settings)
+        }
+    }
+
+    /**
+     * Re-run the fetch for an attachment that's in the "Tap to download"
+     * deferred state. Used by the inbound-media card's CTA on cellular.
+     */
+    fun manualFetchAttachment(messageId: String, attachmentIndex: Int) {
+        val handler = chatHandler ?: return
+        val relay = relayHttpClient ?: return
+        val repo = mediaSettingsRepo ?: return
+        val cache = mediaCacheWriter ?: return
+
+        val msg = handler.messages.value.find { it.id == messageId } ?: return
+        val att = msg.attachments.getOrNull(attachmentIndex) ?: return
+        val token = att.relayToken ?: return
+
+        // Flip back to a pure LOADING spinner (drop the CTA marker) so the
+        // user gets immediate feedback that the download kicked off.
+        updateAttachmentByToken(handler, messageId, token) { existing ->
+            existing.copy(state = AttachmentState.LOADING, errorMessage = null)
+        }
+
+        viewModelScope.launch {
+            val settings = repo.settings.first()
+            performFetch(handler, messageId, token, settings)
+        }
+    }
+
+    /**
+     * Invoked when ChatHandler parses a bare-path `MEDIA:/abs/path` marker
+     * (relay wasn't reachable when the tool fired, so the file only exists
+     * on the server's local disk and we have no way to retrieve it).
+     *
+     * Inserts a FAILED placeholder so the chat shows "Image unavailable"
+     * instead of the literal path text.
+     */
+    fun onUnavailableMediaMarker(messageId: String, originalPath: String) {
+        val handler = chatHandler ?: return
+        val placeholder = Attachment(
+            contentType = "application/octet-stream",
+            content = "",
+            state = AttachmentState.FAILED,
+            errorMessage = "Image unavailable — relay offline",
+            fileName = originalPath.substringAfterLast('/').ifBlank { null }
+        )
+        appendAttachmentToMessage(handler, messageId, placeholder)
+    }
+
+    /**
+     * Core fetch routine. Extracted so both the auto-fetch path and the
+     * manual-retry path can share error handling and size enforcement.
+     */
+    private suspend fun performFetch(
+        handler: ChatHandler,
+        messageId: String,
+        token: String,
+        settings: MediaSettings
+    ) {
+        val relay = relayHttpClient ?: return
+        val cache = mediaCacheWriter ?: return
+        val maxBytes = settings.maxInboundSizeMb.toLong().coerceAtLeast(1) * 1024L * 1024L
+
+        val result = relay.fetchMedia(token)
+        result.fold(
+            onSuccess = { fetched ->
+                if (fetched.bytes.size > maxBytes) {
+                    val sizeMb = fetched.bytes.size / (1024.0 * 1024.0)
+                    updateAttachmentByToken(handler, messageId, token) { att ->
+                        att.copy(
+                            state = AttachmentState.FAILED,
+                            errorMessage = "File too large (%.1f MB, max %d MB)".format(
+                                sizeMb, settings.maxInboundSizeMb
+                            ),
+                            contentType = fetched.contentType,
+                            fileName = fetched.fileName ?: att.fileName,
+                            fileSize = fetched.bytes.size.toLong()
+                        )
+                    }
+                    return
+                }
+
+                try {
+                    val uri = cache.cache(fetched.bytes, fetched.contentType, fetched.fileName)
+                    updateAttachmentByToken(handler, messageId, token) { att ->
+                        att.copy(
+                            state = AttachmentState.LOADED,
+                            errorMessage = null,
+                            contentType = fetched.contentType,
+                            fileName = fetched.fileName ?: att.fileName,
+                            fileSize = fetched.bytes.size.toLong(),
+                            cachedUri = uri.toString()
+                        )
+                    }
+                } catch (e: Exception) {
+                    updateAttachmentByToken(handler, messageId, token) { att ->
+                        att.copy(
+                            state = AttachmentState.FAILED,
+                            errorMessage = "Failed to cache: ${e.message ?: "unknown"}"
+                        )
+                    }
+                }
+            },
+            onFailure = { err ->
+                updateAttachmentByToken(handler, messageId, token) { att ->
+                    att.copy(
+                        state = AttachmentState.FAILED,
+                        errorMessage = err.message ?: "Fetch failed"
+                    )
+                }
+            }
+        )
+    }
+
+    /**
+     * Append an attachment to a specific assistant message, matched by id.
+     * No-ops if the message can't be found (e.g. it was trimmed from the
+     * MAX_MESSAGES rolling buffer between the marker parse and the update).
+     */
+    private fun appendAttachmentToMessage(
+        handler: ChatHandler,
+        messageId: String,
+        attachment: Attachment
+    ) {
+        // Direct StateFlow mutation via the handler's messages flow would be
+        // cleaner, but ChatHandler exposes the flow as read-only. We piggyback
+        // on the same pattern used by the tool-call callbacks: mutate in-place
+        // through a handler method. For attachments there's no existing helper,
+        // so we reach into the StateFlow via Kotlin's `update` reflection-free
+        // pattern — except we can't, because _messages is private. Fall back
+        // to a minimal helper added below.
+        handler.mutateMessage(messageId) { msg ->
+            if (msg.role != MessageRole.ASSISTANT) msg
+            else msg.copy(attachments = msg.attachments + attachment)
+        }
+    }
+
+    /**
+     * Find the attachment on [messageId] whose [Attachment.relayToken] equals
+     * [token] and apply [transform] to it. Used for all LOADING→LOADED/FAILED
+     * transitions so the update key is stable across list shifts.
+     */
+    private fun updateAttachmentByToken(
+        handler: ChatHandler,
+        messageId: String,
+        token: String,
+        transform: (Attachment) -> Attachment
+    ) {
+        handler.mutateMessage(messageId) { msg ->
+            if (msg.role != MessageRole.ASSISTANT) return@mutateMessage msg
+            val idx = msg.attachments.indexOfFirst { it.relayToken == token }
+            if (idx < 0) return@mutateMessage msg
+            val updated = msg.attachments.toMutableList().also {
+                it[idx] = transform(it[idx])
+            }
+            msg.copy(attachments = updated)
+        }
+    }
+
+    /**
+     * True when the currently active network is cellular (metered LTE/5G).
+     * Returns false on Wi-Fi, Ethernet, or when the state is unavailable.
+     */
+    private fun isOnCellular(): Boolean {
+        val ctx = appContext ?: return false
+        return try {
+            val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                ?: return false
+            val active = cm.activeNetwork ?: return false
+            val caps = cm.getNetworkCapabilities(active) ?: return false
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
+                !caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+                !caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+        } catch (_: Exception) {
+            false
+        }
     }
 
     override fun onCleared() {

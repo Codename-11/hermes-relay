@@ -64,6 +64,10 @@ All settings via environment variables:
 | `RELAY_WEBAPI_URL` | `http://localhost:8642` | Hermes API Server URL |
 | `RELAY_HERMES_CONFIG` | `~/.hermes/config.yaml` | Hermes config path |
 | `RELAY_LOG_LEVEL` | `INFO` | Logging level |
+| `RELAY_MEDIA_MAX_SIZE_MB` | `100` | Per-file size cap for `POST /media/register` (inbound media pipeline — see ADR 14) |
+| `RELAY_MEDIA_TTL_SECONDS` | `86400` | How long a registered media entry stays fetchable |
+| `RELAY_MEDIA_LRU_CAP` | `500` | Max entries in the in-memory media registry before LRU eviction |
+| `RELAY_MEDIA_ALLOWED_ROOTS` | — | Extra absolute-path roots allowed on register (`os.pathsep`-separated). Extends defaults (`tempfile.gettempdir()` + `HERMES_WORKSPACE`). |
 
 ## CLI Flags
 
@@ -87,6 +91,8 @@ hermes relay start [OPTIONS]          (or: python -m plugin.relay)
 | `/health` | GET | `{status, version, clients, sessions}` JSON |
 | `/pairing` | POST | Generate a new relay-side pairing code |
 | `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code so it can be embedded in a QR payload. Used by `/hermes-relay-pair` / `hermes-pair` on the same host. Rejects non-loopback peers with HTTP 403. |
+| `/media/register` | POST | **Loopback only.** Register a host-local file with the `MediaRegistry` and receive an opaque token. Body: `{"path": "/abs/path", "content_type": "image/jpeg", "file_name": "screenshot.jpg"}`. Used by tools like `android_screenshot` so the agent can emit `MEDIA:hermes-relay://<token>` in chat and have the phone fetch bytes out-of-band. Path is sandboxed to `tempfile.gettempdir()` + `HERMES_WORKSPACE` + any `RELAY_MEDIA_ALLOWED_ROOTS`; symlink escape is rejected via `realpath`. Returns 400 on validation failure. See ADR 14. |
+| `/media/{token}` | GET | Stream the bytes of a previously-registered file. Requires `Authorization: Bearer <session_token>` — same token the WSS channel uses (validated against `SessionManager`). Response carries the registered `Content-Type` plus `Content-Disposition: inline; filename="..."` if a file name was provided at register time. The client only ever sees the opaque token — the path is never exposed. 401 without/with bad auth, 404 for unknown/expired tokens. |
 
 ## Pairing Model
 

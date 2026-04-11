@@ -192,12 +192,22 @@ def android_press_key(key: str) -> str:
 def android_screenshot() -> str:
     """
     Capture a screenshot of the Android screen.
-    Saves to a temp file and returns the path.
-    The gateway will auto-send the image to the user via MEDIA: tag.
+
+    Writes the JPEG to a temp file, then asks the local Hermes-Relay to
+    mint an opaque token via ``POST /media/register``. On success the
+    tool returns ``MEDIA:hermes-relay://<token>`` in its output, which
+    the phone parses and fetches via bearer-auth'd ``GET /media/<token>``
+    on the same relay.
+
+    Fallback: if the relay is not running (or rejects the registration),
+    the tool returns the old ``MEDIA:/tmp/<path>`` form and logs a warning.
+    The phone's parser renders a "relay offline" placeholder for that case.
     """
     try:
         import base64
+        import logging
         import tempfile
+
         data = _get("/screenshot")
         if "error" in data:
             return json.dumps(data)
@@ -217,6 +227,27 @@ def android_screenshot() -> str:
         w = result.get("width", "?")
         h = result.get("height", "?")
 
+        # Try to register with the local relay so the phone gets an opaque
+        # token instead of a literal path. Relay must be running on the
+        # same host (it's loopback-only). Any failure falls back to the
+        # bare path form — the phone shows a placeholder in that case.
+        try:
+            from plugin.relay.client import register_media
+            token = register_media(tmp.name, "image/jpeg", file_name="screenshot.jpg")
+        except Exception:
+            logging.getLogger("hermes_relay.tools").warning(
+                "register_media raised; falling back to bare MEDIA: path",
+                exc_info=True,
+            )
+            token = None
+
+        if token:
+            return f"Screenshot captured ({w}x{h})\nMEDIA:hermes-relay://{token}"
+
+        logging.getLogger("hermes_relay.tools").warning(
+            "relay not reachable; falling back to bare MEDIA: path "
+            "(phone will show a placeholder)"
+        )
         return f"Screenshot captured ({w}x{h})\nMEDIA:{tmp.name}"
     except Exception as e:
         return json.dumps({"error": str(e)})

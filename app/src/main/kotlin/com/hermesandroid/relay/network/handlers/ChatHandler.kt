@@ -55,6 +55,15 @@ class ChatHandler {
         private val toolAnnotationVerboseFailedRegex = Regex(
             """([❌✗])\s+(?:Failed(?:\s*:\s*|\s+)|Error(?:\s*:\s*|\s+))(\w[\w\s]*)"""
         )
+        // Inbound media markers emitted by tool results (e.g. android_screenshot).
+        //
+        // Primary form (server with relay): `MEDIA:hermes-relay://<token>` — the
+        //   relay has the file, we fetch it over HTTP and render it inline.
+        // Fallback form (no relay): `MEDIA:/absolute/path` — relay wasn't
+        //   reachable when the tool fired, so we render an "unavailable"
+        //   placeholder instead of attempting a fetch.
+        private val mediaRelayRegex = Regex("""MEDIA:hermes-relay://([A-Za-z0-9_-]+)""")
+        private val mediaBarePathRegex = Regex("""^\s*MEDIA:(/\S+)\s*$""")
         // Known completion/failure emojis — if these appear in backtick format, it's a completion
         private val completionEmojis = setOf("✅", "✓", "☑")
         private val failureEmojis = setOf("❌", "✗", "⚠")
@@ -67,12 +76,43 @@ class ChatHandler {
     var activeAgentName: String? = null
 
     /**
+     * Fired when the text stream contains `MEDIA:hermes-relay://<token>`. The
+     * ViewModel should insert a LOADING [com.hermesandroid.relay.data.Attachment]
+     * on the matching message and kick off a relay fetch.
+     * Default is a no-op so tests and legacy callers don't have to wire it.
+     */
+    var onMediaAttachmentRequested: (messageId: String, token: String) -> Unit = { _, _ -> }
+
+    /**
+     * Fired when the text stream contains a bare-path `MEDIA:/path` marker,
+     * indicating the relay wasn't reachable when the tool fired. The ViewModel
+     * should insert a FAILED placeholder attachment with an "unavailable"
+     * message — no network fetch is attempted.
+     */
+    var onUnavailableMediaMarker: (messageId: String, originalPath: String) -> Unit = { _, _ -> }
+
+    /**
      * Buffer for incomplete lines during streaming. Tool annotations are line-oriented
      * (backtick + emoji + tool_name + backtick), so we accumulate text until we see a
      * newline and then scan completed lines. This handles the case where a single
      * annotation is split across multiple SSE deltas.
      */
     private var annotationLineBuffer = StringBuilder()
+
+    /**
+     * Separate line buffer used exclusively for media-marker scanning.
+     *
+     * Media parsing runs unconditionally (unlike tool-annotation parsing which
+     * is gated behind [parseToolAnnotations]), so it needs its own buffer so
+     * disabling the tool-annotation path doesn't silently drop partial media
+     * lines that hadn't yet hit a newline.
+     *
+     * Tracks already-fired tokens per message to avoid duplicate attachments
+     * when a marker happens to appear in both real-time streaming and the
+     * post-stream finalize reconciliation pass.
+     */
+    private var mediaLineBuffer = StringBuilder()
+    private val dispatchedMediaMarkers = mutableSetOf<String>()
 
     /**
      * Tracks which tool names currently have an active (in-progress) annotation-based
@@ -118,6 +158,12 @@ class ChatHandler {
 
     fun clearMessages() {
         _messages.value = emptyList()
+        // Drop any pending line buffers / dedupe state so a fresh session
+        // doesn't inherit leftovers from the previous one.
+        mediaLineBuffer.clear()
+        dispatchedMediaMarkers.clear()
+        annotationLineBuffer.clear()
+        activeAnnotationTools.clear()
     }
 
     /**
@@ -137,6 +183,23 @@ class ChatHandler {
 
     fun clearError() {
         _error.value = null
+    }
+
+    /**
+     * Apply [transform] to the first message matching [messageId]. Used by
+     * [ChatViewModel][com.hermesandroid.relay.viewmodel.ChatViewModel] to
+     * mutate attachment state (LOADING → LOADED / FAILED) without having
+     * direct access to the private [_messages] StateFlow.
+     *
+     * No-op if no message matches (e.g. it was trimmed from the rolling
+     * MAX_MESSAGES buffer between the callback being queued and executing).
+     */
+    fun mutateMessage(messageId: String, transform: (ChatMessage) -> ChatMessage) {
+        _messages.update { messages ->
+            messages.map { msg ->
+                if (msg.id == messageId) transform(msg) else msg
+            }
+        }
     }
 
     /**
@@ -332,6 +395,10 @@ class ChatHandler {
         if (parseToolAnnotations) {
             scanForToolAnnotations(messageId, processedDelta)
         }
+
+        // Always scan for media markers — inbound attachments are a first-class
+        // feature and shouldn't be gated behind the tool-annotation flag.
+        scanForMediaMarkers(messageId, processedDelta)
     }
 
     /**
@@ -441,6 +508,74 @@ class ChatHandler {
     }
 
     /**
+     * Accumulate incoming text in a dedicated media line buffer and scan
+     * completed lines for media markers. Runs independently of the
+     * tool-annotation pipeline so inbound files always render, regardless of
+     * whether the user has enabled `parseToolAnnotations`.
+     *
+     * Matched markers fire [onMediaAttachmentRequested] / [onUnavailableMediaMarker]
+     * and the raw line is stripped from the visible message content (via
+     * [stripLineFromContent]) so the user sees the rendered attachment card
+     * instead of the literal `MEDIA:...` text.
+     */
+    private fun scanForMediaMarkers(messageId: String, delta: String) {
+        mediaLineBuffer.append(delta)
+
+        while (true) {
+            val newlineIndex = mediaLineBuffer.indexOf('\n')
+            if (newlineIndex == -1) break
+
+            val line = mediaLineBuffer.substring(0, newlineIndex)
+            mediaLineBuffer.delete(0, newlineIndex + 1)
+
+            val trimmed = line.trim()
+            if (trimmed.isEmpty()) continue
+
+            if (tryDispatchMediaMarker(messageId, trimmed)) {
+                stripLineFromContent(messageId, trimmed)
+            }
+        }
+    }
+
+    /**
+     * Inspect [line] for a media marker and dispatch the appropriate callback.
+     *
+     *  - `MEDIA:hermes-relay://<token>` → [onMediaAttachmentRequested]
+     *  - bare `MEDIA:/path` (the whole line, no other content) →
+     *    [onUnavailableMediaMarker]
+     *
+     * De-dupes via [dispatchedMediaMarkers] so the same token doesn't fire
+     * twice (e.g. once during streaming and again during finalize).
+     *
+     * Returns true when a marker was matched so the caller can strip the line.
+     */
+    private fun tryDispatchMediaMarker(messageId: String, line: String): Boolean {
+        val relayMatch = mediaRelayRegex.find(line)
+        if (relayMatch != null) {
+            val token = relayMatch.groupValues[1]
+            val dedupeKey = "$messageId:relay:$token"
+            if (dispatchedMediaMarkers.add(dedupeKey)) {
+                Log.d(TAG, "Media marker (relay): token=$token")
+                onMediaAttachmentRequested(messageId, token)
+            }
+            return true
+        }
+
+        val bareMatch = mediaBarePathRegex.find(line)
+        if (bareMatch != null) {
+            val path = bareMatch.groupValues[1]
+            val dedupeKey = "$messageId:bare:$path"
+            if (dispatchedMediaMarkers.add(dedupeKey)) {
+                Log.d(TAG, "Media marker (bare-path, unavailable): $path")
+                onUnavailableMediaMarker(messageId, path)
+            }
+            return true
+        }
+
+        return false
+    }
+
+    /**
      * Remove a matched annotation line from the message's displayed content.
      * This prevents the raw annotation text (e.g., `💻 terminal`) from showing
      * in the chat bubble alongside the ToolCall card.
@@ -482,6 +617,13 @@ class ChatHandler {
      */
     private fun parseAnnotationLine(messageId: String, line: String): Boolean {
         if (line.isEmpty()) return false
+
+        // --- Media markers (run first so they're always detected, even when
+        // parseToolAnnotations is off — the scanForMediaMarkers path handles
+        // the streaming case, this branch handles finalize reconciliation) ---
+        if (tryDispatchMediaMarker(messageId, line)) {
+            return true
+        }
 
         // --- Format 1: Backtick-wrapped `<emoji> <tool_name>` ---
         toolAnnotationBacktickRegex.find(line)?.let { match ->
@@ -555,6 +697,50 @@ class ChatHandler {
         }
 
         return false
+    }
+
+    /**
+     * Flush any remaining partial line in the media buffer and re-scan the
+     * final message content for any media markers that survived real-time
+     * stripping. Called unconditionally from [onStreamComplete] and
+     * [onTurnComplete] — inbound media is a first-class feature regardless
+     * of whether tool-annotation parsing is enabled.
+     */
+    private fun finalizeMediaMarkers(messageId: String) {
+        // Drain any partial line (last media marker without trailing newline).
+        if (mediaLineBuffer.isNotEmpty()) {
+            val remaining = mediaLineBuffer.toString().trim()
+            mediaLineBuffer.clear()
+            if (remaining.isNotEmpty() && tryDispatchMediaMarker(messageId, remaining)) {
+                stripLineFromContent(messageId, remaining)
+            }
+        }
+
+        // Post-stream reconciliation: re-scan the final content for markers
+        // that raced with stripLineFromContent during streaming.
+        _messages.update { messages ->
+            messages.map { msg ->
+                if (msg.id != messageId || msg.role != MessageRole.ASSISTANT) return@map msg
+                var cleaned = msg.content
+                var changed = false
+                for (rawLine in msg.content.lines()) {
+                    val trimmed = rawLine.trim()
+                    if (trimmed.isEmpty()) continue
+                    if (mediaRelayRegex.containsMatchIn(trimmed) ||
+                        mediaBarePathRegex.containsMatchIn(trimmed)
+                    ) {
+                        tryDispatchMediaMarker(messageId, trimmed)
+                        cleaned = cleaned
+                            .replace("\n$rawLine\n", "\n")
+                            .replace("\n$rawLine", "")
+                            .replace("$rawLine\n", "")
+                            .replace(rawLine, "")
+                        changed = true
+                    }
+                }
+                if (changed) msg.copy(content = cleaned.trim()) else msg
+            }
+        }
     }
 
     /**
@@ -775,6 +961,9 @@ class ChatHandler {
         if (parseToolAnnotations) {
             finalizeAnnotations(messageId)
         }
+
+        // Finalize media markers unconditionally (not gated by parseToolAnnotations)
+        finalizeMediaMarkers(messageId)
         // Note: do NOT set _isStreaming to false — the run is still active
     }
 
@@ -806,6 +995,9 @@ class ChatHandler {
         if (parseToolAnnotations) {
             finalizeAnnotations(messageId)
         }
+
+        // Finalize media markers unconditionally
+        finalizeMediaMarkers(messageId)
     }
 
     fun onStreamError(message: String) {

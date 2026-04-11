@@ -103,10 +103,20 @@ fun RelayApp() {
     val lastSessionId by connectionViewModel.lastSessionId.collectAsState()
     var sessionResumed by remember { mutableStateOf(false) }
 
+    val mediaContext = androidx.compose.ui.platform.LocalContext.current
     LaunchedEffect(apiClient) {
         apiClient?.let { client ->
             chatViewModel.initialize(client, connectionViewModel.chatHandler)
             chatViewModel.updateApiClient(client)
+
+            // Wire inbound-media dependencies. Safe to call on every reinit —
+            // idempotent rewire of the ChatHandler callbacks.
+            chatViewModel.initializeMedia(
+                context = mediaContext,
+                relayHttpClient = connectionViewModel.relayHttpClient,
+                mediaSettingsRepo = connectionViewModel.mediaSettingsRepo,
+                mediaCacheWriter = connectionViewModel.mediaCacheWriter
+            )
 
             // Wire session persistence callback
             chatViewModel.onSessionChanged = { sessionId ->
