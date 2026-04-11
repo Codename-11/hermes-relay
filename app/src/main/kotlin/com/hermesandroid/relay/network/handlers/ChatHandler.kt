@@ -206,12 +206,28 @@ class ChatHandler {
      * Load message history from API response into the messages list.
      * Replaces current messages with the loaded history.
      * Reconstructs tool calls from assistant messages' tool_calls field.
+     *
+     * Server-persisted message content still contains raw `MEDIA:...` markers
+     * (the streaming-time stripping is a phone-local operation that never
+     * mutated server storage), so this pass re-runs the marker parser on each
+     * loaded assistant message: strips the marker lines from displayed content
+     * and re-fires [onMediaAttachmentRequested] / [onUnavailableMediaMarker]
+     * so the ViewModel can inject attachments against the freshly-loaded
+     * message IDs. Without this, the session_end reload — which happens at
+     * every stream complete — would wipe the placeholder the streaming path
+     * just injected, and the raw marker text would become visible in the
+     * bubble. See the placeholder-flicker fix in DEVLOG 2026-04-11.
      */
     fun loadMessageHistory(items: List<MessageItem>) {
         // Build a map of tool result messages (role:"tool") keyed by tool_call_id
         // so we can attach results back to the originating assistant message's ToolCall
         val toolResults = items.filter { it.role == "tool" }
             .associateBy { it.toolCallId }
+
+        // Accumulator for media markers we find in loaded content — fired AFTER
+        // the wholesale `_messages.value = ...` assignment so the ViewModel's
+        // mutateMessage lookups find the newly-loaded messages.
+        val pendingMediaHits = mutableListOf<Pair<String, MediaMarkerHit>>()
 
         val loaded = items.mapNotNull { item ->
             val role = when (item.role) {
@@ -232,16 +248,102 @@ class ChatHandler {
                 emptyList()
             }
 
+            val messageId = item.id?.toString() ?: java.util.UUID.randomUUID().toString()
+            val rawContent = item.contentText ?: ""
+
+            // Run the media marker parser on assistant content; strip matched
+            // lines and queue hits for post-assignment dispatch.
+            val cleanedContent = if (role == MessageRole.ASSISTANT && rawContent.isNotEmpty()) {
+                extractMediaMarkersFromContent(messageId, rawContent, pendingMediaHits)
+            } else {
+                rawContent
+            }
+
             ChatMessage(
-                id = item.id?.toString() ?: java.util.UUID.randomUUID().toString(),
+                id = messageId,
                 role = role,
-                content = item.contentText ?: "",
+                content = cleanedContent,
                 timestamp = timestampMs,
                 isStreaming = false,
                 toolCalls = toolCalls
             )
         }
+
+        // Reload swaps the entire message list — any stale dedupe entries keyed
+        // on pre-reload message IDs are meaningless now. Clear so the hits we
+        // just collected against the reloaded IDs are guaranteed to fire.
+        dispatchedMediaMarkers.clear()
+
         _messages.value = if (loaded.size > MAX_MESSAGES) loaded.takeLast(MAX_MESSAGES) else loaded
+
+        // Now that the reloaded messages are in state, fire callbacks so the
+        // ViewModel can insert LOADING/FAILED attachments via mutateMessage.
+        for ((messageId, hit) in pendingMediaHits) {
+            when (hit) {
+                is MediaMarkerHit.RelayToken -> {
+                    val dedupeKey = "$messageId:relay:${hit.token}"
+                    if (dispatchedMediaMarkers.add(dedupeKey)) {
+                        Log.d(TAG, "Media marker (relay, reload): token=${hit.token}")
+                        onMediaAttachmentRequested(messageId, hit.token)
+                    }
+                }
+                is MediaMarkerHit.BarePath -> {
+                    val dedupeKey = "$messageId:bare:${hit.path}"
+                    if (dispatchedMediaMarkers.add(dedupeKey)) {
+                        Log.d(TAG, "Media marker (bare-path, reload): ${hit.path}")
+                        onUnavailableMediaMarker(messageId, hit.path)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Marker hit collected during [loadMessageHistory] for post-assignment dispatch.
+     */
+    private sealed interface MediaMarkerHit {
+        data class RelayToken(val token: String) : MediaMarkerHit
+        data class BarePath(val path: String) : MediaMarkerHit
+    }
+
+    /**
+     * Scan loaded (non-streaming) message content line-by-line for media
+     * markers, append hits to [out], and return the content with matched
+     * lines removed. Pure function — does NOT mutate [_messages] or fire
+     * callbacks. Called from [loadMessageHistory].
+     */
+    private fun extractMediaMarkersFromContent(
+        messageId: String,
+        content: String,
+        out: MutableList<Pair<String, MediaMarkerHit>>,
+    ): String {
+        var cleaned = content
+        for (rawLine in content.lines()) {
+            val trimmed = rawLine.trim()
+            if (trimmed.isEmpty()) continue
+
+            val relayMatch = mediaRelayRegex.find(trimmed)
+            if (relayMatch != null) {
+                out.add(messageId to MediaMarkerHit.RelayToken(relayMatch.groupValues[1]))
+                cleaned = cleaned
+                    .replace("\n$rawLine\n", "\n")
+                    .replace("\n$rawLine", "")
+                    .replace("$rawLine\n", "")
+                    .replace(rawLine, "")
+                continue
+            }
+
+            val bareMatch = mediaBarePathRegex.find(trimmed)
+            if (bareMatch != null) {
+                out.add(messageId to MediaMarkerHit.BarePath(bareMatch.groupValues[1]))
+                cleaned = cleaned
+                    .replace("\n$rawLine\n", "\n")
+                    .replace("\n$rawLine", "")
+                    .replace("$rawLine\n", "")
+                    .replace(rawLine, "")
+            }
+        }
+        return cleaned.trim()
     }
 
     /**
