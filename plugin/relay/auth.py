@@ -82,35 +82,6 @@ def _default_grants(ttl_seconds: float, now: float) -> dict[str, float]:
     }
 
 
-def _clamp_grants_to_lifetime(
-    grants: dict[str, float],
-    ttl_seconds: float,
-    now: float,
-) -> dict[str, float]:
-    """Re-clamp an already-materialized set of grants to a (possibly new)
-    session lifetime.
-
-    Used by :meth:`SessionManager.update_session` when the caller extends
-    (or shortens) a session without explicitly replacing grants. Any
-    grant whose absolute expiry is past the new session ``expires_at``
-    gets clipped; grants already inside the lifetime are left alone.
-
-    ``ttl_seconds == 0`` → session is now never-expiring, nothing gets
-    clipped.
-    """
-    if ttl_seconds == 0:
-        return dict(grants)
-    session_expiry = now + ttl_seconds
-    out: dict[str, float] = {}
-    for channel, grant_expiry in grants.items():
-        if _is_never(grant_expiry):
-            # Never-expire grant on a bounded session: clamp to session end.
-            out[channel] = session_expiry
-        else:
-            out[channel] = min(grant_expiry, session_expiry)
-    return out
-
-
 def _materialize_grants(
     grants: dict[str, float] | None,
     ttl_seconds: float,
@@ -514,12 +485,17 @@ class SessionManager:
             # pass, same as create_session).
             session.grants = _materialize_grants(grants, effective_ttl, now)
         else:
-            # Caller didn't touch grants. Re-clamp the existing ones to
-            # the (possibly new) session lifetime so a shorter TTL
-            # correctly clips any grant that would outlive the session.
-            session.grants = _clamp_grants_to_lifetime(
-                session.grants, effective_ttl, now
-            )
+            # Caller only changed TTL. Regenerate grants from defaults
+            # based on the new session lifetime — this handles both
+            # shorter (all grants correctly clipped) and longer (grants
+            # stretch to the new defaults) cleanly. Preserving old
+            # absolute-time grants across an extend would leave them
+            # where they originally were relative to the old "now",
+            # which is usually not what the user means by "Extend".
+            #
+            # If the user wants to preserve custom grants across an
+            # extend, they should pass them explicitly.
+            session.grants = _default_grants(effective_ttl, now)
 
         logger.info(
             "Updated session for %s: expires_at=%s, grants=%s",
