@@ -8,7 +8,7 @@ Hermes-Relay is a native Android app for [Hermes Agent](https://hermes-agent.nou
 curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
 ```
 
-This installs the server-side plugin. Grab the Android app from [GitHub Releases](https://github.com/Codename-11/hermes-relay/releases), then run `hermes pair` to generate a pairing QR. See [Installation & Setup](/guide/getting-started) for the full walkthrough.
+This installs the server-side plugin. Grab the Android app from [GitHub Releases](https://github.com/Codename-11/hermes-relay/releases), then either type `/hermes-relay-pair` in any Hermes chat surface or run `hermes-pair` from a shell to generate a pairing QR. See [Installation & Setup](/guide/getting-started) for the full walkthrough.
 
 ## Connection Model
 

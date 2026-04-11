@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import { withBase } from 'vitepress'
 
 const installCommand = 'curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash'
-const pairCommand = 'hermes pair'
+const pairCommand = 'hermes-pair'
 
 const copiedKey = ref<string | null>(null)
 let resetTimer: ReturnType<typeof setTimeout> | null = null
@@ -26,7 +26,7 @@ async function copy(key: string, text: string) {
   <section class="install-section">
     <h2>Install in 30 seconds</h2>
     <p class="install-tagline">
-      One line installs the server plugin into your Hermes agent. After restarting hermes, run <code>hermes pair</code> to generate a QR code the Android app can scan.
+      One line installs the server plugin into your Hermes agent. After restarting hermes, run <code>hermes-pair</code> (or type <code>/hermes-relay-pair</code> in any Hermes chat surface) to generate a QR code the Android app can scan.
     </p>
 
     <div class="install-code">
@@ -58,7 +58,7 @@ async function copy(key: string, text: string) {
     </div>
 
     <p class="install-note">
-      Installs the 14 <code>android_*</code> device control tools and the <code>hermes pair</code> CLI command. Requires hermes-agent v0.8.0+ and Python 3.11+.
+      Installs the 14 <code>android_*</code> device control tools, the <code>/hermes-relay-pair</code> skill, and a <code>hermes-pair</code> shell shim. Requires hermes-agent v0.8.0+ and Python 3.11+.
     </p>
 
     <p class="install-cta">

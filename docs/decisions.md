@@ -122,7 +122,7 @@ Phone (WSS)      → Relay Server (:8767)          [bridge, terminal]
 
 #### 6a. QR Carries Both API and Relay Credentials (updated 2026-04-11)
 
-**Decision:** The Hermes pairing QR payload bundles the API server credentials AND the relay URL + pairing code into a single scan. `hermes pair` runs on the Hermes host; if a relay is reachable at `localhost:RELAY_PORT`, the command mints a fresh 6-char code, pre-registers it with the relay via a new loopback-only `POST /pairing/register` endpoint, and embeds `{url, code}` under a nullable `relay` key alongside the existing `host`/`port`/`key`/`tls` fields.
+**Decision:** The Hermes pairing QR payload bundles the API server credentials AND the relay URL + pairing code into a single scan. The pair command (`/hermes-relay-pair` skill or `hermes-pair` shell shim, both backed by `plugin/pair.py`) runs on the Hermes host; if a relay is reachable at `localhost:RELAY_PORT`, the command mints a fresh 6-char code, pre-registers it with the relay via a new loopback-only `POST /pairing/register` endpoint, and embeds `{url, code}` under a nullable `relay` key alongside the existing `host`/`port`/`key`/`tls` fields.
 
 **Trust anchor:** the operator with shell access on the host. Only a process running on the same machine as the relay can hit `/pairing/register` — the handler rejects any non-loopback `request.remote` with HTTP 403. A LAN attacker cannot inject codes. This matches the model we already rely on for reading `~/.hermes/.env` and `~/.hermes/config.yaml`: if you have shell access to the host, you have enough privilege to authorize a device.
 
@@ -132,7 +132,7 @@ Phone (WSS)      → Relay Server (:8767)          [bridge, terminal]
 
 **Schema evolution:**
 - Old API-only QRs (`{hermes, host, port, key, tls}`) still parse cleanly — the `relay` field is nullable and `kotlinx.serialization` runs with `ignoreUnknownKeys = true`.
-- When `--no-relay` is passed to `hermes pair`, or the relay isn't running, the QR omits the `relay` block and the command prints an `[info]` pointing at `hermes relay start`.
+- When `--no-relay` is passed to the pair command, or the relay isn't running, the QR omits the `relay` block and the command prints an `[info]` pointing at `hermes relay start`.
 
 **Pairing alphabet change:** `PAIRING_ALPHABET` in `plugin/relay/config.py` was widened from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (32 chars, no ambiguous 0/O/1/I) to the full `A-Z / 0-9` (36 chars) to match the phone-side `AuthManager.PAIRING_CODE_CHARS`. The old restriction only mattered when a human had to retype a code from a display; now that the code flows phone ↔ server through a QR + HTTP, the restriction silently rejected ~12% of valid codes and had to go.
 
@@ -304,6 +304,30 @@ Key data classes: `MessageEvent` (inbound), `SendResult` (outbound), `SessionSou
 - Current chat works fine as request/response via HTTP/SSE
 - Terminal and bridge channels are higher priority for MVP
 - Upstream PR needs careful design and community alignment
+
+### 13. Skill Distribution via `external_dirs`, not Hub Publish or Hand-Copy (2026-04-11)
+
+**Decision:** The `hermes-relay-pair` skill is distributed by adding the Hermes-Relay clone's `skills/` directory to `skills.external_dirs` in `~/.hermes/config.yaml`, rather than publishing to the Hermes skill hub or hand-copying files into `~/.hermes/skills/`. The skill itself lives at `skills/devops/hermes-relay-pair/SKILL.md` in the repo (category subdirectory matching `metadata.hermes.category: devops`, per Hermes canonical layout).
+
+**Why:**
+- **Atomic updates** — a single `git pull` inside `~/.hermes/hermes-relay/` updates the skill, the plugin (via `pip install -e`), and the docs in lock-step. There is no drift between the skill and the plugin module it depends on (`plugin/pair.py`).
+- **No hub round-trip** — the skill is an implementation detail of this project, not a generally-useful standalone skill. Publishing to the hub would be overkill and would make updates slower (hub publish step + `hermes skills update` on every change).
+- **No hand-copy** — `cp -r skills/... ~/.hermes/skills/` was the old approach, but it means every update is a manual step and users can silently end up with stale skills. `external_dirs` is scanned fresh on every hermes-agent invocation, so there's nothing to forget.
+- **Canonical category layout** — matching the `devops` subdirectory to the `metadata.hermes.category` frontmatter lets users browse `~/.hermes/skills/` (and external dirs) by category and mirrors how upstream organizes its own skills.
+
+**Trade-off:** Users need to trust the installer's YAML edit to `~/.hermes/config.yaml`. The installer keeps the edit idempotent and only appends a single line under `skills.external_dirs`. If a user removes the line by hand, re-running the installer restores it.
+
+**Why not `hermes skills update`:** That command targets skills installed via the hub (which writes to `~/.hermes/skills/`). Skills discovered via `external_dirs` aren't tracked by the hub at all — hermes-agent enumerates them on startup. Update flow for `external_dirs` skills is whatever the external dir's own update mechanism is. For us, that's `git pull`.
+
+**Why the old `skills/hermes-pairing-qr/` was deleted:** It was the pre-plugin bash script era — `hermes-pair` as a shell script + a flat-file `SKILL.md`. The plugin now owns the QR generation (`plugin/pair.py`, pure Python, no `qrencode` dependency), the skill at `skills/devops/hermes-relay-pair/` owns the slash-command surface, and the shell shim at `~/.local/bin/hermes-pair` covers the script-friendly CLI entry point. Keeping the deprecated skill around would have been two sources of truth for the same operation.
+
+**Upstream CLI gap (documented for posterity):** hermes-agent v0.8.0's `PluginContext.register_cli_command()` is wired up on the plugin side, and `plugin/cli.py` calls it correctly. However, `hermes_cli/main.py:5236` only reads `plugins.memory.discover_plugin_cli_commands()` (memory-plugin-specific) and never consults the generic `_cli_commands` dict. Third-party plugin CLI commands never reach the top-level argparser. Documented in DEVLOG as an upstream fix target. Until it lands, `hermes pair` (with a space) is **not** a working entry point — docs point users at `/hermes-relay-pair` (skill-driven slash command) and `hermes-pair` (dashed shell shim) instead.
+
+**References:**
+- `install.sh` — canonical installer
+- `skills/devops/hermes-relay-pair/SKILL.md` — skill definition (canonical category layout)
+- `plugin/pair.py` — shared implementation
+- `~/.hermes/hermes-agent/website/docs/user-guide/features/skills.md` — upstream skill distribution spec
 
 ---
 

@@ -73,8 +73,8 @@ hermes-android/                  ← Android Studio opens this root
 ├── plugin/                      ← Hermes agent plugin (14 android_* tools + relay + pair CLI)
 │   ├── android_tool.py
 │   ├── android_relay.py
-│   ├── pair.py                  # `hermes pair` implementation (QR + /pairing/register)
-│   ├── cli.py                   # Registers `hermes pair` + `hermes relay start`
+│   ├── pair.py                  # QR pairing implementation — `python -m plugin.pair`, wrapped by `hermes-pair` shim and the `hermes-relay-pair` skill
+│   ├── cli.py                   # Registers plugin CLI sub-commands (note: top-level `hermes pair` blocked by upstream argparser gap — use slash command or shell shim)
 │   ├── relay/                   # Canonical WSS relay (consolidated from relay_server/)
 │   │   ├── server.py            # aiohttp WSS + HTTP routes (incl. /pairing/register)
 │   │   ├── auth.py              # PairingManager, SessionManager, RateLimiter
@@ -88,8 +88,9 @@ hermes-android/                  ← Android Studio opens this root
 │   ├── Dockerfile
 │   ├── hermes-relay.service     # Systemd unit
 │   └── requirements.txt
-├── skills/                      ← Installable Hermes skills
-│   └── hermes-pairing-qr/      # (DEPRECATED) QR pairing — use `hermes pair` from the plugin instead
+├── skills/                      ← Installable Hermes skills (categorized per canonical layout)
+│   └── devops/
+│       └── hermes-relay-pair/  # /hermes-relay-pair slash command — QR pairing skill (category: devops)
 ├── docs/                        ← spec, decisions, security
 └── .github/workflows/           ← CI + release
 ```
@@ -164,10 +165,10 @@ hermes-android/                  ← Android Studio opens this root
 | `relay_server/hermes-relay.service` | Systemd unit file for persistent deployment |
 | `docs/relay-server.md` | Relay server setup, config, Docker, systemd, TLS reference |
 | `app/src/main/kotlin/.../ui/components/QrPairingScanner.kt` | QR code scanner + `HermesPairingPayload` (incl. optional `relay` block with `url` + `code`) |
-| `plugin/pair.py` | `hermes pair` — probes local relay, pre-registers pairing code via `/pairing/register`, embeds relay URL + code in QR (pure-Python, uses segno) |
-| `plugin/cli.py` | Registers `hermes pair` (with `--no-relay`) and `hermes relay start` via the v0.8.0 plugin CLI API |
-| `skills/hermes-pairing-qr/SKILL.md` | (DEPRECATED) QR pairing skill — use `hermes pair` from the plugin instead |
-| `skills/hermes-pairing-qr/hermes-pair` | (DEPRECATED) QR generator script — use `hermes pair` from the plugin instead |
+| `plugin/pair.py` | QR pairing implementation — probes local relay, pre-registers pairing code via `/pairing/register`, embeds relay URL + code in QR (pure-Python, uses segno). Invoked via `python -m plugin.pair`, wrapped by the `hermes-pair` shell shim and the `hermes-relay-pair` skill. |
+| `plugin/cli.py` | Registers plugin CLI sub-commands via the v0.8.0 plugin CLI API. **Note:** the top-level `hermes pair` sub-command is not currently reachable — upstream `hermes_cli/main.py` only reads `plugins.memory.discover_plugin_cli_commands()` and never consults the generic plugin CLI dict. Use `/hermes-relay-pair` (skill) or `hermes-pair` (shell shim) instead. |
+| `skills/devops/hermes-relay-pair/SKILL.md` | `/hermes-relay-pair` slash command — canonical category layout (`devops`), matches `metadata.hermes.category` frontmatter. Discovered via `skills.external_dirs` entry added by the installer. |
+| `install.sh` | Canonical installer — clones to `~/.hermes/hermes-relay/`, `pip install -e` into the hermes-agent venv, appends `skills/` to `skills.external_dirs` in `~/.hermes/config.yaml`, symlinks `plugin/` into `~/.hermes/plugins/hermes-relay`, drops `hermes-pair` shell shim into `~/.local/bin/`. Updates via `git pull` in the clone. |
 | `AGENTS.md` | Tool usage patterns for the `android_*` toolset |
 | `docs/mcp-tooling.md` | MCP server setup — android-tools-mcp + mobile-mcp |
 
@@ -233,7 +234,7 @@ Quick reference:
 | Models | `GET /v1/models` | — |
 | Plugin tools | `android_*` via `plugin/` | — |
 | Relay health | `GET /health` on `plugin/relay/server.py` (default `:8767`) | — |
-| Relay pairing (QR flow) | `POST /pairing/register` (loopback only) — driven by `hermes pair` | — |
+| Relay pairing (QR flow) | `POST /pairing/register` (loopback only) — driven by `/hermes-relay-pair` skill or `hermes-pair` shell shim | — |
 | QR payload schema | `HermesPairingPayload` (see `plugin/pair.py` + `QrPairingScanner.kt`) — top-level API fields + optional `relay: { url, code }` block | Old API-only QRs still parse (relay field is nullable + `ignoreUnknownKeys = true`) |
 
 ## Upstream References

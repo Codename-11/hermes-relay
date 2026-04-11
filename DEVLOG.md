@@ -1,5 +1,38 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-11 — Install Flow Canonicalization (external_dirs + pip install -e + skill category layout)
+
+**Done:**
+- **Install flow rewritten to match Hermes canonical distribution patterns** (per `~/.hermes/hermes-agent/website/docs/user-guide/features/skills.md`). The new `install.sh` clones the repo to `~/.hermes/hermes-relay/` (override with `$HERMES_RELAY_HOME`) instead of a throwaway tmpdir, `pip install -e`s the package into the hermes-agent venv, and registers the clone's `skills/` directory under `skills.external_dirs` in `~/.hermes/config.yaml` via an idempotent YAML edit. The plugin is symlinked into `~/.hermes/plugins/hermes-relay`, and a thin `~/.local/bin/hermes-pair` shim execs `python -m plugin.pair` in the venv.
+- **Updates are now `cd ~/.hermes/hermes-relay && git pull`** — one command updates plugin (editable install picks up changes automatically) + skill (`external_dirs` is scanned fresh on every hermes-agent invocation) + docs. No `hermes skills update` step — that only applies to hub-installed skills, not `external_dirs`-scanned ones.
+- **Skill directory now follows canonical category layout** — `skills/devops/hermes-relay-pair/SKILL.md` (category subdir matching the `metadata.hermes.category: devops` frontmatter), not the old flat `skills/hermes-relay-pair/`.
+- **`skills/hermes-pairing-qr/` deleted entirely** — the pre-plugin bash script + SKILL.md. Replaced by `skills/devops/hermes-relay-pair/` + `plugin/pair.py` (Python module) + `hermes-pair` shell shim.
+- **`plugin/skill.md` deleted** — old lowercase-s flat-file artifact from before the skill system existed.
+- **Documented the upstream CLI gap** — hermes-agent v0.8.0's `PluginContext.register_cli_command()` is wired on the plugin side, but `hermes_cli/main.py:5236` only reads `plugins.memory.discover_plugin_cli_commands()` and never consults the generic `_cli_commands` dict. Third-party plugin CLI commands never reach the top-level argparser. Docs no longer promise `hermes pair` (with a space) works — only `/hermes-relay-pair` (slash command via the skill) and `hermes-pair` (dashed shell shim) are documented as working entry points.
+
+**Files changed:**
+- `README.md` — Quick Start replaces `hermes pair` with `/hermes-relay-pair` + `hermes-pair`, adds update-via-`git pull` note, updates repo structure to show `skills/devops/hermes-relay-pair/`
+- `docs/relay-server.md` — pairing description and `/pairing/register` row updated to reference the new entry points
+- `docs/decisions.md` — new ADR 13 on skill distribution via `external_dirs`
+- `user-docs/guide/getting-started.md` — full install-flow rewrite covering the 5-step canonical installer, update mechanism, slash command vs shell shim entry points, upstream CLI gap warning
+- `user-docs/reference/configuration.md` — new `Skills (external_dirs)` subsection, command references updated
+- `user-docs/reference/relay-server.md` — pairing model + troubleshooting updated
+- `CLAUDE.md` — Repo Layout shows `skills/devops/hermes-relay-pair/`; Key Files gains `install.sh`, drops deprecated `hermes-pairing-qr` rows and `plugin/skill.md` references; integration points updated
+- `AGENTS.md` — Setup steps rewritten around the canonical installer
+- `DEVLOG.md` — this entry
+
+**Files NOT touched (main session owns them):** `plugin/**`, `relay_server/**`, `app/**`, `pyproject.toml`, `skills/devops/hermes-relay-pair/SKILL.md`, `install.sh`. The deleted `skills/hermes-pairing-qr/` and `plugin/skill.md` paths are referenced only as historical deletions in this entry and ADR 13.
+
+**Next:**
+- Verify `/hermes-relay-pair` renders correctly once the skill is at `skills/devops/hermes-relay-pair/SKILL.md` and hermes-agent reloads from `external_dirs`.
+- Confirm `install.sh`'s YAML edit is actually idempotent against a pre-existing `external_dirs` list with a trailing comment — regression-test with a pathological config.
+- Upstream patch to `hermes_cli/main.py` that dispatches to the generic `_cli_commands` dict — would let us restore `hermes pair` as a first-class CLI verb. Track in `docs/upstream-contributions.md`.
+
+**Blockers:**
+- Upstream argparser doesn't forward to plugin CLI dict (see above). Not blocking the install flow — the slash command + shell shim cover the same surface.
+
+---
+
 ## 2026-04-11 — Settings Connection UX Rework (QR-first, collapsible manual + bridge)
 
 **Done:**

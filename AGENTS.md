@@ -6,22 +6,23 @@ It communicates with the Hermes-Relay app running on an Android device over WSS.
 
 ## Setup
 
-### Quick start (relay + plugin)
+### Quick start (canonical installer)
 
 ```bash
-pip install aiohttp pyyaml && python -m relay_server --no-ssl   # start relay
-cp -r plugin ~/.hermes/plugins/hermes-relay                      # install plugin
+curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
 ```
 
-Then restart hermes-agent. See [docs/relay-server.md](docs/relay-server.md) for Docker, systemd, TLS, and configuration options.
+This clones the repo to `~/.hermes/hermes-relay/`, `pip install -e`s the package into the hermes-agent venv, registers the clone's `skills/` directory in `~/.hermes/config.yaml` under `skills.external_dirs`, symlinks the plugin into `~/.hermes/plugins/hermes-relay`, and installs a `hermes-pair` shell shim into `~/.local/bin/`. Restart hermes-agent and everything is live. Updates are a `git pull` inside `~/.hermes/hermes-relay/`.
+
+See [docs/relay-server.md](docs/relay-server.md) for Docker, systemd, TLS, and configuration options.
 
 ### Full setup
 1. Install the Hermes-Relay APK on the Android device (build via `scripts/dev.bat build`)
 2. Grant the app Accessibility Service permission in Settings > Accessibility
 3. Grant SYSTEM_ALERT_WINDOW permission
-4. Start the relay server: `pip install aiohttp pyyaml && python -m relay_server --no-ssl`
-5. Install the plugin: `cp -r plugin ~/.hermes/plugins/hermes-relay`
-6. Restart hermes-agent
+4. Run the installer (above) and restart hermes-agent
+5. Start the relay server if you need terminal/bridge: `python -m plugin.relay --no-ssl`
+6. Pair the phone: type `/hermes-relay-pair` in any Hermes chat surface, or run `hermes-pair` from a shell. **Note:** the top-level `hermes pair` sub-command is not currently exposed — upstream argparser doesn't forward to plugin CLI dicts. Use the slash command or the dashed shim.
 
 ## Tool usage patterns
 

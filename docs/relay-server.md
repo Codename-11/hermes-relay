@@ -105,7 +105,7 @@ Or use a reverse proxy (nginx/Caddy) to terminate TLS in front of the relay.
 
 The relay uses a QR-driven two-step auth flow:
 
-1. **Pairing** — `hermes pair` runs on the Hermes host, mints a fresh 6-char code (`A-Z / 0-9`), pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint, and embeds the relay URL + code in the scanned QR payload. The phone sends the code in its first `system/auth` envelope; the relay consumes it and issues a session token. Codes are one-shot and expire 10 minutes after registration.
+1. **Pairing** — the pair command runs on the Hermes host (either the `/hermes-relay-pair` slash command invoked from any Hermes chat surface, or the `hermes-pair` shell shim), mints a fresh 6-char code (`A-Z / 0-9`), pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint, and embeds the relay URL + code in the scanned QR payload. The phone sends the code in its first `system/auth` envelope; the relay consumes it and issues a session token. Codes are one-shot and expire 10 minutes after registration.
 2. **Session token** — Stored in Android's EncryptedSharedPreferences. Used for all subsequent connections. Expires after 30 days.
 
 Rate limiting: 5 failed auth attempts per 60 seconds triggers a 5-minute block per IP.
@@ -119,7 +119,7 @@ See [`docs/spec.md` §3.3](spec.md) for the full auth flow and the QR wire forma
 | `/ws`, `/` | GET (upgrade) | Main WebSocket endpoint. Phone connects, sends `system/auth`, then multiplexes `chat`/`terminal`/`bridge` envelopes. |
 | `/health` | GET | Returns `{status, version, clients, sessions}` JSON. |
 | `/pairing` | POST | Generate a new relay-side pairing code. Returns `{"code": "ABC123"}`. Unrestricted (intended for host-local callers). |
-| `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code so it can appear in a QR payload before the phone scans it. Request body: `{"code": "ABCD12"}`. Response: `{"ok": true, "code": "ABCD12"}`. Returns HTTP 403 for any `request.remote` other than `127.0.0.1` / `::1` — only a process running on the same host as the relay can inject codes. Used by `hermes pair`. |
+| `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code so it can appear in a QR payload before the phone scans it. Request body: `{"code": "ABCD12"}`. Response: `{"ok": true, "code": "ABCD12"}`. Returns HTTP 403 for any `request.remote` other than `127.0.0.1` / `::1` — only a process running on the same host as the relay can inject codes. Used by `/hermes-relay-pair` / `hermes-pair`. |
 
 ## Health Check
 

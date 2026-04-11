@@ -86,13 +86,13 @@ hermes relay start [OPTIONS]          (or: python -m plugin.relay)
 | `/ws`, `/` | GET (upgrade) | WebSocket endpoint — phone connects here |
 | `/health` | GET | `{status, version, clients, sessions}` JSON |
 | `/pairing` | POST | Generate a new relay-side pairing code |
-| `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code so it can be embedded in a QR payload. Used by `hermes pair` on the same host. Rejects non-loopback peers with HTTP 403. |
+| `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code so it can be embedded in a QR payload. Used by `/hermes-relay-pair` / `hermes-pair` on the same host. Rejects non-loopback peers with HTTP 403. |
 
 ## Pairing Model
 
-The phone does **not** enter a pairing code by hand. Instead, `hermes pair` (running on the Hermes host) drives the whole handshake:
+The phone does **not** enter a pairing code by hand. Instead, the pair command (the `/hermes-relay-pair` slash command or the `hermes-pair` shell shim, both running on the Hermes host) drives the whole handshake:
 
-1. `hermes pair` mints a fresh 6-character code from `A-Z / 0-9`
+1. The pair command mints a fresh 6-character code from `A-Z / 0-9`
 2. It POSTs the code to `/pairing/register` on the local relay (blocked for any caller outside `127.0.0.1` / `::1`)
 3. It embeds the relay URL and code in the same QR payload that carries the API server credentials
 4. The phone scans once — the relay block auto-configures Settings > Connection
@@ -109,8 +109,8 @@ curl http://localhost:8767/health
 ## Troubleshooting
 
 - **Connection refused** — Is the relay running? `systemctl status hermes-relay` or `docker logs hermes-relay`
-- **Auth failure** — Pairing codes expire 10 minutes after registration and are one-shot. Re-run `hermes pair` to mint a fresh code and get a new QR.
-- **QR has no relay block** — `hermes pair` only embeds relay details if it can reach `localhost:RELAY_PORT/health` when it runs. Start the relay first, then re-run `hermes pair`.
+- **Auth failure** — Pairing codes expire 10 minutes after registration and are one-shot. Re-run `hermes-pair` (or `/hermes-relay-pair`) to mint a fresh code and get a new QR.
+- **QR has no relay block** — the pair command only embeds relay details if it can reach `localhost:RELAY_PORT/health` when it runs. Start the relay first, then re-run `hermes-pair`.
 - **TLS errors** — Use `--no-ssl` for local dev. Ensure cert paths are correct for production.
 - **Phone can't reach relay** — Check firewall rules for port 8767. Verify with `curl http://server-ip:8767/health` from another machine.
 

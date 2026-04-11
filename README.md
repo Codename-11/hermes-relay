@@ -61,17 +61,16 @@ On the machine running your Hermes agent:
 curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
 ```
 
-This installs the `hermes-relay` plugin — 14 `android_*` device control tools plus the `hermes pair` CLI command. After restarting hermes, generate a pairing QR code:
+The installer clones Hermes-Relay to `~/.hermes/hermes-relay/` (override with `$HERMES_RELAY_HOME`), `pip install -e`s the package into the hermes-agent venv, registers the `skills/` directory in your `~/.hermes/config.yaml` under `skills.external_dirs` (so updates flow through `git pull`), symlinks the plugin into `~/.hermes/plugins/hermes-relay`, and drops a thin `hermes-pair` shim into `~/.local/bin/`. After restart, pair your phone via either of these equivalent entry points:
 
-```bash
-hermes pair
-```
+- **From any Hermes chat surface** (CLI, Discord, Telegram, etc.): type `/hermes-relay-pair` and the `hermes-relay-pair` skill renders the QR inline. Shortest path if you're already chatting with the agent.
+- **From a shell**: `hermes-pair` (dashed) — a thin wrapper around `python -m plugin.pair` in the hermes-agent venv. Use this in scripts or when you want the raw output.
 
-Or, if you're already in an active Hermes session (CLI, Discord, Telegram, etc.), just type `/hermes-relay-pair` and the agent renders the QR inline — same payload, no shell needed.
+Scan the QR from the Android app's onboarding screen and you're connected. One scan configures **both** the direct-chat API server **and** the WSS relay (for terminal/bridge) — if a local relay is running at `localhost:8767`, the pair command pre-registers a fresh 6-char pairing code with it and embeds the relay URL + code in the same QR. If you only want direct chat, pass `--no-relay` (or just don't start the relay). Plain-text connection details are always printed alongside the QR so you can copy values by hand if your terminal can't render QR blocks.
 
-Scan it from the Android app's onboarding screen and you're connected. One scan configures **both** the direct-chat API server **and** the WSS relay (for terminal/bridge) — if a local relay is running at `localhost:8767` when you run `hermes pair`, the command pre-registers a fresh 6-char pairing code with it and embeds the relay URL + code in the same QR. If you only want direct chat, pass `--no-relay` (or just don't start the relay). The command also prints the server URL and API key as plain text, so you can pair manually if your terminal can't render QR blocks.
+**Updating:** `cd ~/.hermes/hermes-relay && git pull` — pulls new plugin, skill, and docs in one step. Because the installer uses `pip install -e` and `external_dirs`, nothing needs to be re-copied; restart hermes-agent and the updated skill + plugin are picked up on next load.
 
-**Requirements:** Android 8.0+ (SDK 26), [hermes-agent](https://github.com/NousResearch/hermes-agent) v0.8.0+ (for the `hermes pair` CLI), Python 3.11+.
+**Requirements:** Android 8.0+ (SDK 26), [hermes-agent](https://github.com/NousResearch/hermes-agent) v0.8.0+, Python 3.11+.
 
 ## What It Does
 
@@ -153,8 +152,10 @@ scripts/dev.bat relay      # Start relay server (dev, no TLS)
 hermes-relay/
 ├── app/                       # Android app (Kotlin + Jetpack Compose)
 ├── relay_server/              # WSS relay server (Python + aiohttp)
-├── plugin/                    # Hermes agent plugin (14 android_* tools)
-├── skills/                    # Hermes agent skills (QR pairing)
+├── plugin/                    # Hermes agent plugin (14 android_* tools + pair module)
+├── skills/                    # Hermes agent skills
+│   └── devops/
+│       └── hermes-relay-pair/ # /hermes-relay-pair slash-command skill
 ├── user-docs/                 # VitePress documentation site
 ├── docs/                      # Spec, decisions, security
 ├── scripts/                   # Dev helper scripts
@@ -199,7 +200,7 @@ cp -r plugin ~/.hermes/plugins/hermes-relay
 ln -s "$PWD/plugin" ~/.hermes/plugins/hermes-relay
 ```
 
-Then restart hermes and run `hermes pair` to test the CLI command. The 14 `android_*` tools register regardless of hermes-agent version; the `hermes pair` CLI requires v0.8.0+.
+Then restart hermes and run `hermes-pair` (dashed shell shim) or type `/hermes-relay-pair` in any Hermes chat surface to verify pairing. The 14 `android_*` tools register regardless of hermes-agent version. **Note:** a top-level `hermes pair` CLI sub-command is *not* currently exposed — hermes-agent v0.8.0's top-level argparser doesn't yet forward to third-party plugins' `register_cli_command()` dict. Use the slash command or the dashed shim instead.
 
 ## Hermes Agent
 

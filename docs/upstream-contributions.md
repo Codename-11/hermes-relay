@@ -51,7 +51,45 @@ Improvements that would benefit hermes-relay (and other frontends) if added to [
 
 **Workaround (current):** App fetches `config.agent.personalities` map, sends the system prompt as `system_message`.
 
-## 3. Terminal HTTP API (for non-relay setups)
+## 3. Wire Third-Party Plugin CLI Commands into Top-Level Argparser
+
+**Current state (hermes-agent v0.8.0):** `PluginContext.register_cli_command(name, help, setup_fn, handler_fn, description)` is implemented in `hermes_cli/plugins.py:192` and plugins can call it during `register(ctx)`. The resulting registrations are stored in `PluginManager._cli_commands`, and a module-level getter `get_plugin_cli_commands()` exists at line 592. But `hermes_cli/main.py:5236` only consults `plugins.memory.discover_plugin_cli_commands()` (memory-subsystem-specific) when building the top-level argparser — it never iterates the generic `_cli_commands` dict.
+
+**Result:** third-party plugins (like ours) correctly register sub-commands via the documented API, Hermes reports them loaded successfully in `hermes plugins list`, but typing `hermes <subcommand>` at the shell returns `argument command: invalid choice`. The plugin CLI path is effectively dead for anything outside the memory plugin subsystem.
+
+**Proposed patch:** immediately after the existing memory discovery loop in `main.py`, add a parallel loop over `get_plugin_cli_commands()` and wire each entry into the subparsers the same way. Something like:
+
+```python
+try:
+    from hermes_cli.plugins import get_plugin_cli_commands
+    for cmd_name, cmd_info in get_plugin_cli_commands().items():
+        if cmd_name in subparsers.choices:
+            continue  # memory loop already handled it
+        plugin_parser = subparsers.add_parser(
+            cmd_name,
+            help=cmd_info["help"],
+            description=cmd_info.get("description", ""),
+            formatter_class=__import__("argparse").RawDescriptionHelpFormatter,
+        )
+        cmd_info["setup_fn"](plugin_parser)
+except Exception as _exc:
+    import logging as _log
+    _log.getLogger(__name__).debug("Generic plugin CLI discovery failed: %s", _exc)
+```
+
+**Impact:** any plugin declaring `ctx.register_cli_command(...)` in `register()` would instantly get a working `hermes <name>` sub-command. Our hermes-relay plugin would unlock `hermes pair` and `hermes relay start` without shell shims. All other third-party plugins would benefit too.
+
+**Workaround (current):** ship a `hermes-pair` shell shim at `~/.local/bin/hermes-pair` that execs `<venv-python> -m plugin.pair "$@"`, plus a `/hermes-relay-pair` skill that auto-registers as a slash command in any Hermes chat session. Both work but are plumbing around the gap rather than using the intended API.
+
+## 4. Follow Symlinks in Skill Discovery
+
+**Current state:** `~/.hermes/skills/<category>/<name>/` directories are scanned for `SKILL.md` files and auto-registered as slash commands. But if `<name>` is a **symlink** to a directory outside `~/.hermes/skills/`, the scanner skips it — the skill doesn't appear in `hermes skills list` and its `/name` slash command isn't registered. Real directory copies work; symlinks don't.
+
+**Proposed:** follow symlinks during skill discovery, the same way `skills.external_dirs` already handles external paths. The security model is identical — the user explicitly placed the symlink in their skills dir, same as they'd place an external dir in config.
+
+**Workaround (current):** our `install.sh` registers the repo's `skills/` directory via `skills.external_dirs` in `~/.hermes/config.yaml` instead of symlinking. Works but forces every third-party skill author to touch the user's config.yaml instead of dropping a symlink.
+
+## 5. Terminal HTTP API (for non-relay setups)
 
 **Current state:** hermes-agent's `terminal_tool.py` supports 6 backends (local, Docker, SSH, Modal, Daytona, Singularity) but is only callable internally by the agent during conversations. There is no HTTP API for interactive terminal sessions.
 

@@ -6,9 +6,9 @@ Hermes-Relay stores its settings using Android's DataStore and EncryptedSharedPr
 
 These are configured during onboarding or from the **Settings → Connection** screen. The Connection screen groups everything under a single section with three cards:
 
-- **Pair with your server** — always visible. One-tap entry point: a **Scan Pairing QR** button plus a unified status summary (API Server reachable, Relay connected, Session paired). One scan of the QR printed by `hermes pair` configures everything.
+- **Pair with your server** — always visible. One-tap entry point: a **Scan Pairing QR** button plus a unified status summary (API Server reachable, Relay connected, Session paired). One scan of the QR printed by `/hermes-relay-pair` (or the `hermes-pair` shell shim) configures everything.
 - **Manual configuration** — collapsible. Starts collapsed when you're already paired and reachable, expanded otherwise. Holds the manual-entry fields below and a **Save & Test** action. This is the power-user / troubleshooting path.
-- **Bridge pairing code** — collapsible and only visible when the relay feature flag is on. Shows a locally-generated 6-char code with copy / regenerate icons. This code is **for the future Phase 3 bridge feature** — the host would approve it to let the agent control the phone. It is **not** used for initial pairing; that's driven entirely by the QR from `hermes pair`.
+- **Bridge pairing code** — collapsible and only visible when the relay feature flag is on. Shows a locally-generated 6-char code with copy / regenerate icons. This code is **for the future Phase 3 bridge feature** — the host would approve it to let the agent control the phone. It is **not** used for initial pairing; that's driven entirely by the QR from `/hermes-relay-pair`.
 
 | Setting | Storage | Description |
 |---------|---------|-------------|
@@ -88,14 +88,14 @@ hermes relay start --no-ssl
 python -m plugin.relay --no-ssl
 ```
 
-`RELAY_HOST` and `RELAY_PORT` are read by **both** the relay server itself and `hermes pair` — the pair command uses them to locate the local relay when pre-registering a pairing code, so if you run the relay on a non-default port, make sure the same values are in the environment when you run `hermes pair`.
+`RELAY_HOST` and `RELAY_PORT` are read by **both** the relay server itself and the pair command (`hermes-pair` / `/hermes-relay-pair`) — the pair command uses them to locate the local relay when pre-registering a pairing code, so if you run the relay on a non-default port, make sure the same values are in the environment when you invoke pairing.
 
 **Environment variables:**
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `RELAY_HOST` | `0.0.0.0` | Bind address (relay) / relay host used by `hermes pair` |
-| `RELAY_PORT` | `8767` | Listen port (relay) / relay port probed by `hermes pair` |
+| `RELAY_HOST` | `0.0.0.0` | Bind address (relay) / relay host used by the pair command |
+| `RELAY_PORT` | `8767` | Listen port (relay) / relay port probed by the pair command |
 | `RELAY_SSL_CERT` | — | TLS certificate path |
 | `RELAY_SSL_KEY` | — | TLS private key path |
 | `RELAY_WEBAPI_URL` | `http://localhost:8642` | Hermes API Server URL |
@@ -107,6 +107,20 @@ python -m plugin.relay --no-ssl
 **Pairing alphabet:** As of 2026-04-11, the relay accepts any 6-character code from `A-Z / 0-9` (36 chars). The earlier "no ambiguous 0/O/1/I" 32-char restriction was dropped once the pairing flow became QR + HTTP — the phone-side generator in `AuthManager.kt` uses the full alphabet, and the restriction silently rejected roughly one in eight valid codes.
 
 For Docker, systemd, and TLS setup, see [docs/relay-server.md](https://github.com/Codename-11/hermes-relay/blob/main/docs/relay-server.md).
+
+### Skills (`external_dirs`)
+
+Hermes-Relay's `/hermes-relay-pair` slash command is implemented as a skill at `~/.hermes/hermes-relay/skills/devops/hermes-relay-pair/SKILL.md`. Rather than hand-copying it into `~/.hermes/skills/`, the installer registers the clone's `skills/` directory in your `~/.hermes/config.yaml`:
+
+```yaml
+skills:
+  external_dirs:
+    - ~/.hermes/hermes-relay/skills
+```
+
+This is the canonical Hermes distribution pattern for plugin-bundled skills — hermes-agent scans `external_dirs` on every invocation, so a `git pull` inside `~/.hermes/hermes-relay/` immediately updates the skill with no extra steps. (There is no `hermes skills update` flow for `external_dirs`-based skills; update = `git pull`.)
+
+If you already have an `external_dirs` list, the installer appends to it idempotently. If you removed the entry by hand and want it back, re-run the one-liner or add the line manually and restart hermes-agent.
 
 ## Network Security Config
 

@@ -26,32 +26,60 @@ On the machine running your Hermes agent:
 curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
 ```
 
-This installs the `hermes-relay` plugin into `~/.hermes/plugins/hermes-relay` and pulls in its Python dependencies (`requests`, `aiohttp`, `segno`). Restart hermes to load it.
+The installer follows Hermes's canonical skill-distribution pattern:
+
+1. Clones the repo to `~/.hermes/hermes-relay/` (override with `$HERMES_RELAY_HOME`)
+2. `pip install -e ~/.hermes/hermes-relay/` into the hermes-agent venv — editable, so `git pull` is all that's needed to update the plugin
+3. Adds `~/.hermes/hermes-relay/skills` to `skills.external_dirs` in `~/.hermes/config.yaml` (idempotent YAML edit) so the `hermes-relay-pair` skill is picked up on every hermes-agent load
+4. Symlinks `~/.hermes/plugins/hermes-relay` → the clone's `plugin/` subdir
+5. Installs a thin `~/.local/bin/hermes-pair` shim that execs `python -m plugin.pair` inside the hermes-agent venv
+
+Restart hermes-agent after install.
 
 ::: tip What you get
-The plugin registers **14 `android_*` device control tools** (tap, type, read screen, screenshot, open apps, etc.) plus the **`hermes pair` CLI command** for generating pairing QR codes. No separate skill install, no `qrencode` binary needed.
+- **14 `android_*` device control tools** (tap, type, read screen, screenshot, open apps, etc.) — registered by the plugin
+- **`/hermes-relay-pair` slash command** — backed by the `devops/hermes-relay-pair` skill and usable from any Hermes chat surface
+- **`hermes-pair` shell shim** — for scripts and power-user flows
+
+No separate skill install, no `qrencode` binary needed.
+:::
+
+::: info Updating
+Because the installer uses `pip install -e` for the plugin and `external_dirs` for the skill, updates are a single command:
+
+```bash
+cd ~/.hermes/hermes-relay && git pull
+```
+
+Restart hermes-agent and the updated plugin, skill, and docs are live. There's no separate `hermes skills update` step — `external_dirs` is scanned fresh on every hermes-agent invocation.
 :::
 
 ### 3. Pair your phone
 
-You have two paths to the same QR — pick whichever fits where you already are:
+You have two equivalent entry points — pick whichever fits where you already are:
 
-**From an active Hermes session** (shortest path if you're already chatting with Hermes): type `/hermes-relay-pair` in any chat surface — CLI, Discord, Telegram, anywhere Hermes is listening. The agent generates the QR and renders it inline for you. No shell required.
+**From an active Hermes session** (shortest path if you're already chatting with the agent): type `/hermes-relay-pair` in any chat surface — CLI, Discord, Telegram, anywhere Hermes is listening. The `hermes-relay-pair` skill generates the QR and renders it inline for you. No shell required.
 
 **From a shell** (power-user / scriptable): on the server, run
 
 ```bash
-hermes pair
+hermes-pair
 ```
 
-Both routes share the same implementation and produce the same payload. This prints a QR code **and** the plain-text connection details (server URL, API key). Scan the QR from the app's onboarding screen — or type the values in manually if your terminal can't render QR blocks. The text fallback is always shown, so this works inside Hermes's Rich TUI panel and over SSH with limited charsets.
+The dashed `hermes-pair` is a thin shim that execs `python -m plugin.pair` in the hermes-agent venv. Both routes share the same implementation and produce the same QR + plain-text output.
 
-**One scan configures chat *and* the relay.** If you've already started the Hermes-Relay WSS server on the same host (see [Relay Server](#relay-server-optional) below), `hermes pair` automatically detects it at `localhost:8767`, mints a fresh 6-char pairing code, pre-registers the code with the relay via its loopback-only `/pairing/register` endpoint, and embeds the relay URL and code in the same QR. The phone scans once and is ready for chat, terminal, and bridge.
+::: warning `hermes pair` (with a space) is not currently exposed
+A top-level `hermes pair` sub-command would be nice, but hermes-agent v0.8.0's top-level argparser doesn't forward to third-party plugins' `register_cli_command()` dict yet. Use `/hermes-relay-pair` or the dashed `hermes-pair` shim in the meantime — both work today and will keep working once the upstream gap is closed.
+:::
 
-If the relay isn't running, `hermes pair` prints an `[info]` line pointing at `hermes relay start` and renders an API-only QR — chat still works, and you can pair with the relay later once it's up. You can also force API-only mode explicitly:
+This prints a QR code **and** the plain-text connection details (server URL, API key). Scan the QR from the app's onboarding screen — or type the values in manually if your terminal can't render QR blocks. The text fallback is always shown, so this works inside Hermes's Rich TUI panel and over SSH with limited charsets.
+
+**One scan configures chat *and* the relay.** If you've already started the Hermes-Relay WSS server on the same host (see [Relay Server](#relay-server-optional) below), `hermes-pair` automatically detects it at `localhost:8767`, mints a fresh 6-char pairing code, pre-registers the code with the relay via its loopback-only `/pairing/register` endpoint, and embeds the relay URL and code in the same QR. The phone scans once and is ready for chat, terminal, and bridge.
+
+If the relay isn't running, `hermes-pair` prints an `[info]` line pointing at `hermes relay start` and renders an API-only QR — chat still works, and you can pair with the relay later once it's up. You can also force API-only mode explicitly:
 
 ```bash
-hermes pair --no-relay
+hermes-pair --no-relay
 ```
 
 ::: warning Security
@@ -70,7 +98,7 @@ API_SERVER_PORT=8642
 ```
 
 ::: tip API key is optional for local setups
-If you're running Hermes on the same machine (or connecting via `localhost`), you can leave `API_SERVER_KEY` unset. The key is only needed when exposing the API server over the network. If you do set one, `hermes pair` reads it automatically.
+If you're running Hermes on the same machine (or connecting via `localhost`), you can leave `API_SERVER_KEY` unset. The key is only needed when exposing the API server over the network. If you do set one, `hermes-pair` reads it automatically.
 :::
 
 ## Sideload APK
@@ -161,7 +189,7 @@ If you don't want to use QR pairing, you can enter connection details by hand �
 
 **After onboarding:** open **Settings → Connection**. The top card (**Pair with your server**) shows a **Scan Pairing QR** button and a status summary for the API server, relay, and session. To enter values by hand, expand the **Manual configuration** card below it — API Server URL, API Key, Relay URL, and Insecure Mode live there, along with **Save & Test**.
 
-The `hermes pair` command always prints these same values as plain text alongside the QR code, so you can copy them directly.
+The `hermes-pair` command always prints these same values as plain text alongside the QR code, so you can copy them directly.
 
 ## Relay Server (Optional)
 
@@ -175,12 +203,12 @@ hermes relay start --no-ssl
 # Or directly from a repo checkout:
 python -m plugin.relay --no-ssl
 ```
-Run this on the same machine as hermes-agent. If the relay is running when you execute `hermes pair`, its URL and a freshly-registered pairing code are automatically embedded in the QR — you don't need to enter anything in the app.
+Run this on the same machine as hermes-agent. If the relay is running when you execute `hermes-pair` (or `/hermes-relay-pair`), its URL and a freshly-registered pairing code are automatically embedded in the QR — you don't need to enter anything in the app.
 :::
 
 For persistent deployment, Docker, systemd, and TLS options, see the [Relay Server docs](/reference/relay-server).
 
-If you only saw an API-only QR earlier (because the relay wasn't running), just start the relay and re-run `hermes pair` — the new QR will include the relay block.
+If you only saw an API-only QR earlier (because the relay wasn't running), just start the relay and re-run `hermes-pair` — the new QR will include the relay block.
 
 ## Verify Connection
 

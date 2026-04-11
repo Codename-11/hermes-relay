@@ -150,11 +150,11 @@ Phone control — mirrors upstream relay protocol.
 
 ### 3.3 Auth Flow
 
-Pairing is QR-driven. The operator runs `hermes pair` on the host; the command probes for a running relay, generates a fresh 6-char code, pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint, then embeds the relay URL + code (and the API server credentials) in a single QR payload. The phone scans once and is configured for both chat AND terminal/bridge.
+Pairing is QR-driven. The operator runs the pair command on the host — either `/hermes-relay-pair` from any Hermes chat surface (backed by the `devops/hermes-relay-pair` skill) or the `hermes-pair` shell shim (a thin wrapper around `python -m plugin.pair`). Both share the same implementation in `plugin/pair.py`. The command probes for a running relay, generates a fresh 6-char code, pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint, then embeds the relay URL + code (and the API server credentials) in a single QR payload. The phone scans once and is configured for both chat AND terminal/bridge.
 
 ```
-1. Operator runs `hermes pair` on the Hermes host
-2. `hermes pair` reads the API server config (host/port/key) from
+1. Operator runs /hermes-relay-pair (or hermes-pair) on the Hermes host
+2. The pair command reads the API server config (host/port/key) from
    ~/.hermes/config.yaml or ~/.hermes/.env
 3. If a relay is reachable at localhost:RELAY_PORT (default 8767):
    a. Mint a fresh 6-char code from A-Z / 0-9
@@ -191,7 +191,7 @@ Biometric gate on the app side for terminal access (fingerprint/face).
 ```
 
 - Top-level fields (`host`/`port`/`key`/`tls`) configure the direct-chat Hermes API Server. This is the legacy shape.
-- The `relay` object is **optional** and nullable. Present only when `hermes pair` found a running relay and successfully pre-registered a pairing code with it.
+- The `relay` object is **optional** and nullable. Present only when the pair command found a running relay and successfully pre-registered a pairing code with it.
 - `relay.url` is the full WebSocket URL (`ws://` for dev, `wss://` for production).
 - `relay.code` is a 6-char one-shot pairing code from `A-Z / 0-9`. Expires 10 minutes after registration (same lifecycle as relay-generated codes).
 - The Android parser uses `kotlinx.serialization` with `ignoreUnknownKeys = true`, so future fields can be added without breaking older app builds.
@@ -324,7 +324,7 @@ HTTP routes registered by `create_app()` in `plugin/relay/server.py`:
 | `/ws`, `/` | GET (upgrade) | WebSocket handler — main multiplexed channel |
 | `/health` | GET | Health check — returns `{status, version, clients, sessions}` |
 | `/pairing` | POST | Generate a new relay-side pairing code |
-| `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code. Used by `hermes pair` to inject codes that will appear in QR payloads. Request: `{"code": "ABCD12"}`. Rejects non-loopback peers with HTTP 403. |
+| `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code. Used by the pair command (`/hermes-relay-pair` skill or `hermes-pair` shim) to inject codes that will appear in QR payloads. Request: `{"code": "ABCD12"}`. Rejects non-loopback peers with HTTP 403. |
 
 ### 6.2 Chat — Direct API Connection
 

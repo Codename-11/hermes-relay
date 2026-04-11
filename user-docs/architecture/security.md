@@ -35,8 +35,8 @@ The app enforces HTTPS for all connections except localhost development:
 
 ## Relay Auth Flow
 
-1. Operator runs `hermes pair` on the Hermes host
-2. `hermes pair` probes `localhost:RELAY_PORT/health`; if the relay is up, it mints a fresh 6-char code
+1. Operator runs `/hermes-relay-pair` (from any Hermes chat surface) or `hermes-pair` (shell shim) on the Hermes host
+2. The pair command probes `localhost:RELAY_PORT/health`; if the relay is up, it mints a fresh 6-char code
 3. It pre-registers the code with the relay via the loopback-only `POST /pairing/register` endpoint
 4. The relay URL + code are embedded in the QR payload alongside the API server credentials
 5. Phone scans once, opens WSS, and sends the code in its first `system/auth` envelope

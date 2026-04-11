@@ -211,7 +211,7 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.titleSmall
                     )
                     Text(
-                        text = "Scan the QR code from `hermes pair` on your Hermes host. One scan configures chat and terminal.",
+                        text = "Scan a QR from `/hermes-relay-pair` (in any Hermes chat) or `hermes-pair` (shell). One scan configures chat and terminal.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
