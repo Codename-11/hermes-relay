@@ -180,8 +180,8 @@ class ChatViewModel : ViewModel() {
             handler.onMediaAttachmentRequested = { messageId, token ->
                 onMediaAttachmentRequested(messageId, token)
             }
-            handler.onUnavailableMediaMarker = { messageId, originalPath ->
-                onUnavailableMediaMarker(messageId, originalPath)
+            handler.onMediaBarePathRequested = { messageId, originalPath ->
+                onMediaBarePathRequested(messageId, originalPath)
             }
         }
     }
@@ -648,13 +648,21 @@ class ChatViewModel : ViewModel() {
             }
 
             // 3. Fetch + cache.
-            performFetch(handler, messageId, token, settings)
+            performFetchWith(handler, messageId, token, settings) {
+                relay.fetchMedia(token)
+            }
         }
     }
 
     /**
      * Re-run the fetch for an attachment that's in the "Tap to download"
      * deferred state. Used by the inbound-media card's CTA on cellular.
+     *
+     * Works for both flavors of inbound attachment: if the stored key starts
+     * with `/` it's an absolute path (bare-media form, use
+     * [RelayHttpClient.fetchMediaByPath]); otherwise it's a relay token
+     * (use [RelayHttpClient.fetchMedia]). `secrets.token_urlsafe` never
+     * produces `/` so the prefix check is unambiguous.
      */
     fun manualFetchAttachment(messageId: String, attachmentIndex: Int) {
         val handler = chatHandler ?: return
@@ -664,60 +672,119 @@ class ChatViewModel : ViewModel() {
 
         val msg = handler.messages.value.find { it.id == messageId } ?: return
         val att = msg.attachments.getOrNull(attachmentIndex) ?: return
-        val token = att.relayToken ?: return
+        val fetchKey = att.relayToken ?: return
 
         // Flip back to a pure LOADING spinner (drop the CTA marker) so the
         // user gets immediate feedback that the download kicked off.
-        updateAttachmentByToken(handler, messageId, token) { existing ->
+        updateAttachmentByToken(handler, messageId, fetchKey) { existing ->
             existing.copy(state = AttachmentState.LOADING, errorMessage = null)
         }
 
         viewModelScope.launch {
             val settings = repo.settings.first()
-            performFetch(handler, messageId, token, settings)
+            performFetchWith(handler, messageId, fetchKey, settings) {
+                if (fetchKey.startsWith("/")) {
+                    relay.fetchMediaByPath(fetchKey)
+                } else {
+                    relay.fetchMedia(fetchKey)
+                }
+            }
         }
     }
 
     /**
-     * Invoked when ChatHandler parses a bare-path `MEDIA:/abs/path` marker
-     * (relay wasn't reachable when the tool fired, so the file only exists
-     * on the server's local disk and we have no way to retrieve it).
+     * Invoked when ChatHandler parses a bare-path `MEDIA:/abs/path` marker.
      *
-     * Inserts a FAILED placeholder so the chat shows "Image unavailable"
-     * instead of the literal path text.
+     * The bare-path form is the LLM's native output — upstream
+     * `agent/prompt_builder.py` explicitly instructs the model to "include
+     * MEDIA:/absolute/path/to/file in your response" — so this is the
+     * primary inbound-media path, not a fallback.
+     *
+     * Flow mirrors [onMediaAttachmentRequested]:
+     *  1. Insert a LOADING placeholder with [Attachment.relayToken] set to
+     *     the absolute path (serves as the stable key for state updates —
+     *     since `secrets.token_urlsafe` never starts with `/`, we can
+     *     disambiguate token vs path downstream by the leading `/`).
+     *  2. Cellular gate (same as token path).
+     *  3. Kick off a background fetch via [RelayHttpClient.fetchMediaByPath],
+     *     which hits the bearer-auth'd `/media/by-path` relay route. The
+     *     route enforces the same path sandbox as `/media/register`.
+     *  4. On success → cache + flip to LOADED. On failure → FAILED with a
+     *     user-facing message from [RelayHttpClient].
      */
-    fun onUnavailableMediaMarker(messageId: String, originalPath: String) {
+    fun onMediaBarePathRequested(messageId: String, originalPath: String) {
         val handler = chatHandler ?: return
+        val relay = relayHttpClient
+        val repo = mediaSettingsRepo
+        val cache = mediaCacheWriter
+
         val placeholder = Attachment(
             contentType = "application/octet-stream",
             content = "",
-            state = AttachmentState.FAILED,
-            errorMessage = "Image unavailable — relay offline",
+            state = AttachmentState.LOADING,
+            // Reuse relayToken as a generic inbound-fetch key. Paths always
+            // start with `/`, real tokens never do — downstream helpers
+            // that need to distinguish can check the prefix.
+            relayToken = originalPath,
             fileName = originalPath.substringAfterLast('/').ifBlank { null }
         )
         appendAttachmentToMessage(handler, messageId, placeholder)
+
+        if (relay == null || repo == null || cache == null) {
+            updateAttachmentByToken(handler, messageId, originalPath) { att ->
+                att.copy(
+                    state = AttachmentState.FAILED,
+                    errorMessage = "Media pipeline not ready"
+                )
+            }
+            return
+        }
+
+        viewModelScope.launch {
+            val settings = repo.settings.first()
+
+            if (isOnCellular() && !settings.autoFetchOnCellular) {
+                updateAttachmentByToken(handler, messageId, originalPath) { att ->
+                    att.copy(
+                        state = AttachmentState.LOADING,
+                        errorMessage = MEDIA_TAP_TO_DOWNLOAD
+                    )
+                }
+                return@launch
+            }
+
+            performFetchWith(handler, messageId, originalPath, settings) {
+                relay.fetchMediaByPath(originalPath)
+            }
+        }
     }
 
     /**
-     * Core fetch routine. Extracted so both the auto-fetch path and the
-     * manual-retry path can share error handling and size enforcement.
+     * Core fetch routine. Takes a [fetch] lambda so it can serve both the
+     * `hermes-relay://<token>` path ([RelayHttpClient.fetchMedia]) and the
+     * bare-path `MEDIA:/abs/path` path ([RelayHttpClient.fetchMediaByPath]).
+     *
+     * [fetchKey] is whatever string identifies the attachment in
+     * [Attachment.relayToken] — a token for the relay-hosted case, an
+     * absolute path for the bare-path case. The size / cache / state
+     * handling is identical; only the remote call differs.
      */
-    private suspend fun performFetch(
+    private suspend fun performFetchWith(
         handler: ChatHandler,
         messageId: String,
-        token: String,
-        settings: MediaSettings
+        fetchKey: String,
+        settings: MediaSettings,
+        fetch: suspend () -> Result<RelayHttpClient.FetchedMedia>,
     ) {
-        val relay = relayHttpClient ?: return
         val cache = mediaCacheWriter ?: return
         val maxBytes = settings.maxInboundSizeMb.toLong().coerceAtLeast(1) * 1024L * 1024L
 
-        val result = relay.fetchMedia(token)
+        val result = fetch()
         result.fold(
             onSuccess = { fetched ->
                 if (fetched.bytes.size > maxBytes) {
                     val sizeMb = fetched.bytes.size / (1024.0 * 1024.0)
-                    updateAttachmentByToken(handler, messageId, token) { att ->
+                    updateAttachmentByToken(handler, messageId, fetchKey) { att ->
                         att.copy(
                             state = AttachmentState.FAILED,
                             errorMessage = "File too large (%.1f MB, max %d MB)".format(
@@ -733,7 +800,7 @@ class ChatViewModel : ViewModel() {
 
                 try {
                     val uri = cache.cache(fetched.bytes, fetched.contentType, fetched.fileName)
-                    updateAttachmentByToken(handler, messageId, token) { att ->
+                    updateAttachmentByToken(handler, messageId, fetchKey) { att ->
                         att.copy(
                             state = AttachmentState.LOADED,
                             errorMessage = null,
@@ -744,7 +811,7 @@ class ChatViewModel : ViewModel() {
                         )
                     }
                 } catch (e: Exception) {
-                    updateAttachmentByToken(handler, messageId, token) { att ->
+                    updateAttachmentByToken(handler, messageId, fetchKey) { att ->
                         att.copy(
                             state = AttachmentState.FAILED,
                             errorMessage = "Failed to cache: ${e.message ?: "unknown"}"
@@ -753,7 +820,7 @@ class ChatViewModel : ViewModel() {
                 }
             },
             onFailure = { err ->
-                updateAttachmentByToken(handler, messageId, token) { att ->
+                updateAttachmentByToken(handler, messageId, fetchKey) { att ->
                     att.copy(
                         state = AttachmentState.FAILED,
                         errorMessage = err.message ?: "Fetch failed"

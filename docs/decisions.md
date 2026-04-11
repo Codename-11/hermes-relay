@@ -378,7 +378,20 @@ android_screenshot()
 - **Per-file size cap: 100 MB** (default, `RELAY_MEDIA_MAX_SIZE_MB`) — guards `/media/register` against accidentally registering a 10 GB file.
 
 **Fallback when the relay isn't running:**
-The tool calls `register_media()` with a 5-second timeout. On any failure (connection refused, non-200, timeout) it logs a warning and returns the legacy bare-path form `MEDIA:/tmp/...`. The phone's `ChatHandler` has a second regex for this form and renders a `⚠️ Image unavailable — relay offline` placeholder via a FAILED `Attachment`. No regression versus the pre-fix behavior; the placeholder is just a tidier user-facing signal than raw marker text.
+The tool calls `register_media()` with a 5-second timeout. On any failure (connection refused, non-200, timeout) it logs a warning and returns the legacy bare-path form `MEDIA:/tmp/...`. The phone's `ChatHandler` parses this form via a second regex and, as of the bare-path-fetch update below, attempts a direct `/media/by-path` fetch — rendering the `⚠️ Image unavailable` placeholder only if that fetch ALSO fails (relay offline, sandbox violation, file missing). No regression versus the pre-fix behavior; the marker never renders as raw text.
+
+**Addendum (2026-04-11, same day): LLM-emitted bare-path markers + `/media/by-path`.**
+On-device testing exposed a gap: the above token-registration flow only covers markers **emitted by tools** (which we control and can wire through `register_media()`). But upstream `hermes-agent/agent/prompt_builder.py:266` explicitly instructs the LLM in its base system prompt: *"include MEDIA:/absolute/path/to/file in your response. The file..."* — so the agent's free-form completions contain `MEDIA:/abs/path` markers too, and those never go through any tool code. Our tool-only fix left them as raw text.
+
+Rather than patch the system prompt (out of scope — upstream-owned), the fix is a second relay route — **`GET /media/by-path`** — that takes an absolute path + bearer auth and streams the file directly. Same path sandbox as `/media/register` (via shared `validate_media_path` helper), same trust model (bearer session token). The phone's bare-path marker handler now attempts this fetch first and only falls back to the "unavailable" placeholder on network/404/403 failure. Result: LLM free-form MEDIA markers render inline with zero prompt-hacking.
+
+**Security implications of `/media/by-path`:** Adding a path-addressable fetch widens what a paired phone can request by one degree — it can now read any file in the allowed-roots whitelist without host-local process cooperation, where previously it needed a tool to pre-register via `/media/register`. This does NOT widen the trust boundary because:
+ 1. The allowed-roots whitelist is the same. Files outside `tempfile.gettempdir()` / `HERMES_WORKSPACE` / `RELAY_MEDIA_ALLOWED_ROOTS` are still unreachable.
+ 2. On Linux `/tmp` is already world-readable to every process running as the same user, so the relay exposing it over bearer-auth'd HTTP is no new disclosure to an attacker who could already connect a paired phone.
+ 3. Bearer auth still requires a valid session token issued at pair time. Unpaired peers get 401.
+ 4. The path never leaks out of the sandbox via symlinks — `os.path.realpath()` resolves symlinks before the whitelist check, so a symlink inside the whitelist pointing outside it is rejected.
+
+The bare-path fetch is therefore safe as long as operators treat the allowed-roots whitelist as "directories the paired phone is allowed to read." If that's wrong for a given deployment, tighten `RELAY_MEDIA_ALLOWED_ROOTS` rather than disabling the endpoint.
 
 **Trade-off: session replay across relay restarts doesn't work.** If the user scrolls back into a session from yesterday and the relay has restarted since, the tokens stored in the persisted message text are stale and `/media/{token}` returns 404. The phone renders a FAILED placeholder. Acceptable for MVP — the alternative (phone-side persistent cache indexed by token or content hash) is meaningful new plumbing and the right layer for durability, but out of scope. Filed as a follow-up in DEVLOG.
 

@@ -47,7 +47,9 @@ Available in **Settings > Inbound media**. Controls how the app fetches and cach
 - Session replay across relay restarts. The `MediaRegistry` is in-memory on the relay side, so tokens stored in persisted message history become stale when the relay restarts. Scrolling back into a prior session renders a `⚠️ Image unavailable` placeholder for any stale token. Phone-side persistent caching (indexed by token or content hash) is the planned fix; filed as a follow-up.
 - Auto-fetch threshold enforcement (see table above).
 
-**If the relay isn't running** when a tool emits a media marker, the tool falls back to the legacy bare-path form (`MEDIA:/tmp/...`). The app recognizes this form and renders an inline `⚠️ Image unavailable — relay offline` card instead of raw marker text.
+**Bare-path markers (`MEDIA:/abs/path.ext`) — the LLM's native format.** Upstream `hermes-agent/agent/prompt_builder.py` instructs the LLM to emit markers in this form directly in its response text. The app parses bare-path markers and fetches bytes via `GET /media/by-path` on the relay (same bearer auth, same path sandbox as `/media/register`). The tool-side `MEDIA:hermes-relay://<token>` form remains available for tools that want to pre-register explicitly.
+
+**If the relay isn't reachable** or the file isn't in the allowed roots, the app shows an inline `⚠️ Image unavailable` card with the specific reason (relay offline / sandbox violation / file not found) instead of raw marker text.
 
 ## Appearance Settings
 

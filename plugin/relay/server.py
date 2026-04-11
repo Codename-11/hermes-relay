@@ -22,6 +22,8 @@ import argparse
 import asyncio
 import json
 import logging
+import mimetypes
+import os
 import signal
 import ssl
 import sys
@@ -38,7 +40,7 @@ from .channels.bridge import BridgeHandler
 from .channels.chat import ChatHandler
 from .channels.terminal import TerminalHandler
 from .config import RelayConfig
-from .media import MediaRegistrationError, MediaRegistry
+from .media import MediaRegistrationError, MediaRegistry, validate_media_path
 
 logger = logging.getLogger("hermes_relay")
 
@@ -299,6 +301,111 @@ async def handle_media_get(request: web.Request) -> web.StreamResponse:
         bearer[:8],
     )
     return web.FileResponse(entry.path, headers=headers)
+
+
+async def handle_media_by_path(request: web.Request) -> web.StreamResponse:
+    """Serve a media file by absolute path, with the same sandbox as /media/register.
+
+    This endpoint exists for the case where an agent's LLM freeform-emits a
+    ``MEDIA:/abs/path.ext`` marker in its response text (which is exactly what
+    upstream ``hermes-agent/agent/prompt_builder.py`` instructs the model to
+    do). There is no token-registration step — the phone sees the bare path
+    in the chat stream and fetches it directly here.
+
+    Security model:
+      * **Bearer auth** — identical to ``/media/{token}``. Only a paired phone
+        with a valid relay session token can fetch, so the trust boundary is
+        the same as every other phone-facing relay channel.
+      * **Path sandboxing** — identical to ``/media/register`` via the shared
+        :func:`validate_media_path` helper. A paired phone cannot escape the
+        allowed-roots whitelist (default: ``tempfile.gettempdir()`` +
+        ``HERMES_WORKSPACE`` + ``RELAY_MEDIA_ALLOWED_ROOTS``). On Linux ``/tmp``
+        is world-readable anyway, so this doesn't widen what an authenticated
+        peer could already read through other paired channels.
+      * **Size cap** — ``RELAY_MEDIA_MAX_SIZE_MB``, same as register.
+
+    GET /media/by-path?path=<urlencoded-abs-path>&content_type=<optional-type>
+      → 200 file bytes
+      → 400 missing path query param
+      → 401 missing/invalid bearer
+      → 403 path outside sandbox / not absolute / other validation failure
+      → 404 file does not exist or is not a regular file
+      → 413 file exceeds RELAY_MEDIA_MAX_SIZE_MB
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise web.HTTPUnauthorized(
+            text="Authorization: Bearer <session_token> required",
+        )
+
+    bearer = auth_header[len("Bearer ") :].strip()
+    if not bearer:
+        raise web.HTTPUnauthorized(text="empty bearer token")
+
+    server: RelayServer = request.app["server"]
+    session = server.sessions.get_session(bearer)
+    if session is None:
+        logger.info(
+            "Media by-path fetch rejected: invalid bearer from %s",
+            request.remote or "unknown",
+        )
+        raise web.HTTPUnauthorized(text="invalid or expired session token")
+
+    path = request.query.get("path", "").strip()
+    if not path:
+        return web.json_response(
+            {"ok": False, "error": "missing 'path' query parameter"},
+            status=400,
+        )
+
+    # Hint: phone may pass content_type=; if not, guess from extension.
+    content_type_hint = request.query.get("content_type", "").strip() or None
+
+    try:
+        real_path, size = validate_media_path(
+            path,
+            server.media.allowed_roots,
+            server.media.max_size_bytes,
+        )
+    except MediaRegistrationError as exc:
+        msg = str(exc)
+        # Differentiate file-not-found (phone should mark FAILED, stop
+        # retrying) from sandbox violations (phone should mark FAILED with
+        # a different error). Both are non-retryable.
+        if "does not exist" in msg or "not a regular file" in msg:
+            logger.info("Media by-path: not found — %s", msg)
+            raise web.HTTPNotFound(text=msg)
+        # Everything else — not absolute, outside allowed root, too large,
+        # bad stat — is a sandbox or policy violation. 403 signals this
+        # distinctly from 401 (bad auth) and 400 (malformed request).
+        logger.info("Media by-path: sandbox violation — %s", msg)
+        raise web.HTTPForbidden(text=msg)
+
+    # Content type: honor phone-provided hint if given; otherwise guess.
+    if content_type_hint:
+        content_type = content_type_hint
+    else:
+        guessed, _ = mimetypes.guess_type(real_path)
+        content_type = guessed or "application/octet-stream"
+
+    # Extract a display file name from the path for Content-Disposition.
+    file_name = os.path.basename(real_path)
+    safe_name = file_name.replace('"', "")
+
+    headers = {
+        "Content-Type": content_type,
+        "Cache-Control": "private, max-age=3600",
+        "Content-Disposition": f'inline; filename="{safe_name}"',
+    }
+
+    logger.debug(
+        "Serving media by-path %s size=%d type=%s to session=%s...",
+        real_path,
+        size,
+        content_type,
+        bearer[:8],
+    )
+    return web.FileResponse(real_path, headers=headers)
 
 
 # ── WebSocket handler ────────────────────────────────────────────────────────
@@ -615,6 +722,10 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_post("/pairing", handle_pairing)
     app.router.add_post("/pairing/register", handle_pairing_register)
     app.router.add_post("/media/register", handle_media_register)
+    # Order matters: the fixed-path "/media/by-path" route must be declared
+    # before the wildcard "/media/{token}" route or aiohttp will swallow
+    # "by-path" as a token literal and handle_media_get will 404.
+    app.router.add_get("/media/by-path", handle_media_by_path)
     app.router.add_get("/media/{token}", handle_media_get)
 
     # Cleanup on shutdown

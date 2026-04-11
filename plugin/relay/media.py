@@ -67,6 +67,70 @@ class _MediaEntry:
         return time.time() > self.expires_at
 
 
+def validate_media_path(
+    path: str,
+    allowed_roots: list[str],
+    max_size_bytes: int,
+) -> tuple[str, int]:
+    """Validate that ``path`` is safe to serve as media content.
+
+    Performs the full sandbox check used by both :meth:`MediaRegistry.register`
+    (loopback-only tool register) and :func:`handle_media_by_path` (phone-side
+    bearer-auth'd direct fetch): absolute path → ``realpath`` → under at least
+    one allowed root → exists → is a regular file → under size cap.
+
+    Returns ``(real_path, size_bytes)`` on success.
+
+    Raises :class:`MediaRegistrationError` with a clear message on any
+    validation failure so both callers can propagate the same error shape.
+    """
+    if not path or not isinstance(path, str):
+        raise MediaRegistrationError("missing or invalid 'path'")
+    if not os.path.isabs(path):
+        raise MediaRegistrationError(f"path must be absolute: {path!r}")
+
+    real_path = os.path.realpath(path)
+
+    if not _is_under_any_root(real_path, allowed_roots):
+        raise MediaRegistrationError(
+            f"path is not under an allowed root: {path!r}"
+        )
+
+    if not os.path.exists(real_path):
+        raise MediaRegistrationError(f"path does not exist: {path!r}")
+
+    if not os.path.isfile(real_path):
+        raise MediaRegistrationError(f"path is not a regular file: {path!r}")
+
+    try:
+        size = os.path.getsize(real_path)
+    except OSError as exc:
+        raise MediaRegistrationError(
+            f"could not stat {path!r}: {exc}"
+        ) from exc
+
+    if size > max_size_bytes:
+        raise MediaRegistrationError(
+            f"file too large ({size} bytes, max {max_size_bytes})"
+        )
+
+    return real_path, size
+
+
+def _is_under_any_root(real_path: str, allowed_roots: list[str]) -> bool:
+    """Return True if ``real_path`` lives under any of ``allowed_roots``."""
+    for root in allowed_roots:
+        try:
+            common = os.path.commonpath([real_path, root])
+        except ValueError:
+            # commonpath raises ValueError on mixed drives (Windows) —
+            # treat as "not under this root" and keep checking.
+            continue
+        if common == root:
+            return True
+    return False
+
+
 def _default_allowed_roots() -> list[str]:
     """Build the default list of allowed roots at init time.
 
@@ -159,38 +223,12 @@ class MediaRegistry:
         validation failure (bad path, not under allowed roots, missing,
         oversized, not a regular file).
         """
-        if not path or not isinstance(path, str):
-            raise MediaRegistrationError("missing or invalid 'path'")
         if not content_type or not isinstance(content_type, str):
             raise MediaRegistrationError("missing or invalid 'content_type'")
 
-        if not os.path.isabs(path):
-            raise MediaRegistrationError(f"path must be absolute: {path!r}")
-
-        real_path = os.path.realpath(path)
-
-        if not self._is_under_allowed_root(real_path):
-            raise MediaRegistrationError(
-                f"path is not under an allowed root: {path!r}"
-            )
-
-        if not os.path.exists(real_path):
-            raise MediaRegistrationError(f"path does not exist: {path!r}")
-
-        if not os.path.isfile(real_path):
-            raise MediaRegistrationError(f"path is not a regular file: {path!r}")
-
-        try:
-            size = os.path.getsize(real_path)
-        except OSError as exc:
-            raise MediaRegistrationError(
-                f"could not stat {path!r}: {exc}"
-            ) from exc
-
-        if size > self.max_size_bytes:
-            raise MediaRegistrationError(
-                f"file too large ({size} bytes, max {self.max_size_bytes})"
-            )
+        real_path, size = validate_media_path(
+            path, self.allowed_roots, self.max_size_bytes
+        )
 
         token = secrets.token_urlsafe(16)
         now = time.time()
@@ -260,19 +298,6 @@ class MediaRegistry:
             return len(self._entries)
 
     # ── Internals ───────────────────────────────────────────────────────
-
-    def _is_under_allowed_root(self, real_path: str) -> bool:
-        """Return True if ``real_path`` lives under any allowed root."""
-        for root in self.allowed_roots:
-            try:
-                common = os.path.commonpath([real_path, root])
-            except ValueError:
-                # commonpath raises ValueError on mixed drives (Windows) —
-                # treat as "not under this root" and keep checking.
-                continue
-            if common == root:
-                return True
-        return False
 
     def _cleanup_locked(self) -> int:
         """Prune expired entries. Caller must hold ``self._lock``."""

@@ -247,8 +247,10 @@ Quick reference:
 | Relay pairing (QR flow) | `POST /pairing/register` (loopback only) — driven by `/hermes-relay-pair` skill or `hermes-pair` shell shim | — |
 | QR payload schema | `HermesPairingPayload` (see `plugin/pair.py` + `QrPairingScanner.kt`) — top-level API fields + optional `relay: { url, code }` block | Old API-only QRs still parse (relay field is nullable + `ignoreUnknownKeys = true`) |
 | Inbound media register | `POST /media/register` on the relay (loopback only) — called by host-local tools via `plugin/relay/client.py::register_media()` | Tool falls back to bare `MEDIA:<path>` text + `⚠️ Image unavailable` placeholder if the relay isn't reachable |
-| Inbound media fetch | `GET /media/{token}` on the relay — `Authorization: Bearer <session_token>` (same token WSS uses) | — |
-| Inbound media marker | `MEDIA:hermes-relay://<token>` emitted in tool chat responses; parsed phone-side by `ChatHandler.scanForMediaMarkers` | Bare-form `MEDIA:<path>` recognized as an unavailable-media placeholder |
+| Inbound media fetch (token) | `GET /media/{token}` on the relay — `Authorization: Bearer <session_token>` (same token WSS uses) | — |
+| Inbound media fetch (path) | `GET /media/by-path?path=<abs>` on the relay — same bearer auth, same sandbox as `/media/register`. Used for LLM-emitted `MEDIA:/abs/path` markers (upstream `agent/prompt_builder.py` instructs the LLM to emit this form). | — |
+| Inbound media marker (tool) | `MEDIA:hermes-relay://<token>` — emitted by host-local tools that called `register_media()` via loopback | — |
+| Inbound media marker (LLM) | `MEDIA:/abs/path.ext` — emitted by the LLM directly per the upstream system prompt. Phone fetches via `/media/by-path`, falls back to `⚠️ Image unavailable` on any failure | — |
 
 ## Upstream References
 

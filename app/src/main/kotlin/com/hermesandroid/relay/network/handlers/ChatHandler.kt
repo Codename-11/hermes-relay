@@ -84,12 +84,23 @@ class ChatHandler {
     var onMediaAttachmentRequested: (messageId: String, token: String) -> Unit = { _, _ -> }
 
     /**
-     * Fired when the text stream contains a bare-path `MEDIA:/path` marker,
-     * indicating the relay wasn't reachable when the tool fired. The ViewModel
-     * should insert a FAILED placeholder attachment with an "unavailable"
-     * message — no network fetch is attempted.
+     * Fired when the text stream contains a bare-path `MEDIA:/path` marker.
+     *
+     * The bare-path form is the PRIMARY format LLMs emit — upstream
+     * `hermes-agent/agent/prompt_builder.py` explicitly instructs the model
+     * to "include MEDIA:/absolute/path/to/file in your response" — so this
+     * callback fires for most inbound media, not just fallback / unavailable
+     * cases.
+     *
+     * The ViewModel inserts a LOADING placeholder and kicks off a direct
+     * fetch via `RelayHttpClient.fetchMediaByPath`, which hits the
+     * bearer-auth'd `/media/by-path` relay route. The route enforces the
+     * same path sandbox as `/media/register`. The placeholder flips to
+     * LOADED on success, FAILED on any fetch error (relay offline → "Relay
+     * unreachable", sandbox violation → "Path not allowed", missing file →
+     * "File not found", etc).
      */
-    var onUnavailableMediaMarker: (messageId: String, originalPath: String) -> Unit = { _, _ -> }
+    var onMediaBarePathRequested: (messageId: String, originalPath: String) -> Unit = { _, _ -> }
 
     /**
      * Buffer for incomplete lines during streaming. Tool annotations are line-oriented
@@ -211,7 +222,7 @@ class ChatHandler {
      * (the streaming-time stripping is a phone-local operation that never
      * mutated server storage), so this pass re-runs the marker parser on each
      * loaded assistant message: strips the marker lines from displayed content
-     * and re-fires [onMediaAttachmentRequested] / [onUnavailableMediaMarker]
+     * and re-fires [onMediaAttachmentRequested] / [onMediaBarePathRequested]
      * so the ViewModel can inject attachments against the freshly-loaded
      * message IDs. Without this, the session_end reload — which happens at
      * every stream complete — would wipe the placeholder the streaming path
@@ -291,7 +302,7 @@ class ChatHandler {
                     val dedupeKey = "$messageId:bare:${hit.path}"
                     if (dispatchedMediaMarkers.add(dedupeKey)) {
                         Log.d(TAG, "Media marker (bare-path, reload): ${hit.path}")
-                        onUnavailableMediaMarker(messageId, hit.path)
+                        onMediaBarePathRequested(messageId, hit.path)
                     }
                 }
             }
@@ -615,7 +626,7 @@ class ChatHandler {
      * tool-annotation pipeline so inbound files always render, regardless of
      * whether the user has enabled `parseToolAnnotations`.
      *
-     * Matched markers fire [onMediaAttachmentRequested] / [onUnavailableMediaMarker]
+     * Matched markers fire [onMediaAttachmentRequested] / [onMediaBarePathRequested]
      * and the raw line is stripped from the visible message content (via
      * [stripLineFromContent]) so the user sees the rendered attachment card
      * instead of the literal `MEDIA:...` text.
@@ -644,7 +655,7 @@ class ChatHandler {
      *
      *  - `MEDIA:hermes-relay://<token>` → [onMediaAttachmentRequested]
      *  - bare `MEDIA:/path` (the whole line, no other content) →
-     *    [onUnavailableMediaMarker]
+     *    [onMediaBarePathRequested]
      *
      * De-dupes via [dispatchedMediaMarkers] so the same token doesn't fire
      * twice (e.g. once during streaming and again during finalize).
@@ -669,7 +680,7 @@ class ChatHandler {
             val dedupeKey = "$messageId:bare:$path"
             if (dispatchedMediaMarkers.add(dedupeKey)) {
                 Log.d(TAG, "Media marker (bare-path, unavailable): $path")
-                onUnavailableMediaMarker(messageId, path)
+                onMediaBarePathRequested(messageId, path)
             }
             return true
         }

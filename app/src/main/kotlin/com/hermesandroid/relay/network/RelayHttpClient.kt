@@ -3,6 +3,7 @@ package com.hermesandroid.relay.network
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
@@ -137,6 +138,113 @@ class RelayHttpClient(
             Result.failure(e)
         } catch (e: Exception) {
             Log.w(TAG, "fetchMedia unexpected error for $token: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Fetch `GET /media/by-path?path=<abs>` from the relay.
+     *
+     * Used when the agent's LLM freeform-emits a bare `MEDIA:/abs/path.ext`
+     * marker in its response text (upstream `prompt_builder.py` explicitly
+     * instructs the LLM to emit this form). The relay validates the path
+     * against the same sandbox that `/media/register` uses — no token
+     * round-trip is needed because the file is identified by its absolute
+     * path directly.
+     *
+     * Auth is the same relay session token used by [fetchMedia]. If the
+     * fetch fails for any reason the returned [Result] wraps an [IOException]
+     * with a human-readable message suitable for [com.hermesandroid.relay.data.Attachment.errorMessage].
+     *
+     * @param path absolute path on the relay host — passed verbatim as a
+     *        query parameter (OkHttp URL-encodes it correctly).
+     * @param contentTypeHint optional MIME hint. If null, the server guesses
+     *        from the file extension via Python's [mimetypes].
+     */
+    suspend fun fetchMediaByPath(
+        path: String,
+        contentTypeHint: String? = null,
+    ): Result<FetchedMedia> = withContext(Dispatchers.IO) {
+        val relayUrl = relayUrlProvider()?.trim().orEmpty()
+        if (relayUrl.isEmpty()) {
+            return@withContext Result.failure(
+                IllegalStateException("Relay URL not configured")
+            )
+        }
+
+        val sessionToken = sessionTokenProvider()
+        if (sessionToken.isNullOrBlank()) {
+            return@withContext Result.failure(
+                IllegalStateException("Relay not paired — session token missing")
+            )
+        }
+
+        val httpBase = relayUrl
+            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
+            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
+            .trimEnd('/')
+
+        // Build the URL via OkHttp's HttpUrl builder so query-param encoding
+        // handles paths with slashes, spaces, and non-ASCII characters
+        // correctly. A naive string-concat would double-encode or mis-encode.
+        val url = try {
+            "$httpBase/media/by-path".toHttpUrl().newBuilder()
+                .addQueryParameter("path", path)
+                .apply {
+                    if (contentTypeHint != null) {
+                        addQueryParameter("content_type", contentTypeHint)
+                    }
+                }
+                .build()
+        } catch (e: IllegalArgumentException) {
+            return@withContext Result.failure(
+                IOException("Invalid relay URL: ${e.message}")
+            )
+        }
+
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .header("Authorization", "Bearer $sessionToken")
+            .header("Accept", "*/*")
+            .build()
+
+        try {
+            okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val reason = when (response.code) {
+                        401 -> "Unauthorized — re-pair with the relay"
+                        403 -> "Path not allowed by relay sandbox"
+                        404 -> "File not found on relay: $path"
+                        400 -> "Bad request — missing path"
+                        in 500..599 -> "Relay error (HTTP ${response.code})"
+                        else -> "HTTP ${response.code}: ${response.message.ifBlank { "request failed" }}"
+                    }
+                    return@withContext Result.failure(IOException(reason))
+                }
+
+                val contentType = response.header("Content-Type")
+                    ?.substringBefore(';')
+                    ?.trim()
+                    ?.ifBlank { null }
+                    ?: "application/octet-stream"
+
+                val fileName = parseContentDispositionFilename(
+                    response.header("Content-Disposition")
+                )
+
+                val body = response.body
+                if (body == null) {
+                    return@withContext Result.failure(IOException("Empty response body"))
+                }
+                val bytes = body.bytes()
+                Result.success(FetchedMedia(contentType, bytes, fileName))
+            }
+        } catch (e: IOException) {
+            Log.w(TAG, "fetchMediaByPath failed for $path: ${e.message}")
+            Result.failure(IOException("Relay unreachable: ${e.message ?: "IO error"}"))
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchMediaByPath unexpected error for $path: ${e.message}")
             Result.failure(e)
         }
     }

@@ -1,5 +1,77 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-11 — Inbound Media v2: bare-path fetch + session-reload re-parse
+
+**Why this exists:**
+On-device testing of the v1 inbound media pipeline (shipped earlier today, commits `1195778` + `8f61262`) surfaced two bugs that showed up in the same screenshot:
+
+1. **Placeholder flicker.** The `⚠️ Image unavailable` card rendered for a split second and then vanished, replaced by raw `MEDIA:/tmp/...` text in the bubble.
+2. **Blank-looking attachment bubbles.** Related symptoms of the same underlying issue — messages re-rendered inconsistently during the turn-end reload.
+
+Both root-caused to the `session_end reload` pattern documented in `CLAUDE.md`: when a streaming turn completes, `ChatViewModel.onCompleteCb` calls `client.getMessages()` → `ChatHandler.loadMessageHistory()`, which wholesale-replaces `_messages.value` with fresh `ChatMessage`s built from `item.contentText`. The streaming-time media marker parser had stripped the markers from the client-side copy and injected attachments, but NEITHER mutation was visible to `loadMessageHistory` — the server-stored text still contained the raw markers, and the client-injected attachments were gone.
+
+**Fix 1: re-run the media marker parser on reloaded history.** `loadMessageHistory` now scans each loaded assistant message's content, strips matched lines, and queues `onMediaAttachmentRequested` / `onMediaBarePathRequested` callbacks to fire **after** the wholesale `_messages.value` assignment (so `mutateMessage` lookups hit the newly-loaded IDs). `dispatchedMediaMarkers` is cleared at the same time since pre-reload dedupe keys are meaningless against post-reload message IDs. Extracted into `extractMediaMarkersFromContent` — a pure helper that doesn't touch mutable buffer state. Shipped in commit `272a3c5`.
+
+---
+
+While digging into the flicker bug I noticed something bigger and more important in Bailey's screenshot:
+
+**The LLM is emitting `MEDIA:/tmp/...` in its free-form text completions, not via the tool.** Upstream `hermes-agent/agent/prompt_builder.py:266` explicitly instructs the model in its system prompt: *"include MEDIA:/absolute/path/to/file in your response. The file..."* So the LLM treats MEDIA markers as a first-class way to request file delivery — in free-form completions, not through tool calls. Our v1 fix only intercepted markers **emitted by tools** that called `register_media()` — which covers `android_screenshot` but not the much larger set of LLM free-form emissions. For those, the marker form is always bare-path (`MEDIA:/tmp/foo.jpg`), and our phone-side handler treated bare-path as "unavailable" no matter what.
+
+**Fix 2: `GET /media/by-path` on the relay + phone-side `fetchMediaByPath`.** Adds a second fetch route alongside the existing `/media/{token}`. Key points:
+
+- **Shared path validation** — extracted `validate_media_path(path, allowed_roots, max_size_bytes) -> (real_path, size)` at the top of `plugin/relay/media.py`. Both `MediaRegistry.register` (the loopback-only tool path) and the new `handle_media_by_path` (the phone-auth'd direct fetch) call it, so the sandbox rules can't drift.
+- **Same trust model as `/media/{token}`** — bearer auth against the existing `SessionManager`. Only a paired phone with a valid relay session token can fetch; 401 for everyone else.
+- **Path sandboxing** — absolute path → `os.path.realpath` → must resolve under an allowed root (`tempfile.gettempdir()` + `HERMES_WORKSPACE` + `RELAY_MEDIA_ALLOWED_ROOTS`) → must exist → must be a regular file → must fit under `RELAY_MEDIA_MAX_SIZE_MB`. Symlink escape is blocked by the `realpath` pre-check. 403 for any violation; 404 if the file is missing; 400 if the `path` query param is absent.
+- **Content-Type negotiation** — if the phone passes `?content_type=<...>` it's honored; otherwise the server guesses via Python `mimetypes.guess_type()`. Falls back to `application/octet-stream`.
+- **Route ordering** — `/media/by-path` is registered **before** `/media/{token}` in `create_app` or aiohttp swallows the literal path as a token and 404s. Commented in the source as a reminder.
+- **Phone-side rename for clarity** — `onUnavailableMediaMarker` → `onMediaBarePathRequested` (ChatHandler callback and ChatViewModel method). The name "unavailable" made sense in v1 when bare-path was always terminal; now bare-path is the primary LLM format, so it's a request-to-fetch like the token form. The failure branch still produces the `⚠️ Image unavailable` card, but only when the fetch actually fails.
+- **Shared fetch pipeline** — `performFetch` → `performFetchWith(handler, messageId, fetchKey, settings, fetch: suspend () -> Result<FetchedMedia>)`. Takes the fetch lambda as a parameter so both the token path (`relay.fetchMedia(token)`) and the bare-path (`relay.fetchMediaByPath(path)`) share the same size-cap / cache / state-flip logic. The `fetchKey` stored in `Attachment.relayToken` disambiguates via the leading `/` — `secrets.token_urlsafe` never produces a `/`, so the prefix check is unambiguous. `manualFetchAttachment` (retry CTA) uses the same discriminator.
+
+**Security review (in ADR 14 addendum):**
+Adding `/media/by-path` widens what a paired phone can request by one degree — it can now read any file in the allowed-roots whitelist without host-local tool cooperation. This does NOT widen the trust boundary because (1) the whitelist is the same, (2) `/tmp` on Linux is already world-readable to same-user processes, (3) bearer auth still requires a valid session token, and (4) `realpath` symlink-resolves before the whitelist check so symlink escape is still blocked. Operators who want a tighter sandbox should narrow `RELAY_MEDIA_ALLOWED_ROOTS`, not disable the endpoint.
+
+**Tests added** (`plugin/tests/test_relay_media_routes.py`):
+- `test_by_path_without_authorization_returns_401`
+- `test_by_path_with_invalid_bearer_returns_401`
+- `test_by_path_missing_path_param_returns_400`
+- `test_by_path_outside_sandbox_returns_403`
+- `test_by_path_nonexistent_in_sandbox_returns_404`
+- `test_by_path_relative_path_returns_403`
+- `test_by_path_happy_path_streams_bytes` (verifies auto-guessed `Content-Type: image/png` from `.png` extension)
+- `test_by_path_content_type_hint_overrides_guess` (verifies `?content_type=application/json` wins over extension guess)
+- `test_by_path_oversized_returns_403` (uses try/finally to restore `max_size_bytes` so other tests in the class aren't affected — `AioHTTPTestCase` reuses one app instance)
+
+**Files created/modified:**
+
+*Server (Python):*
+- `plugin/relay/media.py` — new `validate_media_path()` module-level helper + `_is_under_any_root()` private helper; `MediaRegistry.register` refactored to call the new helper; duplicate `_is_under_allowed_root` method removed.
+- `plugin/relay/server.py` — new `handle_media_by_path` route handler, new imports (`mimetypes`, `os`, `validate_media_path`), route registration in `create_app` (order-sensitive — `by-path` before `{token}`).
+- `plugin/tests/test_relay_media_routes.py` — 9 new tests for the by-path endpoint.
+
+*Phone (Kotlin):*
+- `app/src/main/kotlin/com/hermesandroid/relay/network/RelayHttpClient.kt` — new `fetchMediaByPath(path, contentTypeHint)` method, uses `okhttp3.HttpUrl` builder for correct query-param encoding (paths with slashes / spaces / unicode).
+- `app/src/main/kotlin/com/hermesandroid/relay/network/handlers/ChatHandler.kt` — rename `onUnavailableMediaMarker` → `onMediaBarePathRequested`, updated KDoc explaining the new semantics.
+- `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/ChatViewModel.kt` — rename + rewrite method body (now inserts LOADING, applies cellular gate, calls `performFetchWith { relay.fetchMediaByPath(path) }`); `performFetch` → `performFetchWith` signature change (takes `fetch: suspend () -> Result<FetchedMedia>` lambda); `manualFetchAttachment` dispatches to token-vs-path branch by `fetchKey.startsWith("/")`.
+
+*Docs:*
+- `docs/decisions.md` — ADR 14 addendum covering the bare-path fetch endpoint, upstream-prompt rationale, and security review
+- `docs/relay-server.md` + `user-docs/reference/relay-server.md` — new `/media/by-path` route entry
+- `docs/spec.md` — §6.2a updated with three-route listing + bare-path flow
+- `user-docs/reference/configuration.md` — honest description of the bare-path-as-primary-format model
+- `CLAUDE.md` — Integration Points table split into token / path fetch + tool / LLM marker rows
+- `DEVLOG.md` — this entry
+
+**Known gaps still filed for later:**
+- Session replay across relay restarts (phone-side persistent cache by token/hash-indexed)
+- Auto-fetch threshold slider enforcement (currently persisted-not-enforced placeholder)
+- Build verification — I haven't run gradle against the phone side; relying on type-checks and by-eye review. Bailey builds from Studio.
+
+**Next cycle discussion point:**
+Bailey raised a broader design question about pairing security and TTL policy — bidirectional pairing, secure-by-default, user-selectable pair duration at initial pair, separate defaults for terminal vs bridge, opt-in never-expire for secured transports. Deferred to next design pass; not in this commit.
+
+---
+
 ## 2026-04-11 — Inbound Media Pipeline (agent → phone, Discord-style file rendering)
 
 **Done:**
