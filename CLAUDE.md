@@ -232,6 +232,9 @@ Quick reference:
 | Health check | `GET /health` or `GET /v1/health` | — |
 | Models | `GET /v1/models` | — |
 | Plugin tools | `android_*` via `plugin/` | — |
+| Relay health | `GET /health` on `plugin/relay/server.py` (default `:8767`) | — |
+| Relay pairing (QR flow) | `POST /pairing/register` (loopback only) — driven by `hermes pair` | — |
+| QR payload schema | `HermesPairingPayload` (see `plugin/pair.py` + `QrPairingScanner.kt`) — top-level API fields + optional `relay: { url, code }` block | Old API-only QRs still parse (relay field is nullable + `ignoreUnknownKeys = true`) |
 
 ## Upstream References
 

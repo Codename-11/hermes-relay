@@ -7,9 +7,10 @@ hermes-android gives a remote AI agent full control of an Android device via Acc
 ## Current Security Model
 
 ### Authentication
-- **Pairing code**: A random 6-character alphanumeric code generated on the phone
-- The phone and server must share this code to establish a connection
-- Codes use characters `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (no ambiguous 0/O/1/I)
+- **Pairing code**: A random 6-character alphanumeric code. For the QR-driven flow, `hermes pair` generates the code on the Hermes host and pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint; the phone-side `AuthManager.generatePairingCode()` generator is retained for the Phase 3 bridge flow.
+- The phone and server must share this code to establish a connection.
+- Codes use the full `A-Z / 0-9` alphabet (36 chars). The earlier "no ambiguous 0/O/1/I" restriction was dropped when the pairing flow moved from "human retypes code from display" to "code flows phone ↔ server via QR + HTTP" (see `docs/decisions.md` §6a).
+- `POST /pairing/register` is gated to loopback callers only (`127.0.0.1` / `::1`) — only a process with host shell access on the relay machine can inject pairing codes. A LAN attacker cannot.
 
 ### Rate Limiting
 - Failed WebSocket authentication attempts are rate-limited per IP

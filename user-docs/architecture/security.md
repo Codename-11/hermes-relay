@@ -35,14 +35,19 @@ The app enforces HTTPS for all connections except localhost development:
 
 ## Relay Auth Flow
 
-1. App displays a 6-character pairing code (generated locally)
-2. User tells the agent the code
-3. Server validates the code and returns a session token
-4. App stores the token in EncryptedSharedPreferences
-5. Future connections use the token directly (no re-pairing)
-6. Token expires after 30 days or on manual revoke
+1. Operator runs `hermes pair` on the Hermes host
+2. `hermes pair` probes `localhost:RELAY_PORT/health`; if the relay is up, it mints a fresh 6-char code
+3. It pre-registers the code with the relay via the loopback-only `POST /pairing/register` endpoint
+4. The relay URL + code are embedded in the QR payload alongside the API server credentials
+5. Phone scans once, opens WSS, and sends the code in its first `system/auth` envelope
+6. Relay consumes the code and returns a session token
+7. App stores the token in EncryptedSharedPreferences
+8. Future connections use the token directly (no re-pairing)
+9. Token expires after 30 days or on manual revoke
 
-Pairing codes use unambiguous characters only: `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (no 0/O/1/I).
+Pairing codes use the full `A-Z / 0-9` alphabet (36 chars). The earlier "no ambiguous 0/O/1/I" restriction was dropped on 2026-04-11 when the pairing flow moved from "human retypes code" to "code flows through QR + HTTP" — the phone-side generator uses the full alphabet, and enforcing the smaller alphabet silently rejected valid codes.
+
+`POST /pairing/register` is gated to loopback callers only (`127.0.0.1` / `::1`). Only a process running on the same host as the relay can inject pairing codes — a LAN attacker cannot. Trust anchor: the operator with host shell access.
 
 ## Rate Limiting
 

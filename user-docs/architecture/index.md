@@ -65,7 +65,7 @@ The relay connection (bridge/terminal) uses a pairing code for initial setup, th
 
 <HermesFlow diagram="auth-flow" height="200px" />
 
-Pairing codes use unambiguous characters: `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (no 0/O/1/I). Session tokens are stored in EncryptedSharedPreferences backed by Android Keystore.
+Pairing codes use the full `A-Z / 0-9` alphabet (36 chars). `hermes pair` on the Hermes host mints the code and pre-registers it with the relay via a loopback-only `/pairing/register` endpoint before embedding it in the QR — so the phone never types a code by hand. Session tokens are stored in EncryptedSharedPreferences backed by Android Keystore.
 
 ## Direct API vs Relay
 
