@@ -1,6 +1,6 @@
 # Potential Upstream Contributions to hermes-agent
 
-Improvements that would benefit hermes-android (and other frontends) if added to [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent).
+Improvements that would benefit hermes-relay (and other frontends) if added to [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent).
 
 ## 1. `GET /api/commands` — Expose Gateway Slash Commands
 
@@ -30,7 +30,7 @@ Improvements that would benefit hermes-android (and other frontends) if added to
 }
 ```
 
-**Impact:** All frontends (hermes-android, hermes-workspace, ClawPort) could dynamically show available commands without hardcoding. New commands added upstream would appear automatically.
+**Impact:** All frontends (hermes-relay, hermes-workspace, ClawPort) could dynamically show available commands without hardcoding. New commands added upstream would appear automatically.
 
 **Workaround (current):** 29 gateway commands hardcoded in `ChatScreen.kt`, manually synced with `hermes_cli/commands.py`. Personality commands generated from `GET /api/config`. Skills from `GET /api/skills`.
 

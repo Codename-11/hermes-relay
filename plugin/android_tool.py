@@ -1,5 +1,5 @@
 """
-hermes-android tool — 14 android_* tool handlers + schemas.
+hermes-relay plugin — 14 android_* tool handlers + schemas.
 
 Used by the plugin's __init__.py to register tools into hermes-agent
 via ctx.register_tool().
@@ -348,7 +348,7 @@ def android_setup(pairing_code: str) -> str:
         except ImportError:
             return json.dumps({
                 "status": "error",
-                "message": "android_relay module not found. Make sure hermes-android plugin is installed.",
+                "message": "android_relay module not found. Make sure hermes-relay plugin is installed.",
             })
 
     except Exception as e:

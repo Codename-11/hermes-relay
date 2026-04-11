@@ -1,23 +1,23 @@
 ---
 name: hermes-pairing-qr
-description: Generate QR codes for pairing mobile devices with the Hermes API server. Reads connection details (host, port, API key) from Hermes config and renders a scannable QR code in the terminal. Use when the user wants to connect hermes-android or any mobile client to their gateway.
+description: Generate QR codes for pairing mobile devices with the Hermes API server. Reads connection details (host, port, API key) from Hermes config and renders a scannable QR code in the terminal. Use when the user wants to connect Hermes-Relay or any mobile client to their gateway.
 version: 1.0.0
 author: Axiom-Labs
 deprecated: true
-deprecated_message: "Use the hermes-android plugin instead: install the plugin and run `hermes pair`"
-tags: [hermes, pairing, qr, mobile, api-server, gateway, hermes-android, deprecated]
+deprecated_message: "Use the hermes-relay plugin instead: install the plugin and run `hermes pair`"
+tags: [hermes, pairing, qr, mobile, api-server, gateway, hermes-relay, deprecated]
 triggers:
   - user wants to pair a mobile device
   - user asks about QR code for Hermes
-  - user wants to connect hermes-android
+  - user wants to connect Hermes-Relay
   - user mentions mobile pairing or device setup
 ---
 
-> **DEPRECATED:** This standalone skill is superseded by the `hermes-android` plugin (v0.3.0+).
+> **DEPRECATED:** This standalone skill is superseded by the `hermes-relay` plugin (v0.5.0+).
 > Install the plugin and run `hermes pair` instead — no separate script or `qrencode` binary needed.
 >
 > ```bash
-> cp -r plugin ~/.hermes/plugins/hermes-android
+> cp -r plugin ~/.hermes/plugins/hermes-relay
 > hermes pair
 > ```
 >

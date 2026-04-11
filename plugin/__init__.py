@@ -1,9 +1,9 @@
 """
-hermes-android plugin — registers android_* tools and the `hermes pair`
+hermes-relay plugin — registers android_* tools and the `hermes pair`
 CLI sub-command into hermes-agent via the v0.3.0+ plugin system.
 
-Drop this folder into ~/.hermes/plugins/hermes-android and restart hermes.
-Run `hermes pair` to generate a QR code for pairing the Android app.
+Drop this folder into ~/.hermes/plugins/hermes-relay and restart hermes.
+Run `hermes pair` to generate a QR code for pairing the Hermes-Relay app.
 """
 
 from .android_tool import _SCHEMAS, _HANDLERS, _check_requirements

@@ -61,11 +61,13 @@ On the machine running your Hermes agent:
 curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
 ```
 
-This installs the `hermes-android` plugin — 14 `android_*` device control tools plus the `hermes pair` CLI command. After restarting hermes, generate a pairing QR code:
+This installs the `hermes-relay` plugin — 14 `android_*` device control tools plus the `hermes pair` CLI command. After restarting hermes, generate a pairing QR code:
 
 ```bash
 hermes pair
 ```
+
+Or, if you're already in an active Hermes session (CLI, Discord, Telegram, etc.), just type `/hermes-relay-pair` and the agent renders the QR inline — same payload, no shell needed.
 
 Scan it from the Android app's onboarding screen and you're connected. One scan configures **both** the direct-chat API server **and** the WSS relay (for terminal/bridge) — if a local relay is running at `localhost:8767` when you run `hermes pair`, the command pre-registers a fresh 6-char pairing code with it and embeds the relay URL + code in the same QR. If you only want direct chat, pass `--no-relay` (or just don't start the relay). The command also prints the server URL and API key as plain text, so you can pair manually if your terminal can't render QR blocks.
 
@@ -192,9 +194,9 @@ See [docs/relay-server.md](docs/relay-server.md) for TLS, systemd, and full setu
 End users should install via the [one-liner](#2-install-the-server-plugin-one-liner) at the top. For local development from a clone:
 
 ```bash
-cp -r plugin ~/.hermes/plugins/hermes-android
+cp -r plugin ~/.hermes/plugins/hermes-relay
 # Or symlink for live edits:
-ln -s "$PWD/plugin" ~/.hermes/plugins/hermes-android
+ln -s "$PWD/plugin" ~/.hermes/plugins/hermes-relay
 ```
 
 Then restart hermes and run `hermes pair` to test the CLI command. The 14 `android_*` tools register regardless of hermes-agent version; the `hermes pair` CLI requires v0.8.0+.

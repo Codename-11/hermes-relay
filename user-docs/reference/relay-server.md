@@ -13,7 +13,7 @@ The relay server is a lightweight Python WSS service that enables **terminal** (
 ## Quick Start
 
 ```bash
-# If you installed the hermes-android plugin (recommended):
+# If you installed the hermes-relay plugin (recommended):
 hermes relay start --no-ssl
 
 # Or directly from a repo checkout:

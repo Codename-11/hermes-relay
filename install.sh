@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Hermes-Relay — one-line installer for the server-side plugin.
 #
-# Installs the `hermes-android` plugin (14 android_* device tools + the
+# Installs the `hermes-relay` plugin (14 android_* device tools + the
 # `hermes pair` QR pairing CLI) into your local hermes-agent plugin directory.
 #
 # Usage:
@@ -16,7 +16,7 @@ set -euo pipefail
 # ── Config ──────────────────────────────────────────────────────────────
 REPO="https://github.com/Codename-11/hermes-relay.git"
 BRANCH="${HERMES_RELAY_BRANCH:-main}"
-PLUGIN_NAME="hermes-android"
+PLUGIN_NAME="hermes-relay"
 PLUGIN_DIR="${HERMES_HOME:-$HOME/.hermes}/plugins/$PLUGIN_NAME"
 TMP_DIR="$(mktemp -d)"
 

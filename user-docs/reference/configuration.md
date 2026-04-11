@@ -81,7 +81,7 @@ The relay server is a **separate service** (canonically at `plugin/relay/` with 
 **Quick start:**
 
 ```bash
-# If you installed the hermes-android plugin:
+# If you installed the hermes-relay plugin:
 hermes relay start --no-ssl
 
 # Or directly from a repo checkout:

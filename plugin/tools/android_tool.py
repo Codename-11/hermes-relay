@@ -1,5 +1,5 @@
 """
-hermes-android tool — registers android_* tools into hermes-agent registry.
+hermes-relay plugin — registers android_* tools into hermes-agent registry.
 
 Tools registered:
   - android_ping          check bridge connectivity
@@ -361,7 +361,7 @@ def android_setup(pairing_code: str) -> str:
         except ImportError:
             return json.dumps({
                 "status": "error",
-                "message": "android_relay module not found. Make sure hermes-android is installed.",
+                "message": "android_relay module not found. Make sure hermes-relay plugin is installed.",
             })
 
     except Exception as e:

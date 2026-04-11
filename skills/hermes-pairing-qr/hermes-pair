@@ -3,14 +3,14 @@
 # Reads connection details from ~/.hermes/.env and renders a scannable QR via qrencode.
 # Usage: hermes-pair [--png] [--host HOST] [--port PORT]
 #
-# DEPRECATED: Use the hermes-android plugin's `hermes pair` command instead.
+# DEPRECATED: Use the hermes-relay plugin's `hermes pair` command instead.
 # This script is kept for backward compatibility with hermes-agent v0.7.0 and earlier.
-#   Install the plugin: cp -r plugin ~/.hermes/plugins/hermes-android
+#   Install the plugin: cp -r plugin ~/.hermes/plugins/hermes-relay
 #   Then run:           hermes pair
 set -euo pipefail
 
-echo "WARNING: 'hermes-pair' is deprecated. Use 'hermes pair' from the hermes-android plugin." >&2
-echo "         Install: cp -r plugin ~/.hermes/plugins/hermes-android" >&2
+echo "WARNING: 'hermes-pair' is deprecated. Use 'hermes pair' from the hermes-relay plugin." >&2
+echo "         Install: cp -r plugin ~/.hermes/plugins/hermes-relay" >&2
 echo "" >&2
 
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
@@ -94,6 +94,6 @@ echo ""
 # Also save PNG
 echo "$PAYLOAD" | qrencode -t PNG -o /tmp/hermes-pairing-qr.png -s 8 2>/dev/null
 echo "  PNG: /tmp/hermes-pairing-qr.png"
-echo "  Scan with hermes-android or any QR reader."
+echo "  Scan with Hermes-Relay or any QR reader."
 echo "  WARNING: This QR contains your API key — do not share screenshots."
 echo ""

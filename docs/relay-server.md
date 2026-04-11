@@ -26,7 +26,7 @@ The relay runs alongside hermes-agent on the same machine. It reads `~/.hermes/c
 ### One-liner
 
 ```bash
-# If you installed the hermes-android plugin:
+# If you installed the hermes-relay plugin:
 hermes relay start --no-ssl
 
 # Or directly from a repo checkout:

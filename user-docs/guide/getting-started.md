@@ -26,7 +26,7 @@ On the machine running your Hermes agent:
 curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
 ```
 
-This installs the `hermes-android` plugin into `~/.hermes/plugins/hermes-android` and pulls in its Python dependencies (`requests`, `aiohttp`, `segno`). Restart hermes to load it.
+This installs the `hermes-relay` plugin into `~/.hermes/plugins/hermes-relay` and pulls in its Python dependencies (`requests`, `aiohttp`, `segno`). Restart hermes to load it.
 
 ::: tip What you get
 The plugin registers **14 `android_*` device control tools** (tap, type, read screen, screenshot, open apps, etc.) plus the **`hermes pair` CLI command** for generating pairing QR codes. No separate skill install, no `qrencode` binary needed.
@@ -34,13 +34,17 @@ The plugin registers **14 `android_*` device control tools** (tap, type, read sc
 
 ### 3. Pair your phone
 
-On the server, run:
+You have two paths to the same QR — pick whichever fits where you already are:
+
+**From an active Hermes session** (shortest path if you're already chatting with Hermes): type `/hermes-relay-pair` in any chat surface — CLI, Discord, Telegram, anywhere Hermes is listening. The agent generates the QR and renders it inline for you. No shell required.
+
+**From a shell** (power-user / scriptable): on the server, run
 
 ```bash
 hermes pair
 ```
 
-This prints a QR code **and** the plain-text connection details (server URL, API key). Scan the QR from the app's onboarding screen — or type the values in manually if your terminal can't render QR blocks. The text fallback is always shown, so this works inside Hermes's Rich TUI panel and over SSH with limited charsets.
+Both routes share the same implementation and produce the same payload. This prints a QR code **and** the plain-text connection details (server URL, API key). Scan the QR from the app's onboarding screen — or type the values in manually if your terminal can't render QR blocks. The text fallback is always shown, so this works inside Hermes's Rich TUI panel and over SSH with limited charsets.
 
 **One scan configures chat *and* the relay.** If you've already started the Hermes-Relay WSS server on the same host (see [Relay Server](#relay-server-optional) below), `hermes pair` automatically detects it at `localhost:8767`, mints a fresh 6-char pairing code, pre-registers the code with the relay via its loopback-only `/pairing/register` endpoint, and embeds the relay URL and code in the same QR. The phone scans once and is ready for chat, terminal, and bridge.
 
@@ -165,7 +169,7 @@ The relay server is only needed for **Terminal** (remote shell) and **Bridge** (
 
 ::: tip Start the relay
 ```bash
-# If you installed the hermes-android plugin (recommended):
+# If you installed the hermes-relay plugin (recommended):
 hermes relay start --no-ssl
 
 # Or directly from a repo checkout:

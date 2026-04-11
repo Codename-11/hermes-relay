@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hermes-android"
-version = "0.4.0"
-description = "Android device control toolset, QR pairing CLI, and Hermes-Relay WSS server for hermes-agent"
+name = "hermes-relay"
+version = "0.5.0"
+description = "Hermes-Relay plugin — Android device control toolset, QR pairing CLI, and WSS relay server for hermes-agent"
 requires-python = ">=3.11"
 dependencies = [
     "requests>=2.28.0",
