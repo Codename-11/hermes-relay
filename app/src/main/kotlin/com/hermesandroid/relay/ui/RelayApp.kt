@@ -61,6 +61,7 @@ import com.hermesandroid.relay.ui.screens.TerminalScreen
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import com.hermesandroid.relay.viewmodel.TerminalViewModel
 
 sealed class Screen(
     val route: String,
@@ -85,6 +86,17 @@ private val bottomNavScreens = listOf(
 fun RelayApp() {
     val connectionViewModel: ConnectionViewModel = viewModel()
     val chatViewModel: ChatViewModel = viewModel()
+    val terminalViewModel: TerminalViewModel = viewModel()
+
+    // One-time init: the terminal channel ViewModel registers with the shared
+    // multiplexer and observes the relay connection state so it can attach/
+    // reattach automatically on network changes.
+    LaunchedEffect(Unit) {
+        terminalViewModel.initialize(
+            multiplexer = connectionViewModel.multiplexer,
+            connectionState = connectionViewModel.relayConnectionState
+        )
+    }
 
     // Initialize ChatViewModel reactively when API client becomes available
     val apiClient by connectionViewModel.apiClient.collectAsState()
@@ -269,7 +281,10 @@ fun RelayApp() {
                     )
                 }
                 composable(Screen.Terminal.route) {
-                    TerminalScreen()
+                    TerminalScreen(
+                        terminalViewModel = terminalViewModel,
+                        connectionViewModel = connectionViewModel
+                    )
                 }
                 composable(Screen.Bridge.route) {
                     BridgeScreen()

@@ -1,5 +1,53 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-11 — Phase 2: Terminal Channel MVP (server + app)
+
+**Done:**
+- **Server-side `TerminalHandler` (`relay_server/channels/terminal.py`)** — Replaced the stub with a real PTY-backed shell handler. Uses `pty.openpty()` + `fork` + `TIOCSCTTY` (not `pty.fork()`) so we can set `O_NONBLOCK` on the master fd before handing it to `loop.add_reader()`. Output is batched on a ~16 ms window (via `loop.call_later`) or flushed immediately on 4 KiB buffer — that keeps 60 fps refresh from a shell dumping megabytes without flooding the WebSocket. Supports `terminal.attach`/`input`/`resize`/`detach`/`list`. Resize uses `TIOCSWINSZ` ioctl for SIGWINCH. Graceful teardown on disconnect: flush pending buffer → remove reader → SIGHUP → `waitpid(WNOHANG)` loop (up to 1 s grace) → SIGKILL fallback → `os.close`. Shell resolution checks absolute-path candidates (request → config → `$SHELL` → `/bin/bash` → `/bin/sh`) and rejects relative paths. Per-client cap of 4 concurrent sessions. Child gets `TERM=xterm-256color`, `COLORTERM=truecolor`, and `HERMES_RELAY_TERMINAL=<session_name>` as a debug marker. Unix-only: `pty`/`termios`/`fcntl` imports are guarded with `try/except ImportError` so the relay still starts on Windows — attach attempts return a clean `terminal.error` instead of crashing the whole server at import time.
+- **Config** — Added `terminal_shell: str | None` to `RelayConfig` (`RELAY_TERMINAL_SHELL` env var, `None` = auto-detect). Wired into `TerminalHandler(default_shell=...)` in `relay.py`.
+- **xterm.js asset bundle (`app/src/main/assets/terminal/`)** — Downloaded `@xterm/xterm@5.5.0` + `@xterm/addon-fit@0.10.0` + `@xterm/addon-web-links@0.11.0` from jsDelivr into `assets/terminal/`. Wrote `index.html` with a Hermes-themed palette (navy `#1A1A2E` background, purple `#B794F4` cursor/magenta, magenta/cyan/green ANSI mapping that matches the app's Material 3 primary). Disables autocorrect/overscroll/zoom. Uses base64-encoded output payloads (`window.writeTerminal('<b64>')`) to avoid JS string-escape headaches with control bytes and escape sequences.
+- **`TerminalViewModel.kt`** — AndroidViewModel mirroring `ChatViewModel` init pattern. Registers a `ChannelMultiplexer` handler for `"terminal"`. State flow tracks attached/sessionName/pid/shell/cols/rows/tmuxAvailable/ctrlActive/altActive/error. Output flows on a `MutableSharedFlow<String>` (replay=0, buffer=256) — explicitly not a StateFlow because terminal chunks must be delivered exactly once; StateFlow would conflate rapid deltas and drop output. Sticky CTRL translates a–z/A–Z + `[\]` to their control bytes; sticky ALT prefixes ESC. Both auto-clear after the next keypress. Pending-attach queue: if the WebView signals ready before the relay connects, the cols/rows are held and the attach fires once `ConnectionState.Connected` lands.
+- **`TerminalWebView.kt`** — Compose WebView wrapper. Loads `file:///android_asset/terminal/index.html`, installs `AndroidBridge` @JavascriptInterface (`onReady`/`onInput`/`onResize`/`onLink`). `viewModel.outputFlow` is collected in a `LaunchedEffect` on the UI thread and piped into `webView.evaluateJavascript("window.writeTerminal('$b64')")`. `DisposableEffect` tears down the WebView cleanly on recomposition out. Uses the modern `shouldOverrideUrlLoading(WebView, WebResourceRequest)` signature (minSdk 26), routes non-asset URLs to the system browser via `ACTION_VIEW`.
+- **`ExtraKeysToolbar.kt`** — `RowScope`-extension `ToolbarKey` composable for the 8-key bottom toolbar: ESC, TAB, CTRL (sticky), ALT (sticky), ←↓↑→. Active state highlights with `primary.copy(alpha=0.22f)` background + primary border. Haptic `LongPress` feedback on every tap.
+- **`TerminalScreen.kt`** — Replaced the "Coming Soon" placeholder. TopAppBar with monospace subtitle line that shows session name / "attaching…" / "relay disconnected" / error. `ConnectionStatusBadge` in the actions slot (green when attached, amber when attaching/reconnecting, red otherwise) + `Refresh` IconButton for manual reattach. WebView fills `weight(1f)`, `ExtraKeysToolbar` is anchored at the bottom with `navigationBarsPadding() + imePadding()` so it slides up with the IME. Overlay card appears when relay is disconnected or there's an error, explaining state and pointing at Settings.
+- **`RelayApp.kt` wiring** — Imported `TerminalViewModel`, added `viewModel()` instance, one-time `LaunchedEffect` calls `terminalViewModel.initialize(multiplexer, relayConnectionState)` so the channel handler registers and auto-attaches on reconnect. `Screen.Terminal` composable now passes both view models into `TerminalScreen`.
+
+**Files changed/added:**
+- `relay_server/channels/terminal.py` (rewritten — 560 lines of real PTY handling)
+- `relay_server/config.py` (new `terminal_shell` field + env var)
+- `relay_server/relay.py` (pass `default_shell` into `TerminalHandler`)
+- `app/src/main/assets/terminal/index.html` (new)
+- `app/src/main/assets/terminal/xterm.js` + `xterm.css` + `addon-fit.js` + `addon-web-links.js` (new — ~300 KB bundled, no CDN dependency at runtime)
+- `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/TerminalViewModel.kt` (new)
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/components/TerminalWebView.kt` (new)
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/components/ExtraKeysToolbar.kt` (new)
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/screens/TerminalScreen.kt` (rewritten)
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/RelayApp.kt` (import + instantiate + init + pass to screen)
+- `DEVLOG.md` (this entry)
+
+**Build:** `gradlew :app:assembleDebug` — BUILD SUCCESSFUL in 1m 59s. Only pre-existing deprecation warnings remain; no warnings or errors from new code. Server-side Python is not covered by CI; change is additive and gated by `_PTY_AVAILABLE` on Windows hosts so the existing chat/bridge channels remain unaffected.
+
+**Not yet tested on real hardware.** This session produced compiling code, not verified feature behavior. Before declaring Phase 2 MVP shipped we need:
+1. A Linux/macOS host running the relay server + tmux (or not — raw PTY fallback is what we actually built) with a shell the host user can actually log into.
+2. Deploy the debug APK, connect the relay, open the Terminal tab, verify: prompt appears → soft keyboard typing reaches the shell → arrow keys work → CTRL+C interrupts → resize on rotation / IME show reflows prompt correctly → htop renders with box chars → disconnect/reconnect reattaches cleanly.
+3. Check for WebView keyboard quirks on at least two devices (the plan flags this as the highest device-side risk).
+
+**Deferred from the Phase 2 plan (will land in follow-up sessions):**
+- **Plugin consolidation** — `relay_server/` is still a separate process; the plan wants it absorbed into `plugin/relay/` with a unified `hermes relay` CLI. Pure refactor, no user-visible change. Separate session.
+- **tmux session persistence** — `self.tmux_available` is detected and surfaced in `terminal.attached` payloads but we're not using libtmux yet. Current implementation is raw PTY only. Adding tmux is additive (same envelope protocol, swap the spawn path).
+- **P1/P2 polish** — pinch-to-zoom, mouse reporting (needed for htop/vim mouse), font bundling (JetBrains Mono NF), multiple themes, settings screen entries, visual bell, scroll-to-bottom FAB, URL-detection config, multi-session picker dropdown, hardware keyboard edge cases.
+- **CLI commands** — `hermes relay status/sessions/kill` are spec'd but not wired. Nothing to wire them to until plugin consolidation lands.
+
+**Next:**
+- Smoke-test on a real device with the relay running against a real Linux host.
+- Fix whatever that surfaces (WebView keyboard oddities, resize timing, PTY race conditions we haven't seen yet).
+- Decide whether to ship MVP as-is under a feature flag or continue straight through 2B polish → tmux → consolidation before any user sees it.
+
+**Blockers:**
+- None in code. Need a Linux/macOS relay host to exercise the PTY path end-to-end.
+
+---
+
 ## 2026-04-10 — v0.1.0 Play Store Release (Internal Testing)
 
 **Done:**

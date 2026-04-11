@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="format-detection" content="telephone=no">
+    <title>Hermes-Relay Terminal</title>
+    <link rel="stylesheet" href="xterm.css">
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background: #1A1A2E;
+            overflow: hidden;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Mono', 'Roboto Mono', monospace;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-touch-callout: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        #terminal {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            padding: 8px 6px 0 8px;
+            box-sizing: border-box;
+        }
+        .xterm .xterm-viewport {
+            background-color: #1A1A2E !important;
+        }
+        /* Let text inside the terminal be selectable so copy/paste works. */
+        .xterm-rows, .xterm-selection-layer {
+            -webkit-user-select: text;
+            user-select: text;
+        }
+    </style>
+</head>
+<body>
+    <div id="terminal"></div>
+
+    <script src="xterm.js"></script>
+    <script src="addon-fit.js"></script>
+    <script src="addon-web-links.js"></script>
+    <script>
+    (function () {
+        // ── Hermes-Relay theme (matches app primary palette) ──────────────
+        const hermesTheme = {
+            background: '#1A1A2E',
+            foreground: '#E8E8F0',
+            cursor: '#B794F4',
+            cursorAccent: '#1A1A2E',
+            selectionBackground: '#4A3A7A',
+            black: '#1A1A2E',
+            red: '#FF6B9D',
+            green: '#7EE787',
+            yellow: '#FFD166',
+            blue: '#79C0FF',
+            magenta: '#B794F4',
+            cyan: '#56D4DD',
+            white: '#E8E8F0',
+            brightBlack: '#4A4A6A',
+            brightRed: '#FF8FAE',
+            brightGreen: '#A8F0B0',
+            brightYellow: '#FFE29A',
+            brightBlue: '#A5D4FF',
+            brightMagenta: '#D0B3FF',
+            brightCyan: '#7FE5EE',
+            brightWhite: '#FFFFFF',
+        };
+
+        const term = new Terminal({
+            cursorBlink: true,
+            cursorStyle: 'block',
+            fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Mono', 'Roboto Mono', monospace",
+            fontSize: 13,
+            lineHeight: 1.15,
+            letterSpacing: 0,
+            scrollback: 10000,
+            theme: hermesTheme,
+            allowProposedApi: true,
+            allowTransparency: false,
+            convertEol: false,
+            macOptionIsMeta: true,
+            rightClickSelectsWord: false,
+        });
+
+        const fitAddon = new FitAddon.FitAddon();
+        const webLinksAddon = new WebLinksAddon.WebLinksAddon(function (event, uri) {
+            // Delegate to Android so taps open the system browser.
+            if (window.AndroidBridge && window.AndroidBridge.onLink) {
+                window.AndroidBridge.onLink(uri);
+            }
+        });
+
+        term.loadAddon(fitAddon);
+        term.loadAddon(webLinksAddon);
+
+        term.open(document.getElementById('terminal'));
+        try { fitAddon.fit(); } catch (_) { /* container not measured yet */ }
+
+        // ── Outbound: terminal → Android ──────────────────────────────────
+        term.onData(function (data) {
+            if (window.AndroidBridge && window.AndroidBridge.onInput) {
+                window.AndroidBridge.onInput(data);
+            }
+        });
+
+        term.onBinary(function (data) {
+            // Binary input (very rare — only used for mouse tracking byte paths).
+            if (window.AndroidBridge && window.AndroidBridge.onInput) {
+                window.AndroidBridge.onInput(data);
+            }
+        });
+
+        let lastCols = 0;
+        let lastRows = 0;
+        term.onResize(function (size) {
+            if (size.cols === lastCols && size.rows === lastRows) return;
+            lastCols = size.cols;
+            lastRows = size.rows;
+            if (window.AndroidBridge && window.AndroidBridge.onResize) {
+                window.AndroidBridge.onResize(size.cols, size.rows);
+            }
+        });
+
+        // ── Inbound: Android → terminal ───────────────────────────────────
+        // Base64-encoded payloads avoid JS string-escaping headaches when the
+        // stream contains control characters, raw escape sequences, or bytes
+        // that would need careful quoting in evaluateJavascript.
+        window.writeTerminal = function (b64) {
+            if (!b64) return;
+            try {
+                const binary = atob(b64);
+                const bytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {
+                    bytes[i] = binary.charCodeAt(i);
+                }
+                term.write(bytes);
+            } catch (err) {
+                console.error('writeTerminal decode error:', err);
+            }
+        };
+
+        window.refit = function () {
+            try {
+                fitAddon.fit();
+            } catch (err) {
+                console.error('fit error:', err);
+            }
+        };
+
+        window.setFontSize = function (size) {
+            try {
+                term.options.fontSize = size;
+                fitAddon.fit();
+            } catch (_) {}
+        };
+
+        window.focusTerminal = function () {
+            try { term.focus(); } catch (_) {}
+        };
+
+        window.clearTerminal = function () {
+            try { term.clear(); } catch (_) {}
+        };
+
+        window.pasteToTerminal = function (text) {
+            if (!text) return;
+            try {
+                term.paste(text);
+            } catch (_) {
+                // Fallback — send as plain input
+                if (window.AndroidBridge && window.AndroidBridge.onInput) {
+                    window.AndroidBridge.onInput(text);
+                }
+            }
+        };
+
+        // Refit on viewport resize (IME show/hide, orientation change).
+        // Small debounce to avoid thrashing the layout during keyboard animations.
+        let resizeTimeout = null;
+        window.addEventListener('resize', function () {
+            if (resizeTimeout) clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(function () {
+                try { fitAddon.fit(); } catch (_) {}
+            }, 80);
+        });
+
+        // Signal readiness to Android once the initial fit has settled.
+        // Use requestAnimationFrame so the first measured cols/rows is the one we send.
+        requestAnimationFrame(function () {
+            try { fitAddon.fit(); } catch (_) {}
+            requestAnimationFrame(function () {
+                if (window.AndroidBridge && window.AndroidBridge.onReady) {
+                    window.AndroidBridge.onReady(term.cols, term.rows);
+                }
+            });
+        });
+    })();
+    </script>
+</body>
+</html>
