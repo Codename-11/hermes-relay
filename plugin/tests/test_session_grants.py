@@ -177,9 +177,23 @@ class PairingMetadataTests(unittest.TestCase):
 
     def test_register_rejects_bad_format(self) -> None:
         mgr = PairingManager()
-        self.assertFalse(mgr.register_code("short"))
-        self.assertFalse(mgr.register_code("lowr12"))  # lowercase rejected
-        self.assertFalse(mgr.register_code("ABC@12"))
+        self.assertFalse(mgr.register_code("short"))         # wrong length
+        self.assertFalse(mgr.register_code("ABC@12"))        # invalid char
+
+    def test_register_normalizes_case(self) -> None:
+        """Lowercase codes are normalized to uppercase rather than rejected.
+
+        Matches the user-friendly "type your code in either case" behavior
+        the server has always had — ``register_code`` upper-cases before
+        validating against ``PAIRING_ALPHABET``. Regression guard so a
+        future well-intentioned refactor doesn't accidentally make this
+        case-sensitive.
+        """
+        mgr = PairingManager()
+        self.assertTrue(mgr.register_code("lowr12"))
+        # The normalized (uppercase) form is what's actually stored and
+        # consumable.
+        self.assertIsNotNone(mgr.consume_code("LOWR12"))
 
 
 class SessionListingTests(unittest.TestCase):
