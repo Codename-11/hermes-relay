@@ -3,12 +3,30 @@
 Replaces the standalone bash script `skills/hermes-pairing-qr/hermes-pair`.
 Exposed as the `hermes pair` CLI sub-command via plugin/cli.py.
 
-The payload format matches what QrPairingScanner.kt in the Android app expects::
+The payload format matches what QrPairingScanner.kt in the Android app expects.
+v2 (current) adds optional TTL / per-channel grants / transport hint /
+HMAC signature. v1 is still emitted when no v2-only field is present so
+old phones can still parse the QR::
 
+    v2 (extended):
+    {
+      "hermes": 2,
+      "host": "<ip>", "port": <port>, "key": "<token>", "tls": <bool>,
+      "relay": {
+        "url": "ws://<ip>:<port>",
+        "code": "<6-char>",
+        "ttl_seconds": 2592000,           // 0 = never expire
+        "grants": {"terminal": ..., "bridge": ...},
+        "transport_hint": "ws"            // "wss" or "ws"
+      },
+      "sig": "<base64-hmac-sha256>"
+    }
+
+    v1 (legacy fallback):
     {
       "hermes": 1,
       "host": "<ip>", "port": <port>, "key": "<token>", "tls": <bool>,
-      "relay": { "url": "ws://<ip>:<port>", "code": "<6-char>" }  // optional
+      "relay": { "url": "ws://<ip>:<port>", "code": "<6-char>" }
     }
 
 Top-level fields configure the direct-chat Hermes API server (port 8642 by
@@ -32,6 +50,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Optional
+
+from plugin.relay.qr_sign import load_or_create_secret, sign_payload
 
 
 def _get_hermes_home() -> Path:
@@ -132,21 +152,36 @@ def _resolve_lan_ip(host: str) -> str:
         return host
 
 
+def _relay_has_v2_fields(relay: Optional[dict]) -> bool:
+    """True if the relay block uses any v2-only field."""
+    if relay is None:
+        return False
+    return any(
+        k in relay for k in ("ttl_seconds", "grants", "transport_hint")
+    )
+
+
 def build_payload(
     host: str,
     port: int,
     key: str,
     tls: bool,
     relay: Optional[dict] = None,
+    sign: bool = True,
 ) -> str:
     """Build compact JSON payload matching HermesPairingPayload.kt format.
 
-    If ``relay`` is provided, it's embedded as a nested ``"relay"`` object
-    with ``url`` and ``code`` fields. The app's QR scanner parses both the
-    legacy (API-only) shape and the extended (API + relay) shape.
+    If ``relay`` is provided it's embedded as a nested ``"relay"`` object.
+    When any v2-only field (``ttl_seconds``, ``grants``, ``transport_hint``)
+    is present the top-level ``hermes`` field is bumped to ``2``; otherwise
+    it stays at ``1`` so old phones can still parse.
+
+    If ``sign`` is true the payload is signed with the host-local QR
+    secret and the base64 HMAC is added as a top-level ``sig`` field.
     """
+    version = 2 if _relay_has_v2_fields(relay) else 1
     payload: dict = {
-        "hermes": 1,
+        "hermes": version,
         "host": host,
         "port": port,
         "key": key,
@@ -154,7 +189,118 @@ def build_payload(
     }
     if relay is not None:
         payload["relay"] = relay
+
+    if sign:
+        try:
+            secret = load_or_create_secret()
+            payload["sig"] = sign_payload(payload, secret)
+        except Exception as exc:
+            # Signing is best-effort: if we can't read/write the secret
+            # file we still want to emit a usable QR rather than crashing
+            # the `hermes pair` flow. Log to stderr so the operator sees
+            # it but doesn't lose the QR.
+            print(
+                f"  [warn] QR signing failed ({exc}) — payload will be unsigned.",
+                file=sys.stderr,
+            )
+
     return json.dumps(payload, separators=(",", ":"))
+
+
+# ── TTL / grants parsing ─────────────────────────────────────────────────────
+
+
+_TTL_PRESETS: dict[str, int] = {
+    # 0 => never expire
+    "never": 0,
+    "1d": 1 * 24 * 3600,
+    "7d": 7 * 24 * 3600,
+    "30d": 30 * 24 * 3600,
+    "90d": 90 * 24 * 3600,
+    # 1y ≈ 365 days. Not a leap-year-aware calendar year, just a round
+    # duration; "never" covers the "really long" case.
+    "1y": 365 * 24 * 3600,
+}
+
+
+def parse_duration(spec: str) -> int:
+    """Parse a duration spec like ``"30d"`` / ``"1y"`` / ``"never"``.
+
+    Returns the duration in seconds. ``"never"`` returns 0, which the
+    relay interprets as ``math.inf`` (session never expires).
+
+    Also accepts an explicit number of seconds (e.g. ``"3600"``) for
+    power users.
+    """
+    normalized = spec.strip().lower()
+    if not normalized:
+        raise ValueError("empty duration")
+    if normalized in _TTL_PRESETS:
+        return _TTL_PRESETS[normalized]
+    # Explicit numeric seconds.
+    if normalized.isdigit():
+        return int(normalized)
+    # Loose suffix form: <int>[smhdwy]
+    unit = normalized[-1]
+    head = normalized[:-1]
+    if not head.isdigit():
+        raise ValueError(f"cannot parse duration {spec!r}")
+    n = int(head)
+    if unit == "s":
+        return n
+    if unit == "m":
+        return n * 60
+    if unit == "h":
+        return n * 3600
+    if unit == "d":
+        return n * 24 * 3600
+    if unit == "w":
+        return n * 7 * 24 * 3600
+    if unit == "y":
+        return n * 365 * 24 * 3600
+    raise ValueError(f"unknown duration unit {unit!r} in {spec!r}")
+
+
+def parse_grants(spec: str) -> dict[str, int]:
+    """Parse a ``--grants`` spec like ``"terminal=7d,bridge=1d"``.
+
+    Returns a dict ``{channel: duration_seconds}``. Unknown channels are
+    accepted — the server applies its own whitelist.
+    """
+    out: dict[str, int] = {}
+    if not spec.strip():
+        return out
+    for pair_str in spec.split(","):
+        pair_str = pair_str.strip()
+        if not pair_str:
+            continue
+        if "=" not in pair_str:
+            raise ValueError(
+                f"invalid grant {pair_str!r} — expected channel=duration"
+            )
+        channel, _, duration = pair_str.partition("=")
+        channel = channel.strip()
+        if not channel:
+            raise ValueError(f"empty channel in grant {pair_str!r}")
+        out[channel] = parse_duration(duration)
+    return out
+
+
+def format_duration_label(ttl_seconds: int) -> str:
+    """Return a human-readable label for a TTL like ``'30 days'`` or ``'indefinitely'``."""
+    if ttl_seconds == 0:
+        return "indefinitely"
+    day = 24 * 3600
+    if ttl_seconds % (365 * day) == 0:
+        n = ttl_seconds // (365 * day)
+        return f"{n} year{'s' if n != 1 else ''}"
+    if ttl_seconds % day == 0:
+        n = ttl_seconds // day
+        return f"{n} day{'s' if n != 1 else ''}"
+    if ttl_seconds % 3600 == 0:
+        n = ttl_seconds // 3600
+        return f"{n} hour{'s' if n != 1 else ''}"
+    return f"{ttl_seconds} seconds"
 
 
 # ── Relay pre-pairing ────────────────────────────────────────────────────────
@@ -171,20 +317,24 @@ def _generate_relay_code() -> str:
     return "".join(rng.choice(_RELAY_CODE_ALPHABET) for _ in range(_RELAY_CODE_LENGTH))
 
 
-def _relay_lan_base_url(relay_host: str, relay_port: int) -> str:
-    """Build the ws://host:port URL the phone should connect to.
+def _relay_lan_base_url(relay_host: str, relay_port: int, tls: bool = False) -> str:
+    """Build the ws[s]://host:port URL the phone should connect to.
 
     Always resolves loopback/bind-all to a routable LAN IP so the QR payload
     contains a URL the phone can actually reach across the network.
     """
     lan_host = _resolve_lan_ip(relay_host)
-    return f"ws://{lan_host}:{relay_port}"
+    scheme = "wss" if tls else "ws"
+    return f"{scheme}://{lan_host}:{relay_port}"
 
 
 def register_relay_code(
     localhost_port: int,
     code: str,
     timeout_s: float = 2.0,
+    ttl_seconds: int | None = None,
+    grants: dict[str, int] | None = None,
+    transport_hint: str | None = None,
 ) -> bool:
     """Pre-register ``code`` with the running relay via loopback HTTP.
 
@@ -193,12 +343,23 @@ def register_relay_code(
     as the relay (operator shell) can inject pairing codes. A phone on the
     LAN cannot register codes.
 
+    Optional ``ttl_seconds`` / ``grants`` / ``transport_hint`` are passed
+    through verbatim so the operator's choices at QR generation time are
+    applied to the freshly-minted session when the phone claims the code.
+
     Returns ``True`` on success, ``False`` on any failure (relay not running,
     timeout, HTTP error). Callers should treat failure as "relay pairing
     unavailable" and render an API-only QR.
     """
     url = f"http://127.0.0.1:{localhost_port}/pairing/register"
-    body = json.dumps({"code": code}).encode("utf-8")
+    body_dict: dict = {"code": code}
+    if ttl_seconds is not None:
+        body_dict["ttl_seconds"] = ttl_seconds
+    if grants:
+        body_dict["grants"] = grants
+    if transport_hint:
+        body_dict["transport_hint"] = transport_hint
+    body = json.dumps(body_dict).encode("utf-8")
     req = urllib.request.Request(
         url,
         data=body,
@@ -236,14 +397,17 @@ def read_relay_config() -> dict:
 
     Mirrors ``plugin/relay/config.py`` — uses ``RELAY_HOST`` / ``RELAY_PORT``
     if set, otherwise falls back to ``0.0.0.0:8767`` which the LAN resolver
-    will turn into a routable address.
+    will turn into a routable address. The ``tls`` flag is True whenever
+    ``RELAY_SSL_CERT`` is set in the environment; ``transport_hint`` gets
+    set accordingly for the QR payload.
     """
     host = os.getenv("RELAY_HOST") or "0.0.0.0"
     try:
         port = int(os.getenv("RELAY_PORT") or "8767")
     except ValueError:
         port = 8767
-    return {"host": host, "port": port}
+    tls = bool(os.getenv("RELAY_SSL_CERT"))
+    return {"host": host, "port": port, "tls": tls}
 
 
 def _mask_key(key: str) -> str:
@@ -295,6 +459,21 @@ def render_text_block(
             f"  URL  : {relay['url']}",
             f"  Code : {relay['code']}  (expires in 10 min, one-shot)",
         ])
+        ttl = relay.get("ttl_seconds")
+        if ttl is not None:
+            label = format_duration_label(int(ttl))
+            if ttl == 0:
+                lines.append(f"  Pair : {label} (never expires)")
+            else:
+                lines.append(f"  Pair : for {label}")
+        grants = relay.get("grants")
+        if grants:
+            grant_parts = []
+            for channel, duration in grants.items():
+                grant_parts.append(
+                    f"{channel}={format_duration_label(int(duration))}"
+                )
+            lines.append(f"  Grants: {', '.join(grant_parts)}")
 
     lines.append("")
     return "\n".join(lines)
@@ -364,11 +543,30 @@ def pair_command(args) -> None:
     # scan. If the relay isn't running (or we can't register), we render an
     # API-only QR and print a warning pointing at `hermes relay start`.
 
+    # ── TTL + grants from CLI flags ──────────────────────────────────────
+    ttl_spec = getattr(args, "ttl", None) or "30d"
+    try:
+        ttl_seconds = parse_duration(ttl_spec)
+    except ValueError as exc:
+        print(f"  [error] --ttl: {exc}", file=sys.stderr)
+        sys.exit(2)
+
+    grants_spec = getattr(args, "grants", None)
+    grants_dict: Optional[dict[str, int]] = None
+    if grants_spec:
+        try:
+            grants_dict = parse_grants(grants_spec)
+        except ValueError as exc:
+            print(f"  [error] --grants: {exc}", file=sys.stderr)
+            sys.exit(2)
+
     relay_block: Optional[dict] = None
     skip_relay = getattr(args, "no_relay", False)
     if not skip_relay:
         relay_cfg = read_relay_config()
         relay_port = relay_cfg["port"]
+        relay_tls = bool(relay_cfg.get("tls"))
+        transport_hint = "wss" if relay_tls else "ws"
 
         health = probe_relay(relay_port)
         if health is None:
@@ -382,11 +580,23 @@ def pair_command(args) -> None:
             )
         else:
             relay_code = _generate_relay_code()
-            if register_relay_code(relay_port, relay_code):
+            if register_relay_code(
+                relay_port,
+                relay_code,
+                ttl_seconds=ttl_seconds,
+                grants=grants_dict,
+                transport_hint=transport_hint,
+            ):
                 relay_block = {
-                    "url": _relay_lan_base_url(relay_cfg["host"], relay_port),
+                    "url": _relay_lan_base_url(
+                        relay_cfg["host"], relay_port, tls=relay_tls
+                    ),
                     "code": relay_code,
+                    "ttl_seconds": ttl_seconds,
+                    "transport_hint": transport_hint,
                 }
+                if grants_dict:
+                    relay_block["grants"] = grants_dict
             else:
                 print(
                     "  [warn] Relay is running but /pairing/register was "
@@ -438,4 +648,21 @@ if __name__ == "__main__":
     )
     parser.add_argument("--host", help="Override API server host")
     parser.add_argument("--port", type=int, help="Override API server port")
+    parser.add_argument(
+        "--ttl",
+        default="30d",
+        help=(
+            "Session TTL — one of 1d/7d/30d/90d/1y/never, or an explicit "
+            "<N><unit> like 12h/4w. Default: 30d."
+        ),
+    )
+    parser.add_argument(
+        "--grants",
+        default=None,
+        help=(
+            "Per-channel grants, comma-separated channel=duration pairs, "
+            "e.g. 'terminal=7d,bridge=1d'. Unspecified channels get server "
+            "defaults."
+        ),
+    )
     pair_command(parser.parse_args())

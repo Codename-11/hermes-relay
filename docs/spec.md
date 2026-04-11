@@ -150,67 +150,117 @@ Phone control — mirrors upstream relay protocol.
 
 ### 3.3 Auth Flow
 
-Pairing is QR-driven. The operator runs the pair command on the host — either `/hermes-relay-pair` from any Hermes chat surface (backed by the `devops/hermes-relay-pair` skill) or the `hermes-pair` shell shim (a thin wrapper around `python -m plugin.pair`). Both share the same implementation in `plugin/pair.py`. The command probes for a running relay, generates a fresh 6-char code, pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint, then embeds the relay URL + code (and the API server credentials) in a single QR payload. The phone scans once and is configured for both chat AND terminal/bridge.
+Pairing is QR-driven. The operator runs the pair command on the host — either `/hermes-relay-pair` from any Hermes chat surface (backed by the `devops/hermes-relay-pair` skill) or the `hermes-pair` shell shim (a thin wrapper around `python -m plugin.pair`). Both share the same implementation in `plugin/pair.py`. The command probes for a running relay, generates a fresh 6-char code, pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint, then embeds the relay URL + code + **chosen TTL + per-channel grants + HMAC signature** (and the API server credentials) in a single QR payload. The phone scans once, **confirms the TTL and grants via a picker dialog**, and is configured for both chat AND terminal/bridge.
 
 ```
-1. Operator runs /hermes-relay-pair (or hermes-pair) on the Hermes host
+1. Operator runs /hermes-relay-pair (or hermes-pair) on the Hermes host,
+   optionally with --ttl <duration> and --grants terminal=7d,bridge=1d.
 2. The pair command reads the API server config (host/port/key) from
-   ~/.hermes/config.yaml or ~/.hermes/.env
+   ~/.hermes/config.yaml or ~/.hermes/.env.
 3. If a relay is reachable at localhost:RELAY_PORT (default 8767):
    a. Mint a fresh 6-char code from A-Z / 0-9
-   b. POST /pairing/register { "code": "ABCD12" }  (loopback only)
-   c. Embed { url: "ws://host:port", code: "ABCD12" } in the QR payload
-4. Render QR + plain-text block
-5. Phone scans the QR → parses HermesPairingPayload (see §3.3.1)
-6. Phone stores the API server URL + key and, if present, the relay URL
-7. Phone opens WSS to the relay with the pairing code in the first
-   system/auth envelope; relay consumes the code, returns a session token
-8. Phone stores the session token in EncryptedSharedPreferences
-9. Future connections use the session token directly (no re-pairing)
-10. Session tokens expire after 30 days or on manual revoke
+   b. Compute the transport hint (wss / ws) from the relay's TLS config
+   c. POST /pairing/register { code, ttl_seconds, grants, transport_hint }
+      (loopback only — the relay clears all rate-limit blocks on success
+      so stale blocks don't prevent legitimate re-pair)
+   d. Build the payload dict, HMAC-SHA256-sign it with the host-local
+      secret at ~/.hermes/hermes-relay-qr-secret (auto-created, 32 bytes,
+      mode 0o600), attach as `sig` field.
+4. Render QR + plain-text block (includes "Pair: for 30 days" or
+   "Pair: indefinitely" + per-channel grant labels).
+5. Phone scans the QR → parses HermesPairingPayload (see §3.3.1).
+6. Phone stores the API server URL + key and, if present, the relay URL.
+7. SessionTtlPickerDialog opens with the QR's operator-chosen TTL
+   preselected (or default 30d on wss/Tailscale, 7d on plain ws). User
+   picks: 1d / 7d / 30d / 90d / 1y / Never. Never-expire warns inline
+   but is always selectable — user intent is the trust model.
+8. Phone opens WSS to the relay with the pairing code + confirmed
+   ttl_seconds + grants in the first system/auth envelope.
+9. Relay consumes the code (host-registered metadata wins over phone-sent
+   metadata — operator policy is authoritative), creates a Session with
+   the resolved TTL + grants + transport_hint, returns session token +
+   expires_at + grants + transport_hint in auth.ok.
+10. Phone stores the session token in the Android Keystore (StrongBox-
+    preferred) with fallback to EncryptedSharedPreferences on older /
+    unsupported devices. On the first wss handshake, records the cert
+    SHA-256 fingerprint in CertPinStore (TOFU). Subsequent connects
+    verify against the stored pin via OkHttp's CertificatePinner.
+11. Future connections use the session token directly. Rate limiter,
+    session expiry, and per-channel grants all enforced at the relay.
+12. Session expires on ttl_seconds (or never); individual grants may
+    expire sooner. Paired Devices screen lists all devices with per-row
+    revoke.
 ```
 
-Old API-only QRs (no `relay` block) still parse — the phone just skips the relay setup step and can be paired against a relay later via Settings. Phase 3 (bridge) will introduce a symmetric phone-generates-code, host-approves flow that reuses the same `POST /pairing/register` endpoint from the opposite direction.
+**Old API-only QRs** (no `relay` block, no `hermes` field, or `hermes: 1`) still parse — the phone just skips the relay setup step and can be paired against a relay later via Settings. **v1 QRs with a relay block** (no TTL / grants / sig fields) still parse via `ignoreUnknownKeys`; the phone treats missing TTL as "prompt the user with defaults". Forward-compat: future v3+ QRs will ignore-unknown-keys in existing clients.
 
-Biometric gate on the app side for terminal access (fingerprint/face).
+**Re-pair explicitly resets the TOFU pin** for the target host (`applyServerIssuedCodeAndReset(code, relayUrl)` wipes `CertPinStore[host:port]`) — a QR rescan is taken as consent to possibly-new certificate material. This is the documented recovery path when a relay restarts with a new self-signed cert.
 
-#### 3.3.1 QR Wire Format — `HermesPairingPayload`
+**Phase 3 (bridge)** will introduce a symmetric phone-generates-code, host-approves flow. The `POST /pairing/approve` route is stubbed in this cycle — same wire shape as `/pairing/register`, same loopback gate — with a `# TODO(Phase 3)` pointing at the pending-codes store + operator approval UI that still needs to be built.
+
+Biometric gate on the app side for terminal access (fingerprint/face) remains planned.
+
+#### 3.3.1 QR Wire Format — `HermesPairingPayload` (v2)
 
 ```json
 {
-  "hermes": 1,
+  "hermes": 2,
   "host": "172.16.24.250",
   "port": 8642,
   "key": "api-bearer-token",
   "tls": false,
   "relay": {
     "url": "ws://172.16.24.250:8767",
-    "code": "ABCD12"
-  }
+    "code": "ABCD12",
+    "ttl_seconds": 2592000,
+    "grants": {
+      "terminal": 2592000,
+      "bridge": 604800
+    },
+    "transport_hint": "ws"
+  },
+  "sig": "base64url-hmac-sha256"
 }
 ```
 
-- Top-level fields (`host`/`port`/`key`/`tls`) configure the direct-chat Hermes API Server. This is the legacy shape.
-- The `relay` object is **optional** and nullable. Present only when the pair command found a running relay and successfully pre-registered a pairing code with it.
-- `relay.url` is the full WebSocket URL (`ws://` for dev, `wss://` for production).
-- `relay.code` is a 6-char one-shot pairing code from `A-Z / 0-9`. Expires 10 minutes after registration (same lifecycle as relay-generated codes).
-- The Android parser uses `kotlinx.serialization` with `ignoreUnknownKeys = true`, so future fields can be added without breaking older app builds.
+- `hermes` — payload version. `1` is the legacy shape (no new fields); `2` is set when any v2-only field (`ttl_seconds`, `grants`, `transport_hint`) is present in the `relay` block. Both versions parse on phones with the v2 parser.
+- Top-level fields (`host`/`port`/`key`/`tls`) configure the direct-chat Hermes API Server. Unchanged since v1.
+- `relay` — **optional** and nullable. Present only when the pair command found a running relay and successfully pre-registered a pairing code with it.
+- `relay.url` — full WebSocket URL (`ws://` for dev, `wss://` for production).
+- `relay.code` — 6-char one-shot pairing code from `A-Z / 0-9`. Expires 10 minutes after registration.
+- `relay.ttl_seconds` — **optional**. Operator-chosen session lifetime in seconds. `0` means never expire. When present, the phone's TTL picker preselects this value; when missing, the phone picks a default based on transport hint (wss → 30d, ws → 7d). The user always confirms via the picker dialog.
+- `relay.grants` — **optional**. Per-channel expiries in seconds-from-now. Map keys: `"terminal"`, `"bridge"`. Each grant is clamped server-side to the overall session TTL — a grant cannot outlive its session. Default caps if unspecified: terminal 30 days, bridge 7 days.
+- `relay.transport_hint` — **optional**. `"wss"` or `"ws"`. Used by the phone as the default for the transport security badge and to compute the TTL picker's default option.
+- `sig` — **optional**. Base64 HMAC-SHA256 of the canonicalized payload (sort_keys=True, separators=(",", ":"), `sig` field excluded from canonical form). Computed with a host-local secret at `~/.hermes/hermes-relay-qr-secret`. Phones parse and store `sig` but **do not verify it yet** — full verification requires a secret distribution mechanism the protocol doesn't yet define.
+- The Android parser uses `kotlinx.serialization` with `ignoreUnknownKeys = true`, so future fields can be added without breaking older app builds. `RelayPairing.ttlSeconds` / `grants` / `transportHint` are all nullable with defaults.
 
 Implementation references:
-- Server-side payload builder: `plugin/pair.py` → `build_payload()` / `pair_command()`
+- Server-side payload builder + CLI flags: `plugin/pair.py` → `build_payload(sign=True)` / `pair_command()` / `parse_duration()` / `parse_grants()`
+- Server-side HMAC: `plugin/relay/qr_sign.py` → `canonicalize` / `sign_payload` / `verify_payload` / `load_or_create_secret`
 - Phone-side parser: `app/src/main/kotlin/.../ui/components/QrPairingScanner.kt` → `HermesPairingPayload` / `RelayPairing`
+- Phone-side TTL picker: `app/src/main/kotlin/.../ui/components/SessionTtlPickerDialog.kt`
 - Relay registration endpoint: `plugin/relay/server.py` → `handle_pairing_register` (see §6 for details)
 
 ### 3.4 Security
 
 | Layer | Implementation |
 |-------|---------------|
-| Transport | WSS (TLS 1.3) — no plaintext option |
-| Auth | Pairing code → session token (stored encrypted on device) |
-| Rate limiting | 5 auth attempts / 60s, then 5min block (existing) |
-| Terminal gate | Biometric/PIN required before terminal access |
-| Token storage | Android EncryptedSharedPreferences (AES-256-GCM) |
-| Certificate | Pin server cert or use Let's Encrypt with ACME |
+| Transport (default) | WSS / TLS 1.3 (**preferred**) |
+| Transport (opt-in) | Plain `ws://` — gated on `InsecureConnectionAckDialog` consent + reason picker (LAN-only / Tailscale or VPN / Local dev). Reason is displayed, not enforced — operator intent is the trust model. |
+| Transport indicator | `TransportSecurityBadge` in Settings + Session sheet + Paired Devices card. Three states: 🔒 secure / 🔓 insecure with reason / 🔓 insecure unknown. |
+| Pairing (host → phone) | `hermes-pair` / `/hermes-relay-pair` → `POST /pairing/register` (loopback-only) → QR embedded in operator's terminal or chat. |
+| Pairing (phone → host, Phase 3) | Stubbed at `POST /pairing/approve` — same wire shape, same loopback gate. Real UX pending bridge work. |
+| Session lifetime | User-selected at pair: 1d / 7d / 30d / 90d / 1y / **never**. Never is always selectable; operator intent is the trust model. |
+| Per-channel grants | One session token carries `{chat, terminal, bridge}` per-channel expiries. Terminal default cap 30d, bridge default cap 7d, both clamped to session lifetime. |
+| Auth envelope | `{pairing_code, ttl_seconds, grants, device_name, device_id}` for pairing mode; `{session_token, device_name, device_id}` for session-mode re-auth. Host metadata wins over phone metadata when both are present. |
+| `auth.ok` response | `{session_token, expires_at, grants, transport_hint, profiles, server_version}`. `math.inf` expiries serialize as `null`. |
+| Rate limiting | 5 auth attempts / 60s → 5-min block. **`/pairing/register` clears all blocks on success** so legitimate re-pair after a relay restart works immediately. |
+| Token storage | `SessionTokenStore` — `KeystoreTokenStore` (StrongBox-preferred via `setRequestStrongBoxBacked`) with fallback to `LegacyEncryptedPrefsTokenStore` (TEE-backed `EncryptedSharedPreferences`). One-shot lossless migration on first launch post-upgrade. `hasHardwareBackedStorage` flag surfaced in UI. |
+| Cert pinning | TOFU via `CertPinStore` — SHA-256 SPKI fingerprint recorded per `host:port` on first successful wss connect. Subsequent connects verify via OkHttp `CertificatePinner`. Pin wiped explicitly on QR re-pair (`applyServerIssuedCodeAndReset`). Plain ws:// short-circuits pinning entirely. |
+| QR integrity | HMAC-SHA256 over canonicalized payload. Host-local secret at `~/.hermes/hermes-relay-qr-secret`. Phone parses + stores the signature but does NOT verify yet (secret distribution TBD). |
+| Tailscale detection | Informational only — `tailscale0` interface + `100.64.0.0/10` CGNAT + `.ts.net` hostname checks. Displayed as a Connection-section chip. Does NOT auto-change TTL defaults. |
+| Device revocation | Paired Devices screen → `GET /sessions` (tokens masked to 8-char prefix) / `DELETE /sessions/{token_prefix}` (self-revoke allowed, wipes local state + redirects to pair flow). Any paired device can revoke any other — trade-off documented in ADR 15. |
+| Terminal gate | Biometric/PIN required before terminal access (planned). |
 
 ---
 

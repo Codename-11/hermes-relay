@@ -82,8 +82,47 @@ If the relay isn't running, `hermes-pair` prints an `[info]` line pointing at `h
 hermes-pair --no-relay
 ```
 
+#### Choosing session lifetime + channel grants
+
+By default the phone prompts you to pick a session TTL when you scan the QR (1 day / 7 days / 30 days / 90 days / 1 year / never expire). You can also **pre-set** the TTL and per-channel grants on the host side so the phone's picker dialog opens with your chosen values already selected:
+
+```bash
+# Pair for 7 days
+hermes-pair --ttl 7d
+
+# Pair indefinitely, limit terminal to 30 days and bridge to 1 day
+hermes-pair --ttl never --grants terminal=30d,bridge=1d
+
+# Short-lived dev session
+hermes-pair --ttl 1d
+```
+
+Supported duration formats: `1d`, `7d`, `30d`, `90d`, `1y`, `never` (or any `<number><unit>` combo where unit is `s`/`m`/`h`/`d`/`w`/`y`). Grants can be pre-set for the `terminal` and `bridge` channels and are automatically clamped to the overall session TTL — a grant cannot outlive its session.
+
+The phone's TTL picker dialog always opens on scan, preselected with your chosen values, so you have one final chance to confirm or override before the session is created. The selection you make is persisted as the new default for future pairs.
+
+::: tip Never expire
+`Never expire` is always available in the picker regardless of transport. The phone treats your intent as the trust model rather than gating on secure-transport detection — if you explicitly pick it, the session stays active until you revoke it from **Paired Devices**.
+:::
+
+#### Transport security + insecure-mode consent
+
+The app renders a **Transport Security** badge next to each Connection row:
+
+- 🔒 **Secure (TLS)** — paired over `wss://`
+- 🔓 **Insecure (LAN only / Tailscale / Local dev)** — paired over plain `ws://` with the reason you picked on the consent dialog
+- 🔓 **Insecure** — plain `ws://` with no reason recorded
+
+The first time you toggle insecure mode on, a consent dialog opens with a plain-language threat-model explanation and a reason picker. The reason is displayed on the badge but is not enforced — it's informational, to make the choice visible to you later.
+
+The app also runs a **Trust On First Use** (TOFU) cert pinning check on `wss://` connections: on the first successful handshake it records the server's certificate fingerprint, and every subsequent connect verifies against it. If the cert changes (because the relay was rebuilt, the Let's Encrypt cert rolled over, or an MITM is happening), the connection fails loudly. Re-pairing via QR is taken as explicit consent to pin a new certificate.
+
+#### Paired Devices management
+
+**Settings → Connection → Paired Devices** lists every device currently paired with the relay — device name, transport badge, session expiry, per-channel grant chips, and a **Revoke** button per row. Revoking the current device wipes local state and redirects to the pair flow. Any paired device can revoke any other; for single-operator setups this is intentional (so you can manage everything from one phone), multi-user deployments will need a role model later.
+
 ::: warning Security
-The QR contains credentials — your API key if one is set, and the relay pairing code if a relay block was embedded. Don't screenshot or share it. The relay code is one-shot and expires in 10 minutes, but the API key is long-lived.
+The QR contains credentials — your API key if one is set, and the relay pairing code if a relay block was embedded. The pairing QR is now also signed with HMAC-SHA256 using a host-local secret (auto-created at `~/.hermes/hermes-relay-qr-secret`, mode 0o600). Don't screenshot or share it. The relay code is one-shot and expires in 10 minutes, but the API key is long-lived.
 :::
 
 ## Hermes Server Setup

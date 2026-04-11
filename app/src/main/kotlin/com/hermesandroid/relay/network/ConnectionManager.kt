@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.network
 
 import android.util.Log
+import com.hermesandroid.relay.auth.CertPinStore
 import com.hermesandroid.relay.network.models.Envelope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -12,6 +13,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import okhttp3.CertificatePinner
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -27,7 +29,18 @@ enum class ConnectionState {
 }
 
 class ConnectionManager(
-    private val multiplexer: ChannelMultiplexer
+    private val multiplexer: ChannelMultiplexer,
+    /**
+     * Optional TOFU certificate pin store. When provided, ConnectionManager
+     * builds its [OkHttpClient] with a snapshot of the current pins each
+     * connect — so subsequent wss connects refuse mismatched certs. On a
+     * successful `onOpen` we call back to record the peer cert fingerprint
+     * for the first-time TOFU case. See [CertPinStore] for the contract.
+     *
+     * Nullable for backwards-compat with unit tests that construct a bare
+     * ConnectionManager without auth wiring.
+     */
+    private val certPinStore: CertPinStore? = null
 ) {
     private val supervisorJob = SupervisorJob()
     private val scope = CoroutineScope(supervisorJob + Dispatchers.IO)
@@ -37,10 +50,26 @@ class ConnectionManager(
         encodeDefaults = true
     }
 
-    private val client = OkHttpClient.Builder()
-        .pingInterval(30, TimeUnit.SECONDS)
-        .readTimeout(0, TimeUnit.MILLISECONDS)
-        .build()
+    private fun buildClient(): OkHttpClient {
+        val builder = OkHttpClient.Builder()
+            .pingInterval(30, TimeUnit.SECONDS)
+            .readTimeout(0, TimeUnit.MILLISECONDS)
+        // Swap in the current pin snapshot on every connect. We DON'T hold a
+        // long-lived OkHttpClient with a stale pinner — otherwise a re-pair
+        // that wipes a pin would still be subject to the pre-wipe rules.
+        certPinStore?.let { store ->
+            try {
+                builder.certificatePinner(store.buildPinnerSnapshot())
+            } catch (e: Exception) {
+                Log.w(TAG, "CertificatePinner build failed: ${e.message}")
+                builder.certificatePinner(CertificatePinner.DEFAULT)
+            }
+        }
+        return builder.build()
+    }
+
+    @Volatile
+    private var client: OkHttpClient = buildClient()
 
     private var webSocket: WebSocket? = null
     private var serverUrl: String? = null
@@ -142,6 +171,16 @@ class ConnectionManager(
             ConnectionState.Connecting
         }
 
+        scope.launch { doConnectInternal(url) }
+    }
+
+    private fun doConnectInternal(url: String) {
+        // Rebuild the client so the CertificatePinner picks up the current
+        // pin store snapshot — crucial right after applyServerIssuedCodeAndReset
+        // wipes a pin for re-pair. buildClient() does a tiny DataStore read
+        // via runBlocking, so it runs on the IO dispatcher inside [scope].
+        client = buildClient()
+
         val request = Request.Builder()
             .url(url)
             .build()
@@ -150,6 +189,24 @@ class ConnectionManager(
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 reconnectAttempt = 0
                 _connectionState.value = ConnectionState.Connected
+
+                // TOFU: record the peer cert fingerprint if we don't have one
+                // yet. OkHttp populates response.handshake when the connection
+                // was upgraded over TLS; ws:// plaintext connections skip this.
+                certPinStore?.let { store ->
+                    val handshake = response.handshake
+                    val peerCerts = handshake?.peerCertificates
+                    if (peerCerts != null && peerCerts.isNotEmpty()) {
+                        scope.launch {
+                            try {
+                                store.recordPinIfAbsent(url, peerCerts)
+                            } catch (e: Exception) {
+                                Log.w(TAG, "recordPinIfAbsent failed: ${e.message}")
+                            }
+                        }
+                    }
+                }
+
                 multiplexer.onConnected()
             }
 

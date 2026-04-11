@@ -1,5 +1,178 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-11 — Pairing + Security Architecture Overhaul (grants, TTL, Keystore, TOFU, devices)
+
+**Why this exists:**
+The existing pairing model has been minimal since day one: pairing codes (one-shot, 10 min TTL) → session tokens (30 days hardcoded, single expiry, no per-channel grants, stored in `EncryptedSharedPreferences`). After the inbound media work exposed the "paired phone gets rate-limited to death on relay restart" gap, Bailey flagged the entire pairing story as ready for a pass. Explicit asks:
+
+1. Secure transport the default, insecure opt-in with clear UI
+2. User-chosen TTL at pair time (1d/7d/30d/90d/1y/never)
+3. Separate defaults by channel (terminal + bridge shorter than chat)
+4. Never-expire ALWAYS selectable — *"don't force check, just allow based on user intent"* (per Bailey)
+5. Tailscale detection — informational only, not opinionated about defaults
+6. Hardware-backed token storage
+7. TOFU cert pinning with explicit reset on re-pair
+8. Device revocation UI (Paired Devices screen)
+9. QR payload signing
+10. Phase 3 bidirectional pairing foundation
+
+Delivered by two parallel background agents (server + phone) + local docs pass. No upstream hermes-agent changes — everything lives in files we own.
+
+---
+
+### Server side — `plugin/relay/`
+
+**Data model (`auth.py`):**
+- `Session` gains `grants: dict[str, float]` (per-channel expiry timestamps), `transport_hint: str` (`"wss"` / `"ws"` / `"unknown"`), `first_seen: float`, and handles `math.inf` for never-expire (`is_expired` is False for inf; JSON serializes inf → `null`).
+- New `PairingMetadata` dataclass carries `ttl_seconds`, `grants`, and `transport_hint` through the pairing flow. `_PairingEntry.metadata` stores it; `PairingManager.register_code(..., ttl_seconds, grants, transport_hint)` accepts it; `consume_code` returns the metadata dataclass (or `None`) instead of a bool — existing boolean callers use `is not None`.
+- `SessionManager.create_session` now takes `ttl_seconds`, `grants`, `transport_hint` params (all with backwards-compatible defaults). `_materialize_grants` helper resolves seconds-from-now durations to absolute expiries and **clamps** each grant to the overall session lifetime — no terminal grant can outlive its session. Default caps: terminal 30 days, bridge 7 days, chat = session lifetime. Constants: `DEFAULT_TERMINAL_CAP`, `DEFAULT_BRIDGE_CAP`.
+- `SessionManager.list_sessions`, `SessionManager.find_by_prefix` — used by the new routes below.
+- `RateLimiter.clear_all_blocks()` — new method that resets `_blocked` and `_failures` dicts. Called unconditionally when `/pairing/register` succeeds, because the operator is explicitly re-pairing and stale rate-limit state is noise. **This fixes the "phone rate-limited for 5 minutes after relay restart" bug that was biting Bailey right when this session started.**
+
+**Routes (`server.py`):**
+- `handle_pairing_register` — now accepts optional `ttl_seconds` / `grants` / `transport_hint` in the JSON body and forwards them to the `_PairingEntry.metadata`. Host-registered metadata takes precedence over phone-sent metadata (operator policy is authoritative). Calls `server.rate_limiter.clear_all_blocks()` on success.
+- `handle_pairing_approve` — new **`POST /pairing/approve`**, Phase 3 bidirectional pairing stub. Loopback-only, same shape as `/pairing/register`. Marked with `# TODO(Phase 3):` — full flow needs a pending-codes store so operators review rather than rubber-stamp. Route + wire shape locked in now so the Android agent has something to target.
+- `handle_sessions_list` — new **`GET /sessions`**, bearer-auth'd. Returns `{"sessions": [...]}` where each entry carries `token_prefix` (first 8 chars, never the full token), `device_name`, `device_id`, `created_at`, `last_seen`, `expires_at` (null for never), `grants`, `transport_hint`, `is_current`. Full tokens are NEVER included — only the prefix — so a caller can't extract another session's credential.
+- `handle_sessions_revoke` — new **`DELETE /sessions/{token_prefix}`**, bearer-auth'd. Matches on first-N-char prefix (≥ 4 chars). Returns 200 on exact match, 404 on zero matches, 409 on ambiguous (2+) matches with the count in the body. Self-revoke is allowed and flagged via `revoked_self: true` so the phone knows to wipe local state.
+- `_authenticate` — extended to thread pairing metadata into the new session + include `expires_at`, `grants`, `transport_hint` in the `auth.ok` payload. `math.inf` → `null` on the wire.
+- `_detect_transport_hint` helper — sniffs `request.transport.get_extra_info('ssl_object')` (non-None → `"wss"`), falls back to `request.scheme`, defaults to `"unknown"`. Runs only when pairing metadata didn't already supply a hint.
+
+**QR signing (new `qr_sign.py`):**
+- `load_or_create_secret(path)` — reads `~/.hermes/hermes-relay-qr-secret` if present (32 bytes, `0o600`, owner-only). On first run generates + writes via `secrets.token_bytes(32)` with `os.umask` safety.
+- `canonicalize(payload)` — JSON-encode with `sort_keys=True, separators=(",", ":")`, `allow_nan=False` (so accidentally signing `math.inf` crashes loudly). Explicitly strips the `sig` field before canonicalization so signing a signed payload is idempotent.
+- `sign_payload(payload, secret) -> str` — base64 HMAC-SHA256.
+- `verify_payload(payload, sig, secret) -> bool` — constant-time compare via `hmac.compare_digest`.
+- 13 test assertions covering canonicalization order-independence, `sig` exclusion, round-trip, tamper + wrong-secret + malformed-sig rejection, file perm check.
+
+**Pair CLI (`plugin/pair.py` + `plugin/cli.py`):**
+- New flags: `--ttl DURATION` (parses `1d` / `7d` / `30d` / `1y` / `never`) and `--grants SPEC` (`terminal=7d,bridge=1d`).
+- `build_payload(..., sign=True)` — auto-bumps `hermes: 1 → 2` when any v2 field is present, embeds `ttl_seconds` / `grants` / `transport_hint` in the `relay` block, computes and attaches the HMAC signature.
+- `read_relay_config` now reads `RELAY_SSL_CERT` to determine TLS status; `_relay_lan_base_url(tls=True)` emits `wss://` when set.
+- `register_relay_code` sends the new fields so `/pairing/register`'s metadata attaches to the code.
+- `render_text_block` shows `Pair: for 30 days` / `Pair: indefinitely` + per-channel grant labels.
+
+**Tests added** (all `unittest.IsolatedAsyncioTestCase` / `AioHTTPTestCase`, runs via `python -m unittest`):
+- `test_qr_sign.py` — 13 assertions covering canonicalize / sign / verify / load_or_create_secret.
+- `test_session_grants.py` — default TTL + grant caps, 1-day session clamping terminal/bridge, never-expire (math.inf everywhere), explicit grants clamped to session, `grant=0` semantics, transport_hint, unknown-channel → expired, pairing metadata register/consume/one-shot/format-reject, list_sessions / find_by_prefix / revoke.
+- `test_sessions_routes.py` — 401 on missing + invalid bearer, GET shape (no full-token leak, 8-char prefix, `is_current` correct, null for never-expire), DELETE 404 / 200 / 409 (ambiguous) / self-revoke.
+- `test_rate_limit_clear.py` — unit `clear_all_blocks` + integration `/pairing/register` clears pre-existing blocks + metadata round-trip + invalid-ttl / bad-transport rejection + `/pairing/approve` loopback gate.
+
+---
+
+### Phone side — `app/src/main/kotlin/.../`
+
+**Token storage + TOFU (new `auth/SessionTokenStore.kt`, `auth/CertPinStore.kt`):**
+- `SessionTokenStore` interface with two implementations:
+  - `KeystoreTokenStore` — StrongBox-preferred via `setRequestStrongBoxBacked(true)` when `FEATURE_STRONGBOX_KEYSTORE` is present (Android 9+). Best-effort: `tryCreate` swallows exceptions so broken OEM keystores don't brick pairing; falls back to the legacy store.
+  - `LegacyEncryptedPrefsTokenStore` — existing `EncryptedSharedPreferences` path, TEE-backed via `MasterKey.AES256_GCM`.
+- One-shot migration: on first launch post-upgrade, reads `session_token` / `device_id` / `api_server_key` / paired-metadata blob from the legacy `hermes_companion_auth` file, writes them to the new store, clears the legacy. If Keystore is unavailable, legacy stays as the active store and no migration happens — users never lose their session.
+- `hasHardwareBackedStorage: Boolean` flag — true only for the StrongBox path. Legacy TEE-backed reports false. Surfaced in the Session info sheet as "Hardware (StrongBox)" vs "Hardware (TEE)".
+- `CertPinStore` — DataStore-backed map of `host:port` → SHA-256 SPKI fingerprints. `recordPinIfAbsent` on first successful wss connect; `buildPinnerSnapshot` produces an OkHttp `CertificatePinner`. `ConnectionManager` takes a fresh snapshot on **every** `doConnect`, so a `removePinFor(host)` during re-pair is honored on the next connect — no coordination needed between `AuthManager` and `ConnectionManager`. Plaintext `ws://` short-circuits via `isPinnableUrl`.
+- `applyServerIssuedCodeAndReset(code, relayUrl?)` now wipes the TOFU pin for the target host — a QR re-pair is explicit consent to a possibly-new cert fingerprint.
+
+**Auth + session model (`auth/AuthManager.kt`, new `auth/PairedSession.kt`):**
+- `PairedSession` data class: `token, deviceName, expiresAt: Long?, grants: Map<String, Long?>, transportHint, firstSeen, hasHardwareStorage`.
+- `PairedDeviceInfo` wire model mirrors the server's `GET /sessions` response — `token_prefix, device_name, device_id, created_at, last_seen, expires_at, grants, transport_hint, is_current`.
+- `AuthManager.currentPairedSession: StateFlow<PairedSession?>` — UI reads this for pair metadata without poking at prefs.
+- `handleAuthOk` parses `expires_at` / `grants` / `transport_hint` from the payload, tolerates both int and float epoch seconds, persists alongside the token.
+- `authenticate(ttlSeconds)` injects `ttl_seconds` + `grants` into pairing-mode auth envelopes. Session-mode re-auth (existing session token present) does NOT re-send these — the server keeps the grant table keyed on the original pair.
+
+**QR payload v2 (`ui/components/QrPairingScanner.kt`):**
+- `HermesPairingPayload` gains `sig: String?` (parsed, stored, NOT verified — the phone doesn't have the HMAC secret). `RelayPairing` gains `ttlSeconds: Long?`, `grants: Map<String, Long>?`, `transportHint: String?` — all optional with defaults.
+- `parseHermesPairingQr` no longer rejects on version mismatch — any `hermes >= 1` with a non-blank host decodes. Future v3+ still parses via `ignoreUnknownKeys = true`. v1 QRs with no `hermes` field also parse.
+- Signature verification is a `// TODO` in the parser — full verification requires a phone-side secret distribution path the protocol doesn't yet define.
+
+**TTL picker (new `ui/components/SessionTtlPickerDialog.kt`):**
+- Radio list: **1 day / 7 days / 30 days / 90 days / 1 year / Never expire**.
+- `defaultTtlSeconds(qrTtl, transportHint, tailscale)` logic: QR operator value wins; else wss OR Tailscale → 30d; plain ws → 7d; unknown → 30d.
+- **Never expire is always selectable** per Bailey's explicit "don't force check" direction. Shows an inline warning — *"This device will stay paired until you revoke it manually. Only choose this if you control the network — LAN, Tailscale, VPN, or TLS."* — but does NOT gate.
+- Dialog ALWAYS opens on QR scan so the user confirms the TTL — the trust model is the user's judgment, not the QR's.
+- Last user pick persists to `PairingPreferences.pairTtlSeconds` and becomes the preselected default on future pairs.
+
+**Transport security UI (new `ui/components/TransportSecurityBadge.kt`, `ui/components/InsecureConnectionAckDialog.kt`):**
+- Badge renders in 3 states (secure green 🔒 / amber insecure-with-reason / red insecure-unknown) and 3 sizes (Chip / Row / Large). Rendered in Settings → Connection, in the Session info sheet, and on each Paired Device card.
+- Insecure ack dialog shown **first time** the user toggles insecure mode on. Body: plain-language threat model. Radio buttons for reason — "LAN only" / "Tailscale or VPN" / "Local development only". Only dismissible after selecting a reason + tapping "I understand". Marks `insecure_ack_seen = true`. Reason is stored for display, NOT gating.
+
+**Tailscale detection (new `util/TailscaleDetector.kt`):**
+- Checks `NetworkInterface.getNetworkInterfaces()` for `tailscale0` interface or an address in `100.64.0.0/10` (Tailscale CGNAT range), plus the configured relay URL host (`.ts.net` / 100.x.y.z).
+- `StateFlow<Boolean>` refreshed on network changes via `ConnectivityManager` callback.
+- Purely informational — shown as a "Tailscale detected" green chip in the Connection section. Does NOT auto-change any defaults per Bailey's #5 requirement.
+
+**Paired Devices screen (new `ui/screens/PairedDevicesScreen.kt`):**
+- Nav destination reached from Settings → Connection → "Paired Devices".
+- Fetches via `RelayHttpClient.listSessions()` (new method, GET `/sessions` with bearer auth). Each card: device name + ID, "Current device" badge if `isCurrent`, transport security badge, expiry ("Expires Apr 18, 2026" or "Never"), per-channel grant chips, revoke button.
+- Revoke button → confirmation dialog → `RelayHttpClient.revokeSession(tokenPrefix)`. Revoking the current device wipes local session token + redirects to pairing flow.
+- Pull-to-refresh. Empty state "No paired devices". Graceful 404 handling — if the server hasn't shipped `/sessions` yet, renders empty list instead of crashing.
+
+**`network/RelayHttpClient.kt` — two new methods:**
+- `listSessions(): Result<List<PairedDeviceInfo>>` — GET `/sessions` with bearer auth. 404 treated as "endpoint not implemented yet" → empty list.
+- `revokeSession(tokenPrefix): Result<Unit>` — DELETE `/sessions/{prefix}` with bearer auth. 404 treated as "already gone" → success.
+
+**`network/ConnectionManager.kt` — TOFU integration:**
+- Optional `CertPinStore` param. Rebuilds `OkHttpClient` on every connect with a fresh `CertificatePinner` snapshot (so re-pair pin wipes take effect immediately). Records peer cert fingerprint in `onOpen` when the handshake is TLS.
+- Connect logic moved to IO dispatcher so the DataStore read for pin snapshot doesn't run on the caller's thread.
+
+**`viewmodel/ConnectionViewModel.kt`:**
+- Wires `AuthManager` before `ConnectionManager` so the pin store is available.
+- Exposes `currentPairedSession`, `pairedDevices` + `pairedDevicesLoading` + `pairedDevicesError`, `isTailscaleDetected`, `insecureAckSeen`, `insecureReason`.
+- `loadPairedDevices()`, `revokeDevice(prefix)`, `setInsecureAckComplete(reason)`.
+- Shuts down Tailscale detector on `onCleared`.
+
+**`ui/screens/SettingsScreen.kt` — integration:**
+- `onNavigateToPairedDevices` callback added to the signature.
+- Connection card: new TransportSecurityBadge row, Tailscale chip (if detected), hardware-storage chip, Paired Devices navigation row.
+- Insecure toggle now routes through the first-time ack dialog. Cancel leaves the toggle off; confirm persists the reason and flips the mode.
+- QR scan handoff now stages the payload into `pendingQrPayload` and opens `SessionTtlPickerDialog`. Picker confirm applies URLs/key/code, calls `applyServerIssuedCodeAndReset(code, relayUrl)` (wipes the TOFU pin), stores `pendingGrants` + `pendingTtlSeconds`, then tests the connection.
+
+**`ui/components/ConnectionInfoSheet.kt`:**
+- `SessionInfoSheet` now reads `currentPairedSession` and displays Expires / Channel grants / Transport / Key storage rows when paired.
+
+**`ui/RelayApp.kt`:**
+- New `Screen.PairedDevices` nav destination wired into the nav graph with back + re-pair callbacks. Reachable only from Settings — no bottom-nav slot.
+
+**New DataStore keys (`data/PairingPreferences.kt`):**
+- `pair_ttl_seconds` (Long, user's last-selected TTL)
+- `insecure_ack_seen` (Boolean)
+- `insecure_reason` (String: `"lan_only"` / `"tailscale_vpn"` / `"local_dev"` / `""`)
+- `tofu_pins` (string-encoded map)
+
+---
+
+### Security review
+
+The expansion of what a paired phone can do is:
+- **Listing all sessions** (prefixes only, not full tokens) — a compromised phone was already able to see its own session, this adds visibility into other paired devices' metadata. Acceptable because the paired-phone population is explicitly trusted by the operator (they approved each QR pair).
+- **Revoking other sessions** — any paired phone can revoke any other paired device. This is DoS territory: a compromised phone could lock out all other devices. Mitigation: revocation is auditable via the relay logs, and re-pairing is always possible from the host. For most deployments (one operator, 1-2 phones) this is acceptable. For multi-user deployments it'll need per-device role model (admin / user).
+- **QR payload signing** — raises the bar for QR tampering (attacker can't inject their own pairing code via a modified QR photo), but it's defensive: the phone doesn't verify signatures yet. The server-side infrastructure is there so phone-side verification can land in a follow-up once the secret distribution model is defined.
+- **Never-expire sessions** — Bailey's explicit call: allow based on user intent, not gated. Users who pick this are accepting the risk. The Paired Devices screen makes revocation trivial.
+- **TOFU pinning** — protects against MITM of a self-signed wss cert AFTER the first connect. Does not protect the first connect itself (trust-on-first-use). Acceptable for the LAN / Tailscale / VPN deployment model.
+- **StrongBox storage** — improves attacker cost for on-device token extraction on Android 9+ devices with StrongBox hardware. Best-effort; older devices fall back to TEE-backed EncryptedSharedPreferences which is still strong.
+
+---
+
+### Files created/modified
+
+**Server (11 files):**
+- New: `plugin/relay/qr_sign.py`, `plugin/tests/test_qr_sign.py`, `plugin/tests/test_rate_limit_clear.py`, `plugin/tests/test_session_grants.py`, `plugin/tests/test_sessions_routes.py`
+- Modified: `plugin/cli.py`, `plugin/pair.py`, `plugin/relay/auth.py`, `plugin/relay/server.py`
+- Unchanged: `plugin/relay/__init__.py` (version stays `0.2.0` per Bailey's direction — never released)
+
+**Phone (17 files):**
+- New: `auth/CertPinStore.kt`, `auth/PairedSession.kt`, `auth/SessionTokenStore.kt`, `data/PairingPreferences.kt`, `ui/components/InsecureConnectionAckDialog.kt`, `ui/components/SessionTtlPickerDialog.kt`, `ui/components/TransportSecurityBadge.kt`, `ui/screens/PairedDevicesScreen.kt`, `util/TailscaleDetector.kt`
+- Modified: `auth/AuthManager.kt`, `network/ConnectionManager.kt`, `network/RelayHttpClient.kt`, `ui/RelayApp.kt`, `ui/components/ConnectionInfoSheet.kt`, `ui/components/QrPairingScanner.kt`, `ui/screens/SettingsScreen.kt`, `viewmodel/ConnectionViewModel.kt`
+
+**Docs:** this DEVLOG entry, ADR 15 in `docs/decisions.md`, §3.3 / §3.3.1 / §3.4 rewrites in `docs/spec.md`, route tables in `docs/relay-server.md` + `user-docs/reference/relay-server.md`, config sections in `user-docs/reference/configuration.md`, Key Files + Integration Points in `CLAUDE.md`, pair flow in `user-docs/guide/getting-started.md`.
+
+### Known gaps / follow-ups
+
+- **Phone-side QR signature verification** — parsing + storing the `sig` field works; full verification requires a secret distribution mechanism (pre-shared key? on-device enrollment?) the protocol doesn't yet define.
+- **Bidirectional pairing full UX** — `POST /pairing/approve` is a working stub. Real Phase 3 work needs a pending-codes store + operator approval UI.
+- **Per-device role model** — all paired devices currently have equal revoke rights. Multi-user / admin-vs-user split is a future refactor.
+- **Grant renewal UI** — the Paired Devices screen shows expiry but has no "extend this grant" action. Pair-again from the host or just revoke + re-pair.
+- **Build verification** — no gradle run in this session. Bailey deploys from Android Studio. If a compile bug slipped through a KDoc or Compose misuse, it'll surface on the first build attempt (like the `text/*` comment bug earlier today).
+
+---
+
 ## 2026-04-11 — Inbound Media v2: bare-path fetch + session-reload re-parse
 
 **Why this exists:**

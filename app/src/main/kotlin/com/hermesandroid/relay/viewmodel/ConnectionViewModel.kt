@@ -10,9 +10,13 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.hermesandroid.relay.auth.AuthManager
 import com.hermesandroid.relay.auth.AuthState
+import com.hermesandroid.relay.auth.PairedDeviceInfo
+import com.hermesandroid.relay.auth.PairedSession
 import com.hermesandroid.relay.data.DataManager
 import com.hermesandroid.relay.data.MediaSettingsRepository
+import com.hermesandroid.relay.data.PairingPreferences
 import com.hermesandroid.relay.data.relayDataStore
+import com.hermesandroid.relay.util.TailscaleDetector
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.ConnectivityObserver
 import com.hermesandroid.relay.network.ChatMode
@@ -75,8 +79,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // Relay (bridge/terminal)
     val multiplexer = ChannelMultiplexer()
     val chatHandler = ChatHandler()
-    private val connectionManager = ConnectionManager(multiplexer)
+    // AuthManager owns the CertPinStore; ConnectionManager takes a snapshot
+    // of the store's current pins on every connect so re-pair wipes land.
+    // AuthManager must be constructed before ConnectionManager so the pin
+    // store is available for the certificate pinner.
     val authManager = AuthManager(application, multiplexer, viewModelScope)
+    private val connectionManager = ConnectionManager(multiplexer, authManager.certPinStore)
 
     // Data management
     val dataManager = DataManager(application)
@@ -181,6 +189,36 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     // Pairing code from AuthManager
     val pairingCode: StateFlow<String> = authManager.pairingCode
+
+    // Paired-session snapshot (expires_at, grants, transport hint) from AuthManager.
+    // Exposed straight through so SettingsScreen + PairedDevicesScreen can
+    // render expiry + grant chips without poking at prefs.
+    val currentPairedSession: StateFlow<PairedSession?> = authManager.currentPairedSession
+
+    // --- Paired devices list (GET /sessions) -------------------------------
+    //
+    // Loaded on-demand from PairedDevicesScreen. State is held here so the
+    // screen can navigate away and come back without re-fetching every time.
+
+    private val _pairedDevices = MutableStateFlow<List<PairedDeviceInfo>>(emptyList())
+    val pairedDevices: StateFlow<List<PairedDeviceInfo>> = _pairedDevices.asStateFlow()
+
+    private val _pairedDevicesLoading = MutableStateFlow(false)
+    val pairedDevicesLoading: StateFlow<Boolean> = _pairedDevicesLoading.asStateFlow()
+
+    private val _pairedDevicesError = MutableStateFlow<String?>(null)
+    val pairedDevicesError: StateFlow<String?> = _pairedDevicesError.asStateFlow()
+
+    // --- Tailscale detection (informational) -------------------------------
+    //
+    // Purely for UI labeling. Does NOT auto-change TTLs or flip insecure mode.
+    // Exposed to SettingsScreen + SessionTtlPickerDialog.
+    private val tailscaleDetector = TailscaleDetector(
+        context = application,
+        scope = viewModelScope,
+        relayUrlProvider = { _relayUrl.value },
+    )
+    val isTailscaleDetected: StateFlow<Boolean> = tailscaleDetector.isTailscaleDetected
 
     // What's New tracking
     private val _showWhatsNew = MutableStateFlow(false)
@@ -717,9 +755,73 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         authManager.clearSession()
     }
 
+    // --- Paired devices management ----------------------------------------
+
+    /**
+     * Fetch the list of paired devices from the relay. Idempotent — safe to
+     * call repeatedly (e.g. on screen entry and on pull-to-refresh). Errors
+     * surface through [pairedDevicesError]; a partial failure (404 = endpoint
+     * not implemented) yields an empty list rather than an error.
+     */
+    fun loadPairedDevices() {
+        viewModelScope.launch {
+            _pairedDevicesLoading.value = true
+            _pairedDevicesError.value = null
+            val result = relayHttpClient.listSessions()
+            result.fold(
+                onSuccess = { list -> _pairedDevices.value = list },
+                onFailure = { e ->
+                    _pairedDevicesError.value = e.message ?: "Unknown error"
+                }
+            )
+            _pairedDevicesLoading.value = false
+        }
+    }
+
+    /**
+     * Revoke a paired device by its token prefix. Returns `true` on success
+     * (and on 404, which we treat as "already gone"). Refreshes the list
+     * automatically on success.
+     */
+    suspend fun revokeDevice(tokenPrefix: String): Boolean {
+        val result = relayHttpClient.revokeSession(tokenPrefix)
+        return if (result.isSuccess) {
+            // Optimistic local removal so the UI updates immediately while
+            // the refresh round-trips.
+            _pairedDevices.value = _pairedDevices.value.filterNot { it.tokenPrefix == tokenPrefix }
+            loadPairedDevices()
+            true
+        } else {
+            _pairedDevicesError.value = result.exceptionOrNull()?.message
+            false
+        }
+    }
+
+    // --- Insecure-ack helpers ---------------------------------------------
+
+    /**
+     * DataStore-backed flow of whether the user has acknowledged the
+     * [com.hermesandroid.relay.ui.components.InsecureConnectionAckDialog].
+     */
+    val insecureAckSeen: StateFlow<Boolean> =
+        PairingPreferences.insecureAckSeen(application)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    val insecureReason: StateFlow<String> =
+        PairingPreferences.insecureReason(application)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
+    fun setInsecureAckComplete(reason: String) {
+        viewModelScope.launch {
+            PairingPreferences.setInsecureAckSeen(application, true)
+            PairingPreferences.setInsecureReason(application, reason)
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
         connectionManager.shutdown()
         _apiClient.value?.shutdown()
+        tailscaleDetector.shutdown()
     }
 }

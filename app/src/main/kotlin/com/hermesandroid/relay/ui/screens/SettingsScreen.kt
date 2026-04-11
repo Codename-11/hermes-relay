@@ -21,8 +21,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Shield
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -107,20 +109,29 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.network.ConnectionState
+import com.hermesandroid.relay.data.PairingPreferences
 import com.hermesandroid.relay.ui.components.ApiServerInfoSheet
 import com.hermesandroid.relay.ui.components.ConnectionStatusRow
+import com.hermesandroid.relay.ui.components.InsecureConnectionAckDialog
 import com.hermesandroid.relay.ui.components.PairingWalkthroughDialog
 import com.hermesandroid.relay.ui.components.RelayInfoSheet
 import com.hermesandroid.relay.ui.components.SessionInfoSheet
+import com.hermesandroid.relay.ui.components.SessionTtlPickerDialog
 import com.hermesandroid.relay.ui.components.QrPairingScanner
+import com.hermesandroid.relay.ui.components.HermesPairingPayload
 import com.hermesandroid.relay.ui.components.StatsForNerds
+import com.hermesandroid.relay.ui.components.TransportSecurityBadge
+import com.hermesandroid.relay.ui.components.TransportSecuritySize
 import com.hermesandroid.relay.ui.components.WhatsNewDialog
+import com.hermesandroid.relay.ui.components.defaultTtlSeconds
+import com.hermesandroid.relay.ui.components.isUrlSecure
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    connectionViewModel: ConnectionViewModel
+    connectionViewModel: ConnectionViewModel,
+    onNavigateToPairedDevices: () -> Unit = {},
 ) {
     val relayConnectionState by connectionViewModel.relayConnectionState.collectAsState()
     val authState by connectionViewModel.authState.collectAsState()
@@ -139,6 +150,13 @@ fun SettingsScreen(
     val streamingEndpoint by connectionViewModel.streamingEndpoint.collectAsState()
     val maxAttachmentMb by connectionViewModel.maxAttachmentMb.collectAsState()
     val maxMessageLength by connectionViewModel.maxMessageLength.collectAsState()
+
+    // Security overhaul (2026-04-11):
+    val currentPairedSession by connectionViewModel.currentPairedSession.collectAsState()
+    val pairedDevices by connectionViewModel.pairedDevices.collectAsState()
+    val isTailscaleDetected by connectionViewModel.isTailscaleDetected.collectAsState()
+    val insecureAckSeen by connectionViewModel.insecureAckSeen.collectAsState()
+    val insecureReason by connectionViewModel.insecureReason.collectAsState()
 
     val isDarkTheme = isSystemInDarkTheme()
 
@@ -204,6 +222,19 @@ fun SettingsScreen(
     // Tap-to-unlock developer options (tap version 7 times)
     var versionTapCount by remember { mutableStateOf(0) }
     var lastTapTime by remember { mutableStateOf(0L) }
+
+    // --- Security overhaul state (2026-04-11) ------------------------------
+    //
+    // After a successful QR parse we stash the payload and open a TTL picker
+    // dialog. The picker's confirm callback then completes the pair (applies
+    // the code, connects, etc.). This matches Bailey's request that the user
+    // always gets a confirmation step so the trust model is explicit.
+    var pendingQrPayload by remember { mutableStateOf<HermesPairingPayload?>(null) }
+
+    // The insecure ack dialog opens the first time the user toggles insecure
+    // mode on. We stash the "new state" so we can revert the toggle if they
+    // cancel the dialog without picking a reason.
+    var showInsecureAckDialog by remember { mutableStateOf(false) }
 
     // Camera permission launcher for QR scanning
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
@@ -406,6 +437,102 @@ fun SettingsScreen(
                                 Text("Re-pair")
                             }
                         }
+                    }
+
+                    // --- Security overhaul row set --------------------------
+                    //
+                    // Transport security badge + Tailscale chip + Paired
+                    // Devices entry point. Rendered at the bottom of Card 1
+                    // so they're part of the "what's my pairing posture"
+                    // mental model instead of buried in manual config.
+
+                    HorizontalDivider()
+
+                    // Transport security badge — reflects the currently-
+                    // configured relay URL, not the live connection state.
+                    // Secure = wss://, insecure = ws://. Reason comes from
+                    // the insecure ack dialog.
+                    val transportSecure = isUrlSecure(relayUrl)
+                    TransportSecurityBadge(
+                        isSecure = transportSecure,
+                        reason = insecureReason.ifBlank { null },
+                        size = TransportSecuritySize.Row,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    // Tailscale detected chip — purely informational. Only
+                    // shows when detected; absence implies "not on Tailscale".
+                    if (isTailscaleDetected) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Shield,
+                                contentDescription = null,
+                                tint = Color(0xFF2E7D32),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "Tailscale detected",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF2E7D32)
+                            )
+                        }
+                    }
+
+                    // Hardware-backed storage badge — shows the 🛡 when
+                    // the session token is in StrongBox.
+                    if (currentPairedSession?.hasHardwareStorage == true) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Shield,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "Session token stored in hardware keystore",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
+                    // Paired Devices entry point. Navigates to
+                    // PairedDevicesScreen which fetches GET /sessions. Shows
+                    // a cached count when we've loaded the list before.
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onNavigateToPairedDevices() }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Paired Devices",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = if (pairedDevices.isNotEmpty()) {
+                                    "${pairedDevices.size} active"
+                                } else {
+                                    "View and revoke paired phones"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.Filled.ChevronRight,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
@@ -628,7 +755,18 @@ fun SettingsScreen(
                         }
                         Switch(
                             checked = insecureMode,
-                            onCheckedChange = { connectionViewModel.setInsecureMode(it) }
+                            onCheckedChange = { enabled ->
+                                if (enabled && !insecureAckSeen) {
+                                    // First time enabling insecure mode —
+                                    // show the one-time threat model dialog
+                                    // so the user understands what they're
+                                    // opting into. Leave the toggle OFF
+                                    // until they confirm a reason.
+                                    showInsecureAckDialog = true
+                                } else {
+                                    connectionViewModel.setInsecureMode(enabled)
+                                }
+                            }
                         )
                     }
 
@@ -1748,30 +1886,68 @@ fun SettingsScreen(
     }
 
     // QR Scanner overlay
+    //
+    // On successful parse we stash the payload and open the TTL picker —
+    // the picker's confirm callback completes the pair. This ensures the
+    // user always gets an explicit "Keep this pairing for…" confirmation
+    // step so the trust model (who has access, for how long) is visible.
     if (showQrScanner) {
         QrPairingScanner(
             onPairingDetected = { payload ->
+                showQrScanner = false
+                pendingQrPayload = payload
+            },
+            onDismiss = { showQrScanner = false }
+        )
+    }
+
+    // TTL picker — opens when pendingQrPayload becomes non-null. Confirm
+    // persists URLs/keys/code and kicks the relay connect; cancel drops the
+    // payload and leaves the user on Settings unchanged.
+    pendingQrPayload?.let { payload ->
+        val defaultTtl = defaultTtlSeconds(
+            qrTtlSeconds = payload.relay?.ttlSeconds,
+            transportHint = payload.relay?.transportHint,
+            isTailscaleDetected = isTailscaleDetected,
+        )
+        // Previously-selected TTL from DataStore (seeded from the default).
+        // collectAsState with a default so we don't block composition while
+        // DataStore spins up its first emit.
+        val persistedTtl by PairingPreferences.pairTtlSeconds(context)
+            .collectAsState(initial = PairingPreferences.DEFAULT_TTL_SECONDS)
+        val initialTtl = if (payload.relay?.ttlSeconds != null) defaultTtl else persistedTtl
+
+        SessionTtlPickerDialog(
+            initialTtlSeconds = initialTtl,
+            isTailscaleDetected = isTailscaleDetected,
+            transportHint = payload.relay?.transportHint,
+            onConfirm = { ttl ->
+                // Apply the scanned values
                 apiUrlInput = payload.serverUrl
                 apiKeyInput = payload.key
-                showQrScanner = false
-
-                // Auto-save and test
                 connectionViewModel.updateApiServerUrl(payload.serverUrl)
                 connectionViewModel.updateApiKey(payload.key)
 
-                // If the QR carries a relay block, configure the relay side
-                // too so one scan fully provisions chat + terminal + bridge.
                 payload.relay?.let { relay ->
                     connectionViewModel.updateRelayUrl(relay.url)
-                    // Auto-enable insecure mode when the relay URL is
-                    // plain ws:// — otherwise the connect will silently
-                    // refuse and the user has to dig into Developer
-                    // Options to enable it manually.
                     if (relay.url.startsWith("ws://")) {
                         connectionViewModel.setInsecureMode(true)
                     }
-                    connectionViewModel.authManager.applyServerIssuedCode(relay.code)
+                    // Wipe any TOFU pin for the new host + apply the code.
+                    // applyServerIssuedCodeAndReset now takes the relay URL
+                    // so the cert-pin store can remove its per-host entry
+                    // for legitimate cert rotation.
+                    connectionViewModel.authManager.applyServerIssuedCodeAndReset(
+                        code = relay.code,
+                        relayUrl = relay.url,
+                    )
+                    // Propagate per-channel grants into the next auth.
+                    connectionViewModel.authManager.setPendingGrants(relay.grants)
                 }
+                // Stash TTL for the next authenticate() call.
+                connectionViewModel.authManager.setPendingTtlSeconds(ttl)
+
+                pendingQrPayload = null
 
                 isTesting = true
                 connectionViewModel.testApiConnection { success ->
@@ -1787,7 +1963,24 @@ fun SettingsScreen(
                     Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                 }
             },
-            onDismiss = { showQrScanner = false }
+            onCancel = { pendingQrPayload = null }
+        )
+    }
+
+    // Insecure ack dialog — first time the user flips the "Allow insecure"
+    // toggle on. Only gates the toggle itself; all actual pairing flows
+    // trust the user's judgment.
+    if (showInsecureAckDialog) {
+        InsecureConnectionAckDialog(
+            onConfirm = { reason ->
+                connectionViewModel.setInsecureAckComplete(reason)
+                connectionViewModel.setInsecureMode(true)
+                showInsecureAckDialog = false
+            },
+            onCancel = {
+                showInsecureAckDialog = false
+                // Leave the toggle off — the user bailed out of the ack.
+            }
         )
     }
 }

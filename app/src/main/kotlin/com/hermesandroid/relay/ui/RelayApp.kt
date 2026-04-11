@@ -56,6 +56,7 @@ import kotlinx.coroutines.delay
 import com.hermesandroid.relay.ui.onboarding.OnboardingScreen
 import com.hermesandroid.relay.ui.screens.BridgeScreen
 import com.hermesandroid.relay.ui.screens.ChatScreen
+import com.hermesandroid.relay.ui.screens.PairedDevicesScreen
 import com.hermesandroid.relay.ui.screens.SettingsScreen
 import com.hermesandroid.relay.ui.screens.TerminalScreen
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
@@ -73,6 +74,10 @@ sealed class Screen(
     data object Terminal : Screen("terminal", "Terminal", Icons.Filled.Code)
     data object Bridge : Screen("bridge", "Bridge", Icons.Filled.PhoneAndroid)
     data object Settings : Screen("settings", "Settings", Icons.Filled.Settings)
+
+    // Non-bottom-nav destinations — reached by explicit navigation, not the
+    // NavigationBar. Paired Devices is opened from Settings → Connection.
+    data object PairedDevices : Screen("paired_devices", "Paired Devices", Icons.Filled.Settings)
 }
 
 private val bottomNavScreens = listOf(
@@ -314,7 +319,24 @@ fun RelayApp() {
                     BridgeScreen()
                 }
                 composable(Screen.Settings.route) {
-                    SettingsScreen(connectionViewModel = connectionViewModel)
+                    SettingsScreen(
+                        connectionViewModel = connectionViewModel,
+                        onNavigateToPairedDevices = {
+                            navController.navigate(Screen.PairedDevices.route)
+                        }
+                    )
+                }
+                composable(Screen.PairedDevices.route) {
+                    PairedDevicesScreen(
+                        connectionViewModel = connectionViewModel,
+                        onBack = { navController.popBackStack() },
+                        onRequestRepair = {
+                            // Pop back to Settings so the user lands on the
+                            // "Scan Pairing QR" button rather than getting
+                            // stranded on an empty devices list.
+                            navController.popBackStack(Screen.Settings.route, inclusive = false)
+                        }
+                    )
                 }
             }
         }

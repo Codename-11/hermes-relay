@@ -410,6 +410,61 @@ The bare-path fetch is therefore safe as long as operators treat the allowed-roo
 - `app/src/main/kotlin/.../network/handlers/ChatHandler.kt` → `scanForMediaMarkers`, `finalizeMediaMarkers`
 - `app/src/main/kotlin/.../ui/components/InboundAttachmentCard.kt` — Discord-style rendering
 
+### 15. Pairing + Security Architecture: grants, user-chosen TTL, Keystore, TOFU, Paired Devices (2026-04-11)
+
+**Decision:** Replace the minimal pairing model (one-shot code → fixed-30-day session token → no channel separation → `EncryptedSharedPreferences` storage) with a layered architecture built around four ideas:
+
+1. **User chooses session TTL at pair time** — 1 day / 7 days / 30 days / 90 days / 1 year / **never expire**. The Android TTL picker dialog always opens on QR scan so the user explicitly confirms. Defaults depend on transport: wss or Tailscale → 30d; plain ws → 7d. Never-expire is ALWAYS selectable with an inline warning — per operator direction, trust the user's intent rather than gating on secure-transport detection.
+2. **Per-channel grants** — one session token, separate expiries for `chat` / `terminal` / `bridge`. Blast-radius-heavy channels have shorter default caps (`terminal ≤ 30d`, `bridge ≤ 7d`), clamped to the session lifetime. Chat runs through the hermes-agent API server rather than the relay, so the chat grant is informational only (used by the phone UI to show scope).
+3. **Hardware-backed token storage with graceful fallback** — `KeystoreTokenStore` requests StrongBox-backed keys via `setRequestStrongBoxBacked(true)` on Android 9+ devices that advertise `FEATURE_STRONGBOX_KEYSTORE`. Falls back to the existing `LegacyEncryptedPrefsTokenStore` (TEE-backed `EncryptedSharedPreferences`) on older devices or when the Keystore path throws. Migration is one-shot and lossless — users never lose a session to an app upgrade.
+4. **TOFU cert pinning with explicit reset on re-pair** — `CertPinStore` records SHA-256 SPKI fingerprints per `host:port` on the first successful wss connect. Subsequent connects build an OkHttp `CertificatePinner` from the stored pin. A user-initiated QR re-pair (`applyServerIssuedCodeAndReset(code, relayUrl)`) wipes the pin for the target host — re-pair is explicit consent to potentially-new cert material. Plaintext ws:// short-circuits pinning entirely.
+
+**Supporting infrastructure:**
+
+- **Device revocation UI** — new Paired Devices screen on the phone, backed by `GET /sessions` (list all paired devices, tokens masked to first 8 chars) and `DELETE /sessions/{token_prefix}` (revoke). Self-revoke is allowed and flagged via `revoked_self: true` so the phone can wipe local state and redirect to pairing.
+- **QR payload v2 + HMAC signing** — payload version bumped from 1 to 2 when any new field is present (`ttl_seconds`, `grants`, `transport_hint`). Signed with HMAC-SHA256 using a host-local secret at `~/.hermes/hermes-relay-qr-secret` (32 bytes, `0o600`, auto-created). Phone parses and stores the `sig` field but does NOT verify it yet — full verification requires a secret-distribution mechanism we don't have defined. The server-side infrastructure is in place so phone-side verification can land in a follow-up.
+- **Rate-limit clear on pair** — `/pairing/register` now calls `RateLimiter.clear_all_blocks()` on success. An operator explicitly re-pairing wants a clean slate; the stale rate-limit state otherwise blocks the legitimate re-pair attempt for 5 minutes. This was an actual bug biting the operator at the start of this session.
+- **Transport security UI** — badge component with three states (secure green 🔒 / insecure amber with reason / insecure unknown red), three sizes (chip / row / large). Rendered in Settings Connection section, Session info sheet, and on each Paired Device card.
+- **Insecure ack dialog** — first-time toggle-on shows a plain-language threat-model dialog with a reason picker (LAN only / Tailscale or VPN / Local dev only). Reason persists for display purposes; does NOT gate anything per the operator's trust-model direction.
+- **Tailscale detection** — `TailscaleDetector` checks for `tailscale0` interface + `100.64.0.0/10` CGNAT addresses + `.ts.net` hostnames in the relay URL. Shown as a "Tailscale detected" green chip; **does NOT auto-change** any defaults — informational only.
+- **Phase 3 bidirectional pairing stub** — new `POST /pairing/approve` route, loopback-only, same shape as `/pairing/register`. Marked with `# TODO(Phase 3):` — full flow needs a pending-codes store so operators review rather than rubber-stamp. The route and wire shape are committed now so the phone side has something to target when bridge lands.
+
+**Why this split:**
+
+- **Grants on a single token (not multiple tokens)** — one WSS connection, one auth envelope, one session lookup. Per-channel expiry is checked at channel message dispatch time via `Session.channel_is_expired(name)`. Simpler to reason about than multiple parallel tokens, and the phone only needs one storage slot.
+- **`math.inf` for never-expire** — represents "truly unbounded" in code, serializes to `null` on the wire (JSON doesn't have an infinity literal, and null maps cleanly to Kotlin's nullable `Long?`). `canonicalize()` uses `allow_nan=False` so accidentally trying to sign a payload with a raw `math.inf` crashes loudly — callers must explicitly emit `None`/`0`. Prevents silent serialization bugs.
+- **Metadata on pairing entries, host wins over phone** — when the host operator runs `hermes-pair --ttl 7d` and the phone sends `ttl_seconds=30d` in the auth envelope (because the user picked a different value on the TTL dialog), the host value wins. Operator policy is authoritative. If the host didn't specify anything, the phone's value applies.
+- **Token prefix (not full token) in `/sessions` responses** — a caller already holds their own full token; they should never see another session's full token. First 8 chars are enough to identify devices in a practical deployment (one operator, 1-3 phones) and enough entropy to avoid collisions. Collisions return 409 with the match count.
+- **Always open the TTL picker (no skip)** — even when the QR carries an operator-chosen TTL, the dialog opens with that value preselected. The user is always in the loop for the trust decision. A future "don't ask again if QR specifies a TTL" toggle is a plausible refinement but not in this cut.
+
+**Trade-offs:**
+
+- **Any paired phone can revoke any other paired device.** A compromised phone could lock out all other devices — DoS territory. Acceptable for the single-operator / 1-2 phones deployment model; multi-user deployments will need a per-device role model (admin vs user) with per-role grant caps.
+- **QR signatures aren't verified on the phone.** Raises the bar for QR tampering on the server side (attacker can't inject a fake code via a modified photo if the server requires a valid sig), but the phone currently trusts any signature as long as the parse succeeds. Full verification is a follow-up.
+- **TOFU cert pinning doesn't protect the first connect.** By definition, trust-on-first-use accepts whatever certificate is present on the initial handshake. Protects against MITM of subsequent connects only. Acceptable for LAN / Tailscale / VPN deployments where the first connect happens over a trusted path.
+- **StrongBox is opportunistic.** Older Android devices or devices without StrongBox hardware fall back to TEE-backed EncryptedSharedPreferences. Still strong, but the attack surface is larger than hardware-backed.
+
+**Alternatives rejected:**
+
+- **Separate tokens per channel** — clean model but triples the storage + auth flow. One-token-with-grants is the right abstraction.
+- **Gating never-expire on secure transport detection** — operator explicitly requested "don't force check, just allow based on user intent." User agency over policy.
+- **Full QR signature verification on the phone in this cut** — requires a secret distribution mechanism (pre-shared key? enrollment token? OAuth?) that isn't yet designed. Server-side signing is the prerequisite and it's in place.
+
+**References:**
+
+- `plugin/relay/auth.py` — `Session`, `PairingMetadata`, `SessionManager`, `PairingManager`, `RateLimiter.clear_all_blocks`
+- `plugin/relay/qr_sign.py` — `canonicalize`, `sign_payload`, `verify_payload`, `load_or_create_secret`
+- `plugin/relay/server.py` — `handle_pairing_register`, `handle_pairing_approve`, `handle_sessions_list`, `handle_sessions_revoke`, `_detect_transport_hint`
+- `plugin/pair.py` — `build_payload(sign=True)`, `parse_duration`, `parse_grants`, `--ttl` / `--grants` flags
+- `app/src/main/kotlin/.../auth/SessionTokenStore.kt` — Keystore / legacy fallback
+- `app/src/main/kotlin/.../auth/CertPinStore.kt` — TOFU pinning
+- `app/src/main/kotlin/.../auth/PairedSession.kt` — phone-side session metadata
+- `app/src/main/kotlin/.../ui/components/SessionTtlPickerDialog.kt` — TTL picker
+- `app/src/main/kotlin/.../ui/components/TransportSecurityBadge.kt` — secure / insecure indicator
+- `app/src/main/kotlin/.../ui/components/InsecureConnectionAckDialog.kt` — first-time insecure consent
+- `app/src/main/kotlin/.../ui/screens/PairedDevicesScreen.kt` — list + revoke UI
+- `app/src/main/kotlin/.../util/TailscaleDetector.kt` — informational detection
+
 ---
 
 ## CI/CD Patterns (from ARC)

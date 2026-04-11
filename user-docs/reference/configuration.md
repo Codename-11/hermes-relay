@@ -1,13 +1,13 @@
 # Configuration
 
-Hermes-Relay stores its settings using Android's DataStore and EncryptedSharedPreferences. This page documents the available configuration options.
+Hermes-Relay stores its settings using Android's DataStore, Android Keystore (for session tokens when available), and EncryptedSharedPreferences (fallback). This page documents the available configuration options.
 
 ## Connection Settings
 
 These are configured during onboarding or from the **Settings → Connection** screen. The Connection screen groups everything under a single section with three cards:
 
-- **Pair with your server** — always visible. One-tap entry point: a **Scan Pairing QR** button plus a unified status summary (API Server reachable, Relay connected, Session paired). One scan of the QR printed by `/hermes-relay-pair` (or the `hermes-pair` shell shim) configures everything.
-- **Manual configuration** — collapsible. Starts collapsed when you're already paired and reachable, expanded otherwise. Holds the manual-entry fields below and a **Save & Test** action. This is the power-user / troubleshooting path.
+- **Pair with your server** — always visible. One-tap entry point: a **Scan Pairing QR** button plus a unified status summary (API Server reachable, Relay connected, Session paired). One scan of the QR printed by `/hermes-relay-pair` (or the `hermes-pair` shell shim) configures everything. When paired, a **Transport Security** badge (🔒 secure / 🔓 insecure with reason / 🔓 unknown) and a **Tailscale detected** chip (if applicable) surface above the status rows. A **Paired Devices** row navigates to the full device-management screen.
+- **Manual configuration** — collapsible. Starts collapsed when you're already paired and reachable, expanded otherwise. Holds the manual-entry fields below and a **Save & Test** action. This is the power-user / troubleshooting path. Toggling **Insecure mode** (plain `ws://` instead of `wss://`) for the first time opens a consent dialog with a reason picker (LAN only / Tailscale or VPN / Local dev only). The reason is displayed on the Transport Security badge but is not enforced — the operator's intent is the trust model.
 - **Bridge pairing code** — collapsible and only visible when the relay feature flag is on. Shows a locally-generated 6-char code with copy / regenerate icons. This code is **for the future Phase 3 bridge feature** — the host would approve it to let the agent control the phone. It is **not** used for initial pairing; that's driven entirely by the QR from `/hermes-relay-pair`.
 
 | Setting | Storage | Description |
@@ -15,7 +15,38 @@ These are configured during onboarding or from the **Settings → Connection** s
 | API Server URL | EncryptedSharedPreferences | Base URL of the Hermes API Server (e.g., `http://192.168.1.100:8642`) |
 | API Key (optional) | EncryptedSharedPreferences | Bearer token for API authentication — only needed if server has `API_SERVER_KEY` set |
 | Relay URL | EncryptedSharedPreferences | WebSocket URL for the Relay Server (optional, for bridge/terminal) |
-| Relay Session Token | EncryptedSharedPreferences | Persistent token from relay pairing flow |
+| Relay Session Token | **Keystore** (StrongBox when available), with fallback to EncryptedSharedPreferences | Persistent token from relay pairing flow. Migrated automatically from the legacy EncryptedSharedPreferences file on first launch post-upgrade. |
+| TOFU Cert Pins | DataStore (`tofu_pins`) | SHA-256 SPKI fingerprints per `host:port`. Recorded on the first successful `wss://` connect, verified on subsequent connects via OkHttp `CertificatePinner`. Wiped explicitly when the user re-pairs via QR (taken as consent to new cert material). |
+| Pair TTL Preference | DataStore (`pair_ttl_seconds`) | User's last-selected session TTL on the pair flow. Preselected next time. |
+| Insecure Ack Seen | DataStore (`insecure_ack_seen`) | Whether the user has acknowledged the insecure-mode threat model. The ack dialog only shows once per install; revoke via **Clear data** to reshow. |
+| Insecure Reason | DataStore (`insecure_reason`) | The reason selected on the insecure ack dialog — `lan_only` / `tailscale_vpn` / `local_dev` / empty. Displayed on the Transport Security badge for context. |
+
+### Pair Flow — TTL Picker
+
+When you scan a pairing QR (or enter a code manually), a **Session TTL Picker** dialog opens before the phone connects to the relay. Options:
+
+- **1 day** — one-shot development sessions. Expires fast, forces frequent re-pair.
+- **7 days** — the default for plain `ws://` without Tailscale.
+- **30 days** — the default for `wss://` or when Tailscale is detected. Also matches the legacy hardcoded TTL.
+- **90 days** / **1 year** — longer-lived operator devices.
+- **Never expire** — the device stays paired until you revoke it manually from Paired Devices. Always selectable — the phone treats user intent as the trust model and doesn't gate on transport security. A warning is shown inline.
+
+The default pre-selection depends on the QR's operator-chosen TTL (if any, via `hermes-pair --ttl <duration>`), falling back to 30d on secure/Tailscale transports or 7d on plain ws. Your last pick persists as the new default for future pairs.
+
+Per-channel grants (`terminal`, `bridge`) can be pre-set by the operator via `hermes-pair --grants terminal=7d,bridge=1d`. The phone displays them on the Paired Devices card as chips. Grants cannot outlive the session — they're clamped to the session TTL server-side.
+
+### Paired Devices
+
+**Settings → Connection → Paired Devices** opens a full-screen list of every device currently paired with the relay. Each card shows:
+
+- Device name + device ID
+- **Current device** badge if this is the device you're looking at the list on
+- Transport security badge (secure / insecure / unknown)
+- Session expiry (a date or "Never")
+- Per-channel grant chips (`chat · terminal · bridge`)
+- **Revoke** button — confirmation dialog, then `DELETE /sessions/{token_prefix}`. Revoking the current device wipes local session token and redirects to pairing flow.
+
+Any paired device can revoke any other. For single-operator deployments (1-2 phones, one host) this is fine; for multi-user deployments a per-device role model is a future refactor (see ADR 15).
 
 ## Chat Settings
 

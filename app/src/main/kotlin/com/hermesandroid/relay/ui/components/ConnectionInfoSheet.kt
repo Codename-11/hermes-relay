@@ -179,6 +179,7 @@ fun SessionInfoSheet(
     val relayConnectionState by connectionViewModel.relayConnectionState.collectAsState()
     val pairingCode by connectionViewModel.pairingCode.collectAsState()
     val profiles by connectionViewModel.authManager.profiles.collectAsState()
+    val pairedSession by connectionViewModel.currentPairedSession.collectAsState()
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -263,6 +264,33 @@ fun SessionInfoSheet(
                 label = "Profiles",
                 value = if (profiles.isEmpty()) "(none)" else profiles.joinToString(", ")
             )
+
+            // Security overhaul (2026-04-11) — show expiry + grants + storage.
+            pairedSession?.let { paired ->
+                HorizontalDivider()
+                val expiryLabel = when {
+                    paired.expiresAt == null -> "Never"
+                    else -> java.text.DateFormat
+                        .getDateInstance(java.text.DateFormat.MEDIUM)
+                        .format(java.util.Date(paired.expiresAt * 1000L))
+                }
+                InfoRow(label = "Expires", value = expiryLabel)
+
+                if (paired.grants.isNotEmpty()) {
+                    val grantsLabel = paired.grants.entries.joinToString(", ") { (k, v) ->
+                        if (v == null) "$k: never" else k
+                    }
+                    InfoRow(label = "Channel grants", value = grantsLabel)
+                }
+
+                val transportLabel = paired.transportHint?.uppercase() ?: "—"
+                InfoRow(label = "Transport", value = transportLabel)
+
+                InfoRow(
+                    label = "Key storage",
+                    value = if (paired.hasHardwareStorage) "Hardware (StrongBox)" else "Hardware (TEE)"
+                )
+            }
 
             Spacer(modifier = Modifier.height(4.dp))
 

@@ -50,6 +50,27 @@ def register_cli(subparser) -> None:
         type=int,
         help="Override API server port (default: 8642)",
     )
+    subparser.add_argument(
+        "--ttl",
+        metavar="DURATION",
+        default="30d",
+        help=(
+            "Session TTL — one of 1d/7d/30d/90d/1y/never, or an explicit "
+            "<N><unit> like 12h/4w. 'never' means the session never expires. "
+            "Default: 30d."
+        ),
+    )
+    subparser.add_argument(
+        "--grants",
+        metavar="SPEC",
+        default=None,
+        help=(
+            "Per-channel grant overrides, comma-separated channel=duration "
+            "pairs, e.g. 'terminal=7d,bridge=1d'. Unspecified channels fall "
+            "back to server-side defaults (terminal capped at 30d, bridge "
+            "capped at 7d)."
+        ),
+    )
     subparser.set_defaults(func=pair_command)
 
 

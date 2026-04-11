@@ -43,18 +43,22 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.int
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.concurrent.Executors
 
 /**
  * Parsed result from a Hermes pairing QR code.
  *
- * QR payload format (v1, extended 2026-04-11):
+ * **Supported versions:** v1 and v2.
+ *
+ * v1 (legacy, pre-2026-04-11):
  * ```json
  * {
  *   "hermes": 1,
@@ -66,21 +70,51 @@ import java.util.concurrent.Executors
  * }
  * ```
  *
- * Top-level fields configure the direct-chat Hermes API server. The optional
- * [relay] block configures the Hermes-Relay WSS connection used by the
- * terminal and bridge channels — present only when the operator's
- * `hermes pair` invocation found a running relay and pre-registered a
- * pairing code with it. Old QRs without the relay block still parse cleanly
- * because the field is nullable and the JSON parser ignores unknown keys.
+ * v2 (security overhaul, 2026-04-11):
+ * ```json
+ * {
+ *   "hermes": 2,
+ *   "host": "192.168.1.100",
+ *   "port": 8642,
+ *   "key": "optional-api-key",
+ *   "tls": true,
+ *   "relay": {
+ *     "url": "ws://192.168.1.100:8767",
+ *     "code": "ABC123",
+ *     "ttl_seconds": 2592000,
+ *     "grants": { "terminal": 2592000, "bridge": 604800 },
+ *     "transport_hint": "wss"
+ *   },
+ *   "sig": "base64-hmac-sha256"
+ * }
+ * ```
+ *
+ * The top-level fields configure the direct-chat Hermes API server. The
+ * optional [relay] block configures the Hermes-Relay WSS connection used by
+ * the terminal and bridge channels.
+ *
+ * **Forward/backward compatibility:**
+ *  - `hermes` now has a default of `1` so v1 QRs without the field parse.
+ *  - `sig` is captured but **not verified** — we don't have the server's
+ *    HMAC secret. Stored for future verification and for operator audit.
+ *    TODO: once the server exposes a pairing public key, verify.
+ *  - Unknown fields are tolerated via `ignoreUnknownKeys = true`. v3+ QRs
+ *    will still parse on this phone.
+ *  - The `ttl_seconds`, `grants`, and `transport_hint` fields on [RelayPairing]
+ *    are nullable so v1 QRs with only `url` + `code` still deserialize.
+ *
+ * Old QRs without the relay block still parse cleanly because the field is
+ * nullable.
  */
 @Serializable
 data class HermesPairingPayload(
-    val hermes: Int,
-    val host: String,
+    val hermes: Int = 1,
+    val host: String = "",
     val port: Int = 8642,
     val key: String = "",
     val tls: Boolean = false,
-    val relay: RelayPairing? = null
+    val relay: RelayPairing? = null,
+    val sig: String? = null,
 ) {
     /** Build the full API server URL from host, port, and tls flag. */
     val serverUrl: String
@@ -98,26 +132,61 @@ data class HermesPairingPayload(
  *   phone sends this code in its first `system/auth` envelope; the relay
  *   consumes it and returns a long-lived session token for subsequent
  *   reconnects.
+ * - [ttlSeconds] is an operator-preselected session TTL. When non-null the
+ *   [com.hermesandroid.relay.ui.components.SessionTtlPickerDialog] defaults
+ *   to this value so users can override it if they want. `0` means "never
+ *   expire"; `null`/missing means "use the phone-side default".
+ * - [grants] is an optional per-channel TTL map. Keys are channel names
+ *   (`"chat"`, `"terminal"`, `"bridge"`); values are seconds. When the
+ *   phone authenticates it includes these grants in its auth envelope so
+ *   the relay can issue channel-specific tokens.
+ * - [transportHint] is `"wss"` / `"ws"` / `null`. Drives the default TTL
+ *   selection and the [com.hermesandroid.relay.ui.components.TransportSecurityBadge]
+ *   label.
  */
 @Serializable
 data class RelayPairing(
-    val url: String,
-    val code: String
+    val url: String = "",
+    val code: String = "",
+    @SerialName("ttl_seconds")
+    val ttlSeconds: Long? = null,
+    val grants: Map<String, Long>? = null,
+    @SerialName("transport_hint")
+    val transportHint: String? = null,
 )
 
-private val json = Json { ignoreUnknownKeys = true }
+private val json = Json {
+    ignoreUnknownKeys = true
+    isLenient = true
+    coerceInputValues = true
+}
 
 /**
  * Try to parse a scanned string as a Hermes pairing QR payload.
- * Returns null if it's not a valid Hermes QR (no "hermes":1 field).
+ *
+ * Accepts both v1 and v2 (or anything without a `hermes` field — we default
+ * to `1`). Returns null when the payload is not valid JSON, has no `host`
+ * field, or fails strict decoding.
  */
 fun parseHermesPairingQr(raw: String): HermesPairingPayload? {
     return try {
-        // Quick check: must contain "hermes" key with value 1
+        // Quick check: must contain a `host` field and be valid JSON. We no
+        // longer reject based on the `hermes` version int — future v3+ QRs
+        // should still parse on this phone so Bailey doesn't have to ship a
+        // whole release to keep up with wire-format growth.
         val obj = json.decodeFromString<JsonObject>(raw)
-        val version = obj["hermes"]?.jsonPrimitive?.int ?: return null
-        if (version != 1) return null
-        json.decodeFromString<HermesPairingPayload>(raw)
+        val version = obj["hermes"]?.jsonPrimitive?.intOrNull ?: 1
+        if (version < 1) return null
+        val decoded = json.decodeFromString<HermesPairingPayload>(raw)
+        if (decoded.host.isBlank()) return null
+
+        // TODO(security): verify `decoded.sig` against the server's HMAC
+        // secret once the pairing protocol exposes a public verification
+        // path. For now we parse and store the signature but do not reject
+        // unsigned payloads — the phone has no way to fetch the server's
+        // secret in-band.
+
+        decoded
     } catch (_: Exception) {
         null
     }

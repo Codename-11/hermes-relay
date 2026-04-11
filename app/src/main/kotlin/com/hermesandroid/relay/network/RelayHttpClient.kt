@@ -1,8 +1,11 @@
 package com.hermesandroid.relay.network
 
 import android.util.Log
+import com.hermesandroid.relay.auth.PairedDeviceInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -36,6 +39,12 @@ class RelayHttpClient(
 
     companion object {
         private const val TAG = "RelayHttpClient"
+        private val sessionsJson = Json {
+            ignoreUnknownKeys = true
+            isLenient = true
+            coerceInputValues = true
+            explicitNulls = false
+        }
     }
 
     /**
@@ -245,6 +254,162 @@ class RelayHttpClient(
             Result.failure(IOException("Relay unreachable: ${e.message ?: "IO error"}"))
         } catch (e: Exception) {
             Log.w(TAG, "fetchMediaByPath unexpected error for $path: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Paired-device management (2026-04-11 security overhaul)
+    // ------------------------------------------------------------------
+    //
+    // The sibling Python agent is adding two new relay endpoints:
+    //   GET    /sessions                 → list all paired devices
+    //   DELETE /sessions/{token_prefix}  → revoke a specific device
+    //
+    // Both are bearer-auth'd with the same session token we use for the
+    // WSS channel. These methods are *defensive* — if the server hasn't
+    // been updated yet, they'll come back with 404 and the UI renders an
+    // empty list instead of crashing. See [PairedDevicesScreen] for the
+    // consumer.
+
+    /**
+     * Fetch the list of currently-paired devices from the relay.
+     *
+     * @return [Result.success] with a list of [PairedDeviceInfo] (possibly
+     *         empty), or [Result.failure] with a diagnostic exception. A 404
+     *         is treated as "endpoint not implemented yet" → empty list.
+     */
+    suspend fun listSessions(): Result<List<PairedDeviceInfo>> = withContext(Dispatchers.IO) {
+        val relayUrl = relayUrlProvider()?.trim().orEmpty()
+        if (relayUrl.isEmpty()) {
+            return@withContext Result.failure(
+                IllegalStateException("Relay URL not configured")
+            )
+        }
+
+        val sessionToken = sessionTokenProvider()
+        if (sessionToken.isNullOrBlank()) {
+            return@withContext Result.failure(
+                IllegalStateException("Relay not paired — session token missing")
+            )
+        }
+
+        val httpBase = relayUrl
+            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
+            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
+            .trimEnd('/')
+
+        val url = "$httpBase/sessions"
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .header("Authorization", "Bearer $sessionToken")
+            .header("Accept", "application/json")
+            .build()
+
+        try {
+            okHttpClient.newCall(request).execute().use { response ->
+                if (response.code == 404) {
+                    // Server hasn't shipped the endpoint yet — degrade to
+                    // empty list so the UI can render "No paired devices"
+                    // without exploding.
+                    Log.i(TAG, "listSessions: relay returned 404, endpoint not implemented")
+                    return@withContext Result.success(emptyList())
+                }
+                if (!response.isSuccessful) {
+                    val reason = when (response.code) {
+                        401, 403 -> "Unauthorized — re-pair with the relay"
+                        in 500..599 -> "Relay error (HTTP ${response.code})"
+                        else -> "HTTP ${response.code}: ${response.message.ifBlank { "request failed" }}"
+                    }
+                    return@withContext Result.failure(IOException(reason))
+                }
+                val body = response.body?.string().orEmpty()
+                val devices = sessionsJson.decodeFromString(
+                    ListSerializer(PairedDeviceInfo.serializer()),
+                    body
+                )
+                Result.success(devices)
+            }
+        } catch (e: IOException) {
+            Log.w(TAG, "listSessions failed: ${e.message}")
+            Result.failure(e)
+        } catch (e: Exception) {
+            Log.w(TAG, "listSessions parse error: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Revoke a paired device by its token prefix.
+     *
+     * Token prefixes are the first N characters of the session token —
+     * enough to uniquely identify a device without transmitting the full
+     * token. The server looks up and deletes the matching record.
+     *
+     * Revoking the CURRENT device (i.e. the phone making the request) is
+     * valid — the caller should follow up by wiping local state and
+     * redirecting to the pairing screen.
+     */
+    suspend fun revokeSession(tokenPrefix: String): Result<Unit> = withContext(Dispatchers.IO) {
+        val relayUrl = relayUrlProvider()?.trim().orEmpty()
+        if (relayUrl.isEmpty()) {
+            return@withContext Result.failure(
+                IllegalStateException("Relay URL not configured")
+            )
+        }
+
+        val sessionToken = sessionTokenProvider()
+        if (sessionToken.isNullOrBlank()) {
+            return@withContext Result.failure(
+                IllegalStateException("Relay not paired — session token missing")
+            )
+        }
+
+        val httpBase = relayUrl
+            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
+            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
+            .trimEnd('/')
+
+        val url = try {
+            "$httpBase/sessions/".toHttpUrl().newBuilder()
+                .addPathSegment(tokenPrefix)
+                .build()
+        } catch (e: IllegalArgumentException) {
+            return@withContext Result.failure(
+                IOException("Invalid relay URL: ${e.message}")
+            )
+        }
+
+        val request = Request.Builder()
+            .url(url)
+            .delete()
+            .header("Authorization", "Bearer $sessionToken")
+            .header("Accept", "application/json")
+            .build()
+
+        try {
+            okHttpClient.newCall(request).execute().use { response ->
+                if (response.code == 404) {
+                    // Already gone — treat as success so the UI can just
+                    // drop the row on the next refresh.
+                    return@withContext Result.success(Unit)
+                }
+                if (!response.isSuccessful) {
+                    val reason = when (response.code) {
+                        401, 403 -> "Unauthorized — re-pair with the relay"
+                        in 500..599 -> "Relay error (HTTP ${response.code})"
+                        else -> "HTTP ${response.code}: ${response.message.ifBlank { "request failed" }}"
+                    }
+                    return@withContext Result.failure(IOException(reason))
+                }
+                Result.success(Unit)
+            }
+        } catch (e: IOException) {
+            Log.w(TAG, "revokeSession failed: ${e.message}")
+            Result.failure(e)
+        } catch (e: Exception) {
+            Log.w(TAG, "revokeSession unexpected error: ${e.message}")
             Result.failure(e)
         }
     }
