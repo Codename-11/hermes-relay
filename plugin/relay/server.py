@@ -4,10 +4,16 @@ Serves a single WebSocket endpoint at ``/ws`` and a health check at ``/health``.
 Phone connects, authenticates with a pairing code or session token, then sends
 typed envelope messages that get routed to the appropriate channel handler.
 
+This is the canonical implementation since the plugin consolidation; the
+top-level ``relay_server`` package is a thin shim that delegates here.
+
 Usage:
+    python -m plugin.relay
+    python -m plugin.relay --port 8767 --no-ssl
+    python -m plugin.relay --config /path/to/config.yaml
+
+    # Legacy entrypoints still work via the shim:
     python -m relay_server
-    python -m relay_server --port 8767 --no-ssl
-    python -m relay_server --config /path/to/config.yaml
 """
 
 from __future__ import annotations
@@ -33,7 +39,7 @@ from .channels.chat import ChatHandler
 from .channels.terminal import TerminalHandler
 from .config import RelayConfig
 
-logger = logging.getLogger("relay_server")
+logger = logging.getLogger("hermes_relay")
 
 
 # ── Server state ─────────────────────────────────────────────────────────────
@@ -52,7 +58,7 @@ class RelayServer:
 
         # Channel handlers
         self.chat = ChatHandler(webapi_url=config.webapi_url)
-        self.terminal = TerminalHandler()
+        self.terminal = TerminalHandler(default_shell=config.terminal_shell)
         self.bridge = BridgeHandler()
 
         # Connected clients: ws → session token

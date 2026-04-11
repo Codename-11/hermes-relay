@@ -130,9 +130,16 @@ jobs:
       - name: Install dependencies
         run: pip install -r relay_server/requirements.txt
 
-      - name: Syntax check
-        run: python -m py_compile relay_server/relay.py
+      - name: Syntax check (plugin.relay — canonical location)
+        run: |
+          python -m py_compile plugin/relay/server.py
+          python -m py_compile plugin/relay/channels/terminal.py
+          python -m py_compile plugin/relay/channels/chat.py
+          python -m py_compile plugin/relay/channels/bridge.py
+
+      - name: Syntax check (relay_server shim)
+        run: python -m py_compile relay_server/__init__.py relay_server/__main__.py
 
       # TODO: Add pytest step when relay tests exist
       # - name: Run tests
-      #   run: pytest relay_server/tests/
+      #   run: pytest plugin/relay/tests/

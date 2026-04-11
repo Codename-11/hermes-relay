@@ -29,6 +29,7 @@ class RelayConfig:
     hermes_config_path: str = "~/.hermes/config.yaml"
     log_level: str = "INFO"
     profiles: list[dict[str, Any]] = field(default_factory=list)
+    terminal_shell: str | None = None
 
     @classmethod
     def from_env(cls) -> RelayConfig:
@@ -43,6 +44,7 @@ class RelayConfig:
                 "RELAY_HERMES_CONFIG", cls.hermes_config_path
             ),
             log_level=os.getenv("RELAY_LOG_LEVEL", cls.log_level),
+            terminal_shell=os.getenv("RELAY_TERMINAL_SHELL") or None,
         )
         config.profiles = _load_profiles(config.hermes_config_path)
         return config

@@ -21,11 +21,16 @@ def register(ctx):
             check_fn=(lambda: True) if tool_name == "android_setup" else _check_requirements,
         )
 
-    # Register CLI sub-command: hermes pair (v0.8.0+)
+    # Register CLI sub-commands: hermes pair + hermes relay (v0.8.0+)
     # Wrapped in try/except so the plugin still works on older hermes-agent
     # versions that don't expose register_cli_command.
     try:
-        from .cli import register_cli, pair_command
+        from .cli import (
+            register_cli,
+            pair_command,
+            register_relay_cli,
+            relay_start_command,
+        )
 
         ctx.register_cli_command(
             name="pair",
@@ -38,8 +43,19 @@ def register(ctx):
                 "mobile client to your gateway."
             ),
         )
+
+        ctx.register_cli_command(
+            name="relay",
+            help="Run the Hermes-Relay WSS server (terminal + bridge channels)",
+            setup_fn=register_relay_cli,
+            handler_fn=relay_start_command,
+            description=(
+                "Runs the embedded WSS relay server that the Hermes-Relay Android "
+                "app connects to for the terminal and bridge channels. Chat still "
+                "goes direct to the Hermes API server."
+            ),
+        )
     except (AttributeError, ImportError):
-        # Older hermes-agent (v0.7.0 and earlier) — CLI command not registered.
-        # The 14 tools above still work; users can fall back to the deprecated
-        # skills/hermes-pairing-qr/hermes-pair script.
+        # Older hermes-agent (v0.7.0 and earlier) — CLI commands not registered.
+        # The 14 tools above still work; users can fall back to `python -m plugin.relay`.
         pass

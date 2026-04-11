@@ -1,5 +1,5 @@
-"""Entry point: python -m relay_server"""
+"""Entry point: ``python -m relay_server`` — delegates to ``plugin.relay``."""
 
-from .relay import main
+from plugin.relay.server import main
 
 main()
