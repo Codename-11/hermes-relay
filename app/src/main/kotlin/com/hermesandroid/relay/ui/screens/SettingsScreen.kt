@@ -70,6 +70,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -135,6 +136,15 @@ fun SettingsScreen(
     val devOptionsUnlocked by FeatureFlags.devOptionsUnlocked(context).collectAsState(initial = FeatureFlags.isDevBuild)
     val relayEnabled by FeatureFlags.relayEnabled(context).collectAsState(initial = FeatureFlags.isDevBuild)
 
+    // Connection section expand state — seeded from the current pair/reach
+    // status on first composition, then driven by the user. rememberSaveable
+    // preserves user intent across config changes so tapping "collapse" when
+    // the connection drops doesn't re-open the card.
+    val manualConfigExpandedDefault =
+        !(apiReachable && (authState is AuthState.Paired || !relayEnabled))
+    var manualConfigExpanded by rememberSaveable { mutableStateOf(manualConfigExpandedDefault) }
+    var bridgePairingExpanded by rememberSaveable { mutableStateOf(false) }
+
     // Tap-to-unlock developer options (tap version 7 times)
     var versionTapCount by remember { mutableStateOf(0) }
     var lastTapTime by remember { mutableStateOf(0L) }
@@ -167,13 +177,20 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // API Server section
+            // ── Connection section ──────────────────────────────────────────
+            //
+            // Merged layout as of 2026-04-11. Replaces the separate "API
+            // Server", "Relay Server", and "Pairing" cards. The primary
+            // card is the one-button QR pairing flow; manual configuration
+            // and the Phase-3 bridge code live in collapsibles below.
+
             Text(
-                text = "API Server",
+                text = "Connection",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary
             )
 
+            // Card 1 — Pair with your server (primary, always visible)
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -189,105 +206,313 @@ fun SettingsScreen(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // API Server URL
-                    OutlinedTextField(
-                        value = apiUrlInput,
-                        onValueChange = { apiUrlInput = it },
-                        label = { Text("API Server URL") },
-                        placeholder = { Text("http://your-server:8642") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                    Text(
+                        text = "Pair with your server",
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    Text(
+                        text = "Scan the QR code from `hermes pair` on your Hermes host. One scan configures chat and terminal.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
-                    // API Key (optional — most local setups don't need one)
-                    OutlinedTextField(
-                        value = apiKeyInput,
-                        onValueChange = { apiKeyInput = it },
-                        label = { Text("API Key (optional)") },
-                        placeholder = { Text("Leave empty if not configured") },
-                        supportingText = {
-                            Text("Only needed if Hermes is configured with API_SERVER_KEY")
-                        },
-                        singleLine = true,
-                        visualTransformation = if (apiKeyVisible) {
-                            VisualTransformation.None
-                        } else {
-                            PasswordVisualTransformation()
-                        },
-                        trailingIcon = {
-                            IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) {
-                                Icon(
-                                    imageVector = if (apiKeyVisible) {
-                                        Icons.Filled.VisibilityOff
-                                    } else {
-                                        Icons.Filled.Visibility
-                                    },
-                                    contentDescription = if (apiKeyVisible) "Hide" else "Show"
-                                )
-                            }
+                    // Primary scan button — full width, dominant
+                    Button(
+                        onClick = {
+                            cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
                         },
                         modifier = Modifier.fillMaxWidth()
-                    )
-
-                    // Save & Test + Scan QR buttons
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Button(
-                            onClick = {
-                                connectionViewModel.updateApiServerUrl(apiUrlInput)
-                                // Only update API key if user entered a value (don't erase stored key with empty input)
-                                if (apiKeyInput.isNotBlank()) {
-                                    connectionViewModel.updateApiKey(apiKeyInput)
-                                }
-                                isTesting = true
-                                connectionViewModel.testApiConnection { success ->
-                                    isTesting = false
-                                    Toast.makeText(
-                                        context,
-                                        if (success) "API server reachable" else "Cannot reach API server",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                }
-                            },
-                            enabled = apiUrlInput.isNotBlank() && !isTesting
-                        ) {
-                            Text("Save & Test")
-                        }
-
-                        OutlinedButton(
-                            onClick = {
-                                cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
-                            }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.QrCodeScanner,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.size(6.dp))
-                            Text("Scan QR")
-                        }
-
-                        if (isTesting) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                strokeWidth = 2.dp
-                            )
-                        }
+                        Icon(
+                            imageVector = Icons.Filled.QrCodeScanner,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.size(8.dp))
+                        Text("Scan Pairing QR")
                     }
 
                     HorizontalDivider()
 
-                    // API status
+                    // Unified status summary
                     ConnectionStatusRow(
                         label = "API Server",
                         isConnected = apiReachable,
                         statusText = if (apiReachable) "Reachable" else "Unreachable"
                     )
+
+                    if (relayEnabled) {
+                        ConnectionStatusRow(
+                            label = "Relay",
+                            isConnected = relayConnectionState == ConnectionState.Connected,
+                            isConnecting = relayConnectionState == ConnectionState.Connecting ||
+                                relayConnectionState == ConnectionState.Reconnecting,
+                            statusText = when (relayConnectionState) {
+                                ConnectionState.Connected -> "Connected"
+                                ConnectionState.Connecting -> "Connecting..."
+                                ConnectionState.Reconnecting -> "Reconnecting..."
+                                ConnectionState.Disconnected -> "Disconnected"
+                            }
+                        )
+
+                        ConnectionStatusRow(
+                            label = "Session",
+                            isConnected = authState is AuthState.Paired,
+                            isConnecting = authState is AuthState.Pairing,
+                            statusText = when (authState) {
+                                is AuthState.Paired -> "Paired"
+                                is AuthState.Pairing -> "Pairing..."
+                                is AuthState.Unpaired -> "Unpaired"
+                                is AuthState.Failed -> "Failed: ${(authState as AuthState.Failed).reason}"
+                            }
+                        )
+                    }
+
+                    // Secondary actions — only shown when paired
+                    if (authState is AuthState.Paired) {
+                        HorizontalDivider()
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = { connectionViewModel.clearSession() }
+                            ) {
+                                Text("Clear Session")
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    connectionViewModel.clearSession()
+                                    cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
+                                }
+                            ) {
+                                Text("Re-pair")
+                            }
+                        }
+                    }
                 }
             }
+
+            // Card 2 — Manual configuration (collapsible)
+            SettingsExpandableCard(
+                title = "Manual configuration",
+                expanded = manualConfigExpanded,
+                onToggle = { manualConfigExpanded = !manualConfigExpanded },
+                isDarkTheme = isDarkTheme
+            ) {
+                // API Server URL
+                OutlinedTextField(
+                    value = apiUrlInput,
+                    onValueChange = { apiUrlInput = it },
+                    label = { Text("API Server URL") },
+                    placeholder = { Text("http://your-server:8642") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // API Key (optional)
+                OutlinedTextField(
+                    value = apiKeyInput,
+                    onValueChange = { apiKeyInput = it },
+                    label = { Text("API Key (optional)") },
+                    placeholder = { Text("Leave empty if not configured") },
+                    supportingText = {
+                        Text("Only needed if Hermes is configured with API_SERVER_KEY")
+                    },
+                    singleLine = true,
+                    visualTransformation = if (apiKeyVisible) {
+                        VisualTransformation.None
+                    } else {
+                        PasswordVisualTransformation()
+                    },
+                    trailingIcon = {
+                        IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) {
+                            Icon(
+                                imageVector = if (apiKeyVisible) {
+                                    Icons.Filled.VisibilityOff
+                                } else {
+                                    Icons.Filled.Visibility
+                                },
+                                contentDescription = if (apiKeyVisible) "Hide" else "Show"
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // Save & Test
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Button(
+                        onClick = {
+                            connectionViewModel.updateApiServerUrl(apiUrlInput)
+                            if (apiKeyInput.isNotBlank()) {
+                                connectionViewModel.updateApiKey(apiKeyInput)
+                            }
+                            isTesting = true
+                            connectionViewModel.testApiConnection { success ->
+                                isTesting = false
+                                Toast.makeText(
+                                    context,
+                                    if (success) "API server reachable" else "Cannot reach API server",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        },
+                        enabled = apiUrlInput.isNotBlank() && !isTesting
+                    ) {
+                        Text("Save & Test")
+                    }
+
+                    if (isTesting) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp
+                        )
+                    }
+                }
+
+                // Relay-only fields
+                if (relayEnabled) {
+                    HorizontalDivider()
+
+                    OutlinedTextField(
+                        value = relayUrlInput,
+                        onValueChange = { relayUrlInput = it },
+                        label = { Text("Relay URL") },
+                        placeholder = { Text("wss://your-server:8767") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    // Connect/Disconnect
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        val canConnect = relayConnectionState == ConnectionState.Disconnected &&
+                            (relayUrlInput.startsWith("wss://") ||
+                                (insecureMode && relayUrlInput.startsWith("ws://")))
+                        Button(
+                            onClick = { connectionViewModel.connectRelay(relayUrlInput) },
+                            enabled = canConnect
+                        ) {
+                            Text("Connect")
+                        }
+                        OutlinedButton(
+                            onClick = { connectionViewModel.disconnectRelay() },
+                            enabled = relayConnectionState != ConnectionState.Disconnected
+                        ) {
+                            Text("Disconnect")
+                        }
+                    }
+
+                    // Insecure active warning
+                    if (isInsecureConnection && relayConnectionState == ConnectionState.Connected) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Warning,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "Insecure connection — traffic is not encrypted",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+
+                    // Insecure mode toggle
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Allow insecure connections",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = "Enable ws:// and http:// for local dev/testing only",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = insecureMode,
+                            onCheckedChange = { connectionViewModel.setInsecureMode(it) }
+                        )
+                    }
+                }
+            }
+
+            // Card 3 — Bridge pairing code (collapsible, relay-gated)
+            if (relayEnabled) {
+                SettingsExpandableCard(
+                    title = "Bridge pairing code",
+                    expanded = bridgePairingExpanded,
+                    onToggle = { bridgePairingExpanded = !bridgePairingExpanded },
+                    isDarkTheme = isDarkTheme
+                ) {
+                    Text(
+                        text = "For Phase 3 bridge feature — the host approves this code to enable Android tool control. Not used for initial pairing.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Text(
+                        text = "Pairing Code",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = pairingCode,
+                            style = MaterialTheme.typography.headlineMedium.copy(
+                                fontFamily = FontFamily.Monospace,
+                                letterSpacing = MaterialTheme.typography.headlineMedium.fontSize * 0.15
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+
+                        IconButton(onClick = {
+                            scope.launch {
+                                clipboard.setClipEntry(
+                                    ClipEntry(
+                                        ClipData.newPlainText("Pairing code", pairingCode)
+                                    )
+                                )
+                            }
+                        }) {
+                            Icon(
+                                imageVector = Icons.Filled.ContentCopy,
+                                contentDescription = "Copy pairing code"
+                            )
+                        }
+
+                        IconButton(onClick = { connectionViewModel.regeneratePairingCode() }) {
+                            Icon(
+                                imageVector = Icons.Filled.Refresh,
+                                contentDescription = "Generate new code"
+                            )
+                        }
+                    }
+                }
+            }
+            // ── end Connection section ──────────────────────────────────────
 
             // Chat section
             Text(
@@ -597,254 +822,6 @@ fun SettingsScreen(
                     }
                 }
             }
-
-            // Relay Server section (gated behind feature flag)
-            if (relayEnabled) {
-            Text(
-                text = "Relay Server",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
-
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .gradientBorder(
-                        shape = RoundedCornerShape(12.dp),
-                        isDarkTheme = isDarkTheme
-                    ),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Text(
-                        text = "Used for Bridge and Terminal features",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    // Relay URL
-                    OutlinedTextField(
-                        value = relayUrlInput,
-                        onValueChange = { relayUrlInput = it },
-                        label = { Text("Relay URL") },
-                        placeholder = { Text("wss://your-server:8767") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    // Connect/Disconnect buttons
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        val canConnect = relayConnectionState == ConnectionState.Disconnected &&
-                            (relayUrlInput.startsWith("wss://") ||
-                                (insecureMode && relayUrlInput.startsWith("ws://")))
-                        Button(
-                            onClick = {
-                                connectionViewModel.connectRelay(relayUrlInput)
-                            },
-                            enabled = canConnect
-                        ) {
-                            Text("Connect")
-                        }
-                        OutlinedButton(
-                            onClick = { connectionViewModel.disconnectRelay() },
-                            enabled = relayConnectionState != ConnectionState.Disconnected
-                        ) {
-                            Text("Disconnect")
-                        }
-                    }
-
-                    HorizontalDivider()
-
-                    // Relay connection status
-                    ConnectionStatusRow(
-                        label = "Relay",
-                        isConnected = relayConnectionState == ConnectionState.Connected,
-                        isConnecting = relayConnectionState == ConnectionState.Connecting ||
-                            relayConnectionState == ConnectionState.Reconnecting,
-                        statusText = when (relayConnectionState) {
-                            ConnectionState.Connected -> "Connected"
-                            ConnectionState.Connecting -> "Connecting..."
-                            ConnectionState.Reconnecting -> "Reconnecting..."
-                            ConnectionState.Disconnected -> "Disconnected"
-                        }
-                    )
-
-                    // Insecure connection warning
-                    if (isInsecureConnection && relayConnectionState == ConnectionState.Connected) {
-                        HorizontalDivider()
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Warning,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Text(
-                                text = "Insecure connection — traffic is not encrypted",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                        }
-                    }
-
-                    HorizontalDivider()
-
-                    // Insecure mode toggle
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Allow insecure connections",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Text(
-                                text = "Enable ws:// and http:// for local dev/testing only",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = insecureMode,
-                            onCheckedChange = { connectionViewModel.setInsecureMode(it) }
-                        )
-                    }
-                }
-            }
-
-            } // end if (relayEnabled) — Relay Server section
-
-            // Pairing section (gated behind feature flag)
-            if (relayEnabled) {
-            Text(
-                text = "Pairing",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
-
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .gradientBorder(
-                        shape = RoundedCornerShape(12.dp),
-                        isDarkTheme = isDarkTheme
-                    ),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Text(
-                        text = "Used for relay authentication (Bridge/Terminal)",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    // Pairing code display
-                    Text(
-                        text = "Pairing Code",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = pairingCode,
-                            style = MaterialTheme.typography.headlineMedium.copy(
-                                fontFamily = FontFamily.Monospace,
-                                letterSpacing = MaterialTheme.typography.headlineMedium.fontSize * 0.15
-                            ),
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-
-                        IconButton(onClick = {
-                            // setClipEntry is suspend in the new Compose Clipboard
-                            // API — wrap in the existing scope.launch.
-                            scope.launch {
-                                clipboard.setClipEntry(
-                                    ClipEntry(
-                                        ClipData.newPlainText(
-                                            "Pairing code",
-                                            pairingCode
-                                        )
-                                    )
-                                )
-                            }
-                        }) {
-                            Icon(
-                                imageVector = Icons.Filled.ContentCopy,
-                                contentDescription = "Copy pairing code"
-                            )
-                        }
-
-                        IconButton(onClick = {
-                            connectionViewModel.regeneratePairingCode()
-                        }) {
-                            Icon(
-                                imageVector = Icons.Filled.Refresh,
-                                contentDescription = "Generate new code"
-                            )
-                        }
-                    }
-
-                    HorizontalDivider()
-
-                    // Session token status
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = "Session:",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = when (authState) {
-                                is AuthState.Paired -> "Paired"
-                                is AuthState.Pairing -> "Pairing..."
-                                is AuthState.Unpaired -> "Unpaired"
-                                is AuthState.Failed -> "Failed: ${(authState as AuthState.Failed).reason}"
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = when (authState) {
-                                is AuthState.Paired -> MaterialTheme.colorScheme.primary
-                                is AuthState.Failed -> MaterialTheme.colorScheme.error
-                                else -> MaterialTheme.colorScheme.onSurfaceVariant
-                            }
-                        )
-                    }
-
-                    if (authState is AuthState.Paired) {
-                        OutlinedButton(onClick = { connectionViewModel.clearSession() }) {
-                            Text("Clear Session")
-                        }
-                    }
-                }
-            }
-
-            } // end if (relayEnabled) — Pairing section
 
             // Theme section
             Text(
@@ -1523,5 +1500,65 @@ private fun DataManagementSection(connectionViewModel: ConnectionViewModel) {
                 }
             }
         )
+    }
+}
+
+/**
+ * A card with a tappable header row that reveals/hides its [content] via
+ * [AnimatedVisibility]. Used for the "Manual configuration" and "Bridge
+ * pairing code" sections in the Connection settings.
+ *
+ * [content] is a Column slot — each direct child is laid out with 12.dp
+ * vertical spacing, matching the rest of SettingsScreen's card interiors.
+ */
+@Composable
+private fun SettingsExpandableCard(
+    title: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    isDarkTheme: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .gradientBorder(
+                shape = RoundedCornerShape(12.dp),
+                isDarkTheme = isDarkTheme
+            ),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            // Header row — always visible, tappable to toggle
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onToggle),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Icon(
+                    imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = if (expanded) "Collapse" else "Expand"
+                )
+            }
+
+            // Expandable content
+            AnimatedVisibility(visible = expanded) {
+                Column(
+                    modifier = Modifier.padding(top = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    content()
+                }
+            }
+        }
     }
 }

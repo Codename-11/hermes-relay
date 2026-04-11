@@ -144,14 +144,18 @@ scripts/dev.bat run      # Build + install + launch (requires connected device)
 
 ## Manual Pairing
 
-If you don't want to use QR pairing, you can enter connection details by hand during the app's onboarding flow:
+If you don't want to use QR pairing, you can enter connection details by hand — either during the app's onboarding flow or later from Settings.
+
+**During onboarding:**
 
 1. The app opens with an onboarding flow
 2. On the **Connect** page, tap **Enter manually**
 3. Type your API Server URL (e.g., `http://192.168.1.100:8642`) and API Key
 4. Tap **Test Connection** to verify
-5. Optionally enter a **Relay URL** for future Bridge/Terminal features
+5. Optionally enter a **Relay URL** for Terminal/Bridge features
 6. Tap **Get Started**
+
+**After onboarding:** open **Settings → Connection**. The top card (**Pair with your server**) shows a **Scan Pairing QR** button and a status summary for the API server, relay, and session. To enter values by hand, expand the **Manual configuration** card below it — API Server URL, API Key, Relay URL, and Insecure Mode live there, along with **Save & Test**.
 
 The `hermes pair` command always prints these same values as plain text alongside the QR code, so you can copy them directly.
 

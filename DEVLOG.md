@@ -1,5 +1,32 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-11 — Settings Connection UX Rework (QR-first, collapsible manual + bridge)
+
+**Done:**
+- **Unified Connection section on the Settings screen.** Replaced the three separate top-level cards (**API Server**, **Relay Server**, **Pairing**) with a single **Connection** section containing three stacked cards:
+  - **Pair with your server** — always visible, primary entry point. Large **Scan Pairing QR** button + a unified status summary line showing API Server (Reachable / Unreachable), Relay (Connected / Disconnected), and Session (Paired / Unpaired). This is the one-button flow: scan the QR from `hermes pair` on the host and everything is configured.
+  - **Manual configuration** — collapsible. Starts collapsed when the user is already paired and reachable, expanded otherwise. Holds the manual-entry fields (API Server URL, API Key, Relay URL, Insecure Mode toggle) and the **Save & Test** button. Power-user / troubleshooting path.
+  - **Bridge pairing code** — collapsible, gated by the `relayEnabled` feature flag, starts collapsed. Shows the locally-generated 6-char pairing code with copy / regenerate icons. Explicitly labelled "For the Phase 3 bridge feature — the host approves this code to enable Android tool control. Not used for initial pairing." Replaces the old Pairing card, which was visually prominent but semantically misleading in the new QR-driven flow.
+- **Why.** The old layout buried the QR button inside the API Server card next to **Save & Test**, so new users couldn't tell which button was the primary setup path. The old **Pairing** card prominently displayed a phone-generated code that's no longer used for initial pairing — only for the future Phase 3 bridge direction. The rework makes the happy path (one QR scan → chat + relay) the obvious default and demotes both manual config and the bridge code to collapsibles for users who actually need them.
+- **User docs updated.** `user-docs/guide/getting-started.md` (Manual Pairing section now walks through Settings → Connection → Manual configuration), `user-docs/reference/configuration.md` (Onboarding Settings renamed to Connection Settings + describes the three-card layout), and the `CLAUDE.md` Key Files entry for `SettingsScreen.kt`.
+
+**Files changed:**
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/screens/SettingsScreen.kt` — three-card Connection section, collapsible state, unified status summary
+- `user-docs/guide/getting-started.md` — Manual Pairing section updated for Settings → Connection layout
+- `user-docs/reference/configuration.md` — Onboarding Settings → Connection Settings, three-card layout described
+- `CLAUDE.md` — Key Files `SettingsScreen.kt` entry updated
+- `DEVLOG.md` — this entry
+
+**Next:**
+- Update splash / onboarding completion screen so the "you can change this later in Settings" hint points at the Connection section, not the old API Server card.
+- Screenshot pass for Play Store listing — the old screenshots still show the three-section layout.
+- Consider whether the **Bridge pairing code** card should be hidden entirely (not just collapsed) until Phase 3 lands, to avoid confusing users who enable the relay feature flag for terminal alone.
+
+**Blockers:**
+- None.
+
+---
+
 ## 2026-04-11 — QR-Driven Relay Pairing (one scan → chat + relay)
 
 **Done:**

@@ -2,9 +2,13 @@
 
 Hermes-Relay stores its settings using Android's DataStore and EncryptedSharedPreferences. This page documents the available configuration options.
 
-## Onboarding Settings
+## Connection Settings
 
-These are set during the initial onboarding flow and can be updated in **Settings > Connection**.
+These are configured during onboarding or from the **Settings → Connection** screen. The Connection screen groups everything under a single section with three cards:
+
+- **Pair with your server** — always visible. One-tap entry point: a **Scan Pairing QR** button plus a unified status summary (API Server reachable, Relay connected, Session paired). One scan of the QR printed by `hermes pair` configures everything.
+- **Manual configuration** — collapsible. Starts collapsed when you're already paired and reachable, expanded otherwise. Holds the manual-entry fields below and a **Save & Test** action. This is the power-user / troubleshooting path.
+- **Bridge pairing code** — collapsible and only visible when the relay feature flag is on. Shows a locally-generated 6-char code with copy / regenerate icons. This code is **for the future Phase 3 bridge feature** — the host would approve it to let the agent control the phone. It is **not** used for initial pairing; that's driven entirely by the QR from `hermes pair`.
 
 | Setting | Storage | Description |
 |---------|---------|-------------|

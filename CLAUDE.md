@@ -141,7 +141,7 @@ hermes-android/                  ← Android Studio opens this root
 | `app/src/main/kotlin/.../data/FeatureFlags.kt` | Feature gating — compile-time defaults (DEV_MODE) + runtime DataStore overrides |
 | `app/src/main/kotlin/.../data/AppAnalytics.kt` | In-app analytics singleton (TTFT, tokens, health, stream rates) |
 | `app/src/main/kotlin/.../ui/screens/ChatScreen.kt` | Chat UI — streaming messages, slash commands, tool cards |
-| `app/src/main/kotlin/.../ui/screens/SettingsScreen.kt` | Settings — connection, chat, appearance, analytics, about |
+| `app/src/main/kotlin/.../ui/screens/SettingsScreen.kt` | Settings — unified Connection section (Pair-with-your-server card with Scan QR primary action + unified API/Relay/Session status summary; collapsible Manual configuration card for API URL / key / Relay URL / Insecure toggle + Save & Test; collapsible Bridge-pairing-code card gated by `relayEnabled` feature flag, Phase 3 only), plus chat, appearance, analytics, about |
 | `app/src/main/kotlin/.../ui/components/StatsForNerds.kt` | Canvas bar charts for analytics display |
 | `app/src/main/kotlin/.../ui/components/CompactToolCall.kt` | Inline compact tool call display |
 | `app/src/main/kotlin/.../ui/components/PersonalityPicker.kt` | Personality picker dropdown (from config.agent.personalities) |
