@@ -54,10 +54,24 @@ import java.util.concurrent.Executors
 /**
  * Parsed result from a Hermes pairing QR code.
  *
- * QR payload format:
+ * QR payload format (v1, extended 2026-04-11):
  * ```json
- * {"hermes":1,"host":"172.16.24.250","port":8642,"key":"bearer-token","tls":false}
+ * {
+ *   "hermes": 1,
+ *   "host": "172.16.24.250",
+ *   "port": 8642,
+ *   "key": "bearer-token",
+ *   "tls": false,
+ *   "relay": { "url": "ws://172.16.24.250:8767", "code": "ABCD12" }
+ * }
  * ```
+ *
+ * Top-level fields configure the direct-chat Hermes API server. The optional
+ * [relay] block configures the Hermes-Relay WSS connection used by the
+ * terminal and bridge channels — present only when the operator's
+ * `hermes pair` invocation found a running relay and pre-registered a
+ * pairing code with it. Old QRs without the relay block still parse cleanly
+ * because the field is nullable and the JSON parser ignores unknown keys.
  */
 @Serializable
 data class HermesPairingPayload(
@@ -65,12 +79,31 @@ data class HermesPairingPayload(
     val host: String,
     val port: Int = 8642,
     val key: String = "",
-    val tls: Boolean = false
+    val tls: Boolean = false,
+    val relay: RelayPairing? = null
 ) {
-    /** Build the full server URL from host, port, and tls flag. */
+    /** Build the full API server URL from host, port, and tls flag. */
     val serverUrl: String
         get() = "${if (tls) "https" else "http"}://$host:$port"
 }
+
+/**
+ * Relay connection details carried in a Hermes pairing QR.
+ *
+ * - [url] is the full WebSocket URL the phone should connect to, e.g.
+ *   `ws://172.16.24.250:8767` for dev or `wss://relay.example.com:8767`
+ *   for a TLS-fronted relay.
+ * - [code] is a 6-char one-shot pairing code that the relay has already
+ *   registered via its localhost-only `/pairing/register` endpoint. The
+ *   phone sends this code in its first `system/auth` envelope; the relay
+ *   consumes it and returns a long-lived session token for subsequent
+ *   reconnects.
+ */
+@Serializable
+data class RelayPairing(
+    val url: String,
+    val code: String
+)
 
 private val json = Json { ignoreUnknownKeys = true }
 

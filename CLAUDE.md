@@ -70,17 +70,24 @@ hermes-android/                  ← Android Studio opens this root
 ├── settings.gradle.kts
 ├── gradle/                      ← Wrapper (8.13) + version catalog
 ├── scripts/                     ← Dev scripts (build, install, run, test, relay)
-├── relay_server/             ← Python WSS relay server
-│   ├── relay.py                 # Main aiohttp WSS server
-│   ├── auth.py                  # Pairing + session management
-│   ├── channels/                # chat.py, terminal.py (stub), bridge.py (stub)
-│   └── config.py
-├── plugin/                      ← Hermes agent plugin (14 android_* tools)
+├── plugin/                      ← Hermes agent plugin (14 android_* tools + relay + pair CLI)
 │   ├── android_tool.py
 │   ├── android_relay.py
+│   ├── pair.py                  # `hermes pair` implementation (QR + /pairing/register)
+│   ├── cli.py                   # Registers `hermes pair` + `hermes relay start`
+│   ├── relay/                   # Canonical WSS relay (consolidated from relay_server/)
+│   │   ├── server.py            # aiohttp WSS + HTTP routes (incl. /pairing/register)
+│   │   ├── auth.py              # PairingManager, SessionManager, RateLimiter
+│   │   ├── config.py            # RelayConfig, PAIRING_ALPHABET (full A-Z / 0-9)
+│   │   └── channels/            # chat.py, terminal.py (PTY), bridge.py (stub)
 │   ├── tools/                   # Standalone toolset
 │   ├── skills/                  # Agent skills
 │   └── tests/
+├── relay_server/                ← Thin compat shim → plugin.relay (legacy entrypoint)
+│   ├── __main__.py              # `python -m relay_server` still works
+│   ├── Dockerfile
+│   ├── hermes-relay.service     # Systemd unit
+│   └── requirements.txt
 ├── skills/                      ← Installable Hermes skills
 │   └── hermes-pairing-qr/      # (DEPRECATED) QR pairing — use `hermes pair` from the plugin instead
 ├── docs/                        ← spec, decisions, security
@@ -147,14 +154,18 @@ hermes-android/                  ← Android Studio opens this root
 | `app/src/main/kotlin/.../viewmodel/ConnectionViewModel.kt` | Dual connection model (API + relay) |
 | `app/src/main/res/drawable/splash_icon.xml` | Splash screen icon (0.9x scale) |
 | `app/src/main/res/drawable/splash_icon_animated.xml` | Animated splash (scale + overshoot + fade) |
-| `relay_server/relay.py` | Relay server — main WSS server (bridge/terminal only) |
+| `plugin/relay/server.py` | Canonical relay server — WSS + HTTP routes (health, /pairing, /pairing/register) |
+| `plugin/relay/auth.py` | PairingManager (generate + register_code), SessionManager, RateLimiter |
+| `plugin/relay/config.py` | RelayConfig + PAIRING_ALPHABET (full A-Z / 0-9 as of 2026-04-11) |
+| `plugin/relay/channels/terminal.py` | Phase 2 PTY-backed terminal handler |
+| `relay_server/__main__.py` | Thin shim → `plugin.relay.server.main()` — legacy `python -m relay_server` entrypoint |
 | `relay_server/SKILL.md` | Hermes skill reference for relay self-setup |
 | `relay_server/Dockerfile` | Container image for relay server |
 | `relay_server/hermes-relay.service` | Systemd unit file for persistent deployment |
 | `docs/relay-server.md` | Relay server setup, config, Docker, systemd, TLS reference |
-| `app/src/main/kotlin/.../ui/components/QrPairingScanner.kt` | QR code scanner + Hermes pairing payload parser |
-| `plugin/pair.py` | QR pairing logic (pure-Python, uses segno) — replaces deprecated bash script |
-| `plugin/cli.py` | Registers `hermes pair` CLI sub-command via v0.8.0 plugin CLI API |
+| `app/src/main/kotlin/.../ui/components/QrPairingScanner.kt` | QR code scanner + `HermesPairingPayload` (incl. optional `relay` block with `url` + `code`) |
+| `plugin/pair.py` | `hermes pair` — probes local relay, pre-registers pairing code via `/pairing/register`, embeds relay URL + code in QR (pure-Python, uses segno) |
+| `plugin/cli.py` | Registers `hermes pair` (with `--no-relay`) and `hermes relay start` via the v0.8.0 plugin CLI API |
 | `skills/hermes-pairing-qr/SKILL.md` | (DEPRECATED) QR pairing skill — use `hermes pair` from the plugin instead |
 | `skills/hermes-pairing-qr/hermes-pair` | (DEPRECATED) QR generator script — use `hermes pair` from the plugin instead |
 | `AGENTS.md` | Tool usage patterns for the `android_*` toolset |

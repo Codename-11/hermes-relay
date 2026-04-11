@@ -67,7 +67,7 @@ This installs the `hermes-android` plugin — 14 `android_*` device control tool
 hermes pair
 ```
 
-Scan it from the Android app's onboarding screen and you're connected. The command also prints the server URL and API key as plain text, so you can pair manually if your terminal can't render QR blocks.
+Scan it from the Android app's onboarding screen and you're connected. One scan configures **both** the direct-chat API server **and** the WSS relay (for terminal/bridge) — if a local relay is running at `localhost:8767` when you run `hermes pair`, the command pre-registers a fresh 6-char pairing code with it and embeds the relay URL + code in the same QR. If you only want direct chat, pass `--no-relay` (or just don't start the relay). The command also prints the server URL and API key as plain text, so you can pair manually if your terminal can't render QR blocks.
 
 **Requirements:** Android 8.0+ (SDK 26), [hermes-agent](https://github.com/NousResearch/hermes-agent) v0.8.0+ (for the `hermes pair` CLI), Python 3.11+.
 
@@ -174,7 +174,9 @@ hermes-relay/
 ### Relay Server (optional — terminal/bridge only)
 
 ```bash
-pip install aiohttp pyyaml && python -m relay_server --no-ssl
+hermes relay start --no-ssl          # if you installed the plugin
+# or from a repo checkout:
+python -m plugin.relay --no-ssl
 ```
 
 Or with Docker:

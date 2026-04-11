@@ -249,13 +249,27 @@ fun RelayApp() {
             ) {
                 composable(Screen.Onboarding.route) {
                     OnboardingScreen(
-                        onComplete = { apiServerUrl, apiKey, relayUrl ->
+                        onComplete = { apiServerUrl, apiKey, relayUrl, relayPairingCode ->
                             connectionViewModel.updateApiServerUrl(apiServerUrl)
                             if (apiKey.isNotBlank()) {
                                 connectionViewModel.updateApiKey(apiKey)
                             }
                             if (relayUrl.isNotBlank()) {
                                 connectionViewModel.updateRelayUrl(relayUrl)
+                                // Auto-flip insecure mode when the scanned
+                                // relay URL is plain ws:// so the user
+                                // doesn't have to hunt through Developer
+                                // Options to allow the connection.
+                                if (relayUrl.startsWith("ws://")) {
+                                    connectionViewModel.setInsecureMode(true)
+                                }
+                            }
+                            // Hand the server-issued pairing code (from a
+                            // scanned QR) to AuthManager so the next auth
+                            // envelope uses it instead of the locally-
+                            // generated fallback. Consumed on first auth.ok.
+                            if (!relayPairingCode.isNullOrBlank()) {
+                                connectionViewModel.authManager.applyServerIssuedCode(relayPairingCode)
                             }
                             connectionViewModel.completeOnboarding()
                             navController.navigate(Screen.Chat.route) {

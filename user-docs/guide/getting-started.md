@@ -40,10 +40,18 @@ On the server, run:
 hermes pair
 ```
 
-This prints a QR code **and** the plain-text connection details (server URL, API key). Scan the QR from the app's onboarding screen — or type the URL and key in manually if your terminal can't render QR blocks. The text fallback is always shown, so this works even inside Hermes's Rich TUI panel and over SSH sessions with limited charsets.
+This prints a QR code **and** the plain-text connection details (server URL, API key). Scan the QR from the app's onboarding screen — or type the values in manually if your terminal can't render QR blocks. The text fallback is always shown, so this works inside Hermes's Rich TUI panel and over SSH with limited charsets.
+
+**One scan configures chat *and* the relay.** If you've already started the Hermes-Relay WSS server on the same host (see [Relay Server](#relay-server-optional) below), `hermes pair` automatically detects it at `localhost:8767`, mints a fresh 6-char pairing code, pre-registers the code with the relay via its loopback-only `/pairing/register` endpoint, and embeds the relay URL and code in the same QR. The phone scans once and is ready for chat, terminal, and bridge.
+
+If the relay isn't running, `hermes pair` prints an `[info]` line pointing at `hermes relay start` and renders an API-only QR — chat still works, and you can pair with the relay later once it's up. You can also force API-only mode explicitly:
+
+```bash
+hermes pair --no-relay
+```
 
 ::: warning Security
-The QR code contains your API key in plaintext. Don't screenshot or share it. The terminal output is equally sensitive.
+The QR contains credentials — your API key if one is set, and the relay pairing code if a relay block was embedded. Don't screenshot or share it. The relay code is one-shot and expires in 10 minutes, but the API key is long-lived.
 :::
 
 ## Hermes Server Setup
@@ -151,16 +159,20 @@ The `hermes pair` command always prints these same values as plain text alongsid
 
 The relay server is only needed for **Terminal** (remote shell) and **Bridge** (agent-driven phone control). Chat works without it.
 
-::: tip One-liner install
+::: tip Start the relay
 ```bash
-pip install aiohttp pyyaml && python -m relay_server --no-ssl
+# If you installed the hermes-android plugin (recommended):
+hermes relay start --no-ssl
+
+# Or directly from a repo checkout:
+python -m plugin.relay --no-ssl
 ```
-Run this on the same machine as hermes-agent, from the hermes-relay repo root.
+Run this on the same machine as hermes-agent. If the relay is running when you execute `hermes pair`, its URL and a freshly-registered pairing code are automatically embedded in the QR — you don't need to enter anything in the app.
 :::
 
 For persistent deployment, Docker, systemd, and TLS options, see the [Relay Server docs](/reference/relay-server).
 
-After starting the relay, enter the **Relay URL** in the app's onboarding or Settings > Connection (e.g., `ws://192.168.1.100:8767`).
+If you only saw an API-only QR earlier (because the relay wasn't running), just start the relay and re-run `hermes pair` — the new QR will include the relay block.
 
 ## Verify Connection
 

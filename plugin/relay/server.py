@@ -122,6 +122,55 @@ async def handle_pairing(request: web.Request) -> web.Response:
     return web.json_response({"code": code})
 
 
+async def handle_pairing_register(request: web.Request) -> web.Response:
+    """Pre-register an externally-provided pairing code.
+
+    Used by ``hermes pair`` to inject a code that will appear in a QR payload
+    before the phone scans it. Gated to loopback callers only — only a process
+    running on the same host can register codes, which matches the trust
+    model: the operator has host access and is the source of truth for
+    who gets to connect.
+
+    POST /pairing/register {"code": "ABCD12"} → {"ok": true, "code": "ABCD12"}
+    """
+    remote = request.remote or ""
+    # aiohttp gives us the peer IP as a string. The loopback check covers
+    # both IPv4 and IPv6 loopback addresses.
+    if remote not in ("127.0.0.1", "::1"):
+        logger.warning(
+            "Rejected /pairing/register from non-loopback peer %s", remote
+        )
+        raise web.HTTPForbidden(
+            text="/pairing/register is restricted to localhost callers",
+        )
+
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return web.json_response(
+            {"ok": False, "error": "invalid JSON body"}, status=400
+        )
+
+    code = (payload.get("code") or "").strip()
+    if not code:
+        return web.json_response(
+            {"ok": False, "error": "missing 'code' field"}, status=400
+        )
+
+    server: RelayServer = request.app["server"]
+    if not server.pairing.register_code(code):
+        return web.json_response(
+            {
+                "ok": False,
+                "error": "invalid code format (must be 6 chars from A-Z / 0-9)",
+            },
+            status=400,
+        )
+
+    logger.info("Pre-registered pairing code via /pairing/register: %s", code.upper())
+    return web.json_response({"ok": True, "code": code.upper()})
+
+
 # ── WebSocket handler ────────────────────────────────────────────────────────
 
 
@@ -428,10 +477,13 @@ def create_app(config: RelayConfig) -> web.Application:
     server = RelayServer(config)
     app["server"] = server
 
-    # Routes
+    # Routes — /ws is canonical but we also accept "/" as an alias so clients
+    # that pass a bare ws://host:port URL (no path) still connect cleanly.
     app.router.add_get("/ws", handle_ws)
+    app.router.add_get("/", handle_ws)
     app.router.add_get("/health", handle_health)
     app.router.add_post("/pairing", handle_pairing)
+    app.router.add_post("/pairing/register", handle_pairing_register)
 
     # Cleanup on shutdown
     app.on_shutdown.append(_on_app_shutdown)
@@ -507,9 +559,20 @@ def main() -> None:
         help="Log level (default: INFO, or RELAY_LOG_LEVEL env)",
     )
     parser.add_argument(
+        "--pairing-code",
+        metavar="CODE",
+        default=None,
+        help=(
+            "Pre-register a pairing code at startup (6 chars from A-Z / 0-9). "
+            "Use this when the phone generates the code and displays it in "
+            "the app — pass the same code here so the relay accepts it. "
+            "Can also be set via RELAY_PAIRING_CODE."
+        ),
+    )
+    parser.add_argument(
         "--version",
         action="version",
-        version=f"companion-relay {__version__}",
+        version=f"hermes-relay {__version__}",
     )
 
     args = parser.parse_args()
@@ -543,6 +606,23 @@ def main() -> None:
 
     # Build the app
     app = create_app(config)
+
+    # Pre-register a pairing code from CLI/env so the relay will accept it
+    # when the phone sends its locally-generated code during auth.
+    import os as _os
+    preset_code = args.pairing_code or _os.environ.get("RELAY_PAIRING_CODE")
+    if preset_code:
+        server: RelayServer = app["server"]
+        if server.pairing.register_code(preset_code):
+            logger.info("Pre-registered pairing code from CLI: %s", preset_code.upper())
+        else:
+            logger.error(
+                "Failed to pre-register pairing code %r — must be %d chars from %s",
+                preset_code,
+                6,
+                "A-Z2-9 (no ambiguous 0/1/I/O)",
+            )
+            sys.exit(2)
 
     # SSL context
     ssl_ctx = None if args.no_ssl else _create_ssl_context(config)

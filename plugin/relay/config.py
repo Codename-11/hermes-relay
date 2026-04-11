@@ -12,8 +12,13 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-# Characters used for pairing codes — no ambiguous 0/O/1/I
-PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+# Characters used for pairing codes. Full A-Z + 0-9 alphabet (36 chars) so
+# codes the phone generates with AuthManager.PAIRING_CODE_CHARS always
+# validate cleanly. The earlier "no ambiguous 0/O/1/I" restriction only
+# mattered when a human had to retype the code from a display; when the
+# phone is the source of truth, that restriction silently rejected valid
+# codes containing any of those four characters.
+PAIRING_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 PAIRING_CODE_LENGTH = 6
 
 

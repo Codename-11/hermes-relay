@@ -26,10 +26,17 @@ The relay runs alongside hermes-agent on the same machine. It reads `~/.hermes/c
 ### One-liner
 
 ```bash
-pip install aiohttp pyyaml && python -m relay_server --no-ssl
+# If you installed the hermes-android plugin:
+hermes relay start --no-ssl
+
+# Or directly from a repo checkout:
+python -m plugin.relay --no-ssl
+
+# Legacy entrypoint still works via a thin compat shim:
+python -m relay_server --no-ssl
 ```
 
-Run from the repo root (where `relay_server/` is a Python package).
+The canonical implementation lives at `plugin/relay/`. The top-level `relay_server/` package is a thin shim that delegates to `plugin.relay.server.main()` so existing docs, scripts, and systemd units keep working.
 
 ### Docker
 
@@ -96,12 +103,23 @@ Or use a reverse proxy (nginx/Caddy) to terminate TLS in front of the relay.
 
 ## Authentication
 
-The relay uses a two-step auth flow:
+The relay uses a QR-driven two-step auth flow:
 
-1. **Pairing** — The app displays a 6-character code. The user provides this to hermes-agent (or enters it in the relay's pairing endpoint). The relay validates and issues a session token.
+1. **Pairing** — `hermes pair` runs on the Hermes host, mints a fresh 6-char code (`A-Z / 0-9`), pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint, and embeds the relay URL + code in the scanned QR payload. The phone sends the code in its first `system/auth` envelope; the relay consumes it and issues a session token. Codes are one-shot and expire 10 minutes after registration.
 2. **Session token** — Stored in Android's EncryptedSharedPreferences. Used for all subsequent connections. Expires after 30 days.
 
 Rate limiting: 5 failed auth attempts per 60 seconds triggers a 5-minute block per IP.
+
+See [`docs/spec.md` §3.3](spec.md) for the full auth flow and the QR wire format.
+
+## HTTP Routes
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/ws`, `/` | GET (upgrade) | Main WebSocket endpoint. Phone connects, sends `system/auth`, then multiplexes `chat`/`terminal`/`bridge` envelopes. |
+| `/health` | GET | Returns `{status, version, clients, sessions}` JSON. |
+| `/pairing` | POST | Generate a new relay-side pairing code. Returns `{"code": "ABC123"}`. Unrestricted (intended for host-local callers). |
+| `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code so it can appear in a QR payload before the phone scans it. Request body: `{"code": "ABCD12"}`. Response: `{"ok": true, "code": "ABCD12"}`. Returns HTTP 403 for any `request.remote` other than `127.0.0.1` / `::1` — only a process running on the same host as the relay can inject codes. Used by `hermes pair`. |
 
 ## Health Check
 
@@ -151,15 +169,23 @@ The relay reads the hermes config file for agent profiles but does not modify it
 
 ## Files
 
+Canonical implementation (`plugin/relay/`):
+
 | File | Purpose |
 |------|---------|
-| `relay_server/__main__.py` | Entry point (`python -m relay_server`) |
-| `relay_server/relay.py` | Main WSS server, routing, auth flow |
-| `relay_server/config.py` | Configuration from env vars + config file |
-| `relay_server/auth.py` | Pairing codes, session tokens, rate limiting |
-| `relay_server/channels/chat.py` | Chat handler (proxies to API server) |
-| `relay_server/channels/terminal.py` | Terminal handler (Phase 2 — stub) |
-| `relay_server/channels/bridge.py` | Bridge handler (Phase 3 — stub) |
+| `plugin/relay/__main__.py` | Entry point (`python -m plugin.relay`) |
+| `plugin/relay/server.py` | Main WSS server, HTTP route registration, auth flow, `/pairing/register` handler |
+| `plugin/relay/config.py` | `RelayConfig`, `PAIRING_ALPHABET` (full `A-Z / 0-9`), env var loading |
+| `plugin/relay/auth.py` | `PairingManager`, `SessionManager`, `RateLimiter` |
+| `plugin/relay/channels/chat.py` | Chat handler (proxies to API server) |
+| `plugin/relay/channels/terminal.py` | Terminal handler (PTY-backed, Phase 2) |
+| `plugin/relay/channels/bridge.py` | Bridge handler (Phase 3 — stub) |
+
+Deployment assets (`relay_server/`, thin shim + ops files):
+
+| File | Purpose |
+|------|---------|
+| `relay_server/__main__.py` | Legacy entrypoint — delegates to `plugin.relay.server.main()` |
 | `relay_server/Dockerfile` | Container image |
 | `relay_server/hermes-relay.service` | Systemd unit file |
 | `relay_server/SKILL.md` | Hermes skill reference for self-setup |

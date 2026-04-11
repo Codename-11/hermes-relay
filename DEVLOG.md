@@ -1,5 +1,42 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-11 — QR-Driven Relay Pairing (one scan → chat + relay)
+
+**Done:**
+- **Extended QR payload schema** — `HermesPairingPayload` (in `plugin/pair.py` + `app/.../QrPairingScanner.kt`) now carries an optional `relay` block alongside the existing API server fields: `{ "hermes": 1, "host", "port", "key", "tls", "relay": { "url": "ws://host:port", "code": "ABCD12" } }`. The `relay` field is nullable and `kotlinx.serialization` runs with `ignoreUnknownKeys = true`, so old API-only QRs still parse cleanly — no migration required.
+- **New relay endpoint `POST /pairing/register`** (`plugin/relay/server.py` → `handle_pairing_register`) — Pre-registers an externally-provided pairing code with the running relay. Accepts `{"code": "ABCD12"}`, returns `{"ok": true, "code": "ABCD12"}`. Gated to loopback callers only (`127.0.0.1` / `::1`) — any non-local `request.remote` gets HTTP 403. Matches the trust model: only a process with host shell access can inject codes; a LAN attacker cannot. Validation delegates to `PairingManager.register_code()` which enforces the 6-char `A-Z / 0-9` format.
+- **`hermes pair` probes + pre-registers the relay** — When invoked, the command calls `probe_relay()` against `http://127.0.0.1:RELAY_PORT/health`; on success, mints a fresh 6-char code (`random.SystemRandom`, alphabet `string.ascii_uppercase + string.digits`), posts it to `/pairing/register`, and embeds `{url, code}` in the QR. If the relay isn't running it prints an `[info]` pointing at `hermes relay start` and renders an API-only QR. If registration fails it prints a `[warn]` and also falls back. New `--no-relay` flag skips the probe entirely for operators who only want direct chat.
+- **Output format** — `render_text_block()` now renders a second "Relay (terminal + bridge)" section when a relay block is present, showing the `ws://host:port` URL and the pairing code (with "expires in 10 min, one-shot" note) alongside the existing "Server" section. Unified warning at the bottom notes the QR contains credentials whenever an API key OR a relay code is present.
+- **Pairing alphabet widened** — `plugin/relay/config.py` — `PAIRING_ALPHABET` went from `"ABCDEFGHJKLMNPQRSTUVWXYZ23456789"` (32 chars, no ambiguous 0/O/1/I) to `"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"` (36 chars). The phone-side `PAIRING_CODE_CHARS = ('A'..'Z') + ('0'..'9')` in `AuthManager.kt` could previously emit codes that `PairingManager.register_code()` silently rejected as "invalid format". The old restriction only mattered when a human had to retype a code from a display; with QR + HTTP the full alphabet is correct.
+- **Relay config env vars** — `RELAY_HOST` / `RELAY_PORT` are now consumed by `plugin/pair.py`'s `read_relay_config()` too (in addition to `plugin/relay/config.py`), so `hermes pair` and `hermes relay start` agree on where the relay lives.
+- **Phase 3 note** — Phone-side `generatePairingCode()` in `AuthManager.kt` is retained. The bridge channel (Phase 3) will use the opposite flow — phone generates, host approves — and `POST /pairing/register` is written generically enough to serve both directions.
+
+**Files changed/added:**
+- `plugin/relay/server.py` — `handle_pairing_register` + route registration on `/pairing/register`
+- `plugin/relay/auth.py` — `PairingManager.register_code()` validation helper
+- `plugin/relay/config.py` — widened `PAIRING_ALPHABET`, comment explaining why
+- `plugin/pair.py` — `probe_relay()`, `register_relay_code()`, `_generate_relay_code()`, `_relay_lan_base_url()`, `read_relay_config()`; extended `build_payload()` / `render_text_block()` / `pair_command()`
+- `plugin/cli.py` — `--no-relay` flag on `hermes pair`
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/components/QrPairingScanner.kt` — `RelayPairing` data class + nullable `relay` field on `HermesPairingPayload`
+- `README.md` — Quick Start pairing section now mentions one-scan chat + relay
+- `docs/spec.md` — pairing flow section and QR wire format
+- `docs/decisions.md` — new ADR entry on QR-carries-both-credentials trust model
+- `docs/relay-server.md` — routes table includes `/pairing/register`, loopback restriction note
+- `user-docs/guide/getting-started.md` — updated pairing steps
+- `user-docs/reference/relay-server.md` — routes + pairing model
+- `user-docs/reference/configuration.md` — `RELAY_HOST` / `RELAY_PORT` + alphabet note
+- `CLAUDE.md` — Integration Points + Repo Layout references updated to `plugin/relay/`
+- `DEVLOG.md` — this entry
+
+**Next:**
+- End-to-end test: start relay → `hermes pair` → scan QR on phone → verify both API and relay auto-configure → verify terminal tab attaches without asking for a pairing code.
+- If the phone's stored relay session token is still valid from a previous pairing, the new code should be a no-op (session reconnect takes priority over pairing in `_authenticate()`). Verify that path doesn't accidentally consume the freshly-registered code.
+
+**Blockers:**
+- None.
+
+---
+
 ## 2026-04-11 — Phase 2: Terminal Channel MVP (server + app)
 
 **Done:**

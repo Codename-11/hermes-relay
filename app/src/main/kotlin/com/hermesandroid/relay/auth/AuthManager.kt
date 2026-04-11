@@ -75,6 +75,17 @@ class AuthManager(
     private val _pairingCode = MutableStateFlow(generatePairingCode())
     val pairingCode: StateFlow<String> = _pairingCode.asStateFlow()
 
+    /**
+     * When non-null, the next [authenticate] call sends this code instead
+     * of [_pairingCode]. Populated via [applyServerIssuedCode] when the
+     * user scans a QR that carries a server-issued relay pairing code.
+     *
+     * Cleared automatically after a successful `auth.ok` so we fall back
+     * to the locally-generated code (which stays as the trust anchor for
+     * the phone → server direction used by the Phase 3 bridge channel).
+     */
+    private var serverIssuedCode: String? = null
+
     private val _profiles = MutableStateFlow<List<String>>(emptyList())
     val profiles: StateFlow<List<String>> = _profiles.asStateFlow()
 
@@ -102,6 +113,14 @@ class AuthManager(
 
     /**
      * Send auth envelope when connection is established.
+     *
+     * Pairing-code precedence when unpaired:
+     *   1. [serverIssuedCode] if set — comes from a scanned QR. This is the
+     *      canonical path: operator runs `hermes pair` on the host, which
+     *      pre-registers the code with the running relay, then renders it
+     *      into the QR. The phone scans once and consumes it here.
+     *   2. [_pairingCode] (locally-generated). Fallback for manual setups
+     *      and Phase 3's bridge direction (phone-issues-code, host-approves).
      */
     fun authenticate() {
         scope.launch {
@@ -117,8 +136,9 @@ class AuthManager(
                 }
                 else -> {
                     _authState.value = AuthState.Pairing
+                    val codeToSend = serverIssuedCode ?: _pairingCode.value
                     buildJsonObject {
-                        put("pairing_code", _pairingCode.value)
+                        put("pairing_code", codeToSend)
                         put("device_id", deviceId)
                         put("device_name", android.os.Build.MODEL)
                     }
@@ -133,6 +153,22 @@ class AuthManager(
                 )
             )
         }
+    }
+
+    /**
+     * Store a server-issued pairing code (from a scanned QR) for use on the
+     * next [authenticate] call. Overrides the locally-generated code; cleared
+     * automatically on successful `auth.ok`.
+     *
+     * Also mirrors the code into [_pairingCode] so any UI that displays the
+     * code shows the one actually being used — avoids a confusing "QR said
+     * ABCD12 but the app shows XYZ123" gap during the pairing moment.
+     */
+    fun applyServerIssuedCode(code: String) {
+        val normalized = code.trim().uppercase()
+        if (normalized.isEmpty()) return
+        serverIssuedCode = normalized
+        _pairingCode.value = normalized
     }
 
     override fun onMessage(envelope: Envelope) {
@@ -185,6 +221,9 @@ class AuthManager(
                 if (token != null) {
                     prefs().edit().putString(KEY_SESSION_TOKEN, token).apply()
                     _authState.value = AuthState.Paired(token)
+                    // Server-issued code is one-shot — drop it once the
+                    // upgrade to a long-lived session token has landed.
+                    serverIssuedCode = null
                 }
 
                 val profilesArray = payload["profiles"]?.jsonArray

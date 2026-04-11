@@ -82,15 +82,37 @@ class ConnectionManager(
             return
         }
 
+        // Normalize: append /ws if the user gave us a bare host:port with no
+        // path. The relay routes the WebSocket handler at /ws; a bare URL
+        // hits the HTTP root and comes back as 404 Not Found during the
+        // upgrade handshake. We still accept an explicit path if present.
+        val normalized = normalizeRelayUrl(url)
+
         _isInsecureConnection.value = isInsecure
         if (isInsecure) {
-            Log.w(TAG, "⚠ Connecting over INSECURE ws:// to: $url")
+            Log.w(TAG, "⚠ Connecting over INSECURE ws:// to: $normalized")
         }
 
-        serverUrl = url
+        serverUrl = normalized
         shouldReconnect = true
         reconnectAttempt = 0
-        doConnect(url)
+        doConnect(normalized)
+    }
+
+    private fun normalizeRelayUrl(url: String): String {
+        // Strip scheme to reason about the path portion cheaply.
+        val schemeEnd = url.indexOf("://")
+        if (schemeEnd < 0) return url
+        val afterScheme = url.substring(schemeEnd + 3)
+        val pathStart = afterScheme.indexOf('/')
+        return if (pathStart < 0) {
+            // No path at all — append /ws
+            "$url/ws"
+        } else {
+            val path = afterScheme.substring(pathStart)
+            // Empty or root path — append ws
+            if (path == "/" || path.isEmpty()) "${url.trimEnd('/')}/ws" else url
+        }
     }
 
     fun disconnect() {

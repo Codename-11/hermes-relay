@@ -120,6 +120,30 @@ Phone (WSS)      → Relay Server (:8767)          [bridge, terminal]
 - Session tokens avoid re-pairing on every app restart.
 - Tokens stored in EncryptedSharedPreferences (Android Keystore-backed AES-256-GCM).
 
+#### 6a. QR Carries Both API and Relay Credentials (updated 2026-04-11)
+
+**Decision:** The Hermes pairing QR payload bundles the API server credentials AND the relay URL + pairing code into a single scan. `hermes pair` runs on the Hermes host; if a relay is reachable at `localhost:RELAY_PORT`, the command mints a fresh 6-char code, pre-registers it with the relay via a new loopback-only `POST /pairing/register` endpoint, and embeds `{url, code}` under a nullable `relay` key alongside the existing `host`/`port`/`key`/`tls` fields.
+
+**Trust anchor:** the operator with shell access on the host. Only a process running on the same machine as the relay can hit `/pairing/register` — the handler rejects any non-loopback `request.remote` with HTTP 403. A LAN attacker cannot inject codes. This matches the model we already rely on for reading `~/.hermes/.env` and `~/.hermes/config.yaml`: if you have shell access to the host, you have enough privilege to authorize a device.
+
+**Why the change was necessary:**
+- Previously the phone generated its own 6-char pairing code locally via `AuthManager.generatePairingCode()` and sent it to the relay on WSS connect. The relay had no way to know what code to accept, so relay pairing was effectively broken — only API-direct-chat pairing worked via the QR.
+- Pushing the code flow through the host means the operator always has the source of truth, and a single scan configures both chat and terminal/bridge with no manual steps.
+
+**Schema evolution:**
+- Old API-only QRs (`{hermes, host, port, key, tls}`) still parse cleanly — the `relay` field is nullable and `kotlinx.serialization` runs with `ignoreUnknownKeys = true`.
+- When `--no-relay` is passed to `hermes pair`, or the relay isn't running, the QR omits the `relay` block and the command prints an `[info]` pointing at `hermes relay start`.
+
+**Pairing alphabet change:** `PAIRING_ALPHABET` in `plugin/relay/config.py` was widened from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (32 chars, no ambiguous 0/O/1/I) to the full `A-Z / 0-9` (36 chars) to match the phone-side `AuthManager.PAIRING_CODE_CHARS`. The old restriction only mattered when a human had to retype a code from a display; now that the code flows phone ↔ server through a QR + HTTP, the restriction silently rejected ~12% of valid codes and had to go.
+
+**Phase 3 symmetry:** `POST /pairing/register` is written generically enough that the bridge channel's phone-generates-code, host-approves flow (symmetric to the current server-generates, phone-scans flow) can reuse it from the opposite direction. Phone-side `generatePairingCode()` in `AuthManager.kt` is retained for that reason.
+
+**References:**
+- `plugin/pair.py` — `pair_command()`, `register_relay_code()`, `probe_relay()`
+- `plugin/relay/server.py` — `handle_pairing_register`
+- `plugin/relay/auth.py` — `PairingManager.register_code()`
+- `app/.../ui/components/QrPairingScanner.kt` — `HermesPairingPayload` / `RelayPairing`
+
 ### 7. Biometric Gate for Terminal Only
 
 **Decision:** Biometric/PIN required before terminal access. Chat and bridge don't require it.

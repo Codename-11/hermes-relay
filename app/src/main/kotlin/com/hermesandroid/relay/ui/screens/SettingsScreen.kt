@@ -1295,14 +1295,33 @@ fun SettingsScreen(
                 // Auto-save and test
                 connectionViewModel.updateApiServerUrl(payload.serverUrl)
                 connectionViewModel.updateApiKey(payload.key)
+
+                // If the QR carries a relay block, configure the relay side
+                // too so one scan fully provisions chat + terminal + bridge.
+                payload.relay?.let { relay ->
+                    connectionViewModel.updateRelayUrl(relay.url)
+                    // Auto-enable insecure mode when the relay URL is
+                    // plain ws:// — otherwise the connect will silently
+                    // refuse and the user has to dig into Developer
+                    // Options to enable it manually.
+                    if (relay.url.startsWith("ws://")) {
+                        connectionViewModel.setInsecureMode(true)
+                    }
+                    connectionViewModel.authManager.applyServerIssuedCode(relay.code)
+                }
+
                 isTesting = true
                 connectionViewModel.testApiConnection { success ->
                     isTesting = false
-                    Toast.makeText(
-                        context,
-                        if (success) "Paired — server reachable" else "Paired — but server unreachable",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    val msg = if (success) {
+                        if (payload.relay != null)
+                            "Paired — API + relay configured"
+                        else
+                            "Paired — server reachable"
+                    } else {
+                        "Paired — but server unreachable"
+                    }
+                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                 }
             },
             onDismiss = { showQrScanner = false }

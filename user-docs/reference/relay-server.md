@@ -13,10 +13,14 @@ The relay server is a lightweight Python WSS service that enables **terminal** (
 ## Quick Start
 
 ```bash
-pip install aiohttp pyyaml && python -m relay_server --no-ssl
+# If you installed the hermes-android plugin (recommended):
+hermes relay start --no-ssl
+
+# Or directly from a repo checkout:
+python -m plugin.relay --no-ssl
 ```
 
-Run from the `hermes-relay` repo root on the same machine as hermes-agent.
+Run on the same machine as hermes-agent. The canonical implementation lives at `plugin/relay/`; the top-level `relay_server/` package is a thin compat shim that delegates to it, so legacy entrypoints (`python -m relay_server`) still work.
 
 ## Deployment Options
 
@@ -64,21 +68,37 @@ All settings via environment variables:
 ## CLI Flags
 
 ```
-python -m relay_server [OPTIONS]
+hermes relay start [OPTIONS]          (or: python -m plugin.relay)
 
+  --host HOST        Bind address (default: 0.0.0.0)
   --port PORT        Listen port (default: 8767)
   --no-ssl           Disable TLS (dev/localhost only)
+  --shell PATH       Default shell for terminal sessions (absolute path; default: $SHELL)
+  --webapi-url URL   Hermes WebAPI base URL (default: http://localhost:8642)
   --log-level LEVEL  DEBUG, INFO, WARNING, ERROR
-  --config PATH      Hermes config.yaml path
+  --config PATH      Hermes config.yaml path (python -m plugin.relay only)
 ```
 
-## App Setup
+## HTTP Routes
 
-After starting the relay, configure the app to connect:
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/ws`, `/` | GET (upgrade) | WebSocket endpoint — phone connects here |
+| `/health` | GET | `{status, version, clients, sessions}` JSON |
+| `/pairing` | POST | Generate a new relay-side pairing code |
+| `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code so it can be embedded in a QR payload. Used by `hermes pair` on the same host. Rejects non-loopback peers with HTTP 403. |
 
-1. Open **Settings > Connection**
-2. Enter **Relay URL**: `ws://your-server-ip:8767` (or `wss://` with TLS)
-3. The app will pair via a 6-character code on first connection
+## Pairing Model
+
+The phone does **not** enter a pairing code by hand. Instead, `hermes pair` (running on the Hermes host) drives the whole handshake:
+
+1. `hermes pair` mints a fresh 6-character code from `A-Z / 0-9`
+2. It POSTs the code to `/pairing/register` on the local relay (blocked for any caller outside `127.0.0.1` / `::1`)
+3. It embeds the relay URL and code in the same QR payload that carries the API server credentials
+4. The phone scans once — the relay block auto-configures Settings > Connection
+5. The phone's first WSS connect uses that code in its `system/auth` envelope; the relay consumes it and issues a 30-day session token
+
+Pairing codes are one-shot and expire 10 minutes after registration. Session tokens (stored in EncryptedSharedPreferences on device) are used for all subsequent reconnects.
 
 ## Health Check
 
@@ -89,7 +109,8 @@ curl http://localhost:8767/health
 ## Troubleshooting
 
 - **Connection refused** — Is the relay running? `systemctl status hermes-relay` or `docker logs hermes-relay`
-- **Auth failure** — Pairing codes expire after 10 minutes. Generate a new one in the app.
+- **Auth failure** — Pairing codes expire 10 minutes after registration and are one-shot. Re-run `hermes pair` to mint a fresh code and get a new QR.
+- **QR has no relay block** — `hermes pair` only embeds relay details if it can reach `localhost:RELAY_PORT/health` when it runs. Start the relay first, then re-run `hermes pair`.
 - **TLS errors** — Use `--no-ssl` for local dev. Ensure cert paths are correct for production.
 - **Phone can't reach relay** — Check firewall rules for port 8767. Verify with `curl http://server-ip:8767/health` from another machine.
 

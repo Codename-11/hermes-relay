@@ -30,15 +30,25 @@ def register_cli(subparser) -> None:
         help="Show connection details as text only (no QR code)",
     )
     subparser.add_argument(
+        "--no-relay",
+        action="store_true",
+        dest="no_relay",
+        help=(
+            "Skip relay pre-pairing. Renders an API-only QR — useful if "
+            "you're only pairing for direct chat and haven't started the "
+            "relay server."
+        ),
+    )
+    subparser.add_argument(
         "--host",
         metavar="HOST",
-        help="Override server host (default: auto-detect LAN IP)",
+        help="Override API server host (default: auto-detect LAN IP)",
     )
     subparser.add_argument(
         "--port",
         metavar="PORT",
         type=int,
-        help="Override server port (default: 8642)",
+        help="Override API server port (default: 8642)",
     )
     subparser.set_defaults(func=pair_command)
 

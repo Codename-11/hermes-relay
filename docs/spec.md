@@ -150,19 +150,56 @@ Phone control — mirrors upstream relay protocol.
 
 ### 3.3 Auth Flow
 
+Pairing is QR-driven. The operator runs `hermes pair` on the host; the command probes for a running relay, generates a fresh 6-char code, pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint, then embeds the relay URL + code (and the API server credentials) in a single QR payload. The phone scans once and is configured for both chat AND terminal/bridge.
+
 ```
-1. App displays 6-char pairing code (generated locally)
-2. User tells Hermes: "connect to my phone, code is ABC123"
-3. Hermes relay generates a server-side session token
-4. Server sends WSS URL to user via chat
-5. App connects to WSS URL with pairing code
-6. Server validates code, returns session token
-7. App stores token in EncryptedSharedPreferences
-8. Future connections use token directly (no re-pairing)
-9. Token expires after 30 days or manual revoke
+1. Operator runs `hermes pair` on the Hermes host
+2. `hermes pair` reads the API server config (host/port/key) from
+   ~/.hermes/config.yaml or ~/.hermes/.env
+3. If a relay is reachable at localhost:RELAY_PORT (default 8767):
+   a. Mint a fresh 6-char code from A-Z / 0-9
+   b. POST /pairing/register { "code": "ABCD12" }  (loopback only)
+   c. Embed { url: "ws://host:port", code: "ABCD12" } in the QR payload
+4. Render QR + plain-text block
+5. Phone scans the QR → parses HermesPairingPayload (see §3.3.1)
+6. Phone stores the API server URL + key and, if present, the relay URL
+7. Phone opens WSS to the relay with the pairing code in the first
+   system/auth envelope; relay consumes the code, returns a session token
+8. Phone stores the session token in EncryptedSharedPreferences
+9. Future connections use the session token directly (no re-pairing)
+10. Session tokens expire after 30 days or on manual revoke
 ```
 
+Old API-only QRs (no `relay` block) still parse — the phone just skips the relay setup step and can be paired against a relay later via Settings. Phase 3 (bridge) will introduce a symmetric phone-generates-code, host-approves flow that reuses the same `POST /pairing/register` endpoint from the opposite direction.
+
 Biometric gate on the app side for terminal access (fingerprint/face).
+
+#### 3.3.1 QR Wire Format — `HermesPairingPayload`
+
+```json
+{
+  "hermes": 1,
+  "host": "172.16.24.250",
+  "port": 8642,
+  "key": "api-bearer-token",
+  "tls": false,
+  "relay": {
+    "url": "ws://172.16.24.250:8767",
+    "code": "ABCD12"
+  }
+}
+```
+
+- Top-level fields (`host`/`port`/`key`/`tls`) configure the direct-chat Hermes API Server. This is the legacy shape.
+- The `relay` object is **optional** and nullable. Present only when `hermes pair` found a running relay and successfully pre-registered a pairing code with it.
+- `relay.url` is the full WebSocket URL (`ws://` for dev, `wss://` for production).
+- `relay.code` is a 6-char one-shot pairing code from `A-Z / 0-9`. Expires 10 minutes after registration (same lifecycle as relay-generated codes).
+- The Android parser uses `kotlinx.serialization` with `ignoreUnknownKeys = true`, so future fields can be added without breaking older app builds.
+
+Implementation references:
+- Server-side payload builder: `plugin/pair.py` → `build_payload()` / `pair_command()`
+- Phone-side parser: `app/src/main/kotlin/.../ui/components/QrPairingScanner.kt` → `HermesPairingPayload` / `RelayPairing`
+- Relay registration endpoint: `plugin/relay/server.py` → `handle_pairing_register` (see §6 for details)
 
 ### 3.4 Security
 
@@ -264,18 +301,30 @@ The relay is a new Python service that runs alongside the Hermes gateway. It own
 
 ### 6.1 Structure
 
+The canonical relay implementation lives at `plugin/relay/` (consolidated into the plugin as of Phase 2). A thin compat shim at the top-level `relay_server/` package delegates to it so legacy entrypoints (`python -m relay_server`) still work.
+
 ```
 hermes-android/
-├── relay_server/
-│   ├── relay.py           # Main WSS server (aiohttp)
-│   ├── auth.py            # Pairing, token management
+├── plugin/relay/              # canonical implementation
+│   ├── server.py              # main aiohttp WSS server + HTTP routes
+│   ├── auth.py                # PairingManager, SessionManager, RateLimiter
+│   ├── config.py              # RelayConfig, PAIRING_ALPHABET
 │   ├── channels/
-│   │   ├── chat.py        # Proxies to Hermes WebAPI
-│   │   ├── terminal.py    # PTY/tmux management (stub)
-│   │   └── bridge.py      # Existing bridge protocol (stub)
-│   ├── config.py          # Relay configuration
-│   └── requirements.txt
+│   │   ├── chat.py            # proxies to Hermes WebAPI
+│   │   ├── terminal.py        # PTY-backed shell handler (Phase 2)
+│   │   └── bridge.py          # existing bridge protocol (stub)
+│   └── __main__.py            # `python -m plugin.relay`
+└── relay_server/              # thin shim → plugin.relay (legacy entrypoint)
 ```
+
+HTTP routes registered by `create_app()` in `plugin/relay/server.py`:
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/ws`, `/` | GET (upgrade) | WebSocket handler — main multiplexed channel |
+| `/health` | GET | Health check — returns `{status, version, clients, sessions}` |
+| `/pairing` | POST | Generate a new relay-side pairing code |
+| `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code. Used by `hermes pair` to inject codes that will appear in QR payloads. Request: `{"code": "ABCD12"}`. Rejects non-loopback peers with HTTP 403. |
 
 ### 6.2 Chat — Direct API Connection
 

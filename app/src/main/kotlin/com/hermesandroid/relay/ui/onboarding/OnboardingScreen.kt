@@ -87,7 +87,12 @@ private enum class OnboardingPage { Welcome, Chat, Terminal, Bridge, Connect, Re
 
 @Composable
 fun OnboardingScreen(
-    onComplete: (apiServerUrl: String, apiKey: String, relayUrl: String) -> Unit
+    onComplete: (
+        apiServerUrl: String,
+        apiKey: String,
+        relayUrl: String,
+        relayPairingCode: String?
+    ) -> Unit
 ) {
     val context = LocalContext.current
     val relayEnabled by FeatureFlags.relayEnabled(context).collectAsState(initial = FeatureFlags.isDevBuild)
@@ -115,6 +120,10 @@ fun OnboardingScreen(
     var apiServerUrl by rememberSaveable { mutableStateOf("http://localhost:8642") }
     var apiKey by rememberSaveable { mutableStateOf("") }
     var relayUrl by rememberSaveable { mutableStateOf("wss://localhost:8767") }
+    // When a scanned QR carries a relay block, we capture the one-shot
+    // pairing code here and hand it to AuthManager during onComplete. It's
+    // consumed on first successful auth, not persisted.
+    var serverIssuedRelayCode by rememberSaveable { mutableStateOf<String?>(null) }
     var showSkipConfirm by rememberSaveable { mutableStateOf(false) }
 
     Surface(
@@ -131,7 +140,7 @@ fun OnboardingScreen(
                 confirmButton = {
                     TextButton(onClick = {
                         showSkipConfirm = false
-                        onComplete(apiServerUrl, apiKey, relayUrl)
+                        onComplete(apiServerUrl, apiKey, relayUrl, serverIssuedRelayCode)
                     }) {
                         Text("Skip anyway")
                     }
@@ -183,7 +192,15 @@ fun OnboardingScreen(
                             apiServerUrl = apiServerUrl,
                             onApiServerUrlChange = { apiServerUrl = it },
                             apiKey = apiKey,
-                            onApiKeyChange = { apiKey = it }
+                            onApiKeyChange = { apiKey = it },
+                            onRelayPairingDetected = { scannedUrl, scannedCode ->
+                                // QR carried a relay block — configure the
+                                // relay side too so the user doesn't have
+                                // to type a second URL. The pairing code
+                                // rides along to AuthManager via onComplete.
+                                relayUrl = scannedUrl
+                                serverIssuedRelayCode = scannedCode
+                            }
                         )
                         OnboardingPage.Relay -> RelayPage(
                             relayUrl = relayUrl,
@@ -250,7 +267,7 @@ fun OnboardingScreen(
                         }
                     } else {
                         Button(
-                            onClick = { onComplete(apiServerUrl, apiKey, relayUrl) },
+                            onClick = { onComplete(apiServerUrl, apiKey, relayUrl, serverIssuedRelayCode) },
                             enabled = apiServerUrl.isNotBlank()
                         ) {
                             Text(text = "Get Started")
@@ -316,7 +333,8 @@ private fun ConnectPage(
     apiServerUrl: String,
     onApiServerUrlChange: (String) -> Unit,
     apiKey: String,
-    onApiKeyChange: (String) -> Unit
+    onApiKeyChange: (String) -> Unit,
+    onRelayPairingDetected: (relayUrl: String, relayCode: String) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -560,6 +578,12 @@ private fun ConnectPage(
             onPairingDetected = { payload ->
                 onApiServerUrlChange(payload.serverUrl)
                 onApiKeyChange(payload.key)
+                // If the QR also carries relay credentials, propagate them
+                // up so the relay URL + pairing code get applied before
+                // onComplete runs.
+                payload.relay?.let { r ->
+                    onRelayPairingDetected(r.url, r.code)
+                }
                 showQrScanner = false
                 // Auto-trigger test
                 isTesting = true
@@ -665,7 +689,7 @@ private suspend fun performHealthCheck(apiServerUrl: String, apiKey: String): Te
 private fun OnboardingScreenPreview() {
     HermesRelayTheme {
         OnboardingScreen(
-            onComplete = { _, _, _ -> }
+            onComplete = { _, _, _, _ -> }
         )
     }
 }
@@ -675,7 +699,7 @@ private fun OnboardingScreenPreview() {
 private fun OnboardingScreenDarkPreview() {
     HermesRelayTheme(themePreference = "dark") {
         OnboardingScreen(
-            onComplete = { _, _, _ -> }
+            onComplete = { _, _, _, _ -> }
         )
     }
 }

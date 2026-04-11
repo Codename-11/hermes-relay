@@ -3,8 +3,19 @@
 Replaces the standalone bash script `skills/hermes-pairing-qr/hermes-pair`.
 Exposed as the `hermes pair` CLI sub-command via plugin/cli.py.
 
-The payload format matches what QrPairingScanner.kt in the Android app expects:
-    {"hermes":1,"host":"<ip>","port":<port>,"key":"<token>","tls":<bool>}
+The payload format matches what QrPairingScanner.kt in the Android app expects::
+
+    {
+      "hermes": 1,
+      "host": "<ip>", "port": <port>, "key": "<token>", "tls": <bool>,
+      "relay": { "url": "ws://<ip>:<port>", "code": "<6-char>" }  // optional
+    }
+
+Top-level fields configure the direct-chat Hermes API server (port 8642 by
+default). The optional ``relay`` block configures the Hermes-Relay WSS
+connection used by the terminal and bridge channels — present only when a
+local relay is running and we were able to pre-register a pairing code with
+it via ``POST /pairing/register``.
 """
 
 from __future__ import annotations
@@ -12,9 +23,13 @@ from __future__ import annotations
 import io
 import json
 import os
+import random
 import socket
+import string
 import sys
 import tempfile
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Optional
 
@@ -117,12 +132,118 @@ def _resolve_lan_ip(host: str) -> str:
         return host
 
 
-def build_payload(host: str, port: int, key: str, tls: bool) -> str:
-    """Build compact JSON payload matching HermesPairingPayload.kt format."""
-    return json.dumps(
-        {"hermes": 1, "host": host, "port": port, "key": key, "tls": tls},
-        separators=(",", ":"),
+def build_payload(
+    host: str,
+    port: int,
+    key: str,
+    tls: bool,
+    relay: Optional[dict] = None,
+) -> str:
+    """Build compact JSON payload matching HermesPairingPayload.kt format.
+
+    If ``relay`` is provided, it's embedded as a nested ``"relay"`` object
+    with ``url`` and ``code`` fields. The app's QR scanner parses both the
+    legacy (API-only) shape and the extended (API + relay) shape.
+    """
+    payload: dict = {
+        "hermes": 1,
+        "host": host,
+        "port": port,
+        "key": key,
+        "tls": tls,
+    }
+    if relay is not None:
+        payload["relay"] = relay
+    return json.dumps(payload, separators=(",", ":"))
+
+
+# ── Relay pre-pairing ────────────────────────────────────────────────────────
+
+
+# Mirrors the relay's PAIRING_ALPHABET and the app's AuthManager generator.
+_RELAY_CODE_ALPHABET = string.ascii_uppercase + string.digits
+_RELAY_CODE_LENGTH = 6
+
+
+def _generate_relay_code() -> str:
+    """Generate a fresh 6-char pairing code (A-Z / 0-9)."""
+    rng = random.SystemRandom()
+    return "".join(rng.choice(_RELAY_CODE_ALPHABET) for _ in range(_RELAY_CODE_LENGTH))
+
+
+def _relay_lan_base_url(relay_host: str, relay_port: int) -> str:
+    """Build the ws://host:port URL the phone should connect to.
+
+    Always resolves loopback/bind-all to a routable LAN IP so the QR payload
+    contains a URL the phone can actually reach across the network.
+    """
+    lan_host = _resolve_lan_ip(relay_host)
+    return f"ws://{lan_host}:{relay_port}"
+
+
+def register_relay_code(
+    localhost_port: int,
+    code: str,
+    timeout_s: float = 2.0,
+) -> bool:
+    """Pre-register ``code`` with the running relay via loopback HTTP.
+
+    The relay's ``/pairing/register`` endpoint is gated to loopback callers,
+    which matches the trust model: only a process running on the same host
+    as the relay (operator shell) can inject pairing codes. A phone on the
+    LAN cannot register codes.
+
+    Returns ``True`` on success, ``False`` on any failure (relay not running,
+    timeout, HTTP error). Callers should treat failure as "relay pairing
+    unavailable" and render an API-only QR.
+    """
+    url = f"http://127.0.0.1:{localhost_port}/pairing/register"
+    body = json.dumps({"code": code}).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
     )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            if resp.status != 200:
+                return False
+            data = json.loads(resp.read().decode("utf-8"))
+            return bool(data.get("ok"))
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
+        return False
+
+
+def probe_relay(localhost_port: int, timeout_s: float = 1.0) -> Optional[dict]:
+    """Check if a relay is listening on ``localhost:<port>``.
+
+    Returns the parsed /health JSON on success, or None if the relay isn't
+    reachable. Used to decide whether to embed a relay block in the QR.
+    """
+    url = f"http://127.0.0.1:{localhost_port}/health"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout_s) as resp:
+            if resp.status != 200:
+                return None
+            return json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
+        return None
+
+
+def read_relay_config() -> dict:
+    """Resolve relay host/port from env vars + defaults.
+
+    Mirrors ``plugin/relay/config.py`` — uses ``RELAY_HOST`` / ``RELAY_PORT``
+    if set, otherwise falls back to ``0.0.0.0:8767`` which the LAN resolver
+    will turn into a routable address.
+    """
+    host = os.getenv("RELAY_HOST") or "0.0.0.0"
+    try:
+        port = int(os.getenv("RELAY_PORT") or "8767")
+    except ValueError:
+        port = 8767
+    return {"host": host, "port": port}
 
 
 def _mask_key(key: str) -> str:
@@ -134,8 +255,19 @@ def _mask_key(key: str) -> str:
     return f"{key[:4]}...{key[-3:]} ({len(key)} chars)"
 
 
-def render_text_block(host: str, port: int, key: str, tls: bool) -> str:
-    """Return formatted connection details — always shown (works in any terminal)."""
+def render_text_block(
+    host: str,
+    port: int,
+    key: str,
+    tls: bool,
+    relay: Optional[dict] = None,
+) -> str:
+    """Return formatted connection details — always shown (works in any terminal).
+
+    When a ``relay`` block is provided, adds a second section showing the
+    WebSocket URL and the pre-registered pairing code so the operator can
+    enter them manually if QR scanning fails.
+    """
     scheme = "https" if tls else "http"
     url = f"{scheme}://{host}:{port}"
     auth_status = "Bearer token configured" if key else "NO AUTH (open access)"
@@ -154,6 +286,16 @@ def render_text_block(host: str, port: int, key: str, tls: bool) -> str:
     ]
     if key:
         lines.append(f"    Key: {key}")
+
+    if relay is not None:
+        lines.extend([
+            "",
+            "  Relay (terminal + bridge)",
+            "  " + "-" * 40,
+            f"  URL  : {relay['url']}",
+            f"  Code : {relay['code']}  (expires in 10 min, one-shot)",
+        ])
+
     lines.append("")
     return "\n".join(lines)
 
@@ -213,10 +355,48 @@ def pair_command(args) -> None:
     key = config["key"]
     tls = config["tls"]
 
-    payload = build_payload(host, port, key, tls)
+    # ── Relay pre-pairing ────────────────────────────────────────────────
+    #
+    # If a relay is running locally, mint a fresh pairing code, register it
+    # with the relay via the loopback-only /pairing/register endpoint, and
+    # embed both the relay URL and the code in the QR payload. The phone
+    # gets everything it needs to connect to chat + terminal in a single
+    # scan. If the relay isn't running (or we can't register), we render an
+    # API-only QR and print a warning pointing at `hermes relay start`.
+
+    relay_block: Optional[dict] = None
+    skip_relay = getattr(args, "no_relay", False)
+    if not skip_relay:
+        relay_cfg = read_relay_config()
+        relay_port = relay_cfg["port"]
+
+        health = probe_relay(relay_port)
+        if health is None:
+            print(
+                "  [info] Relay not running at localhost:"
+                f"{relay_port} — QR will configure chat only."
+            )
+            print(
+                "         Start the relay with: hermes relay start   "
+                "(or: python -m plugin.relay --no-ssl)\n"
+            )
+        else:
+            relay_code = _generate_relay_code()
+            if register_relay_code(relay_port, relay_code):
+                relay_block = {
+                    "url": _relay_lan_base_url(relay_cfg["host"], relay_port),
+                    "code": relay_code,
+                }
+            else:
+                print(
+                    "  [warn] Relay is running but /pairing/register was "
+                    "rejected — QR will configure chat only.\n"
+                )
+
+    payload = build_payload(host, port, key, tls, relay=relay_block)
 
     # Always show text block — works in any terminal including Hermes TUI
-    print(render_text_block(host, port, key, tls))
+    print(render_text_block(host, port, key, tls, relay=relay_block))
 
     png_only = getattr(args, "png", False)
     no_qr = getattr(args, "no_qr", False)
@@ -234,7 +414,13 @@ def pair_command(args) -> None:
             print(f"  PNG: {png_path}")
         print("  Scan with the Hermes-Relay Android app.")
 
-    print("  WARNING: This contains your API key. Do not share screenshots.\n")
+    if key or relay_block is not None:
+        print(
+            "  WARNING: This QR contains credentials "
+            "(API key and/or relay pairing code). Do not share screenshots.\n"
+        )
+    else:
+        print()
 
 
 if __name__ == "__main__":
@@ -244,6 +430,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Hermes Android pairing")
     parser.add_argument("--png", action="store_true", help="Save PNG only")
     parser.add_argument("--no-qr", action="store_true", dest="no_qr", help="Text only")
-    parser.add_argument("--host", help="Override server host")
-    parser.add_argument("--port", type=int, help="Override server port")
+    parser.add_argument(
+        "--no-relay",
+        action="store_true",
+        dest="no_relay",
+        help="Skip relay pre-pairing (render API-only QR)",
+    )
+    parser.add_argument("--host", help="Override API server host")
+    parser.add_argument("--port", type=int, help="Override API server port")
     pair_command(parser.parse_args())
