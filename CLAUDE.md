@@ -231,6 +231,92 @@ scripts/dev.bat relay      # Start relay server (dev mode, no SSL)
 
 Open repo root in Android Studio for Compose previews and device deployment.
 
+### Typical Dev Loop (Claude-driven edits + Bailey's local testing)
+
+The standard flow when Claude is editing code and Bailey is testing against the live hermes-agent install on the LAN server:
+
+1. **Edit locally** in the Windows checkout (`C:\Users\Bailey\Desktop\Open-Projects\hermes-android\`). Both Python plugin (`plugin/`) and Android app (`app/`) live here. All code edits, tests, and doc updates happen in this one tree.
+2. **Python changes** → run `python -m py_compile plugin/<file>.py` for quick syntax check. Full `pytest` / `unittest` runs happen on the server (the Windows env doesn't have the `aiohttp` + venv set up).
+3. **Kotlin changes** → **do NOT run `gradle build`**. Bailey builds and runs the app from Android Studio's green ▶ button directly onto the physical device. This is a hard convention — never `adb install`, never `gradle assembleDebug` from Claude. Rely on type checks, `grep` for obvious structural bugs, and let Android Studio catch compile errors on Bailey's next build attempt. Errors surface in his IDE and he pastes them back for fast fixes.
+4. **Commit + push to `origin/main`** via `git push origin main`. `main` is the deploy branch for this project. Feature branches are fine for longer work but the normal cycle is straight to main (SYSTEM.md convention: *"Git as handoff: Always commit + push before handing off between sessions"*).
+5. **Pull on the Linux server** where the live relay + hermes-agent run. The hermes-relay plugin is **editable-installed** (`pip install -e`) against the hermes-agent venv, so `git pull` inside the server clone is all it takes for Python code changes to take effect on the **next import** per process. See "Server Deployment" below for the exact paths and commands.
+6. **Restart running Python processes** if needed. Editable installs only take effect on fresh imports — any process that already imported the old code is holding it in memory. In practice this means:
+   - `hermes-gateway.service` (user systemd) — restart via `systemctl --user restart hermes-gateway` when plugin *tool* code changes (e.g., `plugin/tools/android_tool.py`), because the gateway process imports and caches tools.
+   - The relay (`python -m plugin.relay --no-ssl`) — not a systemd service on this deployment; runs as a detached `nohup`/`setsid` process. Restart via `pkill -TERM -f "python -m plugin.relay"` then re-launch with `nohup ... & disown`. See the log at `~/hermes-relay.log` on the server.
+   - Plugin skill changes (files under `skills/`) — picked up **automatically** on every hermes-agent invocation via the `external_dirs` scan. No restart needed.
+7. **Run tests on the server** (the venv there has all dependencies). Prefer `python -m unittest plugin.tests.test_<name>` — `python -m pytest` sometimes chokes on a pre-existing `conftest.py` that imports the `responses` module (not installed). `unittest` bypasses the conftest entirely.
+8. **Test on the phone** — Bailey builds from Android Studio, installs to his Samsung device connected via USB (or the Studio device chooser), scans the pair QR from `/hermes-relay-pair` or `hermes-pair` on the server, and exercises the feature. He reports errors by pasting the Studio Logcat or the Kotlin compile error into the chat.
+
+### Server Deployment (the "local instance" Bailey tests against)
+
+The server is a Linux box on Bailey's LAN running hermes-agent with the hermes-relay plugin editable-installed. Canonical paths and commands (see `~/SYSTEM.md` on the server for the authoritative / sensitive details — host IP, user, services list):
+
+| What | Where |
+|---|---|
+| hermes-agent repo (upstream fork) | `~/.hermes/hermes-agent/` |
+| hermes-agent venv (python + all deps) | `~/.hermes/hermes-agent/venv/` |
+| hermes-relay clone (this repo) | `~/.hermes/hermes-relay/` |
+| Plugin symlink | `~/.hermes/plugins/hermes-relay` → `~/.hermes/hermes-relay/plugin` |
+| Editable install verification | `~/.hermes/hermes-agent/venv/bin/pip show hermes-relay` → `Editable project location: ~/.hermes/hermes-relay` |
+| Config (yaml + env) | `~/.hermes/config.yaml` + `~/.hermes/.env` |
+| QR-secret (HMAC pair signing) | `~/.hermes/hermes-relay-qr-secret` (32 bytes, 0o600, auto-created by `hermes-pair` first run) |
+| Relay log | `~/hermes-relay.log` |
+| `hermes-gateway.service` | User systemd unit; runs `python -m hermes_cli.main gateway run --replace` on port 8642 |
+| Relay process | Detached `nohup` / `setsid` (NOT a systemd service), `python -m plugin.relay --no-ssl --log-level INFO` on port 8767 |
+
+**Standard update cycle on the server** (run manually via `ssh` — connection details in `~/SYSTEM.md` server-side):
+
+```bash
+cd ~/.hermes/hermes-relay
+git pull --ff-only origin main
+
+# If plugin tools changed (android_tool.py etc.):
+systemctl --user restart hermes-gateway
+
+# If relay server code changed (plugin/relay/*.py):
+pkill -TERM -f "python -m plugin.relay"
+sleep 2
+nohup ~/.hermes/hermes-agent/venv/bin/python -m plugin.relay \
+    --no-ssl --log-level INFO \
+    >> ~/hermes-relay.log 2>&1 </dev/null & disown
+
+# Verify health
+curl -s http://localhost:8767/health
+```
+
+**Running tests on the server:**
+
+```bash
+cd ~/.hermes/hermes-relay
+# Specific modules to skip the conftest.py that imports `responses`:
+~/.hermes/hermes-agent/venv/bin/python -m unittest \
+    plugin.tests.test_qr_sign \
+    plugin.tests.test_session_grants \
+    plugin.tests.test_sessions_routes \
+    plugin.tests.test_rate_limit_clear \
+    plugin.tests.test_media_registry \
+    plugin.tests.test_relay_media_routes
+```
+
+**Important conventions:**
+
+- **Never install APKs from Claude.** Bailey deploys via Android Studio's run button. No `adb install`, no gradle builds from the tool side.
+- **Never run `pytest` from Claude-side on the server** without the `unittest` escape above, unless you've first checked that `responses` is in the venv — the pre-existing conftest will fail the collector.
+- **Always use `nohup` + `disown` or `setsid -f`** when starting the relay over SSH, otherwise the SSH session's exit can kill the process before it fully detaches.
+- **Sensitive info lives in `~/SYSTEM.md` on the server and `~/.hermes/.env`**, NOT in this repo. Bailey's SSH user, IP, and secrets don't belong in `CLAUDE.md`. Claude reads the server's SYSTEM.md on first SSH if orientation is needed (`cat ~/SYSTEM.md`).
+- **The phone re-pairs after each relay restart** — in-memory `SessionManager` state is wiped on restart, so the phone's stored session token becomes stale. `/pairing/register` clears rate-limit blocks automatically (per ADR 15) so re-pair via `/hermes-relay-pair` (in-chat) or `hermes-pair` (shell shim) works immediately without waiting for a block to expire.
+
+### Where Python vs. Kotlin changes land
+
+| Change type | Who rebuilds/restarts? | How? |
+|---|---|---|
+| Python plugin tool (e.g., `android_tool.py`) | `hermes-gateway.service` restart | `systemctl --user restart hermes-gateway` |
+| Python plugin relay (`plugin/relay/*.py`) | Manual relay process restart | `pkill` + `nohup ... & disown` (see above) |
+| Python plugin pair CLI (`plugin/pair.py`, `plugin/cli.py`) | Next invocation picks up new code | No restart needed — fresh process per invocation |
+| Skill files (`skills/**/SKILL.md`) | Next hermes-agent invocation scans `external_dirs` | No restart needed |
+| Android app (`app/**`) | Bailey rebuilds in Android Studio | Studio run button → device |
+| Docs (`docs/`, `user-docs/`, `DEVLOG.md`, `CLAUDE.md`, `README.md`) | — | No runtime effect |
+
 ### Release Process
 
 See [RELEASE.md](RELEASE.md) for the full release recipe — versioning conventions, keystore setup, Play Console upload (manual + automated via `gradle-play-publisher`), GitHub release workflow, and troubleshooting.

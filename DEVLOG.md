@@ -1,5 +1,42 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-11 — Relay status flicker fix + Dev Workflow docs in CLAUDE.md
+
+Two small follow-ups from the same session:
+
+**1. Connection card flicker on Settings entry.**
+When opening Settings with a stored session token, the Relay status row flashed through 3 rapid states: red "Disconnected" → amber "Stale — tap to reconnect" → amber "Connecting..." → green "Connected". Users saw the middle two as a flicker.
+
+Root cause: `authState` default is `Unpaired` until the `EncryptedSharedPreferences` read finishes (~50ms async). During that gap the row shows red "Disconnected" which is actually correct. Once `authState` flips to `Paired`, `isRelayStale` becomes true and the row shows "Stale — tap to reconnect". The `LaunchedEffect(Unit)` that fires `reconnectIfStale()` then triggers `ConnectionState.Connecting`, changing the label to "Connecting...". These rapid transitions are the flicker.
+
+Fix: added a screen-local `isAutoReconnecting` flag that's true for up to 5 seconds on screen entry (or until `ConnectionState.Connected` lands, whichever is first). During that window the status text unifies all the non-Connected sub-states into one consistent `"Reconnecting..."` label. After 5s the flag drops and the row falls through to the normal state machine — so the "Stale — tap to reconnect" affordance still works for cases where the user is genuinely sitting in a stale state (backgrounding the app, network flapping, etc.). Only the initial-entry transition gets the unified label.
+
+The fix is purely presentational — the underlying state machine is unchanged. `isConnecting` is wired to treat `isAutoReconnecting` the same as the real `Connecting` / `Reconnecting` states so the ConnectionStatusBadge's pulse ring animates continuously through the window.
+
+**2. Dev workflow documented in `CLAUDE.md`.**
+Bailey asked for the typical dev loop to be documented in `CLAUDE.md` so Claude doesn't have to rediscover the flow each session. Added a new "Typical Dev Loop" subsection + "Server Deployment" table + "Where Python vs. Kotlin changes land" table. Covers:
+- Edit-in-Windows, test-on-Linux-server split
+- Python plugin edits via `pip install -e` editable path → `git pull` on server picks them up
+- `hermes-gateway.service` systemctl user-unit restart when tool code changes
+- Manual `nohup` / `setsid` restart for the relay process (which isn't a systemd service on this deployment)
+- Running tests via `python -m unittest plugin.tests.test_<name>` (avoiding the pre-existing `conftest.py` that imports the uninstalled `responses` module)
+- The hard convention: Claude never builds/installs APKs — Bailey uses Android Studio's run button
+- Where sensitive info lives (`~/SYSTEM.md` on the server, `~/.hermes/.env`) — explicitly NOT in this repo
+- The PATH conventions (venv, plugin symlink, relay log, config yaml, qr-secret)
+
+Keeps the doc free of any host-specific identifiers (IP, username, SSH key) — those stay on the server side.
+
+**Also included in this entry but landed in a separate earlier commit:** `fix(auth): extend without grants regenerates from defaults, not absolute-time clamp` (`c209c99`). The first cut of `SessionManager.update_session` tried to preserve existing grants via a `_clamp_grants_to_lifetime` helper when only TTL changed. That made sense for shortening (clip grants that exceed the new session) but produced nonsense for extending: a 1h bridge grant made 30 minutes ago, extended to 90d, would still have an absolute expiry of 30 minutes from now — the user would tap Extend and find bridge was about to expire anyway. Corrected to regenerate grants from `_default_grants(new_ttl, now)` when only TTL changes, giving fresh allocations for the new lifetime. Deleted the now-unused `_clamp_grants_to_lifetime` helper. Caught by `test_extend_ttl_zero_means_never` which asserts that extending a finite session to never-expire produces all-null (never) grants.
+
+**Files changed:**
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/screens/SettingsScreen.kt` — `isAutoReconnecting` flag + updated `ConnectionStatusRow` wiring
+- `CLAUDE.md` — new Dev Workflow subsections (Typical Dev Loop, Server Deployment, Where Python vs. Kotlin changes land)
+- `plugin/relay/auth.py` — (separate commit `c209c99`) `update_session` semantic fix
+
+No server side changes in this entry — the flicker fix is phone-only and the docs don't deploy.
+
+---
+
 ## 2026-04-11 — Grant renewal action (PATCH /sessions/{prefix} + "Extend" button)
 
 **Why this exists:**

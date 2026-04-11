@@ -206,8 +206,23 @@ fun SettingsScreen(
     // Auto-reconnect when entering the Settings screen in a stale state.
     // Keeps 90% of users out of the contradictory "Paired + Disconnected"
     // state without requiring a manual tap.
+    //
+    // [isAutoReconnecting] is a screen-local gate that unifies the brief
+    // "Stale → Connecting → Connected" transition into one consistent
+    // "Reconnecting..." label so users don't see the row flash between
+    // states. Flipped off when we either reach Connected, or after a
+    // 5s timeout (at which point we fall through to the real
+    // "Stale — tap to reconnect" affordance).
+    var isAutoReconnecting by remember { mutableStateOf(true) }
     LaunchedEffect(Unit) {
         connectionViewModel.reconnectIfStale()
+        kotlinx.coroutines.delay(5000)
+        isAutoReconnecting = false
+    }
+    LaunchedEffect(relayConnectionState) {
+        if (relayConnectionState == ConnectionState.Connected) {
+            isAutoReconnecting = false
+        }
     }
 
     // Connection section expand state — seeded from the current pair/reach
@@ -364,14 +379,25 @@ fun SettingsScreen(
                         ConnectionStatusRow(
                             label = "Relay",
                             isConnected = relayConnectionState == ConnectionState.Connected,
-                            // Treat "stale" as the amber in-flight state so
-                            // the row renders in amber instead of red — a
-                            // tap will bring it back, no re-pair needed.
+                            // Treat "stale" AND the initial auto-reconnect
+                            // window as the amber in-flight state so the
+                            // row renders in amber instead of red — a tap
+                            // will bring it back, no re-pair needed.
                             isConnecting = relayConnectionState == ConnectionState.Connecting ||
                                 relayConnectionState == ConnectionState.Reconnecting ||
-                                isRelayStale,
+                                isRelayStale ||
+                                isAutoReconnecting,
                             statusText = when {
                                 relayConnectionState == ConnectionState.Connected -> "Connected"
+                                // During the initial auto-reconnect window
+                                // (screen just opened, stale session is being
+                                // revived), show ONE consistent label even as
+                                // the underlying state bounces from
+                                // Disconnected → Connecting → Connected. Avoids
+                                // the flash of "Stale — tap to reconnect"
+                                // followed immediately by "Connecting..." that
+                                // users were seeing on every Settings entry.
+                                isAutoReconnecting && relayConnectionState != ConnectionState.Connected -> "Reconnecting..."
                                 relayConnectionState == ConnectionState.Connecting -> "Connecting..."
                                 relayConnectionState == ConnectionState.Reconnecting -> "Reconnecting..."
                                 isRelayStale -> "Stale — tap to reconnect"
