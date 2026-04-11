@@ -44,6 +44,7 @@ Per-channel grants (`terminal`, `bridge`) can be pre-set by the operator via `he
 - Transport security badge (secure / insecure / unknown)
 - Session expiry (a date or "Never")
 - Per-channel grant chips (`chat · terminal · bridge`)
+- **Extend** button — opens the same TTL picker dialog used during initial pair, preselected with the current remaining lifetime (or "Never" if already never-expiring). Confirming calls `PATCH /sessions/{token_prefix}` with the new TTL; the server restarts the clock from now and auto-clamps any existing grants to the (possibly new) session lifetime. Also works to **shorten** sessions — pick a shorter duration or "Never" to change the policy without re-pairing.
 - **Revoke** button — confirmation dialog, then `DELETE /sessions/{token_prefix}`. Revoking the current device wipes local session token and redirects to pairing flow.
 
 Any paired device can revoke any other. For single-operator deployments (1-2 phones, one host) this is fine; for multi-user deployments a per-device role model is a future refactor (see ADR 15).

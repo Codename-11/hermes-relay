@@ -1,5 +1,59 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-11 — Grant renewal action (PATCH /sessions/{prefix} + "Extend" button)
+
+**Why this exists:**
+Pairing/security overhaul shipped a Paired Devices screen with list + revoke, but no way to change a session's TTL or grants after initial pair. Users who paired with "1 day" when trying out the feature and decided to keep it had to revoke + re-pair. This closes that gap with the smallest possible surface area: one new route, one new client method, one new button, one new dialog reuse. Scope #4 from the gap list — small and concrete enough to do directly rather than via agent team.
+
+**Semantics decision: TTL restarts the clock.**
+"Extend by 30 days" = "30 days from now", not "add 30 days to the existing expiry." This matches what users mean when they tap Extend: they want the session to be valid for another 30 days starting today. It also means Extend can SHORTEN a session (pick a shorter duration or "Never" → fewer) — the button is labeled "Extend" for the common case but the semantics are really "update TTL policy".
+
+**Grant handling:**
+- If caller passes `grants`: re-materialize from scratch via `_materialize_grants` (uses defaults for channels the caller didn't specify, clamps each to the new session lifetime).
+- If caller passes ONLY `ttl_seconds`: keep existing grants but re-clamp them via a new `_clamp_grants_to_lifetime` helper so a shorter TTL correctly clips any grant that would outlive the session. A longer TTL leaves grants unchanged (they were already ≤ the old expiry, which is now ≤ the new longer expiry, so no clipping needed).
+- If caller passes both: apply TTL first (new session expiry), then materialize the provided grants clamped to the new expiry.
+- If caller passes neither: 400. No-op calls are bugs.
+
+**UX:**
+Reuses the existing `SessionTtlPickerDialog` directly — no new component needed. The dialog's "Keep this pairing for…" title works for both the pair flow and the extend flow (tense-neutral). Preselected option is computed from the session's current remaining lifetime rounded to the nearest picker option — never-expire sessions preselect "Never", 1-hour-remaining sessions preselect "1 day" (shortest real option), 25-day-remaining sessions preselect "30 days", etc.
+
+## Files
+
+**Server** (`plugin/relay/`):
+- `auth.py` — new `SessionManager.update_session(token, ttl_seconds?, grants?) -> Session | None` that restarts-the-clock on TTL and re-materializes/re-clamps grants. New module-level `_clamp_grants_to_lifetime(grants, ttl_seconds, now)` helper alongside the existing `_materialize_grants`. Expired sessions are NOT silently resurrected — caller should re-pair instead.
+- `server.py` — new `handle_sessions_extend(request)` handler doing full validation (non-negative `ttl_seconds`, non-negative numeric grant values, at least one field present) + the prefix → session → update dance that mirrors `handle_sessions_revoke`. Route registered via `app.router.add_patch("/sessions/{token_prefix}", handle_sessions_extend)` — PATCH is a distinct method on the same pattern, no ordering collision with existing GET/DELETE.
+- `plugin/tests/test_sessions_routes.py` — 10 new tests: bearer-required, nonexistent prefix → 404, empty body → 400, negative TTL → 400, bad grant shape → 400, TTL-only restarts the clock (asserts `new_expiry ≈ now + new_ttl`, NOT old_expiry + new_ttl), `ttl_seconds=0` → never (null grants), grants-only leaves expiry alone, shorter TTL clips grants, self-extend, helper `_settle()` for the 1ms async delay needed on fast machines to make timestamp assertions meaningful.
+
+**Phone** (`app/src/main/kotlin/.../`):
+- `network/RelayHttpClient.kt` — new `extendSession(tokenPrefix, ttlSeconds?, grants?)` method. Hand-rolls the small JSON body to avoid pulling in another serializer branch (two optional fields, trivial to write, auditable). 400/401/404/409/5xx are all mapped to user-facing error messages. 404 is a hard failure here (unlike revoke where "already gone" → success) — if you're extending an active session and it's gone, that's surprising and should surface.
+- `viewmodel/ConnectionViewModel.kt` — new `suspend fun extendDevice(tokenPrefix, ttlSeconds): Boolean`, mirrors `revokeDevice`'s shape (refresh list on success, surface error via `pairedDevicesError`). Grants intentionally not exposed on this path — MVP UX is "pick a new duration", server-side re-clamping handles the rest. Power users can call `RelayHttpClient.extendSession` directly for grant editing.
+- `ui/screens/PairedDevicesScreen.kt` — `pendingExtend: PairedDeviceInfo?` state alongside the existing `pendingRevoke`. New dialog branch renders `SessionTtlPickerDialog` with the current remaining lifetime preselected (`expires_at - now`, clamped to ≥ 0, or 0 for never-expire sessions). Confirming calls `connectionViewModel.extendDevice(...)` inside a coroutine + shows a snackbar. `DeviceCard` action row becomes a 50/50 split between "Extend" and "Revoke" buttons (instead of a single full-width revoke). Both buttons are `OutlinedButton`; the revoke button keeps the error color tint.
+
+**Docs:**
+- `docs/relay-server.md` + `user-docs/reference/relay-server.md` — new PATCH /sessions/{token_prefix} route row
+- `user-docs/reference/configuration.md` — Extend button description in the Paired Devices subsection
+- `CLAUDE.md` — Integration Points table row for the new route
+- this DEVLOG entry
+
+## Not changed (intentionally)
+
+- `__version__` stays at 0.2.0 per prior direction (we never released 0.2.0)
+- No grant-editing UI — power users can hit the endpoint directly via a future tool
+- No "extend by increment" UX (e.g. "+30 days on top of current") — semantics are always "set new TTL from now". Easier to reason about, matches what the picker already shows.
+- No ADR bump — this is a small follow-up to ADR 15's architecture, not a new decision. ADR 15 already documents the session mutation model at a high level.
+
+## Test plan (on-device)
+
+1. Pair with `--ttl 1d` so you have a short session
+2. Open Paired Devices → find the current device → tap Extend
+3. Picker should show "1 day" preselected. Pick "30 days" → confirm.
+4. Verify the card now shows "Expires ~30 days from now" and the snackbar says "Session expiry updated"
+5. Tap Extend again → pick "Never expire" → confirm. Verify the card now shows "Never" and all channel grant chips show "never" too
+6. Tap Extend again → pick "1 day" → confirm. Verify the card now shows ~1 day from now AND the grant chips are now all ≤ 1 day (clamped by the shortened session)
+7. Try to Extend a non-current session (if you have multiple paired) → should work the same way
+
+---
+
 ## 2026-04-11 — Pairing + Security Architecture Overhaul (grants, TTL, Keystore, TOFU, devices)
 
 **Why this exists:**

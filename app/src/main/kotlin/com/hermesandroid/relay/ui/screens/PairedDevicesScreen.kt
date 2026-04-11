@@ -55,6 +55,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.auth.PairedDeviceInfo
+import com.hermesandroid.relay.ui.components.SessionTtlPickerDialog
 import com.hermesandroid.relay.ui.components.TransportSecurityBadge
 import com.hermesandroid.relay.ui.components.TransportSecuritySize
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
@@ -90,6 +91,8 @@ fun PairedDevicesScreen(
     val scope = rememberCoroutineScope()
 
     var pendingRevoke by remember { mutableStateOf<PairedDeviceInfo?>(null) }
+    var pendingExtend by remember { mutableStateOf<PairedDeviceInfo?>(null) }
+    val isTailscaleDetected by connectionViewModel.isTailscaleDetected.collectAsState()
 
     // Kick off the initial fetch when the screen is first composed.
     LaunchedEffect(Unit) {
@@ -138,7 +141,8 @@ fun PairedDevicesScreen(
                 else -> DeviceList(
                     devices = devices,
                     currentToken = currentPairedSession?.token,
-                    onRevoke = { pendingRevoke = it }
+                    onRevoke = { pendingRevoke = it },
+                    onExtend = { pendingExtend = it }
                 )
             }
         }
@@ -215,6 +219,40 @@ fun PairedDevicesScreen(
                     Text("Cancel")
                 }
             }
+        )
+    }
+
+    pendingExtend?.let { target ->
+        // Pre-select the session's CURRENT remaining lifetime rounded to
+        // the nearest picker option, so the dialog reflects what's
+        // already in place. Falls back to 30 days if the session is
+        // unbounded or expired.
+        val nowSec = System.currentTimeMillis() / 1000L
+        val remaining: Long = target.expiresAt?.let { (it.toLong() - nowSec).coerceAtLeast(0L) }
+            ?: 0L  // 0 = never expire (matches the picker's "Never" option)
+        val initialTtl = if (target.expiresAt == null) 0L else remaining
+        SessionTtlPickerDialog(
+            initialTtlSeconds = initialTtl,
+            isTailscaleDetected = isTailscaleDetected,
+            transportHint = target.transportHint,
+            onConfirm = { newTtl ->
+                val toExtend = target
+                pendingExtend = null
+                scope.launch {
+                    val success = connectionViewModel.extendDevice(
+                        toExtend.tokenPrefix, newTtl
+                    )
+                    if (success) {
+                        snackbarHostState.showSnackbar(
+                            if (newTtl == 0L) "Session set to never expire"
+                            else "Session expiry updated"
+                        )
+                    } else {
+                        snackbarHostState.showSnackbar("Failed to update session")
+                    }
+                }
+            },
+            onCancel = { pendingExtend = null }
         )
     }
 }
@@ -299,6 +337,7 @@ private fun DeviceList(
     devices: List<PairedDeviceInfo>,
     currentToken: String?,
     onRevoke: (PairedDeviceInfo) -> Unit,
+    onExtend: (PairedDeviceInfo) -> Unit,
 ) {
     LazyColumn(
         contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
@@ -308,7 +347,8 @@ private fun DeviceList(
             DeviceCard(
                 device = device,
                 isCurrent = device.isCurrent || (currentToken?.startsWith(device.tokenPrefix) == true),
-                onRevoke = { onRevoke(device) }
+                onRevoke = { onRevoke(device) },
+                onExtend = { onExtend(device) }
             )
         }
     }
@@ -320,6 +360,7 @@ private fun DeviceCard(
     device: PairedDeviceInfo,
     isCurrent: Boolean,
     onRevoke: () -> Unit,
+    onExtend: () -> Unit,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -403,15 +444,26 @@ private fun DeviceCard(
                 MetaRow(label = "Last seen", value = formatEpoch(device.lastSeen.toLong()))
             }
 
-            // Revoke button
-            OutlinedButton(
-                onClick = onRevoke,
+            // Extend + Revoke actions
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = MaterialTheme.colorScheme.error
-                )
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(if (isCurrent) "Revoke this device" else "Revoke")
+                OutlinedButton(
+                    onClick = onExtend,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Extend")
+                }
+                OutlinedButton(
+                    onClick = onRevoke,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text(if (isCurrent) "Revoke this" else "Revoke")
+                }
             }
         }
     }

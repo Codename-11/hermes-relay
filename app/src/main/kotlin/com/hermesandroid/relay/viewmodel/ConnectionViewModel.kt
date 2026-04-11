@@ -797,6 +797,36 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    /**
+     * Extend (or update) a paired device's session TTL.
+     *
+     * Backs the "Extend" button on the Paired Devices card. Passes through
+     * to [RelayHttpClient.extendSession] and refreshes the list on success
+     * so the UI shows the new expiry immediately. Errors surface via
+     * [pairedDevicesError] the same way revoke errors do.
+     *
+     * Grants are intentionally NOT exposed on this path — the MVP UX is
+     * "pick a new session duration", and server-side re-clamping ensures
+     * existing grants stay inside the (possibly new) session lifetime.
+     * Callers that want to edit grants can call [RelayHttpClient.extendSession]
+     * directly.
+     *
+     * @param ttlSeconds new session lifetime in seconds. `0` means "never
+     *   expire". Must be non-negative.
+     * @return `true` on success, `false` otherwise (error message in
+     *   [pairedDevicesError]).
+     */
+    suspend fun extendDevice(tokenPrefix: String, ttlSeconds: Long): Boolean {
+        val result = relayHttpClient.extendSession(tokenPrefix, ttlSeconds = ttlSeconds)
+        return if (result.isSuccess) {
+            loadPairedDevices()
+            true
+        } else {
+            _pairedDevicesError.value = result.exceptionOrNull()?.message
+            false
+        }
+    }
+
     // --- Insecure-ack helpers ---------------------------------------------
 
     /**

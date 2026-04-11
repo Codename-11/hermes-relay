@@ -82,6 +82,35 @@ def _default_grants(ttl_seconds: float, now: float) -> dict[str, float]:
     }
 
 
+def _clamp_grants_to_lifetime(
+    grants: dict[str, float],
+    ttl_seconds: float,
+    now: float,
+) -> dict[str, float]:
+    """Re-clamp an already-materialized set of grants to a (possibly new)
+    session lifetime.
+
+    Used by :meth:`SessionManager.update_session` when the caller extends
+    (or shortens) a session without explicitly replacing grants. Any
+    grant whose absolute expiry is past the new session ``expires_at``
+    gets clipped; grants already inside the lifetime are left alone.
+
+    ``ttl_seconds == 0`` → session is now never-expiring, nothing gets
+    clipped.
+    """
+    if ttl_seconds == 0:
+        return dict(grants)
+    session_expiry = now + ttl_seconds
+    out: dict[str, float] = {}
+    for channel, grant_expiry in grants.items():
+        if _is_never(grant_expiry):
+            # Never-expire grant on a bounded session: clamp to session end.
+            out[channel] = session_expiry
+        else:
+            out[channel] = min(grant_expiry, session_expiry)
+    return out
+
+
 def _materialize_grants(
     grants: dict[str, float] | None,
     ttl_seconds: float,
@@ -416,6 +445,89 @@ class SessionManager:
             logger.info("Revoked session for %s", session.device_name)
             return True
         return False
+
+    def update_session(
+        self,
+        token: str,
+        ttl_seconds: int | None = None,
+        grants: dict[str, float] | None = None,
+    ) -> Session | None:
+        """Update a session's TTL and/or grants in place.
+
+        * ``ttl_seconds`` (optional): new session lifetime. ``0`` means
+          "never expire". When provided, ``expires_at`` is recalculated
+          from ``now + ttl_seconds`` (i.e. the clock restarts — "extend
+          by 30 days" = "30 more days starting now", not "add 30 days
+          to the existing expiry"). When omitted, ``expires_at`` is
+          unchanged.
+        * ``grants`` (optional): per-channel seconds-from-now values,
+          same shape as ``create_session``. When provided, grants are
+          re-materialized (clamped to the current session lifetime —
+          whether that's the new TTL or the existing one). When omitted,
+          existing grants are **re-clamped** to the new session lifetime
+          if ``ttl_seconds`` was provided (shorter TTL may clip a grant
+          that was previously further out; longer TTL leaves grants
+          unchanged because they were already ≤ the old session expiry).
+
+        Returns the updated :class:`Session`, or ``None`` if ``token``
+        is unknown (or expired — you can't renew an already-expired
+        session, re-pair instead).
+
+        At least one of ``ttl_seconds`` / ``grants`` must be provided;
+        the caller (aiohttp handler) is responsible for rejecting
+        no-op calls before dispatch.
+        """
+        self._cleanup()
+        session = self._sessions.get(token)
+        if session is None:
+            return None
+        if session.is_expired:
+            # Don't silently resurrect an expired session; caller should
+            # re-pair to get a fresh token.
+            return None
+
+        now = time.time()
+
+        # 1. Resolve the new session expiry (if TTL changed) and update
+        #    last_seen so the change is visible in list_sessions.
+        if ttl_seconds is not None:
+            if ttl_seconds == 0:
+                session.expires_at = math.inf
+            else:
+                session.expires_at = now + float(ttl_seconds)
+        session.last_seen = now
+
+        # 2. Re-materialize grants. We need the session's CURRENT
+        #    lifetime as the clamp target, which is either the newly-set
+        #    expires_at or the pre-existing one.
+        #
+        #    _materialize_grants wants ttl_seconds as a float (0 = never),
+        #    so reconstruct that from expires_at.
+        if math.isinf(session.expires_at):
+            effective_ttl = 0.0
+        else:
+            effective_ttl = max(session.expires_at - now, 0.0)
+
+        if grants is not None:
+            # Caller provided fresh per-channel values; re-materialize
+            # from scratch (uses defaults for channels the caller didn't
+            # pass, same as create_session).
+            session.grants = _materialize_grants(grants, effective_ttl, now)
+        else:
+            # Caller didn't touch grants. Re-clamp the existing ones to
+            # the (possibly new) session lifetime so a shorter TTL
+            # correctly clips any grant that would outlive the session.
+            session.grants = _clamp_grants_to_lifetime(
+                session.grants, effective_ttl, now
+            )
+
+        logger.info(
+            "Updated session for %s: expires_at=%s, grants=%s",
+            session.device_name,
+            "never" if math.isinf(session.expires_at) else session.expires_at,
+            session.grants,
+        )
+        return session
 
     def active_count(self) -> int:
         """Return the number of non-expired sessions."""

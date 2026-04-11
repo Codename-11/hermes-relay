@@ -7,8 +7,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 
 /**
@@ -410,6 +412,123 @@ class RelayHttpClient(
             Result.failure(e)
         } catch (e: Exception) {
             Log.w(TAG, "revokeSession unexpected error: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Extend (or update) a paired device's session TTL and/or per-channel
+     * grants.
+     *
+     * Backs the "Extend" button on the Paired Devices card. At least one
+     * of [ttlSeconds] / [grants] must be non-null — both null is an
+     * immediate `Result.failure` without hitting the network.
+     *
+     * * [ttlSeconds] — new session lifetime in seconds, `0` means never
+     *   expire. When provided, the server restarts the clock from now
+     *   (i.e. "extend by 30 days" = "30 days from now", not "add 30 days
+     *   to the existing expiry"). `null` leaves session expiry alone.
+     * * [grants] — seconds-from-now per channel. When provided, grants
+     *   are re-materialized and clamped to the (possibly new) session
+     *   lifetime. `null` leaves grants alone, though they'll be re-clamped
+     *   server-side if [ttlSeconds] was provided and shortens the session.
+     *
+     * Returns [Result.success] on HTTP 200. 404 is a hard failure here
+     * (unlike revoke — "already gone" is a surprise when you're trying to
+     * extend an active session).
+     */
+    suspend fun extendSession(
+        tokenPrefix: String,
+        ttlSeconds: Long? = null,
+        grants: Map<String, Long>? = null,
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        if (ttlSeconds == null && grants == null) {
+            return@withContext Result.failure(
+                IllegalArgumentException("extendSession requires at least one of ttlSeconds or grants")
+            )
+        }
+
+        val relayUrl = relayUrlProvider()?.trim().orEmpty()
+        if (relayUrl.isEmpty()) {
+            return@withContext Result.failure(
+                IllegalStateException("Relay URL not configured")
+            )
+        }
+
+        val sessionToken = sessionTokenProvider()
+        if (sessionToken.isNullOrBlank()) {
+            return@withContext Result.failure(
+                IllegalStateException("Relay not paired — session token missing")
+            )
+        }
+
+        val httpBase = relayUrl
+            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
+            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
+            .trimEnd('/')
+
+        val url = try {
+            "$httpBase/sessions/".toHttpUrl().newBuilder()
+                .addPathSegment(tokenPrefix)
+                .build()
+        } catch (e: IllegalArgumentException) {
+            return@withContext Result.failure(
+                IOException("Invalid relay URL: ${e.message}")
+            )
+        }
+
+        // Hand-rolling the JSON body to keep the serializer tree thin —
+        // kotlinx.serialization's JsonObjectBuilder would pull in another
+        // dependency branch. The body is 1-2 fields so the hand form is
+        // trivial and auditable.
+        val bodyJson = buildString {
+            append('{')
+            var first = true
+            if (ttlSeconds != null) {
+                append("\"ttl_seconds\":").append(ttlSeconds)
+                first = false
+            }
+            if (grants != null) {
+                if (!first) append(',')
+                append("\"grants\":{")
+                var g = true
+                for ((k, v) in grants) {
+                    if (!g) append(',')
+                    append('"').append(k.replace("\"", "\\\"")).append("\":").append(v)
+                    g = false
+                }
+                append('}')
+            }
+            append('}')
+        }
+
+        val request = Request.Builder()
+            .url(url)
+            .patch(bodyJson.toRequestBody("application/json".toMediaType()))
+            .header("Authorization", "Bearer $sessionToken")
+            .header("Accept", "application/json")
+            .build()
+
+        try {
+            okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val reason = when (response.code) {
+                        400 -> "Invalid extend request (check TTL/grants)"
+                        401, 403 -> "Unauthorized — re-pair with the relay"
+                        404 -> "Session not found — it may have expired"
+                        409 -> "Ambiguous token prefix — retry with more chars"
+                        in 500..599 -> "Relay error (HTTP ${response.code})"
+                        else -> "HTTP ${response.code}: ${response.message.ifBlank { "request failed" }}"
+                    }
+                    return@withContext Result.failure(IOException(reason))
+                }
+                Result.success(Unit)
+            }
+        } catch (e: IOException) {
+            Log.w(TAG, "extendSession failed: ${e.message}")
+            Result.failure(e)
+        } catch (e: Exception) {
+            Log.w(TAG, "extendSession unexpected error: ${e.message}")
             Result.failure(e)
         }
     }

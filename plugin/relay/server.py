@@ -455,6 +455,128 @@ async def handle_sessions_revoke(request: web.Request) -> web.Response:
     )
 
 
+async def handle_sessions_extend(request: web.Request) -> web.Response:
+    """Update a paired device's session TTL and/or per-channel grants.
+
+    This is the "extend" action exposed on the phone's Paired Devices
+    screen, but also handles arbitrary TTL updates — passing
+    ``ttl_seconds`` shorter than the current expiry clips the session
+    (equivalent to shortening, though the button is labeled "Extend"
+    for the common case). ``ttl_seconds == 0`` maps to never-expire.
+
+    PATCH /sessions/{token_prefix}
+      Body: {"ttl_seconds": 2592000}              # extend only
+           | {"grants": {"terminal": 604800}}     # grants only
+           | {"ttl_seconds": 0, "grants": {...}}  # both
+      → 200 {"ok": true, "expires_at": ..., "grants": {...}}
+      → 400 missing/invalid body or no fields provided
+      → 401 missing/invalid bearer
+      → 404 prefix doesn't match any active session
+      → 409 prefix matches multiple sessions
+    """
+    server, current_session = _require_bearer_session(request)
+    prefix = request.match_info.get("token_prefix", "").strip()
+    if not prefix:
+        return web.json_response(
+            {"ok": False, "error": "missing token_prefix"}, status=400
+        )
+
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return web.json_response(
+            {"ok": False, "error": "invalid JSON body"}, status=400
+        )
+    if not isinstance(body, dict):
+        return web.json_response(
+            {"ok": False, "error": "body must be a JSON object"}, status=400
+        )
+
+    ttl_seconds = body.get("ttl_seconds")
+    grants = body.get("grants")
+
+    if ttl_seconds is None and grants is None:
+        return web.json_response(
+            {
+                "ok": False,
+                "error": "must provide at least one of 'ttl_seconds' or 'grants'",
+            },
+            status=400,
+        )
+
+    if ttl_seconds is not None:
+        if not isinstance(ttl_seconds, int) or ttl_seconds < 0:
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error": "'ttl_seconds' must be a non-negative integer (0 = never expire)",
+                },
+                status=400,
+            )
+    if grants is not None:
+        if not isinstance(grants, dict):
+            return web.json_response(
+                {"ok": False, "error": "'grants' must be an object"}, status=400
+            )
+        for k, v in grants.items():
+            if not isinstance(k, str) or not isinstance(v, (int, float)) or v < 0:
+                return web.json_response(
+                    {
+                        "ok": False,
+                        "error": (
+                            "'grants' must map string channel names to "
+                            "non-negative numeric seconds-from-now values"
+                        ),
+                    },
+                    status=400,
+                )
+
+    matches = server.sessions.find_by_prefix(prefix)
+    if len(matches) == 0:
+        raise web.HTTPNotFound(text=f"no session matches prefix {prefix!r}")
+    if len(matches) > 1:
+        return web.json_response(
+            {
+                "ok": False,
+                "error": (
+                    f"{len(matches)} sessions match prefix {prefix!r} — "
+                    "retry with more characters"
+                ),
+            },
+            status=409,
+        )
+
+    target = matches[0]
+    updated = server.sessions.update_session(
+        target.token,
+        ttl_seconds=ttl_seconds,
+        grants=grants,
+    )
+    if updated is None:
+        # Raced with expiry or revocation between find_by_prefix and update.
+        raise web.HTTPNotFound(text="session vanished mid-update, retry")
+
+    logger.info(
+        "Extended session %s... (%s)%s",
+        target.token[:8],
+        target.device_name,
+        " [self]" if target.token == current_session.token else "",
+    )
+    return web.json_response(
+        {
+            "ok": True,
+            "token_prefix": target.token[:8],
+            "expires_at": (
+                None if math.isinf(updated.expires_at) else updated.expires_at
+            ),
+            "grants": {
+                k: (None if math.isinf(v) else v)
+                for k, v in updated.grants.items()
+            },
+        }
+    )
+
+
 # ── Media handlers ───────────────────────────────────────────────────────────
 
 
@@ -1072,6 +1194,7 @@ def create_app(config: RelayConfig) -> web.Application:
     # route first for clarity.
     app.router.add_get("/sessions", handle_sessions_list)
     app.router.add_delete("/sessions/{token_prefix}", handle_sessions_revoke)
+    app.router.add_patch("/sessions/{token_prefix}", handle_sessions_extend)
     app.router.add_post("/media/register", handle_media_register)
     # Order matters: the fixed-path "/media/by-path" route must be declared
     # before the wildcard "/media/{token}" route or aiohttp will swallow
