@@ -493,7 +493,13 @@ def render_qr_terminal(payload: str) -> str:
         )
 
     try:
-        qr = segno.make(payload, error="m")
+        # error="l" (low ~7% redundancy) keeps the QR version as small as
+        # possible given the signed payload length. border=1 is the minimum
+        # scannable quiet zone. compact=True packs two modules per character
+        # vertically via ▀ / ▄ half-blocks, halving the visual height vs the
+        # full-block renderer. Together these produce the smallest terminal
+        # QR segno can emit without dropping features.
+        qr = segno.make(payload, error="l")
         buf = io.StringIO()
         qr.terminal(out=buf, compact=True, border=1)
         return buf.getvalue()
@@ -512,7 +518,7 @@ def render_qr_png(payload: str, path: Optional[str] = None) -> Optional[str]:
         path = str(Path(tempfile.gettempdir()) / "hermes-pairing-qr.png")
 
     try:
-        qr = segno.make(payload, error="m")
+        qr = segno.make(payload, error="l")
         qr.save(path, scale=8, border=2)
         return path
     except Exception:
