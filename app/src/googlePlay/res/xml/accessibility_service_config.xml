@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Google Play AccessibilityService configuration.
+
+    Conservative event-type subset targeted at the "read notifications,
+    summarize messages, reply with confirmation" use case Play Store policy
+    review expects. Does NOT subscribe to typeAllMask, does NOT request
+    gestures, does NOT request flagRetrieveInteractiveWindows.
+
+    Keep these attributes aligned with the description in strings.xml
+    (`a11y_description_googleplay`) — if the description widens, reviewers
+    will expect the config to widen too.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/a11y_description_googleplay"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewClicked"
+    android:accessibilityFlags="flagDefault"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:notificationTimeout="100"
+    android:canRetrieveWindowContent="true" />

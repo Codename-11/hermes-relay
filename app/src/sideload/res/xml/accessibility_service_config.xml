@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Sideload AccessibilityService configuration.
+
+    Full agent-control capability surface:
+      * typeAllMask                     — subscribe to every event type so the
+                                          agent can observe arbitrary app state
+      * flagRetrieveInteractiveWindows  — enumerate all interactive windows, not
+                                          just the active one (required for
+                                          multi-window observation)
+      * flagReportViewIds               — return View resource IDs in events so
+                                          the agent can target specific controls
+      * flagRequestTouchExplorationMode — enable touch-exploration gesture layer
+      * canPerformGestures              — required for `dispatchGesture()` so the
+                                          agent can synthesize taps and swipes
+
+    Keep this aligned with `a11y_description_sideload` — users reading the
+    Accessibility settings entry need the capability surface to match the
+    description they are consenting to.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/a11y_description_sideload"
+    android:accessibilityEventTypes="typeAllMask"
+    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows|flagReportViewIds|flagRequestTouchExplorationMode"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:notificationTimeout="100"
+    android:canRetrieveWindowContent="true"
+    android:canPerformGestures="true" />

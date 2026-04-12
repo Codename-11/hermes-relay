@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Sideload flavor strings.
+
+    `a11y_description_sideload` is the full-surface description users see when
+    enabling Hermes Bridge on the direct-install track. Unlike the Google Play
+    flavor we can be explicit about voice + vision + full device control here:
+    the sideload user is assumed to be a power user who installed an APK by
+    hand, not a Play Store customer.
+
+    Do NOT reuse these strings in the googlePlay flavor — Play reviewers may
+    flag any mention of "full read/write access" or "hands-free control" as
+    outside the declared use case.
+-->
+<resources>
+    <string name="a11y_service_label">Hermes Bridge</string>
+    <string name="a11y_description_sideload">Hermes Bridge gives the agent full read/write access to the phone for hands-free control via voice and vision. All actions are logged in the Activity Log and destructive actions require your confirmation.</string>
+</resources>
