@@ -72,6 +72,7 @@ import com.hermesandroid.relay.ui.screens.MediaSettingsScreen
 import com.hermesandroid.relay.ui.screens.PairedDevicesScreen
 import com.hermesandroid.relay.ui.screens.SettingsScreen
 import com.hermesandroid.relay.ui.screens.TerminalScreen
+import com.hermesandroid.relay.ui.screens.NotificationCompanionSettingsScreen
 import com.hermesandroid.relay.ui.screens.VoiceSettingsScreen
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
 import com.hermesandroid.relay.viewmodel.ChatViewModel
@@ -116,6 +117,10 @@ sealed class Screen(
     // NavigationBar. Paired Devices is opened from Settings → Connection.
     data object PairedDevices : Screen("paired_devices", "Paired Devices", Icons.Filled.Settings)
     data object VoiceSettings : Screen("voice_settings", "Voice", Icons.Filled.Settings)
+    // === PHASE3-ε-followup ===
+    data object NotificationCompanionSettings :
+        Screen("settings/notifications", "Notification companion", Icons.Filled.Settings)
+    // === END PHASE3-ε-followup ===
     // Per-category settings sub-screens — split out of the mega SettingsScreen
     // following the VoiceSettingsScreen pattern (see DEVLOG 2026-04-11).
     data object ConnectionSettings : Screen("settings/connection", "Connection", Icons.Filled.Settings)
@@ -446,6 +451,9 @@ fun RelayApp() {
                         onNavigateToVoiceSettings = {
                             navController.navigate(Screen.VoiceSettings.route)
                         },
+                        onNavigateToNotificationCompanion = {
+                            navController.navigate(Screen.NotificationCompanionSettings.route)
+                        },
                         onNavigateToPairedDevices = {
                             navController.navigate(Screen.PairedDevices.route)
                         },
@@ -464,6 +472,13 @@ fun RelayApp() {
                         onBack = { navController.popBackStack() }
                     )
                 }
+                // === PHASE3-ε-followup: notification companion route ===
+                composable(Screen.NotificationCompanionSettings.route) {
+                    NotificationCompanionSettingsScreen(
+                        onBack = { navController.popBackStack() }
+                    )
+                }
+                // === END PHASE3-ε-followup ===
                 composable(Screen.PairedDevices.route) {
                     PairedDevicesScreen(
                         connectionViewModel = connectionViewModel,

@@ -28,6 +28,7 @@ import os
 import signal
 import ssl
 import sys
+import tempfile
 import time
 import uuid
 from typing import Any
@@ -647,6 +648,155 @@ async def handle_media_register(request: web.Request) -> web.Response:
             "expires_at": entry.expires_at,
         }
     )
+
+
+# === PHASE3-α-followup: /media/upload ===
+#
+# γ's ScreenCapture (the phone-side accessibility runtime) needs to push
+# screenshot bytes to the relay over the network. The pre-existing
+# /media/register endpoint is loopback + path-based — it assumes the
+# caller already has the bytes on the relay's filesystem, which is true
+# for host-local Hermes tools but false for the phone. This endpoint
+# bridges that gap: accept multipart bytes from a paired phone, write to
+# a sandboxed tempfile under tempfile.gettempdir() (which is in the
+# default MediaRegistry allowed_roots), then hand the path to
+# MediaRegistry.register() so the rest of the pipeline (token issuance,
+# expiry, LRU eviction, GET /media/{token}) is identical.
+
+_MEDIA_UPLOAD_CHUNK_SIZE = 64 * 1024
+
+
+async def handle_media_upload(request: web.Request) -> web.Response:
+    """Accept a phone-uploaded file and register it with MediaRegistry.
+
+    Bearer-auth'd (every paired phone has a session token). Streams the
+    multipart `file` field to a NamedTemporaryFile under
+    ``tempfile.gettempdir()``, enforces ``MediaRegistry.max_size_bytes``
+    while reading, and on success returns the same JSON shape as
+    ``/media/register``.
+
+    POST /media/upload (multipart/form-data, field name "file")
+      → 200 {"ok": true, "token": "...", "expires_at": <epoch>}
+      → 400 invalid request shape (no multipart, no "file" field)
+      → 401 missing/invalid bearer
+      → 413 file too large (over MediaRegistry.max_size_bytes)
+    """
+    server, _session = _require_bearer_session(request)
+
+    content_type = request.content_type or ""
+    if not content_type.startswith("multipart/"):
+        return web.json_response(
+            {"ok": False, "error": "expected multipart/form-data"},
+            status=400,
+        )
+
+    try:
+        reader = await request.multipart()
+    except (aiohttp.ClientPayloadError, ValueError) as exc:
+        return web.json_response(
+            {"ok": False, "error": f"invalid multipart body: {exc}"},
+            status=400,
+        )
+
+    field = await reader.next()
+    while field is not None and field.name != "file":
+        field = await reader.next()
+    if field is None:
+        return web.json_response(
+            {"ok": False, "error": "missing 'file' multipart field"},
+            status=400,
+        )
+
+    file_name = field.filename or "upload.bin"
+    file_content_type = (
+        field.headers.get("Content-Type") or "application/octet-stream"
+    )
+
+    # Pick a suffix from the filename so MIME-by-extension consumers
+    # downstream still work. Strip path components defensively in case
+    # a client sends something exotic.
+    base_name = os.path.basename(file_name) or "upload.bin"
+    suffix = ""
+    if "." in base_name:
+        suffix = "." + base_name.rsplit(".", 1)[-1]
+
+    tmp = tempfile.NamedTemporaryFile(
+        prefix="hermes-relay-upload-",
+        suffix=suffix,
+        delete=False,
+    )
+    bytes_written = 0
+    max_size = server.media.max_size_bytes
+    try:
+        while True:
+            chunk = await field.read_chunk(_MEDIA_UPLOAD_CHUNK_SIZE)
+            if not chunk:
+                break
+            bytes_written += len(chunk)
+            if bytes_written > max_size:
+                tmp.close()
+                try:
+                    os.unlink(tmp.name)
+                except OSError:
+                    pass
+                return web.json_response(
+                    {
+                        "ok": False,
+                        "error": (
+                            f"upload too large ({bytes_written} bytes, "
+                            f"max {max_size})"
+                        ),
+                    },
+                    status=413,
+                )
+            tmp.write(chunk)
+    except (aiohttp.ClientPayloadError, OSError) as exc:
+        tmp.close()
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+        return web.json_response(
+            {"ok": False, "error": f"upload aborted: {exc}"},
+            status=400,
+        )
+    finally:
+        if not tmp.closed:
+            tmp.close()
+
+    try:
+        entry = await server.media.register(
+            path=tmp.name,
+            content_type=file_content_type,
+            file_name=base_name,
+        )
+    except MediaRegistrationError as exc:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+        logger.info("Media upload registration rejected: %s", exc)
+        return web.json_response(
+            {"ok": False, "error": str(exc)}, status=400
+        )
+
+    logger.info(
+        "Media uploaded: token=%s... bytes=%d type=%s file=%s",
+        entry.token[:8],
+        bytes_written,
+        file_content_type,
+        base_name,
+    )
+    return web.json_response(
+        {
+            "ok": True,
+            "token": entry.token,
+            "expires_at": entry.expires_at,
+        }
+    )
+
+
+# === END PHASE3-α-followup ===
 
 
 async def handle_media_get(request: web.Request) -> web.StreamResponse:
@@ -1461,6 +1611,9 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_delete("/sessions/{token_prefix}", handle_sessions_revoke)
     app.router.add_patch("/sessions/{token_prefix}", handle_sessions_extend)
     app.router.add_post("/media/register", handle_media_register)
+    # === PHASE3-α-followup: /media/upload ===
+    app.router.add_post("/media/upload", handle_media_upload)
+    # === END PHASE3-α-followup ===
     # Order matters: the fixed-path "/media/by-path" route must be declared
     # before the wildcard "/media/{token}" route or aiohttp will swallow
     # "by-path" as a token literal and handle_media_get will 404.

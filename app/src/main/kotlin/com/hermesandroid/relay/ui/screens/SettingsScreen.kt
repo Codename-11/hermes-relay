@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Palette
@@ -75,6 +76,7 @@ fun SettingsScreen(
     onNavigateToAppearanceSettings: () -> Unit,
     onNavigateToAnalytics: () -> Unit,
     onNavigateToVoiceSettings: () -> Unit,
+    onNavigateToNotificationCompanion: () -> Unit,
     onNavigateToPairedDevices: () -> Unit,
     onNavigateToDeveloperSettings: () -> Unit,
     onNavigateToAbout: () -> Unit,
@@ -193,6 +195,16 @@ fun SettingsScreen(
                 onClick = onNavigateToVoiceSettings,
                 isDarkTheme = isDarkTheme,
             )
+
+            // === PHASE3-ε-followup: notification companion entry-point ===
+            SettingsCategoryRow(
+                icon = Icons.Filled.Notifications,
+                title = "Notification companion",
+                subtitle = "Let your assistant triage notifications you've shared",
+                onClick = onNavigateToNotificationCompanion,
+                isDarkTheme = isDarkTheme,
+            )
+            // === END PHASE3-ε-followup ===
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Image,

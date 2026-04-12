@@ -1,5 +1,18 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-12 — Phase 3 / Wave 1.5 — α-followup + ε-followup (post-merge polish)
+
+Two small follow-ups discovered during the Wave 1 agent-team merge. Both gate clean smoke testing of the merged Wave 1 work in Android Studio.
+
+**α-followup — `POST /media/upload` route on the relay.** Agent γ's `ScreenCapture` posts screenshot bytes via multipart to `/media/upload`, but α only ported the existing `/media/register` (loopback + path-based). Phone has no shared filesystem with the relay, so `/media/register` was unusable for the bridge screenshot path. The new endpoint accepts a `file` multipart field with bearer auth (every paired phone has a session token), streams the bytes to a `NamedTemporaryFile` under `tempfile.gettempdir()` (which is in the default `MediaRegistry.allowed_roots`), enforces `MediaRegistry.max_size_bytes` while reading (returns 413 on overflow), then hands the path off to `MediaRegistry.register()` so token issuance / expiry / LRU eviction / `GET /media/{token}` are byte-for-byte identical to the loopback path. Marker block: `# === PHASE3-α-followup: /media/upload === / # === END PHASE3-α-followup ===` in `plugin/relay/server.py`. `tempfile` import added at the top. Route registered next to `/media/register`. py_compile clean.
+
+**ε-followup — wire `HermesNotificationCompanion.multiplexer` + Settings nav row.** Agent ε flagged two small touch-ups in its handoff:
+
+1. `ConnectionViewModel.init` now sets `HermesNotificationCompanion.multiplexer = multiplexer` once, immediately after the bridge handler registration. The companion service buffers up to 50 envelopes in its own `pendingEnvelopes` queue while the slot is null, so wiring it from here (rather than at service-bind time) is safe — the buffer drains on the next `onNotificationPosted` once the slot is set. Marker: `// === PHASE3-ε-followup: notification companion multiplexer wiring === / // === END PHASE3-ε-followup ===`.
+2. `SettingsScreen` gains a new `onNavigateToNotificationCompanion: () -> Unit` callback parameter and a `SettingsCategoryRow` between Voice mode and Media (`Icons.Filled.Notifications`, "Notification companion", "Let your assistant triage notifications you've shared"). `RelayApp` adds `Screen.NotificationCompanionSettings` (route `settings/notifications`), wires the new callback in the `SettingsScreen` call site, and registers a `composable(...)` that hosts `NotificationCompanionSettingsScreen(onBack = popBackStack)`. Both new imports added.
+
+After this entry the Bridge tab + Notification companion screen are both reachable through the normal navigation tree, and γ's screenshot pipeline has a working server-side endpoint. Wave 2 (ζ safety, η voice-bridge, θ vision) is unblocked once Bailey confirms both build flavors compile in Android Studio.
+
 ## 2026-04-12 — Phase 3 / Wave 1 / α — Migrated legacy bridge relay into unified relay (port 8767)
 
 Retired the standalone bridge relay (`plugin/tools/android_relay.py` + the duplicate top-level `plugin/android_relay.py`, both listening on port 8766) and folded its functionality into the unified Hermes-Relay on port 8767 as the bridge channel. The wire protocol (`bridge.command` / `bridge.response` / `bridge.status`) stays byte-for-byte identical — only the transport changed. Agents γ, δ, ε can now build against a single port.

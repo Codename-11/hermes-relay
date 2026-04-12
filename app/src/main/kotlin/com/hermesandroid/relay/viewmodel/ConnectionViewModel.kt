@@ -451,6 +451,17 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         bridgeStatusReporter.start()
         // === END PHASE3-γ ===
 
+        // === PHASE3-ε-followup: notification companion multiplexer wiring ===
+        // The bound NotificationListenerService instance buffers up to 50
+        // envelopes in its own pendingEnvelopes queue while this slot is
+        // null, so wiring it from here (rather than at service-bind time)
+        // is safe — the buffer drains on the next onNotificationPosted
+        // once the slot is set. Set unconditionally; the multiplexer's
+        // own sendCallback gating handles the relay-disconnected case.
+        com.hermesandroid.relay.notifications.HermesNotificationCompanion
+            .multiplexer = multiplexer
+        // === END PHASE3-ε-followup ===
+
         // Load saved state — split into fast (UI-blocking) and slow (network) paths
         viewModelScope.launch {
             _onboardingCompleted.value = dataManager.isOnboardingCompleted()
