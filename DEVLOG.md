@@ -1,5 +1,17 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-12 — Phase 3 / Wave 1 hotfix — dedupe AccessibilityService entry; Gradle deprecation cleanup
+
+Two small fixes discovered while smoke-testing Wave 1 in Android Studio.
+
+**Duplicate AccessibilityService entry in Android Settings.** Bailey noticed Settings → Accessibility → Installed services listed two Hermes entries (`Hermes-Relay` and `Hermes Bridge`). Root cause: a coordination miss between agents β and γ during the Wave 1 agent-team run. β created the flavor manifests *first* and stubbed `<service android:name=".accessibility.BridgeAccessibilityService" tools:ignore="MissingClass">` blocks in both flavor overlays, anticipating that γ would name the service class `BridgeAccessibilityService`. γ later named it `HermesAccessibilityService` instead. Manifest merger only collapses `<service>` elements with matching `android:name`, so two different names → two separate `<service>` entries in the merged manifest. The β-stub entry pointed at a class that doesn't exist anywhere — enabling that row in Android Settings would have crashed the bind.
+
+Fix: removed the stub `<service>` blocks from both `app/src/googlePlay/AndroidManifest.xml` and `app/src/sideload/AndroidManifest.xml` entirely (the flavor manifests are now empty `<application />` overlays kept around for future flavor-specific permissions / activities). The flavor distinction now lives purely at the resource layer — each flavor's `res/xml/accessibility_service_config.xml` carries its own use-case description and flag bitset, and Gradle's resource merger picks the right file at build time. Added `a11y_service_label` ("Hermes-Relay Bridge") to `app/src/main/res/values/strings.xml` so the single canonical service entry in `app/src/main/AndroidManifest.xml` can be labeled distinctly from the launcher icon.
+
+**Gradle deprecation warning.** AGP printed `android.dependency.excludeLibraryComponentsFromConstraints=true is deprecated, will be removed in version 10.0`. The two flags `useConstraints=true` + `excludeLibraryComponentsFromConstraints=true` were doing the work of one — the second flag overrode the first to mean "actually, exclude library components from constraint resolution." AGP's recommended migration is `useConstraints=false`. Collapsed two lines in `gradle.properties` into one. Semantics unchanged.
+
+**Lessons learned (for future agent teams):** when an agent that creates a manifest stub names a class to be filled in by another agent, the two agents need to agree on the class name *up front* — manifest merger does not auto-collapse `<service>` blocks with different `android:name` values, even if everything else matches. Putting the canonical class name in the plan's "Wire format" section would have prevented this.
+
 ## 2026-04-12 — Onboarding/Settings unification + lifecycle-aware health checks
 
 Closed two long-standing UX gaps that compounded each other: (1) onboarding's "Connect" page only configured the API server side and discarded the QR's relay block (code, TTL, grants, transport hint), so users walked out of onboarding in a "half-paired" state and had to re-do setup in Settings; (2) connection status badges showed stale Connected/Disconnected for up to 30 s after foregrounding because nothing kicked a re-probe on `Lifecycle.Event.ON_RESUME` — the StateFlow snapshot was just preserved across backgrounding even when the underlying server had died or the network had flipped.
