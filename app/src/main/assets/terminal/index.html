@@ -45,6 +45,7 @@
     <script src="xterm.js"></script>
     <script src="addon-fit.js"></script>
     <script src="addon-web-links.js"></script>
+    <script src="addon-search.js"></script>
     <script>
     (function () {
         // ── Hermes-Relay theme (matches app primary palette) ──────────────
@@ -96,8 +97,29 @@
             }
         });
 
+        // Search addon — vendored from @xterm/addon-search@0.15.0. Loaded
+        // here so the Compose-side TerminalSearchBar can call findNext /
+        // findPrevious through the window.search* shims defined below.
+        // Wrapped in a try because if vendoring ever fails or the global
+        // shape changes, we want the rest of the terminal to keep working
+        // rather than turning the whole tab into a JS error.
+        let searchAddon = null;
+        try {
+            if (window.SearchAddon && window.SearchAddon.SearchAddon) {
+                searchAddon = new SearchAddon.SearchAddon();
+            }
+        } catch (err) {
+            console.warn('SearchAddon init failed: ' + err);
+        }
+
         term.loadAddon(fitAddon);
         term.loadAddon(webLinksAddon);
+        if (searchAddon) {
+            try { term.loadAddon(searchAddon); } catch (err) {
+                console.warn('SearchAddon loadAddon failed: ' + err);
+                searchAddon = null;
+            }
+        }
 
         term.open(document.getElementById('terminal'));
         try { fitAddon.fit(); } catch (_) { /* container not measured yet */ }
@@ -257,6 +279,28 @@
         // Diagnostic hook — Kotlin can read back the current grid size.
         window.getTerminalGeometry = function () {
             return JSON.stringify({ cols: term.cols, rows: term.rows });
+        };
+
+        // ── Search shims — driven by TerminalSearchBar.kt ────────────────
+        // Each function returns a boolean so the Kotlin side can check
+        // whether the search actually matched (for "no results" UX).
+        // The try/catch is defensive: if the addon is missing or its API
+        // changes, the terminal stays usable instead of throwing.
+        window.searchNext = function (text) {
+            if (!text || !searchAddon) return false;
+            try { return !!searchAddon.findNext(text); } catch (_) { return false; }
+        };
+        window.searchPrev = function (text) {
+            if (!text || !searchAddon) return false;
+            try { return !!searchAddon.findPrevious(text); } catch (_) { return false; }
+        };
+        window.clearSearch = function () {
+            if (!searchAddon) return;
+            try {
+                if (typeof searchAddon.clearDecorations === 'function') {
+                    searchAddon.clearDecorations();
+                }
+            } catch (_) { /* old addon-search builds */ }
         };
     })();
     </script>

@@ -15,26 +15,37 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import com.hermesandroid.relay.viewmodel.TerminalViewModel
+import kotlinx.coroutines.flow.filter
 
 /**
- * Composable hosting xterm.js inside a WebView.
+ * Composable hosting xterm.js inside a WebView, scoped to a single terminal
+ * tab.
  *
  * Loads `file:///android_asset/terminal/index.html`, installs a JS bridge
- * named `AndroidBridge`, and pipes `TerminalViewModel.outputFlow` into the
- * terminal via `window.writeTerminal`.
+ * named `AndroidBridge`, and pipes [TerminalViewModel.outputFlow] entries
+ * tagged with [tabId] into the terminal via `window.writeTerminal`.
  *
  * Bridge methods are invoked on a WebView-owned binder thread — the ViewModel
  * it forwards to uses thread-safe state flows, so no extra synchronization
  * is needed here.
+ *
+ * @param tabId the tab number this WebView is bound to. Used for both
+ *        outbound bridge calls (so the ViewModel knows which tab the input
+ *        came from) and inbound output filtering.
+ * @param onWebViewReady invoked once on construction with the underlying
+ *        WebView so the parent screen can keep a reference for things like
+ *        `window.searchNext('...')` evaluation. Optional — pass null if you
+ *        don't need it.
  */
 @Composable
 fun TerminalWebView(
     viewModel: TerminalViewModel,
-    modifier: Modifier = Modifier
+    tabId: Int,
+    modifier: Modifier = Modifier,
+    onWebViewReady: ((WebView) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     // Background matches xterm's theme so there's no white flash while the
@@ -48,7 +59,11 @@ fun TerminalWebView(
     // and never grows, so command output scrolls straight off the viewport.
     val density = context.resources.displayMetrics.density
 
-    val webView = remember {
+    // Each tab gets its own WebView instance. We key the `remember` block on
+    // tabId so reusing the same composition slot for a different tab (which
+    // shouldn't happen with our `key(tabId)` parent, but is defensive) yields
+    // a fresh WebView rather than re-binding the JS bridge to the wrong tab.
+    val webView = remember(tabId) {
         @SuppressLint("SetJavaScriptEnabled")
         WebView(context).apply {
             setBackgroundColor(webViewBackground)
@@ -114,13 +129,13 @@ fun TerminalWebView(
                     message ?: return false
                     android.util.Log.d(
                         "TerminalWebView",
-                        "${message.messageLevel()} [${message.sourceId()}:${message.lineNumber()}] ${message.message()}"
+                        "tab=$tabId ${message.messageLevel()} [${message.sourceId()}:${message.lineNumber()}] ${message.message()}"
                     )
                     return true
                 }
             }
 
-            addJavascriptInterface(TerminalBridge(viewModel, this), "AndroidBridge")
+            addJavascriptInterface(TerminalBridge(viewModel, this, tabId), "AndroidBridge")
 
             // Force xterm to refit every time Compose gives us a new layout.
             // Compose often measures the WebView at ~0-pixel-tall during the
@@ -130,6 +145,11 @@ fun TerminalWebView(
             // reliably propagate native-side resize to the HTML viewport — if
             // we rely on CSS `height:100%` or the `window.resize` event, the
             // internal viewport stays frozen at the first bad measurement.
+            //
+            // PRESERVED FROM SINGLE-TAB IMPLEMENTATION (commit 182d5a4) — every
+            // per-tab WebView MUST install this listener with the same density
+            // conversion and the same post-to-main pattern. Removing it
+            // re-introduces the rows=1 latch bug.
             addOnLayoutChangeListener { view, left, top, right, bottom,
                                         oldLeft, oldTop, oldRight, oldBottom ->
                 val widthPx = right - left
@@ -152,14 +172,27 @@ fun TerminalWebView(
         }
     }
 
-    // Stream outputs from the ViewModel into the WebView.
-    LaunchedEffect(webView, viewModel) {
-        viewModel.outputFlow.collect { base64 ->
-            android.util.Log.d("TerminalWebView", "writeTerminal: ${base64.length} b64 chars")
-            // evaluateJavascript must run on the UI thread; LaunchedEffect's
-            // dispatcher is Main.
-            webView.evaluateJavascript("window.writeTerminal('$base64');", null)
-        }
+    // Hand the WebView to the parent so it can drive search-bar JS calls
+    // against the active tab. Fired once per tabId so the parent's map of
+    // tab -> WebView stays correct on tab churn.
+    LaunchedEffect(webView) {
+        onWebViewReady?.invoke(webView)
+    }
+
+    // Stream outputs from the ViewModel into the WebView, filtered to this
+    // tab only. Each per-tab WebView ignores chunks destined for other tabs.
+    LaunchedEffect(webView, viewModel, tabId) {
+        viewModel.outputFlow
+            .filter { it.tabId == tabId }
+            .collect { tabOutput ->
+                android.util.Log.d(
+                    "TerminalWebView",
+                    "tab=$tabId writeTerminal: ${tabOutput.b64.length} b64 chars"
+                )
+                // evaluateJavascript must run on the UI thread; LaunchedEffect's
+                // dispatcher is Main.
+                webView.evaluateJavascript("window.writeTerminal('${tabOutput.b64}');", null)
+            }
     }
 
     DisposableEffect(webView) {
@@ -184,26 +217,32 @@ fun TerminalWebView(
  * the HTML side as `AndroidBridge.<method>(...)`. Every call happens on a
  * WebView-owned binder thread — route straight into the ViewModel, which is
  * thread-safe.
+ *
+ * Each bridge instance is bound to a specific [tabId] at construction time
+ * so the ViewModel always knows which tab a given input/resize/ready call
+ * came from. The HTML side never sees or sends a tab id — the binding is
+ * one-WebView-per-tab on the Kotlin side.
  */
 private class TerminalBridge(
     private val viewModel: TerminalViewModel,
-    private val webView: WebView
+    private val webView: WebView,
+    private val tabId: Int,
 ) {
 
     @JavascriptInterface
     fun onReady(cols: Int, rows: Int) {
-        viewModel.onTerminalReady(cols, rows)
+        viewModel.onTerminalReady(tabId, cols, rows)
     }
 
     @JavascriptInterface
     fun onInput(data: String) {
-        android.util.Log.d("TerminalWebView", "bridge.onInput: ${data.length} bytes")
-        viewModel.sendInput(data)
+        android.util.Log.d("TerminalWebView", "tab=$tabId bridge.onInput: ${data.length} bytes")
+        viewModel.sendInput(tabId, data)
     }
 
     @JavascriptInterface
     fun onResize(cols: Int, rows: Int) {
-        viewModel.resize(cols, rows)
+        viewModel.resize(tabId, cols, rows)
     }
 
     @JavascriptInterface

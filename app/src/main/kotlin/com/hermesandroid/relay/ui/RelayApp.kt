@@ -109,7 +109,8 @@ fun RelayApp() {
         terminalViewModel.initialize(
             multiplexer = connectionViewModel.multiplexer,
             connectionState = connectionViewModel.relayConnectionState,
-            authState = connectionViewModel.authState
+            authState = connectionViewModel.authState,
+            authManager = connectionViewModel.authManager
         )
     }
 

@@ -5,6 +5,7 @@ import android.util.Base64
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.hermesandroid.relay.auth.AuthManager
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.ConnectionState
@@ -13,41 +14,56 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 /**
- * Terminal channel ViewModel.
+ * Terminal channel ViewModel — multi-tab edition.
  *
- * Owns PTY session state and bridges envelopes between the WebSocket relay
- * (via [ChannelMultiplexer]) and the [com.hermesandroid.relay.ui.components.TerminalWebView]
- * that hosts xterm.js.
+ * Owns up to [MAX_TABS] concurrent PTY session slots and bridges envelopes
+ * between the WebSocket relay (via [ChannelMultiplexer]) and per-tab
+ * [com.hermesandroid.relay.ui.components.TerminalWebView] instances.
  *
- * Lifecycle:
- *   1. [initialize] wires the multiplexer + connection state flow.
- *   2. The WebView boots, fits the container, and calls [onTerminalReady] with
- *      the initial cols/rows. The ViewModel sends `terminal.attach`.
- *   3. Relay responds with `terminal.attached` → [state] flips to connected.
- *   4. Output arrives as `terminal.output` envelopes → [outputFlow] emits
- *      base64-encoded bytes that the WebView pipes into `window.writeTerminal`.
- *   5. Typing in xterm.js → WebView JS bridge → [sendInput] → `terminal.input`.
+ * Each tab maps to a stable wire-side `session_name` of the form
+ * `hermes-<deviceId>-tab<N>` so the server (which wraps every PTY in tmux)
+ * can re-attach the same long-lived shell across phone reconnects without
+ * the phone needing to remember anything beyond the tab index.
+ *
+ * Lifecycle per tab:
+ *   1. [openNewTab] (or the auto-created tab1 in [initialize]) reserves a slot.
+ *   2. The tab's WebView boots, fits the container, and calls [onTerminalReady]
+ *      with the initial cols/rows. The ViewModel sends `terminal.attach`.
+ *   3. Relay responds with `terminal.attached` → that tab's [TabState] flips
+ *      to attached.
+ *   4. Output arrives as `terminal.output` envelopes, gets routed to the
+ *      matching tab by `session_name`, and is emitted on [outputFlow] as a
+ *      [TabOutput] tagged with the destination tab id. Each WebView filters
+ *      the flow to its own tab id.
+ *   5. Typing in xterm.js → WebView JS bridge → [sendInput] (with tab id) →
+ *      `terminal.input`.
+ *
+ * The auth gate from the single-tab implementation is preserved exactly:
+ * we never send a `terminal.*` envelope unless `connectionState == Connected
+ * && authState is AuthState.Paired`. Pending attaches per tab are held in
+ * [pendingReady] and replayed when the gate opens.
  */
 class TerminalViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
         private const val TAG = "TerminalViewModel"
+        const val MAX_TABS = 4
     }
 
     /** Keys the extra-keys toolbar can emit. */
@@ -56,53 +72,126 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
         HOME, END, PAGE_UP, PAGE_DOWN
     }
 
-    data class TerminalState(
+    /**
+     * Per-tab terminal state. One of these exists for every active tab.
+     *
+     * @property tabId stable user-facing tab number (1..MAX_TABS). Reused
+     *           when a tab is closed and a new one is opened — see
+     *           [openNewTab] for the slot-allocation rules.
+     * @property sessionName the wire-side session_name we send to the relay
+     *           for this tab — `hermes-<deviceId>-tab<tabId>`. Stable across
+     *           reconnects so the server's tmux-backed handler re-attaches
+     *           the same shell.
+     */
+    data class TabState(
+        val tabId: Int,
+        val sessionName: String,
         val attached: Boolean = false,
         val attaching: Boolean = false,
-        val sessionName: String? = null,
-        val pid: Int? = null,
-        val shell: String? = null,
         val cols: Int = 80,
         val rows: Int = 24,
+        val pid: Int? = null,
+        val shell: String? = null,
         val tmuxAvailable: Boolean = false,
+        val error: String? = null,
         val ctrlActive: Boolean = false,
         val altActive: Boolean = false,
-        val error: String? = null
     )
 
-    private val _state = MutableStateFlow(TerminalState())
-    val state: StateFlow<TerminalState> = _state.asStateFlow()
+    /**
+     * One chunk of base64-encoded output destined for a specific tab. Emitted
+     * on [outputFlow] so per-tab WebViews can filter on `tabId`.
+     */
+    data class TabOutput(val tabId: Int, val b64: String)
+
+    private val _tabs = MutableStateFlow<List<TabState>>(emptyList())
+    val tabs: StateFlow<List<TabState>> = _tabs.asStateFlow()
+
+    private val _activeTabId = MutableStateFlow(1)
+    val activeTabId: StateFlow<Int> = _activeTabId.asStateFlow()
 
     /**
-     * Base64-encoded output chunks destined for the WebView. We use SharedFlow
-     * (not StateFlow) because each chunk must be delivered exactly once — a
-     * StateFlow would conflate consecutive chunks and drop terminal output.
+     * Convenience derived flow for the currently-active tab. Null when no
+     * tab exists yet (briefly during cold start before [initialize]).
      */
-    private val _outputFlow = MutableSharedFlow<String>(
+    val activeTab: StateFlow<TabState?> = combine(_tabs, _activeTabId) { list, id ->
+        list.firstOrNull { it.tabId == id } ?: list.firstOrNull()
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /**
+     * Single multiplexed output stream tagged by tab id. Each
+     * [com.hermesandroid.relay.ui.components.TerminalWebView] subscribes and
+     * filters on its own tab id — no per-tab flow ceremony, no risk of a
+     * SharedFlow getting orphaned when its tab closes.
+     */
+    private val _outputFlow = MutableSharedFlow<TabOutput>(
         replay = 0,
         extraBufferCapacity = 256
     )
-    val outputFlow: SharedFlow<String> = _outputFlow.asSharedFlow()
+    val outputFlow: SharedFlow<TabOutput> = _outputFlow.asSharedFlow()
 
     private var multiplexer: ChannelMultiplexer? = null
     private var connectionState: StateFlow<ConnectionState>? = null
     private var authState: StateFlow<AuthState>? = null
+    private var authManager: AuthManager? = null
 
-    /** Pending attach request — if the WebView signals ready before the relay is ready for channel messages, we hold and retry. */
-    private var pendingReady: Pair<Int, Int>? = null
+    /**
+     * Cached device id used to construct stable per-tab session names. Loaded
+     * lazily inside [initialize] before the first tab is created so the
+     * initial tab1 lines up with the deviceId-derived name immediately.
+     */
+    private var cachedDeviceId: String = "unknown"
 
+    /**
+     * Pending attach requests keyed by tab id. If a WebView signals ready
+     * before the relay is ready for channel messages, we hold the request
+     * and replay it when the auth+connection gate opens.
+     */
+    private val pendingReady: MutableMap<Int, Pair<Int, Int>> = mutableMapOf()
+
+    /**
+     * One-shot init. Wires the multiplexer, watches the auth+connection gate,
+     * and creates the initial tab1. Subsequent calls are no-ops so it's safe
+     * to invoke from `LaunchedEffect(Unit)`.
+     */
     fun initialize(
         multiplexer: ChannelMultiplexer,
         connectionState: StateFlow<ConnectionState>,
-        authState: StateFlow<AuthState>
+        authState: StateFlow<AuthState>,
+        authManager: AuthManager? = null,
     ) {
         if (this.multiplexer != null) return
         this.multiplexer = multiplexer
         this.connectionState = connectionState
         this.authState = authState
+        this.authManager = authManager
 
         multiplexer.registerHandler("terminal") { envelope ->
             handleEnvelope(envelope)
+        }
+
+        // Resolve the device id off the main dispatcher and seed tab1.
+        // We seed tab1 immediately with a placeholder name so the UI has
+        // something to render, then patch the session_name once the device
+        // id resolves. The placeholder name is never sent on the wire because
+        // sendAttach is gated on the auth combine below — it can't fire until
+        // the device id has been baked into the tab.
+        viewModelScope.launch {
+            cachedDeviceId = try {
+                authManager?.getOrCreateDeviceId() ?: "unknown"
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to resolve device id, using fallback", e)
+                "unknown"
+            }
+            if (_tabs.value.isEmpty()) {
+                _tabs.value = listOf(makeTab(1))
+                _activeTabId.value = 1
+            } else {
+                // Patch every existing tab so the placeholder is replaced.
+                _tabs.update { list ->
+                    list.map { it.copy(sessionName = sessionNameFor(it.tabId)) }
+                }
+            }
         }
 
         // Auth-gated attach pump.
@@ -120,43 +209,127 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
         // that `sendAttach` won on every reconnect.
         //
         // Now we `combine` connection + auth and only fire attach when BOTH
-        // are healthy (Connected + Paired). The combine flow also collapses
-        // the drop-side cleanup: if either leg drops, we flip `attached` back
-        // to false so the UI reflects reality.
+        // are healthy (Connected + Paired). On drop we flip every tab back
+        // to detached state. On rise we replay every pending attach.
         viewModelScope.launch {
             connectionState.combine(authState) { conn, auth -> conn to auth }
                 .collect { (conn, auth) ->
                     val ready = conn == ConnectionState.Connected && auth is AuthState.Paired
-                    if (!ready && _state.value.attached) {
-                        _state.update {
-                            it.copy(
-                                attached = false,
-                                attaching = false,
-                                sessionName = null,
-                                pid = null
-                            )
+                    if (!ready) {
+                        // Reflect drop on every tab so the UI doesn't claim
+                        // attached state while the wire is dead. The actual
+                        // server-side tmux session is still alive — we'll
+                        // re-attach next time the gate opens.
+                        _tabs.update { list ->
+                            list.map { tab ->
+                                if (tab.attached || tab.attaching) {
+                                    // Re-queue this tab to re-attach when the
+                                    // gate re-opens. We use the cached cols/rows
+                                    // so the server gets a sensible initial PTY
+                                    // size right away — the WebView's layout
+                                    // listener will resize again on first paint.
+                                    pendingReady[tab.tabId] = tab.cols to tab.rows
+                                    tab.copy(
+                                        attached = false,
+                                        attaching = false,
+                                        pid = null,
+                                    )
+                                } else tab
+                            }
                         }
-                    }
-                    if (ready) {
-                        pendingReady?.let { (c, r) ->
-                            sendAttach(c, r)
-                            pendingReady = null
+                    } else {
+                        // Replay every queued attach. Iterate a snapshot so we
+                        // can mutate the map under the loop.
+                        val queued = pendingReady.toMap()
+                        for ((tabId, dims) in queued) {
+                            sendAttach(tabId, dims.first, dims.second)
+                            pendingReady.remove(tabId)
                         }
                     }
                 }
         }
     }
 
+    // ── Tab management ───────────────────────────────────────────────────
+
+    private fun sessionNameFor(tabId: Int): String =
+        "hermes-${cachedDeviceId}-tab${tabId}"
+
+    private fun makeTab(tabId: Int): TabState =
+        TabState(tabId = tabId, sessionName = sessionNameFor(tabId))
+
+    /**
+     * Allocate a new tab. Returns the new tab id, or `null` when the tab
+     * cap is hit. New tabs become active immediately so the UI animates the
+     * tab strip and the WebView for the new tab gets constructed on the
+     * next composition.
+     */
+    fun openNewTab(): Int? {
+        val current = _tabs.value
+        if (current.size >= MAX_TABS) return null
+        // Find the lowest unused tab id in [1..MAX_TABS]. We re-use slots
+        // when an earlier tab was closed so the user always sees `1 2 3`
+        // instead of `1 3 4` after closing tab 2.
+        val used = current.map { it.tabId }.toSet()
+        val newId = (1..MAX_TABS).first { it !in used }
+        val newTab = makeTab(newId)
+        _tabs.update { (it + newTab).sortedBy { t -> t.tabId } }
+        _activeTabId.value = newId
+        Log.i(TAG, "openNewTab: id=$newId session=${newTab.sessionName}")
+        return newId
+    }
+
+    /**
+     * Close a tab. Sends a server-side detach so the relay can shut down the
+     * underlying PTY (or, with tmux wrapping, kill or detach the tmux session
+     * — that's an `agent-tmux` policy decision). If the closed tab was active,
+     * we move focus to the next available tab.
+     *
+     * Closing the last tab is a no-op — there's always at least one tab.
+     */
+    fun closeTab(tabId: Int) {
+        val current = _tabs.value
+        if (current.size <= 1) return
+        val tab = current.firstOrNull { it.tabId == tabId } ?: return
+        if (tab.attached) {
+            sendEnvelope("terminal.detach", buildJsonObject {
+                put("session_name", tab.sessionName)
+            })
+        }
+        pendingReady.remove(tabId)
+        val remaining = current.filter { it.tabId != tabId }
+        _tabs.value = remaining
+        if (_activeTabId.value == tabId) {
+            _activeTabId.value = remaining.first().tabId
+        }
+        Log.i(TAG, "closeTab: id=$tabId remaining=${remaining.map { it.tabId }}")
+    }
+
+    fun selectTab(tabId: Int) {
+        if (_tabs.value.any { it.tabId == tabId }) {
+            _activeTabId.value = tabId
+        }
+    }
+
+    private inline fun updateTab(tabId: Int, transform: (TabState) -> TabState) {
+        _tabs.update { list ->
+            list.map { if (it.tabId == tabId) transform(it) else it }
+        }
+    }
+
+    private fun tabById(tabId: Int): TabState? =
+        _tabs.value.firstOrNull { it.tabId == tabId }
+
     // ── Called by TerminalWebView's JS bridge ────────────────────────────
 
     /** WebView booted and knows its container size in cells. Time to attach. */
-    fun onTerminalReady(cols: Int, rows: Int) {
-        Log.i(TAG, "onTerminalReady: cols=$cols rows=$rows")
-        _state.update { it.copy(cols = cols, rows = rows) }
+    fun onTerminalReady(tabId: Int, cols: Int, rows: Int) {
+        Log.i(TAG, "onTerminalReady tab=$tabId cols=$cols rows=$rows")
+        updateTab(tabId) { it.copy(cols = cols, rows = rows) }
         if (isReadyForChannelMessages()) {
-            sendAttach(cols, rows)
+            sendAttach(tabId, cols, rows)
         } else {
-            pendingReady = cols to rows
+            pendingReady[tabId] = cols to rows
         }
     }
 
@@ -165,18 +338,18 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
             authState?.value is AuthState.Paired
 
     /** Raw input from xterm.js (soft keyboard, hardware keys, paste). */
-    fun sendInput(data: String) {
+    fun sendInput(tabId: Int, data: String) {
         if (data.isEmpty()) return
-        Log.d(TAG, "sendInput: ${data.length} bytes attached=${_state.value.attached} session=${_state.value.sessionName}")
+        val tab = tabById(tabId) ?: return
+        Log.d(TAG, "sendInput tab=$tabId: ${data.length} bytes attached=${tab.attached}")
         var payload = data
 
         // Apply sticky CTRL: map a single a-z/A-Z keypress to its control byte.
-        if (_state.value.ctrlActive && payload.length == 1) {
+        if (tab.ctrlActive && payload.length == 1) {
             val c = payload[0]
             val translated = when (c) {
                 in 'a'..'z' -> (c.code - 'a'.code + 1).toChar().toString()
                 in 'A'..'Z' -> (c.code - 'A'.code + 1).toChar().toString()
-                // Common punctuation Ctrl sequences
                 ' ' -> "\u0000"      // Ctrl+Space → NUL
                 '[' -> "\u001b"      // Ctrl+[ → ESC
                 '\\' -> "\u001c"     // Ctrl+\
@@ -184,23 +357,24 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
                 else -> payload
             }
             payload = translated
-            _state.update { it.copy(ctrlActive = false) }
+            updateTab(tabId) { it.copy(ctrlActive = false) }
         }
 
         // Apply sticky ALT: prefix ESC (standard meta convention).
-        if (_state.value.altActive && payload.isNotEmpty()) {
+        if (tab.altActive && payload.isNotEmpty()) {
             payload = "\u001b$payload"
-            _state.update { it.copy(altActive = false) }
+            updateTab(tabId) { it.copy(altActive = false) }
         }
 
         sendEnvelope("terminal.input", buildJsonObject {
-            _state.value.sessionName?.let { put("session_name", it) }
+            put("session_name", tab.sessionName)
             put("data", payload)
         })
     }
 
     /** Extra-keys toolbar key tap. */
-    fun sendKey(key: SpecialKey) {
+    fun sendKey(tabId: Int, key: SpecialKey) {
+        val tab = tabById(tabId) ?: return
         val sequence = when (key) {
             SpecialKey.ESC -> "\u001b"
             SpecialKey.TAB -> "\t"
@@ -215,83 +389,106 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
         }
         // Special keys bypass sticky CTRL/ALT translation and are sent raw.
         sendEnvelope("terminal.input", buildJsonObject {
-            _state.value.sessionName?.let { put("session_name", it) }
+            put("session_name", tab.sessionName)
             put("data", sequence)
         })
     }
 
-    fun toggleCtrl() {
-        _state.update { it.copy(ctrlActive = !it.ctrlActive) }
+    fun toggleCtrl(tabId: Int) {
+        updateTab(tabId) { it.copy(ctrlActive = !it.ctrlActive) }
     }
 
-    fun toggleAlt() {
-        _state.update { it.copy(altActive = !it.altActive) }
+    fun toggleAlt(tabId: Int) {
+        updateTab(tabId) { it.copy(altActive = !it.altActive) }
     }
 
     /** Container resize from the WebView — forwards to the server. */
-    fun resize(cols: Int, rows: Int) {
-        val current = _state.value
-        if (current.cols == cols && current.rows == rows) return
-        Log.i(TAG, "resize: cols=$cols rows=$rows (was ${current.cols}x${current.rows})")
-        _state.update { it.copy(cols = cols, rows = rows) }
-        if (current.attached) {
+    fun resize(tabId: Int, cols: Int, rows: Int) {
+        val tab = tabById(tabId) ?: return
+        if (tab.cols == cols && tab.rows == rows) return
+        Log.i(TAG, "resize tab=$tabId: cols=$cols rows=$rows (was ${tab.cols}x${tab.rows})")
+        updateTab(tabId) { it.copy(cols = cols, rows = rows) }
+        if (tab.attached) {
             sendEnvelope("terminal.resize", buildJsonObject {
-                current.sessionName?.let { put("session_name", it) }
+                put("session_name", tab.sessionName)
                 put("cols", cols)
                 put("rows", rows)
             })
         }
     }
 
-    fun detach() {
-        val session = _state.value.sessionName ?: return
-        sendEnvelope("terminal.detach", buildJsonObject {
-            put("session_name", session)
-        })
-        _state.update { it.copy(attached = false, attaching = false, sessionName = null, pid = null) }
+    /**
+     * Force a fresh attach for [tabId]. Used by the Reattach button on the
+     * info sheet — same path as the auth-gate replay so we never bypass the
+     * gate accidentally.
+     */
+    fun reattach(tabId: Int) {
+        val tab = tabById(tabId) ?: return
+        pendingReady[tabId] = tab.cols to tab.rows
+        if (isReadyForChannelMessages()) {
+            sendAttach(tabId, tab.cols, tab.rows)
+            pendingReady.remove(tabId)
+        }
     }
 
-    fun reattach() {
-        pendingReady = _state.value.cols to _state.value.rows
-        if (isReadyForChannelMessages()) {
-            sendAttach(_state.value.cols, _state.value.rows)
-            pendingReady = null
+    /** Server-side detach without removing the tab — currently unused but kept for parity with the old API. */
+    fun detach(tabId: Int) {
+        val tab = tabById(tabId) ?: return
+        if (!tab.attached) return
+        sendEnvelope("terminal.detach", buildJsonObject {
+            put("session_name", tab.sessionName)
+        })
+        updateTab(tabId) {
+            it.copy(attached = false, attaching = false, pid = null)
         }
     }
 
     // ── Envelope handling ────────────────────────────────────────────────
 
-    private fun sendAttach(cols: Int, rows: Int) {
-        _state.update { it.copy(attaching = true, error = null) }
+    private fun sendAttach(tabId: Int, cols: Int, rows: Int) {
+        val tab = tabById(tabId) ?: return
+        updateTab(tabId) { it.copy(attaching = true, error = null) }
         sendEnvelope("terminal.attach", buildJsonObject {
+            put("session_name", tab.sessionName)
             put("cols", cols)
             put("rows", rows)
         })
     }
 
+    /**
+     * Route a terminal envelope to the right tab by `session_name`. Falls
+     * back to the active tab when the envelope omits `session_name` (some
+     * server responses might) so we don't drop output on the floor.
+     */
     private fun handleEnvelope(envelope: Envelope) {
         val payload = envelope.payload
+        val sessionName = payload["session_name"]?.asStringOrNull()
+        val targetTab: TabState? = sessionName?.let { name ->
+            _tabs.value.firstOrNull { it.sessionName == name }
+        } ?: tabById(_activeTabId.value)
+
         when (envelope.type) {
             "terminal.attached" -> {
-                _state.update {
+                val tab = targetTab ?: return
+                updateTab(tab.tabId) {
                     it.copy(
                         attached = true,
                         attaching = false,
-                        sessionName = payload["session_name"]?.asStringOrNull(),
                         pid = payload["pid"]?.asIntOrNull(),
                         shell = payload["shell"]?.asStringOrNull(),
                         cols = payload["cols"]?.asIntOrNull() ?: it.cols,
                         rows = payload["rows"]?.asIntOrNull() ?: it.rows,
                         tmuxAvailable = payload["tmux_available"]?.asBoolOrNull() ?: false,
-                        error = null
+                        error = null,
                     )
                 }
-                Log.i(TAG, "Attached: ${_state.value.sessionName} pid=${_state.value.pid}")
+                Log.i(TAG, "Attached tab=${tab.tabId} session=${tab.sessionName} pid=${payload["pid"]?.asIntOrNull()}")
             }
 
             "terminal.output" -> {
+                val tab = targetTab ?: return
                 val data = payload["data"]?.asStringOrNull() ?: return
-                Log.d(TAG, "terminal.output: ${data.length} bytes")
+                Log.d(TAG, "terminal.output tab=${tab.tabId}: ${data.length} bytes")
                 // Re-encode as base64 so the WebView's window.writeTerminal can
                 // decode it back to bytes without any JS-string escaping worries.
                 val b64 = Base64.encodeToString(
@@ -299,32 +496,34 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
                     Base64.NO_WRAP
                 )
                 viewModelScope.launch {
-                    _outputFlow.emit(b64)
+                    _outputFlow.emit(TabOutput(tab.tabId, b64))
                 }
             }
 
             "terminal.detached" -> {
+                val tab = targetTab ?: return
                 val reason = payload["reason"]?.asStringOrNull() ?: "detached"
-                Log.i(TAG, "Detached: $reason")
-                _state.update {
+                Log.i(TAG, "Detached tab=${tab.tabId}: $reason")
+                updateTab(tab.tabId) {
                     it.copy(
                         attached = false,
                         attaching = false,
-                        sessionName = null,
                         pid = null,
-                        error = if (reason == "client detach") null else reason
+                        error = if (reason == "client detach") null else reason,
                     )
                 }
             }
 
             "terminal.error" -> {
+                val tab = targetTab
                 val message = payload["message"]?.asStringOrNull() ?: "Unknown error"
-                Log.w(TAG, "Terminal error: $message")
-                _state.update { it.copy(attaching = false, error = message) }
+                Log.w(TAG, "Terminal error tab=${tab?.tabId}: $message")
+                if (tab != null) {
+                    updateTab(tab.tabId) { it.copy(attaching = false, error = message) }
+                }
             }
 
             "terminal.sessions" -> {
-                // Session listing — unused in MVP, logged for debugging.
                 Log.d(TAG, "Sessions: $payload")
             }
 
