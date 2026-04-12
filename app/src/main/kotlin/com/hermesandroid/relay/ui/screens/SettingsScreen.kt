@@ -85,6 +85,8 @@ fun SettingsScreen(
     val isDarkTheme = isSystemInDarkTheme()
 
     val apiReachable by connectionViewModel.apiServerReachable.collectAsState()
+    val apiHealth by connectionViewModel.apiServerHealth.collectAsState()
+    val relayHealth by connectionViewModel.relayServerHealth.collectAsState()
     val relayConnectionState by connectionViewModel.relayConnectionState.collectAsState()
     val authState by connectionViewModel.authState.collectAsState()
     val apiUrl by connectionViewModel.apiServerUrl.collectAsState()
@@ -152,7 +154,13 @@ fun SettingsScreen(
                     ConnectionStatusRow(
                         label = "API",
                         isConnected = apiReachable,
-                        statusText = apiUrl.ifBlank { "Not configured" }
+                        isProbing = apiHealth == ConnectionViewModel.HealthStatus.Probing,
+                        statusText = when {
+                            apiUrl.isBlank() -> "Not configured"
+                            apiHealth == ConnectionViewModel.HealthStatus.Probing -> "Checking…"
+                            apiReachable -> apiUrl
+                            else -> "Unreachable"
+                        }
                     )
 
                     if (relayFeatureEnabled) {
@@ -162,12 +170,20 @@ fun SettingsScreen(
                             isConnected = relayConnectionState == ConnectionState.Connected,
                             isConnecting = relayConnectionState == ConnectionState.Connecting ||
                                 relayConnectionState == ConnectionState.Reconnecting,
-                            statusText = relayUrl.ifBlank { "Not configured" }
+                            isProbing = relayConnectionState == ConnectionState.Disconnected &&
+                                relayHealth == ConnectionViewModel.HealthStatus.Probing,
+                            statusText = when {
+                                relayUrl.isBlank() -> "Not configured"
+                                relayConnectionState == ConnectionState.Connected -> relayUrl
+                                relayHealth == ConnectionViewModel.HealthStatus.Probing -> "Checking…"
+                                else -> "Disconnected"
+                            }
                         )
                         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
                         ConnectionStatusRow(
                             label = "Session",
                             isConnected = authState is AuthState.Paired,
+                            isConnecting = authState is AuthState.Pairing,
                             statusText = when (authState) {
                                 is AuthState.Paired -> "Paired"
                                 is AuthState.Pairing -> "Pairing…"

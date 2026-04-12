@@ -2,8 +2,6 @@ package com.hermesandroid.relay.ui.screens
 
 import android.content.ClipData
 import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -26,7 +24,6 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -75,21 +72,16 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.FeatureFlags
-import com.hermesandroid.relay.data.PairingPreferences
 import com.hermesandroid.relay.network.ConnectionState
 import com.hermesandroid.relay.ui.components.ApiServerInfoSheet
 import com.hermesandroid.relay.ui.components.ConnectionStatusRow
-import com.hermesandroid.relay.ui.components.HermesPairingPayload
+import com.hermesandroid.relay.ui.components.ConnectionWizard
 import com.hermesandroid.relay.ui.components.InsecureConnectionAckDialog
-import com.hermesandroid.relay.ui.components.PairingWalkthroughDialog
-import com.hermesandroid.relay.ui.components.QrPairingScanner
 import com.hermesandroid.relay.ui.components.RelayInfoSheet
 import com.hermesandroid.relay.ui.components.SessionInfoSheet
-import com.hermesandroid.relay.ui.components.SessionTtlPickerDialog
 import com.hermesandroid.relay.ui.components.SettingsExpandableCard
 import com.hermesandroid.relay.ui.components.TransportSecurityBadge
 import com.hermesandroid.relay.ui.components.TransportSecuritySize
-import com.hermesandroid.relay.ui.components.defaultTtlSeconds
 import com.hermesandroid.relay.ui.components.isUrlSecure
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.util.classifyError
@@ -116,6 +108,8 @@ fun ConnectionSettingsScreen(
     val authState by connectionViewModel.authState.collectAsState()
     val apiServerUrl by connectionViewModel.apiServerUrl.collectAsState()
     val apiReachable by connectionViewModel.apiServerReachable.collectAsState()
+    val apiHealth by connectionViewModel.apiServerHealth.collectAsState()
+    val relayHealth by connectionViewModel.relayServerHealth.collectAsState()
     val relayUrl by connectionViewModel.relayUrl.collectAsState()
     val pairingCode by connectionViewModel.pairingCode.collectAsState()
     val apiKeyPresent by connectionViewModel.authManager.apiKeyPresent.collectAsState()
@@ -136,7 +130,12 @@ fun ConnectionSettingsScreen(
     var apiKeyVisible by remember { mutableStateOf(false) }
     var relayUrlInput by remember(relayUrl) { mutableStateOf(relayUrl) }
     var isTesting by remember { mutableStateOf(false) }
-    var showQrScanner by remember { mutableStateOf(false) }
+
+    // Pairing wizard — modal full-screen flow that scans the QR, lets the
+    // user pick a TTL, and verifies the pair. Replaces the old split between
+    // QrPairingScanner + SessionTtlPickerDialog + PairingWalkthroughDialog.
+    var showConnectionWizard by remember { mutableStateOf(false) }
+
     var showManualCodeDialog by remember { mutableStateOf(false) }
     var manualCodeInput by remember { mutableStateOf("") }
     var manualPairingInProgress by remember { mutableStateOf(false) }
@@ -148,10 +147,6 @@ fun ConnectionSettingsScreen(
     var showSessionInfoSheet by remember { mutableStateOf(false) }
     var showApiInfoSheet by remember { mutableStateOf(false) }
     var showRelayInfoSheet by remember { mutableStateOf(false) }
-
-    // Full-screen guided pairing walkthrough — 4-step wizard triggered from
-    // the Connection card, for users setting up from scratch.
-    var showPairingWalkthrough by remember { mutableStateOf(false) }
 
     // Manual config: pairing code input. Relay reachability state now
     // lives on the ViewModel (relayReachableResult StateFlow) — the old
@@ -203,29 +198,10 @@ fun ConnectionSettingsScreen(
     var manualConfigExpanded by rememberSaveable { mutableStateOf(manualConfigExpandedDefault) }
     var bridgePairingExpanded by rememberSaveable { mutableStateOf(false) }
 
-    // --- Security overhaul state (2026-04-11) ------------------------------
-    //
-    // After a successful QR parse we stash the payload and open a TTL picker
-    // dialog. The picker's confirm callback then completes the pair (applies
-    // the code, connects, etc.). This matches Bailey's request that the user
-    // always gets a confirmation step so the trust model is explicit.
-    var pendingQrPayload by remember { mutableStateOf<HermesPairingPayload?>(null) }
-
     // The insecure ack dialog opens the first time the user toggles insecure
     // mode on. We stash the "new state" so we can revert the toggle if they
     // cancel the dialog without picking a reason.
     var showInsecureAckDialog by remember { mutableStateOf(false) }
-
-    // Camera permission launcher for QR scanning
-    val cameraPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) {
-            showQrScanner = true
-        } else {
-            Toast.makeText(context, "Camera permission needed to scan QR codes", Toast.LENGTH_SHORT).show()
-        }
-    }
 
     Scaffold(
         topBar = {
@@ -286,11 +262,11 @@ fun ConnectionSettingsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
-                    // Primary scan button — full width, dominant
+                    // Primary action — open the shared 3-step pairing wizard
+                    // (Scan → Confirm → Verify). Same wizard onboarding uses,
+                    // so first-run and re-pair stay perfectly aligned.
                     Button(
-                        onClick = {
-                            cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
-                        },
+                        onClick = { showConnectionWizard = true },
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(
@@ -299,22 +275,7 @@ fun ConnectionSettingsScreen(
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.size(8.dp))
-                        Text("Scan Pairing QR")
-                    }
-
-                    // Secondary: guided 4-step walkthrough for users who
-                    // want a stepper-driven setup (or can't scan the QR).
-                    OutlinedButton(
-                        onClick = { showPairingWalkthrough = true },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Route,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.size(8.dp))
-                        Text("Guided setup")
+                        Text("Pair with QR")
                     }
 
                     // Tertiary: quick re-pair for power users who already
@@ -337,7 +298,12 @@ fun ConnectionSettingsScreen(
                     ConnectionStatusRow(
                         label = "API Server",
                         isConnected = apiReachable,
-                        statusText = if (apiReachable) "Reachable" else "Unreachable",
+                        isProbing = apiHealth == ConnectionViewModel.HealthStatus.Probing,
+                        statusText = when {
+                            apiHealth == ConnectionViewModel.HealthStatus.Probing -> "Checking…"
+                            apiReachable -> "Reachable"
+                            else -> "Unreachable"
+                        },
                         onClick = { showApiInfoSheet = true },
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -354,6 +320,12 @@ fun ConnectionSettingsScreen(
                                 relayConnectionState == ConnectionState.Reconnecting ||
                                 isRelayStale ||
                                 isAutoReconnecting,
+                            // Initial post-resume probe — show gray
+                            // checking state when the disconnect is fresh
+                            // and we haven't finished a /health probe yet.
+                            isProbing = relayConnectionState == ConnectionState.Disconnected &&
+                                !isRelayStale && !isAutoReconnecting &&
+                                relayHealth == ConnectionViewModel.HealthStatus.Probing,
                             statusText = when {
                                 relayConnectionState == ConnectionState.Connected -> "Connected"
                                 // During the initial auto-reconnect window
@@ -422,7 +394,7 @@ fun ConnectionSettingsScreen(
                             OutlinedButton(
                                 onClick = {
                                     connectionViewModel.clearSession()
-                                    cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
+                                    showConnectionWizard = true
                                 }
                             ) {
                                 Text("Re-pair")
@@ -896,12 +868,49 @@ fun ConnectionSettingsScreen(
         }
     }
 
-    // Guided pairing walkthrough — full-screen 4-step wizard
-    if (showPairingWalkthrough) {
-        PairingWalkthroughDialog(
-            connectionViewModel = connectionViewModel,
-            onDismiss = { showPairingWalkthrough = false }
-        )
+    // Pairing wizard — full-screen modal scan → confirm → verify flow.
+    // Same composable onboarding uses, so first-run and re-pair stay aligned.
+    if (showConnectionWizard) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { showConnectionWizard = false },
+            properties = androidx.compose.ui.window.DialogProperties(
+                usePlatformDefaultWidth = false,
+                dismissOnBackPress = true,
+                dismissOnClickOutside = false,
+            ),
+        ) {
+            androidx.compose.material3.Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = MaterialTheme.colorScheme.background,
+            ) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    TopAppBar(
+                        title = { Text("Pair with your server") },
+                        navigationIcon = {
+                            IconButton(onClick = { showConnectionWizard = false }) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = "Close",
+                                )
+                            }
+                        },
+                    )
+                    ConnectionWizard(
+                        connectionViewModel = connectionViewModel,
+                        onComplete = {
+                            showConnectionWizard = false
+                            Toast.makeText(
+                                context,
+                                "Paired successfully",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        },
+                        onCancel = { showConnectionWizard = false },
+                        showSkip = false,
+                    )
+                }
+            }
+        }
     }
 
     // Connection info bottom sheets — tap-to-reveal details for each row
@@ -1150,98 +1159,8 @@ fun ConnectionSettingsScreen(
         )
     }
 
-    // QR Scanner overlay
-    //
-    // On successful parse we stash the payload and open the TTL picker —
-    // the picker's confirm callback completes the pair. This ensures the
-    // user always gets an explicit "Keep this pairing for…" confirmation
-    // step so the trust model (who has access, for how long) is visible.
-    if (showQrScanner) {
-        QrPairingScanner(
-            onPairingDetected = { payload ->
-                showQrScanner = false
-                pendingQrPayload = payload
-            },
-            onDismiss = { showQrScanner = false }
-        )
-    }
-
-    // TTL picker — opens when pendingQrPayload becomes non-null. Confirm
-    // persists URLs/keys/code and kicks the relay connect; cancel drops the
-    // payload and leaves the user on Settings unchanged.
-    pendingQrPayload?.let { payload ->
-        val defaultTtl = defaultTtlSeconds(
-            qrTtlSeconds = payload.relay?.ttlSeconds,
-            transportHint = payload.relay?.transportHint,
-            isTailscaleDetected = isTailscaleDetected,
-        )
-        // Previously-selected TTL from DataStore (seeded from the default).
-        // collectAsState with a default so we don't block composition while
-        // DataStore spins up its first emit.
-        val persistedTtl by PairingPreferences.pairTtlSeconds(context)
-            .collectAsState(initial = PairingPreferences.DEFAULT_TTL_SECONDS)
-        val initialTtl = if (payload.relay?.ttlSeconds != null) defaultTtl else persistedTtl
-
-        SessionTtlPickerDialog(
-            initialTtlSeconds = initialTtl,
-            isTailscaleDetected = isTailscaleDetected,
-            transportHint = payload.relay?.transportHint,
-            onConfirm = { ttl ->
-                // Apply the scanned values
-                apiUrlInput = payload.serverUrl
-                apiKeyInput = payload.key
-                connectionViewModel.updateApiServerUrl(payload.serverUrl)
-                connectionViewModel.updateApiKey(payload.key)
-
-                payload.relay?.let { relay ->
-                    connectionViewModel.updateRelayUrl(relay.url)
-                    if (relay.url.startsWith("ws://")) {
-                        connectionViewModel.setInsecureMode(true)
-                    }
-                    // Wipe any TOFU pin for the new host + apply the code.
-                    // applyServerIssuedCodeAndReset now takes the relay URL
-                    // so the cert-pin store can remove its per-host entry
-                    // for legitimate cert rotation.
-                    connectionViewModel.authManager.applyServerIssuedCodeAndReset(
-                        code = relay.code,
-                        relayUrl = relay.url,
-                    )
-                    // Propagate per-channel grants into the next auth.
-                    connectionViewModel.authManager.setPendingGrants(relay.grants)
-                }
-                // Stash TTL for the next authenticate() call.
-                connectionViewModel.authManager.setPendingTtlSeconds(ttl)
-
-                // Kick off the WSS handshake now — AuthManager is holding a
-                // fresh server-issued code so the pair-context gate on
-                // connectRelay will let it through. Without this call, the
-                // Settings QR flow stashed credentials but never actually
-                // opened the WSS, forcing the user to hit Reconnect
-                // manually or reopen Settings to hit reconnectIfStale.
-                payload.relay?.let { relay ->
-                    connectionViewModel.disconnectRelay()
-                    connectionViewModel.connectRelay(relay.url)
-                }
-
-                pendingQrPayload = null
-
-                isTesting = true
-                connectionViewModel.testApiConnection { success ->
-                    isTesting = false
-                    val msg = if (success) {
-                        if (payload.relay != null)
-                            "Paired — API + relay configured"
-                        else
-                            "Paired — server reachable"
-                    } else {
-                        "Paired — but server unreachable"
-                    }
-                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                }
-            },
-            onCancel = { pendingQrPayload = null }
-        )
-    }
+    // (QR scanner + TTL picker live inside ConnectionWizard now — see the
+    // showConnectionWizard block above.)
 
     // Insecure ack dialog — first time the user flips the "Allow insecure"
     // toggle on. Only gates the toggle itself; all actual pairing flows

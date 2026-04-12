@@ -34,46 +34,79 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
+ * Four-state connection indicator. The fourth state — [Probing] — is the
+ * one that fixes the resume-lag flash: when the app comes back to the
+ * foreground, every status starts as Probing instead of inheriting whatever
+ * the StateFlow happened to hold from the last session. The badge then
+ * resolves to Connected or Disconnected once a fresh health probe lands.
+ *
+ * Old call sites that still use the boolean overload keep working — they
+ * just never enter the Probing state, which is fine for the local-first
+ * indicators (e.g. terminal session badges) where there's nothing to revalidate.
+ */
+enum class BadgeState {
+    /** Verified connected by the most recent probe. Green pulse. */
+    Connected,
+
+    /** Connect/handshake in flight. Amber pulse. */
+    Connecting,
+
+    /** Verified disconnected by the most recent probe. Red, no pulse. */
+    Disconnected,
+
+    /** Status not yet verified — fresh foreground, no probe has landed. Gray pulse. */
+    Probing,
+}
+
+/**
  * Animated connection status indicator — a colored dot with an optional pulsing ring.
  *
  * - **Connected (green):** solid dot + slow heartbeat pulse (1.5 s)
  * - **Connecting / Reconnecting (amber):** solid dot + faster pulse (0.8 s)
+ * - **Probing (gray):** solid dot + slow pulse (1.2 s) — initial state on resume
  * - **Disconnected (red):** solid dot, no pulse
  */
 @Composable
 fun ConnectionStatusBadge(
-    isConnected: Boolean,
-    isConnecting: Boolean = false,
+    state: BadgeState,
     modifier: Modifier = Modifier,
-    size: Dp = 12.dp
+    size: Dp = 12.dp,
 ) {
+    val onSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
+    val errorColor = MaterialTheme.colorScheme.error
+
     val dotColor: Color
     val showPulse: Boolean
     val pulseDurationMs: Int
     val statusLabel: String
 
-    when {
-        isConnected -> {
+    when (state) {
+        BadgeState.Connected -> {
             dotColor = Color(0xFF4CAF50) // Material green 500
             showPulse = true
             pulseDurationMs = 1500
             statusLabel = "Connected"
         }
-        isConnecting -> {
+        BadgeState.Connecting -> {
             dotColor = Color(0xFFFFA726) // Material amber/orange 400
             showPulse = true
             pulseDurationMs = 800
             statusLabel = "Connecting"
         }
-        else -> {
-            dotColor = MaterialTheme.colorScheme.error
+        BadgeState.Probing -> {
+            dotColor = onSurfaceVariant
+            showPulse = true
+            pulseDurationMs = 1200
+            statusLabel = "Checking status"
+        }
+        BadgeState.Disconnected -> {
+            dotColor = errorColor
             showPulse = false
             pulseDurationMs = 1500 // unused but required for val init
             statusLabel = "Disconnected"
         }
     }
 
-    // Pulse animation — only runs when showPulse is true
     val pulseScale: Float
     val pulseAlpha: Float
 
@@ -107,7 +140,6 @@ fun ConnectionStatusBadge(
             .size(size)
             .semantics { contentDescription = statusLabel }
             .drawBehind {
-                // Pulse ring (expanding, fading circle outline)
                 if (showPulse && pulseAlpha > 0f) {
                     val ringRadius = (this.size.minDimension / 2f) * pulseScale
                     drawCircle(
@@ -116,11 +148,31 @@ fun ConnectionStatusBadge(
                         style = Stroke(width = 2.dp.toPx())
                     )
                 }
-
-                // Solid inner dot
                 drawCircle(color = dotColor)
             }
     )
+}
+
+/**
+ * Boolean overload — preserved for legacy call sites (terminal, bridge,
+ * chat header, etc.) that don't need a Probing state. New code should pass
+ * a [BadgeState] directly so it can express the "checking status" pose.
+ */
+@Composable
+fun ConnectionStatusBadge(
+    isConnected: Boolean,
+    isConnecting: Boolean = false,
+    isProbing: Boolean = false,
+    modifier: Modifier = Modifier,
+    size: Dp = 12.dp,
+) {
+    val state = when {
+        isConnected -> BadgeState.Connected
+        isConnecting -> BadgeState.Connecting
+        isProbing -> BadgeState.Probing
+        else -> BadgeState.Disconnected
+    }
+    ConnectionStatusBadge(state = state, modifier = modifier, size = size)
 }
 
 /**
@@ -140,16 +192,42 @@ fun ConnectionStatusRow(
     label: String,
     isConnected: Boolean,
     isConnecting: Boolean = false,
+    isProbing: Boolean = false,
     statusText: String,
     onTest: (() -> Unit)? = null,
     onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    // Clip + clickable gives us the full Material ripple on the row surface
-    // plus rounded corners so the tap target looks like a list item rather
-    // than a raw strip. If the caller also passed a clickable via modifier
-    // (legacy call sites that haven't been migrated to onClick yet), that
-    // still works — Modifier.clickable is additive.
+    val state = when {
+        isConnected -> BadgeState.Connected
+        isConnecting -> BadgeState.Connecting
+        isProbing -> BadgeState.Probing
+        else -> BadgeState.Disconnected
+    }
+    ConnectionStatusRow(
+        label = label,
+        state = state,
+        statusText = statusText,
+        onTest = onTest,
+        onClick = onClick,
+        modifier = modifier,
+    )
+}
+
+/**
+ * Four-state overload of [ConnectionStatusRow]. Prefer this for any new
+ * call site that needs to render the Probing state — the boolean overload
+ * is kept around for legacy call sites.
+ */
+@Composable
+fun ConnectionStatusRow(
+    label: String,
+    state: BadgeState,
+    statusText: String,
+    onTest: (() -> Unit)? = null,
+    onClick: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
     val interactiveModifier = if (onClick != null) {
         Modifier
             .clip(RoundedCornerShape(8.dp))
@@ -163,10 +241,7 @@ fun ConnectionStatusRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        ConnectionStatusBadge(
-            isConnected = isConnected,
-            isConnecting = isConnecting
-        )
+        ConnectionStatusBadge(state = state)
 
         Text(
             text = label,
@@ -177,10 +252,11 @@ fun ConnectionStatusRow(
         Text(
             text = statusText,
             style = MaterialTheme.typography.bodyMedium,
-            color = when {
-                isConnected -> Color(0xFF4CAF50)
-                isConnecting -> Color(0xFFFFA726)
-                else -> MaterialTheme.colorScheme.error
+            color = when (state) {
+                BadgeState.Connected -> Color(0xFF4CAF50)
+                BadgeState.Connecting -> Color(0xFFFFA726)
+                BadgeState.Probing -> MaterialTheme.colorScheme.onSurfaceVariant
+                BadgeState.Disconnected -> MaterialTheme.colorScheme.error
             }
         )
 
@@ -191,9 +267,6 @@ fun ConnectionStatusRow(
             }
         }
 
-        // Chevron affordance for tappable rows. Users couldn't previously
-        // tell that API / Relay / Session rows were tappable — the drawer
-        // opening was invisible until they stumbled onto the tap target.
         if (onClick != null && onTest == null) {
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
