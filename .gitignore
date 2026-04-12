@@ -54,8 +54,8 @@ package-lock.json
 # Local upstream reference
 hermes-agent-upstream/
 
-# Captured screenshots (may contain sensitive server IPs/keys — curate manually before committing)
-assets/screenshots/
+# Claude Code internal state (worktrees, image cache, conversation logs)
+.claude/
 
 # Kotlin compiler cache
 .kotlin/
