@@ -830,20 +830,30 @@ class HermesApiClient(
      *
      * Probe order:
      *   1. `/health` — if this fails, everything else is moot.
-     *   2. `/api/sessions?limit=1` — sessions CRUD (true on fork OR
-     *      bootstrap-injected vanilla upstream).
-     *   3. `OPTIONS /api/sessions/probe/chat/stream` — chat-stream handler
-     *      presence. We use OPTIONS because the actual handler only accepts
-     *      POST. aiohttp returns 405 (Method Not Allowed) when the route is
-     *      registered but the method doesn't match, and 404 when the route
-     *      doesn't exist at all. The 405 is the positive signal we want.
-     *   4. `OPTIONS /v1/runs` — runs endpoint presence (same 405 vs 404
-     *      logic).
-     *   5. `/v1/models` — OpenAI-compat reachability.
+     *   2. `HEAD /api/sessions?limit=1` — sessions CRUD (true on fork OR
+     *      bootstrap-injected upstream).
+     *   3. `HEAD /api/sessions/probe/chat/stream` — chat-stream handler
+     *      presence. The handler only accepts POST, so HEAD returns 405
+     *      (Method Not Allowed) when the route is registered. 404 means
+     *      the route doesn't exist at all.
+     *   4. `HEAD /v1/runs` — runs endpoint presence (same 405-vs-404 logic).
+     *   5. `HEAD /v1/models` — OpenAI-compat reachability.
      *
-     * All probes are bearer-auth'd. A 401 still tells us "endpoint exists,
-     * just not authorised right now" — that counts as present for capability
-     * purposes, since the user will retry once auth is fixed.
+     * **Why HEAD instead of OPTIONS:** The hermes-agent gateway runs CORS
+     * middleware (`security_headers_middleware`) that intercepts OPTIONS
+     * preflight requests and returns 403 for both existing AND missing
+     * paths — making OPTIONS useless as a probe. HEAD bypasses the CORS
+     * middleware path and surfaces the actual router status (200/401/405
+     * for present, 404 for missing). Verified empirically against the
+     * production hermes-agent gateway on 2026-04-12.
+     *
+     * **Success criterion:** any HTTP response code that isn't 404 means
+     * the route is registered. We accept 200, 204, 401, 403, 405, 415,
+     * etc. as positive — even quirky middleware responses count, because
+     * the alternative (404) is the only signal that means "no such path."
+     *
+     * Network errors (connection refused, DNS failure, etc.) count as
+     * "missing" since we can't differentiate from a server-down case.
      */
     suspend fun probeCapabilities(): ServerCapabilities = withContext(Dispatchers.IO) {
         // 1. Health
@@ -855,53 +865,21 @@ class HermesApiClient(
         }
         if (!healthy) return@withContext ServerCapabilities.DISCONNECTED
 
-        // 2. Sessions CRUD
-        val sessionsApi = try {
-            val req = authRequest("$baseUrl/api/sessions?limit=1").get().build()
-            client.newCall(req).execute().use { response ->
-                // 200 = present + authed; 401 = present but not authed
-                response.code in setOf(200, 401)
-            }
+        // Reusable HEAD probe — returns true if the route is registered
+        // (any status except 404 + network errors). Already inside the
+        // Dispatchers.IO context from the outer withContext, so the
+        // blocking OkHttp calls are safe here.
+        fun routeExists(path: String): Boolean = try {
+            val req = authRequest("$baseUrl$path").head().build()
+            client.newCall(req).execute().use { response -> response.code != 404 }
         } catch (_: Exception) {
             false
         }
 
-        // 3. Sessions chat stream — OPTIONS probe so we don't kick off a real
-        //    chat. aiohttp returns 405 when the path is registered but the
-        //    method isn't allowed (POST-only), and 404 when the path is
-        //    unknown. 405 = endpoint exists.
-        val sessionsChatStream = try {
-            val req = authRequest("$baseUrl/api/sessions/probe/chat/stream")
-                .method("OPTIONS", null)
-                .build()
-            client.newCall(req).execute().use { response ->
-                response.code in setOf(200, 401, 405)
-            }
-        } catch (_: Exception) {
-            false
-        }
-
-        // 4. /v1/runs — same OPTIONS-probe trick.
-        val runs = try {
-            val req = authRequest("$baseUrl/v1/runs")
-                .method("OPTIONS", null)
-                .build()
-            client.newCall(req).execute().use { response ->
-                response.code in setOf(200, 401, 405)
-            }
-        } catch (_: Exception) {
-            false
-        }
-
-        // 5. /v1/models — OpenAI-compat reachability
-        val portable = try {
-            val req = authRequest("$baseUrl/v1/models").get().build()
-            client.newCall(req).execute().use { response ->
-                response.code in setOf(200, 401)
-            }
-        } catch (_: Exception) {
-            false
-        }
+        val sessionsApi = routeExists("/api/sessions?limit=1")
+        val sessionsChatStream = routeExists("/api/sessions/probe/chat/stream")
+        val runs = routeExists("/v1/runs")
+        val portable = routeExists("/v1/models")
 
         ServerCapabilities(
             sessionsApi = sessionsApi,
