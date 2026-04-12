@@ -49,6 +49,85 @@ Wired into `ChannelMultiplexer.kt` via a `// === PHASE3-γ ===` marked section (
 
 Branch: `feature/phase3-accessibility-runtime`.
 
+## 2026-04-12 — Phase 3 / Wave 1 / δ — BridgeScreen rewrite (bridge-screen-ui)
+
+Replaced the `BridgeScreen` "Coming Soon" placeholder with the real Tier-1
+control surface from the Phase 3 plan. Wave 1 Agent δ (`bridge-screen-ui`)
+deliverable — the UI scaffold is now ready to render whatever state Agent γ's
+`HermesAccessibilityService` exposes once its runtime lands.
+
+New files:
+
+- `app/src/main/kotlin/.../data/BridgePreferences.kt` — DataStore repo with
+  `bridge_master_enabled` boolean and serialized `bridge_activity_log` JSON
+  list (capped at 100 entries). Mirrors `VoicePreferences.kt` /
+  `MediaSettings.kt` style. Uses lenient `Json` for forward-compat.
+- `app/src/main/kotlin/.../viewmodel/BridgeViewModel.kt` — AndroidViewModel
+  exposing `masterToggle`, `bridgeStatus`, `permissionStatus`, `activityLog`
+  StateFlows. Reads a11y service enablement via
+  `Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES`, overlay via
+  `Settings.canDrawOverlays`, notification listener via
+  `enabled_notification_listeners`. Seeds `BridgeStatus` on init from
+  `PowerManager.isInteractive` + `BatteryManager.BATTERY_PROPERTY_CAPACITY`
+  so the card isn't empty before γ lands. Four explicit `TODO(γ-handoff)`
+  markers documenting the StateFlow/class-name/activity-writer surface that
+  γ needs to expose for final wiring.
+- `app/src/main/kotlin/.../ui/components/BridgeMasterToggle.kt` — headline
+  Switch card with status inlines (device / battery / screen / current app),
+  explanation dialog (required by Play Store a11y review), and a11y-granted
+  gate so users can't flip it on before enabling the service.
+- `app/src/main/kotlin/.../ui/components/BridgeStatusCard.kt` — standalone
+  status card with `ConnectionStatusBadge` integration. Usable independently
+  of the master toggle so ζ can re-arrange the cards without losing state.
+- `app/src/main/kotlin/.../ui/components/BridgePermissionChecklist.kt` —
+  four-row checklist (Accessibility / Screen Capture / Overlay / Notification
+  Listener) with tap-to-open Intent launchers wrapped in `runCatching` for
+  OEM skin safety. `ACTION_ACCESSIBILITY_SETTINGS`,
+  `ACTION_MANAGE_OVERLAY_PERMISSION` with package URI, and the direct
+  `enabled_notification_listeners` intent string.
+- `app/src/main/kotlin/.../ui/components/BridgeActivityLog.kt` — scrollable
+  `LazyColumn` (bounded at `heightIn(max = 320.dp)`) with tap-to-expand row
+  showing full timestamp, status, result text, and optional screenshot token.
+  `java.time.DateTimeFormatter` for `HH:mm:ss` / `yyyy-MM-dd HH:mm:ss`.
+  Stubbed screenshot thumbnail rendering with a TODO pointing at γ's
+  MediaRegistry upload path.
+
+Shared-concern edits (marked with `PHASE3-δ:` banners):
+
+- `app/src/main/kotlin/.../ui/RelayApp.kt` — the existing `BridgeScreen()`
+  call wraps in the δ marker. Signature compatible: `BridgeScreen` defaults
+  its ViewModel via `viewModel()`, so no new nav-graph plumbing needed.
+
+Each new component carries a `@Preview` (or two — e.g.,
+`BridgeMasterTogglePreviewOn` vs `PreviewBlocked`) so Bailey can iterate in
+Android Studio's preview pane without rebuilding the whole app.
+
+γ-handoff points (in priority order, documented in `BridgeViewModel` KDoc):
+
+1. `bridgeStatus` StateFlow — δ stubs a best-effort read from system APIs;
+   γ replaces with the real HermesAccessibilityService status flow.
+2. `A11Y_SERVICE_CLASS` constant — δ hard-codes
+   `"com.hermesandroid.relay.accessibility.HermesAccessibilityService"`.
+   γ confirms the final FQCN.
+3. `recordActivity` write path — γ's command dispatcher calls
+   `BridgeViewModel.recordActivity(entry)` on every `bridge.command` to
+   populate the activity log. Until then the log stays empty and the empty-
+   state copy shows.
+4. Master toggle read from γ — γ's service reads `bridge_master_enabled` from
+   `BridgePreferencesRepository.settings` and treats it as the runtime disable
+   switch. No extra wiring needed from δ; γ just imports the repo.
+
+Build-flavor flags (`BuildFlavor.bridgeTierN` from β) are not referenced yet
+— this worktree pre-dates β's landing. Once β's object lands on main, δ's
+components remain compatible (they don't tier-gate anything; Tier 1 is
+always-on in both flavors per the plan).
+
+Safety card is a placeholder stub — Agent ζ (Wave 2) owns the real safety
+UI. δ's `SafetyPlaceholderCard` just says "Configure in Bridge Safety
+Settings" with a Wave-2 teaser subtitle.
+
+Branch: `feature/phase3-delta-bridge-screen-ui`.
+
 ## 2026-04-12 — Fix: TTS waveform stays alive through multi-sentence playback
 
 The waveform was flatlinining after the first sentence while audio kept playing. Root cause: `maybeAutoResume()` fired after every sentence in the TTS consumer loop. The SSE stream finishes before TTS plays all queued sentences, so `streamObserverJob?.isActive` was already false → state flipped to Idle → amplitude bridge stopped → waveform died. Fix: restructured TTS consumer from `for` loop to `while` + `tryReceive` peek. `maybeAutoResume` only fires when the queue is actually drained (`tryReceive` returns failure), not between sentences. Between sentences within the same response, `tryReceive` succeeds immediately and the consumer skips the Idle transition. Additionally, the consumer re-asserts Speaking state before each synthesis call to handle the edge case where the queue was briefly empty between observer pushes.

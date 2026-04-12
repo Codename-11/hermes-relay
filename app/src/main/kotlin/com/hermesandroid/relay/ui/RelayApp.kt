@@ -414,7 +414,16 @@ fun RelayApp() {
                     )
                 }
                 composable(Screen.Bridge.route) {
+                    // === PHASE3-δ: BridgeScreen wiring ===
+                    // BridgeScreen owns its own BridgeViewModel via the
+                    // default `viewModel()` parameter — no shared state with
+                    // ChatViewModel / ConnectionViewModel is plumbed through
+                    // here yet. Once Agent γ lands HermesAccessibilityService
+                    // and we need to observe its runtime state from RelayApp
+                    // scope, a shared holder or explicit VM param gets added
+                    // here.
                     BridgeScreen()
+                    // === END PHASE3-δ ===
                 }
                 composable(Screen.Settings.route) {
                     SettingsScreen(
