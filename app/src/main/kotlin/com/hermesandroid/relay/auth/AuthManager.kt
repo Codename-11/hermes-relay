@@ -306,6 +306,14 @@ class AuthManager(
     }
 
     /**
+     * Public accessor for the stable device ID. Used by [TerminalViewModel]
+     * to compose deterministic per-tab `session_name` values
+     * (`hermes-<deviceId>-tabN`) so the relay's tmux-backed terminal channel
+     * can re-attach the same shell across reconnects.
+     */
+    suspend fun getOrCreateDeviceId(): String = getDeviceId()
+
+    /**
      * Set the TTL the user picked at [SessionTtlPickerDialog]. `0` → never,
      * `null` → defer to server default. Persisted across [authenticate]
      * calls and mirrored into [PairingPreferences] for the next pair's
