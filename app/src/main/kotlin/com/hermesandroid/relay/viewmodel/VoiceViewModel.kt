@@ -705,7 +705,7 @@ internal fun extractNextSentence(buffer: StringBuilder): String? {
         val ch = buffer[idx]
         if (ch in SENTENCE_TERMINATORS) {
             val nextChar = if (idx + 1 < buffer.length) buffer[idx + 1] else null
-            val isBoundary = nextChar == null || nextChar.isWhitespace()
+            val isBoundary = ch == '\n' || nextChar == null || nextChar.isWhitespace()
             if (isBoundary && idx + 1 >= MIN_SENTENCE_LEN) {
                 val endExclusive = idx + 1
                 val sentence = buffer.substring(0, endExclusive).trim()
