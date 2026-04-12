@@ -67,6 +67,7 @@ import com.hermesandroid.relay.viewmodel.TerminalViewModel
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
 import com.hermesandroid.relay.audio.VoicePlayer
 import com.hermesandroid.relay.audio.VoiceRecorder
+import com.hermesandroid.relay.audio.VoiceSfxPlayer
 import com.hermesandroid.relay.network.RelayVoiceClient
 import com.hermesandroid.relay.auth.AuthState
 import androidx.lifecycle.viewModelScope
@@ -86,6 +87,15 @@ sealed class Screen(
     // NavigationBar. Paired Devices is opened from Settings → Connection.
     data object PairedDevices : Screen("paired_devices", "Paired Devices", Icons.Filled.Settings)
     data object VoiceSettings : Screen("voice_settings", "Voice", Icons.Filled.Settings)
+    // Per-category settings sub-screens — split out of the mega SettingsScreen
+    // following the VoiceSettingsScreen pattern (see DEVLOG 2026-04-11).
+    data object ConnectionSettings : Screen("settings/connection", "Connection", Icons.Filled.Settings)
+    data object ChatSettings : Screen("settings/chat", "Chat", Icons.Filled.Settings)
+    data object MediaSettings : Screen("settings/media", "Media", Icons.Filled.Settings)
+    data object AppearanceSettings : Screen("settings/appearance", "Appearance", Icons.Filled.Settings)
+    data object Analytics : Screen("settings/analytics", "Analytics", Icons.Filled.Settings)
+    data object DeveloperSettings : Screen("settings/developer", "Developer", Icons.Filled.Settings)
+    data object About : Screen("settings/about", "About", Icons.Filled.Settings)
 }
 
 private val bottomNavScreens = listOf(
@@ -138,6 +148,10 @@ fun RelayApp() {
             },
         )
     }
+    // Remembered so the AudioTrack buffers are synthesized once per process.
+    // VoiceSfxPlayer is internally crash-proof — failed AudioTrack builds
+    // become null-tracks that no-op — so we don't need an outer try/catch.
+    val voiceSfxPlayer = remember { VoiceSfxPlayer(mediaContext) }
     LaunchedEffect(Unit) {
         val recorder = VoiceRecorder(mediaContext, voiceViewModel.viewModelScope)
         val player = VoicePlayer()
@@ -146,6 +160,7 @@ fun RelayApp() {
             chatViewModel = chatViewModel,
             recorder = recorder,
             player = player,
+            sfxPlayer = voiceSfxPlayer,
         )
     }
 
@@ -393,6 +408,51 @@ fun RelayApp() {
                             // stranded on an empty devices list.
                             navController.popBackStack(Screen.Settings.route, inclusive = false)
                         }
+                    )
+                }
+                composable(Screen.ConnectionSettings.route) {
+                    ConnectionSettingsScreen(
+                        connectionViewModel = connectionViewModel,
+                        onBack = { navController.popBackStack() },
+                        onNavigateToPairedDevices = {
+                            navController.navigate(Screen.PairedDevices.route)
+                        }
+                    )
+                }
+                composable(Screen.ChatSettings.route) {
+                    ChatSettingsScreen(
+                        connectionViewModel = connectionViewModel,
+                        onBack = { navController.popBackStack() }
+                    )
+                }
+                composable(Screen.MediaSettings.route) {
+                    MediaSettingsScreen(
+                        connectionViewModel = connectionViewModel,
+                        onBack = { navController.popBackStack() }
+                    )
+                }
+                composable(Screen.AppearanceSettings.route) {
+                    AppearanceSettingsScreen(
+                        connectionViewModel = connectionViewModel,
+                        onBack = { navController.popBackStack() }
+                    )
+                }
+                composable(Screen.Analytics.route) {
+                    AnalyticsScreen(
+                        connectionViewModel = connectionViewModel,
+                        onBack = { navController.popBackStack() }
+                    )
+                }
+                composable(Screen.DeveloperSettings.route) {
+                    DeveloperSettingsScreen(
+                        connectionViewModel = connectionViewModel,
+                        onBack = { navController.popBackStack() }
+                    )
+                }
+                composable(Screen.About.route) {
+                    AboutScreen(
+                        connectionViewModel = connectionViewModel,
+                        onBack = { navController.popBackStack() }
                     )
                 }
             }
