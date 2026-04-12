@@ -36,7 +36,9 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -124,8 +126,10 @@ import com.hermesandroid.relay.ui.components.SessionDrawerContent
 import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.ui.components.StreamingDots
 import com.hermesandroid.relay.ui.components.ToolProgressCard
+import com.hermesandroid.relay.ui.components.VoiceModeOverlay
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import com.hermesandroid.relay.viewmodel.VoiceViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -154,8 +158,51 @@ private data class ChatScrollSnapshot(
 fun ChatScreen(
     chatViewModel: ChatViewModel,
     connectionViewModel: ConnectionViewModel,
+    voiceViewModel: VoiceViewModel,
     maxBubbleWidth: Dp = 300.dp
 ) {
+    val voiceUiState by voiceViewModel.uiState.collectAsState()
+    val chatAlpha by animateFloatAsState(
+        targetValue = if (voiceUiState.voiceMode) 0.4f else 1f,
+        animationSpec = tween(300),
+        label = "chatAlpha",
+    )
+
+    // RECORD_AUDIO permission flow — user taps the mic FAB → if not granted,
+    // request; on grant, latch the pending-enter and fire enterVoiceMode() in
+    // the callback. Denial shows an inline banner above the input.
+    val context = LocalContext.current
+    var pendingVoiceEnter by remember { mutableStateOf(false) }
+    var micPermissionDenied by remember { mutableStateOf(false) }
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            micPermissionDenied = false
+            if (pendingVoiceEnter) {
+                pendingVoiceEnter = false
+                voiceViewModel.enterVoiceMode()
+            }
+        } else {
+            pendingVoiceEnter = false
+            micPermissionDenied = true
+        }
+    }
+    val requestVoiceMode: () -> Unit = {
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.RECORD_AUDIO,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            micPermissionDenied = false
+            voiceViewModel.enterVoiceMode()
+        } else {
+            pendingVoiceEnter = true
+            micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+
     val messages by chatViewModel.messages.collectAsState()
     val isStreaming by chatViewModel.isStreaming.collectAsState()
     val chatReady by connectionViewModel.chatReady.collectAsState()
@@ -231,7 +278,6 @@ fun ChatScreen(
     val clipboard = LocalClipboard.current
     val haptic = LocalHapticFeedback.current
     val snackbarHostState = remember { SnackbarHostState() }
-    val context = LocalContext.current
 
     // File picker for attachments (any file type)
     val filePickerLauncher = rememberLauncherForActivityResult(
@@ -532,11 +578,13 @@ fun ChatScreen(
     ) {
         val isDarkTheme = isSystemInDarkTheme()
 
+        Box(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .radialNavyBackground(isDarkTheme = isDarkTheme)
                 .imePadding()
+                .alpha(chatAlpha)
         ) {
             // Top bar — messaging app style with avatar, name, model subtitle
             TopAppBar(
@@ -1180,7 +1228,72 @@ fun ChatScreen(
                     }
                 }
             }
+        } // end Column
+
+        // Mic permission denied banner
+        AnimatedVisibility(
+            visible = micPermissionDenied && !voiceUiState.voiceMode,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 80.dp, start = 16.dp, end = 16.dp),
+        ) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.errorContainer,
+                tonalElevation = 2.dp,
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Microphone permission is required for voice mode",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { micPermissionDenied = false }) {
+                        Text("Dismiss")
+                    }
+                }
+            }
         }
+
+        // Mic FAB — enter voice mode. Hidden while voice mode is active.
+        if (!voiceUiState.voiceMode) {
+            FloatingActionButton(
+                onClick = { requestVoiceMode() },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 16.dp, bottom = 96.dp),
+                containerColor = MaterialTheme.colorScheme.primary,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Mic,
+                    contentDescription = "Enter voice mode",
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                )
+            }
+        }
+
+        // Voice mode overlay — covers the whole Box when voiceUiState.voiceMode
+        AnimatedVisibility(
+            visible = voiceUiState.voiceMode,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            VoiceModeOverlay(
+                uiState = voiceUiState,
+                onMicTap = { voiceViewModel.startListening() },
+                onMicRelease = { voiceViewModel.stopListening() },
+                onInterrupt = { voiceViewModel.interruptSpeaking() },
+                onDismiss = { voiceViewModel.exitVoiceMode() },
+                onModeChange = { voiceViewModel.setInteractionMode(it) },
+                onClearError = { voiceViewModel.clearError() },
+            )
+        }
+        } // end Box
     }
 
     // Command palette bottom sheet

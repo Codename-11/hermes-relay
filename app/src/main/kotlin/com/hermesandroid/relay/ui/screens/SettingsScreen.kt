@@ -132,6 +132,7 @@ import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 fun SettingsScreen(
     connectionViewModel: ConnectionViewModel,
     onNavigateToPairedDevices: () -> Unit = {},
+    onNavigateToVoiceSettings: () -> Unit = {},
 ) {
     val relayConnectionState by connectionViewModel.relayConnectionState.collectAsState()
     val authState by connectionViewModel.authState.collectAsState()
@@ -908,6 +909,51 @@ fun SettingsScreen(
                 }
             }
             // ── end Connection section ──────────────────────────────────────
+
+            // Voice section — navigation row to the dedicated Voice settings screen
+            Text(
+                text = "Voice",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .gradientBorder(
+                        shape = RoundedCornerShape(12.dp),
+                        isDarkTheme = isDarkTheme
+                    ),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onNavigateToVoiceSettings() }
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Voice mode",
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Text(
+                            text = "Interaction mode, silence threshold, providers",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.Filled.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
 
             // Chat section
             Text(

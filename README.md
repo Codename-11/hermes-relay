@@ -85,6 +85,7 @@ Talk to your Hermes agent from anywhere. Direct API streaming, session history, 
 ## Features
 
 - **Streaming chat** — Direct SSE to the Hermes API Server with real-time markdown rendering
+- **Voice mode** — Real-time voice conversation via the relay; sphere listens with you, performs the agent's reply as it speaks. Uses your server's configured TTS/STT providers (Edge TTS, ElevenLabs, OpenAI, MiniMax, Mistral, NeuTTS / faster-whisper, Groq, OpenAI Whisper)
 - **Smooth auto-scroll** — Live-follow streaming responses with a "scrolled up to read" pause/resume gesture
 - **Session management** — Create, switch, rename, delete chat sessions
 - **Tool visualization** — See agent tool calls as they execute (compact or detailed cards)

@@ -47,6 +47,7 @@ from .channels.chat import ChatHandler
 from .channels.terminal import TerminalHandler
 from .config import RelayConfig
 from .media import MediaRegistrationError, MediaRegistry, validate_media_path
+from .voice import VoiceHandler
 
 logger = logging.getLogger("hermes_relay")
 
@@ -72,6 +73,9 @@ class RelayServer:
             max_size_bytes=config.media_max_size_mb * 1024 * 1024,
             allowed_roots=config.media_allowed_roots or None,
         )
+
+        # Voice handler — TTS / STT bridge to the hermes-agent venv tools
+        self.voice = VoiceHandler(config)
 
         # Channel handlers
         self.chat = ChatHandler(webapi_url=config.webapi_url)
@@ -1201,6 +1205,23 @@ def create_app(config: RelayConfig) -> web.Application:
     # "by-path" as a token literal and handle_media_get will 404.
     app.router.add_get("/media/by-path", handle_media_by_path)
     app.router.add_get("/media/{token}", handle_media_get)
+
+    # Voice endpoints — TTS / STT bridge, bearer-auth'd like /media/*.
+    async def _voice_transcribe(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.voice.handle_transcribe(request)
+
+    async def _voice_synthesize(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.voice.handle_synthesize(request)
+
+    async def _voice_config(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.voice.handle_voice_config(request)
+
+    app.router.add_post("/voice/transcribe", _voice_transcribe)
+    app.router.add_post("/voice/synthesize", _voice_synthesize)
+    app.router.add_get("/voice/config", _voice_config)
 
     # Cleanup on shutdown
     app.on_shutdown.append(_on_app_shutdown)

@@ -573,6 +573,27 @@ Wraps the existing relay protocol. When the agent calls `android_*` tools, the t
 - [ ] Notification channel for agent messages
 - [ ] App icon and branding
 
+### Phase V — Voice Mode
+**Status: shipped 2026-04-12**
+
+Real-time voice conversation via relay-hosted TTS/STT endpoints that wrap the hermes-agent venv's configured providers. Chat still goes directly to the API server — voice adds a modality on top, not a separate channel.
+
+**Server-side (plugin/relay):**
+- `POST /voice/transcribe` — multipart audio → `{text, provider}`. Wraps `tools.transcription_tools.transcribe_audio` in `asyncio.to_thread`.
+- `POST /voice/synthesize` — JSON `{text}` → `audio/mpeg` file. Wraps `tools.tts_tool.text_to_speech_tool`.
+- `GET /voice/config` — provider availability + current settings from `tts:` / `stt:` in `~/.hermes/config.yaml`.
+- All three gated on the same bearer auth as `/media/*`.
+
+**App-side:**
+- `VoiceRecorder` (MediaRecorder / MPEG-4 AAC / m4a / 16 kHz mono) + `VoicePlayer` (MediaPlayer + Visualizer for amplitude) with `StateFlow<Float>` amplitude for the orb.
+- `VoiceViewModel` state machine (`Idle / Listening / Transcribing / Thinking / Speaking / Error`) with sentence-boundary detection, `Channel<String>` TTS queue, and a consumer coroutine that synthesizes + plays sentences one at a time.
+- Integrates with `ChatViewModel` by **observing** `messages: StateFlow` — no changes to chat code. Transcribed text goes through normal `chatVm.sendMessage(text)` so voice utterances appear as regular user messages in chat history.
+- `VoiceModeOverlay` — full-screen UI with the MorphingSphere at 60% height in `voiceMode=true`, transcribed + response text, mic button supporting Tap / Hold / Continuous interaction modes.
+- `MorphingSphere` gains `SphereState.Listening` (soft blue/purple, subtle wobble with user amplitude) and `SphereState.Speaking` (vivid green/teal, dramatic core-warmth pulse with agent amplitude). Additive changes — existing call sites unchanged via defaulted `voiceAmplitude` / `voiceMode` params.
+- Voice Settings screen off the main Settings — interaction mode, silence threshold, TTS/STT provider labels, Test Voice button.
+
+See `docs/decisions.md` → **Voice Mode — Architecture** for the four key decisions (relay-hosted endpoints, buffer-not-stream client chunking, m4a-not-webm recorder, ChatViewModel observation pattern).
+
 ### Phase 6 — Future
 **Priority: P3 — not for MVP**
 
@@ -581,7 +602,6 @@ Wraps the existing relay protocol. When the agent calls `android_*` tools, the t
 - [ ] File transfer (phone ↔ server)
 - [ ] Multi-device support
 - [ ] On-device model fallback
-- [ ] Voice mode (TTS/STT)
 
 ---
 

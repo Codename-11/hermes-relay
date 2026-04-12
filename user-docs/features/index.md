@@ -5,6 +5,7 @@
 | Feature | Description |
 |---------|-------------|
 | [Direct API Connection](/features/direct-api) | HTTP/SSE streaming to Hermes API Server |
+| [Voice Mode](/features/voice) | Real-time voice conversation — sphere listens, agent speaks back via your server's configured TTS/STT providers |
 | [Markdown Rendering](/features/markdown) | Full markdown with syntax-highlighted code blocks |
 | [Reasoning Display](/features/reasoning) | Collapsible extended-thinking blocks |
 | [Personalities](/features/personalities) | Dynamic from `GET /api/config` — picker, agent name on bubbles |
@@ -55,5 +56,4 @@
 | Remote Terminal | Phase 2 — xterm.js + tmux |
 | Device Bridge | Phase 3 — AccessibilityService control |
 | Push Notifications | Future — Agent-initiated alerts |
-| Voice Input | Future — Android SpeechRecognizer |
 | Memory Viewer | Future — View/edit agent memories |
