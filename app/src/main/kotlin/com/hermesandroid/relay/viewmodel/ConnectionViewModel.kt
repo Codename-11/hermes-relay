@@ -39,7 +39,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.Request
 
 class ConnectionViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -492,44 +491,6 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    /**
-     * Probe the relay server's /health endpoint over plain HTTP(S) — derived
-     * from the ws(s) URL by swapping the scheme and dropping the WS path.
-     * Lets us report "relay reachable" without going through the full WSS
-     * handshake (which would require a pairing code + auth round-trip).
-     *
-     * Used by the pairing walkthrough wizard and Manual configuration's
-     * "Test relay" button.
-     */
-    fun testRelayReachability(wsUrl: String, onResult: (Boolean) -> Unit) {
-        viewModelScope.launch {
-            val ok = withContext(Dispatchers.IO) {
-                try {
-                    val trimmed = wsUrl.trim()
-                    if (trimmed.isBlank()) return@withContext false
-                    val uri = java.net.URI(trimmed)
-                    val scheme = when (uri.scheme) {
-                        "ws" -> "http"
-                        "wss" -> "https"
-                        else -> return@withContext false
-                    }
-                    val port = if (uri.port > 0) uri.port
-                        else if (scheme == "https") 443 else 80
-                    val healthUrl = "$scheme://${uri.host}:$port/health"
-                    val client = OkHttpClient.Builder()
-                        .connectTimeout(3, TimeUnit.SECONDS)
-                        .readTimeout(3, TimeUnit.SECONDS)
-                        .build()
-                    val request = Request.Builder().url(healthUrl).get().build()
-                    client.newCall(request).execute().use { it.isSuccessful }
-                } catch (_: Exception) {
-                    false
-                }
-            }
-            onResult(ok)
-        }
-    }
-
     private suspend fun rebuildApiClient() {
         val url = _apiServerUrl.value
         val key = authManager.getApiKey() ?: ""
@@ -562,11 +523,39 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 preferences[KEY_RELAY_URL] = url
             }
         }
-        connectionManager.connect(url)
+        connectRelayInternal(url)
     }
 
     fun connectRelay() {
-        connectionManager.connect(_relayUrl.value)
+        connectRelayInternal(_relayUrl.value)
+    }
+
+    /**
+     * Pair-context-gated connect. WSS connect attempts without a pair
+     * context (no session token, no pending server-issued code, not
+     * mid-pair) are silently skipped — the auth envelope would just fail
+     * and tick the relay's rate limiter toward its 5-min IP block, which
+     * is a trap users can fall into by fumbling with Manual Configuration.
+     *
+     * Legitimate pair-context sources (any one is enough):
+     *   * [AuthManager.authState] is [AuthState.Paired] → session token
+     *   * [AuthManager.authState] is [AuthState.Pairing] → mid-handshake
+     *   * [AuthManager.hasPairContext] → fresh server-issued code is
+     *     stashed from a QR scan and about to ride the next auth envelope
+     *
+     * For the **reachability check** case (user wants to verify a manually-
+     * typed URL before pairing), call [testRelayReachable] instead — it
+     * probes `GET /health` without touching the WSS channel.
+     */
+    private fun connectRelayInternal(url: String) {
+        if (!authManager.hasPairContext) {
+            android.util.Log.i(
+                "ConnectionVM",
+                "connectRelay: no pair context — skipping WSS connect to avoid auth-failure rate-limit (use testRelayReachable for reachability checks)"
+            )
+            return
+        }
+        connectionManager.connect(url)
     }
 
     fun disconnectRelay() {
@@ -598,6 +587,77 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 preferences[KEY_RELAY_URL] = url
             }
         }
+    }
+
+    /**
+     * Result of the **Save & Test** button's reachability probe. One-shot
+     * state: null = idle, [RelayReachable.Probing] = in-flight,
+     * [RelayReachable.Ok] = live hermes-relay responded, [RelayReachable.Fail]
+     * = doesn't look right. UI reads this to render a chip / icon next to
+     * the button.
+     */
+    sealed interface RelayReachable {
+        data object Probing : RelayReachable
+        data class Ok(val version: String, val clients: Int, val sessions: Int) : RelayReachable
+        data class Fail(val message: String) : RelayReachable
+    }
+
+    private val _relayReachableResult = MutableStateFlow<RelayReachable?>(null)
+    val relayReachableResult: StateFlow<RelayReachable?> = _relayReachableResult.asStateFlow()
+
+    /**
+     * Test if [url] points at a live hermes-relay via an unauthenticated
+     * `GET /health` probe.
+     *
+     * Also saves [url] to the persisted relay URL — this is the "Save" half
+     * of the Settings → Manual configuration → **Save & Test** button. The
+     * save happens before the probe so a subsequent failure still leaves
+     * the URL in place for the user to edit.
+     *
+     * Does NOT touch the WSS channel. Does NOT require a pair context. Does
+     * NOT count against the relay's rate limiter (no auth envelope is sent).
+     *
+     * On return [relayReachableResult] is [RelayReachable.Ok] or
+     * [RelayReachable.Fail].
+     */
+    fun testRelayReachable(url: String) {
+        val trimmed = url.trim()
+        if (trimmed.isEmpty()) {
+            _relayReachableResult.value = RelayReachable.Fail("Enter a relay URL first")
+            return
+        }
+        // Persist the typed URL immediately — that's the "Save" half.
+        _relayUrl.value = trimmed
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                preferences[KEY_RELAY_URL] = trimmed
+            }
+        }
+
+        _relayReachableResult.value = RelayReachable.Probing
+        viewModelScope.launch {
+            val result = relayHttpClient.probeHealth(trimmed)
+            _relayReachableResult.value = result.fold(
+                onSuccess = { health ->
+                    RelayReachable.Ok(
+                        version = health.version,
+                        clients = health.clients,
+                        sessions = health.sessions,
+                    )
+                },
+                onFailure = { err ->
+                    RelayReachable.Fail(err.message ?: "Unknown error")
+                }
+            )
+        }
+    }
+
+    /**
+     * Clear the [relayReachableResult] state (e.g. after the user edits the
+     * URL field — the previous probe result is no longer relevant).
+     */
+    fun clearRelayReachableResult() {
+        _relayReachableResult.value = null
     }
 
     // Backward compat wrappers

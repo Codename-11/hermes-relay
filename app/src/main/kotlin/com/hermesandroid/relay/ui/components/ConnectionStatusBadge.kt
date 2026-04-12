@@ -6,15 +6,22 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.ui.draw.clip
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -117,7 +124,16 @@ fun ConnectionStatusBadge(
 }
 
 /**
- * A row showing [ConnectionStatusBadge] alongside a text label and optional status text / test button.
+ * A row showing [ConnectionStatusBadge] alongside a text label and status text.
+ *
+ * When [onClick] is non-null, the row is rendered as a tappable surface with
+ * a trailing chevron so the user gets a clear "tap for details" affordance —
+ * otherwise users have no way to tell that the row opens a drawer.
+ * When null, the row is static and no chevron is shown.
+ *
+ * The old `onTest` trailing-button slot is still supported for call sites
+ * that want an inline Test button inside the row — distinct from the whole-row
+ * clickable behavior.
  */
 @Composable
 fun ConnectionStatusRow(
@@ -126,10 +142,24 @@ fun ConnectionStatusRow(
     isConnecting: Boolean = false,
     statusText: String,
     onTest: (() -> Unit)? = null,
+    onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    // Clip + clickable gives us the full Material ripple on the row surface
+    // plus rounded corners so the tap target looks like a list item rather
+    // than a raw strip. If the caller also passed a clickable via modifier
+    // (legacy call sites that haven't been migrated to onClick yet), that
+    // still works — Modifier.clickable is additive.
+    val interactiveModifier = if (onClick != null) {
+        Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 4.dp, vertical = 6.dp)
+    } else {
+        Modifier.padding(horizontal = 4.dp, vertical = 6.dp)
+    }
     Row(
-        modifier = modifier,
+        modifier = modifier.then(interactiveModifier),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -159,6 +189,18 @@ fun ConnectionStatusRow(
             OutlinedButton(onClick = onTest) {
                 Text("Test")
             }
+        }
+
+        // Chevron affordance for tappable rows. Users couldn't previously
+        // tell that API / Relay / Session rows were tappable — the drawer
+        // opening was invisible until they stumbled onto the tap target.
+        if (onClick != null && onTest == null) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp)
+            )
         }
     }
 }

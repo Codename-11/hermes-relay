@@ -183,11 +183,11 @@ fun SettingsScreen(
     // the Connection card, for users setting up from scratch.
     var showPairingWalkthrough by remember { mutableStateOf(false) }
 
-    // Manual config: pairing code input + relay reachability test state.
-    // Lives outside the walkthrough for power users who want a direct path.
+    // Manual config: pairing code input. Relay reachability state now
+    // lives on the ViewModel (relayReachableResult StateFlow) — the old
+    // relayTestInProgress / relayTestResult locals were removed when Save
+    // & Test was rewired to ConnectionViewModel.testRelayReachable().
     var manualConfigCodeInput by remember { mutableStateOf("") }
-    var relayTestInProgress by remember { mutableStateOf(false) }
-    var relayTestResult by remember { mutableStateOf<Boolean?>(null) }
     val clipboard = LocalClipboard.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -370,9 +370,8 @@ fun SettingsScreen(
                         label = "API Server",
                         isConnected = apiReachable,
                         statusText = if (apiReachable) "Reachable" else "Unreachable",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { showApiInfoSheet = true }
+                        onClick = { showApiInfoSheet = true },
+                        modifier = Modifier.fillMaxWidth()
                     )
 
                     if (relayEnabled) {
@@ -403,18 +402,17 @@ fun SettingsScreen(
                                 isRelayStale -> "Stale — tap to reconnect"
                                 else -> "Disconnected"
                             },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    // When stale, the primary affordance is
-                                    // reconnect. Otherwise fall through to
-                                    // the info bottom sheet.
-                                    if (isRelayStale) {
-                                        connectionViewModel.connectRelay()
-                                    } else {
-                                        showRelayInfoSheet = true
-                                    }
+                            onClick = {
+                                // When stale, the primary affordance is
+                                // reconnect. Otherwise fall through to
+                                // the info bottom sheet.
+                                if (isRelayStale) {
+                                    connectionViewModel.connectRelay()
+                                } else {
+                                    showRelayInfoSheet = true
                                 }
+                            },
+                            modifier = Modifier.fillMaxWidth()
                         )
 
                         ConnectionStatusRow(
@@ -427,9 +425,8 @@ fun SettingsScreen(
                                 is AuthState.Unpaired -> "Unpaired"
                                 is AuthState.Failed -> "Failed: ${(authState as AuthState.Failed).reason}"
                             },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { showSessionInfoSheet = true }
+                            onClick = { showSessionInfoSheet = true },
+                            modifier = Modifier.fillMaxWidth()
                         )
                     }
 
@@ -661,26 +658,43 @@ fun SettingsScreen(
 
                     OutlinedTextField(
                         value = relayUrlInput,
-                        onValueChange = { relayUrlInput = it },
+                        onValueChange = {
+                            relayUrlInput = it
+                            // Clear any stale Save & Test result — the
+                            // previous probe was for a different URL.
+                            connectionViewModel.clearRelayReachableResult()
+                        },
                         label = { Text("Relay URL") },
                         placeholder = { Text("wss://your-server:8767") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    // Connect / Disconnect / Test reachability
+                    // Save & Test + Disconnect.
+                    //
+                    // The Connect button was removed in the Option B cycle
+                    // — it was the source of the "try to connect while
+                    // unpaired → auth fails → rate-limited for 5 min" trap.
+                    // "Save & Test" persists the typed URL AND probes the
+                    // relay's /health endpoint over unauthenticated HTTP,
+                    // with no WSS handshake and no auth envelope. Green =
+                    // the URL points at a live hermes-relay; red = doesn't.
+                    // Actual WSS connect happens through the pair flow
+                    // (Scan Pairing QR) or auto-reconnect, both of which
+                    // already have valid pair context.
+                    val relayReachable by connectionViewModel.relayReachableResult.collectAsState()
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        val canConnect = relayConnectionState == ConnectionState.Disconnected &&
-                            (relayUrlInput.startsWith("wss://") ||
-                                (insecureMode && relayUrlInput.startsWith("ws://")))
                         Button(
-                            onClick = { connectionViewModel.connectRelay(relayUrlInput) },
-                            enabled = canConnect
+                            onClick = {
+                                connectionViewModel.testRelayReachable(relayUrlInput)
+                            },
+                            enabled = relayUrlInput.isNotBlank() &&
+                                relayReachable !is ConnectionViewModel.RelayReachable.Probing
                         ) {
-                            Text("Connect")
+                            Text("Save & Test")
                         }
                         OutlinedButton(
                             onClick = { connectionViewModel.disconnectRelay() },
@@ -688,26 +702,14 @@ fun SettingsScreen(
                         ) {
                             Text("Disconnect")
                         }
-                        OutlinedButton(
-                            onClick = {
-                                relayTestInProgress = true
-                                relayTestResult = null
-                                connectionViewModel.testRelayReachability(relayUrlInput) { ok ->
-                                    relayTestInProgress = false
-                                    relayTestResult = ok
-                                }
-                            },
-                            enabled = relayUrlInput.isNotBlank() && !relayTestInProgress
-                        ) {
-                            Text("Test")
-                        }
                     }
 
-                    // Test reachability result row — probes /health without
-                    // requiring a pairing code, so users can validate the URL
-                    // before committing to a full Connect.
-                    when {
-                        relayTestInProgress -> {
+                    // Save & Test result — one of (Probing / Ok with
+                    // version + client count / Fail with reason). Cleared
+                    // when the user edits the URL (via the OutlinedTextField
+                    // onValueChange below).
+                    when (val r = relayReachable) {
+                        is ConnectionViewModel.RelayReachable.Probing -> {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -723,20 +725,21 @@ fun SettingsScreen(
                                 )
                             }
                         }
-                        relayTestResult == true -> {
+                        is ConnectionViewModel.RelayReachable.Ok -> {
                             Text(
-                                text = "✓ Relay reachable",
+                                text = "✓ Reachable — hermes-relay v${r.version} (${r.clients} client, ${r.sessions} session${if (r.sessions == 1) "" else "s"})",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color(0xFF4CAF50)
                             )
                         }
-                        relayTestResult == false -> {
+                        is ConnectionViewModel.RelayReachable.Fail -> {
                             Text(
-                                text = "✗ Unreachable — check URL, port, and that the relay is running",
+                                text = "✗ ${r.message}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.error
                             )
                         }
+                        null -> { /* idle — no row */ }
                     }
 
                     // Insecure active warning
@@ -1972,6 +1975,17 @@ fun SettingsScreen(
                 }
                 // Stash TTL for the next authenticate() call.
                 connectionViewModel.authManager.setPendingTtlSeconds(ttl)
+
+                // Kick off the WSS handshake now — AuthManager is holding a
+                // fresh server-issued code so the pair-context gate on
+                // connectRelay will let it through. Without this call, the
+                // Settings QR flow stashed credentials but never actually
+                // opened the WSS, forcing the user to hit Reconnect
+                // manually or reopen Settings to hit reconnectIfStale.
+                payload.relay?.let { relay ->
+                    connectionViewModel.disconnectRelay()
+                    connectionViewModel.connectRelay(relay.url)
+                }
 
                 pendingQrPayload = null
 

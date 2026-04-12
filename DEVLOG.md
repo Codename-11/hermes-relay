@@ -1,5 +1,100 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-11 — Option B: Save & Test as HTTP health probe + pair-context gate on connectRelay
+
+Bailey flagged a trap in the Settings → Manual configuration flow: the **Connect** button fired `connectRelay(url)` unconditionally, even when the phone had no session token and no pending server-issued pair code. The WSS handshake would open, the phone would send an `auth` envelope with whatever code was lying around (usually the locally-generated phone→host Phase 3 code, which isn't registered on the relay), auth would fail, and after 5 such failures in 60 seconds the relay's rate limiter would block the IP for 5 minutes. Users fumbling with manual config could lock themselves out of pairing entirely.
+
+Reviewed three fix options; picked **B** (split reachability from connect). Rejected **C** (two buttons — "Test" + "Connect") because the second button is redundant with the existing Reconnect button / auto-reconnect paths and would be disabled-when-unpaired / duplicated-when-paired. The right answer is one button that does a reachability probe, not two buttons fighting over WSS semantics.
+
+### Changes
+
+**Server**: none. This is entirely phone-side.
+
+**`plugin/relay` unchanged** except indirectly — the new phone-side `probeHealth` method hits the relay's existing `GET /health` endpoint (already implemented at `plugin/relay/server.py::handle_health`).
+
+**`auth/AuthManager.kt`** — new `hasPairContext: Boolean` getter. Returns true when any of:
+1. `authState` is `Paired` (stored session token)
+2. `authState` is `Pairing` (mid-handshake)
+3. `serverIssuedCode != null` (fresh QR scan or manual code entry just landed)
+
+Crucially does **NOT** count the locally-generated `_pairingCode.value` as valid — that's the phone→host Phase 3 code and is meaningless to the relay side, so sending it yields guaranteed rate-limit hits. This is the fix for the entire class of "connect when unpaired" bugs.
+
+**`network/RelayHttpClient.kt`** — new `probeHealth(relayUrl): Result<RelayHealth>` method:
+- Converts `ws://`/`wss://` → `http://`/`https://` via the same regex used by `fetchMedia`
+- Unauthenticated `GET /health` with a **3-second** timeout (via `okHttpClient.newBuilder().connectTimeout(3, SECONDS).readTimeout(3, SECONDS).build()` — no need for a separate long-lived client)
+- Parses the JSON body and validates it looks like a hermes-relay health response: `status == "ok"` AND a non-blank `version` field. Anything else fails with a descriptive error. Prevents a random HTTP server on port 8767 from falsely passing.
+- Returns `RelayHealth(version, clients, sessions)` on success so the UI can render `"✓ Reachable — hermes-relay v0.2.0 (0 clients, 1 session)"` — actual metadata, not just a boolean.
+- Error messages differentiate: `"Connection refused — is the relay running on this URL?"`, `"Relay is not responding (3s timeout)"`, `"Relay responded HTTP 404"`, `"Relay returned non-JSON: ..."`, etc.
+
+**`viewmodel/ConnectionViewModel.kt`**:
+- Rewrote `connectRelay(url)` / `connectRelay()` to delegate to a private `connectRelayInternal` that **gates on `authManager.hasPairContext`**. When the gate fails, log an informational message and return silently — the UI doesn't get any error state because this path should only be hit as a user-initiated mistake, not a programmatic one. The four legitimate entry points (pair walkthrough, stale row tap, Reconnect button, QR confirm) all set pair context *before* calling connectRelay, so the gate passes.
+- New sealed interface `RelayReachable { Probing, Ok(version, clients, sessions), Fail(message) }` + `relayReachableResult: StateFlow<RelayReachable?>` + `testRelayReachable(url)` method that saves the URL to DataStore **and** probes `/health`. The save-before-probe order is deliberate: a failed probe still leaves the URL persisted so the user can edit and retry without losing their typing.
+- `clearRelayReachableResult()` — called by the Relay URL text field's `onValueChange` so stale probe results vanish when the user edits the URL.
+- **Deleted** the old callback-based `testRelayReachability(wsUrl, onResult: (Boolean) -> Unit)` — it was a thinner version of `probeHealth` that spun up its own OkHttpClient per call and returned only a boolean. Single caller in SettingsScreen migrated to the new state-flow API.
+- Removed the now-unused `okhttp3.Request` import (was only referenced by the deleted method).
+
+**`ui/screens/SettingsScreen.kt`** — Manual configuration button row rewritten:
+- **Connect button deleted.** It was the leak source. Reconnecting a paired session is handled by the existing Reconnect button (in the Connection card, gated on `Paired`), the stale row tap, and `reconnectIfStale()` on screen entry. No fourth "Connect" button is needed.
+- **"Test" button renamed to "Save & Test"** — wired to `testRelayReachable(relayUrlInput)`. Label change matches the new behavior (the button also persists the URL to DataStore). Disabled when the URL is blank or a probe is in flight.
+- **Disconnect button kept** — still useful for debugging / forcing reconnect cycles.
+- **Result row** rewritten to read from `relayReachableResult: StateFlow` instead of the old local `relayTestInProgress` / `relayTestResult` vars (both removed). Shows:
+  - `Probing /health…` with spinner during the probe
+  - `✓ Reachable — hermes-relay v0.2.0 (0 clients, 1 session)` (green) on success, with version + client count so the user knows they're pointing at an actual relay
+  - `✗ <specific error>` (red) on any failure
+  - Nothing when idle (so the row collapses cleanly when not in use)
+- **Relay URL text field's `onValueChange`** now clears the probe result — stale "✓ Reachable" indicators won't hang around after the user starts typing a different URL.
+
+### Bonus fix — Settings QR confirm never connected WSS
+
+While tracing the pair-context gate I noticed the Settings → Scan Pairing QR → TTL picker confirm flow stashed the server-issued code + grants + TTL but **never actually called `connectRelay`**. The WSS stayed disconnected until the user either left and re-entered Settings (firing `reconnectIfStale`, which still wouldn't fire since `authState` is still `Unpaired`) or manually tapped Reconnect. This was a pre-existing bug dating from the pairing+security architecture cycle — the walkthrough dialog path (which has its own inline `connectRelay` call) masked it.
+
+Added the missing `disconnectRelay()` + `connectRelay(relay.url)` pair to the TTL picker's `onConfirm` callback, mirroring the manual code pair path at `submitPairing` / `authManager.applyServerIssuedCodeAndReset` / `connectRelay(...)`. Since `applyServerIssuedCodeAndReset` has just set `serverIssuedCode`, the new pair-context gate passes cleanly.
+
+### Bonus fix — Connection status rows didn't look tappable
+
+Second Bailey UX feedback from the same cycle: the **API Server / Relay / Session** status rows in the Connection section open drawer sheets on tap, but there was **no visual affordance** that they were tappable — users would stumble onto the tap target by accident.
+
+Fixed in `ConnectionStatusRow`:
+- New `onClick: (() -> Unit)? = null` parameter. When non-null, the component applies a Material ripple + rounded-corner clip + internal `clickable` modifier, so the whole row is a proper list-item tap target.
+- **Trailing chevron icon** (`Icons.AutoMirrored.Filled.KeyboardArrowRight`) rendered after the status text whenever `onClick != null` (and no `onTest` button is competing for the trailing slot). Gives users the standard Settings-list-item visual cue that the row opens something.
+
+All three call sites in SettingsScreen migrated from `modifier = Modifier.fillMaxWidth().clickable { ... }` to `onClick = { ... }` + `modifier = Modifier.fillMaxWidth()`. Old pattern still works for legacy call sites (the component applies the interactive wrapping additively).
+
+### Files changed
+
+**Server**: none.
+
+**Phone**:
+- `app/src/main/kotlin/com/hermesandroid/relay/auth/AuthManager.kt` — `hasPairContext` getter
+- `app/src/main/kotlin/com/hermesandroid/relay/network/RelayHttpClient.kt` — `probeHealth()` + `RelayHealth` data class + `jsonObject` import
+- `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/ConnectionViewModel.kt` — `RelayReachable` sealed interface, `relayReachableResult` flow, `testRelayReachable()`, `clearRelayReachableResult()`, `connectRelayInternal()` with pair-context gate, deleted `testRelayReachability`
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/screens/SettingsScreen.kt` — Connect button removed, Save & Test rewired, result-row reads from ViewModel flow, onValueChange clears probe, QR confirm flow adds missing `connectRelay`, three status rows migrated to `onClick` parameter
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/components/ConnectionStatusBadge.kt` — `ConnectionStatusRow` gains `onClick` + chevron affordance
+
+**Docs**: this DEVLOG entry.
+
+### Test plan
+
+On-device, after Bailey's next Android Studio build:
+
+1. **Fresh Manual Config reachability probe** — Settings → Connection → Manual configuration → type a relay URL → tap **Save & Test**. Verify:
+   - Spinner + "Probing /health…" appears briefly
+   - On a live relay: green "✓ Reachable — hermes-relay vX.Y.Z (N client, M session)"
+   - On a dead URL: red "✗ <reason>" (refused / timeout / non-JSON / etc)
+   - Editing the URL clears the result immediately
+2. **Pair-context gate doesn't regress pairing** — scan a fresh `/hermes-relay-pair` QR → TTL picker confirms → verify the WSS connects + `authState` reaches `Paired` without any manual intervention
+3. **Manual code entry still works** — Settings → Already configured? Enter code only → type a valid code → verify it pairs and WSS connects
+4. **Drawer affordance visible** — open Settings → Connection section → verify **API Server / Relay / Session** rows show a chevron at the right edge + have a ripple on tap → tapping each opens its respective info sheet
+5. **Flicker still fixed** — open Settings with a stale session → verify the row shows "Reconnecting..." for the whole transition, not the old "Stale → Connecting → Connected" flash
+
+### Known caveats
+
+- The Connect button removal is a **UX change** for power users who were using it to force-reconnect. They should use the Reconnect button in the Connection card (gated on Paired) or the stale row tap. If this breaks a workflow Bailey relies on, the button can come back gated on `authManager.hasPairContext`.
+- The new `probeHealth` gives 3 seconds before timing out. On a very slow LAN this might be too tight; consider bumping to 5s if probes start false-failing.
+- `probeHealth` doesn't follow redirects (OkHttp default). A relay behind a reverse proxy that 301s `/health` would fail the probe. None of the current deployments do that.
+
+---
+
 ## 2026-04-11 — Relay status flicker fix + Dev Workflow docs in CLAUDE.md
 
 Two small follow-ups from the same session:

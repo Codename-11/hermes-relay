@@ -6,6 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -529,6 +530,133 @@ class RelayHttpClient(
             Result.failure(e)
         } catch (e: Exception) {
             Log.w(TAG, "extendSession unexpected error: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Result of a [probeHealth] call.
+     *
+     * @property version the relay's reported version string (e.g. `"0.2.0"`)
+     * @property clients number of currently-connected WS clients
+     * @property sessions number of active [SessionManager] entries
+     */
+    data class RelayHealth(
+        val version: String,
+        val clients: Int,
+        val sessions: Int,
+    )
+
+    /**
+     * Probe a relay URL for reachability via an unauthenticated `GET /health`.
+     *
+     * This is the **"is this URL pointing at a live relay"** check behind the
+     * Settings → Manual configuration → **Save & Test** button. It:
+     *
+     *  * uses HTTP (converting `ws://`/`wss://` → `http://`/`https://`)
+     *  * sends NO `Authorization` header — health is public
+     *  * times out fast (3 seconds) so the UI doesn't hang
+     *  * validates that the response body actually looks like a
+     *    hermes-relay health response (`{"status": "ok", "version": ...}`)
+     *    so a random HTTP server on port 8767 doesn't falsely pass
+     *
+     * Unlike [fetchMedia] / [listSessions], this method does NOT consult
+     * [relayUrlProvider] or [sessionTokenProvider] — the caller passes the
+     * URL to probe directly. That's deliberate: the user might be testing a
+     * URL they've typed into the manual-config field but haven't saved yet,
+     * so we can't read it back from stored settings.
+     *
+     * Returns [Result.success] with parsed metadata on a valid hermes-relay
+     * health response; [Result.failure] wrapping an [IOException] with a
+     * human-readable message on any failure (network, non-200, bad body,
+     * doesn't-look-like-hermes-relay).
+     */
+    suspend fun probeHealth(relayUrl: String): Result<RelayHealth> = withContext(Dispatchers.IO) {
+        val trimmed = relayUrl.trim()
+        if (trimmed.isEmpty()) {
+            return@withContext Result.failure(
+                IllegalArgumentException("Relay URL is empty")
+            )
+        }
+
+        val httpBase = trimmed
+            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
+            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
+            .trimEnd('/')
+
+        val url = try {
+            "$httpBase/health".toHttpUrl()
+        } catch (e: IllegalArgumentException) {
+            return@withContext Result.failure(
+                IOException("Invalid relay URL: ${e.message}")
+            )
+        }
+
+        // Fast-timeout client — we don't want Save & Test to hang the UI
+        // for 10 seconds on a dead URL.
+        val fastClient = okHttpClient.newBuilder()
+            .connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+            .writeTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .header("Accept", "application/json")
+            .build()
+
+        try {
+            fastClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        IOException("Relay responded HTTP ${response.code}")
+                    )
+                }
+                val body = response.body?.string().orEmpty()
+                if (body.isBlank()) {
+                    return@withContext Result.failure(
+                        IOException("Relay returned an empty response")
+                    )
+                }
+                // Parse the JSON and verify it looks like a hermes-relay
+                // health response (status=ok + version field).
+                val parsed: Map<String, kotlinx.serialization.json.JsonElement> = try {
+                    sessionsJson.parseToJsonElement(body).jsonObject
+                } catch (e: Exception) {
+                    return@withContext Result.failure(
+                        IOException("Relay returned non-JSON: ${e.message ?: "parse error"}")
+                    )
+                }
+                val status = (parsed["status"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                if (status != "ok") {
+                    return@withContext Result.failure(
+                        IOException("Relay reports status=${status ?: "missing"} (expected 'ok')")
+                    )
+                }
+                val version = (parsed["version"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                if (version.isNullOrBlank()) {
+                    return@withContext Result.failure(
+                        IOException("Response doesn't look like a hermes-relay — missing 'version' field")
+                    )
+                }
+                val clients = (parsed["clients"] as? kotlinx.serialization.json.JsonPrimitive)
+                    ?.content?.toIntOrNull() ?: 0
+                val sessions = (parsed["sessions"] as? kotlinx.serialization.json.JsonPrimitive)
+                    ?.content?.toIntOrNull() ?: 0
+                Result.success(RelayHealth(version = version, clients = clients, sessions = sessions))
+            }
+        } catch (e: java.net.SocketTimeoutException) {
+            Log.w(TAG, "probeHealth timeout: ${e.message}")
+            Result.failure(IOException("Relay is not responding (3s timeout)"))
+        } catch (e: java.net.ConnectException) {
+            Log.w(TAG, "probeHealth connect refused: ${e.message}")
+            Result.failure(IOException("Connection refused — is the relay running on this URL?"))
+        } catch (e: IOException) {
+            Log.w(TAG, "probeHealth IO error: ${e.message}")
+            Result.failure(IOException("Network error: ${e.message ?: "unreachable"}"))
+        } catch (e: Exception) {
+            Log.w(TAG, "probeHealth unexpected error: ${e.message}")
             Result.failure(e)
         }
     }

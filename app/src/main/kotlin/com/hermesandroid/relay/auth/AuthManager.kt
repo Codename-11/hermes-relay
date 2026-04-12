@@ -162,6 +162,34 @@ class AuthManager(
     private var serverIssuedCode: String? = null
 
     /**
+     * Read-only view of whether this AuthManager currently has something to
+     * say in an auth envelope — either a pending server-issued pair code
+     * from a fresh QR scan or a stored session token (via [authState]).
+     *
+     * Used by [com.hermesandroid.relay.viewmodel.ConnectionViewModel.connectRelay]
+     * to gate WSS connect attempts. Without a pair context, firing the WSS
+     * handshake just sends a doomed auth envelope, which makes the relay
+     * tick its rate limiter 5 times in 60 seconds and then block the IP
+     * for 5 minutes — exactly the scenario that bit us on the first cycle
+     * of the inbound media test.
+     *
+     * Returns true if **any** of:
+     *  1. `authState` is [AuthState.Paired] (we have a session token)
+     *  2. `authState` is [AuthState.Pairing] (mid-handshake)
+     *  3. [serverIssuedCode] is non-null (fresh QR scan just landed, about
+     *     to authenticate)
+     *
+     * Does NOT consider the locally-generated [_pairingCode] as a valid
+     * context — that code is for the Phase 3 phone→host direction and is
+     * NOT registered on the relay side, so sending it yields guaranteed
+     * auth failures.
+     */
+    val hasPairContext: Boolean
+        get() = _authState.value is AuthState.Paired ||
+            _authState.value is AuthState.Pairing ||
+            serverIssuedCode != null
+
+    /**
      * TTL the user picked at the [SessionTtlPickerDialog]. Included in the
      * next auth envelope's payload as `ttl_seconds`. `null` means "use
      * server default" (equivalent to the pre-overhaul behavior — the
