@@ -1,5 +1,6 @@
 # Hermes-Relay — Dev Log
 
+<<<<<<< HEAD
 ## 2026-04-12 — Phase 3 / Wave 1 hotfix — dedupe AccessibilityService entry; Gradle deprecation cleanup
 
 Two small fixes discovered while smoke-testing Wave 1 in Android Studio.
@@ -179,6 +180,27 @@ Touched (main):
 - Overlay wire-up (Bailey or a future agent): show `IntentResult.Handled.intentLabel` in the voice overlay, add a Cancel button that calls `cancelPendingBridgeIntent()` when `requiresConfirmation=true`.
 - Wave 3 `voice-bridge-confirmation`: replace the 5 s countdown with a proper multi-turn confirmation ("say yes or cancel" → STT → classifier for yes/no).
 - Classifier unit tests: `extractNextSentence`-style unit tests for `VoiceIntentClassifier.classify()`. Top-level function already testable without an Application context.
+
+## 2026-04-12 — Phase 3 / Wave 2 / θ — android_navigate vision-driven navigation tool
+
+Lands the Tier 4 "burner-phone trick, done sanely" plan row. New Hermes tool `android_navigate(intent, max_iterations=5)` closes the loop on high-level bridge automation: instead of the agent having to know exact node IDs or coordinates, it passes a natural-language intent ("compose a tweet about rainy weather") and the tool loops `screenshot → vision model → action → repeat` until the model emits `done` or hits the iteration cap.
+
+**Files added:**
+- `plugin/tools/android_navigate.py` — main loop + registry registration. Reuses the same `_bridge_url()`/`_auth_headers()`/`ANDROID_BRIDGE_URL` transport layer as `android_tool.py` so pairing config stays single-sourced. Dispatches parsed actions to `/tap_text`, `/tap`, `/type`, `/swipe`, `/press_key` (the HTTP routes Wave 1 stood up). Screenshot per iteration goes through the bridge `/screenshot` endpoint, then tries `plugin.relay.client.register_media()` for an opaque token and gracefully falls back to a `file://` marker if the relay isn't reachable. Every step records `{step, action, params, screenshot_token, reasoning, result}` into a trace the agent gets back on both success and failure envelopes. Iteration cap defaults to 5, hard-clamped to `ABSOLUTE_MAX_ITERATIONS = 20` so the agent can't accidentally burn capture budget.
+- `plugin/tools/android_navigate_prompt.py` — prompt template + response parser. Parser is case-insensitive, tolerates trailing punctuation on the verb, allows `done` to omit the PARAMS line, enforces per-verb param shape (e.g. `tap` needs either `(x,y)` ints or `node_id` string), and returns `ParsedAction(action="error", reasoning=<why>)` on any malformed input so the loop can surface structural failures cleanly.
+- `plugin/tests/test_android_navigate.py` — 35 stdlib-only `unittest` tests covering all 6 valid actions, every malformed-input branch (empty / missing lines / bad JSON / wrong shape / unknown verb / list-not-object / bad swipe direction), success path (single-step and multi-step), iteration cap, screenshot failure, parse error, action-execution failure, `llm_gap` envelope, empty intent short-circuit, `max_iterations` clamping, and schema sanity. Uses only `unittest.mock` so it runs cleanly via `python -m unittest plugin.tests.test_android_navigate` without the pytest `conftest.py` that imports the `responses` module.
+
+**LLM integration — known gap:** The plan specifies "vision model integration" but doesn't pick a provider, and the plugin has no published LLM client surface for tools to call. The gateway's run loop is not re-entrant (calling the agent from inside a tool deadlocks the run). Rather than invent a new LLM client and ship an opinionated default, the loop has a `call_vision_model` injection point. Tests patch it; production either (a) sets `HERMES_NAVIGATE_STUB_REPLY` for smoke testing, or (b) swaps `_default_vision_model` for a real client (e.g. Anthropic `messages.create` with a base64 image block). Until (b) lands, calling `android_navigate` against a live phone returns a clean `{"status": "error", "reason": "llm_gap", ...}` envelope so the agent sees exactly why the loop can't run — no silent fakes, no import-time crashes. The `_default_vision_model` docstring documents the replacement contract.
+
+**Tool guardrails** (from the plan):
+- Never continuous capture — exactly one `/screenshot` per iteration, only when the tool is invoked.
+- Default 5 iterations, hard-clamped ceiling of 20.
+- 200 ms settle delay between action and next screenshot; callers needing longer waits use `android_wait` explicitly.
+- `intent` must be non-empty; empty/whitespace returns an error envelope without touching the bridge.
+
+**Files NOT touched:** `plugin/relay/*`, `plugin/relay/channels/bridge.py`, `plugin/tools/android_tool.py`, `plugin/tools/android_relay.py`, `plugin/relay/auth.py`, `plugin/relay/media.py`, `plugin/relay/voice.py`, anything under `app/`. The slice is self-contained in `plugin/tools/` as scoped.
+
+**Test results:** `python -m unittest plugin.tests.test_android_navigate` → 35 tests, all pass in ~0.05 s.
 
 ## 2026-04-12 — Add canonical uninstall.sh + bootstrap docs
 
