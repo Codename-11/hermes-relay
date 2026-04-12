@@ -1,5 +1,25 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-12 — Phase 3 / safety-rails followup — deep link, overlay nag, in-app permission Test buttons
+
+Three small UX wins on top of the merged Wave 2 safety rails. All gate cleaner first-run smoke testing on a real device.
+
+**Deep link from foreground notification → BridgeSafetySettingsScreen.** `BridgeForegroundService.ACTION_OPEN_SETTINGS` previously dropped the user on `MainActivity`'s home screen — they had to navigate Settings → Bridge safety manually. New `app/src/main/kotlin/com/hermesandroid/relay/util/NavRouteRequest.kt` is a tiny `MutableSharedFlow<String>` singleton that any external launcher (foreground service, broadcast receiver, shortcut intent) can post route requests to. `MainActivity` reads `EXTRA_NAV_ROUTE` in `onCreate` + `onNewIntent` and forwards via `NavRouteRequest.tryRequest`. `RelayApp` adds a `LaunchedEffect(navController)` that collects `NavRouteRequest.requests` and forwards each emission to `navController.navigate(route) { launchSingleTop = true }`. `BridgeForegroundService` now sets `MainActivity.EXTRA_NAV_ROUTE = "settings/bridge_safety"` on its launch intent. Single observer at the app root, no per-screen plumbing.
+
+**Overlay-permission nag banner on BridgeScreen.** When the master toggle is on but `Settings.canDrawOverlays(context)` is false, a prominent red `errorContainer`-colored card appears at the top of `BridgeScreen` warning the user that confirmation prompts can't display. Without the banner, `BridgeSafetyManager.awaitConfirmation` was failing-closed silently — destructive verbs would just be denied with no UX hint about why. New private `OverlayPermissionNagCard` Composable in `BridgeScreen.kt` with a `Warning` icon, plain-language explanation, and a tap action that opens `Settings.ACTION_MANAGE_OVERLAY_PERMISSION` for our package. Goes away on its own once the permission is granted (BridgeViewModel re-probes on `ON_RESUME`).
+
+**In-app permission Test buttons in `BridgePermissionChecklist`.** Matches the pattern ε already shipped on `NotificationCompanionSettingsScreen`. Each row in the bridge permission checklist now has an optional "Test" text-button next to its status icon. Tapping it runs a side-effect-free diagnostic on the underlying runtime state and surfaces the result via the global `LocalSnackbarHost`. New methods in `BridgeViewModel`:
+
+- `testAccessibilityService()` — checks `HermesAccessibilityService.instance` is non-null AND `instance.rootInActiveWindow` is non-null. Three result strings cover "not bound", "bound but no active window", and "OK".
+- `testScreenCapture()` — checks `MediaProjectionHolder.projection` is non-null. Reports either "active grant" or "no grant — bridge will request consent next /screenshot".
+- `testOverlayPermission()` — checks `Settings.canDrawOverlays(context)`. Reports granted vs not-granted with a hint to tap the row.
+
+Each method emits a one-shot human-readable string on a new `MutableSharedFlow<String>` (`testEvents`) that `BridgeScreen` collects in a `LaunchedEffect` and shows via `snackbarHost.showSnackbar(message)`. Notification listener row keeps `onTest = null` because the existing dedicated test on `NotificationCompanionSettingsScreen` already covers it.
+
+**Why diagnostic-only, not full functional tests** (e.g., actually capture a screenshot or actually flash an overlay): the diagnostic checks need zero side effects, no extra dependencies, no permission flows mid-test. They answer the "is this thing actually wired through?" question 80% of the time — full functional tests are a Wave 3 follow-up if the diagnostics aren't enough in practice.
+
+**Files touched:** new `util/NavRouteRequest.kt`, new private composables in `BridgeScreen.kt`, edits to `MainActivity.kt`, `BridgeForegroundService.kt`, `RelayApp.kt`, `BridgePermissionChecklist.kt`, `BridgeViewModel.kt`. All marker blocks use `PHASE3-safety-rails-followup`.
+
 ## 2026-04-12 — Rename Phase 3 agent codenames from Greek letters to ASCII slugs
 
 Bulk rename across the repo + Obsidian plan: replaced the Greek-letter agent codenames I'd been using since the original Phase 3 plan (`α β accessibility bridge-ui notif-listener safety-rails voice-intents vision-nav` — wait, only the first four were Greek; the actual original set was `α β γ δ ε ζ η θ`) with descriptive ASCII slugs. The Greek letters were a math/CS-paper convention and they sort nicely, but they're a pain to type, render badly in some terminals, and made commit-history search awkward.

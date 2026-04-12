@@ -26,6 +26,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,6 +53,11 @@ import com.hermesandroid.relay.viewmodel.BridgePermissionStatus
 fun BridgePermissionChecklist(
     status: BridgePermissionStatus,
     modifier: Modifier = Modifier,
+    // === PHASE3-safety-rails-followup: in-app permission Test handlers ===
+    onTestAccessibility: (() -> Unit)? = null,
+    onTestScreenCapture: (() -> Unit)? = null,
+    onTestOverlay: (() -> Unit)? = null,
+    // === END PHASE3-safety-rails-followup ===
 ) {
     val context = LocalContext.current
 
@@ -73,7 +79,7 @@ fun BridgePermissionChecklist(
                 color = MaterialTheme.colorScheme.primary,
             )
             Text(
-                text = "Tap a row to open Android Settings.",
+                text = "Tap a row to open Android Settings · Tap Test to verify the permission works.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -85,7 +91,8 @@ fun BridgePermissionChecklist(
                 title = "Accessibility Service",
                 subtitle = "Read screen content, dispatch taps/types",
                 granted = status.accessibilityServiceEnabled,
-                onClick = { openAccessibilitySettings(context) }
+                onClick = { openAccessibilitySettings(context) },
+                onTest = onTestAccessibility,
             )
             PermissionRow(
                 icon = Icons.Filled.ScreenShare,
@@ -94,22 +101,27 @@ fun BridgePermissionChecklist(
                 granted = status.screenCapturePermitted,
                 // MediaProjection has no direct Settings entry — the consent
                 // dialog fires each time accessibility's ScreenCapture.kt asks for it.
-                // Tapping this row is informational-only until Tier 1 lands.
-                onClick = null
+                // The Test button reports whether a session grant is currently held.
+                onClick = null,
+                onTest = onTestScreenCapture,
             )
             PermissionRow(
                 icon = Icons.Filled.PictureInPicture,
                 title = "Display over other apps",
                 subtitle = "Status overlay while bridge is active",
                 granted = status.overlayPermitted,
-                onClick = { openOverlaySettings(context) }
+                onClick = { openOverlaySettings(context) },
+                onTest = onTestOverlay,
             )
             PermissionRow(
                 icon = Icons.Filled.Notifications,
                 title = "Notification Listener",
                 subtitle = "Read notifications for agent summaries",
                 granted = status.notificationListenerPermitted,
-                onClick = { openNotificationListenerSettings(context) }
+                onClick = { openNotificationListenerSettings(context) },
+                // Notification companion has its own dedicated Test on
+                // NotificationCompanionSettingsScreen — no need to duplicate.
+                onTest = null,
             )
         }
     }
@@ -122,6 +134,7 @@ private fun PermissionRow(
     subtitle: String,
     granted: Boolean,
     onClick: (() -> Unit)?,
+    onTest: (() -> Unit)? = null,
 ) {
     val rowModifier = if (onClick != null) {
         Modifier
@@ -155,6 +168,27 @@ private fun PermissionRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        // === PHASE3-safety-rails-followup: in-app Test button ===
+        // Compact text button next to the status icon. Tapping it runs a
+        // diagnostic check on the permission and surfaces the result via
+        // BridgeScreen → LocalSnackbarHost. Only renders when the parent
+        // provides an onTest lambda; null hides the button on rows where
+        // a meaningful diagnostic isn't available at this layer.
+        if (onTest != null) {
+            TextButton(
+                onClick = onTest,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    horizontal = 8.dp,
+                    vertical = 0.dp,
+                ),
+            ) {
+                Text(
+                    text = "Test",
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+        }
+        // === END PHASE3-safety-rails-followup ===
         // Status icon: green check when granted, red empty circle otherwise.
         Icon(
             imageVector = if (granted) Icons.Filled.CheckCircle

@@ -1,14 +1,27 @@
 package com.hermesandroid.relay.ui.screens
 
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -16,10 +29,14 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -31,6 +48,7 @@ import com.hermesandroid.relay.bridge.BridgeSafetyManager
 import com.hermesandroid.relay.data.BridgeSafetySettings
 import com.hermesandroid.relay.ui.components.BridgeSafetySummaryCard
 // === END PHASE3-safety-rails ===
+import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.components.BridgeActivityLog
 import com.hermesandroid.relay.ui.components.BridgeMasterToggle
 import com.hermesandroid.relay.ui.components.BridgePermissionChecklist
@@ -71,6 +89,17 @@ fun BridgeScreen(
     val permissionStatus by viewModel.permissionStatus.collectAsState()
     val bridgeStatus by viewModel.bridgeStatus.collectAsState()
     val activityLog by viewModel.activityLog.collectAsState()
+
+    // === PHASE3-safety-rails-followup: surface permission Test results via snackbar ===
+    val snackbarHost = LocalSnackbarHost.current
+    LaunchedEffect(viewModel) {
+        viewModel.testEvents.collect { message ->
+            snackbarHost.showSnackbar(message)
+        }
+    }
+    // === END PHASE3-safety-rails-followup ===
+
+    val context = LocalContext.current
 
     // === PHASE3-safety-rails: safety summary card ===
     // Pulls live safety settings + countdown off the process-wide
@@ -115,6 +144,28 @@ fun BridgeScreen(
                 .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            // === PHASE3-safety-rails-followup: overlay-permission nag banner ===
+            // Bridge is enabled but the user hasn't granted Display Over Other
+            // Apps. Without that permission, the destructive-verb confirmation
+            // modal can't render and BridgeSafetyManager.awaitConfirmation
+            // fails closed (denies the action) — silently from the user's
+            // perspective. Show a prominent banner so the failure isn't
+            // mysterious.
+            if (masterToggle && !permissionStatus.overlayPermitted) {
+                OverlayPermissionNagCard(
+                    onTap = {
+                        runCatching {
+                            val intent = Intent(
+                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:${context.packageName}"),
+                            ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                            context.startActivity(intent)
+                        }
+                    },
+                )
+            }
+            // === END PHASE3-safety-rails-followup ===
+
             BridgeMasterToggle(
                 enabled = masterToggle,
                 status = bridgeStatus,
@@ -130,7 +181,14 @@ fun BridgeScreen(
                 isConnected = permissionStatus.accessibilityServiceEnabled && masterToggle,
             )
 
-            BridgePermissionChecklist(status = permissionStatus)
+            BridgePermissionChecklist(
+                status = permissionStatus,
+                // === PHASE3-safety-rails-followup: in-app permission Test handlers ===
+                onTestAccessibility = { viewModel.testAccessibilityService() },
+                onTestScreenCapture = { viewModel.testScreenCapture() },
+                onTestOverlay = { viewModel.testOverlayPermission() },
+                // === END PHASE3-safety-rails-followup ===
+            )
 
             BridgeActivityLog(
                 entries = activityLog,
@@ -146,6 +204,67 @@ fun BridgeScreen(
             // === END PHASE3-safety-rails ===
 
             Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+/**
+ * Shown at the top of [BridgeScreen] when the master toggle is on but the
+ * user hasn't granted SYSTEM_ALERT_WINDOW. Without that permission,
+ * `BridgeSafetyManager.awaitConfirmation` fails closed and destructive
+ * actions get silently denied — the user has no way to know unless we
+ * tell them. Tap to open the overlay-permission Settings page.
+ *
+ * Phase 3 / safety-rails followup. Goes away on its own once
+ * `Settings.canDrawOverlays(context)` flips true.
+ */
+@Composable
+private fun OverlayPermissionNagCard(onTap: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onTap),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer,
+        ),
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Warning,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.size(28.dp),
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Grant 'Display over other apps'",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+                Text(
+                    text = "Without this, confirmation prompts can't show when " +
+                        "the agent acts. Destructive actions will be silently denied. " +
+                        "Tap to grant.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+            }
+        }
+    }
+}
+
+@Preview(showBackground = true, backgroundColor = 0xFF1A1A2E)
+@Composable
+private fun OverlayPermissionNagCardPreview() {
+    MaterialTheme {
+        Column(modifier = Modifier.padding(16.dp)) {
+            OverlayPermissionNagCard(onTap = {})
         }
     }
 }
