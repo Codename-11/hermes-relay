@@ -139,6 +139,7 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
     /** Raw input from xterm.js (soft keyboard, hardware keys, paste). */
     fun sendInput(data: String) {
         if (data.isEmpty()) return
+        Log.d(TAG, "sendInput: ${data.length} bytes attached=${_state.value.attached} session=${_state.value.sessionName}")
         var payload = data
 
         // Apply sticky CTRL: map a single a-z/A-Z keypress to its control byte.
@@ -261,6 +262,7 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
 
             "terminal.output" -> {
                 val data = payload["data"]?.asStringOrNull() ?: return
+                Log.d(TAG, "terminal.output: ${data.length} bytes")
                 // Re-encode as base64 so the WebView's window.writeTerminal can
                 // decode it back to bytes without any JS-string escaping worries.
                 val b64 = Base64.encodeToString(

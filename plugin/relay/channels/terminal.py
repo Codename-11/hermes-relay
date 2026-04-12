@@ -364,6 +364,11 @@ class TerminalHandler:
         data = bytes(session.buffer)
         session.buffer.clear()
         text = data.decode("utf-8", errors="replace")
+        logger.info(
+            "terminal.output: flushing %d bytes from session=%s",
+            len(data),
+            session.name,
+        )
         try:
             await _send(
                 session.ws,
@@ -384,12 +389,23 @@ class TerminalHandler:
     ) -> None:
         session = self._lookup(ws, payload.get("session_name"))
         if session is None:
+            logger.info(
+                "terminal.input: no session found (requested=%r, open=%r)",
+                payload.get("session_name"),
+                list((self._sessions.get(ws) or {}).keys()),
+            )
             return
         data = payload.get("data")
         if not isinstance(data, str):
             return
         try:
-            os.write(session.master_fd, data.encode("utf-8"))
+            nwritten = os.write(session.master_fd, data.encode("utf-8"))
+            logger.info(
+                "terminal.input: wrote %d bytes to session=%s pid=%d",
+                nwritten,
+                session.name,
+                session.pid,
+            )
         except OSError:
             await self._close_session(session, reason="write failed")
 

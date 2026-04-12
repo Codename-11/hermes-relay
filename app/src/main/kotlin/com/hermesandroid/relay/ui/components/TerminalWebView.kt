@@ -100,6 +100,7 @@ fun TerminalWebView(
     // Stream outputs from the ViewModel into the WebView.
     LaunchedEffect(webView, viewModel) {
         viewModel.outputFlow.collect { base64 ->
+            android.util.Log.d("TerminalWebView", "writeTerminal: ${base64.length} b64 chars")
             // evaluateJavascript must run on the UI thread; LaunchedEffect's
             // dispatcher is Main.
             webView.evaluateJavascript("window.writeTerminal('$base64');", null)
@@ -141,6 +142,7 @@ private class TerminalBridge(
 
     @JavascriptInterface
     fun onInput(data: String) {
+        android.util.Log.d("TerminalWebView", "bridge.onInput: ${data.length} bytes")
         viewModel.sendInput(data)
     }
 
