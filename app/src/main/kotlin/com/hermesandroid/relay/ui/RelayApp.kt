@@ -35,6 +35,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -42,6 +43,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -156,6 +160,25 @@ fun RelayApp() {
             authState = connectionViewModel.authState,
             authManager = connectionViewModel.authManager
         )
+    }
+
+    // Lifecycle-aware revalidation. ON_RESUME (every time the app comes
+    // to the foreground) flips both health badges to Probing and fires a
+    // fresh API + relay /health probe. Without this hook, badges showed
+    // stale Connected/Disconnected for up to 30s after foregrounding —
+    // the entire StateFlow snapshot was preserved across backgrounding
+    // even when the underlying server had died or the network had flipped.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                connectionViewModel.revalidate()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
 
     // Initialize ChatViewModel reactively when API client becomes available
@@ -369,29 +392,13 @@ fun RelayApp() {
                 modifier = Modifier.padding(innerPadding)
             ) {
                 composable(Screen.Onboarding.route) {
+                    // The wizard inside OnboardingScreen now owns credential
+                    // application via ConnectionViewModel.applyPairingPayload,
+                    // so the callback collapses to "mark complete + navigate
+                    // to chat". The legacy 4-arg signature was discarding the
+                    // relay block entirely.
                     OnboardingScreen(
-                        onComplete = { apiServerUrl, apiKey, relayUrl, relayPairingCode ->
-                            connectionViewModel.updateApiServerUrl(apiServerUrl)
-                            if (apiKey.isNotBlank()) {
-                                connectionViewModel.updateApiKey(apiKey)
-                            }
-                            if (relayUrl.isNotBlank()) {
-                                connectionViewModel.updateRelayUrl(relayUrl)
-                                // Auto-flip insecure mode when the scanned
-                                // relay URL is plain ws:// so the user
-                                // doesn't have to hunt through Developer
-                                // Options to allow the connection.
-                                if (relayUrl.startsWith("ws://")) {
-                                    connectionViewModel.setInsecureMode(true)
-                                }
-                            }
-                            // Hand the server-issued pairing code (from a
-                            // scanned QR) to AuthManager so the next auth
-                            // envelope uses it instead of the locally-
-                            // generated fallback. Consumed on first auth.ok.
-                            if (!relayPairingCode.isNullOrBlank()) {
-                                connectionViewModel.authManager.applyServerIssuedCode(relayPairingCode)
-                            }
+                        onComplete = {
                             connectionViewModel.completeOnboarding()
                             navController.navigate(Screen.Chat.route) {
                                 popUpTo(Screen.Onboarding.route) { inclusive = true }

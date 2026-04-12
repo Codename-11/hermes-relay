@@ -36,12 +36,15 @@ import com.hermesandroid.relay.util.MediaCacheWriter
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -169,6 +172,22 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     private val _apiServerReachable = MutableStateFlow(false)
     val apiServerReachable: StateFlow<Boolean> = _apiServerReachable.asStateFlow()
+
+    /**
+     * Tri-state health for the API server. Distinct from
+     * [apiServerReachable] (a Boolean) because the UI needs to render a
+     * dedicated "Probing" pose right after foreground / network change so
+     * the badge doesn't flash a stale Connected/Disconnected from the last
+     * session. The boolean stays in place for legacy callers; new code
+     * should consume this flow.
+     */
+    enum class HealthStatus { Unknown, Probing, Reachable, Unreachable }
+
+    private val _apiServerHealth = MutableStateFlow(HealthStatus.Unknown)
+    val apiServerHealth: StateFlow<HealthStatus> = _apiServerHealth.asStateFlow()
+
+    private val _relayServerHealth = MutableStateFlow(HealthStatus.Unknown)
+    val relayServerHealth: StateFlow<HealthStatus> = _relayServerHealth.asStateFlow()
 
     private val _apiClient = MutableStateFlow<HermesApiClient?>(null)
     val apiClient: StateFlow<HermesApiClient?> = _apiClient.asStateFlow()
@@ -549,14 +568,49 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             }
         }
 
-        // Periodic health check — only runs when an API client is configured
+        // Periodic API health check — only runs when an API client is configured.
+        // 30s cadence matches the prior loop. Updates both the legacy boolean
+        // and the new tri-state HealthStatus flow so existing callers don't break.
         viewModelScope.launch {
             while (true) {
                 delay(30_000)
                 if (_apiClient.value != null) {
-                    checkApiHealth()
+                    probeApiHealth()
                 }
             }
+        }
+
+        // Periodic relay health check — same cadence. Only fires when a relay
+        // URL is configured. Does NOT touch the WSS channel; this is a pure
+        // /health probe via RelayHttpClient (3s timeout, no auth needed).
+        // Plugs the historical gap where relay status was only verified by
+        // WSS heartbeat or manual Save & Test taps.
+        viewModelScope.launch {
+            while (true) {
+                delay(30_000)
+                if (_relayUrl.value.isNotBlank()) {
+                    probeRelayHealth()
+                }
+            }
+        }
+
+        // React to network changes — ConnectivityObserver was previously
+        // observed but never read. Now any "network back" transition kicks
+        // a fresh revalidation so badges flip from Probing to a verified
+        // state without waiting for the next periodic tick.
+        //
+        // drop(1) skips the StateFlow's seed value (Available) so we don't
+        // double-probe on first composition; the init block already triggers
+        // the initial probe via rebuildApiClient().
+        viewModelScope.launch {
+            networkStatus
+                .drop(1)
+                .distinctUntilChanged()
+                .collect { status ->
+                    if (status is ConnectivityObserver.Status.Available) {
+                        revalidate()
+                    }
+                }
         }
 
         // Mirror the media cache cap into a plain volatile field so the
@@ -565,6 +619,146 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             mediaSettingsRepo.settings.collect { settings ->
                 _cachedMediaCapMb = settings.cachedMediaCapMb
             }
+        }
+    }
+
+    // --- Revalidation ----------------------------------------------------
+    //
+    // Single entry point for "the world might have changed — re-check
+    // everything." Called from RelayApp's ON_RESUME observer, from the
+    // ConnectivityObserver collector above, and any future surface that
+    // wants the badges to refresh on demand. Guarded by [revalidationJob]
+    // so rapid-fire resumes don't pile up parallel probes.
+
+    @Volatile
+    private var revalidationJob: Job? = null
+
+    /**
+     * Re-probe API + relay health in parallel. Both flows immediately flip
+     * to [HealthStatus.Probing] so the UI can render a "checking status"
+     * pose without waiting for the network round-trip — that's the fix for
+     * the resume-lag flash where badges showed stale Connected/Disconnected
+     * for up to 30 seconds after foregrounding.
+     *
+     * Idempotent: if a revalidation is already in flight, we skip and let
+     * the existing one finish. Cheap enough that callers don't need to
+     * debounce themselves.
+     */
+    fun revalidate() {
+        if (revalidationJob?.isActive == true) return
+        revalidationJob = viewModelScope.launch {
+            // Flip to Probing immediately so the UI doesn't flash whatever
+            // stale value the previous session left in the flow.
+            if (_apiClient.value != null) {
+                _apiServerHealth.value = HealthStatus.Probing
+            }
+            if (_relayUrl.value.isNotBlank()) {
+                _relayServerHealth.value = HealthStatus.Probing
+            }
+
+            // Fire both probes in parallel — neither blocks the other.
+            val apiProbe = launch { probeApiHealth() }
+            val relayProbe = launch { probeRelayHealth() }
+            apiProbe.join()
+            relayProbe.join()
+
+            // Also kick a stale-WSS reconnect — if we hold a paired session
+            // but the WSS is down (the most common post-resume state), bring
+            // it back without forcing the user to tap into Settings.
+            reconnectIfStale()
+        }
+    }
+
+    /**
+     * Run a single API /health probe and update both the legacy boolean
+     * and the tri-state flow. Safe to call from anywhere; no-ops cleanly
+     * when the client isn't configured.
+     */
+    private suspend fun probeApiHealth() {
+        val client = _apiClient.value
+        if (client == null) {
+            _apiServerHealth.value = HealthStatus.Unknown
+            _apiServerReachable.value = false
+            return
+        }
+        val ok = client.checkHealth()
+        _apiServerReachable.value = ok
+        _apiServerHealth.value = if (ok) HealthStatus.Reachable else HealthStatus.Unreachable
+    }
+
+    /**
+     * Run a single relay /health probe and update [relayServerHealth].
+     * Uses the existing [RelayHttpClient.probeHealth] path (unauthenticated,
+     * 3s timeout, no impact on the rate limiter). Distinct from
+     * [testRelayReachable] which is the user-facing Save & Test action.
+     */
+    private suspend fun probeRelayHealth() {
+        val url = _relayUrl.value
+        if (url.isBlank()) {
+            _relayServerHealth.value = HealthStatus.Unknown
+            return
+        }
+        val result = relayHttpClient.probeHealth(url)
+        _relayServerHealth.value = if (result.isSuccess) {
+            HealthStatus.Reachable
+        } else {
+            HealthStatus.Unreachable
+        }
+    }
+
+    // --- Unified pairing apply ----------------------------------------------
+    //
+    // Single entry point for "user just confirmed a scanned QR + chose a TTL".
+    // Used by both [com.hermesandroid.relay.ui.components.ConnectionWizard]
+    // (the new shared wizard) and any other surface that wants to apply a
+    // pairing payload without duplicating the apply-API-URL/apply-relay-URL/
+    // apply-grants/apply-TTL/wipe-pin/connect dance.
+    //
+    // The payload's relay block is optional — when null, only the API server
+    // side is configured (matches the legacy "API-only" QR flow).
+    fun applyPairingPayload(
+        payload: com.hermesandroid.relay.ui.components.HermesPairingPayload,
+        ttlSeconds: Long,
+    ) {
+        viewModelScope.launch {
+            // API side — always present in any QR.
+            updateApiServerUrl(payload.serverUrl)
+            if (payload.key.isNotBlank()) {
+                updateApiKey(payload.key)
+            }
+
+            // Relay side — only when the QR carried a relay block.
+            payload.relay?.let { relay ->
+                updateRelayUrl(relay.url)
+                if (relay.url.startsWith("ws://")) {
+                    setInsecureMode(true)
+                }
+                // Wipe any TOFU pin for the new host + apply the code so the
+                // next WSS auth envelope rides the fresh server-issued code
+                // instead of the locally-generated fallback.
+                authManager.applyServerIssuedCodeAndReset(
+                    code = relay.code,
+                    relayUrl = relay.url,
+                )
+                authManager.setPendingGrants(relay.grants)
+            }
+
+            // Stash TTL for the next authenticate() call. Done unconditionally
+            // so even relay-less QRs persist the user's chosen TTL for the
+            // next pair attempt.
+            authManager.setPendingTtlSeconds(ttlSeconds)
+
+            // Kick the WSS handshake now if we have a relay. AuthManager is
+            // holding a fresh server-issued code so the pair-context gate on
+            // connectRelay will let it through.
+            payload.relay?.let { relay ->
+                disconnectRelay()
+                connectRelay(relay.url)
+            }
+
+            // Fresh probe so the badges update without waiting for the next
+            // periodic tick.
+            revalidate()
         }
     }
 
@@ -610,10 +804,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         val oldClient = _apiClient.value
 
         if (url.isNotBlank()) {
+            // Show Probing while the new client spins up so the badge has
+            // a coherent in-flight pose instead of flashing the previous
+            // result through.
+            _apiServerHealth.value = HealthStatus.Probing
             val client = HermesApiClient(baseUrl = url, apiKey = key)
             _apiClient.value = client
             oldClient?.shutdown()
-            _apiServerReachable.value = client.checkHealth()
+            val ok = client.checkHealth()
+            _apiServerReachable.value = ok
+            _apiServerHealth.value = if (ok) HealthStatus.Reachable else HealthStatus.Unreachable
 
             // Probe per-endpoint capabilities. The result drives both the
             // legacy chatMode flow and the auto-resolver in ChatViewModel.
@@ -624,6 +824,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             _apiClient.value = null
             oldClient?.shutdown()
             _apiServerReachable.value = false
+            _apiServerHealth.value = HealthStatus.Unknown
             _chatMode.value = ChatMode.DISCONNECTED
             _serverCapabilities.value = ServerCapabilities.DISCONNECTED
         }
@@ -697,10 +898,17 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     fun updateRelayUrl(url: String) {
         _relayUrl.value = url
+        // The new URL hasn't been verified yet — flip to Probing so the
+        // health badge doesn't show stale Reachable/Unreachable from the
+        // old URL while the next periodic tick (or revalidate()) lands.
+        _relayServerHealth.value = HealthStatus.Probing
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
                 preferences[KEY_RELAY_URL] = url
             }
+            // Kick a fresh probe right now rather than waiting up to 30s
+            // for the periodic loop.
+            probeRelayHealth()
         }
     }
 

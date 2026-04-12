@@ -2,38 +2,24 @@
 <!--
     Sideload flavor manifest overlay.
 
-    Merged on top of `app/src/main/AndroidManifest.xml` for the
-    `sideloadDebug` / `sideloadRelease` variants. Declares the
-    AccessibilityService with the full agent-control description used for
-    direct-install distribution (GitHub Releases, F-Droid, ADB). This track
-    is NOT shipped through Google Play — Play Store policy would reject it.
+    Merged on top of `app/src/main/AndroidManifest.xml` for the `sideloadDebug`
+    / `sideloadRelease` variants. This track is NOT shipped through Google Play.
 
-      "Hermes Bridge gives the agent full read/write access to the phone
-       for hands-free control via voice and vision. All actions are logged
-       in the Activity Log and destructive actions require your confirmation."
+    The AccessibilityService is declared exactly once in `app/src/main/AndroidManifest.xml`.
+    The flavor distinction is purely at the resource layer: this flavor's
+    `res/xml/accessibility_service_config.xml` carries the full agent-control
+    config (`canPerformGestures="true"`, `flagRetrieveInteractiveWindows`, etc.)
+    and `res/values/strings.xml` carries the matching description string.
+    Gradle's resource merger picks the right files at build time, so we don't
+    need to redeclare the <service> here.
 
-    Mirror structural changes in the googlePlay flavor unless a change is
-    intentionally track-specific.
+    This file is intentionally kept as an empty overlay so future flavor-specific
+    permissions / activities have an obvious home. Mirror structural additions
+    in `app/src/googlePlay/AndroidManifest.xml` unless the change is intentionally
+    track-specific.
 -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <application>
-
-        <service
-            android:name=".accessibility.BridgeAccessibilityService"
-            android:exported="false"
-            android:label="@string/a11y_service_label"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            tools:ignore="MissingClass">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_service_config" />
-        </service>
-
-    </application>
+    <application />
 
 </manifest>

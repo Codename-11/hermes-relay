@@ -5,11 +5,13 @@ import { withBase } from 'vitepress';
 import HermesFlow from './components/HermesFlow.vue';
 import InstallSection from './components/InstallSection.vue';
 import HeroDemo from './components/HeroDemo.vue';
+import FeatureMatrix from './components/FeatureMatrix.vue';
 
 export default {
   extends: DefaultTheme,
   enhanceApp({ app }: { app: any }) {
     app.component('HermesFlow', HermesFlow);
+    app.component('FeatureMatrix', FeatureMatrix);
   },
   Layout() {
     return h(DefaultTheme.Layout, null, {
