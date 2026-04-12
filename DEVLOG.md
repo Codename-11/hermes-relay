@@ -1,5 +1,60 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-12 — Phase 3 / Wave 2 / ζ: bridge safety rails
+
+Branch: `feature/phase3-zeta-safety-rails` (off `main` @ 8d86a62 which has Wave 1 merged).
+
+**What landed.** Tier 5 safety for the bridge channel — five enforcement components that together make it OK to actually ship agent device control:
+
+1. **Per-app blocklist** (`BridgeSafetyPreferences.kt`) — DataStore-backed set of package names. Ships with a conservative default covering common banking apps (Chase / Wells Fargo / BoA / Revolut / Monzo / Starling), payment apps (Venmo / Cash App / PayPal / Coinbase), password managers (1Password / Bitwarden / LastPass / Dashlane / Keeper), and 2FA apps (Google Authenticator / Authy / Duo). Users edit via `BridgeSafetySettingsScreen` — searchable LazyColumn of installed apps with checkboxes. Enforcement is in `BridgeSafetyManager.checkPackageAllowed(packageName: String?)`, called by `BridgeCommandHandler` against `HermesAccessibilityService.currentApp`; a blocked package fails fast with HTTP 403 `{"error": "blocked package <name>"}`.
+
+2. **Destructive-verb confirmation modal** (`DestructiveVerbConfirmDialog.kt` + `BridgeStatusOverlay.kt`) — when `/tap_text` or `/type` carries a body that matches one of the configurable destructive verbs (default: send, pay, delete, transfer, confirm, submit, post, publish, buy, purchase, charge, withdraw) on a word-boundary regex, `BridgeSafetyManager.awaitConfirmation(method, text)` suspends the handler coroutine, shows a full-screen Compose modal through a `SYSTEM_ALERT_WINDOW` overlay (necessary because the agent can act while the app is backgrounded), and waits on a `CompletableDeferred<Boolean>` under a `withTimeout`. Timeout default 30s; timeout = DENY. Fail-closed: if the overlay permission is missing, the check returns false.
+
+3. **Auto-disable timer** (`AutoDisableWorker.kt`) — a coroutine `Job` owned by `BridgeSafetyManager` with a `delay(minutes.toMillis())`. Rescheduled on every accepted bridge command. On fire: flips the master toggle off via `HermesAccessibilityService.setMasterEnabled(context, false)` and posts a one-shot "Bridge auto-disabled after idle" notification through `NotificationManagerCompat`. Default idle window: 30 min, slider 5..120 min. **Deviation from spec:** spec called for WorkManager, but `androidx.work` is not in the classpath and adding the dep is out of scope for this slice. The coroutine-job approach is documented in `AutoDisableWorker.kt` as the canonical upgrade path if WorkManager is added later.
+
+4. **Persistent foreground service** (`BridgeForegroundService.kt`) — plain `Service` with `startForeground(NOTIFICATION_ID, notification, FOREGROUND_SERVICE_TYPE_SPECIAL_USE)` on Android 14+, graceful fallback below. Notification shows "Hermes agent has device control" with two action buttons: **Disable** (broadcasts back into the service which flips the master toggle) and **Settings** (opens `MainActivity`; TODO followup to wire a deep-link extra for direct nav to `BridgeSafetySettingsScreen`). Started/stopped from `BridgeViewModel` via a `masterToggle.distinctUntilChanged().collect {}` observer.
+
+5. **Optional status overlay chip** (`BridgeStatusOverlay.kt`) — tiny floating "Hermes active" pill in the top-right corner. Off by default, opt-in via `BridgeSafetySettingsScreen`. Uses the same `SYSTEM_ALERT_WINDOW` pipeline as the confirmation modal — only one `WindowManager` attachment point per process. The overlay host implements `ConfirmationOverlayHost` so the safety manager can reach both the chip and the modal through the same singleton.
+
+**Files created (8):**
+
+- `app/src/main/kotlin/com/hermesandroid/relay/data/BridgeSafetyPreferences.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/bridge/BridgeSafetyManager.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/bridge/BridgeForegroundService.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/bridge/BridgeStatusOverlay.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/bridge/AutoDisableWorker.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/screens/BridgeSafetySettingsScreen.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/components/DestructiveVerbConfirmDialog.kt` (also hosts `BridgeStatusOverlayChip`)
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/components/BridgeSafetySummaryCard.kt`
+
+**Shared-concern files touched (6)** — all marked with `// === PHASE3-ζ: ... === / === END PHASE3-ζ ===`:
+
+- `BridgeCommandHandler.kt` — injects `safetyManager: BridgeSafetyManager?`, runs the three-stage check (blocklist → confirmation → reschedule timer) before dispatching each action.
+- `AndroidManifest.xml` — adds `SYSTEM_ALERT_WINDOW` + `FOREGROUND_SERVICE_SPECIAL_USE` uses-permission + a `<service android:name=".bridge.BridgeForegroundService" android:foregroundServiceType="specialUse"/>` declaration with the `PROPERTY_SPECIAL_USE_FGS_SUBTYPE` justification property.
+- `BridgeScreen.kt` — replaces the `SafetyPlaceholderCard` stub with the real `BridgeSafetySummaryCard` driven by `BridgeSafetyManager.peek()?.settings` and `.autoDisableAtMs`. New `onNavigateToBridgeSafety` parameter.
+- `SettingsScreen.kt` — adds `onNavigateToBridgeSafety` callback and a "Bridge safety" `SettingsCategoryRow` between Notification companion and Media.
+- `RelayApp.kt` — `Screen.BridgeSafetySettings` data object, composable(route), wires the nav callback from Settings + from Bridge screen.
+- `BridgeViewModel.kt` — observes `masterToggle` and calls `BridgeForegroundService.start/stop`, reschedules/cancels the auto-disable timer on toggle changes, and combines the master toggle with `statusOverlayEnabled` to drive the chip visibility.
+- `ConnectionViewModel.kt` (wiring only, marked) — calls `BridgeSafetyManager.install()` + `BridgeStatusOverlay.install()` at construction and passes the manager into `BridgeCommandHandler`.
+
+**Key design notes / blockers / decisions.**
+
+- **WorkManager not in classpath.** Went with a coroutine-owned timer instead of adding a new dependency. `AutoDisableWorker.kt` documents the upgrade path. This is acceptable because the toggle is in-process — no inter-process scheduling is required, and process death already implies the service is disconnected.
+
+- **SYSTEM_ALERT_WINDOW UX.** Users must grant the permission through `Settings.ACTION_MANAGE_OVERLAY_PERMISSION` before either the confirmation modal or the status chip can display. `BridgeSafetySettingsScreen` detects via `Settings.canDrawOverlays(context)` and kicks off the grant flow on first switch tap. **Fail-closed:** if the permission is missing when a destructive verb fires, `BridgeSafetyManager.awaitConfirmation` denies the action outright — better to drop a command than to silently allow it. Phase 3 Wave 3 should add a prominent "grant overlay permission" nag on the BridgeScreen when the user enables the master toggle without having granted it.
+
+- **Compose in a WindowManager overlay.** `ComposeView` attached via `WindowManager.addView` doesn't automatically get a `ViewTreeLifecycleOwner` — we synthesize an always-RESUMED `OverlayLifecycleOwner` + `ViewModelStoreOwner`. Skipped `SavedStateRegistryOwner` because the dialog only uses `remember`, not `rememberSaveable`, and `androidx.savedstate` isn't pinned in the version catalog. If future overlay content needs `rememberSaveable`, pin that artifact and extend `OverlayLifecycleOwner`.
+
+- **Confirmation coroutine wiring.** The safety manager keeps a `ConcurrentHashMap<Long, PendingConfirmation>` keyed by a monotonic request id. `awaitConfirmation` registers an entry, asks the overlay host to show the modal, then `withTimeout(...) { deferred.await() }`. The overlay's Allow / Deny buttons call back with the result. Timeouts dismiss the overlay programmatically. The suspending `BridgeCommandHandler.dispatch` call is what holds the slot — the relay sees a slow response instead of a premature 403, which matches the intended UX (user gets 30s to react, agent waits).
+
+- **γ/δ API dependencies.** Relied on: `HermesAccessibilityService.currentApp` (γ, @Volatile String?), `HermesAccessibilityService.setMasterEnabled(context, enabled)` (γ), `HermesAccessibilityService.isMasterEnabled()` (γ), `BridgePreferencesRepository` pattern (δ), `relayDataStore` extension (existing), `BridgeViewModel.masterToggle: StateFlow<Boolean>` (δ). All used as-is — no edits in γ/δ territory.
+
+**What's next.**
+
+- Wire a deep-link extra on `MainActivity` so `BridgeForegroundService.ACTION_OPEN_SETTINGS` lands directly on `BridgeSafetySettingsScreen` (currently opens the app and the user taps through).
+- Record `BridgeActivityEntry` rows for blocked-package / denied-confirmation events so the bridge activity log shows *why* an agent command failed.
+- Wave 3 can add tests: unit tests for the destructive-verb regex word-boundary matching, an instrumented test for the foreground-service lifecycle, and a fake overlay host for `awaitConfirmation` timeout behavior.
+
 ## 2026-04-12 — Add canonical uninstall.sh + bootstrap docs
 
 Companion to the bootstrap injection work below. There was no formal uninstall path before — `install.sh` is idempotent so most update flows worked, but cleanly removing the plugin (e.g., to test that install.sh works on a truly fresh state) required manually undoing 6 install steps. New `uninstall.sh` reverses them in opposite order:

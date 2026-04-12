@@ -10,10 +10,17 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.hermesandroid.relay.data.BridgeActivityEntry
 import com.hermesandroid.relay.data.BridgePreferencesRepository
+// === PHASE3-ζ: foreground service lifecycle ===
+import com.hermesandroid.relay.bridge.BridgeForegroundService
+import com.hermesandroid.relay.bridge.BridgeSafetyManager
+import com.hermesandroid.relay.bridge.BridgeStatusOverlay
+// === END PHASE3-ζ ===
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -111,6 +118,45 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     init {
         refreshPermissionStatus()
         refreshBridgeStatusFromSystem()
+
+        // === PHASE3-ζ: foreground service lifecycle ===
+        // Start/stop BridgeForegroundService based on the master toggle.
+        // distinctUntilChanged prevents re-firing the startForegroundService
+        // intent on every DataStore tick. Cancel the safety manager's
+        // auto-disable timer when the user flips the toggle off manually
+        // (otherwise we race a pending timer against the user).
+        viewModelScope.launch {
+            masterToggle.distinctUntilChanged().collect { enabled ->
+                val ctx = getApplication<Application>()
+                if (enabled) {
+                    runCatching { BridgeForegroundService.start(ctx) }
+                    BridgeSafetyManager.peek()?.rescheduleAutoDisable()
+                } else {
+                    runCatching { BridgeForegroundService.stop(ctx) }
+                    BridgeSafetyManager.peek()?.cancelAutoDisable()
+                    // Force the overlay chip off even if the user hasn't
+                    // explicitly disabled it — no point showing "bridge
+                    // active" when the toggle is off.
+                    BridgeStatusOverlay.peek()?.setChipVisible(false)
+                }
+            }
+        }
+
+        // Toggle the optional status overlay in response to both the
+        // user's preference and the master toggle (chip only shows when
+        // bridge is active AND user opted in).
+        viewModelScope.launch {
+            val safety = BridgeSafetyManager.peek() ?: return@launch
+            combine(
+                masterToggle,
+                safety.settings.map { it.statusOverlayEnabled }.distinctUntilChanged(),
+            ) { master, overlayOn -> master && overlayOn }
+                .distinctUntilChanged()
+                .collect { shouldShow ->
+                    BridgeStatusOverlay.peek()?.setChipVisible(shouldShow)
+                }
+        }
+        // === END PHASE3-ζ ===
     }
 
     /**

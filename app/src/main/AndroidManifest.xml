@@ -20,6 +20,21 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- === END PHASE3-γ === -->
 
+    <!-- === PHASE3-ζ: safety service + overlay === -->
+    <!-- SYSTEM_ALERT_WINDOW is user-granted via Settings.ACTION_MANAGE_OVERLAY_PERMISSION.
+         Used for (a) the destructive-verb confirmation modal that must be
+         visible even when Hermes isn't in the foreground, and (b) the optional
+         floating "Hermes active" status chip. The permission is declared here
+         so the user-visible grant flow triggers, but the overlay itself only
+         appears when the user has explicitly consented.
+
+         FOREGROUND_SERVICE_SPECIAL_USE is required on Android 14+ for the
+         persistent "Bridge active" notification (BridgeForegroundService),
+         because the specialUse type needs its own declared permission.  -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- === END PHASE3-ζ === -->
+
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
@@ -87,6 +102,26 @@
             </intent-filter>
         </service>
         <!-- === END PHASE3-ε === -->
+
+        <!-- === PHASE3-ζ: safety service + overlay === -->
+        <!-- BridgeForegroundService is a plain (non-exported) foreground
+             service driven by BridgeViewModel based on the master toggle.
+             It owns the persistent "Hermes agent has device control"
+             notification. foregroundServiceType is "specialUse" on API 34+
+             to match the SPECIAL_USE foreground-service permission and the
+             Play Console policy we declared when shipping Tier 5.
+
+             Android 14+ additionally requires a <property> tag justifying
+             the specialUse type. Kept conservative and honest. -->
+        <service
+            android:name=".bridge.BridgeForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Persistent indicator that the Hermes agent has device control, per the Tier 5 safety-rails design." />
+        </service>
+        <!-- === END PHASE3-ζ === -->
 
     </application>
 

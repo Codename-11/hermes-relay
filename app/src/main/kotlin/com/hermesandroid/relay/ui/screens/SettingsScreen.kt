@@ -25,6 +25,9 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Info
+// === PHASE3-ζ: bridge safety entry-point ===
+import androidx.compose.material.icons.filled.Security
+// === END PHASE3-ζ ===
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material3.Card
@@ -77,6 +80,9 @@ fun SettingsScreen(
     onNavigateToAnalytics: () -> Unit,
     onNavigateToVoiceSettings: () -> Unit,
     onNavigateToNotificationCompanion: () -> Unit,
+    // === PHASE3-ζ: bridge safety entry-point ===
+    onNavigateToBridgeSafety: () -> Unit,
+    // === END PHASE3-ζ ===
     onNavigateToPairedDevices: () -> Unit,
     onNavigateToDeveloperSettings: () -> Unit,
     onNavigateToAbout: () -> Unit,
@@ -205,6 +211,16 @@ fun SettingsScreen(
                 isDarkTheme = isDarkTheme,
             )
             // === END PHASE3-ε-followup ===
+
+            // === PHASE3-ζ: bridge safety entry-point ===
+            SettingsCategoryRow(
+                icon = Icons.Filled.Security,
+                title = "Bridge safety",
+                subtitle = "Blocklist, destructive-verb confirmation, auto-disable",
+                onClick = onNavigateToBridgeSafety,
+                isDarkTheme = isDarkTheme,
+            )
+            // === END PHASE3-ζ ===
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Image,

@@ -64,6 +64,9 @@ import com.hermesandroid.relay.ui.screens.AboutScreen
 import com.hermesandroid.relay.ui.screens.AnalyticsScreen
 import com.hermesandroid.relay.ui.screens.AppearanceSettingsScreen
 import com.hermesandroid.relay.ui.screens.BridgeScreen
+// === PHASE3-ζ: bridge safety route ===
+import com.hermesandroid.relay.ui.screens.BridgeSafetySettingsScreen
+// === END PHASE3-ζ ===
 import com.hermesandroid.relay.ui.screens.ChatScreen
 import com.hermesandroid.relay.ui.screens.ChatSettingsScreen
 import com.hermesandroid.relay.ui.screens.ConnectionSettingsScreen
@@ -121,6 +124,10 @@ sealed class Screen(
     data object NotificationCompanionSettings :
         Screen("settings/notifications", "Notification companion", Icons.Filled.Settings)
     // === END PHASE3-ε-followup ===
+    // === PHASE3-ζ: bridge safety route ===
+    data object BridgeSafetySettings :
+        Screen("settings/bridge_safety", "Bridge safety", Icons.Filled.Settings)
+    // === END PHASE3-ζ ===
     // Per-category settings sub-screens — split out of the mega SettingsScreen
     // following the VoiceSettingsScreen pattern (see DEVLOG 2026-04-11).
     data object ConnectionSettings : Screen("settings/connection", "Connection", Icons.Filled.Settings)
@@ -431,7 +438,13 @@ fun RelayApp() {
                     // and we need to observe its runtime state from RelayApp
                     // scope, a shared holder or explicit VM param gets added
                     // here.
-                    BridgeScreen()
+                    BridgeScreen(
+                        // === PHASE3-ζ: bridge safety route ===
+                        onNavigateToBridgeSafety = {
+                            navController.navigate(Screen.BridgeSafetySettings.route)
+                        },
+                        // === END PHASE3-ζ ===
+                    )
                     // === END PHASE3-δ ===
                 }
                 composable(Screen.Settings.route) {
@@ -458,6 +471,11 @@ fun RelayApp() {
                         onNavigateToNotificationCompanion = {
                             navController.navigate(Screen.NotificationCompanionSettings.route)
                         },
+                        // === PHASE3-ζ: bridge safety route ===
+                        onNavigateToBridgeSafety = {
+                            navController.navigate(Screen.BridgeSafetySettings.route)
+                        },
+                        // === END PHASE3-ζ ===
                         onNavigateToPairedDevices = {
                             navController.navigate(Screen.PairedDevices.route)
                         },
@@ -483,6 +501,13 @@ fun RelayApp() {
                     )
                 }
                 // === END PHASE3-ε-followup ===
+                // === PHASE3-ζ: bridge safety route ===
+                composable(Screen.BridgeSafetySettings.route) {
+                    BridgeSafetySettingsScreen(
+                        onBack = { navController.popBackStack() }
+                    )
+                }
+                // === END PHASE3-ζ ===
                 composable(Screen.PairedDevices.route) {
                     PairedDevicesScreen(
                         connectionViewModel = connectionViewModel,
