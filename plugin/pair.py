@@ -495,7 +495,7 @@ def render_qr_terminal(payload: str) -> str:
     try:
         qr = segno.make(payload, error="m")
         buf = io.StringIO()
-        qr.terminal(out=buf, compact=True)
+        qr.terminal(out=buf, compact=True, border=1)
         return buf.getvalue()
     except Exception as e:
         return f"  (QR render failed: {e})\n"
