@@ -5,6 +5,9 @@ import com.hermesandroid.relay.accessibility.ActionExecutor
 import com.hermesandroid.relay.accessibility.HermesAccessibilityService
 import com.hermesandroid.relay.accessibility.ScreenCapture
 import com.hermesandroid.relay.accessibility.ScreenReader
+// === PHASE3-ζ: safety enforcement ===
+import com.hermesandroid.relay.bridge.BridgeSafetyManager
+// === END PHASE3-ζ ===
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.models.Envelope
 import kotlinx.coroutines.CoroutineScope
@@ -78,6 +81,12 @@ class BridgeCommandHandler(
     private val multiplexer: ChannelMultiplexer,
     private val scope: CoroutineScope,
     private val screenCapture: ScreenCapture? = null,
+    // === PHASE3-ζ: safety enforcement ===
+    // Safety manager is optional so older tests that construct this handler
+    // without the full DI graph still compile; in production ConnectionViewModel
+    // always wires a BridgeSafetyManager instance and passes it in.
+    private val safetyManager: BridgeSafetyManager? = null,
+    // === END PHASE3-ζ ===
 ) {
 
     companion object {
@@ -159,6 +168,43 @@ class BridgeCommandHandler(
                 }
             )
         }
+
+        // === PHASE3-ζ: safety enforcement ===
+        // Pure-read /ping and /current_app + /screen bypass Tier 5 verbs
+        // (they don't perform destructive actions), but they DO still
+        // respect the blocklist so a blocked app can't be screen-read.
+        val currentPkg = service.currentApp
+        val blocklistAllowed = safetyManager?.checkPackageAllowed(currentPkg) ?: true
+        if (!blocklistAllowed) {
+            return respond(
+                requestId, 403,
+                buildJsonObject {
+                    put("error", "blocked package ${currentPkg ?: "unknown"}")
+                }
+            )
+        }
+
+        // Destructive-verb gate — only /tap_text and /type can carry
+        // user-visible text that fires a real-world action. Other paths
+        // skip the check.
+        val bodyText = body["text"]?.jsonPrimitive?.content
+        if (safetyManager != null && safetyManager.requiresConfirmation(path, bodyText)) {
+            val allowed = safetyManager.awaitConfirmation(path, bodyText)
+            if (!allowed) {
+                return respond(
+                    requestId, 403,
+                    buildJsonObject {
+                        put("error", "user denied destructive action")
+                        put("reason", "confirmation_denied_or_timeout")
+                    }
+                )
+            }
+        }
+
+        // Reschedule the idle auto-disable timer on every accepted
+        // command. Safe to call even when no timer is currently armed.
+        safetyManager?.rescheduleAutoDisable()
+        // === END PHASE3-ζ ===
 
         val executor = service.actionExecutor
 

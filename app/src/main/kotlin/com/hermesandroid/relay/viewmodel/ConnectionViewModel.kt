@@ -462,10 +462,29 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         },
     )
 
+    // === PHASE3-ζ: safety manager + overlay wiring ===
+    // Process-wide singletons — install() is idempotent and the overlay
+    // host wires itself into ConfirmationOverlayHost.instance so the
+    // safety manager can reach it without a hard ref.
+    private val bridgeSafetyManager =
+        com.hermesandroid.relay.bridge.BridgeSafetyManager.install(
+            context = application,
+            scope = viewModelScope,
+        ).also {
+            com.hermesandroid.relay.bridge.BridgeStatusOverlay.install(application)
+        }
+
+    /** Exposed for BridgeScreen → safety summary card. */
+    val bridgeSafety: com.hermesandroid.relay.bridge.BridgeSafetyManager get() = bridgeSafetyManager
+    // === END PHASE3-ζ ===
+
     private val bridgeCommandHandler = BridgeCommandHandler(
         multiplexer = multiplexer,
         scope = viewModelScope,
         screenCapture = screenCapture,
+        // === PHASE3-ζ: safety enforcement ===
+        safetyManager = bridgeSafetyManager,
+        // === END PHASE3-ζ ===
     )
 
     val bridgeStatusReporter = BridgeStatusReporter(
@@ -473,7 +492,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         multiplexer = multiplexer,
         scope = viewModelScope,
     )
-    // === END PHASE3-γ ===
+    // === END PHASE3-γ (plus ζ wiring above) ===
 
     init {
         // Wire multiplexer to connection manager (for relay/bridge/terminal)
