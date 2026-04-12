@@ -59,10 +59,17 @@ import com.hermesandroid.relay.ui.screens.ChatScreen
 import com.hermesandroid.relay.ui.screens.PairedDevicesScreen
 import com.hermesandroid.relay.ui.screens.SettingsScreen
 import com.hermesandroid.relay.ui.screens.TerminalScreen
+import com.hermesandroid.relay.ui.screens.VoiceSettingsScreen
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.TerminalViewModel
+import com.hermesandroid.relay.viewmodel.VoiceViewModel
+import com.hermesandroid.relay.audio.VoicePlayer
+import com.hermesandroid.relay.audio.VoiceRecorder
+import com.hermesandroid.relay.network.RelayVoiceClient
+import com.hermesandroid.relay.auth.AuthState
+import androidx.lifecycle.viewModelScope
 
 sealed class Screen(
     val route: String,
@@ -78,6 +85,7 @@ sealed class Screen(
     // Non-bottom-nav destinations — reached by explicit navigation, not the
     // NavigationBar. Paired Devices is opened from Settings → Connection.
     data object PairedDevices : Screen("paired_devices", "Paired Devices", Icons.Filled.Settings)
+    data object VoiceSettings : Screen("voice_settings", "Voice", Icons.Filled.Settings)
 }
 
 private val bottomNavScreens = listOf(
@@ -92,6 +100,7 @@ fun RelayApp() {
     val connectionViewModel: ConnectionViewModel = viewModel()
     val chatViewModel: ChatViewModel = viewModel()
     val terminalViewModel: TerminalViewModel = viewModel()
+    val voiceViewModel: VoiceViewModel = viewModel()
 
     // One-time init: the terminal channel ViewModel registers with the shared
     // multiplexer and observes the relay connection state so it can attach/
@@ -109,6 +118,35 @@ fun RelayApp() {
     var sessionResumed by remember { mutableStateOf(false) }
 
     val mediaContext = androidx.compose.ui.platform.LocalContext.current
+
+    // Voice pipeline wiring — mirrors ChatViewModel.initializeMedia (above).
+    // We build a dedicated OkHttpClient so voice requests don't contend with
+    // media fetches on the same dispatcher queue, then hand VoiceViewModel
+    // the client + recorder + player it needs for the turn state machine.
+    val voiceClient = remember {
+        RelayVoiceClient(
+            context = mediaContext,
+            okHttpClient = okhttp3.OkHttpClient.Builder()
+                .readTimeout(2, java.util.concurrent.TimeUnit.MINUTES)
+                .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                .build(),
+            relayUrlProvider = { connectionViewModel.relayUrl.value },
+            sessionTokenProvider = {
+                (connectionViewModel.authState.value as? AuthState.Paired)?.token
+            },
+        )
+    }
+    LaunchedEffect(Unit) {
+        val recorder = VoiceRecorder(mediaContext, voiceViewModel.viewModelScope)
+        val player = VoicePlayer()
+        voiceViewModel.initialize(
+            voiceClient = voiceClient,
+            chatViewModel = chatViewModel,
+            recorder = recorder,
+            player = player,
+        )
+    }
+
     LaunchedEffect(apiClient) {
         apiClient?.let { client ->
             chatViewModel.initialize(client, connectionViewModel.chatHandler)
@@ -306,6 +344,7 @@ fun RelayApp() {
                     ChatScreen(
                         chatViewModel = chatViewModel,
                         connectionViewModel = connectionViewModel,
+                        voiceViewModel = voiceViewModel,
                         maxBubbleWidth = maxBubbleWidth
                     )
                 }
@@ -323,7 +362,17 @@ fun RelayApp() {
                         connectionViewModel = connectionViewModel,
                         onNavigateToPairedDevices = {
                             navController.navigate(Screen.PairedDevices.route)
+                        },
+                        onNavigateToVoiceSettings = {
+                            navController.navigate(Screen.VoiceSettings.route)
                         }
+                    )
+                }
+                composable(Screen.VoiceSettings.route) {
+                    VoiceSettingsScreen(
+                        voiceViewModel = voiceViewModel,
+                        voiceClient = voiceClient,
+                        onBack = { navController.popBackStack() }
                     )
                 }
                 composable(Screen.PairedDevices.route) {

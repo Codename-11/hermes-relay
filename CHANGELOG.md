@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+- **Voice mode** — real-time voice conversation with your Hermes agent via the relay plugin. Tap the mic FAB in chat to enter voice mode: the sphere expands to fill the screen, listens while you speak, and performs the agent's response as it talks back. Uses the hermes-agent server's configured TTS/STT providers — no API keys on the phone.
+  - **Three interaction modes** — Tap-to-talk (default), Hold-to-talk, and Continuous (back-and-forth like a natural conversation)
+  - **Streaming TTS** — sentence-by-sentence synthesis starts playing the first sentence while the rest of the response is still being generated
+  - **Interruption** — tap the mic while the agent is speaking to stop TTS and start your next utterance
+  - **Sphere voice states** — MorphingSphere now has `Listening` (soft blue/purple, subtle breathing with your voice) and `Speaking` (vivid green/teal, dramatic core-warmth pulse with the agent's voice amplitude)
+  - **Voice settings screen** — Settings → Voice for interaction mode, silence threshold, and provider info from the relay
+  - **New relay endpoints** — `POST /voice/transcribe`, `POST /voice/synthesize`, `GET /voice/config` (bearer auth, same as `/media/*`)
+  - **6 TTS providers** via hermes-agent config (Edge TTS free default, ElevenLabs, OpenAI TTS, MiniMax, Mistral Voxtral, NeuTTS local)
+  - **5 STT providers** via hermes-agent config (local faster-whisper free default, local command, Groq free tier, OpenAI Whisper, Mistral Voxtral)
+  - Voice messages appear as normal chat messages in session history, so you can reload on another device and see the transcript
+
 ## [0.1.0] - 2026-04-07
 
 ### Added

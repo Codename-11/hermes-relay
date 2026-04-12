@@ -56,6 +56,10 @@ enum class SphereState {
     Thinking,
     /** Energy radiates outward, strong ripples, focused eye. Speaking. */
     Streaming,
+    /** Voice mode — listening to user. Cool palette, subtle amplitude-driven motion. */
+    Listening,
+    /** Voice mode — speaking to user. Warm core, dramatic amplitude-driven motion. */
+    Speaking,
     /** Red shift, erratic motion. Something wrong. */
     Error
 }
@@ -99,6 +103,20 @@ private fun paramsFor(state: SphereState) = when (state) {
         coreTightness = 0.60f, turbulenceAmp = 0.08f,
         rippleScale = 2.0f, heartbeatSpeed = 1.5f, radialFlowSpeed = 0.5f
     )
+    SphereState.Listening -> SphereParams(
+        // Calm base — voiceAmplitude modulates on top (see render loop).
+        breatheSpeed = 0.55f, breatheAmp = 0.035f,
+        lightSpeedX = 0.22f, lightSpeedY = 0.16f, lightInfluence = 0.38f,
+        coreTightness = 0.78f, turbulenceAmp = 0.05f,
+        rippleScale = 0.9f, heartbeatSpeed = 1.2f, radialFlowSpeed = 0.18f
+    )
+    SphereState.Speaking -> SphereParams(
+        // Assertive base — amplitude pushes it dramatically further.
+        breatheSpeed = 0.45f, breatheAmp = 0.05f,
+        lightSpeedX = 0.20f, lightSpeedY = 0.14f, lightInfluence = 0.30f,
+        coreTightness = 0.55f, turbulenceAmp = 0.07f,
+        rippleScale = 1.8f, heartbeatSpeed = 1.8f, radialFlowSpeed = 0.45f
+    )
     SphereState.Error -> SphereParams(
         breatheSpeed = 1.2f, breatheAmp = 0.03f,
         lightSpeedX = 0.7f, lightSpeedY = 0.6f, lightInfluence = 0.40f,
@@ -120,6 +138,17 @@ private fun colorsFor(state: SphereState) = when (state) {
         0.20f, 0.90f, 0.50f,   // green
         0.25f, 0.80f, 0.85f    // teal
     )
+    SphereState.Listening -> SphereColors(
+        // Cool soft blue/purple — cooler than Idle's green/purple.
+        0.35f, 0.55f, 0.95f,   // #597EF2 soft blue
+        0.65f, 0.45f, 0.95f    // #A573F2 soft purple
+    )
+    SphereState.Speaking -> SphereColors(
+        // Vibrant green/teal — same family as Streaming but punchier.
+        // The render loop pushes core toward white as amplitude peaks.
+        0.25f, 0.92f, 0.55f,   // #40EB8C vivid green
+        0.30f, 0.85f, 0.88f    // #4DD9E0 teal
+    )
     SphereState.Error -> SphereColors(
         0.90f, 0.30f, 0.25f,   // red
         0.85f, 0.50f, 0.20f    // orange
@@ -134,24 +163,70 @@ fun MorphingSphere(
     state: SphereState = SphereState.Idle,
     intensity: Float = 0f,
     toolCallBurst: Float = 0f,
+    voiceAmplitude: Float = 0f,
+    voiceMode: Boolean = false,
     fixedTime: Float? = null,
     fixedColorPhase: Float? = null
 ) {
+    // Clamp amplitude once — downstream math assumes 0..1.
+    val amp = voiceAmplitude.coerceIn(0f, 1f)
+
     // ── Animated state parameters (smooth 800ms transitions) ─────
     val targetP = remember(state) { paramsFor(state) }
     val targetC = remember(state) { colorsFor(state) }
     val spec = tween<Float>(800, easing = FastOutSlowInEasing)
 
-    val breatheSpeed by animateFloatAsState(targetP.breatheSpeed, spec, label = "bSpd")
+    // ── voiceMode expansion scalar ───────────────────────────────
+    // 1.0 = normal, ~1.08 = expanded (bounded to avoid data-ring overflow).
+    val voiceRadiusScale by animateFloatAsState(
+        targetValue = if (voiceMode) 1.08f else 1.0f,
+        animationSpec = tween(600, easing = FastOutSlowInEasing),
+        label = "voiceExpand"
+    )
+
+    val baseBreatheSpeed by animateFloatAsState(targetP.breatheSpeed, spec, label = "bSpd")
     val breatheAmp by animateFloatAsState(targetP.breatheAmp, spec, label = "bAmp")
     val lightSpeedX by animateFloatAsState(targetP.lightSpeedX, spec, label = "lsX")
     val lightSpeedY by animateFloatAsState(targetP.lightSpeedY, spec, label = "lsY")
     val lightInfluence by animateFloatAsState(targetP.lightInfluence, spec, label = "lInf")
     val coreTightness by animateFloatAsState(targetP.coreTightness, spec, label = "core")
-    val turbulenceAmp by animateFloatAsState(targetP.turbulenceAmp, spec, label = "turb")
+    val baseTurbulence by animateFloatAsState(targetP.turbulenceAmp, spec, label = "turb")
     val rippleScale by animateFloatAsState(targetP.rippleScale, spec, label = "rip")
     val heartbeatSpeed by animateFloatAsState(targetP.heartbeatSpeed, spec, label = "hb")
     val radialFlowSpeed by animateFloatAsState(targetP.radialFlowSpeed, spec, label = "rf")
+
+    // ── Voice amplitude modulation ────────────────────────────────
+    // Listening = subtle (≤30% boost); Speaking = dramatic (up to 3×).
+    // Idle/Thinking/Streaming/Error ignore amplitude — existing behavior preserved.
+    val breatheSpeed = when (state) {
+        SphereState.Listening -> lerp(baseBreatheSpeed, baseBreatheSpeed * 1.3f, amp * 0.5f)
+        SphereState.Speaking -> lerp(baseBreatheSpeed, baseBreatheSpeed * 2.0f, amp)
+        else -> baseBreatheSpeed
+    }
+    val turbulenceAmp = when (state) {
+        SphereState.Listening -> baseTurbulence + amp * 0.15f
+        SphereState.Speaking -> baseTurbulence + amp * 0.5f
+        else -> baseTurbulence
+    }
+    // Core warmth: 0.30 is the existing constant baked into the render loop's
+    // warmth term (see line where `warmth = (1f - normDist^2) * 0.12f` is mixed).
+    // Speaking pushes this multiplier from 0.3 → 1.0 as amplitude rises, driving
+    // the core bright→white. Listening holds at 0.3 (no change vs. other states).
+    val coreWarmth = when (state) {
+        SphereState.Speaking -> lerp(0.30f, 1.0f, amp)
+        else -> 0.30f
+    }
+    // Perimeter wobble — existing code uses a fixed 0.06 multiplier.
+    val wobbleAmplitude = when (state) {
+        SphereState.Listening -> 0.06f * (1f + amp * 0.3f)
+        SphereState.Speaking -> 0.06f * (1f + amp * 0.8f)
+        else -> 0.06f
+    }
+    // Data ring orbit speed — existing code uses `t * 0.4f`.
+    val dataRingSpeed = when (state) {
+        SphereState.Speaking -> 0.4f * (1f + amp * 3f)
+        else -> 0.4f
+    }
 
     val cr1 by animateFloatAsState(targetC.r1, spec, label = "cr1")
     val cg1 by animateFloatAsState(targetC.g1, spec, label = "cg1")
@@ -216,10 +291,12 @@ fun MorphingSphere(
         val cy = rows / 2f
         val charAspect = cellW / cellH
 
-        // Reduced from 0.72 so data ring (1.55x) fits within grid
+        // Reduced from 0.72 so data ring (1.55x) fits within grid.
+        // voiceRadiusScale is ~1.08 in voiceMode, 1.0 otherwise — bounded so the
+        // data ring outer edge (1.55x) still stays within the drawable region.
         val maxRadiusFromRows = (rows / 2f) * 0.60f
         val maxRadiusFromCols = (cols / 2f) * charAspect * 0.60f
-        val baseRadius = minOf(maxRadiusFromRows, maxRadiusFromCols)
+        val baseRadius = minOf(maxRadiusFromRows, maxRadiusFromCols) * voiceRadiusScale
         val t = time
 
         // ── Breathing ────────────────────────────────────────────
@@ -261,12 +338,12 @@ fun MorphingSphere(
                 val dist = sqrt(dx * dx + dy * dy)
                 val angle = atan2(dy, dx)
 
-                // ── Perimeter (subtle 6% wobble) ────────────────
+                // ── Perimeter (subtle 6% wobble — amplified by voice) ───
                 val perimeterNoise = fbm(
                     angle * 1.8f + t * 0.08f,
                     angle * 0.7f + t * 0.12f
                 ) * 2f - 1f
-                val distortedRadius = breathingRadius * (1f + perimeterNoise * 0.06f)
+                val distortedRadius = breathingRadius * (1f + perimeterNoise * wobbleAmplitude)
                 val glowRadius = distortedRadius * 1.35f
                 val dataRingInner = distortedRadius * 1.40f
                 val dataRingOuter = distortedRadius * 1.55f
@@ -355,8 +432,10 @@ fun MorphingSphere(
                     val alpha = ((brightness * 0.4f + 0.6f) * edgeFade * scanline)
                         .coerceIn(0.1f, 1f)
 
-                    // Core warmth (center bleeds towards white)
-                    val warmth = (1f - normDist * normDist) * 0.12f
+                    // Core warmth (center bleeds towards white).
+                    // coreWarmth is 0.30 for all non-voice states (→ 0.12 multiplier,
+                    // the historical value) and scales up to 1.0 when Speaking peaks.
+                    val warmth = (1f - normDist * normDist) * (coreWarmth * 0.40f)
                     val lightBoost = directionalLight * 0.08f
 
                     paint.color = android.graphics.Color.argb(
@@ -406,8 +485,9 @@ fun MorphingSphere(
 
                     val ringT = (dist - dataRingInner) / (dataRingOuter - dataRingInner)
 
-                    // Orbiting: offset angle by time (different layers at different speeds)
-                    val orbitAngle = angle - t * 0.4f + ringT * 1.5f
+                    // Orbiting: offset angle by time (different layers at different speeds).
+                    // dataRingSpeed is 0.4 default, spun up to ~1.6 at Speaking peak.
+                    val orbitAngle = angle - t * dataRingSpeed + ringT * 1.5f
                     // Sparsity: only render ~15% of ring positions
                     val ringNoise = fbm(
                         orbitAngle * 4f + t * 0.3f,
@@ -515,5 +595,50 @@ private fun PreviewError() {
 private fun PreviewCompact() {
     Box(Modifier.size(200.dp).background(Color(0xFF0D0D0D))) {
         MorphingSphere(Modifier.fillMaxSize(), fixedTime = 8f, fixedColorPhase = 2.0f)
+    }
+}
+
+@Preview(name = "Listening", showBackground = true, backgroundColor = 0xFF0A0A0A, widthDp = 360, heightDp = 640)
+@Composable
+fun MorphingSphereListeningPreview() {
+    Box(Modifier.fillMaxSize().background(Color(0xFF0A0A0A))) {
+        MorphingSphere(
+            modifier = Modifier.fillMaxSize(),
+            state = SphereState.Listening,
+            voiceAmplitude = 0.4f,
+            voiceMode = true,
+            fixedTime = 5f,
+            fixedColorPhase = 1.0f
+        )
+    }
+}
+
+@Preview(name = "Speaking (low)", showBackground = true, backgroundColor = 0xFF0A0A0A, widthDp = 360, heightDp = 640)
+@Composable
+fun MorphingSphereSpeakingLowPreview() {
+    Box(Modifier.fillMaxSize().background(Color(0xFF0A0A0A))) {
+        MorphingSphere(
+            modifier = Modifier.fillMaxSize(),
+            state = SphereState.Speaking,
+            voiceAmplitude = 0.2f,
+            voiceMode = true,
+            fixedTime = 5f,
+            fixedColorPhase = 2.0f
+        )
+    }
+}
+
+@Preview(name = "Speaking (peak)", showBackground = true, backgroundColor = 0xFF0A0A0A, widthDp = 360, heightDp = 640)
+@Composable
+fun MorphingSphereSpeakingPeakPreview() {
+    Box(Modifier.fillMaxSize().background(Color(0xFF0A0A0A))) {
+        MorphingSphere(
+            modifier = Modifier.fillMaxSize(),
+            state = SphereState.Speaking,
+            voiceAmplitude = 0.95f,
+            voiceMode = true,
+            fixedTime = 5f,
+            fixedColorPhase = 2.5f
+        )
     }
 }

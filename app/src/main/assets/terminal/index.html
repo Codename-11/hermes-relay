@@ -180,26 +180,56 @@
             }
         };
 
-        // Refit on viewport resize (IME show/hide, orientation change).
-        // Small debounce to avoid thrashing the layout during keyboard animations.
+        // Refit on any container size change. ResizeObserver is more reliable
+        // than `window.resize` on Android WebView — the window doesn't always
+        // fire `resize` when Compose resizes the parent View, so the initial
+        // fit can latch at rows=1 (before Compose has measured) and never
+        // recompute. ResizeObserver watches the element's content box directly
+        // and fires whenever Compose grows/shrinks the WebView. Without this,
+        // `ls` output scrolls straight off a 1-row viewport and users see
+        // "typed a command, everything cleared, no output".
         let resizeTimeout = null;
-        window.addEventListener('resize', function () {
+        const terminalEl = document.getElementById('terminal');
+        const scheduleFit = function () {
             if (resizeTimeout) clearTimeout(resizeTimeout);
             resizeTimeout = setTimeout(function () {
                 try { fitAddon.fit(); } catch (_) {}
             }, 80);
-        });
+        };
+        if (typeof ResizeObserver !== 'undefined') {
+            const resizeObserver = new ResizeObserver(scheduleFit);
+            resizeObserver.observe(terminalEl);
+        }
+        // Keep the window.resize listener too — it still fires on orientation
+        // change and covers edge cases where ResizeObserver isn't available.
+        window.addEventListener('resize', scheduleFit);
 
         // Signal readiness to Android once the initial fit has settled.
-        // Use requestAnimationFrame so the first measured cols/rows is the one we send.
+        // We wait for the first ResizeObserver callback (or fall back to a
+        // double rAF + delay) so the first cols/rows we send matches the
+        // actual laid-out container — not a transient 0×0 or 1-row state.
+        let readyFired = false;
+        const fireReady = function () {
+            if (readyFired) return;
+            if (term.rows < 2) {
+                // Still not laid out — try again in a frame.
+                requestAnimationFrame(fireReady);
+                return;
+            }
+            readyFired = true;
+            if (window.AndroidBridge && window.AndroidBridge.onReady) {
+                window.AndroidBridge.onReady(term.cols, term.rows);
+            }
+        };
         requestAnimationFrame(function () {
             try { fitAddon.fit(); } catch (_) {}
-            requestAnimationFrame(function () {
-                if (window.AndroidBridge && window.AndroidBridge.onReady) {
-                    window.AndroidBridge.onReady(term.cols, term.rows);
-                }
-            });
+            requestAnimationFrame(fireReady);
         });
+
+        // Diagnostic hook — Kotlin can read back the current grid size.
+        window.getTerminalGeometry = function () {
+            return JSON.stringify({ cols: term.cols, rows: term.rows });
+        };
     })();
     </script>
 </body>

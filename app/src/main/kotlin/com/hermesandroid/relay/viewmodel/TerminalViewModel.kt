@@ -128,6 +128,7 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
 
     /** WebView booted and knows its container size in cells. Time to attach. */
     fun onTerminalReady(cols: Int, rows: Int) {
+        Log.i(TAG, "onTerminalReady: cols=$cols rows=$rows")
         _state.update { it.copy(cols = cols, rows = rows) }
         if (connectionState?.value == ConnectionState.Connected) {
             sendAttach(cols, rows)
@@ -204,6 +205,7 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
     fun resize(cols: Int, rows: Int) {
         val current = _state.value
         if (current.cols == cols && current.rows == rows) return
+        Log.i(TAG, "resize: cols=$cols rows=$rows (was ${current.cols}x${current.rows})")
         _state.update { it.copy(cols = cols, rows = rows) }
         if (current.attached) {
             sendEnvelope("terminal.resize", buildJsonObject {

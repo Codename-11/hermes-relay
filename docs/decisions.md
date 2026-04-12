@@ -475,3 +475,90 @@ Adopting from ARC's workflow patterns:
 2. **Release workflow:** Tag `v*` → version validation (build.gradle.kts vs tag) → signed APK → GitHub Release
 3. **Concurrency groups:** Cancel in-progress CI on new push to same branch
 4. **Dependabot:** Auto-merge minor/patch dependency updates
+
+---
+
+## Voice Mode — Architecture
+
+**Context:** We wanted real-time voice conversation with the Hermes agent — user speaks, agent listens, agent speaks back, orb reacts. Hermes-agent has six TTS providers and five STT providers fully implemented in `tools/tts_tool.py` and `tools/transcription_tools.py`, plus a CLI `voice_mode.py` that uses them for push-to-talk — but none of it is exposed via the WebAPI server at `:8642`. The phone has no way to call voice functions over HTTP.
+
+**The four decisions:**
+
+### 1. Voice endpoints live on the relay, not upstream hermes-agent
+
+Three options were considered:
+
+1. **Patch upstream `gateway/platforms/api_server.py`** — add `/api/voice/transcribe` / `/api/voice/synthesize` routes directly. Cleanest long-term, but requires upstream PRs, version pinning, and blocks shipping voice until upstream merges. Rejected for this cut.
+2. **Relay plugin hosts the endpoints** — `plugin/relay/voice.py` imports `tools.tts_tool.text_to_speech_tool` and `tools.transcription_tools.transcribe_audio` directly from the hermes-agent venv (where the relay is editable-installed) and wraps them in async handlers. Chosen.
+3. **Phone calls provider APIs directly** — ElevenLabs / OpenAI / Groq SDKs on Android. Rejected: would require API keys stored on the phone, different providers per-device, no unified config, and the phone would need to replicate the provider-selection logic that `tts_tool.py` / `transcription_tools.py` already implement.
+
+**Why (2):**
+- The relay already runs inside the hermes-agent venv (editable install per `install.sh` — `pip show hermes-relay` confirms). `from tools.tts_tool import text_to_speech_tool` just works.
+- Provider config (`tts:` and `stt:` sections) is already in `~/.hermes/config.yaml` — the tools read it internally. The phone gets whatever provider the operator configured on the server, with zero per-device keys.
+- No upstream dependency. Ships as part of hermes-relay; updates via `git pull` in the plugin clone.
+- If upstream later adds native voice endpoints to `api_server.py`, the relay can switch to proxying without phone changes.
+
+**Trade-offs accepted:**
+- Uses private upstream helpers (`_load_tts_config`, `_load_stt_config`) for the `/voice/config` endpoint because they're the cleanest way to report what's configured. Marked clearly as private/unstable in the handler — if upstream refactors these, our `/voice/config` response shape is the only thing that needs a patch.
+- Voice endpoints fail with 503 on servers where the hermes-agent venv doesn't have the providers' optional deps installed. Documented — operator's responsibility to run `pip install "hermes-relay[voice]"` or the equivalent.
+
+### 2. Buffer-not-stream TTS responses (sentence-level client chunking)
+
+The plan initially suggested streaming audio/opus over chunked HTTP — sentence-by-sentence during agent streaming. Two problems:
+
+- `text_to_speech_tool` is **sync** and returns a file **path**, not a chunked byte generator. Streaming output would require rewriting the function or calling provider SDKs directly (MiniMax/ElevenLabs both support streaming, Edge TTS doesn't, NeuTTS doesn't).
+- Android `MediaPlayer` prefers complete files — chunked Opus works but requires AudioTrack + manual Opus decode, which is a different layer of complexity.
+
+**Decision:** The relay returns whole `.mp3` files per request. The client does sentence-boundary detection on the SSE chat stream (`VoiceViewModel.startStreamObserver` diffs `messages: StateFlow`), extracts complete sentences as they arrive, POSTs each sentence to `/voice/synthesize`, queues the resulting mp3 file into a `Channel<String>`, and a consumer coroutine plays them one after another with `awaitCompletion` between. First audio plays within one sentence of the agent starting to respond — effectively the same UX as true streaming.
+
+**Why:**
+- Zero upstream changes required.
+- Works across all six TTS providers uniformly (not just the 3 with streaming SDKs).
+- `MediaPlayer` handles mp3 natively — no AudioTrack + decoder ceremony.
+- Bad sentences (failed TTS) don't corrupt the stream — the queue just skips.
+
+**Trade-off:** If the agent response is one giant sentence, latency is dominated by that sentence's synthesis time. In practice responses have frequent punctuation so this is a non-issue.
+
+### 3. `.m4a` (MPEG-4/AAC), not `.webm`, for recorder output
+
+The plan suggested WebM/Opus from `MediaRecorder` (API 29+). Rejected:
+
+- WebM support in Android's `MediaRecorder` arrived in API 29 but encoder availability is vendor-dependent on older builds. AAC in MPEG-4 is guaranteed since API 18 and universally supported.
+- OpenAI's `whisper-1` and Groq's `whisper-large-v3-turbo` both accept `.m4a` / `.mp4` via the upstream `_validate_audio_file` path in `transcribe_audio`.
+- Faster-whisper (local STT default) transparently handles m4a via ffmpeg.
+- M4a at 16kHz/64kbps mono is ~8KB/second — small enough for LAN upload, indistinguishable from Opus at that sample rate.
+
+Use `.m4a`.
+
+### 4. ChatViewModel integration via observation, not callbacks
+
+The plan called for adding a `// VOICE HOOK` callback to `ChatViewModel` so `VoiceViewModel` could see streaming deltas in real time and feed them to the sentence-detection buffer.
+
+**Rejected.** Instead `VoiceViewModel.startStreamObserver` collects `chatVm.messages: StateFlow<List<ChatMessage>>` (already public on `ChatHandler`) and diffs the last assistant message's content length on each emission to extract streaming deltas. Zero changes to `ChatViewModel` or `ChatHandler`.
+
+**Why:**
+- Keeps chat code decoupled from voice. If voice mode is ripped out tomorrow, `ChatViewModel` is untouched.
+- Observes the same state the chat UI observes — no divergence risk.
+- Transcribed user text routes through the existing `chatVm.sendMessage(text)` path, so voice utterances appear as normal user messages in chat history. Load the session on another device and you see the transcript.
+
+**Trade-off documented in a KDoc comment:** relies on the "last `isStreaming=true` message is the current turn" invariant. If `ChatViewModel` ever streams multiple assistant messages concurrently (multi-agent hand-off, for example) this needs a dedicated per-turn flow. Flagged for Phase 3+ review.
+
+### Alternatives explicitly rejected
+
+- **Android `SpeechRecognizer`** (on-device Google speech recognition) for STT — would bypass the relay entirely and lose the "server provider" consistency. Also Google-Play-Services-dependent, which contradicts the "works on degoogled Android" goal.
+- **In-app TTS** (`android.speech.tts.TextToSpeech`) — same problem, plus vastly inferior voice quality compared to ElevenLabs / OpenAI. No synergy with the server's provider config.
+- **Dedicated voice WebSocket channel on the relay** alongside chat/terminal/bridge — heavier than REST for a request-response modality with no true bidirectional streaming needs. REST + SSE (via the existing chat path) is sufficient.
+- **Sphere `voiceMode` expansion to 1.0×** (plan target) — physically impossible with current `baseRadius`/data-ring geometry. Capped at 1.08×, which is still perceptually "bigger" and preserves the data ring's orbit math. Documented in the MorphingSphere KDoc.
+
+**References:**
+
+- `plugin/relay/voice.py` — `VoiceHandler`, `handle_transcribe`, `handle_synthesize`, `handle_voice_config`, `_require_bearer_session`
+- `plugin/relay/server.py` — route registration alongside `/media/*`
+- `plugin/tests/test_voice_routes.py` — 14 unit tests, `unittest`-based (pytest conftest issue documented in `CLAUDE.md`)
+- `app/src/main/kotlin/.../audio/VoiceRecorder.kt` — MediaRecorder amplitude StateFlow
+- `app/src/main/kotlin/.../audio/VoicePlayer.kt` — MediaPlayer + Visualizer amplitude StateFlow with OEM fallback
+- `app/src/main/kotlin/.../network/RelayVoiceClient.kt` — OkHttp multipart + JSON clients
+- `app/src/main/kotlin/.../viewmodel/VoiceViewModel.kt` — turn state machine, sentence detection, TTS queue consumer, `ChatViewModel` observation pattern
+- `app/src/main/kotlin/.../ui/components/VoiceModeOverlay.kt` — full-screen overlay, VoiceState→SphereState mapping, three interaction modes
+- `app/src/main/kotlin/.../ui/components/MorphingSphere.kt` — Listening/Speaking states, `voiceAmplitude`/`voiceMode` params, @Preview functions for iteration
+- Obsidian plan: `3. System/Projects/Hermes-Relay/Plans/Voice Mode.md`

@@ -4,6 +4,10 @@
 
 Type your message in the input field and tap the send button (or press Enter on a hardware keyboard). Messages stream in real-time via Server-Sent Events. There is a 4096 character limit with a counter shown near the limit. Haptic feedback fires on send.
 
+## Voice Mode
+
+Tap the microphone FAB in the bottom-right corner to switch into voice mode. The sphere expands to fill the screen, listens while you speak, and performs the agent's response as it streams back. Three interaction modes (tap, hold, continuous) are in **Settings → Voice**. Transcribed utterances appear in your chat history as normal user messages. Full details and troubleshooting: [Voice Mode](/features/voice).
+
 ## Empty State
 
 When no messages exist, the chat shows a logo with "Start a conversation" and suggestion chips. Tapping a chip populates the input field.
