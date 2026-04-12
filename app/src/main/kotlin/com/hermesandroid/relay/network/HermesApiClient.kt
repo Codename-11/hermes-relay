@@ -51,6 +51,53 @@ enum class ChatMode {
 }
 
 /**
+ * Per-endpoint capability snapshot. Populated by [HermesApiClient.probeCapabilities].
+ *
+ * The Android client uses this to pick the best chat path automatically when
+ * `streamingEndpoint = "auto"`. The bootstrap-injected vanilla-upstream case
+ * is the interesting one: `sessionsApi=true` (we injected it) but
+ * `sessionsChatStream=false` (we deliberately didn't inject the chat
+ * handler — runs is better). The auto-resolver picks `runs` for chat in that
+ * case while still using sessions endpoints for browse/rename/delete.
+ */
+data class ServerCapabilities(
+    /** `/api/sessions` (CRUD) — true on fork, upstream-merged, OR bootstrap-injected. */
+    val sessionsApi: Boolean,
+    /** `/api/sessions/{id}/chat/stream` (SSE) — true ONLY on fork or upstream-merged. */
+    val sessionsChatStream: Boolean,
+    /** `/v1/runs` (structured-event SSE) — standard upstream chat path. */
+    val runs: Boolean,
+    /** `/v1/chat/completions` — OpenAI-compatible fallback. */
+    val portable: Boolean,
+    /** `/health` — basic reachability. */
+    val healthy: Boolean,
+) {
+    /** Resolve `streamingEndpoint = "auto"` to the best concrete choice. */
+    fun preferredChatEndpoint(): String = when {
+        sessionsChatStream -> "sessions"
+        runs -> "runs"
+        else -> "sessions"  // last-resort: try sessions, will surface a clear error
+    }
+
+    fun toChatMode(): ChatMode = when {
+        !healthy -> ChatMode.DISCONNECTED
+        sessionsApi -> ChatMode.ENHANCED_HERMES
+        portable || runs -> ChatMode.PORTABLE
+        else -> ChatMode.DISCONNECTED
+    }
+
+    companion object {
+        val DISCONNECTED = ServerCapabilities(
+            sessionsApi = false,
+            sessionsChatStream = false,
+            runs = false,
+            portable = false,
+            healthy = false,
+        )
+    }
+}
+
+/**
  * Direct HTTP/SSE client for the Hermes API Server.
  *
  * Session CRUD via /api/sessions REST endpoints.
@@ -770,37 +817,99 @@ class HermesApiClient(
 
     /**
      * Probe the server to determine which chat API is available.
-     * Checks /health, then /api/sessions (enhanced), then /v1/models (portable).
+     * Convenience wrapper around [probeCapabilities] that collapses the
+     * per-endpoint result into the older 3-state ChatMode enum for callers
+     * that don't need the detail.
      */
-    suspend fun detectChatMode(): ChatMode = withContext(Dispatchers.IO) {
-        // 1. Basic connectivity
-        try {
-            val healthReq = authRequest("$baseUrl/health").get().build()
-            client.newCall(healthReq).execute().use { response ->
-                if (!response.isSuccessful) return@withContext ChatMode.DISCONNECTED
+    suspend fun detectChatMode(): ChatMode = probeCapabilities().toChatMode()
+
+    /**
+     * Probe each endpoint we care about and return a per-route capability
+     * snapshot. This is the source of truth for "which chat path should we
+     * use" — see [ServerCapabilities.preferredChatEndpoint].
+     *
+     * Probe order:
+     *   1. `/health` — if this fails, everything else is moot.
+     *   2. `/api/sessions?limit=1` — sessions CRUD (true on fork OR
+     *      bootstrap-injected vanilla upstream).
+     *   3. `OPTIONS /api/sessions/probe/chat/stream` — chat-stream handler
+     *      presence. We use OPTIONS because the actual handler only accepts
+     *      POST. aiohttp returns 405 (Method Not Allowed) when the route is
+     *      registered but the method doesn't match, and 404 when the route
+     *      doesn't exist at all. The 405 is the positive signal we want.
+     *   4. `OPTIONS /v1/runs` — runs endpoint presence (same 405 vs 404
+     *      logic).
+     *   5. `/v1/models` — OpenAI-compat reachability.
+     *
+     * All probes are bearer-auth'd. A 401 still tells us "endpoint exists,
+     * just not authorised right now" — that counts as present for capability
+     * purposes, since the user will retry once auth is fixed.
+     */
+    suspend fun probeCapabilities(): ServerCapabilities = withContext(Dispatchers.IO) {
+        // 1. Health
+        val healthy = try {
+            val req = authRequest("$baseUrl/health").get().build()
+            client.newCall(req).execute().use { it.isSuccessful }
+        } catch (_: Exception) {
+            false
+        }
+        if (!healthy) return@withContext ServerCapabilities.DISCONNECTED
+
+        // 2. Sessions CRUD
+        val sessionsApi = try {
+            val req = authRequest("$baseUrl/api/sessions?limit=1").get().build()
+            client.newCall(req).execute().use { response ->
+                // 200 = present + authed; 401 = present but not authed
+                response.code in setOf(200, 401)
             }
         } catch (_: Exception) {
-            return@withContext ChatMode.DISCONNECTED
+            false
         }
 
-        // 2. Try enhanced sessions API
-        try {
-            val sessionsReq = authRequest("$baseUrl/api/sessions?limit=1").get().build()
-            client.newCall(sessionsReq).execute().use { response ->
-                if (response.isSuccessful) return@withContext ChatMode.ENHANCED_HERMES
+        // 3. Sessions chat stream — OPTIONS probe so we don't kick off a real
+        //    chat. aiohttp returns 405 when the path is registered but the
+        //    method isn't allowed (POST-only), and 404 when the path is
+        //    unknown. 405 = endpoint exists.
+        val sessionsChatStream = try {
+            val req = authRequest("$baseUrl/api/sessions/probe/chat/stream")
+                .method("OPTIONS", null)
+                .build()
+            client.newCall(req).execute().use { response ->
+                response.code in setOf(200, 401, 405)
             }
-        } catch (_: Exception) { /* fall through */ }
+        } catch (_: Exception) {
+            false
+        }
 
-        // 3. Try OpenAI-compatible models endpoint
-        try {
-            val modelsReq = authRequest("$baseUrl/v1/models").get().build()
-            client.newCall(modelsReq).execute().use { response ->
-                if (response.isSuccessful) return@withContext ChatMode.PORTABLE
+        // 4. /v1/runs — same OPTIONS-probe trick.
+        val runs = try {
+            val req = authRequest("$baseUrl/v1/runs")
+                .method("OPTIONS", null)
+                .build()
+            client.newCall(req).execute().use { response ->
+                response.code in setOf(200, 401, 405)
             }
-        } catch (_: Exception) { /* fall through */ }
+        } catch (_: Exception) {
+            false
+        }
 
-        // Server is reachable but neither API is available
-        ChatMode.DISCONNECTED
+        // 5. /v1/models — OpenAI-compat reachability
+        val portable = try {
+            val req = authRequest("$baseUrl/v1/models").get().build()
+            client.newCall(req).execute().use { response ->
+                response.code in setOf(200, 401)
+            }
+        } catch (_: Exception) {
+            false
+        }
+
+        ServerCapabilities(
+            sessionsApi = sessionsApi,
+            sessionsChatStream = sessionsChatStream,
+            runs = runs,
+            portable = portable,
+            healthy = true,
+        )
     }
 
     // --- Lifecycle ---

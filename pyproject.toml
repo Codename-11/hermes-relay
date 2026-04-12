@@ -33,9 +33,15 @@ tmux = ["libtmux>=0.37.0"]  # optional — enables persistent tmux sessions in t
 # keeps working via the compat layer.
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["plugin*", "relay_server*"]
+include = ["plugin*", "relay_server*", "hermes_relay_bootstrap*"]
 exclude = ["plugin.tests*", "plugin.skills*", "app*", "docs*", "user-docs*", "scripts*"]
 
 [tool.setuptools.package-data]
 plugin = ["skill.md", "plugin.yaml"]
 "plugin.skills" = ["android/*.md"]
+
+# Note: `hermes_relay_bootstrap.pth` at the repo root is NOT installed by
+# `pip install -e` automatically — setuptools' data-files doesn't ship to
+# site-packages reliably for editable installs. install.sh copies the .pth
+# file into the venv's site-packages as a separate step. The bootstrap
+# package itself (hermes_relay_bootstrap/) IS installed via the find above.

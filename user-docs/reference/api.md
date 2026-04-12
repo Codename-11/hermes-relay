@@ -14,6 +14,12 @@ http(s)://<server>:8642
 Authorization: Bearer <API_SERVER_KEY>   (optional — only if server has a key configured)
 ```
 
+## How endpoints get served
+
+Installing the plugin via `install.sh` is enough to make all of the endpoints below work — including the management ones (`/api/sessions/*`, `/api/memory`, `/api/skills`, `/api/config`, `/api/available-models`). The plugin wires the gateway up at install time so these are served on the same `:8642` host as the standard `/v1/*` endpoints, with the same `Authorization: Bearer …` auth.
+
+**Chat streaming uses standard `/v1/runs`** by default — it emits structured `tool.started`/`tool.completed` SSE events for live tool progress cards in the Android app. The app's `Settings → Chat → Streaming endpoint = "Auto"` (default) probes per-endpoint capability and picks the best chat path automatically; you can manually force `Sessions` or `Runs` mode for debugging.
+
 ## Endpoints
 
 ### Health Check

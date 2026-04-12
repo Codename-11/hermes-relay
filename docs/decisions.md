@@ -80,7 +80,13 @@ The app supports two streaming endpoints, selectable in Settings:
 | **Sessions** (`/api/sessions/{id}/chat/stream`) | Inline text annotations (`` `💻 terminal` ``) — client parses from markdown | Hermes-native SSE (assistant.delta, tool.progress, etc.) or OpenAI-format (delta.content) |
 | **Runs** (`/v1/runs` + `/v1/runs/{run_id}/events`) | **Structured events** (tool.started, tool.completed) — real-time tool cards | Hermes lifecycle events (message.delta, tool.started, tool.completed, run.completed) |
 
-**Important upstream note:** The `/api/sessions` CRUD endpoints may not exist in all hermes-agent versions. The upstream codebase registers `/v1/chat/completions`, `/v1/responses`, and `/v1/runs` as the standard endpoints. Session management via `/api/sessions` may be version-specific (confirmed working in v0.7.0). The app's `detectChatMode()` probes the server and falls back gracefully.
+**Important upstream note:** The `/api/sessions` CRUD endpoints are not in vanilla upstream hermes-agent. They are provided by one of three mechanisms:
+
+1. The Codename-11 fork (`feat/api-server-enhancements` branch, deployed on the `axiom` deploy branch). Submitted upstream as PR [#8556](https://github.com/NousResearch/hermes-agent/pull/8556).
+2. **Bootstrap injection** — `hermes_relay_bootstrap/` ships with the plugin and runs at Python interpreter startup (via a `.pth` file in the venv site-packages). It monkey-patches `aiohttp.web.Application` to add the management endpoints to upstream's `APIServerAdapter` at the moment it builds its app. See ADR 8 below.
+3. Once PR #8556 merges, upstream-merged. The bootstrap detects this and no-ops.
+
+The app's `probeCapabilities()` returns a per-endpoint snapshot, and `ConnectionViewModel.resolveStreamingEndpoint()` collapses `streamingEndpoint = "auto"` (the default for new installs) to a concrete `"sessions"` or `"runs"` choice based on what the server actually exposes.
 
 **Tool call transparency:** In `/v1/chat/completions` streaming, tool calls are NOT emitted as separate SSE events. They are injected as inline markdown text (e.g., `` `💻 pwd` ``). The app's annotation parser (`ChatHandler.parseAnnotationLine`) detects these and renders them as tool progress cards. The `/v1/runs` endpoint is the only path that provides structured `tool.started`/`tool.completed` events.
 
@@ -475,6 +481,48 @@ Adopting from ARC's workflow patterns:
 2. **Release workflow:** Tag `v*` → version validation (build.gradle.kts vs tag) → signed APK → GitHub Release
 3. **Concurrency groups:** Cancel in-progress CI on new push to same branch
 4. **Dependabot:** Auto-merge minor/patch dependency updates
+
+### 16. Runtime API Server Patch via .pth Bootstrap (2026-04-12)
+
+**Context:** The Codename-11 fork of hermes-agent (`feat/api-server-enhancements` branch) adds ~14 management endpoints — `/api/sessions/*` CRUD, `/api/memory`, `/api/skills`, `/api/config`, `/api/available-models` — that the Android app depends on for its sessions browser, personality picker, command palette, and history-on-restart. These are submitted upstream as PR [#8556](https://github.com/NousResearch/hermes-agent/pull/8556) but not yet merged. Until then, users running vanilla upstream hermes-agent + our plugin would lose these features and see a blank chat window when reopening the app to a previous session.
+
+We considered four options:
+- **A. Stay fork-only.** Reject vanilla upstream users until PR #8556 lands. Penalises onboarding.
+- **B. Read-only sessions browser via plugin relay.** Add `GET /api/sessions/*` to the relay at port 8767. Forces the client to know which URL each operation goes to.
+- **C. Full parity by porting all 800 lines onto the plugin relay.** Same architectural pollution as B, plus duplicates ~250 lines of chat-stream handler with cross-cutting `_create_agent` / `run_conversation` dependencies that the fork may have implicitly modified.
+- **D. Runtime injection via Python interpreter startup hook.** Ship a `.pth` file in the venv site-packages that imports a bootstrap module, which installs a `sys.meta_path` finder for `aiohttp.web`. When the gateway eventually imports `aiohttp.web`, our finder wraps the loader and replaces `web.Application` with a thin subclass. The subclass overrides `__setitem__` to detect `app["api_server_adapter"] = self` (the line in upstream's `connect()` that gives us a reference to the adapter while the router is still mutable). At that point we feature-detect by route path and bind our extra handlers directly onto the same router the gateway is in the middle of populating.
+
+**Decision: D, scoped to management endpoints only.** The chat-stream handler is intentionally NOT injected — chat goes through standard upstream `/v1/runs`, which already emits structured `tool.started`/`tool.completed` events. This avoids touching `_create_agent` / `run_conversation` (the fork's riskiest cross-cutting dependencies) and is arguably an upgrade — `/v1/runs` has live tool events whereas the sessions chat-stream path required a post-stream message-history reload to render tool cards.
+
+**Why this is the right answer despite being a clever hack:**
+
+1. **Zero modifications to hermes-agent's filesystem.** `git pull` / `hermes update` see no local changes, so they always work cleanly. The patch lives entirely in `hermes_relay_bootstrap/` inside our own repo.
+2. **Single-file containment of all ported logic.** `_handlers.py` is 500 lines of straight-line aiohttp handler code with explicit `adapter` parameters (closures, not bound methods). Easy to audit, easy to delete.
+3. **Feature detection by route path, not method name.** The bootstrap checks if `/api/sessions` is already in the router and no-ops if so. This means fork users, bootstrap-injected vanilla-upstream users, AND post-PR-#8556 upstream-merged users all run safely with the bootstrap installed. Three of the four valid combinations require zero changes; only the bootstrap-injected one actively patches.
+4. **Trust model already established.** The user installed our plugin into their hermes-agent venv. They've already consented to having the plugin import hermes-agent internals (it does this for relay tools, voice endpoints, media registry). Monkey-patching `aiohttp.web.Application` is in the same trust bucket.
+5. **Trivial removal.** When PR #8556 reaches a released hermes-agent version: delete `hermes_relay_bootstrap/`, delete the `.pth` from `install.sh` step 2, bump plugin version. The Android client's capability detection still works because it probes routes by path, not by source.
+6. **`/v1/runs` is genuinely better for chat than `/api/sessions/{id}/chat/stream`.** It's standard upstream, supports `X-Hermes-Session-Id` for continuation, and emits live structured tool events. The fork's chat handler exists because upstream didn't HAVE this clean structured-event runs API at the time the fork was cut — but upstream does now.
+
+**The Android client adapts via `streamingEndpoint = "auto"`.** New `ServerCapabilities` data class returned by `HermesApiClient.probeCapabilities()` captures per-endpoint presence (`sessionsApi`, `sessionsChatStream`, `runs`, `portable`, `healthy`). `ConnectionViewModel.resolveStreamingEndpoint()` collapses `"auto"` to `"sessions"` (when chat-stream handler is present, i.e. fork or upstream-merged) or `"runs"` (otherwise, i.e. bootstrap-injected vanilla upstream). The setting still supports manual `"sessions"` / `"runs"` overrides for debugging.
+
+**Risks accepted:**
+- **Plugin load order** — verified: `.pth` files are processed by Python's `site` module BEFORE any application code runs, so our import hook is in place before hermes-agent imports `aiohttp.web`.
+- **Upstream refactor of the route-registration block in `connect()`** — handled by feature detection on route path. Worst case: bootstrap logs a warning and gateway runs without injected routes. The Android client falls back to `/v1/runs` automatically.
+- **Editable pip install doesn't ship `.pth` files reliably** — verified empirically (test in `/tmp/pth-test` on the server during scoping). Solved by `install.sh` copying the `.pth` directly into the venv's `site-packages/` after `pip install -e`.
+
+**File locations:**
+- `hermes_relay_bootstrap/__init__.py` — installs the meta_path finder (~30 lines)
+- `hermes_relay_bootstrap/_patch.py` — `_AioHttpWebFinder`, `_PatchingLoader`, `_PatchedApplication`, `_maybe_register_routes` (~170 lines)
+- `hermes_relay_bootstrap/_handlers.py` — 14 ported handlers + helpers (~500 lines)
+- `hermes_relay_bootstrap.pth` — single line: `import hermes_relay_bootstrap`
+- `install.sh` step 2 — copies the `.pth` into the venv site-packages
+
+**Removal path** (when PR #8556 lands and reaches a released hermes-agent):
+1. Delete `hermes_relay_bootstrap/` directory
+2. Delete `hermes_relay_bootstrap.pth` from repo root
+3. Remove the `.pth` drop block from `install.sh` step 2
+4. Update CLAUDE.md to drop the bootstrap reference
+5. The Android client `probeCapabilities()` and `streamingEndpoint = "auto"` plumbing stays — it's permanent infrastructure that handles mixed-version deployments.
 
 ---
 

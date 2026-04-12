@@ -24,6 +24,7 @@ import com.hermesandroid.relay.network.ChatMode
 import com.hermesandroid.relay.network.ConnectionManager
 import com.hermesandroid.relay.network.ConnectionState
 import com.hermesandroid.relay.network.HermesApiClient
+import com.hermesandroid.relay.network.ServerCapabilities
 import com.hermesandroid.relay.network.RelayHttpClient
 import com.hermesandroid.relay.network.handlers.ChatHandler
 import com.hermesandroid.relay.util.MediaCacheWriter
@@ -170,6 +171,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     private val _chatMode = MutableStateFlow(ChatMode.DISCONNECTED)
     val chatMode: StateFlow<ChatMode> = _chatMode.asStateFlow()
 
+    // Per-endpoint capability snapshot from the most recent probe. Used by
+    // ChatViewModel to resolve `streamingEndpoint = "auto"` to a concrete
+    // sessions/runs choice without round-tripping to the network on every
+    // send. Refreshed inside `rebuildApiClient()`.
+    private val _serverCapabilities = MutableStateFlow(ServerCapabilities.DISCONNECTED)
+    val serverCapabilities: StateFlow<ServerCapabilities> = _serverCapabilities.asStateFlow()
+
     // Chat is ready when API client exists and server is reachable
     val chatReady: StateFlow<Boolean> = combine(_apiClient, _apiServerReachable) { client, reachable ->
         client != null && reachable
@@ -296,10 +304,19 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    // Streaming endpoint: "sessions" = /api/sessions/{id}/chat/stream, "runs" = /v1/runs
+    // Streaming endpoint preference. Three values:
+    //   "auto"     — pick based on per-endpoint capability detection (default
+    //                for new installs as of v0.3.0). Resolves to "sessions"
+    //                when the server has /api/sessions/{id}/chat/stream
+    //                (fork or upstream-merged), otherwise "runs".
+    //   "sessions" — force /api/sessions/{id}/chat/stream
+    //   "runs"     — force /v1/runs
+    //
+    // Existing users keep whatever they previously chose. Only fresh installs
+    // (no value persisted yet) get the new "auto" default.
     val streamingEndpoint: StateFlow<String> = application.relayDataStore.data
-        .map { it[KEY_STREAMING_ENDPOINT] ?: "sessions" }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, "sessions")
+        .map { it[KEY_STREAMING_ENDPOINT] ?: "auto" }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "auto")
 
     fun setStreamingEndpoint(endpoint: String) {
         viewModelScope.launch {
@@ -307,6 +324,19 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 prefs[KEY_STREAMING_ENDPOINT] = endpoint
             }
         }
+    }
+
+    /**
+     * Resolve the user's `streamingEndpoint` preference to a concrete value
+     * based on the latest capability probe. Returns "sessions" or "runs"
+     * (never "auto"). Used by ChatViewModel right before kicking off a stream.
+     *
+     * - "sessions" / "runs" pass through unchanged (manual override wins).
+     * - "auto" → reads `serverCapabilities.value.preferredChatEndpoint()`.
+     */
+    fun resolveStreamingEndpoint(preference: String): String = when (preference) {
+        "sessions", "runs" -> preference
+        else -> _serverCapabilities.value.preferredChatEndpoint()
     }
 
     // Parse tool annotations from text markers toggle
@@ -524,14 +554,17 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             oldClient?.shutdown()
             _apiServerReachable.value = client.checkHealth()
 
-            // Detect chat mode
-            val mode = client.detectChatMode()
-            _chatMode.value = mode
+            // Probe per-endpoint capabilities. The result drives both the
+            // legacy chatMode flow and the auto-resolver in ChatViewModel.
+            val caps = client.probeCapabilities()
+            _serverCapabilities.value = caps
+            _chatMode.value = caps.toChatMode()
         } else {
             _apiClient.value = null
             oldClient?.shutdown()
             _apiServerReachable.value = false
             _chatMode.value = ChatMode.DISCONNECTED
+            _serverCapabilities.value = ServerCapabilities.DISCONNECTED
         }
     }
 

@@ -125,8 +125,18 @@ class ChatViewModel : ViewModel() {
     /** Whether to include the brief app context system message */
     var appContextEnabled: Boolean = true
 
-    /** Streaming endpoint: "sessions" or "runs" */
-    var streamingEndpoint: String = "sessions"
+    /**
+     * Streaming endpoint to use for the next chat turn. Always one of
+     * "sessions" or "runs" — never "auto", since the auto-resolver in
+     * ConnectionViewModel.resolveStreamingEndpoint() collapses "auto" to
+     * a concrete value before this field is written from RelayApp.
+     *
+     * Defaults to "runs" so that a fresh ChatViewModel (before RelayApp
+     * pushes the resolved value) prefers the standard upstream chat path.
+     * That's the safer fallback than the previous "sessions" default,
+     * which would 404 on vanilla upstream installs.
+     */
+    var streamingEndpoint: String = "runs"
 
     fun selectPersonality(name: String) {
         _selectedPersonality.value = name

@@ -61,14 +61,16 @@ On the machine running your Hermes agent:
 curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
 ```
 
-The installer clones Hermes-Relay to `~/.hermes/hermes-relay/` (override with `$HERMES_RELAY_HOME`), `pip install -e`s the package into the hermes-agent venv, registers the `skills/` directory in your `~/.hermes/config.yaml` under `skills.external_dirs` (so updates flow through `git pull`), symlinks the plugin into `~/.hermes/plugins/hermes-relay`, and drops a thin `hermes-pair` shim into `~/.local/bin/`. After restart, pair your phone via either of these equivalent entry points:
+The installer clones Hermes-Relay to `~/.hermes/hermes-relay/` (override with `$HERMES_RELAY_HOME`), `pip install -e`s the package into the hermes-agent venv, registers the `skills/` directory in your `~/.hermes/config.yaml` under `skills.external_dirs` (so updates flow through `git pull`), symlinks the plugin into `~/.hermes/plugins/hermes-relay`, drops a thin `hermes-pair` shim into `~/.local/bin/`, and (optionally) installs a systemd user service for the WSS relay. After restart, pair your phone via either of these equivalent entry points:
 
 - **From any Hermes chat surface** (CLI, Discord, Telegram, etc.): type `/hermes-relay-pair` and the `hermes-relay-pair` skill renders the QR inline. Shortest path if you're already chatting with the agent.
 - **From a shell**: `hermes-pair` (dashed) — a thin wrapper around `python -m plugin.pair` in the hermes-agent venv. Use this in scripts or when you want the raw output.
 
 Scan the QR from the Android app's onboarding screen and you're connected. One scan configures **both** the direct-chat API server **and** the WSS relay (for terminal/bridge) — if a local relay is running at `localhost:8767`, the pair command pre-registers a fresh 6-char pairing code with it and embeds the relay URL + code in the same QR. If you only want direct chat, pass `--no-relay` (or just don't start the relay). Plain-text connection details are always printed alongside the QR so you can copy values by hand if your terminal can't render QR blocks.
 
-**Updating:** `cd ~/.hermes/hermes-relay && git pull` — pulls new plugin, skill, and docs in one step. Because the installer uses `pip install -e` and `external_dirs`, nothing needs to be re-copied; restart hermes-agent and the updated skill + plugin are picked up on next load.
+**Updating:** `cd ~/.hermes/hermes-relay && git pull && bash install.sh` — pulls new code and re-runs the installer (idempotent). Restart `hermes-gateway` and `hermes-relay` to pick up changes. For routine plugin/skill updates a plain `git pull` is enough.
+
+**Uninstalling:** `bash ~/.hermes/hermes-relay/uninstall.sh` reverses every install step in the opposite order. Idempotent, never touches state shared with other Hermes tools (`.env`, sessions DB, hermes-agent venv core). Flags: `--dry-run`, `--keep-clone`, `--remove-secret`. Or pull the script via curl if you've already removed the clone.
 
 **Requirements:** Android 8.0+ (SDK 26), [hermes-agent](https://github.com/NousResearch/hermes-agent) v0.8.0+, Python 3.11+.
 

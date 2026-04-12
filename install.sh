@@ -6,8 +6,18 @@
 #
 # Installs:
 #   1. The hermes-relay repo to ~/.hermes/hermes-relay (editable, git-backed)
-#   2. The Python package (plugin + relay server) via `pip install -e` into
-#      the hermes-agent venv so `python -m plugin.pair` works from anywhere
+#   2. The Python package (plugin + relay server + bootstrap injection) via
+#      `pip install -e` into the hermes-agent venv so `python -m plugin.pair`
+#      works from anywhere AND the hermes_relay_bootstrap package is on the
+#      Python path. The bootstrap is also wired up via a `.pth` file dropped
+#      directly into the venv's site-packages so Python's `site` module
+#      auto-loads it at every interpreter startup. The bootstrap monkey-
+#      patches `aiohttp.web.Application` so when the gateway builds its app,
+#      our extra `/api/sessions/*`, `/api/memory`, `/api/skills`, `/api/config`
+#      and `/api/available-models` routes get injected onto the same router
+#      the gateway is in the middle of populating. Feature-detected by route
+#      path — if your hermes-agent build already has these endpoints natively,
+#      the bootstrap no-ops cleanly so it's safe to ship across all versions.
 #   3. A symlink at ~/.hermes/plugins/hermes-relay → the clone's plugin/ dir
 #      so Hermes's plugin loader discovers + enables the plugin
 #   4. The skill(s) under skills/ into ~/.hermes/config.yaml as a scanned
@@ -25,7 +35,20 @@
 # Updates:
 #   cd ~/.hermes/hermes-relay && git pull
 #   (No reinstall needed — editable pip install + external_dirs scan mean
-#    changes go live on the next invocation.)
+#    changes go live on the next invocation. The bootstrap .pth file is
+#    overwritten on every install.sh re-run, so changes to the bootstrap
+#    package itself need a fresh `bash install.sh` to land in site-packages.)
+#
+# Uninstall:
+#   bash ~/.hermes/hermes-relay/uninstall.sh
+#   (Or, if you don't have the clone any more:
+#    curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/uninstall.sh | bash)
+#
+#   The uninstaller reverses every step here in the opposite order. It is
+#   idempotent and never touches shared state (~/.hermes/.env, the gateway's
+#   state.db, the hermes-agent venv core). Use --keep-clone to leave the git
+#   tree in place, --remove-secret to also wipe the QR signing identity,
+#   --dry-run to preview without changing anything.
 #
 # Overrides:
 #   HERMES_RELAY_HOME       Target directory (default: ~/.hermes/hermes-relay)
@@ -103,6 +126,28 @@ info "[2/6] Installing plugin into hermes venv (editable)..."
 "$VENV_PY" -m pip install --quiet -e "$RELAY_HOME" \
     || die "pip install -e $RELAY_HOME failed"
 ok "Installed $("$VENV_PY" -m pip show hermes-relay 2>/dev/null | awk '/^Name:/{n=$2}/^Version:/{print n" "$2}')"
+
+# Drop the bootstrap .pth into the venv's site-packages so Python loads
+# `hermes_relay_bootstrap` at interpreter startup. This is what allows the
+# plugin to inject `/api/sessions/*` (and friends) onto the gateway's
+# aiohttp app at startup. The .pth has to live directly in site-packages —
+# setuptools' editable install does NOT ship data-files there, so we drop
+# it manually here. Idempotent: a second run overwrites the same file.
+#
+# Removal: the bootstrap package and its .pth come out together via
+# `bash uninstall.sh`. The bootstrap also feature-detects on route paths,
+# so it cleanly no-ops on hermes-agent builds that already serve the same
+# routes natively — leaving it installed is safe across all versions.
+SITE_PKGS="$("$VENV_PY" -c 'import site; print(site.getsitepackages()[0])' 2>/dev/null || true)"
+PTH_SRC="$RELAY_HOME/hermes_relay_bootstrap.pth"
+if [ -n "$SITE_PKGS" ] && [ -d "$SITE_PKGS" ] && [ -f "$PTH_SRC" ]; then
+    cp "$PTH_SRC" "$SITE_PKGS/hermes_relay_bootstrap.pth"
+    ok "Installed bootstrap .pth → $SITE_PKGS/hermes_relay_bootstrap.pth"
+else
+    info "  Could not determine venv site-packages — bootstrap .pth NOT installed"
+    info "  This means /api/sessions/* won't be injected onto vanilla upstream"
+    info "  hermes-agent. Manually copy $PTH_SRC into your venv's site-packages."
+fi
 
 # ── 3/6  Symlink plugin into Hermes plugin dir ─────────────────────────────
 info "[3/6] Registering plugin with Hermes..."
@@ -272,7 +317,13 @@ echo "         $VENV_PY -m plugin.pair"
 echo ""
 echo "  To update later:"
 echo "    cd $RELAY_HOME && git pull"
+echo "    bash $RELAY_HOME/install.sh           # re-runs all steps idempotently"
 echo "    systemctl --user restart hermes-relay   # if installed as a service"
+echo "    systemctl --user restart hermes-gateway # if you changed bootstrap code"
+echo ""
+echo "  To uninstall:"
+echo "    bash $RELAY_HOME/uninstall.sh"
+echo "    bash $RELAY_HOME/uninstall.sh --dry-run  # preview without changing anything"
 echo ""
 echo "  Manage the relay service (if installed):"
 echo "    systemctl --user status hermes-relay"

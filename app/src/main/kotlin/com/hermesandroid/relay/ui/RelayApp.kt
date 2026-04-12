@@ -232,10 +232,14 @@ fun RelayApp() {
         connectionViewModel.chatHandler.parseToolAnnotations = parseAnnotations
     }
 
-    // Sync streaming endpoint preference to chat
+    // Sync streaming endpoint preference to chat. Resolves "auto" against the
+    // current server capabilities so vanilla upstream + bootstrap-injected
+    // sessions API picks /v1/runs for chat (which has live tool events)
+    // while still using /api/sessions/* for browse/rename/delete.
     val streamingEndpoint by connectionViewModel.streamingEndpoint.collectAsState()
-    LaunchedEffect(streamingEndpoint) {
-        chatViewModel.streamingEndpoint = streamingEndpoint
+    val serverCapabilities by connectionViewModel.serverCapabilities.collectAsState()
+    LaunchedEffect(streamingEndpoint, serverCapabilities) {
+        chatViewModel.streamingEndpoint = connectionViewModel.resolveStreamingEndpoint(streamingEndpoint)
     }
 
     // What's New auto-show

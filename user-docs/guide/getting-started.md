@@ -33,13 +33,16 @@ The installer follows Hermes's canonical skill-distribution pattern:
 3. Adds `~/.hermes/hermes-relay/skills` to `skills.external_dirs` in `~/.hermes/config.yaml` (idempotent YAML edit) so the `hermes-relay-pair` skill is picked up on every hermes-agent load
 4. Symlinks `~/.hermes/plugins/hermes-relay` → the clone's `plugin/` subdir
 5. Installs a thin `~/.local/bin/hermes-pair` shim that execs `python -m plugin.pair` inside the hermes-agent venv
+6. Installs a systemd user unit at `~/.config/systemd/user/hermes-relay.service` (optional — skipped on macOS, WSL-without-systemd, bare chroots)
 
 Restart hermes-agent after install.
 
 ::: tip What you get
+- **Full Hermes-Relay Android app features** — sessions browser, conversation history on app restart, personality picker, command palette, memory management. Just install the plugin and it works.
 - **14 `android_*` device control tools** (tap, type, read screen, screenshot, open apps, etc.) — registered by the plugin
 - **`/hermes-relay-pair` slash command** — backed by the `devops/hermes-relay-pair` skill and usable from any Hermes chat surface
 - **`hermes-pair` shell shim** — for scripts and power-user flows
+- **Voice mode endpoints** on the WSS relay (transcribe, synthesize, voice config) wired into the Android app's voice mode UI
 
 No separate skill install, no `qrencode` binary needed.
 :::
@@ -48,10 +51,35 @@ No separate skill install, no `qrencode` binary needed.
 Because the installer uses `pip install -e` for the plugin and `external_dirs` for the skill, updates are a single command:
 
 ```bash
-cd ~/.hermes/hermes-relay && git pull
+cd ~/.hermes/hermes-relay && git pull && bash install.sh
+systemctl --user restart hermes-gateway hermes-relay
 ```
 
-Restart hermes-agent and the updated plugin, skill, and docs are live. There's no separate `hermes skills update` step — `external_dirs` is scanned fresh on every hermes-agent invocation.
+`bash install.sh` is idempotent — safe to re-run as often as you like. It re-applies every step against the existing install, picks up any new files, and rebuilds the systemd unit from the latest template.
+:::
+
+::: info Uninstalling
+A clean uninstaller ships in the same repo:
+
+```bash
+bash ~/.hermes/hermes-relay/uninstall.sh
+```
+
+Or if you don't have the clone any more:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/uninstall.sh | bash
+```
+
+The uninstaller reverses every install step in the opposite order, is idempotent, and never touches state shared with other Hermes tools (`~/.hermes/.env`, the gateway's `state.db`, the `hermes-agent` venv core). Useful flags:
+
+```bash
+bash uninstall.sh --dry-run         # preview without changing anything
+bash uninstall.sh --keep-clone      # leave ~/.hermes/hermes-relay in place
+bash uninstall.sh --remove-secret   # also wipe the QR signing identity
+```
+
+By default the QR signing secret at `~/.hermes/hermes-relay-qr-secret` is preserved, so re-installing keeps the same identity and any phones still holding their session tokens stay valid.
 :::
 
 ### 3. Pair your phone

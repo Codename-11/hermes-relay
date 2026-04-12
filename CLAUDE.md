@@ -33,16 +33,26 @@ Chat goes directly to the API server via HTTP/SSE. The API key (Bearer token) is
 | `GET /health` | Health check | — |
 | `GET/POST/PATCH/DELETE /api/jobs/*` | Cron job management | — |
 
-**Non-standard endpoints (may be version-specific):**
+**Non-standard endpoints (provided by fork OR by plugin bootstrap):**
 
-These endpoints work on our hermes-agent v0.7.0 but are **not in the upstream source**. They may be fork-specific, version-specific, or added by plugins. Always use `detectChatMode()` to probe availability.
+These endpoints are not in stock upstream `gateway/platforms/api_server.py`. There are three ways a hermes-agent install can serve them:
 
-| Endpoint | Purpose | Fallback |
-|----------|---------|----------|
-| `POST /api/sessions/{id}/chat/stream` | Session-based SSE chat | Use `/v1/runs` or `/v1/chat/completions` |
-| `GET/POST/PATCH/DELETE /api/sessions` | Session CRUD | Use `X-Hermes-Session-Id` header with `/v1/chat/completions` |
-| `GET /api/skills` | Skill discovery | Hardcoded command list |
-| `GET /api/config` | Server config (personalities, model) | No fallback — personality picker empty |
+1. **Codename-11 fork** (`feat/api-server-enhancements` branch, currently merged into `axiom`) — adds them natively in `gateway/platforms/api_server.py`. Submitted upstream as PR [#8556](https://github.com/NousResearch/hermes-agent/pull/8556).
+2. **Bootstrap injection** (`hermes_relay_bootstrap/`) — installed alongside the plugin via `install.sh`, runs at Python interpreter startup (via a `.pth` file in the venv's site-packages), monkey-patches `aiohttp.web.Application` so that when `APIServerAdapter.connect()` builds its app, our extra routes are added to the same router. **Vanilla upstream + plugin = these endpoints work too.** The bootstrap deliberately does NOT inject `/api/sessions/{id}/chat/stream` — chat goes through standard `/v1/runs` instead, which has live tool events and avoids touching `_create_agent` / `run_conversation` internals.
+3. **Upstream-merged** (post PR #8556) — same paths, native upstream support. The bootstrap feature-detects on route paths and no-ops in this case.
+
+| Endpoint | Purpose | Provided by |
+|----------|---------|-------------|
+| `GET /api/sessions` (CRUD) | Session list/create/rename/delete/fork | Fork OR bootstrap OR upstream-merged |
+| `GET /api/sessions/{id}/messages` | Conversation history | Fork OR bootstrap OR upstream-merged |
+| `GET /api/sessions/search` | Full-text message search | Fork OR bootstrap OR upstream-merged |
+| `POST /api/sessions/{id}/chat/stream` | Session-based SSE chat | Fork OR upstream-merged ONLY (NOT bootstrap — use `/v1/runs`) |
+| `GET /api/config`, `PATCH /api/config` | Personalities + model config | Fork OR bootstrap OR upstream-merged |
+| `GET /api/skills`, `/categories`, `/{name}` | Skill discovery | Fork OR bootstrap OR upstream-merged |
+| `GET/POST/PATCH/DELETE /api/memory` | Memory CRUD | Fork OR bootstrap OR upstream-merged |
+| `GET /api/available-models` | Provider model list | Fork OR bootstrap OR upstream-merged |
+
+The Android client probes per-endpoint capability via `HermesApiClient.probeCapabilities()` (returns `ServerCapabilities`). When `streamingEndpoint = "auto"` (the default for new installs), `ConnectionViewModel.resolveStreamingEndpoint()` reads the capability snapshot and picks `sessions` (when the chat-stream handler is present) or `runs` (otherwise). Users can still force `sessions` or `runs` manually in Settings → Chat → Streaming endpoint.
 
 **Tool call rendering paths:**
 1. **Runs API** (`/v1/runs`) — Best for tool display. Emits `tool.started`/`tool.completed` as real SSE events → rendered as ToolProgressCards in real-time.
@@ -50,9 +60,10 @@ These endpoints work on our hermes-agent v0.7.0 but are **not in the upstream so
 3. **Annotation parser** (`ChatHandler.parseAnnotationLine` + `finalizeAnnotations`) — Fallback for servers that inject inline markdown annotations (`` `💻 terminal` ``). Parses during streaming + reconciliation pass on stream end. If your Hermes version uses a different format, check `adb logcat -s HermesApiClient` for raw SSE events and update the regex.
 
 ## Key Instructions
-- **Always verify upstream before assuming an endpoint exists.** Check `gateway/platforms/api_server.py` in hermes-agent. If an endpoint isn't there, document it as non-standard and implement a fallback.
+- **Always verify upstream before assuming an endpoint exists.** Check `gateway/platforms/api_server.py` in hermes-agent. If an endpoint isn't there, document whether the bootstrap injects it (`hermes_relay_bootstrap/_handlers.py`) or if it requires the fork.
 - When building features that interface with hermes-agent, reference the upstream source — not just our spec docs. Our spec may be aspirational or based on a specific server version.
-- If we use a non-standard endpoint, mark it clearly in code comments and ensure `detectChatMode()` handles its absence gracefully.
+- If we use a non-standard endpoint, ensure `probeCapabilities()` covers it and the auto-resolver in `ConnectionViewModel.resolveStreamingEndpoint()` (or equivalent) degrades gracefully.
+- **Bootstrap maintenance:** When upstream PR #8556 merges and reaches a released hermes-agent version, the entire `hermes_relay_bootstrap/` package and its `.pth` file in `install.sh` can be deleted. The bootstrap is no-op-compatible with both fork and upstream-merged installs (feature detection by route path), so leaving it in place during the rollout window is harmless.
 
 ## Repository Layout
 
@@ -156,6 +167,11 @@ hermes-android/                  ← Android Studio opens this root
 | `app/src/main/res/drawable/splash_icon.xml` | Splash screen icon (0.9x scale) |
 | `app/src/main/res/drawable/splash_icon_animated.xml` | Animated splash (scale + overshoot + fade) |
 | `plugin/relay/server.py` | Canonical relay server — WSS + HTTP routes (health, /pairing, /pairing/register) |
+| `hermes_relay_bootstrap/` | Runtime patch package for vanilla upstream hermes-agent. Loaded via `hermes_relay_bootstrap.pth` in the venv site-packages (dropped by `install.sh` step 2). `__init__.py` installs a `sys.meta_path` finder; `_patch.py` swaps `aiohttp.web.Application` for a subclass that intercepts `app["api_server_adapter"] = self` and triggers `_handlers.register_routes()`; `_handlers.py` ports ~14 management handlers (sessions CRUD, memory, skills, config, available-models) from the fork. Feature-detects on route paths so it no-ops on fork or upstream-merged installs. Removable in one PR once PR #8556 lands. |
+| `hermes_relay_bootstrap.pth` | Single-line `.pth` file at repo root: `import hermes_relay_bootstrap`. `install.sh` copies this into the hermes-agent venv's `site-packages/` so Python's `site` module loads the bootstrap at every interpreter startup. NOT installed automatically by `pip install -e` — setuptools' data-files doesn't ship to site-packages reliably for editable installs. |
+| `uninstall.sh` | Canonical uninstaller — reverses every `install.sh` step in opposite order: stops + disables systemd unit, removes shim, removes skills external_dirs entry from config.yaml (preserves other entries), removes plugin symlink + legacy stales, removes bootstrap `.pth` from site-packages, `pip uninstall hermes-relay`, removes the clone (unless `--keep-clone`). Idempotent. Never touches `~/.hermes/.env`, `state.db`, or the hermes-agent venv core. Flags: `--dry-run`, `--keep-clone`, `--remove-secret` (the last preserves QR signing identity by default). |
+| `app/src/main/kotlin/.../network/HermesApiClient.kt` (capability detection) | `data class ServerCapabilities(sessionsApi, sessionsChatStream, runs, portable, healthy)` + `suspend fun probeCapabilities()`. Uses OPTIONS-method probes against `/api/sessions/probe/chat/stream` and `/v1/runs` to distinguish "endpoint exists, just POST-only" (405) from "endpoint missing" (404). The result drives `streamingEndpoint = "auto"` resolution. |
+| `app/src/main/kotlin/.../viewmodel/ConnectionViewModel.kt` (auto-resolver) | `resolveStreamingEndpoint(preference)` collapses `"auto"` to a concrete `"sessions"` or `"runs"` based on the latest `serverCapabilities` snapshot. Manual `"sessions"` / `"runs"` settings pass through unchanged. |
 | `plugin/relay/auth.py` | PairingManager (generate + register_code), SessionManager, RateLimiter |
 | `plugin/relay/config.py` | RelayConfig + PAIRING_ALPHABET (full A-Z / 0-9 as of 2026-04-11) |
 | `plugin/relay/channels/terminal.py` | Phase 2 PTY-backed terminal handler |

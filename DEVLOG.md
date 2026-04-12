@@ -1,5 +1,58 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-12 — Add canonical uninstall.sh + bootstrap docs
+
+Companion to the bootstrap injection work below. There was no formal uninstall path before — `install.sh` is idempotent so most update flows worked, but cleanly removing the plugin (e.g., to test that install.sh works on a truly fresh state) required manually undoing 6 install steps. New `uninstall.sh` reverses them in opposite order:
+
+1. Stops + disables `hermes-relay.service`, removes the systemd unit, daemon-reloads
+2. Removes `~/.local/bin/hermes-pair` shim
+3. Scrubs the relay's `skills.external_dirs` entry from `~/.hermes/config.yaml` via the same yaml parsing pattern install.sh uses, with a `.bak` backup before write — preserves all other entries
+4. Removes `~/.hermes/plugins/hermes-relay` symlink + any legacy stales (`hermes-android`, etc.)
+5. Removes `hermes_relay_bootstrap.pth` from venv site-packages, `pip uninstall hermes-relay`
+6. Removes `~/.hermes/hermes-relay` clone (sanity-checked: refuses to delete a directory that doesn't have `.git` + `install.sh`)
+
+What it never touches: `~/.hermes/.env` (other tools authenticate against this), `~/.hermes/state.db` (sessions DB shared with the gateway), `~/.hermes/hermes-agent/` (the agent itself), `~/.hermes/hermes-agent/venv/` (only our `.pth` is removed, not the venv core), and `~/.hermes/hermes-relay-qr-secret` (kept by default — the QR signing identity is precious; opt in to wipe with `--remove-secret`).
+
+Flags: `--dry-run` previews without changing anything, `--keep-clone` leaves the git tree in place, `--remove-secret` wipes the QR secret. Help text: `bash uninstall.sh --help`.
+
+`install.sh` header docs updated to mention `bootstrap injection` (step 2) and the uninstall path. Success summary now prints both `git pull && bash install.sh` for updates and `bash uninstall.sh --dry-run` for previewing removal. README.md and `user-docs/guide/getting-started.md` got equivalent updates with the bootstrap explanation + uninstall flags.
+
+## 2026-04-12 — Bootstrap injection: vanilla upstream hermes-agent now works with the plugin
+
+Closed the "you must run our hermes-agent fork to get full features" gap. The Codename-11 fork (`feat/api-server-enhancements`, 13 commits, submitted as PR [#8556](https://github.com/NousResearch/hermes-agent/pull/8556)) adds 20 management endpoints — `/api/sessions/*` CRUD, `/api/memory`, `/api/skills`, `/api/config`, `/api/available-models`, `/api/sessions/{id}/chat/stream` — that the Android app depends on. Until #8556 merges and reaches a release, vanilla upstream users were missing the sessions browser, conversation-history-on-restart, personality picker, command palette, and memory management.
+
+**The fix: a single `.pth` file that runs at Python interpreter startup.** New `hermes_relay_bootstrap/` package ships with the plugin, gets loaded by Python's `site` module before anything in hermes-agent imports `aiohttp.web`. The bootstrap installs a `sys.meta_path` finder that wraps the loader for `aiohttp.web`. When the import resolves, our wrapper replaces `web.Application` with a thin subclass. The subclass overrides `__setitem__` to detect `app["api_server_adapter"] = self` — the line at `gateway/platforms/api_server.py:1735` where the gateway gives us a reference to the adapter while the router is still mutable. At that moment we feature-detect by route path and bind ~14 management handlers from `_handlers.py` directly onto the same router. The gateway then continues with its own route registrations and starts the server. From the outside, vanilla upstream now serves all the fork's management endpoints.
+
+**What is NOT injected and why:** the chat-stream handler (`/api/sessions/{id}/chat/stream`). It depends on `_create_agent` and `agent.run_conversation` with multimodal content — the riskiest cross-cutting upstream methods that the fork may have implicitly modified. Instead, chat goes through standard upstream `/v1/runs`, which already emits structured `tool.started`/`tool.completed` SSE events. This is arguably an upgrade — `/v1/runs` has live tool events whereas the sessions chat-stream path required a post-stream message-history reload to render tool cards. The Android client adapts via a new `streamingEndpoint = "auto"` mode (default for new installs).
+
+**Files added:**
+- `hermes_relay_bootstrap/__init__.py` (~30 lines) — installs the meta_path finder
+- `hermes_relay_bootstrap/_patch.py` (~170 lines) — `_AioHttpWebFinder`, `_PatchingLoader`, `_PatchedApplication`, `_maybe_register_routes` with feature detection by route path
+- `hermes_relay_bootstrap/_handlers.py` (~500 lines) — 14 ported management handlers + helpers (sessions CRUD, memory CRUD, skills, config, available-models). Handlers take `adapter` as a closure parameter rather than being bound methods, so we don't pollute upstream's class.
+- `hermes_relay_bootstrap.pth` — single line: `import hermes_relay_bootstrap`
+
+**Files changed:**
+- `pyproject.toml` — added `hermes_relay_bootstrap*` to packages.find include list
+- `install.sh` step 2 — copies the `.pth` into the venv's `site-packages/` after `pip install -e`. Verified empirically: setuptools' editable install does NOT ship `data-files` to site-packages reliably (it puts them in `venv/data/` instead, where Python's `site` module never looks). Manual copy is necessary.
+- `app/src/main/kotlin/.../HermesApiClient.kt` — new `ServerCapabilities` data class + `probeCapabilities()` method that returns per-endpoint presence. Uses OPTIONS-method probes against `/api/sessions/probe/chat/stream` and `/v1/runs` to distinguish "endpoint exists, just POST-only" (405) from "endpoint missing" (404). `detectChatMode()` becomes a thin compatibility wrapper around `probeCapabilities().toChatMode()`.
+- `app/src/main/kotlin/.../ConnectionViewModel.kt` — exposes `serverCapabilities: StateFlow<ServerCapabilities>`, populates it from `probeCapabilities()` in `rebuildApiClient()`, adds `resolveStreamingEndpoint(preference)` helper that collapses `"auto"` to a concrete `"sessions"` or `"runs"` based on the latest snapshot. Default endpoint preference for new installs flipped from `"sessions"` to `"auto"`.
+- `app/src/main/kotlin/.../ChatViewModel.kt` — `streamingEndpoint` default flipped from `"sessions"` to `"runs"` (the safer fallback before RelayApp pushes the resolved value).
+- `app/src/main/kotlin/.../ui/RelayApp.kt` — `LaunchedEffect(streamingEndpoint, serverCapabilities)` recomputes the resolved endpoint when either changes, pushes into ChatViewModel.
+- `app/src/main/kotlin/.../ui/screens/ChatSettingsScreen.kt` — Settings → Streaming endpoint dropdown gains an "Auto" option (alongside Sessions/Runs). Helper text dynamically shows which path Auto is currently using.
+- `CLAUDE.md` — non-standard endpoints table rewritten to show all three "provided by" mechanisms (fork, bootstrap, upstream-merged), plus key files entries for bootstrap + capability detection.
+- `docs/decisions.md` — new ADR 16 covering the runtime injection rationale, options considered (A/B/C/D), risks accepted, removal path.
+- `vault/Hermes-Relay.md` — new "Bootstrap Injection Architecture" section with the compatibility matrix; updated "Hermes Integration" table to show two install paths (fork or bootstrap).
+
+**Compatibility matrix** (all three combinations safe to ship the bootstrap with):
+
+| Gateway version | Bootstrap behavior | Result |
+|---|---|---|
+| Codename-11 fork (`axiom`) | Detects existing `/api/sessions`, no-ops | Fork serves everything natively ✓ |
+| Vanilla upstream main | Detects no `/api/sessions`, injects routes | Bootstrap-injected endpoints serve ✓ |
+| Post-PR-#8556 upstream-merged | Detects existing `/api/sessions`, no-ops | Upstream serves everything natively ✓ |
+
+**Removal path** (when PR #8556 reaches a released hermes-agent version): delete `hermes_relay_bootstrap/`, delete `hermes_relay_bootstrap.pth`, remove the `.pth` drop block from `install.sh`. The Android client `probeCapabilities()` + `streamingEndpoint = "auto"` plumbing stays — it's permanent infrastructure that handles mixed-version deployments.
+
 ## 2026-04-12 — Fix: TTS waveform stays alive through multi-sentence playback
 
 The waveform was flatlinining after the first sentence while audio kept playing. Root cause: `maybeAutoResume()` fired after every sentence in the TTS consumer loop. The SSE stream finishes before TTS plays all queued sentences, so `streamObserverJob?.isActive` was already false → state flipped to Idle → amplitude bridge stopped → waveform died. Fix: restructured TTS consumer from `for` loop to `while` + `tryReceive` peek. `maybeAutoResume` only fires when the queue is actually drained (`tryReceive` returns failure), not between sentences. Between sentences within the same response, `tryReceive` succeeds immediately and the consumer skips the Idle transition. Additionally, the consumer re-asserts Speaking state before each synthesis call to handle the edge case where the queue was briefly empty between observer pushes.

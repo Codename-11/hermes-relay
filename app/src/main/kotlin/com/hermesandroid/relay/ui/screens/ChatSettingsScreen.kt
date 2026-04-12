@@ -273,14 +273,28 @@ fun ChatSettingsScreen(
                             text = "Streaming endpoint",
                             style = MaterialTheme.typography.bodyMedium
                         )
+                        val serverCaps by connectionViewModel.serverCapabilities.collectAsState()
+                        val resolvedHelp = when (streamingEndpoint) {
+                            "auto" -> {
+                                val resolved = serverCaps.preferredChatEndpoint()
+                                "Auto: picks the best path based on what your server exposes. " +
+                                        "Currently using: $resolved" +
+                                        if (!serverCaps.sessionsChatStream && serverCaps.sessionsApi)
+                                            " (sessions browse via /api/sessions, chat via /v1/runs)"
+                                        else ""
+                            }
+                            "sessions" -> "Sessions: tool calls shown as inline text annotations."
+                            "runs" -> "Runs: structured tool events with real-time progress cards."
+                            else -> ""
+                        }
                         Text(
-                            text = "Sessions: tool calls shown as inline text annotations. Runs: structured tool events with real-time progress cards.",
+                            text = resolvedHelp,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
 
-                        val endpointOptions = listOf("sessions", "runs")
-                        val endpointLabels = listOf("Sessions", "Runs")
+                        val endpointOptions = listOf("auto", "sessions", "runs")
+                        val endpointLabels = listOf("Auto", "Sessions", "Runs")
                         val selectedEndpointIndex = endpointOptions.indexOf(streamingEndpoint).coerceAtLeast(0)
 
                         SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
