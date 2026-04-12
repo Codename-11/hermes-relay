@@ -1318,6 +1318,56 @@ fun SettingsScreen(
                             }
                         }
                     }
+
+                    // ── Font size ──────────────────────────────────────────
+                    //
+                    // Discrete stops applied globally via LocalDensity.fontScale
+                    // at the Compose theme root, plus pushed to xterm via
+                    // window.setFontSize through TerminalWebView.
+                    val fontScale by connectionViewModel.fontScale.collectAsState()
+                    val fontScaleOptions = listOf(0.85f, 1.0f, 1.15f, 1.3f)
+                    val fontScaleLabels = listOf("Small", "Normal", "Large", "Larger")
+                    // Match the closest stop — float equality is fragile.
+                    val selectedFontScaleIndex = fontScaleOptions
+                        .withIndex()
+                        .minByOrNull { kotlin.math.abs(it.value - fontScale) }
+                        ?.index
+                        ?: 1
+
+                    Text(
+                        text = "Font size",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        fontScaleOptions.forEachIndexed { index, option ->
+                            SegmentedButton(
+                                shape = SegmentedButtonDefaults.itemShape(
+                                    index = index,
+                                    count = fontScaleOptions.size
+                                ),
+                                onClick = { connectionViewModel.setFontScale(option) },
+                                selected = index == selectedFontScaleIndex
+                            ) {
+                                Text(fontScaleLabels[index])
+                            }
+                        }
+                    }
+
+                    // Subtle preview at the chosen scale. We multiply the
+                    // current bodyMedium fontSize by the selected stop so the
+                    // preview reflects the user's choice immediately, even
+                    // though everything else in the app already scales via
+                    // LocalDensity once they tap a stop.
+                    val previewBase = MaterialTheme.typography.bodyMedium
+                    Text(
+                        text = "Aa  —  sample text",
+                        style = previewBase.copy(
+                            fontSize = previewBase.fontSize * fontScaleOptions[selectedFontScaleIndex]
+                        ),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
 

@@ -121,7 +121,8 @@ fun TerminalScreen(
             // we're not usable yet.
             TerminalWebView(
                 viewModel = terminalViewModel,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+                fontScale = connectionViewModel.fontScale
             )
 
             val showOverlay = !isConnected || (!terminalState.attached && terminalState.error != null)
