@@ -39,6 +39,18 @@
                 android:resource="@xml/file_provider_paths" />
         </provider>
 
+        <!-- === PHASE3-ε: notification companion service === -->
+        <service
+            android:name=".notifications.HermesNotificationCompanion"
+            android:label="@string/notification_companion_label"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+        <!-- === END PHASE3-ε === -->
+
     </application>
 
 </manifest>

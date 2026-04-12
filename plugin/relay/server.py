@@ -44,6 +44,7 @@ from .auth import (
 )
 from .channels.bridge import BridgeHandler
 from .channels.chat import ChatHandler
+from .channels.notifications import NotificationsChannel
 from .channels.terminal import TerminalHandler
 from .config import RelayConfig
 from .media import MediaRegistrationError, MediaRegistry, validate_media_path
@@ -82,6 +83,9 @@ class RelayServer:
         self.chat = ChatHandler(webapi_url=config.webapi_url)
         self.terminal = TerminalHandler(default_shell=config.terminal_shell)
         self.bridge = BridgeHandler()
+        # === PHASE3-ε: notifications channel ===
+        self.notifications = NotificationsChannel()
+        # === END PHASE3-ε ===
 
         # Connected clients: ws → session token
         self._clients: dict[web.WebSocketResponse, str] = {}
@@ -815,6 +819,73 @@ async def handle_media_by_path(request: web.Request) -> web.StreamResponse:
     return web.FileResponse(real_path, headers=headers)
 
 
+# === PHASE3-ε: notifications HTTP routes ===
+#
+# Bearer-auth'd HTTP read endpoint for the cached notification deque
+# managed by ``NotificationsChannel``. The agent calls this through the
+# ``android_notifications_recent`` tool to answer "what came in
+# recently?" questions during a chat turn.
+#
+# The trust model matches every other phone-facing relay HTTP endpoint
+# (``/media/*``, ``/sessions``, ``/voice/*``): a valid relay session
+# token in ``Authorization: Bearer ...`` is required, and the same
+# token serves as proof that the caller is one of the operator's
+# paired devices.
+
+
+async def handle_notifications_recent(request: web.Request) -> web.Response:
+    """Return the most-recent N cached notification entries.
+
+    Two callers, two auth modes:
+      * **Loopback callers** (the in-process Hermes tool
+        ``android_notifications_recent``) skip bearer auth — the trust
+        boundary is host access, identical to ``/media/register`` and
+        ``/pairing/register``. The agent runs on the same host as the
+        relay, so by-definition tool calls hit us over 127.0.0.1.
+      * **Remote callers** (a paired phone or other client) must
+        present a valid relay session token via
+        ``Authorization: Bearer <token>`` — this is the same gate as
+        every other phone-facing relay HTTP route.
+
+    GET /notifications/recent?limit=20
+      → 200 {"notifications": [...], "count": <int>}
+      → 400 invalid limit
+      → 401 missing/invalid bearer (remote callers only)
+    """
+    remote = request.remote or ""
+    is_loopback = remote in ("127.0.0.1", "::1")
+
+    server: RelayServer
+    if is_loopback:
+        server = request.app["server"]
+    else:
+        server, _session = _require_bearer_session(request)
+
+    raw_limit = request.query.get("limit", "20")
+    try:
+        limit = int(raw_limit)
+    except (TypeError, ValueError):
+        return web.json_response(
+            {"ok": False, "error": "limit must be an integer"}, status=400
+        )
+    if limit < 1:
+        return web.json_response(
+            {"ok": False, "error": "limit must be >= 1"}, status=400
+        )
+
+    entries = server.notifications.get_recent(limit)
+    return web.json_response(
+        {
+            "ok": True,
+            "notifications": entries,
+            "count": len(entries),
+        }
+    )
+
+
+# === END PHASE3-ε ===
+
+
 # ── WebSocket handler ────────────────────────────────────────────────────────
 
 
@@ -1082,6 +1153,11 @@ async def _on_message(
     elif channel == "bridge":
         task = asyncio.create_task(server.bridge.handle(ws, envelope))
         _track_task(server, ws, task)
+    # === PHASE3-ε: notifications channel dispatch ===
+    elif channel == "notifications":
+        task = asyncio.create_task(server.notifications.handle(ws, envelope))
+        _track_task(server, ws, task)
+    # === END PHASE3-ε ===
     else:
         logger.warning("Unknown channel: %s", channel)
         await _send_system(
@@ -1230,6 +1306,10 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_post("/voice/transcribe", _voice_transcribe)
     app.router.add_post("/voice/synthesize", _voice_synthesize)
     app.router.add_get("/voice/config", _voice_config)
+
+    # === PHASE3-ε: notifications HTTP routes ===
+    app.router.add_get("/notifications/recent", handle_notifications_recent)
+    # === END PHASE3-ε ===
 
     # Cleanup on shutdown
     app.on_shutdown.append(_on_app_shutdown)

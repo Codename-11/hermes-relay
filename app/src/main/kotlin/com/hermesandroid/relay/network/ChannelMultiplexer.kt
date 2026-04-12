@@ -91,6 +91,28 @@ class ChannelMultiplexer {
         sendCallback?.invoke(envelope)
     }
 
+    // === PHASE3-ε: notification outbound routing ===
+    //
+    // `HermesNotificationCompanion` is a system-bound
+    // `NotificationListenerService` that lives outside the ViewModel
+    // scope. To push posted-notification envelopes onto the WSS
+    // connection, it grabs the live multiplexer reference (set by
+    // `ConnectionViewModel` via the static companion `multiplexer`
+    // slot on the service) and calls [sendNotification].
+    //
+    // This is a thin wrapper over [send] with a no-op fast path when
+    // no send callback is wired yet (relay disconnected). We drop on
+    // the floor at this layer rather than buffering — the service
+    // owns the cold-start buffer in its `pendingEnvelopes` queue, and
+    // dropping when the relay is offline matches the smartwatch
+    // companion semantics (a wearable doesn't replay notifications
+    // it missed while out of range either).
+    fun sendNotification(envelope: Envelope) {
+        val cb = sendCallback ?: return
+        cb.invoke(envelope)
+    }
+    // === END PHASE3-ε ===
+
     /**
      * Handle system channel messages (auth, ping/pong).
      */
