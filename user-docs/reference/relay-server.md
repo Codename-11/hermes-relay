@@ -14,15 +14,31 @@ The relay server is a lightweight Python WSS service that enables **terminal** (
 
 ## Quick Start
 
-```bash
-# If you installed the hermes-relay plugin (recommended):
-hermes relay start --no-ssl
+**If you used `install.sh`** — nothing to do. Step [6/6] of the installer drops a systemd **user** unit at `~/.config/systemd/user/hermes-relay.service` and enables it. The relay is already running and will auto-restart on failure:
 
-# Or directly from a repo checkout:
-python -m plugin.relay --no-ssl
+```bash
+systemctl --user status hermes-relay
+systemctl --user restart hermes-relay
+journalctl --user -u hermes-relay -f
 ```
 
-Run on the same machine as hermes-agent. The canonical implementation lives at `plugin/relay/`; the top-level `relay_server/` package is a thin compat shim that delegates to it, so legacy entrypoints (`python -m relay_server`) still work.
+Want the service to survive logging out of SSH?
+
+```bash
+loginctl enable-linger $USER
+```
+
+**Manual run** (dev boxes, hosts without systemd-user):
+
+```bash
+# Canonical entry point
+python -m plugin.relay --no-ssl
+
+# Legacy entrypoint still works via a thin compat shim
+python -m relay_server --no-ssl
+```
+
+Both entry points load `~/.hermes/.env` into the process environment **on import**, so API keys (`VOICE_TOOLS_OPENAI_KEY`, `ELEVENLABS_API_KEY`, etc.) are always present on start regardless of how the process was launched — no need to `source` anything first. This is the same pattern `hermes-gateway` uses, which is why neither unit needs an `EnvironmentFile=` directive. See [`docs/relay-server.md`](https://github.com/Codename-11/hermes-relay/blob/main/docs/relay-server.md#env-auto-loading) for the precedence rules.
 
 ## Deployment Options
 
@@ -34,24 +50,31 @@ docker run -d --name hermes-relay --network host \
   -v ~/.hermes:/home/relay/.hermes:ro hermes-relay
 ```
 
-### Systemd
+Mount `~/.hermes` read-only into the container so the in-process `.env` bootstrap can find it at its canonical path.
+
+### Systemd user service (manual install)
+
+The installer does this for you, but if you're installing from a non-standard layout:
 
 ```bash
-sudo cp relay_server/hermes-relay.service /etc/systemd/system/
-# Edit the file: set User= and WorkingDirectory= for your setup
-sudo systemctl daemon-reload
-sudo systemctl enable --now hermes-relay
+mkdir -p ~/.config/systemd/user
+cp relay_server/hermes-relay.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now hermes-relay.service
+loginctl enable-linger $USER   # survive logout (optional)
 ```
+
+The unit template uses systemd's `%h` specifier for your home directory, so no hand-editing is required on a default install (`~/.hermes/hermes-relay`, `~/.hermes/hermes-agent/venv`).
 
 ### TLS (production)
 
 ```bash
 export RELAY_SSL_CERT=/etc/letsencrypt/live/yourdomain/fullchain.pem
 export RELAY_SSL_KEY=/etc/letsencrypt/live/yourdomain/privkey.pem
-python -m relay_server
+systemctl --user restart hermes-relay
 ```
 
-Or terminate TLS at a reverse proxy (nginx/Caddy) in front of the relay.
+Or terminate TLS at a reverse proxy (nginx/Caddy) in front of the relay. If you set these in `~/.hermes/.env`, the Python bootstrap picks them up on the next service restart — no need to edit the unit file.
 
 ## Configuration
 
@@ -124,11 +147,14 @@ curl http://localhost:8767/health
 
 ## Troubleshooting
 
-- **Connection refused** — Is the relay running? `systemctl status hermes-relay` or `docker logs hermes-relay`
+- **Connection refused** — Is the relay running? `systemctl --user status hermes-relay` (installed via `install.sh`) or `docker logs hermes-relay` (container) or `pgrep -af "python -m plugin.relay"` (manual launch).
+- **Voice endpoints 500 with "no API key available"** — The relay process doesn't have the right keys. The Python bootstrap loads `~/.hermes/.env` automatically, so this almost always means the key just isn't in `.env` yet. Double-check with `grep VOICE_TOOLS_OPENAI_KEY ~/.hermes/.env` (for STT) or `grep ELEVENLABS_API_KEY ~/.hermes/.env` (for TTS). If you just edited `.env`, restart the service so Python re-imports: `systemctl --user restart hermes-relay`.
+- **Service starts but port bind fails** — Check for an orphan manual launch: `pgrep -f "python -m plugin.relay"`. Kill it with `pkill -f "python -m plugin.relay"` then `systemctl --user restart hermes-relay`.
 - **Auth failure** — Pairing codes expire 10 minutes after registration and are one-shot. Re-run `hermes-pair` (or `/hermes-relay-pair`) to mint a fresh code and get a new QR.
 - **QR has no relay block** — the pair command only embeds relay details if it can reach `localhost:RELAY_PORT/health` when it runs. Start the relay first, then re-run `hermes-pair`.
 - **TLS errors** — Use `--no-ssl` for local dev. Ensure cert paths are correct for production.
 - **Phone can't reach relay** — Check firewall rules for port 8767. Verify with `curl http://server-ip:8767/health` from another machine.
+- **Service stops when you log out of SSH** — That's systemd's default for user services. Run `loginctl enable-linger $USER` once to fix it.
 
 ## Further Reading
 

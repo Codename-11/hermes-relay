@@ -1,31 +1,43 @@
 [Unit]
 Description=Hermes-Relay Server (WSS bridge for Android app)
 Documentation=https://github.com/Codename-11/hermes-relay/blob/main/docs/relay-server.md
-After=network-online.target
-Wants=network-online.target
+After=network.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+# User service — install with:
+#   mkdir -p ~/.config/systemd/user
+#   cp hermes-relay.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now hermes-relay.service
+#
+# Or just run `install.sh` — step [6/6] drops this file into place
+# automatically on any host with a systemd user session.
+#
+# Environment: the relay loads ~/.hermes/.env at Python import time (see
+# plugin/relay/_env_bootstrap.py), mirroring how hermes-gateway handles
+# API keys. There is NO EnvironmentFile= directive here on purpose — any
+# restart of this service via `systemctl --user restart hermes-relay`
+# will pick up fresh key values from ~/.hermes/.env automatically.
+#
+# Surviving logout:
+#   loginctl enable-linger $USER
+# ...otherwise the service stops when your last shell session ends.
 
 [Service]
 Type=simple
-User=bailey
-Group=bailey
-WorkingDirectory=/home/bailey/hermes-relay
-ExecStart=/usr/bin/python3 -m relay_server --no-ssl
+ExecStart=%h/.hermes/hermes-agent/venv/bin/python -m plugin.relay --no-ssl --log-level INFO
+WorkingDirectory=%h/.hermes/hermes-relay
+Environment="PATH=%h/.hermes/hermes-agent/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="VIRTUAL_ENV=%h/.hermes/hermes-agent/venv"
+Environment="HERMES_HOME=%h/.hermes"
 Restart=on-failure
-RestartSec=5
-
-# Environment — uncomment and edit as needed
-# Environment=RELAY_PORT=8767
-# Environment=RELAY_WEBAPI_URL=http://localhost:8642
-# Environment=RELAY_SSL_CERT=/etc/hermes-relay/cert.pem
-# Environment=RELAY_SSL_KEY=/etc/hermes-relay/key.pem
-# Environment=RELAY_LOG_LEVEL=INFO
-
-# Hardening
-NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/tmp
-PrivateTmp=yes
+RestartSec=30
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=60
+StandardOutput=journal
+StandardError=journal
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

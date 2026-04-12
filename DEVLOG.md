@@ -1,5 +1,67 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-12 — Relay startup: Python-side `.env` bootstrap + systemd user service
+
+Fixed a drift-class bug where the relay would 500 on `/voice/transcribe` with `STT provider 'openai' configured but no API key available` after any restart that wasn't preceded by a manual `source ~/.hermes/.env`. Root cause: the relay was run as a detached `nohup` process, which inherits whatever env the launching shell happens to have exported — not what's in `~/.hermes/.env`. The gateway already solves this via `hermes_cli/main.py:144` calling `load_hermes_dotenv(project_env=...)` at import time, which is why its user systemd unit carries no `EnvironmentFile=` directive. The relay was missing that pattern entirely.
+
+### New: `plugin/relay/_env_bootstrap.py`
+
+A tiny helper (55 lines) exposing `load_hermes_env() -> list[Path]`. Preferred path: `from hermes_cli.env_loader import load_hermes_dotenv` and call it with defaults — keeps precedence and encoding fallbacks (latin-1 on `UnicodeDecodeError`) in exact lockstep with hermes-agent. Fallback path: direct `python-dotenv` against `$HERMES_HOME/.env` (or `~/.hermes/.env` when unset) with `override=True`. Silent no-op in stripped-down containers that explicitly provide env via `docker run -e …`. Both entry points — `plugin/relay/__main__.py` and the legacy `relay_server/__main__.py` shim — call `load_hermes_env()` **before** importing `.server`, so anything in the module-import chain that reads `os.getenv` at module level sees the same environment regardless of launcher.
+
+### New: systemd **user** unit matching the gateway's shape
+
+Rewrote `relay_server/hermes-relay.service` from scratch. The old template was a system-level unit hardcoded to `/home/bailey/hermes-relay` with `/usr/bin/python3` — nobody was using it correctly. New template is a user unit with `%h` expansion so it's user-agnostic:
+
+```ini
+[Service]
+Type=simple
+ExecStart=%h/.hermes/hermes-agent/venv/bin/python -m plugin.relay --no-ssl --log-level INFO
+WorkingDirectory=%h/.hermes/hermes-relay
+Environment="PATH=%h/.hermes/hermes-agent/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="VIRTUAL_ENV=%h/.hermes/hermes-agent/venv"
+Environment="HERMES_HOME=%h/.hermes"
+Restart=on-failure
+RestartSec=30
+...
+[Install]
+WantedBy=default.target
+```
+
+No `EnvironmentFile=` on purpose — `_env_bootstrap.py` handles that. Matches the gateway unit's env directives (`PATH`, `VIRTUAL_ENV`, `HERMES_HOME`) + restart policy (`StartLimitIntervalSec=600`, `StartLimitBurst=5`) + log destination (`StandardOutput=journal`). User target so it lives in `~/.config/systemd/user/` and doesn't need sudo.
+
+### `install.sh` step [6/6] — optional systemd install
+
+Added a final installer step that idempotently drops the unit into `~/.config/systemd/user/`, runs `daemon-reload`, and `enable --now`s the service. Skipped gracefully on:
+- Hosts without `systemctl` (macOS, some BSDs)
+- Hosts where `systemctl --user show-environment` fails (bare chroots, WSL without systemd, containers without a user bus)
+- `$HERMES_RELAY_NO_SYSTEMD` set (explicit opt-out for users who prefer their own process supervisor)
+
+If an orphan `nohup`-launched `python -m plugin.relay` is already holding :8767, the installer warns the user to kill it first rather than racing. A parting hint about `loginctl enable-linger $USER` for users who want the relay to survive SSH logout.
+
+After install, the update cycle is now a single command:
+
+```bash
+cd ~/.hermes/hermes-relay && git pull
+systemctl --user restart hermes-relay
+```
+
+No `pkill` / `nohup` / `disown` dance, no manual env sourcing, no stale-key drift on restart.
+
+### Docs surface updated
+
+- `docs/relay-server.md` — new Quick Start with `install.sh` as the recommended path, manual-run and Docker sections preserved, new `.env auto-loading` subsection explaining precedence + why there's no `EnvironmentFile=`.
+- `user-docs/reference/relay-server.md` — mirror of the above in user-facing style, plus two new troubleshooting entries (voice 500 "no API key available" → check `.env` + restart, and service stops on SSH logout → `loginctl enable-linger`).
+- `CLAUDE.md` Server Deployment section — relay is now listed as `hermes-relay.service` (user unit), the restart command is `systemctl --user restart hermes-relay`, the verification step is `cat /proc/$PID/environ` via `systemctl show -p MainPID`, and the old nohup instructions carry a history note pointing at this entry.
+- `DEVLOG.md` — this entry.
+
+### Why this is the right shape for the general plugin path
+
+The installer is the only user-facing install surface for hermes-relay and already owns plugin registration, skill discovery, and the `hermes-pair` shim. Adding systemd-user install to it means any Linux user who runs the one-liner gets the relay in the same canonical place as hermes-gateway (`~/.config/systemd/user/`) with the same management commands (`systemctl --user …`). Non-systemd hosts fall back to manual `python -m plugin.relay --no-ssl` and the Python-side env loader still does the right thing. Docker users mount `~/.hermes` and the bootstrap finds `.env` at its canonical path inside the container. There's no setup branching that varies by user, distro, or launch method — the env load happens at import time, which is the one place every launch path passes through.
+
+Fix scope: 3 Python files touched (2 entry points + 1 new helper), 1 systemd template rewritten, 1 installer stanza added, 4 docs updated. No breaking changes to existing callers — manual `python -m plugin.relay` still works and is actually more robust than before because it now auto-loads `.env`.
+
+---
+
 ## 2026-04-12 — Voice mode: end-to-end voice conversation via relay TTS/STT endpoints
 
 Shipped voice mode in a single session via a four-agent team in a shared worktree (`feature/voice-mode`). Plan came from the Obsidian vault at `Hermes-Relay/Plans/Voice Mode.md` — a 4-phase spec (V1 server endpoints → V2 app audio pipeline → V3 orb animation → V4 polish). All four phases landed in parallel; V2b UI waited on V2a's locked ViewModel contract, everything else ran concurrently. Net: ~2750 lines across 9 new files + 6 modified files, no upstream hermes-agent changes required.

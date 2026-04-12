@@ -16,6 +16,11 @@
 #   5. A shell shim at ~/.local/bin/hermes-pair that execs
 #      `<venv>/python -m plugin.pair "$@"` — the canonical shell-side entry
 #      point while the upstream `hermes pair` plugin CLI path is blocked
+#   6. A systemd user unit at ~/.config/systemd/user/hermes-relay.service
+#      (optional — only on hosts with a systemd user session; skipped on
+#      macOS, WSL-without-systemd, bare chroots, etc.). When installed,
+#      the relay auto-starts on login, restarts on failure, and picks up
+#      API keys from ~/.hermes/.env via the Python-side env bootstrap.
 #
 # Updates:
 #   cd ~/.hermes/hermes-relay && git pull
@@ -28,6 +33,8 @@
 #   HERMES_VENV_PY          Path to hermes-agent venv python
 #                           (default: ~/.hermes/hermes-agent/venv/bin/python)
 #   HERMES_HOME             Hermes config home (default: ~/.hermes)
+#   HERMES_RELAY_NO_SYSTEMD Skip step [6/6] even if systemd is available
+#                           (set to any non-empty value)
 
 set -euo pipefail
 
@@ -41,6 +48,9 @@ PLUGIN_LINK="$HERMES_HOME/plugins/hermes-relay"
 SKILLS_DIR_IN_REPO="$RELAY_HOME/skills"
 HERMES_CONFIG="$HERMES_HOME/config.yaml"
 SHIM_PATH="$HOME/.local/bin/hermes-pair"
+SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
+SERVICE_SRC="$RELAY_HOME/relay_server/hermes-relay.service"
+SERVICE_DST="$SYSTEMD_USER_DIR/hermes-relay.service"
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 die()  { echo "  [x] $*" >&2; exit 1; }
@@ -72,8 +82,8 @@ if [ ! -x "$VENV_PY" ]; then
     die "hermes-agent venv Python not found at $VENV_PY — reinstall hermes-agent or set HERMES_VENV_PY"
 fi
 
-# ── 1/5  Clone or update the repo ──────────────────────────────────────────
-info "[1/5] Syncing repo..."
+# ── 1/6  Clone or update the repo ──────────────────────────────────────────
+info "[1/6] Syncing repo..."
 if [ -d "$RELAY_HOME/.git" ]; then
     (cd "$RELAY_HOME" && git fetch --quiet origin "$BRANCH" && git checkout --quiet "$BRANCH" && git pull --ff-only --quiet) \
         || die "Failed to update existing clone at $RELAY_HOME"
@@ -87,15 +97,15 @@ else
     ok "Cloned $REPO_URL to $RELAY_HOME"
 fi
 
-# ── 2/5  Install Python package editable into the hermes venv ──────────────
-info "[2/5] Installing plugin into hermes venv (editable)..."
+# ── 2/6  Install Python package editable into the hermes venv ──────────────
+info "[2/6] Installing plugin into hermes venv (editable)..."
 "$VENV_PY" -m pip install --quiet --upgrade pip >/dev/null 2>&1 || true
 "$VENV_PY" -m pip install --quiet -e "$RELAY_HOME" \
     || die "pip install -e $RELAY_HOME failed"
 ok "Installed $("$VENV_PY" -m pip show hermes-relay 2>/dev/null | awk '/^Name:/{n=$2}/^Version:/{print n" "$2}')"
 
-# ── 3/5  Symlink plugin into Hermes plugin dir ─────────────────────────────
-info "[3/5] Registering plugin with Hermes..."
+# ── 3/6  Symlink plugin into Hermes plugin dir ─────────────────────────────
+info "[3/6] Registering plugin with Hermes..."
 mkdir -p "$(dirname "$PLUGIN_LINK")"
 # Remove an old install (dir, symlink, or mismatched target)
 if [ -L "$PLUGIN_LINK" ] || [ -e "$PLUGIN_LINK" ]; then
@@ -112,8 +122,8 @@ for stale in "$HERMES_HOME/plugins/hermes-android" "$HERMES_HOME/hermes-agent/pl
     fi
 done
 
-# ── 4/5  Register skills dir in Hermes config (external_dirs) ──────────────
-info "[4/5] Registering skills directory..."
+# ── 4/6  Register skills dir in Hermes config (external_dirs) ──────────────
+info "[4/6] Registering skills directory..."
 "$VENV_PY" - <<PY
 import sys
 from pathlib import Path
@@ -166,8 +176,8 @@ else:
     print(f"  [ok] Added {target} to skills.external_dirs in {cfg_path}")
 PY
 
-# ── 5/5  Install the hermes-pair shell shim ────────────────────────────────
-info "[5/5] Installing hermes-pair shell shim..."
+# ── 5/6  Install the hermes-pair shell shim ────────────────────────────────
+info "[5/6] Installing hermes-pair shell shim..."
 mkdir -p "$(dirname "$SHIM_PATH")"
 cat > "$SHIM_PATH" <<SHIM
 #!/usr/bin/env bash
@@ -189,6 +199,62 @@ SHIM
 chmod +x "$SHIM_PATH"
 ok "Installed $SHIM_PATH"
 
+# ── 6/6  Install systemd user service (optional) ───────────────────────────
+# Idempotent: safe to re-run. Skipped gracefully on hosts without a systemd
+# user session (macOS, bare chroots, WSL without systemd, containers, etc).
+# The relay still runs fine on those — users just start it manually or via
+# their preferred process supervisor.
+#
+# The unit has NO EnvironmentFile= — plugin/relay/_env_bootstrap.py loads
+# ~/.hermes/.env into os.environ on startup, mirroring how the gateway
+# handles API keys. Any future `systemctl --user restart hermes-relay`
+# picks up fresh values from .env automatically.
+info "[6/6] Installing systemd user service..."
+
+if [ -n "${HERMES_RELAY_NO_SYSTEMD:-}" ]; then
+    info "  HERMES_RELAY_NO_SYSTEMD set — skipping"
+elif ! command -v systemctl >/dev/null 2>&1; then
+    info "  systemctl not found — skipping (run manually: $VENV_PY -m plugin.relay --no-ssl)"
+elif ! systemctl --user show-environment >/dev/null 2>&1; then
+    info "  systemd user session not available — skipping"
+    info "  Run manually: $VENV_PY -m plugin.relay --no-ssl"
+elif [ ! -f "$SERVICE_SRC" ]; then
+    info "  Service template not found at $SERVICE_SRC — skipping"
+else
+    mkdir -p "$SYSTEMD_USER_DIR"
+    cp "$SERVICE_SRC" "$SERVICE_DST"
+    ok "Wrote $SERVICE_DST"
+
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+
+    # If a nohup-launched relay is holding :8767, stop+disable will fail
+    # to bind on start. Warn the user to kill it first rather than racing
+    # the installer against their manual process.
+    if pgrep -f "python -m plugin.relay" >/dev/null 2>&1 && \
+       ! systemctl --user is-active hermes-relay.service >/dev/null 2>&1; then
+        info "  A manual 'python -m plugin.relay' is already running."
+        info "  Stop it first:  pkill -f 'python -m plugin.relay'"
+        info "  Then:           systemctl --user enable --now hermes-relay.service"
+    else
+        if systemctl --user enable --now hermes-relay.service >/dev/null 2>&1; then
+            ok "Enabled + started hermes-relay.service"
+            # Give aiohttp a second to bind before checking state.
+            sleep 1
+            if systemctl --user is-active hermes-relay.service >/dev/null 2>&1; then
+                ok "hermes-relay is running"
+            else
+                info "  hermes-relay failed to start"
+                info "  Check:  journalctl --user -u hermes-relay -n 30 --no-pager"
+            fi
+        else
+            info "  Could not enable hermes-relay.service"
+            info "  Check:  systemctl --user status hermes-relay.service"
+        fi
+    fi
+
+    info "  Linger tip: 'loginctl enable-linger $USER' keeps it running after logout"
+fi
+
 # ── Done ───────────────────────────────────────────────────────────────────
 echo ""
 echo "  [OK] Hermes-Relay installed."
@@ -206,6 +272,12 @@ echo "         $VENV_PY -m plugin.pair"
 echo ""
 echo "  To update later:"
 echo "    cd $RELAY_HOME && git pull"
+echo "    systemctl --user restart hermes-relay   # if installed as a service"
+echo ""
+echo "  Manage the relay service (if installed):"
+echo "    systemctl --user status hermes-relay"
+echo "    systemctl --user restart hermes-relay"
+echo "    journalctl --user -u hermes-relay -f"
 echo ""
 echo "  Scan the resulting QR from the Hermes-Relay app's Settings screen"
 echo "  (Connection → Scan Pairing QR) or during first-run onboarding."

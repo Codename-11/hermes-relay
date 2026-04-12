@@ -23,20 +23,46 @@ The relay runs alongside hermes-agent on the same machine. It reads `~/.hermes/c
 
 ## Quick Start
 
-### One-liner
+### Installed via `install.sh` (recommended)
+
+The canonical installer — `install.sh` — drops a systemd **user** unit at `~/.config/systemd/user/hermes-relay.service` and enables it automatically on any host with a systemd user session (Linux desktops, most servers). After install, the relay is running and will auto-restart on failure and resume on login:
 
 ```bash
-# If you installed the hermes-relay plugin:
-hermes relay start --no-ssl
+systemctl --user status hermes-relay
+systemctl --user restart hermes-relay
+journalctl --user -u hermes-relay -f
+```
 
-# Or directly from a repo checkout:
+To keep the relay running after you log out of SSH:
+
+```bash
+loginctl enable-linger $USER
+```
+
+Want to skip the systemd step? `HERMES_RELAY_NO_SYSTEMD=1 ./install.sh` (or equivalent for the one-liner) leaves the unit off disk and you manage the process yourself.
+
+### Running manually (dev / non-systemd hosts)
+
+```bash
+# Canonical entry point
 python -m plugin.relay --no-ssl
 
-# Legacy entrypoint still works via a thin compat shim:
+# Legacy entrypoint — thin compat shim, still works
 python -m relay_server --no-ssl
 ```
 
 The canonical implementation lives at `plugin/relay/`. The top-level `relay_server/` package is a thin shim that delegates to `plugin.relay.server.main()` so existing docs, scripts, and systemd units keep working.
+
+### `.env` auto-loading
+
+Both entry points call `plugin/relay/_env_bootstrap.py::load_hermes_env()` **before** any import that reads `os.environ`, so API keys from `~/.hermes/.env` (`VOICE_TOOLS_OPENAI_KEY`, `ELEVENLABS_API_KEY`, `ANTHROPIC_API_KEY`, etc.) are loaded regardless of how the process was started. This mirrors how `hermes_cli/main.py` bootstraps env for the gateway — it's why neither the gateway unit nor `hermes-relay.service` carries an `EnvironmentFile=` directive. Any future `systemctl --user restart hermes-relay` (or `pkill` + manual relaunch) picks up fresh values from `.env` without needing the shell to `source` anything first.
+
+Precedence (via `hermes_cli.env_loader.load_hermes_dotenv` when importable, falling back to `python-dotenv`):
+
+1. `$HERMES_HOME/.env` (defaults to `~/.hermes/.env`) — `override=True`, so this beats any stale shell exports
+2. No fallback beyond that — the relay is always installed alongside hermes-agent, so one env file is the source of truth
+
+If neither helper is installed (stripped-down containers), the bootstrap no-ops silently — operators can still provide env via `docker run -e ...` or whatever their orchestrator uses.
 
 ### Docker
 
@@ -47,20 +73,27 @@ docker run -d --name hermes-relay --network host \
   hermes-relay
 ```
 
-### Systemd (persistent service)
+The container mounts `~/.hermes` read-only so the in-process `.env` bootstrap can find `.env` at its canonical path inside the container.
+
+### Systemd (manual install, non-`install.sh` hosts)
+
+The `install.sh` step [6/6] handles this automatically, but if you're installing from a non-standard layout or want to skip the installer, the unit template is at `relay_server/hermes-relay.service`:
 
 ```bash
-# Edit the service file to match your user/paths
-sudo cp relay_server/hermes-relay.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now hermes-relay
+mkdir -p ~/.config/systemd/user
+cp relay_server/hermes-relay.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now hermes-relay.service
+loginctl enable-linger $USER   # survive logout (optional)
 ```
+
+The template uses systemd's `%h` specifier for the user's home, so it's user-agnostic — no hand-editing required when the paths match the default install (`~/.hermes/hermes-relay`, `~/.hermes/hermes-agent/venv`). Edit only if your hermes-agent venv lives somewhere non-standard.
 
 Check status:
 
 ```bash
-sudo systemctl status hermes-relay
-journalctl -u hermes-relay -f
+systemctl --user status hermes-relay
+journalctl --user -u hermes-relay -f
 ```
 
 ## CLI Options
@@ -187,7 +220,8 @@ Canonical implementation (`plugin/relay/`):
 
 | File | Purpose |
 |------|---------|
-| `plugin/relay/__main__.py` | Entry point (`python -m plugin.relay`) |
+| `plugin/relay/__main__.py` | Entry point (`python -m plugin.relay`) — calls `load_hermes_env()` before importing the server module |
+| `plugin/relay/_env_bootstrap.py` | `load_hermes_env()` — prefers `hermes_cli.env_loader.load_hermes_dotenv`, falls back to `python-dotenv`, silent no-op in stripped containers |
 | `plugin/relay/server.py` | Main WSS server, HTTP route registration, auth flow, `/pairing/register` handler |
 | `plugin/relay/config.py` | `RelayConfig`, `PAIRING_ALPHABET` (full `A-Z / 0-9`), env var loading |
 | `plugin/relay/auth.py` | `PairingManager`, `SessionManager`, `RateLimiter` |
@@ -199,8 +233,8 @@ Deployment assets (`relay_server/`, thin shim + ops files):
 
 | File | Purpose |
 |------|---------|
-| `relay_server/__main__.py` | Legacy entrypoint — delegates to `plugin.relay.server.main()` |
+| `relay_server/__main__.py` | Legacy entrypoint — calls `load_hermes_env()` then delegates to `plugin.relay.server.main()` |
 | `relay_server/Dockerfile` | Container image |
-| `relay_server/hermes-relay.service` | Systemd unit file |
+| `relay_server/hermes-relay.service` | Systemd **user** unit template — uses `%h` for home expansion so it's user-agnostic, no `EnvironmentFile=` (Python bootstrap handles env) |
 | `relay_server/SKILL.md` | Hermes skill reference for self-setup |
 | `relay_server/requirements.txt` | Python dependencies |

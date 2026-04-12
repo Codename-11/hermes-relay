@@ -251,7 +251,7 @@ The standard flow when Claude is editing code and Bailey is testing against the 
 5. **Pull on the Linux server** where the live relay + hermes-agent run. The hermes-relay plugin is **editable-installed** (`pip install -e`) against the hermes-agent venv, so `git pull` inside the server clone is all it takes for Python code changes to take effect on the **next import** per process. See "Server Deployment" below for the exact paths and commands.
 6. **Restart running Python processes** if needed. Editable installs only take effect on fresh imports — any process that already imported the old code is holding it in memory. In practice this means:
    - `hermes-gateway.service` (user systemd) — restart via `systemctl --user restart hermes-gateway` when plugin *tool* code changes (e.g., `plugin/tools/android_tool.py`), because the gateway process imports and caches tools.
-   - The relay (`python -m plugin.relay --no-ssl`) — not a systemd service on this deployment; runs as a detached `nohup`/`setsid` process. Restart via `pkill -TERM -f "python -m plugin.relay"` then re-launch with `nohup ... & disown`. See the log at `~/hermes-relay.log` on the server.
+   - `hermes-relay.service` (user systemd, installed by `install.sh` step [6/6] as of 2026-04-12) — restart via `systemctl --user restart hermes-relay` when plugin *relay* code changes (files under `plugin/relay/`). The unit's Python entry point calls `plugin/relay/_env_bootstrap.py::load_hermes_env()` before importing the server module, so `~/.hermes/.env` values are re-read on every restart — no shell sourcing, no stale API keys. Logs: `journalctl --user -u hermes-relay -f`.
    - Plugin skill changes (files under `skills/`) — picked up **automatically** on every hermes-agent invocation via the `external_dirs` scan. No restart needed.
 7. **Run tests on the server** (the venv there has all dependencies). Prefer `python -m unittest plugin.tests.test_<name>` — `python -m pytest` sometimes chokes on a pre-existing `conftest.py` that imports the `responses` module (not installed). `unittest` bypasses the conftest entirely.
 8. **Test on the phone** — Bailey builds from Android Studio, installs to his Samsung device connected via USB (or the Studio device chooser), scans the pair QR from `/hermes-relay-pair` or `hermes-pair` on the server, and exercises the feature. He reports errors by pasting the Studio Logcat or the Kotlin compile error into the chat.
@@ -269,9 +269,9 @@ The server is a Linux box on Bailey's LAN running hermes-agent with the hermes-r
 | Editable install verification | `~/.hermes/hermes-agent/venv/bin/pip show hermes-relay` → `Editable project location: ~/.hermes/hermes-relay` |
 | Config (yaml + env) | `~/.hermes/config.yaml` + `~/.hermes/.env` |
 | QR-secret (HMAC pair signing) | `~/.hermes/hermes-relay-qr-secret` (32 bytes, 0o600, auto-created by `hermes-pair` first run) |
-| Relay log | `~/hermes-relay.log` |
+| Relay log | `journalctl --user -u hermes-relay` (systemd user journal). Legacy `~/hermes-relay.log` is from the historical nohup era — no longer written to. |
 | `hermes-gateway.service` | User systemd unit; runs `python -m hermes_cli.main gateway run --replace` on port 8642 |
-| Relay process | Detached `nohup` / `setsid` (NOT a systemd service), `python -m plugin.relay --no-ssl --log-level INFO` on port 8767 |
+| `hermes-relay.service` | User systemd unit (installed by `install.sh` step [6/6] as of 2026-04-12); runs `%h/.hermes/hermes-agent/venv/bin/python -m plugin.relay --no-ssl --log-level INFO` on port 8767. Template lives at `relay_server/hermes-relay.service` and uses `%h` for home-dir expansion so it's user-agnostic. **No `EnvironmentFile=`** — `plugin/relay/_env_bootstrap.py` loads `~/.hermes/.env` at Python import time, exactly like `hermes_cli/main.py` does for the gateway. |
 
 **Standard update cycle on the server** (run manually via `ssh` — connection details in `~/SYSTEM.md` server-side):
 
@@ -283,15 +283,17 @@ git pull --ff-only origin main
 systemctl --user restart hermes-gateway
 
 # If relay server code changed (plugin/relay/*.py):
-pkill -TERM -f "python -m plugin.relay"
-sleep 2
-nohup ~/.hermes/hermes-agent/venv/bin/python -m plugin.relay \
-    --no-ssl --log-level INFO \
-    >> ~/hermes-relay.log 2>&1 </dev/null & disown
+systemctl --user restart hermes-relay
 
 # Verify health
 curl -s http://localhost:8767/health
+
+# Verify the process has ~/.hermes/.env loaded (all expected keys as <set>):
+PID=$(systemctl --user show -p MainPID --value hermes-relay)
+cat /proc/$PID/environ | tr '\0' '\n' | grep -E 'VOICE_TOOLS_OPENAI_KEY|ELEVENLABS_API_KEY|ANTHROPIC_API_KEY' | sed 's/=.*/=<set>/'
 ```
+
+If you ever see a stray `python -m plugin.relay` in `pgrep` output that doesn't belong to the service (orphan from a pre-systemd manual launch), kill it first: `pkill -f "python -m plugin.relay" && systemctl --user restart hermes-relay`. The nohup-era workflow (`nohup … & disown`) is no longer the canonical path as of 2026-04-12 — see the DEVLOG entry for that date.
 
 **Running tests on the server:**
 
@@ -311,7 +313,7 @@ cd ~/.hermes/hermes-relay
 
 - **Never install APKs from Claude.** Bailey deploys via Android Studio's run button. No `adb install`, no gradle builds from the tool side.
 - **Never run `pytest` from Claude-side on the server** without the `unittest` escape above, unless you've first checked that `responses` is in the venv — the pre-existing conftest will fail the collector.
-- **Always use `nohup` + `disown` or `setsid -f`** when starting the relay over SSH, otherwise the SSH session's exit can kill the process before it fully detaches.
+- **Use `systemctl --user restart hermes-relay` to restart the relay.** The nohup + disown dance is historical — as of 2026-04-12 the relay runs as a user systemd unit and `_env_bootstrap.py` loads `.env` at Python import time. If SSH is exiting before the command completes, wrap the restart with `nohup systemctl --user restart hermes-relay </dev/null &`.
 - **Sensitive info lives in `~/SYSTEM.md` on the server and `~/.hermes/.env`**, NOT in this repo. Bailey's SSH user, IP, and secrets don't belong in `CLAUDE.md`. Claude reads the server's SYSTEM.md on first SSH if orientation is needed (`cat ~/SYSTEM.md`).
 - **The phone re-pairs after each relay restart** — in-memory `SessionManager` state is wiped on restart, so the phone's stored session token becomes stale. `/pairing/register` clears rate-limit blocks automatically (per ADR 15) so re-pair via `/hermes-relay-pair` (in-chat) or `hermes-pair` (shell shim) works immediately without waiting for a block to expire.
 
@@ -320,7 +322,7 @@ cd ~/.hermes/hermes-relay
 | Change type | Who rebuilds/restarts? | How? |
 |---|---|---|
 | Python plugin tool (e.g., `android_tool.py`) | `hermes-gateway.service` restart | `systemctl --user restart hermes-gateway` |
-| Python plugin relay (`plugin/relay/*.py`) | Manual relay process restart | `pkill` + `nohup ... & disown` (see above) |
+| Python plugin relay (`plugin/relay/*.py`) | `hermes-relay.service` restart | `systemctl --user restart hermes-relay` (loads `~/.hermes/.env` on every start via `_env_bootstrap.py`) |
 | Python plugin pair CLI (`plugin/pair.py`, `plugin/cli.py`) | Next invocation picks up new code | No restart needed — fresh process per invocation |
 | Skill files (`skills/**/SKILL.md`) | Next hermes-agent invocation scans `external_dirs` | No restart needed |
 | Android app (`app/**`) | Bailey rebuilds in Android Studio | Studio run button → device |
