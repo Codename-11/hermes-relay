@@ -28,6 +28,14 @@ Want the service to survive logging out of SSH?
 loginctl enable-linger $USER
 ```
 
+To uninstall the relay (and the rest of the plugin) cleanly:
+
+```bash
+bash ~/.hermes/hermes-relay/uninstall.sh
+```
+
+The uninstaller stops the systemd unit, removes it, daemon-reloads, and reverses every other install step (pip package, plugin symlink, skills config entry, hermes-pair shim, git clone). It's idempotent and never touches `~/.hermes/.env`, the gateway's `state.db`, or the `hermes-agent` venv core. Use `--dry-run` to preview, `--keep-clone` to keep the git tree, `--remove-secret` to also wipe the QR signing identity.
+
 **Manual run** (dev boxes, hosts without systemd-user):
 
 ```bash
