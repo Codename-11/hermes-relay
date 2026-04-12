@@ -3,6 +3,7 @@ package com.hermesandroid.relay.viewmodel
 import android.app.Application
 import android.net.Uri
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -54,6 +55,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
         // Shared
         private val KEY_THEME = stringPreferencesKey("theme")
+        private val KEY_FONT_SCALE = floatPreferencesKey("font_scale")
+        const val DEFAULT_FONT_SCALE: Float = 1.0f
         private val KEY_INSECURE_MODE = booleanPreferencesKey("insecure_mode")
         private val KEY_LAST_SEEN_VERSION = stringPreferencesKey("last_seen_version")
         private val KEY_LAST_SESSION_ID = stringPreferencesKey("last_session_id")
@@ -190,6 +193,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             preferences[KEY_THEME] ?: "auto"
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "auto")
+
+    // Global font scale (1.0 = system default). Applied at the Compose theme
+    // root via LocalDensity.fontScale and pushed into the xterm WebView via
+    // TerminalWebView's LaunchedEffect on this flow.
+    val fontScale: StateFlow<Float> = application.relayDataStore.data
+        .map { preferences ->
+            preferences[KEY_FONT_SCALE] ?: DEFAULT_FONT_SCALE
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_FONT_SCALE)
 
     // Onboarding state
     private val _onboardingCompleted = MutableStateFlow(true) // default true to avoid flash
@@ -731,6 +743,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
                 preferences[KEY_THEME] = theme
+            }
+        }
+    }
+
+    fun setFontScale(scale: Float) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                preferences[KEY_FONT_SCALE] = scale
             }
         }
     }

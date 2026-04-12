@@ -211,8 +211,9 @@ fun RelayApp() {
 
     // Observe theme preference
     val themePreference by connectionViewModel.theme.collectAsState()
+    val fontScale by connectionViewModel.fontScale.collectAsState()
 
-    HermesRelayTheme(themePreference = themePreference) {
+    HermesRelayTheme(themePreference = themePreference, fontScale = fontScale) {
         // Brief sphere intro after system splash fades
         var introComplete by remember { mutableStateOf(false) }
         LaunchedEffect(Unit) {

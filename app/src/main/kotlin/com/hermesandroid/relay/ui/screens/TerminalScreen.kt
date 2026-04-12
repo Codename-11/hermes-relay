@@ -233,7 +233,9 @@ fun TerminalScreen(
             // Each TerminalWebView remembers its underlying WebView keyed on
             // tabId, so once a tab is created its WebView survives for the
             // lifetime of the tab and gets torn down by DisposableEffect only
-            // when [closeTab] removes the entry from [tabs].
+            // when [closeTab] removes the entry from [tabs]. fontScale is
+            // threaded in from ConnectionViewModel so every tab inherits the
+            // global font size preference.
             for (tab in tabs) {
                 val isActive = tab.tabId == activeTabId
                 TerminalWebView(
@@ -243,6 +245,7 @@ fun TerminalScreen(
                         .fillMaxSize()
                         .zIndex(if (isActive) 1f else 0f)
                         .alpha(if (isActive) 1f else 0f),
+                    fontScale = connectionViewModel.fontScale,
                     onWebViewReady = { wv ->
                         webViewByTab[tab.tabId] = wv
                     },

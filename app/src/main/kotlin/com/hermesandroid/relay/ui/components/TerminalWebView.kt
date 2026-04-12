@@ -18,6 +18,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import com.hermesandroid.relay.viewmodel.TerminalViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.filter
 
 /**
@@ -45,6 +47,7 @@ fun TerminalWebView(
     viewModel: TerminalViewModel,
     tabId: Int,
     modifier: Modifier = Modifier,
+    fontScale: StateFlow<Float> = remember { MutableStateFlow(1.0f) },
     onWebViewReady: ((WebView) -> Unit)? = null,
 ) {
     val context = LocalContext.current
@@ -193,6 +196,21 @@ fun TerminalWebView(
                 // dispatcher is Main.
                 webView.evaluateJavascript("window.writeTerminal('${tabOutput.b64}');", null)
             }
+    }
+
+    // Push the user's global font scale into xterm. The base size matches
+    // index.html (`fontSize: 13`), and `window.setFontSize` already calls
+    // `fitAddon.fit()` so the layout listener picks up the resulting resize
+    // automatically. We coerce to a sensible minimum so a tiny scale (or a
+    // future smaller stop) can never produce sub-6px terminal glyphs.
+    LaunchedEffect(webView, fontScale) {
+        fontScale.collect { scale ->
+            val target = (13 * scale).toInt().coerceAtLeast(6)
+            webView.evaluateJavascript(
+                "if (window.setFontSize) window.setFontSize($target);",
+                null
+            )
+        }
     }
 
     DisposableEffect(webView) {

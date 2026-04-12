@@ -8,8 +8,11 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 
 // Brand palette — derived from assets/logo.svg
 private val HermesPrimary = Color(0xFF6B35E8)       // Logo primary purple
@@ -78,6 +81,7 @@ private val LightColorScheme = lightColorScheme(
 @Composable
 fun HermesRelayTheme(
     themePreference: String = "auto",
+    fontScale: Float = 1.0f,
     content: @Composable () -> Unit
 ) {
     val useDarkTheme = when (themePreference) {
@@ -97,9 +101,30 @@ fun HermesRelayTheme(
         else -> LightColorScheme
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
-        content = content
-    )
+    // Compose-wide font scaling. We multiply the user's chosen scale into the
+    // current LocalDensity.fontScale (which already reflects the system font
+    // size accessibility setting), so our preference stacks on top of the
+    // system value rather than overriding it. Every Text/TextField composable
+    // reads its sp dimensions through LocalDensity, so this propagates to
+    // every screen automatically without rewriting Typography.
+    if (fontScale == 1.0f) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = Typography,
+            content = content
+        )
+    } else {
+        val currentDensity = LocalDensity.current
+        val scaledDensity = Density(
+            density = currentDensity.density,
+            fontScale = currentDensity.fontScale * fontScale
+        )
+        CompositionLocalProvider(LocalDensity provides scaledDensity) {
+            MaterialTheme(
+                colorScheme = colorScheme,
+                typography = Typography,
+                content = content
+            )
+        }
+    }
 }
