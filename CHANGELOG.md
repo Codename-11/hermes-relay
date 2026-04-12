@@ -6,17 +6,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-12
+
 ### Added
-- **Voice mode** — real-time voice conversation with your Hermes agent via the relay plugin. Tap the mic FAB in chat to enter voice mode: the sphere expands to fill the screen, listens while you speak, and performs the agent's response as it talks back. Uses the hermes-agent server's configured TTS/STT providers — no API keys on the phone.
-  - **Three interaction modes** — Tap-to-talk (default), Hold-to-talk, and Continuous (back-and-forth like a natural conversation)
-  - **Streaming TTS** — sentence-by-sentence synthesis starts playing the first sentence while the rest of the response is still being generated
-  - **Interruption** — tap the mic while the agent is speaking to stop TTS and start your next utterance
-  - **Sphere voice states** — MorphingSphere now has `Listening` (soft blue/purple, subtle breathing with your voice) and `Speaking` (vivid green/teal, dramatic core-warmth pulse with the agent's voice amplitude)
-  - **Voice settings screen** — Settings → Voice for interaction mode, silence threshold, and provider info from the relay
-  - **New relay endpoints** — `POST /voice/transcribe`, `POST /voice/synthesize`, `GET /voice/config` (bearer auth, same as `/media/*`)
-  - **6 TTS providers** via hermes-agent config (Edge TTS free default, ElevenLabs, OpenAI TTS, MiniMax, Mistral Voxtral, NeuTTS local)
-  - **5 STT providers** via hermes-agent config (local faster-whisper free default, local command, Groq free tier, OpenAI Whisper, Mistral Voxtral)
-  - Voice messages appear as normal chat messages in session history, so you can reload on another device and see the transcript
+- **Voice mode** — real-time voice conversation via relay TTS/STT endpoints. Tap the mic in the chat bar to enter voice mode with the sphere, waveform visualizer, and streaming sentence-level TTS playback
+  - Three interaction modes (Tap-to-talk, Hold-to-talk, Continuous)
+  - Streaming TTS with sentence-boundary detection
+  - Interrupt: tap stop during Speaking to cancel TTS + SSE stream
+  - Sphere voice states: Listening (blue/purple), Speaking (green/teal)
+  - Voice settings screen (interaction mode, silence threshold, provider info, Test Voice)
+  - Relay endpoints: `POST /voice/transcribe`, `POST /voice/synthesize`, `GET /voice/config`
+  - 6 TTS + 5 STT providers via hermes-agent config
+  - Voice messages appear as normal chat messages in session history
+- **Reactive layered-sine waveform** — three overlapping waves with amplitude-driven phase velocity (`withFrameNanos` ticker), pill-shaped edge merge (geometric `sin(πt)` taper + `BlendMode.DstIn` gradient mask), color-keyed to voice state
+- **Enter/exit voice chimes** — synthesized 200ms PCM sweeps via AudioTrack (440→660 Hz enter, mirror exit)
+- **Terminal (Phase 2)** — tmux-backed persistent shells with tabs, scrollback search, and session info sheet
+- **Session TTL picker** — choose 1d / 7d / 30d / 90d / 1y / Never at pair time
+- **Per-channel grants** — control terminal/bridge access per paired device
+- **Android Keystore token storage** — StrongBox-preferred hardware-backed encrypted storage with TEE fallback
+- **TOFU certificate pinning** — SHA-256 SPKI fingerprints per host:port, wiped on re-pair
+- **Paired Devices screen** — list all paired devices with metadata, extend sessions, revoke access
+- **Transport security badges** — three-state visual indicator (secure / insecure-with-reason / insecure-unknown)
+- **HMAC-SHA256 QR signing** — pairing QR codes signed via host-local secret
+- **Insecure connection acknowledgment dialog** — first-time consent with threat model explanation + reason picker
+- **Inbound media pipeline** — agent-produced files via relay `MediaRegistry` with opaque tokens, Discord-style rendering for image/video/audio/PDF/text/generic attachments
+- **`/media/by-path` endpoint** — LLM-emitted `MEDIA:/path` markers fetched directly by the phone
+- **Settings refactor** — category-list landing page with dedicated sub-screens (Connection, Chat, Voice, Media, Appearance, Paired Devices, Analytics, Developer)
+- **Global font-scale preference** — applies to both chat and terminal
+- **RelayErrorClassifier** — converts any `Throwable` into a user-facing `HumanError(title, body, retryable, actionLabel)` with context-aware titles
+- **Global SnackbarHost** — `LocalSnackbarHost` CompositionLocal at RelayApp scope so any screen can surface classified errors
+- **Mic permission banner** — rebuilt with "Open Settings" action button instead of a toast
+- **Relay `.env` autoload** — `plugin/relay/_env_bootstrap.py` loads `~/.hermes/.env` at Python import time, matching the gateway pattern
+- **systemd user service** — `install.sh` step [6/6] installs and enables `hermes-relay.service` automatically
+- **Save & Test health probe** — relay connection verification with classified error feedback
+- **Gradle logcat task** — `silenceAndroidViewLogs` auto-runs `adb shell setprop log.tag.View SILENT` after every install to suppress Compose Android 15 VRR spam
+- **App screenshots** in `assets/screenshots/`
+
+### Fixed
+- **Voice replying to wrong turn** — `ignoreAssistantId` baseline prevents the stream observer from replaying the previous turn's response as TTS for the new question
+- **Waveform flatline between sentences** — TTS consumer restructured from `for` loop to `while` + `tryReceive` so `maybeAutoResume` only fires when the queue is actually drained, not after every sentence
+- **Stop button during Speaking** — `interruptSpeaking()` now cancels the SSE stream via `chatViewModel.cancelStream()`, drains TTS queue, and returns to Idle (previously only paused playback)
+- **Waveform unresponsive to speech** — perceptual amplitude curve at the source (noise-floor subtraction + speech-ceiling rescale + sqrt boost), attack/release envelope follower (0.75/0.10 at 60Hz), killed Compose spring double-smoothing
+- **Stop button color** — hardcoded vivid red `Color(0xFFE53935)` for Listening + Speaking (Material 3 dark `colorScheme.error` resolved to pale pink)
+- **NaN amplitude propagation** — guards in VoicePlayer.computeRms and VoiceViewModel.sanitizeAmplitude (IEEE 754: `Float.coerceIn` silently passes NaN)
+- **Relay voice 500 on restart** — `.env` not loaded into relay process when started via nohup/systemd without shell sourcing
+- **Rate-limit block on re-pair** — `/pairing/register` clears all rate-limit blocks on success
+- **Paired devices JSON unwrap** — permissive `/media/by-path` sandbox
+- **Settings status flicker** — unified relay status as "Reconnecting..." on Settings entry
+
+### Changed
+- Smart-swap trailing input button (empty → Mic, text → Send) replacing the floating Mic FAB
+- Voice overlay is fully opaque surface (was 0.95 alpha — "phantom pencil" bleed-through from chat)
+- Bottom nav hidden during voice mode
+- Scrollable response text in voice overlay (long responses no longer clip)
+- `install.sh` is now 6 steps (was 5) — new step [6/6] for systemd user service
+- Relay restart is `systemctl --user restart hermes-relay` (nohup era ended)
 
 ## [0.1.0] - 2026-04-07
 
