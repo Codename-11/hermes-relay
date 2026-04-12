@@ -67,10 +67,21 @@ class ChannelMultiplexer {
                 // TODO: Phase 2 — terminal channel handler
                 handlers["terminal"]?.onMessage(envelope)
             }
-            "bridge" -> {
-                // TODO: Phase 3 — bridge channel handler
-                handlers["bridge"]?.onMessage(envelope)
-            }
+            // === PHASE3-γ: bridge channel routing ===
+            // bridge.command envelopes come FROM the server and are
+            // dispatched to a [BridgeCommandHandler] which hands them to
+            // the [HermesAccessibilityService]'s [ActionExecutor]. Responses
+            // (bridge.response / bridge.status) flow back through [send]
+            // directly — the handler never consumes its own responses.
+            //
+            // This branch is intentionally symmetric with "chat" and
+            // "terminal": route inbound envelopes to whatever handler is
+            // registered. The handler registration itself happens in
+            // [ConnectionViewModel] so the ViewModel controls whether
+            // bridge routing is active (Bridge can be gated by build
+            // flavor or by the master enable toggle in the UI).
+            "bridge" -> handlers["bridge"]?.onMessage(envelope)
+            // === END PHASE3-γ ===
             else -> {
                 // Unknown channel — ignore
             }
