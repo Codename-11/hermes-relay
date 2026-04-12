@@ -19,6 +19,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.ui.components.StatsForNerds
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 
 /**
@@ -58,7 +59,14 @@ fun AnalyticsScreen(
                 .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // TODO: extracted from SettingsScreen.kt Stats-for-Nerds section.
+            // Stats for Nerds section
+            Text(
+                text = "Stats for Nerds",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            StatsForNerds()
         }
     }
 }
