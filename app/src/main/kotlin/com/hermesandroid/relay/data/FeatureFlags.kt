@@ -60,3 +60,44 @@ object FeatureFlags {
         }
     }
 }
+
+/**
+ * Compile-time gating based on the active Gradle product flavor.
+ *
+ * Phase 3 ships Bridge on two tracks with very different AccessibilityService
+ * scope: the `googlePlay` flavor carries a conservative event-type subset and
+ * a "notifications + confirmations" description for Play Store policy review,
+ * and the `sideload` flavor carries the full agent-control surface. The tier
+ * flags below let UI code hide tier 3/4/6 surfaces on the Play build without
+ * a runtime check — Kotlin's `val … get() = current == SIDELOAD` resolves at
+ * each call site, but because `current` is a compile-time string, R8 is able
+ * to fold the check away in release builds.
+ *
+ * Tier definitions (see `Phase 3 — Bridge Channel.md` in the vault):
+ *   1. baseline          — both tracks (app open, tap, navigate within app)
+ *   2. notifications     — both tracks (read notifications, summarize, reply)
+ *   3. voice-first       — sideload only (always-on voice capture)
+ *   4. vision-first      — sideload only (always-on screen reading)
+ *   5. safety rails      — both tracks (confirmation dialogs, action log)
+ *   6. ambitious future  — sideload only (cross-app macros, scheduling)
+ */
+object BuildFlavor {
+    const val GOOGLE_PLAY = "googlePlay"
+    const val SIDELOAD = "sideload"
+    val current: String get() = BuildConfig.FLAVOR
+
+    val bridgeTier1: Boolean = true                              // baseline — both tracks
+    val bridgeTier2: Boolean = true                              // notifications, calendar — both tracks
+    val bridgeTier3: Boolean get() = current == SIDELOAD         // voice-first
+    val bridgeTier4: Boolean get() = current == SIDELOAD         // vision-first
+    val bridgeTier5: Boolean = true                              // safety rails — always on
+    val bridgeTier6: Boolean get() = current == SIDELOAD         // future ambitious
+
+    /** Human-readable badge label for the Settings → About version row. */
+    val displayName: String
+        get() = when (current) {
+            GOOGLE_PLAY -> "Google Play"
+            SIDELOAD -> "Sideload"
+            else -> current.ifBlank { "Unknown" }
+        }
+}
