@@ -14,22 +14,26 @@ from typing import Optional
 # ── Config ────────────────────────────────────────────────────────────────────
 #
 # Architecture: Phone connects OUT to Hermes server via WebSocket (NAT-friendly).
-# A relay server runs on localhost and bridges HTTP tool calls to the phone.
+# The unified Hermes-Relay server (``plugin/relay/server.py``, port 8767)
+# multiplexes the bridge channel alongside chat, terminal, media, and voice.
+# The legacy standalone bridge relay on port 8766 was retired in Phase 3
+# Wave 1 (Agent α, bridge-server-migration).
 #
-#   Tools ──HTTP──> Relay (localhost:8766) ──WebSocket──> Phone
+#   Tools ──HTTP──> Unified Relay (localhost:8767) ──WSS bridge channel──> Phone
 #
 # For local/USB dev, tools can also talk directly to the phone's HTTP server
 # by setting ANDROID_BRIDGE_URL to the phone's IP.
 
 def _bridge_url() -> str:
     """URL of the relay (default) or direct phone connection."""
-    return os.getenv("ANDROID_BRIDGE_URL", "http://localhost:8766")
+    return os.getenv("ANDROID_BRIDGE_URL", "http://localhost:8767")
 
 def _bridge_token() -> Optional[str]:
     return os.getenv("ANDROID_BRIDGE_TOKEN")
 
 def _relay_port() -> int:
-    return int(os.getenv("ANDROID_RELAY_PORT", "8766"))
+    # Unified relay default. Override via ANDROID_RELAY_PORT or RELAY_PORT.
+    return int(os.getenv("ANDROID_RELAY_PORT", os.getenv("RELAY_PORT", "8767")))
 
 def _timeout() -> float:
     return float(os.getenv("ANDROID_BRIDGE_TIMEOUT", "30"))
@@ -311,15 +315,21 @@ def _get_public_ip() -> str:
 
 def android_setup(pairing_code: str) -> str:
     """
-    Start the Android bridge relay and configure the pairing code.
-    The relay runs on this server and waits for the phone to connect via WebSocket.
+    Configure the Android bridge to point at the unified Hermes-Relay.
 
-    The user needs to:
-    1. Open the Hermes Bridge app on their phone
-    2. Enter this server's public IP and the pairing code
-    3. The phone connects to the relay automatically
+    The unified relay (``plugin/relay/server.py``, port 8767) is the single
+    WSS endpoint for chat, terminal, bridge, media, and voice. It's meant
+    to run as a persistent service (``systemctl --user start hermes-relay``)
+    rather than being spawned on demand per tool call, so this function no
+    longer starts a standalone relay — it just updates the environment
+    variables the ``android_*`` tools read and verifies the relay is up.
 
-    Call this when the user provides their pairing code from the Hermes Bridge app.
+    For the actual pairing dance (generating + pre-registering a fresh
+    code, producing a QR for the phone to scan), use ``hermes-pair`` or
+    ``/hermes-relay-pair``. This function is the fallback for cases where
+    the operator already has a code and just wants to tell the tool about
+    it.
+
     Example: android_setup("K7V3NP")
     """
     try:
@@ -345,42 +355,63 @@ def android_setup(pairing_code: str) -> str:
         os.environ["ANDROID_BRIDGE_URL"] = relay_url
         os.environ["ANDROID_BRIDGE_TOKEN"] = pairing_code
 
-        # Start the relay server
+        # Verify the unified relay is reachable and probe phone status.
+        server_address = f"{public_ip}:{port}"
+        relay_running = False
+        phone_connected = False
         try:
-            from .android_relay import start_relay, is_relay_running, is_phone_connected
-            start_relay(pairing_code=pairing_code, port=port)
+            health = requests.get(f"http://localhost:{port}/health", timeout=2)
+            if health.status_code == 200:
+                relay_running = True
+        except Exception:
+            relay_running = False
 
-            # Check if phone is already connected
-            time.sleep(1)
-            phone_connected = is_phone_connected()
+        if relay_running:
+            try:
+                ping = requests.get(
+                    f"http://localhost:{port}/ping",
+                    headers=_auth_headers(),
+                    timeout=2,
+                )
+                if ping.status_code == 200:
+                    phone_connected = True
+            except Exception:
+                phone_connected = False
 
-            server_address = f"{public_ip}:{port}"
-
-            if phone_connected:
-                return json.dumps({
-                    "status": "ok",
-                    "message": "Phone is connected and ready!",
-                    "phone_connected": True,
-                    "server_address": server_address,
-                })
-            else:
-                return json.dumps({
-                    "status": "ok",
-                    "message": "Relay is running. Now tell the user to connect their phone.",
-                    "phone_connected": False,
-                    "server_address": server_address,
-                    "user_instructions": (
-                        f"Open the Hermes Bridge app on your phone and enter:\n"
-                        f"  Server: {server_address}\n"
-                        f"  Pairing code: {pairing_code}\n"
-                        f"Then tap Connect."
-                    ),
-                })
-        except ImportError:
+        if not relay_running:
             return json.dumps({
                 "status": "error",
-                "message": "android_relay module not found. Make sure hermes-relay plugin is installed.",
+                "message": (
+                    "Unified Hermes-Relay is not running on "
+                    f"localhost:{port}. Start it with "
+                    "`systemctl --user start hermes-relay` and retry."
+                ),
+                "server_address": server_address,
             })
+
+        if phone_connected:
+            return json.dumps({
+                "status": "ok",
+                "message": "Phone is connected and ready!",
+                "phone_connected": True,
+                "server_address": server_address,
+            })
+
+        return json.dumps({
+            "status": "ok",
+            "message": (
+                "Relay is running. Pair the phone via `hermes-pair` "
+                "or /hermes-relay-pair, then retry."
+            ),
+            "phone_connected": False,
+            "server_address": server_address,
+            "user_instructions": (
+                f"Open the Hermes app on your phone and scan the pairing QR.\n"
+                f"  Server: {server_address}\n"
+                f"  Pairing code: {pairing_code}\n"
+                f"Then tap Connect."
+            ),
+        })
 
     except Exception as e:
         return json.dumps({"status": "error", "message": str(e)})

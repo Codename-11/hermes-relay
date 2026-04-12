@@ -71,8 +71,7 @@ hermes-android/                  ← Android Studio opens this root
 ├── gradle/                      ← Wrapper (8.13) + version catalog
 ├── scripts/                     ← Dev scripts (build, install, run, test, relay)
 ├── plugin/                      ← Hermes agent plugin (14 android_* tools + relay + pair CLI)
-│   ├── android_tool.py
-│   ├── android_relay.py
+│   ├── android_tool.py          # 14 android_* tool handlers; points BRIDGE_URL at the unified relay (localhost:8767) as of Phase 3 Wave 1
 │   ├── pair.py                  # QR pairing implementation — `python -m plugin.pair`, wrapped by `hermes-pair` shim and the `hermes-relay-pair` skill
 │   ├── cli.py                   # Registers plugin CLI sub-commands (note: top-level `hermes pair` blocked by upstream argparser gap — use slash command or shell shim)
 │   ├── relay/                   # Canonical WSS relay (consolidated from relay_server/)
@@ -159,6 +158,7 @@ hermes-android/                  ← Android Studio opens this root
 | `plugin/relay/auth.py` | PairingManager (generate + register_code), SessionManager, RateLimiter |
 | `plugin/relay/config.py` | RelayConfig + PAIRING_ALPHABET (full A-Z / 0-9 as of 2026-04-11) |
 | `plugin/relay/channels/terminal.py` | Phase 2 PTY-backed terminal handler |
+| `plugin/relay/channels/bridge.py` | Phase 3 bridge channel handler — routes agent tool calls to the connected phone over the unified WSS relay. `BridgeHandler.handle_command(method, path, params, body)` mints a `request_id`, sends a `bridge.command` envelope, and awaits a matching `bridge.response` with 30s timeout. `handle(ws, envelope)` opportunistically latches `phone_ws` and dispatches inbound `bridge.response`/`bridge.status`. `detach_ws(ws, reason)` fails all pending futures with `ConnectionError` on phone disconnect so HTTP callers fail fast. Migrated from the legacy standalone `plugin/tools/android_relay.py` (port 8766) into the unified relay on port 8767 in Phase 3 Wave 1 (Agent α, 2026-04-12). Wire protocol is frozen — envelope fields match the legacy relay byte-for-byte. 14 HTTP routes (`/ping`, `/screen`, `/screenshot`, `/get_apps`, `/apps` legacy, `/current_app`, `/tap`, `/tap_text`, `/type`, `/swipe`, `/open_app`, `/press_key`, `/scroll`, `/wait`, `/setup`) are registered in `plugin/relay/server.py` between `# === PHASE3-α ===` markers and delegate straight through to `handle_command`. |
 | `relay_server/__main__.py` | Thin shim → `plugin.relay.server.main()` — legacy `python -m relay_server` entrypoint |
 | `relay_server/SKILL.md` | Hermes skill reference for relay self-setup |
 | `relay_server/Dockerfile` | Container image for relay server |

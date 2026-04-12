@@ -42,7 +42,7 @@ from .auth import (
     Session,
     SessionManager,
 )
-from .channels.bridge import BridgeHandler
+from .channels.bridge import BridgeError, BridgeHandler
 from .channels.chat import ChatHandler
 from .channels.terminal import TerminalHandler
 from .config import RelayConfig
@@ -815,6 +815,175 @@ async def handle_media_by_path(request: web.Request) -> web.StreamResponse:
     return web.FileResponse(real_path, headers=headers)
 
 
+# === PHASE3-α: bridge HTTP routes ===
+#
+# The unified relay exposes the same HTTP shape as the legacy standalone
+# relay on port 8766 so ``plugin/tools/android_tool.py`` only needs a
+# one-line URL change. Requests are delegated straight through to
+# ``BridgeHandler.handle_command`` which forwards them over the WSS
+# channel to the connected phone.
+#
+# Auth model:
+#   * These routes are **unauthenticated** at the HTTP layer on purpose —
+#     the legacy relay was unauthenticated too, and the trust boundary
+#     is the same: only tools running on the same host as the relay can
+#     reach localhost:8767. The relay's default bind is 0.0.0.0 for the
+#     WebSocket side, but tools should always point at ``localhost``, so
+#     an attacker reaching port 8767 from the LAN would need the phone
+#     to also have auth'd with a valid pairing code — without a paired
+#     phone, every bridge HTTP call just returns 503.
+#   * If tightening is needed later, wrap these handlers with the same
+#     ``_require_bearer_session`` pattern used by ``/media/*`` — the
+#     bridge grant is already tracked per-session in ``Session.grants``.
+#
+# A paired but disconnected phone still drops bridge calls with 503 —
+# the tool caller should retry or tell the user to reconnect the app.
+
+
+_BRIDGE_TIMEOUT_STATUS = 504
+_BRIDGE_NO_PHONE_STATUS = 503
+_BRIDGE_SEND_FAIL_STATUS = 502
+
+
+def _bridge_error_response(
+    exc: Exception, fallback_status: int = _BRIDGE_NO_PHONE_STATUS
+) -> web.Response:
+    """Convert a :class:`BridgeError` to a JSON response that matches the
+    legacy standalone relay's error shape."""
+    msg = str(exc) or "Bridge error"
+    status = fallback_status
+    lowered = msg.lower()
+    if "did not respond" in lowered or "timeout" in lowered:
+        status = _BRIDGE_TIMEOUT_STATUS
+    elif "failed to send" in lowered:
+        status = _BRIDGE_SEND_FAIL_STATUS
+    return web.json_response({"error": msg}, status=status)
+
+
+async def _bridge_dispatch(
+    request: web.Request,
+    path: str,
+) -> web.Response:
+    """Forward an HTTP request to the phone via the bridge channel."""
+    server: RelayServer = request.app["server"]
+    method = request.method  # GET or POST
+
+    params: dict[str, Any] = dict(request.query)
+    body: dict[str, Any] = {}
+    if method == "POST":
+        # android_tool.py always sends JSON bodies; treat anything else as empty.
+        try:
+            raw = await request.json()
+            if isinstance(raw, dict):
+                body = raw
+        except (json.JSONDecodeError, ValueError, aiohttp.ContentTypeError):
+            body = {}
+
+    try:
+        response = await server.bridge.handle_command(
+            method=method,
+            path=path,
+            params=params,
+            body=body,
+        )
+    except BridgeError as exc:
+        return _bridge_error_response(exc)
+    except ConnectionError as exc:
+        return web.json_response({"error": str(exc)}, status=_BRIDGE_SEND_FAIL_STATUS)
+
+    status = response.get("status", 200)
+    if not isinstance(status, int):
+        status = 200
+    result = response.get("result")
+    if not isinstance(result, (dict, list)):
+        result = {"value": result} if result is not None else {}
+    return web.json_response(result, status=status)
+
+
+# Route adapters — aiohttp's router only gives us (request,), so we
+# close over the path string here. One adapter per endpoint keeps the
+# route registration self-documenting at the call site.
+#
+# Endpoint inventory mirrors ``plugin/tools/android_tool.py``'s 14 tools:
+#   GET  /ping, /screen, /screenshot, /get_apps, /current_app
+#   POST /tap, /tap_text, /type, /swipe, /open_app, /press_key,
+#        /scroll, /wait, /setup
+#
+# NOTE: the legacy relay used ``/apps`` for list apps but the Android app
+# expects ``/get_apps`` and the tool at line ~230 of android_tool.py calls
+# ``_get("/apps")``. We register both so the legacy tool path keeps
+# working while new code can use the canonical ``/get_apps``.
+
+
+async def handle_bridge_ping(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/ping")
+
+
+async def handle_bridge_screen(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/screen")
+
+
+async def handle_bridge_screenshot(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/screenshot")
+
+
+async def handle_bridge_get_apps(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/get_apps")
+
+
+async def handle_bridge_apps_legacy(request: web.Request) -> web.Response:
+    # Legacy alias — the pre-migration tool used /apps, keep it working.
+    return await _bridge_dispatch(request, "/apps")
+
+
+async def handle_bridge_current_app(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/current_app")
+
+
+async def handle_bridge_tap(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/tap")
+
+
+async def handle_bridge_tap_text(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/tap_text")
+
+
+async def handle_bridge_type(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/type")
+
+
+async def handle_bridge_swipe(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/swipe")
+
+
+async def handle_bridge_open_app(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/open_app")
+
+
+async def handle_bridge_press_key(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/press_key")
+
+
+async def handle_bridge_scroll(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/scroll")
+
+
+async def handle_bridge_wait(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/wait")
+
+
+async def handle_bridge_setup(request: web.Request) -> web.Response:
+    # /setup is the tool-side pairing helper that existed on the legacy
+    # relay; the unified relay's pairing flow is handled via /pairing/*
+    # but we keep the endpoint pluggable through the bridge channel for
+    # phones that still implement it. If the phone doesn't implement it,
+    # the bridge.response will come back with a non-200 status.
+    return await _bridge_dispatch(request, "/setup")
+
+
+# === END PHASE3-α ===
+
+
 # ── WebSocket handler ────────────────────────────────────────────────────────
 
 
@@ -1160,6 +1329,14 @@ async def _on_disconnect(
     token = server._clients.pop(ws, None)
     tasks = server._client_tasks.pop(ws, set())
 
+    # === PHASE3-α: fail in-flight bridge commands on phone disconnect ===
+    # If this ws was the currently-latched phone, detach_ws flips phone_ws
+    # back to None and resolves every pending bridge command future with a
+    # ConnectionError so the HTTP side returns 502 instead of hanging to
+    # the 30s timeout on every in-flight request_id.
+    await server.bridge.detach_ws(ws, reason=f"client {remote_ip} disconnected")
+    # === END PHASE3-α ===
+
     # Cancel all in-flight tasks for this client
     for task in tasks:
         task.cancel()
@@ -1230,6 +1407,27 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_post("/voice/transcribe", _voice_transcribe)
     app.router.add_post("/voice/synthesize", _voice_synthesize)
     app.router.add_get("/voice/config", _voice_config)
+
+    # === PHASE3-α: bridge HTTP routes ===
+    # 14 endpoints mirrored from the legacy standalone relay on port 8766.
+    # Tool-side caller is plugin/tools/android_tool.py — only its
+    # BRIDGE_URL changes, the wire shape is byte-for-byte identical.
+    app.router.add_get("/ping", handle_bridge_ping)
+    app.router.add_get("/screen", handle_bridge_screen)
+    app.router.add_get("/screenshot", handle_bridge_screenshot)
+    app.router.add_get("/get_apps", handle_bridge_get_apps)
+    app.router.add_get("/apps", handle_bridge_apps_legacy)
+    app.router.add_get("/current_app", handle_bridge_current_app)
+    app.router.add_post("/tap", handle_bridge_tap)
+    app.router.add_post("/tap_text", handle_bridge_tap_text)
+    app.router.add_post("/type", handle_bridge_type)
+    app.router.add_post("/swipe", handle_bridge_swipe)
+    app.router.add_post("/open_app", handle_bridge_open_app)
+    app.router.add_post("/press_key", handle_bridge_press_key)
+    app.router.add_post("/scroll", handle_bridge_scroll)
+    app.router.add_post("/wait", handle_bridge_wait)
+    app.router.add_post("/setup", handle_bridge_setup)
+    # === END PHASE3-α ===
 
     # Cleanup on shutdown
     app.on_shutdown.append(_on_app_shutdown)
