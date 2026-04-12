@@ -128,6 +128,37 @@ Settings" with a Wave-2 teaser subtitle.
 
 Branch: `feature/phase3-delta-bridge-screen-ui`.
 
+## 2026-04-12 — Phase 3 / Wave 1 / ε — notification companion (opt-in triage helper)
+
+Adds an opt-in helper that lets the user's Hermes assistant read notifications they've explicitly granted access to via Android's standard `NotificationListenerService` API — the same one Wear OS, Android Auto, and Tasker have used for over a decade. Disabled by default; the user controls grant + revoke via Android Settings → Notification access.
+
+**Three pieces, all marked with `PHASE3-ε` block markers in shared files:**
+
+1. **Phone — `NotificationListenerService` + Compose settings screen.** New `app/src/main/kotlin/.../notifications/` package with `HermesNotificationCompanion` (the bound service) + `NotificationModels` (`@Serializable NotificationEntry`) + `ui/screens/NotificationCompanionSettingsScreen` (About / Status / Test sections, mirrors `VoiceSettingsScreen` style). The service buffers up to 50 envelopes in a `ConcurrentLinkedQueue` if `companion.multiplexer` isn't wired yet (cold-start ordering), drains on the next `onNotificationPosted`, then sends via `multiplexer.sendNotification(envelope)` — a thin new wrapper in `ChannelMultiplexer` that fast-paths to no-op when `sendCallback == null` (relay offline). Notifications with empty title+text are skipped (background-sync placeholders that just confuse the LLM). The `Status` row uses `LifecycleEventObserver(ON_RESUME)` so the grant state updates immediately when the user comes back from Android Settings.
+
+2. **Server — bounded in-memory deque.** New `plugin/relay/channels/notifications.py::NotificationsChannel` with `recent: collections.deque[dict]` capped at 100 entries via `maxlen` (LRU-by-time eviction for free). `handle()` dispatches `notification.posted` envelopes to `handle_envelope()` which appends; `get_recent(limit)` returns newest-first with `limit` clamped to `[1, max_entries]`. Wired into `RelayServer.__init__` as `self.notifications` and dispatched in `_on_message` for `channel == "notifications"`. The cache is in-memory only and lost on restart by design — same semantics as a smartwatch out of range.
+
+3. **Agent tool — `android_notifications_recent(limit=20)`.** New `plugin/tools/android_notifications.py` registers the tool into the `tools.registry` (with the `try/except ImportError` pattern matching `android_tool.py`). It hits `http://127.0.0.1:8767/notifications/recent?limit=N` over loopback via stdlib `urllib.request` — no auth needed because `handle_notifications_recent` skips bearer for loopback callers (matches the `/media/register` and `/pairing/register` trust model). Remote callers still go through `_require_bearer_session`. The tool docstring explicitly frames it as "List recent notifications the user has shared with this assistant" so the LLM treats absence as "not granted yet" rather than an error.
+
+**Files touched:**
+
+- New: `plugin/relay/channels/notifications.py`, `plugin/tools/android_notifications.py`, `app/src/main/kotlin/.../notifications/HermesNotificationCompanion.kt`, `app/src/main/kotlin/.../notifications/NotificationModels.kt`, `app/src/main/kotlin/.../ui/screens/NotificationCompanionSettingsScreen.kt`
+- Edited (additive only, marker-blocked): `plugin/relay/server.py` (import + handler init + HTTP route + dispatch + route registration), `app/src/main/kotlin/.../network/ChannelMultiplexer.kt` (`sendNotification` wrapper), `app/src/main/AndroidManifest.xml` (service entry with `BIND_NOTIFICATION_LISTENER_SERVICE` permission), `app/src/main/res/values/strings.xml` (`notification_companion_label`)
+- Docs: `CLAUDE.md` Key Files table (8 new rows / additive notes), `DEVLOG.md` (this entry)
+
+**Decisions:**
+
+- **No new session grant type.** Spec explicitly said don't add `notifications` to `auth.py` grants — this is opt-in via Android system permission, not via per-channel session grant. Reuses the existing `chat` grant trust boundary.
+- **Loopback bypass for the tool.** The route's spec said "bearer auth gated like /media/*", but the tool is in-process on the host, so we mirror `/media/register`'s loopback gate: 127.0.0.1 callers skip the bearer check, remote callers still require a session token. This means the tool doesn't need to grovel through the relay's session store to mint a token.
+- **Drop on relay-offline rather than buffer at the multiplexer.** A wearable doesn't replay notifications it missed while out of range; we don't either. The cold-start buffer in the service is for the much shorter "service bound but multiplexer not wired yet" window.
+- **`activeNotifications` for the Test button**, not a relay round-trip. Lets the user verify the listener is bound even if the relay is unreachable, which is the more common failure mode at first-grant time.
+
+**Validation:** `python -m py_compile plugin/relay/channels/notifications.py plugin/tools/android_notifications.py plugin/relay/server.py` → OK. Kotlin compile happens on Bailey's next Android Studio run.
+
+**Branch:** `feature/phase3-epsilon-notification-companion` (off `worktree-agent-a84b51cc`).
+
+**Next:** wire `HermesNotificationCompanion.multiplexer` from `ConnectionViewModel` after relay handshake (one-line touch), add a Settings entry-point row that navigates to `NotificationCompanionSettingsScreen`, and (Phase 3 follow-up) consider a per-package allow/deny list so the user can mute social-media spam from the listener pipeline before it ever hits the relay.
+
 ## 2026-04-12 — Fix: TTS waveform stays alive through multi-sentence playback
 
 The waveform was flatlinining after the first sentence while audio kept playing. Root cause: `maybeAutoResume()` fired after every sentence in the TTS consumer loop. The SSE stream finishes before TTS plays all queued sentences, so `streamObserverJob?.isActive` was already false → state flipped to Idle → amplitude bridge stopped → waveform died. Fix: restructured TTS consumer from `for` loop to `while` + `tryReceive` peek. `maybeAutoResume` only fires when the queue is actually drained (`tryReceive` returns failure), not between sentences. Between sentences within the same response, `tryReceive` succeeds immediately and the consumer skips the Idle transition. Additionally, the consumer re-asserts Speaking state before each synthesis call to handle the edge case where the queue was briefly empty between observer pushes.
