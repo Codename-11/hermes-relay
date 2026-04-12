@@ -1,3 +1,4 @@
+import java.io.File
 import java.util.Properties
 
 plugins {
@@ -178,4 +179,68 @@ dependencies {
     androidTestImplementation(libs.compose.ui.test.junit4)
     debugImplementation(libs.compose.ui.tooling)
     debugImplementation(libs.compose.ui.test.manifest)
+}
+
+// ─── Logcat noise suppression ────────────────────────────────────────────────
+// Compose on Android 15 (API 35) calls View.setRequestedFrameRate() on every
+// draw pass, and for certain internal zero-sized helper views the frame-rate
+// math in Compose's VRR decay logic produces NaN. Android's View class logs
+// each NaN call at Info level under the "View" tag, spamming logcat at the
+// display's refresh rate (~120 entries/sec on a 120Hz phone). This is a
+// Compose library bug upstream — our code's amplitude NaN guards were
+// correct but can't fix it because the NaN is generated inside Compose,
+// not from our values.
+//
+// Workaround: silence the "View" log tag at the Android log daemon level
+// via `setprop log.tag.View SILENT`. The setting is device-wide and survives
+// until the next reboot. By hooking this task as `finalizedBy` on installDebug,
+// it runs automatically every time Android Studio builds and installs the
+// app, so the device is always silenced after a dev cycle.
+//
+// Remove this task when the Compose bug is fixed in a future compose-bom bump.
+// Resolve the Android SDK path without touching the deprecated
+// `android.sdkDirectory` accessor (removed from AGP 8's public
+// ApplicationExtension). Preference order:
+//   1. local.properties `sdk.dir`  (what Android Studio writes)
+//   2. $ANDROID_HOME               (standard env var)
+//   3. $ANDROID_SDK_ROOT           (legacy fallback)
+val androidSdkPath: String? = run {
+    val localProps = rootProject.file("local.properties")
+    val fromProps: String? = if (localProps.exists()) {
+        val props = Properties()
+        localProps.inputStream().use { stream -> props.load(stream) }
+        props.getProperty("sdk.dir")
+    } else null
+    fromProps
+        ?: System.getenv("ANDROID_HOME")
+        ?: System.getenv("ANDROID_SDK_ROOT")
+}
+
+tasks.register<Exec>("silenceAndroidViewLogs") {
+    description = "Silence Android's 'View' tag in logcat to work around " +
+        "Compose setRequestedFrameRate=NaN spam on API 35+."
+    group = "hermes"
+
+    val adbRelPath = if (org.gradle.internal.os.OperatingSystem.current().isWindows)
+        "platform-tools/adb.exe"
+    else
+        "platform-tools/adb"
+    val adbFullPath = androidSdkPath?.let { sdk -> "$sdk/$adbRelPath" }
+    // If we couldn't locate the SDK, skip — this task is a nice-to-have.
+    onlyIf { adbFullPath != null && File(adbFullPath).exists() }
+    executable = adbFullPath ?: "true"
+    args("shell", "setprop", "log.tag.View", "SILENT")
+
+    // Don't fail the build if there's no device attached or adb isn't happy —
+    // the setprop is a nice-to-have, not a build requirement.
+    isIgnoreExitValue = true
+}
+
+// Hook silenceAndroidViewLogs onto every install task (installDebug,
+// installRelease, etc.) so it runs after Android Studio's run-button install.
+afterEvaluate {
+    tasks.matching { it.name.startsWith("install") && !it.name.contains("Test") }
+        .configureEach {
+            finalizedBy("silenceAndroidViewLogs")
+        }
 }

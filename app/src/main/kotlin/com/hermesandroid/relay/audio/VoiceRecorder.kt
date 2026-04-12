@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
+import kotlin.math.sqrt
 
 /**
  * Captures the user's voice into an `.m4a` (AAC-in-MP4) file for V2a voice
@@ -42,6 +43,21 @@ class VoiceRecorder(
         private const val BIT_RATE = 64_000
         private const val AMPLITUDE_POLL_MS = 16L
         private const val MAX_AMPLITUDE_SHORT = 32_767f
+
+        // Perceptual amplitude mapping constants. Raw PCM peak values from
+        // MediaRecorder.maxAmplitude for a phone at arm's length:
+        //   silence / ambient : 100..500   (≤0.015 of max)
+        //   quiet speech      : 500..3000  (0.015..0.09)
+        //   normal speech     : 3000..8000 (0.09..0.24)
+        //   loud speech       : 8000..18000 (0.24..0.55)
+        //   shout / clipping  : 18000..32767 (0.55..1.0)
+        //
+        // Linear 0..1 puts normal conversation between 0.09 and 0.24 — the
+        // meter barely moves. Subtract a noise floor, rescale into the
+        // speech-ceiling window, then apply a sqrt curve so quiet speech
+        // still registers visually without drowning loud speech at the top.
+        private const val NOISE_FLOOR = 0.01f
+        private const val SPEECH_CEILING = 0.35f
     }
 
     private val _amplitude = MutableStateFlow(0f)
@@ -192,7 +208,10 @@ class VoiceRecorder(
                     // Recorder torn down under us — exit quietly.
                     break
                 }
-                _amplitude.value = (raw.toFloat() / MAX_AMPLITUDE_SHORT).coerceIn(0f, 1f)
+                val raw01 = (raw.toFloat() / MAX_AMPLITUDE_SHORT).coerceIn(0f, 1f)
+                val floored = ((raw01 - NOISE_FLOOR) / (SPEECH_CEILING - NOISE_FLOOR))
+                    .coerceIn(0f, 1f)
+                _amplitude.value = sqrt(floored)
                 delay(AMPLITUDE_POLL_MS)
             }
         }

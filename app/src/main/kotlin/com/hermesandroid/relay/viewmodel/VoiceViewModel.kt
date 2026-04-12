@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.hermesandroid.relay.audio.VoicePlayer
 import com.hermesandroid.relay.audio.VoiceRecorder
+import com.hermesandroid.relay.audio.VoiceSfxPlayer
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.network.RelayVoiceClient
 import kotlinx.coroutines.Job
@@ -90,6 +91,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var chatViewModel: ChatViewModel? = null
     private var recorder: VoiceRecorder? = null
     private var player: VoicePlayer? = null
+    private var sfxPlayer: VoiceSfxPlayer? = null
 
     // --- UI state --------------------------------------------------------
 
@@ -112,6 +114,20 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var amplitudeBridgeJob: Job? = null
     private var currentTurnJob: Job? = null
 
+    /** Attack/release envelope follower state for the mic amplitude path. */
+    private var listenEnvelope: Float = 0f
+    /** Attack/release envelope follower state for the TTS playback path. */
+    private var speakEnvelope: Float = 0f
+
+    /**
+     * Assistant-message-id that already existed BEFORE the current turn's
+     * [chatVm.sendMessage] call. The stream observer ignores any emission
+     * whose `lastAssistant.id` equals this, so StateFlow's initial replay
+     * of the previous turn's response doesn't get spoken as a reply to
+     * the current voice input.
+     */
+    private var ignoreAssistantId: String? = null
+
     /** MP3 files produced by synthesize — trimmed to [TTS_CACHE_CAP]. */
     private val ttsFileHistory = ArrayDeque<File>()
 
@@ -128,11 +144,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         chatViewModel: ChatViewModel,
         recorder: VoiceRecorder,
         player: VoicePlayer,
+        sfxPlayer: VoiceSfxPlayer,
     ) {
         this.voiceClient = voiceClient
         this.chatViewModel = chatViewModel
         this.recorder = recorder
         this.player = player
+        this.sfxPlayer = sfxPlayer
 
         startTtsConsumer()
         bridgeAmplitudeFlows()
@@ -147,10 +165,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // ---------------------------------------------------------------------
 
     fun enterVoiceMode() {
+        // Fire the chime first so the sound lands with the overlay appearing.
+        try { sfxPlayer?.playEnter() } catch (_: Exception) { /* ignore */ }
         _uiState.update { it.copy(voiceMode = true, state = VoiceState.Idle, error = null) }
     }
 
     fun exitVoiceMode() {
+        // Chime BEFORE teardown — AudioTrack release would cut it off otherwise.
+        try { sfxPlayer?.playExit() } catch (_: Exception) { /* ignore */ }
         // Tear down anything in flight.
         try {
             recorder?.cancel()
@@ -223,17 +245,36 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Stop speaking (and any queued sentences) and transition back to
-     * Listening. Drains the TTS queue so the agent stops mid-sentence.
+     * Hard-stop everything in the current voice turn and return to Idle.
+     *
+     * The old version only drained the queue and paused playback — the
+     * upstream SSE stream kept generating and the observer kept pushing
+     * fresh deltas, so playback resumed on the next sentence. We now
+     * cancel the stream, tear down the observer + turn job, reset all
+     * per-turn state, and go back to Idle (not Listening — Bailey's
+     * mental model is "stop" = ready to start a new turn on mic tap).
      */
     fun interruptSpeaking() {
-        // Empty the queue without closing it.
+        // Drain queued sentences without closing the channel.
         while (true) {
             val r = ttsQueue.tryReceive()
             if (r.isFailure || r.isClosed) break
         }
         try { player?.stop() } catch (_: Exception) { /* ignore */ }
-        _uiState.update { it.copy(state = VoiceState.Listening, responseText = "") }
+        // Stop the upstream SSE stream so the agent quits generating tokens.
+        try { chatViewModel?.cancelStream() } catch (_: Exception) { /* ignore */ }
+        streamObserverJob?.cancel()
+        streamObserverJob = null
+        currentTurnJob?.cancel()
+        currentTurnJob = null
+        // Reset per-turn buffering + tracking so the next turn starts clean.
+        sentenceBuffer = StringBuilder()
+        lastObservedMessageId = null
+        lastObservedContentLength = 0
+        speakEnvelope = 0f
+        _uiState.update {
+            it.copy(state = VoiceState.Idle, responseText = "", amplitude = 0f)
+        }
     }
 
     fun clearError() {
@@ -308,6 +349,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         lastObservedMessageId = null
         lastObservedContentLength = 0
 
+        // Capture the id of the assistant message that currently sits at
+        // the end of history. StateFlow.collect replays the current value
+        // to new subscribers, so without this guard the observer would
+        // treat the previous turn's full response as one giant delta for
+        // the new turn and TTS the wrong answer.
+        ignoreAssistantId = chatVm.messages.value
+            .lastOrNull { it.role == MessageRole.ASSISTANT }?.id
+
         // Kick off streaming observer BEFORE sending the message so we don't
         // miss early deltas that arrive synchronously from the callback.
         startStreamObserver(chatVm)
@@ -335,6 +384,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 val lastAssistant = messages.lastOrNull {
                     it.role == MessageRole.ASSISTANT
                 } ?: return@collect
+
+                // Skip the assistant message that existed BEFORE the current
+                // turn's sendMessage. Without this, StateFlow's replay of the
+                // current list (containing the PREVIOUS turn's response) gets
+                // treated as a delta and the agent voices the old answer.
+                if (lastAssistant.id == ignoreAssistantId) return@collect
 
                 val msgId = lastAssistant.id
                 if (lastObservedMessageId == null) {
@@ -477,11 +532,17 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private fun bridgeAmplitudeFlows() {
         amplitudeBridgeJob?.cancel()
         amplitudeBridgeJob = viewModelScope.launch {
-            // Recorder amplitude bridge.
+            // Recorder amplitude bridge — runs an attack-fast / release-slow
+            // envelope follower so the UI sees instant response on speech
+            // peaks and a smooth ~350ms fade into silence. No Compose spring
+            // downstream.
             launch {
                 recorder?.amplitude?.collect { amp ->
                     if (_uiState.value.state == VoiceState.Listening) {
-                        _uiState.update { it.copy(amplitude = amp) }
+                        listenEnvelope = applyEnvelope(listenEnvelope, amp)
+                        _uiState.update { it.copy(amplitude = listenEnvelope) }
+                    } else if (listenEnvelope != 0f) {
+                        listenEnvelope = 0f
                     }
                 }
             }
@@ -489,12 +550,49 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             launch {
                 player?.amplitude?.collect { amp ->
                     if (_uiState.value.state == VoiceState.Speaking) {
-                        _uiState.update { it.copy(amplitude = amp) }
+                        speakEnvelope = applyEnvelope(speakEnvelope, amp)
+                        _uiState.update { it.copy(amplitude = speakEnvelope) }
+                    } else if (speakEnvelope != 0f) {
+                        speakEnvelope = 0f
                     }
                 }
             }
         }
     }
+
+    /**
+     * Attack-fast / release-slow envelope follower. Called per amplitude
+     * sample (~60 Hz). At these coefficients the envelope reaches 90 % of a
+     * new peak in roughly 30 ms, and fades 90 % back to silence over about
+     * 350 ms — the same shape that makes Siri / WhatsApp voice meters feel
+     * "alive": spike instantly on a consonant, trail naturally on the tail.
+     */
+    private fun applyEnvelope(current: Float, target: Float): Float {
+        val t = sanitizeAmplitude(target)
+        val attack = 0.75f
+        val release = 0.10f
+        val next = if (t > current) {
+            current + (t - current) * attack
+        } else {
+            current + (t - current) * release
+        }
+        return next.coerceIn(0f, 1f)
+    }
+
+    /**
+     * Clamp amplitude to [0f, 1f] and filter out NaN / Infinity. Critical
+     * because both VoiceRecorder and VoicePlayer can produce NaN under edge
+     * conditions (empty PCM frame from the Visualizer callback, or an
+     * `maxAmplitude` read between stop and teardown), and NaN propagates
+     * through `Float.coerceIn` silently — `NaN < 0f` is false, so the
+     * branch returns `this` unchanged. Without this guard, a single NaN
+     * frame would contaminate `animateFloatAsState` targets in the
+     * waveform / sphere / mic button, which in turn feeds NaN to Compose's
+     * Android 15 variable-refresh-rate frame-rate hint and produces a
+     * `setRequestedFrameRate frameRate=NaN` log on every draw pass.
+     */
+    private fun sanitizeAmplitude(amp: Float): Float =
+        if (amp.isNaN() || amp.isInfinite()) 0f else amp.coerceIn(0f, 1f)
 
     // ---------------------------------------------------------------------
     // Helpers
@@ -508,6 +606,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         super.onCleared()
         try { recorder?.cancel() } catch (_: Exception) { /* ignore */ }
         try { player?.stop() } catch (_: Exception) { /* ignore */ }
+        try { sfxPlayer?.release() } catch (_: Exception) { /* ignore */ }
         ttsQueue.close()
         streamObserverJob?.cancel()
         ttsConsumerJob?.cancel()

@@ -9,6 +9,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -23,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -31,11 +34,12 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -84,13 +88,21 @@ fun VoiceModeOverlay(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(surface.copy(alpha = 0.95f))
+            // Fully opaque surface — at 0.95f the chat content behind the
+            // overlay was bleeding through (the "phantom pencil" effect). Voice
+            // mode is a modality, not a dim-over; the transition animation
+            // already sells the mode change, no translucency needed.
+            .background(surface)
     ) {
-        // Top bar — close + mode selector
+        // Top bar — close + mode selector.
+        // `statusBarsPadding()` pushes the row below the system status bar so
+        // the close button isn't crammed against battery/signal icons and
+        // Android's gesture area can't swallow taps on buttons near the edge.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp)
+                .statusBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 8.dp)
                 .align(Alignment.TopCenter),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
@@ -115,7 +127,16 @@ fun VoiceModeOverlay(
                 }
             }
 
-            IconButton(onClick = onDismiss) {
+            // Filled tonal background gives the close button a clear "tappable"
+            // affordance. Plain IconButton was visually indistinguishable from
+            // the surface and users couldn't find it at a glance.
+            FilledTonalIconButton(
+                onClick = onDismiss,
+                colors = IconButtonDefaults.filledTonalIconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                ),
+            ) {
                 Icon(
                     imageVector = Icons.Filled.Close,
                     contentDescription = "Close voice mode",
@@ -145,9 +166,24 @@ fun VoiceModeOverlay(
                 )
             }
 
+            VoiceWaveform(
+                amplitude = uiState.amplitude,
+                state = uiState.state,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 32.dp, vertical = 8.dp),
+            )
+
+            // weight(fill=false) lets this block take only what's left between
+            // the waveform and the bottom mic padding; verticalScroll keeps long
+            // agent responses from clipping off-screen. Transcript scrolls with
+            // the response so layout stays simple — one scroll state, one column.
+            val textScrollState = rememberScrollState()
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .weight(1f, fill = false)
+                    .verticalScroll(textScrollState)
                     .padding(top = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -237,13 +273,32 @@ fun VoiceModeOverlay(
             }
         }
 
-        // Mic button — dispatch by interaction mode
+        // Mic button — dispatch by current voice state.
+        //
+        // Listening → tap stops recording (feeds the audio to STT)
+        // Speaking  → tap interrupts TTS and starts fresh recording
+        // Idle/Error → tap starts recording
+        // Transcribing/Thinking → tap is a no-op; the state machine is busy
+        //
+        // The bug before was that Listening fell through to the else branch
+        // which called onMicTap (= startListening) a second time instead of
+        // stopping the in-progress recording. User ended up with a button
+        // that visually said "Stop" but was actually wired to "Start."
         VoiceMicButton(
             uiState = uiState,
             onTap = {
                 when (uiState.state) {
+                    VoiceState.Listening -> {
+                        try {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        } catch (_: Exception) { /* ignore */ }
+                        onMicRelease()
+                    }
                     VoiceState.Speaking -> onInterrupt()
-                    else -> {
+                    VoiceState.Transcribing, VoiceState.Thinking -> {
+                        // Busy — ignore tap. Avoids double-stop / double-send races.
+                    }
+                    VoiceState.Idle, VoiceState.Error -> {
                         try {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         } catch (_: Exception) { /* ignore */ }
@@ -288,9 +343,16 @@ private fun VoiceMicButton(
         label = "micPulse",
     )
 
+    // Hardcoded vivid red for Listening AND Speaking. Material 3's dark-theme
+    // `colorScheme.error` role resolves to a soft pink (#F2B8B5) which reads
+    // as "pale" rather than "STOP" on a circular mic button — the universal
+    // "record/stop" language is a saturated red, so bypass the role and use
+    // Material Red 600. Speaking needs the same red because tapping it
+    // interrupts TTS; the old tertiary (green-ish) read as "playing" and
+    // users didn't realize they could stop the agent.
     val containerColor = when (uiState.state) {
-        VoiceState.Listening -> MaterialTheme.colorScheme.error
-        VoiceState.Speaking -> MaterialTheme.colorScheme.tertiary
+        VoiceState.Listening -> Color(0xFFE53935)
+        VoiceState.Speaking -> Color(0xFFE53935)
         VoiceState.Error -> MaterialTheme.colorScheme.errorContainer
         else -> MaterialTheme.colorScheme.primary
     }
@@ -298,7 +360,9 @@ private fun VoiceMicButton(
     val icon = when (uiState.state) {
         VoiceState.Listening -> Icons.Filled.Stop
         VoiceState.Transcribing, VoiceState.Thinking -> Icons.Filled.GraphicEq
-        VoiceState.Speaking -> Icons.Filled.VolumeUp
+        // Stop icon makes the "tap to interrupt TTS" affordance obvious;
+        // VolumeUp looked decorative and users didn't try tapping it.
+        VoiceState.Speaking -> Icons.Filled.Stop
         else -> Icons.Filled.Mic
     }
 

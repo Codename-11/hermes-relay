@@ -38,7 +38,6 @@ import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -1193,7 +1192,12 @@ fun ChatScreen(
                     }
                 }
 
-                // Send button — always visible, queues during streaming
+                // Trailing button — smart-swap between mic and send.
+                // Empty input → Mic (taps into voice mode overlay).
+                // Any typed text or attachment → Send (morph into send arrow,
+                // queues during streaming). Stop button during streaming is a
+                // separate IconButton above this one; both can coexist since
+                // they have distinct semantics.
                 val hasContent = inputText.isNotBlank() || pendingAttachments.isNotEmpty()
                 val sendEnabled = hasContent && chatReady
                 Box(
@@ -1205,26 +1209,34 @@ fun ChatScreen(
                         )
                     } else Modifier
                 ) {
-                    IconButton(
-                        onClick = {
-                            if (hasContent) {
+                    if (hasContent) {
+                        IconButton(
+                            onClick = {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 chatViewModel.sendMessage(inputText.ifBlank { "[attachment]" })
                                 inputText = ""
-                            }
-                        },
-                        enabled = sendEnabled
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Send,
-                            contentDescription = if (isStreaming) "Queue message" else "Send message",
-                            tint = if (sendEnabled) {
-                                if (isStreaming) MaterialTheme.colorScheme.tertiary
-                                else MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            }
-                        )
+                            },
+                            enabled = sendEnabled
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Send,
+                                contentDescription = if (isStreaming) "Queue message" else "Send message",
+                                tint = if (sendEnabled) {
+                                    if (isStreaming) MaterialTheme.colorScheme.tertiary
+                                    else MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                }
+                            )
+                        }
+                    } else {
+                        IconButton(onClick = { requestVoiceMode() }) {
+                            Icon(
+                                imageVector = Icons.Filled.Mic,
+                                contentDescription = "Voice mode",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
                 }
             }
@@ -1256,23 +1268,6 @@ fun ChatScreen(
                         Text("Dismiss")
                     }
                 }
-            }
-        }
-
-        // Mic FAB — enter voice mode. Hidden while voice mode is active.
-        if (!voiceUiState.voiceMode) {
-            FloatingActionButton(
-                onClick = { requestVoiceMode() },
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 16.dp, bottom = 96.dp),
-                containerColor = MaterialTheme.colorScheme.primary,
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Mic,
-                    contentDescription = "Enter voice mode",
-                    tint = MaterialTheme.colorScheme.onPrimary,
-                )
             }
         }
 

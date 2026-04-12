@@ -168,8 +168,15 @@ class VoicePlayer {
      * RMS of an 8-bit unsigned PCM waveform, mapped to 0..1. Visualizer
      * emits signed bytes centered at 128 (0x80), so the first step is to
      * re-center at 0.
+     *
+     * Guards: empty waveform short-circuits to 0 to avoid `0.0 / 0 = NaN`,
+     * and the final result is NaN-filtered before returning. A single NaN
+     * amplitude frame would otherwise propagate through `animateFloatAsState`
+     * and cause Android 15 to log `setRequestedFrameRate frameRate=NaN` on
+     * every draw pass.
      */
     private fun computeRms(waveform: ByteArray): Float {
+        if (waveform.isEmpty()) return 0f
         var sumSq = 0.0
         for (b in waveform) {
             val sample = (b.toInt() and 0xFF) - 128
@@ -177,6 +184,8 @@ class VoicePlayer {
         }
         val rms = sqrt(sumSq / waveform.size)
         // 128 is the theoretical max deviation for re-centered 8-bit PCM.
-        return (rms / 128.0).coerceIn(0.0, 1.0).toFloat()
+        val normalized = (rms / 128.0).toFloat()
+        return if (normalized.isNaN() || normalized.isInfinite()) 0f
+               else normalized.coerceIn(0f, 1f)
     }
 }
