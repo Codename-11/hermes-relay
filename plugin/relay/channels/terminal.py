@@ -113,10 +113,29 @@ class TerminalHandler:
     can multiplex a few at once.
     """
 
-    def __init__(self, default_shell: str | None = None) -> None:
+    def __init__(
+        self,
+        default_shell: str | None = None,
+        force_tmux: bool | None = None,
+    ) -> None:
+        """Build a TerminalHandler.
+
+        Args:
+            default_shell: Override the auto-resolved shell ($SHELL → /bin/bash).
+            force_tmux: Test override. ``None`` (default) auto-detects tmux via
+                ``shutil.which("tmux")``. ``True`` forces tmux mode (must be on
+                PATH or spawn will fail in the child). ``False`` forces bare-shell
+                mode even when tmux is installed — useful for tests that want to
+                exercise the legacy ephemeral spawn path.
+        """
         self.default_shell = default_shell
         self._sessions: dict[web.WebSocketResponse, dict[str, _Session]] = {}
-        self.tmux_available = shutil.which("tmux") is not None
+        if force_tmux is None:
+            self._tmux_path = shutil.which("tmux")
+            self.tmux_available = self._tmux_path is not None
+        else:
+            self._tmux_path = shutil.which("tmux") if force_tmux else None
+            self.tmux_available = force_tmux
 
     # ── Envelope dispatch ────────────────────────────────────────────────
 
@@ -225,6 +244,35 @@ class TerminalHandler:
 
         shell = self._resolve_shell(payload.get("shell"))
 
+        # ── Spawn argv selection ─────────────────────────────────────────
+        # tmux-backed when available so shells persist across disconnects —
+        # the Android client sends a stable session_name per tab,
+        # `tmux new-session -A` attaches-or-creates, and all shell state
+        # (cwd, env, running processes, scrollback, bash history) is
+        # preserved across reconnects. The tmux server keeps the bash child
+        # alive in the background after the WebSocket drops or the client
+        # explicitly detaches; the next attach with the same session_name
+        # re-enters the same running session.
+        #
+        # When tmux is not on PATH we fall back to a bare ``bash -l``: the
+        # shell is then ephemeral and dies with the PTY exactly like the
+        # pre-tmux behavior, since there is no out-of-band process to host it.
+        if self.tmux_available:
+            tmux_binary = self._tmux_path or "tmux"
+            tmux_session_name = _tmux_session_name(session_name)
+            exec_path = tmux_binary
+            exec_argv = [
+                tmux_binary,
+                "-u",
+                "new-session",
+                "-A",
+                "-s",
+                tmux_session_name,
+            ]
+        else:
+            exec_path = shell
+            exec_argv = [shell, "-l"]
+
         master_fd, slave_fd = pty.openpty()
         _set_winsize(master_fd, rows, cols)
 
@@ -249,9 +297,11 @@ class TerminalHandler:
                 env["TERM"] = "xterm-256color"
                 env["COLORTERM"] = "truecolor"
                 # A recognizable marker for anyone spelunking through process lists.
+                # Tmux inherits this env so the variable is still visible inside
+                # the persistent shell across reconnects.
                 env["HERMES_RELAY_TERMINAL"] = session_name
 
-                os.execvpe(shell, [shell, "-l"], env)
+                os.execvpe(exec_path, exec_argv, env)
             except Exception:  # noqa: BLE001
                 os._exit(1)
         else:
@@ -332,13 +382,29 @@ class TerminalHandler:
         except OSError as exc:
             if exc.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
                 return
-            # fd closed / child died unexpectedly
-            asyncio.create_task(self._close_session(session, reason="pty closed"))
+            # fd closed / child died unexpectedly. With tmux this usually
+            # means the WS dropped — the tmux server is still alive holding
+            # the shell, so we preserve it for the next reconnect. With
+            # bare-bash there is nothing to preserve.
+            asyncio.create_task(
+                self._close_session(
+                    session,
+                    reason="pty closed",
+                    preserve_shell=self.tmux_available,
+                )
+            )
             return
 
         if not data:
-            # EOF — child exited
-            asyncio.create_task(self._close_session(session, reason="eof"))
+            # EOF — child exited (or tmux client detached). Preserve the
+            # background tmux server when available.
+            asyncio.create_task(
+                self._close_session(
+                    session,
+                    reason="eof",
+                    preserve_shell=self.tmux_available,
+                )
+            )
             return
 
         session.buffer.extend(data)
@@ -378,7 +444,11 @@ class TerminalHandler:
                 ),
             )
         except (ConnectionResetError, RuntimeError):
-            await self._close_session(session, reason="ws closed during flush")
+            await self._close_session(
+                session,
+                reason="ws closed during flush",
+                preserve_shell=self.tmux_available,
+            )
 
     # ── Input / resize / detach ──────────────────────────────────────────
 
@@ -407,7 +477,11 @@ class TerminalHandler:
                 session.pid,
             )
         except OSError:
-            await self._close_session(session, reason="write failed")
+            await self._close_session(
+                session,
+                reason="write failed",
+                preserve_shell=self.tmux_available,
+            )
 
     async def _handle_resize(
         self,
@@ -432,7 +506,16 @@ class TerminalHandler:
         session = self._lookup(ws, payload.get("session_name"))
         if session is None:
             return
-        await self._close_session(session, reason="client detach")
+        # When tmux is hosting the shell, an explicit client detach should
+        # leave the tmux server (and the shell inside it) running so the
+        # next attach lands in the same session. Bare-bash sessions are
+        # ephemeral — they have nowhere to live without the PTY — so we
+        # still hup+kill them on detach.
+        await self._close_session(
+            session,
+            reason="client detach",
+            preserve_shell=self.tmux_available,
+        )
 
     async def _handle_list(
         self,
@@ -472,7 +555,29 @@ class TerminalHandler:
             return next(reversed(list(sessions.values())))
         return None
 
-    async def _close_session(self, session: _Session, reason: str = "") -> None:
+    async def _close_session(
+        self,
+        session: _Session,
+        reason: str = "",
+        preserve_shell: bool = False,
+    ) -> None:
+        """Tear down a session.
+
+        Args:
+            session: The session to close.
+            reason: Human-readable reason for the close (sent in the
+                ``terminal.detached`` envelope).
+            preserve_shell: If True, only the local PTY-side resources are
+                released — the child process (the tmux client running inside
+                the PTY) is left to exit on its own. With tmux this means the
+                tmux server keeps the bash session alive in the background so
+                the next attach with the same session_name re-enters it. The
+                default is False (legacy behavior: SIGHUP + reap + SIGKILL),
+                which is correct for bare-bash spawns and for unrecoverable
+                errors. Tmux call sites pass True via the corresponding
+                ``preserve_shell=self.tmux_available`` argument from the
+                handlers above.
+        """
         if session.closed:
             return
         session.closed = True
@@ -502,27 +607,40 @@ class TerminalHandler:
         except (ValueError, KeyError):
             pass
 
-        # Send SIGHUP → child gets a chance to clean up.
-        try:
-            os.kill(session.pid, signal.SIGHUP)
-        except ProcessLookupError:
-            pass
+        if not preserve_shell:
+            # Legacy / bare-bash path: SIGHUP, then reap, then SIGKILL on
+            # holdouts. This matches the pre-tmux behavior exactly.
+            try:
+                os.kill(session.pid, signal.SIGHUP)
+            except ProcessLookupError:
+                pass
 
-        # Reap without blocking the loop forever.
-        try:
-            for _ in range(20):  # up to ~1s of grace
-                pid, _status = os.waitpid(session.pid, os.WNOHANG)
-                if pid != 0:
-                    break
-                await asyncio.sleep(0.05)
-            else:
-                try:
-                    os.kill(session.pid, signal.SIGKILL)
-                    os.waitpid(session.pid, 0)
-                except (ProcessLookupError, ChildProcessError):
-                    pass
-        except (ChildProcessError, ProcessLookupError):
-            pass
+            try:
+                for _ in range(20):  # up to ~1s of grace
+                    pid, _status = os.waitpid(session.pid, os.WNOHANG)
+                    if pid != 0:
+                        break
+                    await asyncio.sleep(0.05)
+                else:
+                    try:
+                        os.kill(session.pid, signal.SIGKILL)
+                        os.waitpid(session.pid, 0)
+                    except (ProcessLookupError, ChildProcessError):
+                        pass
+            except (ChildProcessError, ProcessLookupError):
+                pass
+        else:
+            # tmux preservation path: closing the PTY master makes the tmux
+            # *client* (the foreground process inside the PTY) detach
+            # cleanly. The tmux *server*, which actually owns the bash
+            # process, keeps running outside our process tree. We do a
+            # non-blocking reap so we don't leak a zombie if the client
+            # exits quickly, but we never SIGHUP / SIGKILL — that would
+            # defeat the whole point of persistence.
+            try:
+                os.waitpid(session.pid, os.WNOHANG)
+            except (ChildProcessError, ProcessLookupError):
+                pass
 
         try:
             os.close(session.master_fd)
@@ -547,16 +665,50 @@ class TerminalHandler:
             except Exception:  # noqa: BLE001
                 pass
 
-        logger.info("Terminal session closed: %s (%s)", session.name, reason)
+        logger.info(
+            "Terminal session closed: %s (%s, preserve_shell=%s)",
+            session.name,
+            reason,
+            preserve_shell,
+        )
 
     async def close(self) -> None:
-        """Close every open session — called from RelayServer.close()."""
+        """Close every open session — called from RelayServer.close().
+
+        With tmux, the relay shutting down does NOT mean the user wants
+        their shells killed — the tmux server keeps running outside our
+        process tree and the next relay boot will re-attach. With bare-bash
+        the shell dies with us and we may as well clean it up.
+        """
         for ws, sessions in list(self._sessions.items()):
             for session in list(sessions.values()):
-                await self._close_session(session, reason="server shutdown")
+                await self._close_session(
+                    session,
+                    reason="server shutdown",
+                    preserve_shell=self.tmux_available,
+                )
 
 
 # ── Private helpers ──────────────────────────────────────────────────────
+
+
+def _tmux_session_name(client_session_name: str) -> str:
+    """Sanitize a client-provided session name for tmux.
+
+    Tmux session names cannot contain ``.``, ``:``, or whitespace, so we
+    replace any of those with ``_``. We also prefix with ``hermes-`` so our
+    sessions don't collide with the user's personal tmux setup — anyone
+    looking at ``tmux ls`` can immediately tell which sessions belong to
+    the relay.
+    """
+    sanitized_chars: list[str] = []
+    for ch in client_session_name:
+        if ch.isspace() or ch in ".:":
+            sanitized_chars.append("_")
+        else:
+            sanitized_chars.append(ch)
+    sanitized = "".join(sanitized_chars).strip("_") or "default"
+    return f"hermes-{sanitized}"
 
 
 def _set_winsize(fd: int, rows: int, cols: int) -> None:
