@@ -476,7 +476,41 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private fun startTtsConsumer() {
         ttsConsumerJob?.cancel()
         ttsConsumerJob = viewModelScope.launch {
-            for (sentence in ttsQueue) {
+            while (true) {
+                // Non-blocking peek: is a sentence already waiting?
+                val immediate = ttsQueue.tryReceive()
+                val sentence: String
+
+                if (immediate.isSuccess) {
+                    sentence = immediate.getOrNull() ?: continue
+                } else if (immediate.isClosed) {
+                    break
+                } else {
+                    // Queue is momentarily empty. If the SSE stream observer
+                    // is also done, this is the true end of the turn — safe
+                    // to leave Speaking. The old code called maybeAutoResume
+                    // after EVERY sentence, which prematurely killed the
+                    // waveform between sentences of a multi-sentence response
+                    // because the SSE stream finishes long before TTS finishes
+                    // playing all the queued audio.
+                    maybeAutoResume()
+
+                    // Block until the next sentence arrives (or channel closes).
+                    // If maybeAutoResume just went to Idle, we park here until
+                    // the next voice turn pushes a new sentence.
+                    sentence = ttsQueue.receiveCatching().getOrNull() ?: break
+                }
+
+                // About to synthesize + play — ensure state is Speaking so
+                // the amplitude bridge forwards player output to the UI.
+                // Between sentences within the same turn the queue usually
+                // yields immediately (no maybeAutoResume call), but if the
+                // channel was briefly empty before the observer pushed the
+                // next sentence, state may have transiently flipped to Idle.
+                if (_uiState.value.voiceMode && _uiState.value.state != VoiceState.Speaking) {
+                    _uiState.update { it.copy(state = VoiceState.Speaking) }
+                }
+
                 val client = voiceClient ?: continue
                 val p = player ?: continue
 
@@ -497,29 +531,20 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 } catch (e: Exception) {
                     Log.w(TAG, "playback failed: ${e.message}")
                 }
-
-                // V2b EXTENSION — after each sentence finishes, if nothing
-                // else is queued and the streaming observer has torn down
-                // (meaning the assistant turn is fully complete), transition
-                // back to Idle so the sphere stops pulsing. In Continuous
-                // mode, also auto-resume listening.
-                maybeAutoResume()
             }
-            // Channel closed — nothing more to do.
         }
     }
 
-    // V2b EXTENSION
+    // Called when the TTS queue is empty (tryReceive returned failure) and
+    // the streaming observer has already torn down (the assistant turn's SSE
+    // is fully consumed). Transitions Speaking → Idle so the sphere stops
+    // pulsing. In Continuous mode, also kicks off a new recording turn.
     //
-    // Called after each TTS sentence finishes playing. If the streaming
-    // observer has already torn down (the assistant turn is fully complete)
-    // and no more sentences are pending, transition Speaking → Idle so the
-    // sphere stops pulsing. In Continuous mode, kick off another listen.
-    //
-    // We can't easily ask the Channel "are you empty?" — instead, use a
-    // short yield + re-check of the streamObserverJob state. If the
-    // consumer sees another tryReceive succeed in the next loop iteration,
-    // it'll transition back to Speaking before the user notices.
+    // Key invariant: this ONLY fires when the queue is actually drained,
+    // not after every sentence. Between sentences of a multi-sentence
+    // response the queue still has entries — the consumer peeks via
+    // tryReceive and skips this entirely, so the amplitude bridge stays
+    // active and the waveform keeps rendering while audio plays.
     private fun maybeAutoResume() {
         val observerStopped = streamObserverJob?.isActive != true
         if (!observerStopped) return
