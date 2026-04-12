@@ -383,11 +383,32 @@ fun RelayApp() {
                 composable(Screen.Settings.route) {
                     SettingsScreen(
                         connectionViewModel = connectionViewModel,
-                        onNavigateToPairedDevices = {
-                            navController.navigate(Screen.PairedDevices.route)
+                        onNavigateToConnectionSettings = {
+                            navController.navigate(Screen.ConnectionSettings.route)
+                        },
+                        onNavigateToChatSettings = {
+                            navController.navigate(Screen.ChatSettings.route)
+                        },
+                        onNavigateToMediaSettings = {
+                            navController.navigate(Screen.MediaSettings.route)
+                        },
+                        onNavigateToAppearanceSettings = {
+                            navController.navigate(Screen.AppearanceSettings.route)
+                        },
+                        onNavigateToAnalytics = {
+                            navController.navigate(Screen.Analytics.route)
                         },
                         onNavigateToVoiceSettings = {
                             navController.navigate(Screen.VoiceSettings.route)
+                        },
+                        onNavigateToPairedDevices = {
+                            navController.navigate(Screen.PairedDevices.route)
+                        },
+                        onNavigateToDeveloperSettings = {
+                            navController.navigate(Screen.DeveloperSettings.route)
+                        },
+                        onNavigateToAbout = {
+                            navController.navigate(Screen.About.route)
                         }
                     )
                 }
