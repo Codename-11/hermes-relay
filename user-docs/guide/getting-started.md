@@ -16,7 +16,14 @@ Three commands get you from zero to connected:
 
 ### 1. Install the Android app
 
-Download the latest APK from [GitHub Releases](https://github.com/Codename-11/hermes-relay/releases/latest), or wait for the Play Store listing. See [Sideload APK](#sideload-apk) below for step-by-step install and integrity-verification instructions.
+Hermes-Relay ships in **two flavors** built from the same codebase:
+
+- **Google Play** — easy install, automatic updates, the agent can read your screen and notifications. The accessibility-service surface is conservative by design so the build stays inside Play Store policy.
+- **Sideload** — manual install from GitHub Releases, full feature set including hands-free voice control of your phone (the agent can tap, type, swipe, and navigate apps for you).
+
+The two builds use different application IDs, so you can install both side-by-side and try them out. Most users want the Google Play version. Read the [Release tracks](/guide/release-tracks) page for the full feature comparison and a decision guide before you pick.
+
+Once you've decided: install from the [Play Store listing](https://play.google.com/store/apps/details?id=com.hermesandroid.relay), or grab `app-release.apk` from the [latest GitHub Release](https://github.com/Codename-11/hermes-relay/releases/latest) and follow the [Sideload APK](#sideload-apk) section below for step-by-step install and integrity-verification instructions.
 
 ### 2. Install the server plugin
 

@@ -1,5 +1,23 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-12 — Docs: two-track explainer + FeatureMatrix component
+
+Closed the user-doc gap left by Phase 3's googlePlay/sideload Gradle flavor split. Before this, the user-docs site framed sideloading as just an alternative install path — there was no signal that the sideload APK actually unlocks tier 3/4/6 features (voice→bridge intent routing, vision-driven `android_navigate`, workflow recording) that are *compiled out* of the Play Store APK by `BuildFlavor.bridgeTier{3,4,6}` checks.
+
+**New: `user-docs/.vitepress/theme/components/FeatureMatrix.vue`** — polished feature comparison component that matches the design language of `HermesFlow.vue` / `InstallSection.vue` / `HeroDemo.vue` (Space Grotesk + Space Mono, `--vp-c-brand-1` purple accent, flat + border-separated, no gradients/shadows/blur). Renders a semantic `<table>` with one row per *feature* (tier numbers are an implementation detail users don't care about), grouped into Chat & voice / Bridge — read / Bridge — control / Safety rails / Install & updates sections. Three support states per cell (`full` / `limited` / `none`) with inline SVG icons inheriting `currentColor` from the cell's class. Sideload-only rows fade to `--vp-c-text-3` opacity 0.6; "limited" cells get a *• see note* suffix that surfaces a per-row footnote about the read-only Play accessibility surface. Responsive: above 720px shows both columns side-by-side with a brand-soft tinted Sideload column; below 720px collapses to a single visible column with role=tablist mobile tab switcher (the semantic table stays intact for screen readers — the inactive column is hidden via `display:none` on mobile-only cells, not removed). Below 480px the text labels collapse to icon-only with the support state on the cell's `aria-label`. Zero npm deps — all icons are inline SVG.
+
+**New: `user-docs/guide/release-tracks.md`** — canonical prose explainer. Plain-language opener ("Hermes-Relay ships in two flavors built from the same codebase"), TL;DR up top, "Why two tracks?" section that explains Google Play's accessibility-service scrutiny without jargon, embedded `<FeatureMatrix />`, decision guide ("Want X? → Track Y" bullets), "Can I switch later?" section explaining the side-by-side `applicationIdSuffix = ".sideload"` story, install instructions for both tracks (linking to existing getting-started.md content rather than duplicating), and a "Safety rails — always on, in both tracks" closer to make clear the floor isn't a sideload feature. Wired into the `/guide/` sidebar between Installation & Setup and Chat.
+
+**Edited: `user-docs/features/index.md`** — added a "Bridge — Phone Control" table with a Track column and a `<span class="track-badge track-badge--sideload">Sideload only</span>` convention for compiled-out features (voice→bridge, vision navigation, workflow recording). Added a "Bridge — Safety Rails" table to make the floor explicit. Removed Bridge from "Coming Soon" since Phase 3 is shipping. Added a "Choose your track" section near the bottom with `<FeatureMatrix />` embedded and a link to release-tracks.md. Top-of-page intro now flags the two flavors and the badge convention.
+
+**Edited: `user-docs/guide/getting-started.md`** — replaced the single-line "download the APK or wait for Play Store" sentence in step 1 with a short two-flavor pitch and a link to release-tracks.md. Did not duplicate the matrix here — just points to it.
+
+**Edited: `user-docs/.vitepress/config.mts`** — added Release tracks to the `/guide/` sidebar between Installation & Setup and Chat.
+
+**Edited: `user-docs/.vitepress/theme/index.ts`** — registered FeatureMatrix as a global Vue component so MD files can use `<FeatureMatrix />` without per-file imports (matches the existing HermesFlow registration pattern).
+
+Build verified locally with `npx vitepress build` — clean compile, all pages render, no errors.
+
 ## 2026-04-12 — Add canonical uninstall.sh + bootstrap docs
 
 Companion to the bootstrap injection work below. There was no formal uninstall path before — `install.sh` is idempotent so most update flows worked, but cleanly removing the plugin (e.g., to test that install.sh works on a truly fresh state) required manually undoing 6 install steps. New `uninstall.sh` reverses them in opposite order:

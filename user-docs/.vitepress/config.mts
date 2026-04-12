@@ -61,6 +61,7 @@ export default defineConfig({
           items: [
             { text: 'What is Hermes-Relay?', link: '/guide/' },
             { text: 'Installation & Setup', link: '/guide/getting-started' },
+            { text: 'Release tracks', link: '/guide/release-tracks' },
             { text: 'Chat', link: '/guide/chat' },
             { text: 'Sessions', link: '/guide/sessions' },
             { text: 'Troubleshooting', link: '/guide/troubleshooting' },
