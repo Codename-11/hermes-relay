@@ -1,5 +1,29 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-12 — Fix: TTS waveform stays alive through multi-sentence playback
+
+The waveform was flatlinining after the first sentence while audio kept playing. Root cause: `maybeAutoResume()` fired after every sentence in the TTS consumer loop. The SSE stream finishes before TTS plays all queued sentences, so `streamObserverJob?.isActive` was already false → state flipped to Idle → amplitude bridge stopped → waveform died. Fix: restructured TTS consumer from `for` loop to `while` + `tryReceive` peek. `maybeAutoResume` only fires when the queue is actually drained (`tryReceive` returns failure), not between sentences. Between sentences within the same response, `tryReceive` succeeds immediately and the consumer skips the Idle transition. Additionally, the consumer re-asserts Speaking state before each synthesis call to handle the edge case where the queue was briefly empty between observer pushes.
+
+## 2026-04-12 — Classified error feedback across voice/chat/settings/pairing
+
+Ended the "error: unknown" era. New `RelayErrorClassifier.kt` converts any `Throwable` → `HumanError(title, body, retryable, actionLabel)` based on exception type + context tag. Branch order: `UnknownHostException` → `ConnectException` → `SocketTimeoutException` → `SSLException` → `SecurityException` → `IllegalStateException` → `IOException` (message-scan for HTTP 401/403/404/413/500/503) → default. SSL before IOException is load-bearing since `SSLPeerUnverifiedException extends IOException`. Context tags (`transcribe`, `synthesize`, `voice_config`, `record`, `pair`, `save_and_test`, `media_fetch`, `send_message`) shape the title and drive 404 body specialization.
+
+Global `SnackbarHost` via `LocalSnackbarHost: CompositionLocal<SnackbarHostState>` at `RelayApp` scope — every screen can toast via `LocalSnackbarHost.current.showHumanError(err)`. Both `VoiceViewModel` and `ChatViewModel` gained `errorEvents: SharedFlow<HumanError>` (one-shot events, replay=0, buffer=4, DROP_OLDEST). 5 voice error sites + 4 chat error sites converted to use the classifier. Mic permission banner in ChatScreen rebuilt with "Open Settings" action. ConnectionSettingsScreen Save & Test and manual pair now show classified errors.
+
+## 2026-04-12 — Voice polish: reactive waveform, pill edges, stop semantics, enter/exit chimes
+
+Comprehensive polish pass on voice mode addressing issues surfaced during live testing:
+
+- **Waveform sensitivity**: four layers of damping were fighting us. Fixed at every stage: perceptual curve in VoiceRecorder (noise-floor + speech-ceiling + sqrt), attack/release envelope follower in VoiceViewModel (0.75/0.10 at 60Hz), killed the Compose spring in VoiceWaveform, amplitude-driven phase velocity via `withFrameNanos` ticker (speeds up 3.5× at peak amplitude).
+- **Pill edges**: dual-technique merge — geometric `sin(π·t)` taper forces wave to centerY at endpoints + `BlendMode.DstIn` horizontal gradient mask in `saveLayer`. Studied Conjure's pill approach (dark gradient overlay against solid background) — won't work on our translucent overlay, hence the layer technique.
+- **TTS replying to wrong turn**: `ignoreAssistantId` captures the pre-send last-assistant-id so the stream observer doesn't replay the previous turn's response. Root cause: StateFlow.collect replays current value on subscribe, and the current value at subscribe time still has the previous assistant message.
+- **Stop semantics**: `interruptSpeaking()` rewritten to drain queue + stop player + `chatViewModel.cancelStream()` + cancel all jobs → Idle (not Listening). Old version only paused playback; SSE kept feeding ttsQueue.
+- **Enter/exit chimes**: new `VoiceSfxPlayer.kt` — pre-synthesized 200ms PCM sweeps (440→660 Hz ascending enter, mirror exit) via `AudioTrack.MODE_STATIC`. Phase-accumulated to avoid chirp artifacts.
+- **Stop button color**: hardcoded vivid red `Color(0xFFE53935)` for both Listening and Speaking states (Material 3 dark `colorScheme.error` resolved to pale pink).
+- **Scrollable response**: overlay response Column now `weight(1f, fill=false) + verticalScroll`.
+- **NaN guards**: `VoicePlayer.computeRms` and `VoiceViewModel.sanitizeAmplitude` — `Float.coerceIn` silently passes NaN per IEEE 754.
+- **Gradle logcat task**: `silenceAndroidViewLogs` Exec task hooked via `finalizedBy` on all `install*` tasks — runs `adb shell setprop log.tag.View SILENT` to suppress Compose's Android 15 `setRequestedFrameRate=NaN` spam.
+
 ## 2026-04-12 — Relay startup: Python-side `.env` bootstrap + systemd user service
 
 Fixed a drift-class bug where the relay would 500 on `/voice/transcribe` with `STT provider 'openai' configured but no API key available` after any restart that wasn't preceded by a manual `source ~/.hermes/.env`. Root cause: the relay was run as a detached `nohup` process, which inherits whatever env the launching shell happens to have exported — not what's in `~/.hermes/.env`. The gateway already solves this via `hermes_cli/main.py:144` calling `load_hermes_dotenv(project_env=...)` at import time, which is why its user systemd unit carries no `EnvironmentFile=` directive. The relay was missing that pattern entirely.
