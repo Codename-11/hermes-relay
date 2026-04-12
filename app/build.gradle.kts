@@ -46,6 +46,40 @@ android {
         }
     }
 
+    // ─── Phase 3 — Bridge channel release tracks ────────────────────────────────
+    // Google Play scrutinizes AccessibilityService heavily (policy review + manual
+    // appeals are common), so Phase 3 ships two distinct tracks via flavor-merged
+    // manifests + flavor-scoped strings + flavor-scoped accessibility configs:
+    //
+    //   googlePlay  — conservative use-case description targeted at Play Store
+    //                 policy review. Subset of event types + flagDefault only.
+    //                 No gestures, no interactive-window reporting. Feature gates
+    //                 in BuildFlavor.kt hide tier 3/4/6 surfaces in the UI.
+    //
+    //   sideload    — full agent-control description for users who install the
+    //                 APK directly (GitHub Releases, F-Droid, ADB). typeAllMask,
+    //                 gestures, interactive windows, view-id reporting. All six
+    //                 tiers enabled.
+    //
+    // applicationIdSuffix decision: sideload gets `.sideload` so both tracks can
+    // coexist on the same device. The Play build keeps the canonical
+    // `com.hermesandroid.relay` applicationId so existing installs upgrade
+    // cleanly from v0.2.0 and Play Console keeps its history. Cost: anyone with
+    // both installed sees two launcher icons — we'll differentiate with a label
+    // suffix once the flavored strings.xml lands.
+    flavorDimensions += "track"
+    productFlavors {
+        create("googlePlay") {
+            dimension = "track"
+            // No applicationIdSuffix — this IS the canonical Play Store install.
+        }
+        create("sideload") {
+            dimension = "track"
+            applicationIdSuffix = ".sideload"
+            versionNameSuffix = "-sideload"
+        }
+    }
+
     buildTypes {
         debug {
             buildConfigField("boolean", "DEV_MODE", "true")

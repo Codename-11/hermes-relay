@@ -67,10 +67,21 @@ class ChannelMultiplexer {
                 // TODO: Phase 2 — terminal channel handler
                 handlers["terminal"]?.onMessage(envelope)
             }
-            "bridge" -> {
-                // TODO: Phase 3 — bridge channel handler
-                handlers["bridge"]?.onMessage(envelope)
-            }
+            // === PHASE3-γ: bridge channel routing ===
+            // bridge.command envelopes come FROM the server and are
+            // dispatched to a [BridgeCommandHandler] which hands them to
+            // the [HermesAccessibilityService]'s [ActionExecutor]. Responses
+            // (bridge.response / bridge.status) flow back through [send]
+            // directly — the handler never consumes its own responses.
+            //
+            // This branch is intentionally symmetric with "chat" and
+            // "terminal": route inbound envelopes to whatever handler is
+            // registered. The handler registration itself happens in
+            // [ConnectionViewModel] so the ViewModel controls whether
+            // bridge routing is active (Bridge can be gated by build
+            // flavor or by the master enable toggle in the UI).
+            "bridge" -> handlers["bridge"]?.onMessage(envelope)
+            // === END PHASE3-γ ===
             else -> {
                 // Unknown channel — ignore
             }
@@ -90,6 +101,28 @@ class ChannelMultiplexer {
     fun send(envelope: Envelope) {
         sendCallback?.invoke(envelope)
     }
+
+    // === PHASE3-ε: notification outbound routing ===
+    //
+    // `HermesNotificationCompanion` is a system-bound
+    // `NotificationListenerService` that lives outside the ViewModel
+    // scope. To push posted-notification envelopes onto the WSS
+    // connection, it grabs the live multiplexer reference (set by
+    // `ConnectionViewModel` via the static companion `multiplexer`
+    // slot on the service) and calls [sendNotification].
+    //
+    // This is a thin wrapper over [send] with a no-op fast path when
+    // no send callback is wired yet (relay disconnected). We drop on
+    // the floor at this layer rather than buffering — the service
+    // owns the cold-start buffer in its `pendingEnvelopes` queue, and
+    // dropping when the relay is offline matches the smartwatch
+    // companion semantics (a wearable doesn't replay notifications
+    // it missed while out of range either).
+    fun sendNotification(envelope: Envelope) {
+        val cb = sendCallback ?: return
+        cb.invoke(envelope)
+    }
+    // === END PHASE3-ε ===
 
     /**
      * Handle system channel messages (auth, ping/pong).

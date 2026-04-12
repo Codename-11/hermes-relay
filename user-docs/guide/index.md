@@ -8,7 +8,21 @@ Hermes-Relay is a native Android app for [Hermes Agent](https://hermes-agent.nou
 curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
 ```
 
-This installs the server-side plugin. Grab the Android app from [GitHub Releases](https://github.com/Codename-11/hermes-relay/releases), then either type `/hermes-relay-pair` in any Hermes chat surface or run `hermes-pair` from a shell to generate a pairing QR. See [Installation & Setup](/guide/getting-started) for the full walkthrough.
+This installs the server-side plugin. One command, full features — sessions browser, conversation history, personality picker, command palette, memory management, and the WSS relay for terminal/voice all work out of the box on any standard `hermes-agent` install. Grab the Android app from [GitHub Releases](https://github.com/Codename-11/hermes-relay/releases), then either type `/hermes-relay-pair` in any Hermes chat surface or run `hermes-pair` from a shell to generate a pairing QR. See [Installation & Setup](/guide/getting-started) for the full walkthrough.
+
+To uninstall later:
+
+```bash
+bash ~/.hermes/hermes-relay/uninstall.sh
+```
+
+Or via curl if the clone is already gone:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/uninstall.sh | bash
+```
+
+The uninstaller is idempotent and never touches state shared with other Hermes tools. Flags: `--dry-run`, `--keep-clone`, `--remove-secret`.
 
 ## Connection Model
 

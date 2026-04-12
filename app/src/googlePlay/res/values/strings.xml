@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Google Play flavor strings.
+
+    `a11y_description_googleplay` is the user-facing description shown in
+    Android's Accessibility settings when enabling the Hermes Bridge service.
+    It is ALSO what Play Store reviewers read when evaluating our
+    AccessibilityService use-case declaration, so phrasing matters: stay
+    narrowly scoped, emphasize user confirmation, emphasize dormancy until
+    the user opts in inside the app.
+
+    Do not reference voice or vision features here — tier 3/4/6 are gated
+    off for this flavor via FeatureFlags.BuildFlavor.
+-->
+<resources>
+    <string name="a11y_service_label">Hermes Bridge</string>
+    <string name="a11y_description_googleplay">Hermes assists you by reading notifications, summarizing messages, and replying with your confirmation. The service is dormant until you explicitly enable Bridge mode in the app.</string>
+</resources>

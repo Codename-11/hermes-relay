@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Hermes-Relay</string>
+    <!-- === PHASE3-ε: notification companion service label === -->
+    <string name="notification_companion_label">Hermes-Relay notification companion</string>
+    <!-- === END PHASE3-ε === -->
 </resources>

@@ -54,6 +54,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.ui.components.WhatsNewDialog
 import com.hermesandroid.relay.ui.theme.gradientBorder
@@ -211,6 +212,28 @@ fun AboutScreen(
                             style = MaterialTheme.typography.bodyMedium
                         )
                     }
+
+                    // === PHASE3-β: build flavor badge ===
+                    // Surfaces which release track the user is running. Tier 3/4/6
+                    // Bridge surfaces differ between googlePlay and sideload, so it
+                    // helps bug reports to see the active flavor right next to the
+                    // version. Small, unobtrusive — shares the same row style as
+                    // the Version label above.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Track",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = BuildFlavor.displayName,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                    // === END PHASE3-β ===
 
                     HorizontalDivider()
 

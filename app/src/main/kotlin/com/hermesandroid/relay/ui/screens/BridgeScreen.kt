@@ -1,129 +1,204 @@
 package com.hermesandroid.relay.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material3.AssistChip
+import androidx.compose.material.icons.filled.Security
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import com.hermesandroid.relay.ui.components.MorphingSphere
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.hermesandroid.relay.ui.components.BridgeActivityLog
+import com.hermesandroid.relay.ui.components.BridgeMasterToggle
+import com.hermesandroid.relay.ui.components.BridgePermissionChecklist
+import com.hermesandroid.relay.ui.components.BridgeStatusCard
+import com.hermesandroid.relay.viewmodel.BridgeViewModel
 
+/**
+ * Bridge tab — phase 3 Wave 1 rewrite (Agent δ, `bridge-screen-ui`).
+ *
+ * Replaces the Phase 0 "Coming Soon" placeholder with the real control
+ * surface described in `Plans/Phase 3 — Bridge Channel.md` §5. Four stacked
+ * cards in a verticalScroll column:
+ *
+ *   1. [BridgeMasterToggle]        — "Allow Agent Control" + live status
+ *   2. [BridgePermissionChecklist] — accessibility / capture / overlay / notif
+ *   3. [BridgeActivityLog]         — scrollable recent-command history
+ *   4. Safety placeholder          — stub owned by Agent ζ in Wave 2
+ *
+ * State comes from [BridgeViewModel] which in turn reads from the
+ * [com.hermesandroid.relay.data.BridgePreferencesRepository] DataStore for
+ * anything persistent, and stubs the live bridge-runtime state until
+ * Agent γ's `HermesAccessibilityService` exposes it. See [BridgeViewModel]'s
+ * KDoc for the exact γ-handoff surface.
+ *
+ * Lifecycle: we re-probe permission status on every ON_RESUME so that
+ * returning from Android Settings immediately flips the accessibility
+ * checklist row from red to green without needing to navigate away and back.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BridgeScreen() {
-    Column(modifier = Modifier.fillMaxSize()) {
-        TopAppBar(
-            title = { Text("Bridge") },
-            colors = TopAppBarDefaults.topAppBarColors(
-                containerColor = MaterialTheme.colorScheme.surface
-            )
-        )
+fun BridgeScreen(
+    viewModel: BridgeViewModel = viewModel(),
+) {
+    val masterToggle by viewModel.masterToggle.collectAsState()
+    val permissionStatus by viewModel.permissionStatus.collectAsState()
+    val bridgeStatus by viewModel.bridgeStatus.collectAsState()
+    val activityLog by viewModel.activityLog.collectAsState()
 
-        Box(
+    // Re-run permission + system-status probes whenever the screen resumes.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.onScreenResumed()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Bridge") },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                )
+            )
+        }
+    ) { innerPadding ->
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 32.dp),
-            contentAlignment = Alignment.Center
+                .padding(innerPadding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Column(
-                modifier = Modifier.widthIn(max = 300.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                // Sphere replaces static icon
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(1.2f)
-                ) {
-                    MorphingSphere(modifier = Modifier.fillMaxSize())
-                }
+            BridgeMasterToggle(
+                enabled = masterToggle,
+                status = bridgeStatus,
+                accessibilityGranted = permissionStatus.accessibilityServiceEnabled,
+                onToggle = { viewModel.setMasterEnabled(it) }
+            )
 
-                Spacer(modifier = Modifier.height(16.dp))
+            BridgeStatusCard(
+                status = bridgeStatus,
+                // TODO(γ-handoff): once γ exposes a `bridgeConnected`
+                // StateFlow from HermesAccessibilityService, drive this off
+                // that instead of the a11y-granted flag.
+                isConnected = permissionStatus.accessibilityServiceEnabled && masterToggle,
+            )
 
-                Text(
-                    text = "Device Bridge",
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
+            BridgePermissionChecklist(status = permissionStatus)
 
-                Spacer(modifier = Modifier.height(8.dp))
+            BridgeActivityLog(
+                entries = activityLog,
+                onClear = { viewModel.clearActivityLog() }
+            )
 
-                Text(
-                    text = "Let your Hermes agent interact with your phone \u2014 " +
-                        "tap, type, read the screen, and automate workflows.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
+            SafetyPlaceholderCard()
 
-                Spacer(modifier = Modifier.height(16.dp))
-
-                AssistChip(
-                    onClick = { },
-                    label = {
-                        Text(
-                            text = "Coming Soon",
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                    },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Filled.Schedule,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                )
-
-                Spacer(modifier = Modifier.height(20.dp))
-
-                val plannedFeatures = listOf(
-                    "Agent-controlled device interaction",
-                    "Accessibility service integration",
-                    "Activity log and command history",
-                    "Permission management"
-                )
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    plannedFeatures.forEach { feature ->
-                        Text(
-                            text = "\u2022  $feature",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
+            Spacer(modifier = Modifier.height(16.dp))
         }
     }
 }
 
-@Preview(showBackground = true)
+/**
+ * Stub safety card — Agent ζ (Wave 2) owns this content. Renders an inert
+ * card with a "Configure in Bridge Safety Settings" label so the layout
+ * doesn't reflow when ζ's real UI drops in.
+ *
+ * TODO(ζ-handoff): replace with the real BridgeSafetySettings entry-point
+ * card once the blocklist / destructive-verb confirm / auto-disable UIs
+ * are ready. Expected call: `BridgeSafetyCard(onClick = { navigateToSafety() })`.
+ */
+@Composable
+private fun SafetyPlaceholderCard() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Security,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    text = "Safety",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Text(
+                text = "Configure in Bridge Safety Settings",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = "Per-app blocklist, destructive-verb confirmation, " +
+                    "auto-disable timer — coming in Phase 3 Wave 2.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Preview(showBackground = true, backgroundColor = 0xFF1A1A2E)
 @Composable
 private fun BridgeScreenPreview() {
+    // Previews can't construct a real AndroidViewModel without an Application
+    // context, so we render the inert SafetyPlaceholderCard on its own to at
+    // least verify the spacing / typography. Individual components have their
+    // own full previews.
     MaterialTheme {
-        BridgeScreen()
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            SafetyPlaceholderCard()
+        }
     }
 }

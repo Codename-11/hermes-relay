@@ -28,6 +28,7 @@ import os
 import signal
 import ssl
 import sys
+import tempfile
 import time
 import uuid
 from typing import Any
@@ -42,8 +43,9 @@ from .auth import (
     Session,
     SessionManager,
 )
-from .channels.bridge import BridgeHandler
+from .channels.bridge import BridgeError, BridgeHandler
 from .channels.chat import ChatHandler
+from .channels.notifications import NotificationsChannel
 from .channels.terminal import TerminalHandler
 from .config import RelayConfig
 from .media import MediaRegistrationError, MediaRegistry, validate_media_path
@@ -82,6 +84,9 @@ class RelayServer:
         self.chat = ChatHandler(webapi_url=config.webapi_url)
         self.terminal = TerminalHandler(default_shell=config.terminal_shell)
         self.bridge = BridgeHandler()
+        # === PHASE3-ε: notifications channel ===
+        self.notifications = NotificationsChannel()
+        # === END PHASE3-ε ===
 
         # Connected clients: ws → session token
         self._clients: dict[web.WebSocketResponse, str] = {}
@@ -645,6 +650,155 @@ async def handle_media_register(request: web.Request) -> web.Response:
     )
 
 
+# === PHASE3-α-followup: /media/upload ===
+#
+# γ's ScreenCapture (the phone-side accessibility runtime) needs to push
+# screenshot bytes to the relay over the network. The pre-existing
+# /media/register endpoint is loopback + path-based — it assumes the
+# caller already has the bytes on the relay's filesystem, which is true
+# for host-local Hermes tools but false for the phone. This endpoint
+# bridges that gap: accept multipart bytes from a paired phone, write to
+# a sandboxed tempfile under tempfile.gettempdir() (which is in the
+# default MediaRegistry allowed_roots), then hand the path to
+# MediaRegistry.register() so the rest of the pipeline (token issuance,
+# expiry, LRU eviction, GET /media/{token}) is identical.
+
+_MEDIA_UPLOAD_CHUNK_SIZE = 64 * 1024
+
+
+async def handle_media_upload(request: web.Request) -> web.Response:
+    """Accept a phone-uploaded file and register it with MediaRegistry.
+
+    Bearer-auth'd (every paired phone has a session token). Streams the
+    multipart `file` field to a NamedTemporaryFile under
+    ``tempfile.gettempdir()``, enforces ``MediaRegistry.max_size_bytes``
+    while reading, and on success returns the same JSON shape as
+    ``/media/register``.
+
+    POST /media/upload (multipart/form-data, field name "file")
+      → 200 {"ok": true, "token": "...", "expires_at": <epoch>}
+      → 400 invalid request shape (no multipart, no "file" field)
+      → 401 missing/invalid bearer
+      → 413 file too large (over MediaRegistry.max_size_bytes)
+    """
+    server, _session = _require_bearer_session(request)
+
+    content_type = request.content_type or ""
+    if not content_type.startswith("multipart/"):
+        return web.json_response(
+            {"ok": False, "error": "expected multipart/form-data"},
+            status=400,
+        )
+
+    try:
+        reader = await request.multipart()
+    except (aiohttp.ClientPayloadError, ValueError) as exc:
+        return web.json_response(
+            {"ok": False, "error": f"invalid multipart body: {exc}"},
+            status=400,
+        )
+
+    field = await reader.next()
+    while field is not None and field.name != "file":
+        field = await reader.next()
+    if field is None:
+        return web.json_response(
+            {"ok": False, "error": "missing 'file' multipart field"},
+            status=400,
+        )
+
+    file_name = field.filename or "upload.bin"
+    file_content_type = (
+        field.headers.get("Content-Type") or "application/octet-stream"
+    )
+
+    # Pick a suffix from the filename so MIME-by-extension consumers
+    # downstream still work. Strip path components defensively in case
+    # a client sends something exotic.
+    base_name = os.path.basename(file_name) or "upload.bin"
+    suffix = ""
+    if "." in base_name:
+        suffix = "." + base_name.rsplit(".", 1)[-1]
+
+    tmp = tempfile.NamedTemporaryFile(
+        prefix="hermes-relay-upload-",
+        suffix=suffix,
+        delete=False,
+    )
+    bytes_written = 0
+    max_size = server.media.max_size_bytes
+    try:
+        while True:
+            chunk = await field.read_chunk(_MEDIA_UPLOAD_CHUNK_SIZE)
+            if not chunk:
+                break
+            bytes_written += len(chunk)
+            if bytes_written > max_size:
+                tmp.close()
+                try:
+                    os.unlink(tmp.name)
+                except OSError:
+                    pass
+                return web.json_response(
+                    {
+                        "ok": False,
+                        "error": (
+                            f"upload too large ({bytes_written} bytes, "
+                            f"max {max_size})"
+                        ),
+                    },
+                    status=413,
+                )
+            tmp.write(chunk)
+    except (aiohttp.ClientPayloadError, OSError) as exc:
+        tmp.close()
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+        return web.json_response(
+            {"ok": False, "error": f"upload aborted: {exc}"},
+            status=400,
+        )
+    finally:
+        if not tmp.closed:
+            tmp.close()
+
+    try:
+        entry = await server.media.register(
+            path=tmp.name,
+            content_type=file_content_type,
+            file_name=base_name,
+        )
+    except MediaRegistrationError as exc:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+        logger.info("Media upload registration rejected: %s", exc)
+        return web.json_response(
+            {"ok": False, "error": str(exc)}, status=400
+        )
+
+    logger.info(
+        "Media uploaded: token=%s... bytes=%d type=%s file=%s",
+        entry.token[:8],
+        bytes_written,
+        file_content_type,
+        base_name,
+    )
+    return web.json_response(
+        {
+            "ok": True,
+            "token": entry.token,
+            "expires_at": entry.expires_at,
+        }
+    )
+
+
+# === END PHASE3-α-followup ===
+
+
 async def handle_media_get(request: web.Request) -> web.StreamResponse:
     """Serve a previously-registered media file by opaque token.
 
@@ -813,6 +967,242 @@ async def handle_media_by_path(request: web.Request) -> web.StreamResponse:
         bearer[:8],
     )
     return web.FileResponse(real_path, headers=headers)
+
+
+# === PHASE3-α: bridge HTTP routes ===
+#
+# The unified relay exposes the same HTTP shape as the legacy standalone
+# relay on port 8766 so ``plugin/tools/android_tool.py`` only needs a
+# one-line URL change. Requests are delegated straight through to
+# ``BridgeHandler.handle_command`` which forwards them over the WSS
+# channel to the connected phone.
+#
+# Auth model:
+#   * These routes are **unauthenticated** at the HTTP layer on purpose —
+#     the legacy relay was unauthenticated too, and the trust boundary
+#     is the same: only tools running on the same host as the relay can
+#     reach localhost:8767. The relay's default bind is 0.0.0.0 for the
+#     WebSocket side, but tools should always point at ``localhost``, so
+#     an attacker reaching port 8767 from the LAN would need the phone
+#     to also have auth'd with a valid pairing code — without a paired
+#     phone, every bridge HTTP call just returns 503.
+#   * If tightening is needed later, wrap these handlers with the same
+#     ``_require_bearer_session`` pattern used by ``/media/*`` — the
+#     bridge grant is already tracked per-session in ``Session.grants``.
+#
+# A paired but disconnected phone still drops bridge calls with 503 —
+# the tool caller should retry or tell the user to reconnect the app.
+
+
+_BRIDGE_TIMEOUT_STATUS = 504
+_BRIDGE_NO_PHONE_STATUS = 503
+_BRIDGE_SEND_FAIL_STATUS = 502
+
+
+def _bridge_error_response(
+    exc: Exception, fallback_status: int = _BRIDGE_NO_PHONE_STATUS
+) -> web.Response:
+    """Convert a :class:`BridgeError` to a JSON response that matches the
+    legacy standalone relay's error shape."""
+    msg = str(exc) or "Bridge error"
+    status = fallback_status
+    lowered = msg.lower()
+    if "did not respond" in lowered or "timeout" in lowered:
+        status = _BRIDGE_TIMEOUT_STATUS
+    elif "failed to send" in lowered:
+        status = _BRIDGE_SEND_FAIL_STATUS
+    return web.json_response({"error": msg}, status=status)
+
+
+async def _bridge_dispatch(
+    request: web.Request,
+    path: str,
+) -> web.Response:
+    """Forward an HTTP request to the phone via the bridge channel."""
+    server: RelayServer = request.app["server"]
+    method = request.method  # GET or POST
+
+    params: dict[str, Any] = dict(request.query)
+    body: dict[str, Any] = {}
+    if method == "POST":
+        # android_tool.py always sends JSON bodies; treat anything else as empty.
+        try:
+            raw = await request.json()
+            if isinstance(raw, dict):
+                body = raw
+        except (json.JSONDecodeError, ValueError, aiohttp.ContentTypeError):
+            body = {}
+
+    try:
+        response = await server.bridge.handle_command(
+            method=method,
+            path=path,
+            params=params,
+            body=body,
+        )
+    except BridgeError as exc:
+        return _bridge_error_response(exc)
+    except ConnectionError as exc:
+        return web.json_response({"error": str(exc)}, status=_BRIDGE_SEND_FAIL_STATUS)
+
+    status = response.get("status", 200)
+    if not isinstance(status, int):
+        status = 200
+    result = response.get("result")
+    if not isinstance(result, (dict, list)):
+        result = {"value": result} if result is not None else {}
+    return web.json_response(result, status=status)
+
+
+# Route adapters — aiohttp's router only gives us (request,), so we
+# close over the path string here. One adapter per endpoint keeps the
+# route registration self-documenting at the call site.
+#
+# Endpoint inventory mirrors ``plugin/tools/android_tool.py``'s 14 tools:
+#   GET  /ping, /screen, /screenshot, /get_apps, /current_app
+#   POST /tap, /tap_text, /type, /swipe, /open_app, /press_key,
+#        /scroll, /wait, /setup
+#
+# NOTE: the legacy relay used ``/apps`` for list apps but the Android app
+# expects ``/get_apps`` and the tool at line ~230 of android_tool.py calls
+# ``_get("/apps")``. We register both so the legacy tool path keeps
+# working while new code can use the canonical ``/get_apps``.
+
+
+async def handle_bridge_ping(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/ping")
+
+
+async def handle_bridge_screen(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/screen")
+
+
+async def handle_bridge_screenshot(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/screenshot")
+
+
+async def handle_bridge_get_apps(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/get_apps")
+
+
+async def handle_bridge_apps_legacy(request: web.Request) -> web.Response:
+    # Legacy alias — the pre-migration tool used /apps, keep it working.
+    return await _bridge_dispatch(request, "/apps")
+
+
+async def handle_bridge_current_app(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/current_app")
+
+
+async def handle_bridge_tap(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/tap")
+
+
+async def handle_bridge_tap_text(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/tap_text")
+
+
+async def handle_bridge_type(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/type")
+
+
+async def handle_bridge_swipe(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/swipe")
+
+
+async def handle_bridge_open_app(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/open_app")
+
+
+async def handle_bridge_press_key(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/press_key")
+
+
+async def handle_bridge_scroll(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/scroll")
+
+
+async def handle_bridge_wait(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/wait")
+
+
+async def handle_bridge_setup(request: web.Request) -> web.Response:
+    # /setup is the tool-side pairing helper that existed on the legacy
+    # relay; the unified relay's pairing flow is handled via /pairing/*
+    # but we keep the endpoint pluggable through the bridge channel for
+    # phones that still implement it. If the phone doesn't implement it,
+    # the bridge.response will come back with a non-200 status.
+    return await _bridge_dispatch(request, "/setup")
+
+
+# === END PHASE3-α ===
+
+
+# === PHASE3-ε: notifications HTTP routes ===
+#
+# Bearer-auth'd HTTP read endpoint for the cached notification deque
+# managed by ``NotificationsChannel``. The agent calls this through the
+# ``android_notifications_recent`` tool to answer "what came in
+# recently?" questions during a chat turn.
+#
+# The trust model matches every other phone-facing relay HTTP endpoint
+# (``/media/*``, ``/sessions``, ``/voice/*``): a valid relay session
+# token in ``Authorization: Bearer ...`` is required, and the same
+# token serves as proof that the caller is one of the operator's
+# paired devices.
+
+
+async def handle_notifications_recent(request: web.Request) -> web.Response:
+    """Return the most-recent N cached notification entries.
+
+    Two callers, two auth modes:
+      * **Loopback callers** (the in-process Hermes tool
+        ``android_notifications_recent``) skip bearer auth — the trust
+        boundary is host access, identical to ``/media/register`` and
+        ``/pairing/register``. The agent runs on the same host as the
+        relay, so by-definition tool calls hit us over 127.0.0.1.
+      * **Remote callers** (a paired phone or other client) must
+        present a valid relay session token via
+        ``Authorization: Bearer <token>`` — this is the same gate as
+        every other phone-facing relay HTTP route.
+
+    GET /notifications/recent?limit=20
+      → 200 {"notifications": [...], "count": <int>}
+      → 400 invalid limit
+      → 401 missing/invalid bearer (remote callers only)
+    """
+    remote = request.remote or ""
+    is_loopback = remote in ("127.0.0.1", "::1")
+
+    server: RelayServer
+    if is_loopback:
+        server = request.app["server"]
+    else:
+        server, _session = _require_bearer_session(request)
+
+    raw_limit = request.query.get("limit", "20")
+    try:
+        limit = int(raw_limit)
+    except (TypeError, ValueError):
+        return web.json_response(
+            {"ok": False, "error": "limit must be an integer"}, status=400
+        )
+    if limit < 1:
+        return web.json_response(
+            {"ok": False, "error": "limit must be >= 1"}, status=400
+        )
+
+    entries = server.notifications.get_recent(limit)
+    return web.json_response(
+        {
+            "ok": True,
+            "notifications": entries,
+            "count": len(entries),
+        }
+    )
+
+
+# === END PHASE3-ε ===
 
 
 # ── WebSocket handler ────────────────────────────────────────────────────────
@@ -1082,6 +1472,11 @@ async def _on_message(
     elif channel == "bridge":
         task = asyncio.create_task(server.bridge.handle(ws, envelope))
         _track_task(server, ws, task)
+    # === PHASE3-ε: notifications channel dispatch ===
+    elif channel == "notifications":
+        task = asyncio.create_task(server.notifications.handle(ws, envelope))
+        _track_task(server, ws, task)
+    # === END PHASE3-ε ===
     else:
         logger.warning("Unknown channel: %s", channel)
         await _send_system(
@@ -1160,6 +1555,14 @@ async def _on_disconnect(
     token = server._clients.pop(ws, None)
     tasks = server._client_tasks.pop(ws, set())
 
+    # === PHASE3-α: fail in-flight bridge commands on phone disconnect ===
+    # If this ws was the currently-latched phone, detach_ws flips phone_ws
+    # back to None and resolves every pending bridge command future with a
+    # ConnectionError so the HTTP side returns 502 instead of hanging to
+    # the 30s timeout on every in-flight request_id.
+    await server.bridge.detach_ws(ws, reason=f"client {remote_ip} disconnected")
+    # === END PHASE3-α ===
+
     # Cancel all in-flight tasks for this client
     for task in tasks:
         task.cancel()
@@ -1208,6 +1611,9 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_delete("/sessions/{token_prefix}", handle_sessions_revoke)
     app.router.add_patch("/sessions/{token_prefix}", handle_sessions_extend)
     app.router.add_post("/media/register", handle_media_register)
+    # === PHASE3-α-followup: /media/upload ===
+    app.router.add_post("/media/upload", handle_media_upload)
+    # === END PHASE3-α-followup ===
     # Order matters: the fixed-path "/media/by-path" route must be declared
     # before the wildcard "/media/{token}" route or aiohttp will swallow
     # "by-path" as a token literal and handle_media_get will 404.
@@ -1230,6 +1636,31 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_post("/voice/transcribe", _voice_transcribe)
     app.router.add_post("/voice/synthesize", _voice_synthesize)
     app.router.add_get("/voice/config", _voice_config)
+
+    # === PHASE3-α: bridge HTTP routes ===
+    # 14 endpoints mirrored from the legacy standalone relay on port 8766.
+    # Tool-side caller is plugin/tools/android_tool.py — only its
+    # BRIDGE_URL changes, the wire shape is byte-for-byte identical.
+    app.router.add_get("/ping", handle_bridge_ping)
+    app.router.add_get("/screen", handle_bridge_screen)
+    app.router.add_get("/screenshot", handle_bridge_screenshot)
+    app.router.add_get("/get_apps", handle_bridge_get_apps)
+    app.router.add_get("/apps", handle_bridge_apps_legacy)
+    app.router.add_get("/current_app", handle_bridge_current_app)
+    app.router.add_post("/tap", handle_bridge_tap)
+    app.router.add_post("/tap_text", handle_bridge_tap_text)
+    app.router.add_post("/type", handle_bridge_type)
+    app.router.add_post("/swipe", handle_bridge_swipe)
+    app.router.add_post("/open_app", handle_bridge_open_app)
+    app.router.add_post("/press_key", handle_bridge_press_key)
+    app.router.add_post("/scroll", handle_bridge_scroll)
+    app.router.add_post("/wait", handle_bridge_wait)
+    app.router.add_post("/setup", handle_bridge_setup)
+    # === END PHASE3-α ===
+
+    # === PHASE3-ε: notifications HTTP routes ===
+    app.router.add_get("/notifications/recent", handle_notifications_recent)
+    # === END PHASE3-ε ===
 
     # Cleanup on shutdown
     app.on_shutdown.append(_on_app_shutdown)

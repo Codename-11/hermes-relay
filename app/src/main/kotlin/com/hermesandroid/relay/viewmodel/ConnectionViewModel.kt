@@ -27,6 +27,11 @@ import com.hermesandroid.relay.network.HermesApiClient
 import com.hermesandroid.relay.network.ServerCapabilities
 import com.hermesandroid.relay.network.RelayHttpClient
 import com.hermesandroid.relay.network.handlers.ChatHandler
+// === PHASE3-γ: bridge channel wiring ===
+import com.hermesandroid.relay.accessibility.BridgeStatusReporter
+import com.hermesandroid.relay.accessibility.ScreenCapture
+import com.hermesandroid.relay.network.handlers.BridgeCommandHandler
+// === END PHASE3-γ ===
 import com.hermesandroid.relay.util.MediaCacheWriter
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -420,6 +425,37 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    // === PHASE3-γ: bridge channel wiring ===
+    // ScreenCapture needs a MediaProjection grant from the Bridge UI
+    // (MediaProjectionHolder) — it's nullable here so the handler can be
+    // constructed before the user has consented to screen capture.
+    // [BridgeCommandHandler] will surface a 503 error for /screenshot
+    // requests until [MediaProjectionHolder.projection] is non-null.
+    private val screenCapture = ScreenCapture(
+        context = application,
+        httpClient = relayOkHttp,
+        relayUrlProvider = { _relayUrl.value },
+        sessionTokenProvider = {
+            (authManager.authState.value as? AuthState.Paired)?.token
+        },
+        mediaProjectionProvider = {
+            com.hermesandroid.relay.accessibility.MediaProjectionHolder.projection
+        },
+    )
+
+    private val bridgeCommandHandler = BridgeCommandHandler(
+        multiplexer = multiplexer,
+        scope = viewModelScope,
+        screenCapture = screenCapture,
+    )
+
+    val bridgeStatusReporter = BridgeStatusReporter(
+        context = application,
+        multiplexer = multiplexer,
+        scope = viewModelScope,
+    )
+    // === END PHASE3-γ ===
+
     init {
         // Wire multiplexer to connection manager (for relay/bridge/terminal)
         multiplexer.setSendCallback { envelope ->
@@ -430,6 +466,31 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         multiplexer.setOnConnectedCallback {
             authManager.authenticate()
         }
+
+        // === PHASE3-γ: bridge handler registration ===
+        // Route every incoming `bridge` channel envelope to the command
+        // handler. Registering unconditionally is safe — the handler
+        // itself checks whether HermesAccessibilityService is running and
+        // whether the master toggle is enabled before executing anything.
+        // Start the periodic status reporter once too; it ticks every
+        // 30s and is a no-op while the WSS isn't connected (multiplexer
+        // just drops the envelopes).
+        multiplexer.registerHandler("bridge") { envelope ->
+            bridgeCommandHandler.onMessage(envelope)
+        }
+        bridgeStatusReporter.start()
+        // === END PHASE3-γ ===
+
+        // === PHASE3-ε-followup: notification companion multiplexer wiring ===
+        // The bound NotificationListenerService instance buffers up to 50
+        // envelopes in its own pendingEnvelopes queue while this slot is
+        // null, so wiring it from here (rather than at service-bind time)
+        // is safe — the buffer drains on the next onNotificationPosted
+        // once the slot is set. Set unconditionally; the multiplexer's
+        // own sendCallback gating handles the relay-disconnected case.
+        com.hermesandroid.relay.notifications.HermesNotificationCompanion
+            .multiplexer = multiplexer
+        // === END PHASE3-ε-followup ===
 
         // Load saved state — split into fast (UI-blocking) and slow (network) paths
         viewModelScope.launch {
