@@ -5,6 +5,7 @@ import android.util.Base64
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.ConnectionState
 import com.hermesandroid.relay.network.models.Envelope
@@ -14,6 +15,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
@@ -84,43 +86,64 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
 
     private var multiplexer: ChannelMultiplexer? = null
     private var connectionState: StateFlow<ConnectionState>? = null
+    private var authState: StateFlow<AuthState>? = null
 
-    /** Pending attach request — if the WebView signals ready before the relay connects, we hold and retry. */
+    /** Pending attach request — if the WebView signals ready before the relay is ready for channel messages, we hold and retry. */
     private var pendingReady: Pair<Int, Int>? = null
 
     fun initialize(
         multiplexer: ChannelMultiplexer,
-        connectionState: StateFlow<ConnectionState>
+        connectionState: StateFlow<ConnectionState>,
+        authState: StateFlow<AuthState>
     ) {
         if (this.multiplexer != null) return
         this.multiplexer = multiplexer
         this.connectionState = connectionState
+        this.authState = authState
 
         multiplexer.registerHandler("terminal") { envelope ->
             handleEnvelope(envelope)
         }
 
-        // If the connection drops, reset attached state so the UI shows disconnected.
+        // Auth-gated attach pump.
+        //
+        // The relay expects the first message on a freshly-opened WebSocket
+        // to be a `system/auth` envelope. If we send `terminal.attach` before
+        // [AuthManager] has completed its auth round-trip, the relay closes
+        // the connection with "expected system/auth, got terminal/terminal.attach"
+        // and the phone's AuthState flips to Failed — which the UI renders
+        // as "pair cleared, re-pair required."
+        //
+        // Before 2026-04-11 we watched `connectionState == Connected` only,
+        // which fires the instant the WS opens, well before `authenticate()`
+        // has finished its suspend I/O to read the device ID. Result: a race
+        // that `sendAttach` won on every reconnect.
+        //
+        // Now we `combine` connection + auth and only fire attach when BOTH
+        // are healthy (Connected + Paired). The combine flow also collapses
+        // the drop-side cleanup: if either leg drops, we flip `attached` back
+        // to false so the UI reflects reality.
         viewModelScope.launch {
-            connectionState.collect { state ->
-                if (state != ConnectionState.Connected && _state.value.attached) {
-                    _state.update {
-                        it.copy(
-                            attached = false,
-                            attaching = false,
-                            sessionName = null,
-                            pid = null
-                        )
+            connectionState.combine(authState) { conn, auth -> conn to auth }
+                .collect { (conn, auth) ->
+                    val ready = conn == ConnectionState.Connected && auth is AuthState.Paired
+                    if (!ready && _state.value.attached) {
+                        _state.update {
+                            it.copy(
+                                attached = false,
+                                attaching = false,
+                                sessionName = null,
+                                pid = null
+                            )
+                        }
+                    }
+                    if (ready) {
+                        pendingReady?.let { (c, r) ->
+                            sendAttach(c, r)
+                            pendingReady = null
+                        }
                     }
                 }
-                // If we came back online and have a pending attach, fire it now.
-                if (state == ConnectionState.Connected) {
-                    pendingReady?.let { (c, r) ->
-                        sendAttach(c, r)
-                        pendingReady = null
-                    }
-                }
-            }
         }
     }
 
@@ -130,12 +153,16 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
     fun onTerminalReady(cols: Int, rows: Int) {
         Log.i(TAG, "onTerminalReady: cols=$cols rows=$rows")
         _state.update { it.copy(cols = cols, rows = rows) }
-        if (connectionState?.value == ConnectionState.Connected) {
+        if (isReadyForChannelMessages()) {
             sendAttach(cols, rows)
         } else {
             pendingReady = cols to rows
         }
     }
+
+    private fun isReadyForChannelMessages(): Boolean =
+        connectionState?.value == ConnectionState.Connected &&
+            authState?.value is AuthState.Paired
 
     /** Raw input from xterm.js (soft keyboard, hardware keys, paste). */
     fun sendInput(data: String) {
@@ -226,7 +253,7 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
 
     fun reattach() {
         pendingReady = _state.value.cols to _state.value.rows
-        if (connectionState?.value == ConnectionState.Connected) {
+        if (isReadyForChannelMessages()) {
             sendAttach(_state.value.cols, _state.value.rows)
             pendingReady = null
         }

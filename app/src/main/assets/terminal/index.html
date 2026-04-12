@@ -131,6 +131,7 @@
         // Base64-encoded payloads avoid JS string-escaping headaches when the
         // stream contains control characters, raw escape sequences, or bytes
         // that would need careful quoting in evaluateJavascript.
+        let writeCount = 0;
         window.writeTerminal = function (b64) {
             if (!b64) return;
             try {
@@ -140,16 +141,52 @@
                     bytes[i] = binary.charCodeAt(i);
                 }
                 term.write(bytes);
+                writeCount++;
+                // Diagnostic: dump xterm geometry + container metrics every few
+                // writes so we can see from logcat whether xterm has a sane
+                // viewport and rows. Routed through onConsoleMessage → the
+                // TerminalWebView tag.
+                if (writeCount <= 2 || writeCount % 5 === 0) {
+                    const el = document.getElementById('terminal');
+                    console.log('xterm state: cols=' + term.cols +
+                        ' rows=' + term.rows +
+                        ' container=' + el.clientWidth + 'x' + el.clientHeight +
+                        ' bytesIn=' + bytes.length);
+                }
             } catch (err) {
-                console.error('writeTerminal decode error:', err);
+                console.error('writeTerminal decode error: ' + err);
             }
         };
 
-        window.refit = function () {
+        // Called by Kotlin's addOnLayoutChangeListener with the WebView's
+        // actual dimensions in CSS pixels. We force body + #terminal to those
+        // sizes explicitly because Chromium WebView's internal viewport does
+        // NOT reliably track native view resizes on Android — `height: 100%`
+        // resolves against a stale 0-height viewport on the first composition
+        // pass and never recovers without this manual override. With the
+        // explicit style set, xterm's fit() reads the correct clientHeight
+        // and computes a sane cols/rows.
+        window.refit = function (widthCss, heightCss) {
             try {
+                if (typeof widthCss === 'number' && typeof heightCss === 'number' &&
+                    widthCss > 0 && heightCss > 0) {
+                    document.documentElement.style.width = widthCss + 'px';
+                    document.documentElement.style.height = heightCss + 'px';
+                    document.body.style.width = widthCss + 'px';
+                    document.body.style.height = heightCss + 'px';
+                    const el = document.getElementById('terminal');
+                    if (el) {
+                        el.style.width = widthCss + 'px';
+                        el.style.height = heightCss + 'px';
+                    }
+                }
                 fitAddon.fit();
+                const el2 = document.getElementById('terminal');
+                console.log('refit: cols=' + term.cols + ' rows=' + term.rows +
+                    ' container=' + (el2 ? el2.clientWidth + 'x' + el2.clientHeight : '?') +
+                    ' requested=' + widthCss + 'x' + heightCss);
             } catch (err) {
-                console.error('fit error:', err);
+                console.error('fit error: ' + err);
             }
         };
 
@@ -204,26 +241,17 @@
         // change and covers edge cases where ResizeObserver isn't available.
         window.addEventListener('resize', scheduleFit);
 
-        // Signal readiness to Android once the initial fit has settled.
-        // We wait for the first ResizeObserver callback (or fall back to a
-        // double rAF + delay) so the first cols/rows we send matches the
-        // actual laid-out container — not a transient 0×0 or 1-row state.
-        let readyFired = false;
-        const fireReady = function () {
-            if (readyFired) return;
-            if (term.rows < 2) {
-                // Still not laid out — try again in a frame.
-                requestAnimationFrame(fireReady);
-                return;
-            }
-            readyFired = true;
-            if (window.AndroidBridge && window.AndroidBridge.onReady) {
-                window.AndroidBridge.onReady(term.cols, term.rows);
-            }
-        };
+        // Signal readiness to Android after two rAFs so the initial layout
+        // has a chance to settle. ResizeObserver above will keep re-fitting
+        // if the container grows after this first onReady call, and the
+        // `resize(cols, rows)` bridge call syncs the server side.
         requestAnimationFrame(function () {
             try { fitAddon.fit(); } catch (_) {}
-            requestAnimationFrame(fireReady);
+            requestAnimationFrame(function () {
+                if (window.AndroidBridge && window.AndroidBridge.onReady) {
+                    window.AndroidBridge.onReady(term.cols, term.rows);
+                }
+            });
         });
 
         // Diagnostic hook — Kotlin can read back the current grid size.

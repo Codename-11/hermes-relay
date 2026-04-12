@@ -41,6 +41,12 @@ fun TerminalWebView(
     // HTML boots. Kept as a constant rather than pulling from MaterialTheme
     // because the WebView host color must match the xterm theme exactly.
     val webViewBackground = 0xFF1A1A2E.toInt()
+    // Device density — we pass CSS-pixel dimensions to xterm explicitly in
+    // the layout listener below because Chromium's internal viewport on
+    // Android WebView doesn't reliably update when Compose resizes the
+    // parent View. Without this, xterm latches at rows=1 on first layout
+    // and never grows, so command output scrolls straight off the viewport.
+    val density = context.resources.displayMetrics.density
 
     val webView = remember {
         @SuppressLint("SetJavaScriptEnabled")
@@ -59,7 +65,11 @@ fun TerminalWebView(
             isHorizontalScrollBarEnabled = false
             isFocusable = true
             isFocusableInTouchMode = true
-            setLayerType(View.LAYER_TYPE_HARDWARE, null)
+            // Intentionally NOT setting LAYER_TYPE_HARDWARE — on Samsung WebView
+            // it can latch the first rendered frame on the GPU layer and fail
+            // to propagate subsequent xterm DOM updates, so the initial prompt
+            // draws but command output never appears. Default layer type lets
+            // Chromium pick its own compositing path.
 
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(
@@ -79,6 +89,24 @@ fun TerminalWebView(
                     }
                     return false
                 }
+
+                override fun onPageFinished(view: WebView, url: String) {
+                    // Re-fire refit once the JS side is actually defined.
+                    // The layout listener above may have fired before
+                    // `window.refit` existed; fire it here with current
+                    // dimensions so the first sensible fit lands regardless
+                    // of event ordering.
+                    val widthCss = (view.width / density).toInt()
+                    val heightCss = (view.height / density).toInt()
+                    if (widthCss > 0 && heightCss > 0) {
+                        view.post {
+                            view.evaluateJavascript(
+                                "if (window.refit) { window.refit($widthCss, $heightCss); }",
+                                null
+                            )
+                        }
+                    }
+                }
             }
 
             webChromeClient = object : WebChromeClient() {
@@ -93,6 +121,33 @@ fun TerminalWebView(
             }
 
             addJavascriptInterface(TerminalBridge(viewModel, this), "AndroidBridge")
+
+            // Force xterm to refit every time Compose gives us a new layout.
+            // Compose often measures the WebView at ~0-pixel-tall during the
+            // AnimatedContent tab-switch animation and during IME transitions,
+            // so the initial fit latches at rows=1. We forward the real CSS
+            // dimensions explicitly here because Chromium's WebView doesn't
+            // reliably propagate native-side resize to the HTML viewport — if
+            // we rely on CSS `height:100%` or the `window.resize` event, the
+            // internal viewport stays frozen at the first bad measurement.
+            addOnLayoutChangeListener { view, left, top, right, bottom,
+                                        oldLeft, oldTop, oldRight, oldBottom ->
+                val widthPx = right - left
+                val heightPx = bottom - top
+                if (widthPx <= 0 || heightPx <= 0) return@addOnLayoutChangeListener
+                val widthCss = (widthPx / density).toInt()
+                val heightCss = (heightPx / density).toInt()
+                // Defer to the next UI frame so layout has settled and the
+                // WebView is attached to the Compose hierarchy before we run
+                // JS against it.
+                view.post {
+                    (view as WebView).evaluateJavascript(
+                        "if (window.refit) { window.refit($widthCss, $heightCss); }",
+                        null
+                    )
+                }
+            }
+
             loadUrl("file:///android_asset/terminal/index.html")
         }
     }

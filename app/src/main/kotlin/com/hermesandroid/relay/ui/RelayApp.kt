@@ -108,7 +108,8 @@ fun RelayApp() {
     LaunchedEffect(Unit) {
         terminalViewModel.initialize(
             multiplexer = connectionViewModel.multiplexer,
-            connectionState = connectionViewModel.relayConnectionState
+            connectionState = connectionViewModel.relayConnectionState,
+            authState = connectionViewModel.authState
         )
     }
 
@@ -230,12 +231,17 @@ fun RelayApp() {
         val imeBottom = WindowInsets.ime.getBottom(density)
         val isKeyboardVisible = imeBottom > 0
 
+        // Voice mode is a full-screen modality — while it's active we hide the
+        // bottom navigation bar so the voice overlay can own the entire screen
+        // without the Chat/Terminal/Bridge/Settings tabs peeking through below.
+        val voiceUiState by voiceViewModel.uiState.collectAsState()
+
         Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             contentWindowInsets = WindowInsets(0),
             bottomBar = {
-                if (!isOnboarding && !isKeyboardVisible) {
+                if (!isOnboarding && !isKeyboardVisible && !voiceUiState.voiceMode) {
                     NavigationBar(
                         containerColor = if (isDarkTheme) {
                             Color(0xFF1A1A2E).copy(alpha = 0.9f)
