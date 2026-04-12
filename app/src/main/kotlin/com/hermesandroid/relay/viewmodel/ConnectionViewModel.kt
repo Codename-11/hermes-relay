@@ -83,7 +83,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // AuthManager must be constructed before ConnectionManager so the pin
     // store is available for the certificate pinner.
     val authManager = AuthManager(application, multiplexer, viewModelScope)
-    private val connectionManager = ConnectionManager(multiplexer, authManager.certPinStore)
+    // Pass hasPairContext as the reconnect gate — the auto-reconnect loop
+    // inside ConnectionManager bypasses ConnectionViewModel.connectRelay's
+    // primary gate, so we plumb the same AuthManager check directly into
+    // the internal scheduler. Without this, clearSession leaves a live
+    // reconnect loop that fires stale auth envelopes and rate-limits us.
+    private val connectionManager = ConnectionManager(
+        multiplexer,
+        authManager.certPinStore,
+        reconnectGate = { authManager.hasPairContext }
+    )
 
     // Data management
     val dataManager = DataManager(application)
@@ -811,7 +820,25 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         authManager.regeneratePairingCode()
     }
 
+    /**
+     * Wipe the stored session token and tear down the relay connection.
+     *
+     * **Order matters**: we must stop the [ConnectionManager] reconnect loop
+     * *before* wiping auth state, otherwise the auto-reconnect can fire a
+     * WS handshake with whatever's left in the auth envelope (most commonly
+     * the freshly-regenerated *local* pairing code, which isn't registered
+     * on the relay) and trigger the rate limiter after 5 attempts — blocking
+     * the device's IP for 5 minutes and making the next QR re-pair attempt
+     * fail with 429.
+     *
+     * This is the fix for the 2026-04-11 "can't re-pair same device after
+     * self-revoke" bug: user hits Revoke on their own entry in Paired
+     * Devices → clearSession was called but the reconnect loop kept firing
+     * with stale credentials → IP blocked → fresh QR scan bounced off the
+     * rate limiter until app restart.
+     */
     fun clearSession() {
+        disconnectRelay()
         authManager.clearSession()
     }
 

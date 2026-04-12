@@ -1,5 +1,70 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-11 — clearSession reconnect leak → self-inflicted rate limit
+
+Bailey reported "unable to pair via QR code" after hitting Revoke on his own device in Paired Devices. Worked again after an app restart.
+
+### Root cause (from `~/hermes-relay.log`)
+
+```
+20:38:29  DELETE /sessions/f75cfb14 → 200 (self-revoke)
+20:38:29  GET /sessions             → 401 (phone loadPairedDevices with dead token)
+20:38:32  Client disconnected
+[relay restart]
+20:39:03  WebSocket from 172.16.24.13 → Auth failed: Invalid pairing code or session token
+20:39:04  WebSocket from 172.16.24.13 → Auth failed
+20:39:05  WebSocket from 172.16.24.13 → Auth failed
+20:39:06  WebSocket from 172.16.24.13 → Auth failed
+20:39:07  WebSocket from 172.16.24.13 → Auth failed
+20:39:07  [WARNING] IP 172.16.24.13 blocked for 300s after 5 failed auth attempts
+20:39:08+ GET /ws → 429 (blocked)
+```
+
+Five `Auth failed` in four seconds. The rate limiter did exactly what it was built to do.
+
+### The bug — three state machines disagree
+
+1. **`AuthManager.clearSession()`** wipes the stored token, sets `authState = Unpaired`, and regenerates a fresh *local* pairing code (`_pairingCode.value = generatePairingCode()`).
+2. **`ConnectionManager`'s internal reconnect loop** (`scheduleReconnect` → `doConnect`) runs *entirely inside* the network module — it bypasses `ConnectionViewModel.connectRelay` and its `hasPairContext` gate completely. `shouldReconnect` stays `true` until someone calls `disconnect()`.
+3. **`ConnectionViewModel.clearSession()`** called `authManager.clearSession()` and returned — **never called `disconnectRelay()`**. So the reconnect scheduler kept firing after the state wipe.
+
+Sequence of collapse:
+
+- Self-revoke succeeds (server deletes session)
+- Phone's Paired Devices UI calls `clearSession()` → state wiped, reconnect loop still alive
+- WS disconnects (because the relay closes the socket after revoke / the relay restart fires)
+- `onClosed` → `scheduleReconnect` → backoff → `doConnect` with freshly-regenerated *local* pair code in the auth envelope
+- Server: `"Invalid pairing code or session token"` (the local code isn't registered)
+- Loop fires 5 times in ~4 seconds (exponential backoff starts at 1s)
+- Rate limiter blocks the IP for 5 minutes
+- User scans a fresh QR → `/pairing/register` clears the block — **but** the phone's next WS connect bounces off whatever delayed retry is still in flight (and also possibly a 429 from the still-valid block depending on exact timing)
+- User restarts app → cold start has `shouldReconnect = false` and empty session store, no auto-connect, fresh QR scan succeeds
+
+### Fix
+
+**`network/ConnectionManager.kt`**:
+- New constructor parameter `reconnectGate: () -> Boolean = { true }` (defense-in-depth gate for the internal auto-reconnect loop).
+- `scheduleReconnect()` calls `reconnectGate()` both **before** scheduling and **after** the backoff delay. If either returns `false`, the retry is silently dropped and `connectionState` is set to `Disconnected`. Rationale: the delay window is where state flips happen — user hits Revoke while the previous attempt was sleeping, and we need to re-check.
+- Logs `"scheduleReconnect: gate says no pair context — aborting retry"` at INFO for traceability.
+- Default value preserves backwards compat with tests that construct a bare `ConnectionManager(multiplexer)`.
+
+**`viewmodel/ConnectionViewModel.kt`**:
+- `ConnectionManager` now constructed with `reconnectGate = { authManager.hasPairContext }` — same `hasPairContext` predicate introduced for the Option B Save & Test gate.
+- `clearSession()` rewritten to call `disconnectRelay()` **before** `authManager.clearSession()`. Order matters: tear down the reconnect loop before wiping the state it depends on, so in-flight retries return cleanly instead of firing with half-wiped state. KDoc explains the 2026-04-11 rate-limit incident as the why.
+
+Both fixes together: `clearSession` stops the immediate loop, and the `reconnectGate` is a safety net for any other code path that wipes state without calling disconnect. Either alone would technically fix the reported bug; together they harden against future regressions.
+
+### Test plan (on-device)
+
+- [ ] Go to Settings → Paired Devices → open the current device's card → Revoke → confirm. Snackbar shows "This device was unpaired". App navigates to pair screen.
+- [ ] Immediately scan a fresh QR (from `/hermes-relay-pair` on the server). Should succeed — no "unable to pair" error, no 429 on the relay's `/ws`.
+- [ ] Check `~/hermes-relay.log` after revoke: should see the `DELETE /sessions/...` line but NOT a burst of `Auth failed` entries. Phone should stay quiet until the user scans the new QR.
+- [ ] Bonus: toggle airplane mode while paired (forces disconnect with pair context still valid), confirm reconnect still works normally after re-enabling network.
+
+### Server deploy
+
+Phone-only change. No server restart needed. Bailey rebuilds from Android Studio.
+
 ## 2026-04-11 — Paired Devices JSON unwrap fix + /media/by-path permissive sandbox (B+C)
 
 Two bugs surfaced on-device:

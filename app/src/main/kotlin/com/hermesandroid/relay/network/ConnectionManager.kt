@@ -40,7 +40,26 @@ class ConnectionManager(
      * Nullable for backwards-compat with unit tests that construct a bare
      * ConnectionManager without auth wiring.
      */
-    private val certPinStore: CertPinStore? = null
+    private val certPinStore: CertPinStore? = null,
+    /**
+     * Defense-in-depth guard for the internal auto-reconnect loop. Called
+     * from [scheduleReconnect] both before scheduling the delayed retry and
+     * after the backoff delay expires — if it returns `false`, the retry is
+     * silently dropped.
+     *
+     * The canonical wiring is `{ authManager.hasPairContext }` so the phone
+     * never fires a reconnect with no session token and no pending pair
+     * code. Without this gate, ConnectionManager's internal retry loop
+     * completely bypasses [ConnectionViewModel.connectRelay]'s gate (the
+     * primary gate introduced in the 2026-04-11 "Option B" commit), and
+     * stale credentials get fed into the auth envelope after clearSession
+     * wipes state → relay returns "Invalid pairing code or session token"
+     * → rate limiter blocks the IP after 5 attempts → user can't re-pair.
+     *
+     * Defaults to always-allow for tests and legacy call sites. Production
+     * wiring passes the AuthManager gate from [ConnectionViewModel].
+     */
+    private val reconnectGate: () -> Boolean = { true }
 ) {
     private val supervisorJob = SupervisorJob()
     private val scope = CoroutineScope(supervisorJob + Dispatchers.IO)
@@ -238,6 +257,17 @@ class ConnectionManager(
 
     private fun scheduleReconnect() {
         if (!shouldReconnect) return
+        // Defense-in-depth: if auth state says we shouldn't be reconnecting
+        // (no session token, no pending pair code), abort before we spend
+        // an attempt. This catches the "clearSession wiped auth state but
+        // the reconnect scheduler didn't get the memo" class of bug —
+        // without this, we'd fire invalid-credential auth envelopes into
+        // the rate limiter and block ourselves.
+        if (!reconnectGate()) {
+            Log.i(TAG, "scheduleReconnect: gate says no pair context — aborting retry")
+            _connectionState.value = ConnectionState.Disconnected
+            return
+        }
 
         val url = serverUrl ?: return
         reconnectAttempt++
@@ -247,8 +277,14 @@ class ConnectionManager(
 
         scope.launch {
             delay(backoffMs)
-            if (shouldReconnect) {
+            // Re-check the gate after the backoff — by the time the delay
+            // expires, auth state may have changed (e.g., user hit Revoke
+            // during the retry window).
+            if (shouldReconnect && reconnectGate()) {
                 doConnect(url)
+            } else if (!reconnectGate()) {
+                Log.i(TAG, "scheduleReconnect: gate turned false during backoff — aborting retry")
+                _connectionState.value = ConnectionState.Disconnected
             }
         }
     }
