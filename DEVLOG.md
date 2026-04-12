@@ -1,6 +1,5 @@
 # Hermes-Relay — Dev Log
 
-<<<<<<< HEAD
 ## 2026-04-12 — Phase 3 / Wave 1 hotfix — dedupe AccessibilityService entry; Gradle deprecation cleanup
 
 Two small fixes discovered while smoke-testing Wave 1 in Android Studio.
