@@ -13,7 +13,7 @@ import kotlinx.serialization.json.Json
 /**
  * User-tunable Tier 5 bridge-safety preferences.
  *
- * Phase 3 Wave 2 — owned by Agent ζ (`bridge-safety-rails`).
+ * Phase 3 Wave 2 — owned by Agent safety-rails (`bridge-safety-rails`).
  *
  * The five knobs this file backs match the Tier 5 spec:
  *

@@ -17,7 +17,7 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.accessibility.HermesAccessibilityService
 
 /**
- * Phase 3 — ζ `bridge-safety-rails`
+ * Phase 3 — safety-rails `bridge-safety-rails`
  *
  * Canonical "turn the bridge off after idle" unit of work. Not a real
  * `androidx.work.CoroutineWorker` — the project intentionally does not
@@ -34,7 +34,7 @@ import com.hermesandroid.relay.accessibility.HermesAccessibilityService
  *  - Every command reschedules the timer, so the idle window is always
  *    reset against wall clock. No drift concerns.
  *
- * When WorkManager is added later (say, if ε needs background-posted
+ * When WorkManager is added later (say, if notif-listener needs background-posted
  * notifications on a schedule), this file is a natural upgrade point:
  * change the class to `CoroutineWorker(appContext, params)` and have
  * [BridgeSafetyManager.rescheduleAutoDisable] enqueue a [OneTimeWorkRequest]

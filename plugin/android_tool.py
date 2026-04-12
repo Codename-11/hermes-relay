@@ -17,7 +17,7 @@ from typing import Optional
 # The unified Hermes-Relay server (``plugin/relay/server.py``, port 8767)
 # multiplexes the bridge channel alongside chat, terminal, media, and voice.
 # The legacy standalone bridge relay on port 8766 was retired in Phase 3
-# Wave 1 (Agent α, bridge-server-migration).
+# Wave 1 (Agent bridge-server, bridge-server-migration).
 #
 #   Tools ──HTTP──> Unified Relay (localhost:8767) ──WSS bridge channel──> Phone
 #

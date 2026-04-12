@@ -25,9 +25,9 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Info
-// === PHASE3-ζ: bridge safety entry-point ===
+// === PHASE3-safety-rails: bridge safety entry-point ===
 import androidx.compose.material.icons.filled.Security
-// === END PHASE3-ζ ===
+// === END PHASE3-safety-rails ===
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material3.Card
@@ -80,9 +80,9 @@ fun SettingsScreen(
     onNavigateToAnalytics: () -> Unit,
     onNavigateToVoiceSettings: () -> Unit,
     onNavigateToNotificationCompanion: () -> Unit,
-    // === PHASE3-ζ: bridge safety entry-point ===
+    // === PHASE3-safety-rails: bridge safety entry-point ===
     onNavigateToBridgeSafety: () -> Unit,
-    // === END PHASE3-ζ ===
+    // === END PHASE3-safety-rails ===
     onNavigateToPairedDevices: () -> Unit,
     onNavigateToDeveloperSettings: () -> Unit,
     onNavigateToAbout: () -> Unit,
@@ -218,7 +218,7 @@ fun SettingsScreen(
                 isDarkTheme = isDarkTheme,
             )
 
-            // === PHASE3-ε-followup: notification companion entry-point ===
+            // === PHASE3-notif-listener-followup: notification companion entry-point ===
             SettingsCategoryRow(
                 icon = Icons.Filled.Notifications,
                 title = "Notification companion",
@@ -226,9 +226,9 @@ fun SettingsScreen(
                 onClick = onNavigateToNotificationCompanion,
                 isDarkTheme = isDarkTheme,
             )
-            // === END PHASE3-ε-followup ===
+            // === END PHASE3-notif-listener-followup ===
 
-            // === PHASE3-ζ: bridge safety entry-point ===
+            // === PHASE3-safety-rails: bridge safety entry-point ===
             SettingsCategoryRow(
                 icon = Icons.Filled.Security,
                 title = "Bridge safety",
@@ -236,7 +236,7 @@ fun SettingsScreen(
                 onClick = onNavigateToBridgeSafety,
                 isDarkTheme = isDarkTheme,
             )
-            // === END PHASE3-ζ ===
+            // === END PHASE3-safety-rails ===
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Image,

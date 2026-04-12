@@ -31,12 +31,12 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 
 /**
- * Phase 3 — γ `accessibility-runtime`
+ * Phase 3 — accessibility `accessibility-runtime`
  *
  * Captures the phone's screen via the Android [MediaProjection] API, encodes
  * it as PNG, and publishes it to the relay so the agent can fetch it.
  *
- * ## Permission flow (blocker for Agent δ / UI to wire)
+ * ## Permission flow (blocker for Agent bridge-ui / UI to wire)
  *
  * `MediaProjection` cannot be granted by the app itself — it needs an
  * explicit user consent dialog per session, launched via
@@ -46,17 +46,17 @@ import kotlin.coroutines.resume
  *
  * Because the grant lives on an `Activity` result, this class can only
  * provide the capture loop — **the consent flow must be wired by the
- * Bridge UI screen (Agent δ)**. Suggested contract:
+ * Bridge UI screen (Agent bridge-ui)**. Suggested contract:
  *
  *  1. `BridgeScreen` holds an `ActivityResultLauncher<Intent>` registered
  *     with `ActivityResultContracts.StartActivityForResult()`.
- *  2. On "Enable screenshots" tap, δ calls
+ *  2. On "Enable screenshots" tap, bridge-ui calls
  *     `MediaProjectionManager.createScreenCaptureIntent()` and launches it.
- *  3. On result, δ passes `(resultCode, data)` into a central holder
+ *  3. On result, bridge-ui passes `(resultCode, data)` into a central holder
  *     (e.g. a ViewModel singleton or [MediaProjectionHolder]).
  *  4. [ScreenCapture] reads from that holder on each capture call and
  *     rebuilds a `MediaProjection` when needed. The projection will need
- *     to be backed by a foreground service on Android 10+ — Agent ζ
+ *     to be backed by a foreground service on Android 10+ — Agent safety-rails
  *     owns the persistent-notification service declaration.
  *
  * Until that wiring lands, this class will fail gracefully with
@@ -77,7 +77,7 @@ import kotlin.coroutines.resume
  *    `multipart/form-data` with the PNG bytes, writes to a sandboxed tmp
  *    dir (`tempfile.gettempdir()`), then calls `MediaRegistry.register()`
  *    on the resulting path. Wire shape mirrors `/voice/transcribe`. This
- *    is a clean server-side change that Agent α could land in parallel.
+ *    is a clean server-side change that Agent bridge-server could land in parallel.
  *
  * 2. **Local-only screenshots** (fallback) — the phone writes the PNG to
  *    its own cache dir, emits `MEDIA:file://<cache_path>` in the response,
@@ -86,7 +86,7 @@ import kotlin.coroutines.resume
  *
  * This class implements option 1 via [uploadViaMultipart]. If the endpoint
  * returns 404 (not yet deployed), we surface the error to the agent with a
- * clear message. **Agent α owns the `POST /media/upload` endpoint** — it's
+ * clear message. **Agent bridge-server owns the `POST /media/upload` endpoint** — it's
  * the only remaining server-side work to complete Tier 1 screenshots.
  *
  * ## Thread model
@@ -134,9 +134,9 @@ class ScreenCapture(
      *
      * Fails fast and with clear messaging on every expected error path:
      *
-     *  - `MediaProjection not granted` → δ needs to run the consent flow
+     *  - `MediaProjection not granted` → bridge-ui needs to run the consent flow
      *  - `relay URL not configured` / `session token missing` → pair first
-     *  - `relay upload endpoint not found` → α needs to ship `/media/upload`
+     *  - `relay upload endpoint not found` → bridge-server needs to ship `/media/upload`
      *  - `capture timeout` → the virtual display never emitted a frame
      */
     suspend fun captureAndUpload(): Result<String> = withContext(Dispatchers.IO) {
@@ -342,7 +342,7 @@ class ScreenCapture(
                     404 -> Result.failure(
                         IOException(
                             "relay /media/upload endpoint not found — server needs " +
-                                "Phase 3 α migration"
+                                "Phase 3 bridge-server migration"
                         )
                     )
                     401, 403 -> Result.failure(
@@ -379,7 +379,7 @@ class ScreenCapture(
 }
 
 /**
- * Holds the per-session [MediaProjection] grant. The Bridge UI (Agent δ)
+ * Holds the per-session [MediaProjection] grant. The Bridge UI (Agent bridge-ui)
  * calls [onGranted] from its `ActivityResultLauncher` callback; [ScreenCapture]
  * reads [projection] through the lambda passed to its constructor.
  *

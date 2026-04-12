@@ -51,9 +51,9 @@ import java.time.format.DateTimeFormatter
  * Scrollable activity log card — rolling view of the most recent bridge
  * commands with timestamp, method, status icon, and tap-to-expand detail.
  *
- * Phase 3 Wave 1 — δ (`bridge-screen-ui`). The log is populated via
+ * Phase 3 Wave 1 — bridge-ui (`bridge-screen-ui`). The log is populated via
  * [com.hermesandroid.relay.data.BridgePreferencesRepository.appendEntry];
- * γ's command dispatcher is the producer once its runtime is wired. Until
+ * accessibility's command dispatcher is the producer once its runtime is wired. Until
  * then this card shows the "no activity yet" empty state.
  *
  * Height-bounded with [heightIn] to keep the log from pushing the safety
@@ -193,8 +193,8 @@ private fun ActivityRow(entry: BridgeActivityEntry) {
                     )
                 }
                 if (entry.thumbnailToken != null) {
-                    // TODO(γ-handoff): wire this to InboundAttachmentCard
-                    // once γ's ScreenCapture.kt is uploading real screenshots
+                    // TODO(accessibility-handoff): wire this to InboundAttachmentCard
+                    // once accessibility's ScreenCapture.kt is uploading real screenshots
                     // to MediaRegistry. Until then we show a placeholder token
                     // label so the expand affordance still communicates the
                     // shape of the future feature.

@@ -12,11 +12,11 @@ import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.RelayVoiceClient
 import com.hermesandroid.relay.util.HumanError
 import com.hermesandroid.relay.util.classifyError
-// === PHASE3-η: voice→bridge intent routing ===
+// === PHASE3-voice-intents: voice→bridge intent routing ===
 import com.hermesandroid.relay.voice.IntentResult
 import com.hermesandroid.relay.voice.VoiceBridgeIntentHandler
 import com.hermesandroid.relay.voice.createVoiceBridgeIntentHandler
-// === END PHASE3-η ===
+// === END PHASE3-voice-intents ===
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
@@ -105,7 +105,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var player: VoicePlayer? = null
     private var sfxPlayer: VoiceSfxPlayer? = null
 
-    // === PHASE3-η: voice→bridge intent routing ===
+    // === PHASE3-voice-intents: voice→bridge intent routing ===
     // Bridge intent handler — the flavor-selected impl, set in initialize().
     // On googlePlay this is the no-op that always returns NotApplicable.
     // On sideload this is the real keyword-classifier + bridge emitter.
@@ -113,7 +113,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // cross-flavor compile pattern. No reflection: the factory lives in
     // each flavor source set and Gradle picks the right one at build time.
     private var voiceBridgeIntentHandler: VoiceBridgeIntentHandler? = null
-    // === END PHASE3-η ===
+    // === END PHASE3-voice-intents ===
 
     // --- UI state --------------------------------------------------------
 
@@ -177,13 +177,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         recorder: VoiceRecorder,
         player: VoicePlayer,
         sfxPlayer: VoiceSfxPlayer,
-        // === PHASE3-η: voice→bridge intent routing ===
+        // === PHASE3-voice-intents: voice→bridge intent routing ===
         // Optional so existing call sites keep compiling until they're
         // updated to pass the WSS multiplexer. On googlePlay the param is
         // ignored by the no-op factory; on sideload it's the channel used
         // to emit bridge tool envelopes.
         bridgeMultiplexer: ChannelMultiplexer? = null,
-        // === END PHASE3-η ===
+        // === END PHASE3-voice-intents ===
     ) {
         this.voiceClient = voiceClient
         this.chatViewModel = chatViewModel
@@ -191,14 +191,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         this.player = player
         this.sfxPlayer = sfxPlayer
 
-        // === PHASE3-η: voice→bridge intent routing ===
+        // === PHASE3-voice-intents: voice→bridge intent routing ===
         // Call the flavor-selected factory exactly once. On googlePlay this
         // returns a no-op handler; on sideload it returns the real
         // classifier-backed handler. VoiceViewModel only ever sees the
         // interface — the concrete impl is picked at compile time by the
         // active product flavor. No runtime flavor check, no reflection.
         voiceBridgeIntentHandler = createVoiceBridgeIntentHandler(bridgeMultiplexer)
-        // === END PHASE3-η ===
+        // === END PHASE3-voice-intents ===
 
         startTtsConsumer()
         bridgeAmplitudeFlows()
@@ -330,7 +330,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(error = null) }
     }
 
-    // === PHASE3-η: voice→bridge intent routing ===
+    // === PHASE3-voice-intents: voice→bridge intent routing ===
     /**
      * Cancel any voice-originated bridge action that is currently inside
      * its v1 confirmation countdown window. Called from the voice overlay's
@@ -347,7 +347,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { it.copy(state = VoiceState.Idle, responseText = "Cancelled.") }
         }
     }
-    // === END PHASE3-η ===
+    // === END PHASE3-voice-intents ===
 
     // V2b EXTENSION --------------------------------------------------------
     // Fire a one-shot TTS synth+playback to verify the voice pipeline from
@@ -412,7 +412,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
 
-        // === PHASE3-η: voice→bridge intent routing ===
+        // === PHASE3-voice-intents: voice→bridge intent routing ===
         // Before routing to chat, ask the flavor-specific intent handler
         // whether this is a phone-control utterance ("text Sam I'll be
         // late", "open camera", "scroll down"). On googlePlay the handler
@@ -462,7 +462,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 Log.w(TAG, "voiceBridgeIntentHandler.tryHandle failed: ${e.message}")
             }
         }
-        // === END PHASE3-η ===
+        // === END PHASE3-voice-intents ===
 
         // Reset sentence buffering state for the new turn.
         sentenceBuffer = StringBuilder()

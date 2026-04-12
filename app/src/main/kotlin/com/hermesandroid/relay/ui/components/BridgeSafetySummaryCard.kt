@@ -31,7 +31,7 @@ import com.hermesandroid.relay.data.DEFAULT_BLOCKLIST
 import com.hermesandroid.relay.data.DEFAULT_DESTRUCTIVE_VERBS
 
 /**
- * Phase 3 — ζ `bridge-safety-rails`
+ * Phase 3 — safety-rails `bridge-safety-rails`
  *
  * Replaces the inert `SafetyPlaceholderCard` in [BridgeScreen]. Shows a
  * live-updating summary of Tier 5 safety state:

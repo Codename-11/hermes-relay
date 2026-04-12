@@ -13,13 +13,13 @@ import kotlinx.serialization.json.Json
 /**
  * User-tunable bridge mode preferences + persisted activity log.
  *
- * Phase 3 Wave 1 — owned by Agent δ (`bridge-screen-ui`).
+ * Phase 3 Wave 1 — owned by Agent bridge-ui (`bridge-screen-ui`).
  *
  * - [masterEnabled] — the headline "Allow Agent Control" switch on BridgeScreen.
  *   Compose-layer gate only; the real safety fence is that the user must also
  *   enable `HermesAccessibilityService` in Android Settings (which is the
  *   Tier-5 "honest" trust boundary Google cares about). Persisting it here lets
- *   us survive restarts and lets Agent γ's `HermesAccessibilityService` query
+ *   us survive restarts and lets Agent accessibility's `HermesAccessibilityService` query
  *   the same source of truth without needing its own DataStore file.
  *
  * - [activityLog] — rolling window of recent [BridgeActivityEntry] rows that
@@ -52,7 +52,7 @@ data class BridgeActivityEntry(
     /**
      * Optional screenshot MediaRegistry token (`hermes-relay://<token>` or the
      * raw token stem). The UI resolves this through the existing InboundAttachmentCard
-     * pipeline — δ deliberately does not invent a second thumbnail cache.
+     * pipeline — bridge-ui deliberately does not invent a second thumbnail cache.
      * Null for commands that don't carry a screenshot.
      */
     val thumbnailToken: String? = null,

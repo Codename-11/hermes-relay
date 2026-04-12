@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Hermes-Relay</string>
-    <!-- === PHASE3-γ: accessibility service label === -->
+    <!-- === PHASE3-accessibility: accessibility service label === -->
     <!-- Shown in Android Settings → Accessibility → Installed services as the
          row label for our AccessibilityService. Single source of truth — both
          flavors render the same label here so users always see one entry, not
          two. The flavor distinction lives in the description string declared
          by accessibility_service_config.xml in each flavor's res/xml/. -->
     <string name="a11y_service_label">Hermes-Relay Bridge</string>
-    <!-- === END PHASE3-γ === -->
-    <!-- === PHASE3-ε: notification companion service label === -->
+    <!-- === END PHASE3-accessibility === -->
+    <!-- === PHASE3-notif-listener: notification companion service label === -->
     <string name="notification_companion_label">Hermes-Relay notification companion</string>
-    <!-- === END PHASE3-ε === -->
+    <!-- === END PHASE3-notif-listener === -->
 </resources>

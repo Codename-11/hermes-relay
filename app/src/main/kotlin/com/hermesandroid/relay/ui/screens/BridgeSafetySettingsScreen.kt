@@ -67,7 +67,7 @@ import com.hermesandroid.relay.data.MIN_CONFIRMATION_TIMEOUT_SECONDS
 import kotlinx.coroutines.launch
 
 /**
- * Phase 3 — ζ `bridge-safety-rails`
+ * Phase 3 — safety-rails `bridge-safety-rails`
  *
  * Compose screen for Tier 5 safety configuration. Five sections:
  *

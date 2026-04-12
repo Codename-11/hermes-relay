@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
 /**
- * Phase 3 — γ `accessibility-runtime`
+ * Phase 3 — accessibility `accessibility-runtime`
  *
  * Hermes's master `AccessibilityService` subclass. Provides the phone-side
  * execution layer for the bridge channel: the agent reads the screen,
@@ -44,7 +44,7 @@ import kotlinx.coroutines.flow.map
  *
  * We subscribe to a minimal event set — `TYPE_WINDOW_STATE_CHANGED` to
  * track the foreground package (for [currentApp] status), and nothing else.
- * The XML resource (flavor-provided by Agent β) controls the exact flag
+ * The XML resource (flavor-provided by Agent flavor-split) controls the exact flag
  * bitset. We deliberately do NOT process text / content-change events —
  * those fire thousands of times a minute and are pointless for our use
  * case (we read the UI tree on demand via `rootInActiveWindow`).
@@ -63,7 +63,7 @@ class HermesAccessibilityService : AccessibilityService() {
          * cleared on [onUnbind] / [onDestroy].
          *
          * Read by [com.hermesandroid.relay.network.handlers.BridgeCommandHandler]
-         * and by the Bridge UI screen (δ) to check live status.
+         * and by the Bridge UI screen (bridge-ui) to check live status.
          */
         @Volatile
         var instance: HermesAccessibilityService? = null

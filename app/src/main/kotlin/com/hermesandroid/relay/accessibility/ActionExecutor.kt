@@ -14,7 +14,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
 /**
- * Phase 3 — γ `accessibility-runtime`
+ * Phase 3 — accessibility `accessibility-runtime`
  *
  * Phone-side action dispatcher. Every method maps 1:1 to a Tier 1 bridge
  * command (`tap`, `tap_text`, `type`, `swipe`, `press_key`, `scroll`,

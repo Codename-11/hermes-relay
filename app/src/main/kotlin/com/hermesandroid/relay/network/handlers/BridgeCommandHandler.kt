@@ -5,9 +5,9 @@ import com.hermesandroid.relay.accessibility.ActionExecutor
 import com.hermesandroid.relay.accessibility.HermesAccessibilityService
 import com.hermesandroid.relay.accessibility.ScreenCapture
 import com.hermesandroid.relay.accessibility.ScreenReader
-// === PHASE3-ζ: safety enforcement ===
+// === PHASE3-safety-rails: safety enforcement ===
 import com.hermesandroid.relay.bridge.BridgeSafetyManager
-// === END PHASE3-ζ ===
+// === END PHASE3-safety-rails ===
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.models.Envelope
 import kotlinx.coroutines.CoroutineScope
@@ -20,7 +20,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 /**
- * Phase 3 — γ `accessibility-runtime`
+ * Phase 3 — accessibility `accessibility-runtime`
  *
  * Routes inbound `bridge.command` envelopes to [ActionExecutor] and
  * publishes the result as a `bridge.response` envelope.
@@ -81,12 +81,12 @@ class BridgeCommandHandler(
     private val multiplexer: ChannelMultiplexer,
     private val scope: CoroutineScope,
     private val screenCapture: ScreenCapture? = null,
-    // === PHASE3-ζ: safety enforcement ===
+    // === PHASE3-safety-rails: safety enforcement ===
     // Safety manager is optional so older tests that construct this handler
     // without the full DI graph still compile; in production ConnectionViewModel
     // always wires a BridgeSafetyManager instance and passes it in.
     private val safetyManager: BridgeSafetyManager? = null,
-    // === END PHASE3-ζ ===
+    // === END PHASE3-safety-rails ===
 ) {
 
     companion object {
@@ -169,7 +169,7 @@ class BridgeCommandHandler(
             )
         }
 
-        // === PHASE3-ζ: safety enforcement ===
+        // === PHASE3-safety-rails: safety enforcement ===
         // Pure-read /ping and /current_app + /screen bypass Tier 5 verbs
         // (they don't perform destructive actions), but they DO still
         // respect the blocklist so a blocked app can't be screen-read.
@@ -204,7 +204,7 @@ class BridgeCommandHandler(
         // Reschedule the idle auto-disable timer on every accepted
         // command. Safe to call even when no timer is currently armed.
         safetyManager?.rescheduleAutoDisable()
-        // === END PHASE3-ζ ===
+        // === END PHASE3-safety-rails ===
 
         val executor = service.actionExecutor
 

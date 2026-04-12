@@ -13,7 +13,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * === PHASE3-η (sideload flavor): real voice→bridge handler ===
+ * === PHASE3-voice-intents (sideload flavor): real voice→bridge handler ===
  *
  * Classifies the transcribed utterance via [VoiceIntentClassifier]. On a
  * hit, it emits a `bridge` envelope through [ChannelMultiplexer] describing
@@ -30,9 +30,9 @@ import kotlinx.serialization.json.put
  *              source:  "voice" } }
  * ```
  *
- * The exact envelope contract is owned by Wave 2 sibling ζ
+ * The exact envelope contract is owned by Wave 2 sibling safety-rails
  * (`bridge-safety-rails`) — we deliberately keep the payload shape simple +
- * documented so ζ can rename fields in a single place if needed.
+ * documented so safety-rails can rename fields in a single place if needed.
  *
  * ## v1 confirmation (see interface doc for why)
  *
@@ -57,7 +57,7 @@ internal class RealVoiceBridgeIntentHandler(
 ) : VoiceBridgeIntentHandler {
 
     companion object {
-        private const val TAG = "VoiceBridgeη"
+        private const val TAG = "VoiceBridgevoice-intents"
         /** v1 confirmation delay. Keep small so the UX is "you can cancel
          *  if you panic" not "let's have a conversation". */
         private const val CONFIRMATION_DELAY_MS = 5_000L
@@ -167,7 +167,7 @@ internal class RealVoiceBridgeIntentHandler(
             mux.send(envelope)
         } catch (e: Exception) {
             // Don't crash voice mode if the bridge channel isn't open yet.
-            // ζ's safety layer will surface a proper user-facing error.
+            // safety-rails's safety layer will surface a proper user-facing error.
             Log.w(TAG, "dispatch failed: ${e.message}")
         }
     }
@@ -237,4 +237,4 @@ internal class RealVoiceBridgeIntentHandler(
     )
 }
 
-// === END PHASE3-η (sideload impl) ===
+// === END PHASE3-voice-intents (sideload impl) ===

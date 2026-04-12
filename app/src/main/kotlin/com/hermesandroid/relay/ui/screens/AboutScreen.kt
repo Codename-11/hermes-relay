@@ -213,7 +213,7 @@ fun AboutScreen(
                         )
                     }
 
-                    // === PHASE3-β: build flavor badge ===
+                    // === PHASE3-flavor-split: build flavor badge ===
                     // Surfaces which release track the user is running. Tier 3/4/6
                     // Bridge surfaces differ between googlePlay and sideload, so it
                     // helps bug reports to see the active flavor right next to the
@@ -233,7 +233,7 @@ fun AboutScreen(
                             style = MaterialTheme.typography.bodyMedium
                         )
                     }
-                    // === END PHASE3-β ===
+                    // === END PHASE3-flavor-split ===
 
                     HorizontalDivider()
 

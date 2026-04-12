@@ -68,9 +68,9 @@ import com.hermesandroid.relay.ui.screens.AboutScreen
 import com.hermesandroid.relay.ui.screens.AnalyticsScreen
 import com.hermesandroid.relay.ui.screens.AppearanceSettingsScreen
 import com.hermesandroid.relay.ui.screens.BridgeScreen
-// === PHASE3-ζ: bridge safety route ===
+// === PHASE3-safety-rails: bridge safety route ===
 import com.hermesandroid.relay.ui.screens.BridgeSafetySettingsScreen
-// === END PHASE3-ζ ===
+// === END PHASE3-safety-rails ===
 import com.hermesandroid.relay.ui.screens.ChatScreen
 import com.hermesandroid.relay.ui.screens.ChatSettingsScreen
 import com.hermesandroid.relay.ui.screens.ConnectionSettingsScreen
@@ -124,14 +124,14 @@ sealed class Screen(
     // NavigationBar. Paired Devices is opened from Settings → Connection.
     data object PairedDevices : Screen("paired_devices", "Paired Devices", Icons.Filled.Settings)
     data object VoiceSettings : Screen("voice_settings", "Voice", Icons.Filled.Settings)
-    // === PHASE3-ε-followup ===
+    // === PHASE3-notif-listener-followup ===
     data object NotificationCompanionSettings :
         Screen("settings/notifications", "Notification companion", Icons.Filled.Settings)
-    // === END PHASE3-ε-followup ===
-    // === PHASE3-ζ: bridge safety route ===
+    // === END PHASE3-notif-listener-followup ===
+    // === PHASE3-safety-rails: bridge safety route ===
     data object BridgeSafetySettings :
         Screen("settings/bridge_safety", "Bridge safety", Icons.Filled.Settings)
-    // === END PHASE3-ζ ===
+    // === END PHASE3-safety-rails ===
     // Per-category settings sub-screens — split out of the mega SettingsScreen
     // following the VoiceSettingsScreen pattern (see DEVLOG 2026-04-11).
     data object ConnectionSettings : Screen("settings/connection", "Connection", Icons.Filled.Settings)
@@ -306,6 +306,22 @@ fun RelayApp() {
 
         val navController = rememberNavController()
 
+        // === PHASE3-safety-rails-followup: cross-layer deep-link nav ===
+        // Collect navigation requests posted by external launchers (e.g., the
+        // BridgeForegroundService notification's "Settings" action). The
+        // service sets EXTRA_NAV_ROUTE on its launch intent → MainActivity's
+        // onCreate / onNewIntent reads it and pumps it onto NavRouteRequest →
+        // we forward each emission to the NavController. Single observer at
+        // the app root so every screen benefits.
+        LaunchedEffect(navController) {
+            com.hermesandroid.relay.util.NavRouteRequest.requests.collect { route ->
+                navController.navigate(route) {
+                    launchSingleTop = true
+                }
+            }
+        }
+        // === END PHASE3-safety-rails-followup ===
+
         val startDestination = if (onboardingCompleted) Screen.Chat.route else Screen.Onboarding.route
 
         val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -437,22 +453,22 @@ fun RelayApp() {
                     )
                 }
                 composable(Screen.Bridge.route) {
-                    // === PHASE3-δ: BridgeScreen wiring ===
+                    // === PHASE3-bridge-ui: BridgeScreen wiring ===
                     // BridgeScreen owns its own BridgeViewModel via the
                     // default `viewModel()` parameter — no shared state with
                     // ChatViewModel / ConnectionViewModel is plumbed through
-                    // here yet. Once Agent γ lands HermesAccessibilityService
+                    // here yet. Once Agent accessibility lands HermesAccessibilityService
                     // and we need to observe its runtime state from RelayApp
                     // scope, a shared holder or explicit VM param gets added
                     // here.
                     BridgeScreen(
-                        // === PHASE3-ζ: bridge safety route ===
+                        // === PHASE3-safety-rails: bridge safety route ===
                         onNavigateToBridgeSafety = {
                             navController.navigate(Screen.BridgeSafetySettings.route)
                         },
-                        // === END PHASE3-ζ ===
+                        // === END PHASE3-safety-rails ===
                     )
-                    // === END PHASE3-δ ===
+                    // === END PHASE3-bridge-ui ===
                 }
                 composable(Screen.Settings.route) {
                     SettingsScreen(
@@ -478,11 +494,11 @@ fun RelayApp() {
                         onNavigateToNotificationCompanion = {
                             navController.navigate(Screen.NotificationCompanionSettings.route)
                         },
-                        // === PHASE3-ζ: bridge safety route ===
+                        // === PHASE3-safety-rails: bridge safety route ===
                         onNavigateToBridgeSafety = {
                             navController.navigate(Screen.BridgeSafetySettings.route)
                         },
-                        // === END PHASE3-ζ ===
+                        // === END PHASE3-safety-rails ===
                         onNavigateToPairedDevices = {
                             navController.navigate(Screen.PairedDevices.route)
                         },
@@ -501,20 +517,20 @@ fun RelayApp() {
                         onBack = { navController.popBackStack() }
                     )
                 }
-                // === PHASE3-ε-followup: notification companion route ===
+                // === PHASE3-notif-listener-followup: notification companion route ===
                 composable(Screen.NotificationCompanionSettings.route) {
                     NotificationCompanionSettingsScreen(
                         onBack = { navController.popBackStack() }
                     )
                 }
-                // === END PHASE3-ε-followup ===
-                // === PHASE3-ζ: bridge safety route ===
+                // === END PHASE3-notif-listener-followup ===
+                // === PHASE3-safety-rails: bridge safety route ===
                 composable(Screen.BridgeSafetySettings.route) {
                     BridgeSafetySettingsScreen(
                         onBack = { navController.popBackStack() }
                     )
                 }
-                // === END PHASE3-ζ ===
+                // === END PHASE3-safety-rails ===
                 composable(Screen.PairedDevices.route) {
                     PairedDevicesScreen(
                         connectionViewModel = connectionViewModel,

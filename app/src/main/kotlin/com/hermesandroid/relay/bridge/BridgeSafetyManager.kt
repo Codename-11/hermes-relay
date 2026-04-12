@@ -22,7 +22,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Phase 3 — ζ `bridge-safety-rails`
+ * Phase 3 — safety-rails `bridge-safety-rails`
  *
  * Central enforcement point for Tier 5 safety: per-app blocklist, destructive
  * verb confirmation, and idle-based auto-disable. Owned as a singleton-per-

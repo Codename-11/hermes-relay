@@ -67,7 +67,7 @@ class ChannelMultiplexer {
                 // TODO: Phase 2 — terminal channel handler
                 handlers["terminal"]?.onMessage(envelope)
             }
-            // === PHASE3-γ: bridge channel routing ===
+            // === PHASE3-accessibility: bridge channel routing ===
             // bridge.command envelopes come FROM the server and are
             // dispatched to a [BridgeCommandHandler] which hands them to
             // the [HermesAccessibilityService]'s [ActionExecutor]. Responses
@@ -81,7 +81,7 @@ class ChannelMultiplexer {
             // bridge routing is active (Bridge can be gated by build
             // flavor or by the master enable toggle in the UI).
             "bridge" -> handlers["bridge"]?.onMessage(envelope)
-            // === END PHASE3-γ ===
+            // === END PHASE3-accessibility ===
             else -> {
                 // Unknown channel — ignore
             }
@@ -102,7 +102,7 @@ class ChannelMultiplexer {
         sendCallback?.invoke(envelope)
     }
 
-    // === PHASE3-ε: notification outbound routing ===
+    // === PHASE3-notif-listener: notification outbound routing ===
     //
     // `HermesNotificationCompanion` is a system-bound
     // `NotificationListenerService` that lives outside the ViewModel
@@ -122,7 +122,7 @@ class ChannelMultiplexer {
         val cb = sendCallback ?: return
         cb.invoke(envelope)
     }
-    // === END PHASE3-ε ===
+    // === END PHASE3-notif-listener ===
 
     /**
      * Handle system channel messages (auth, ping/pong).

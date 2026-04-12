@@ -1,10 +1,33 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-12 — Rename Phase 3 agent codenames from Greek letters to ASCII slugs
+
+Bulk rename across the repo + Obsidian plan: replaced the Greek-letter agent codenames I'd been using since the original Phase 3 plan (`α β accessibility bridge-ui notif-listener safety-rails voice-intents vision-nav` — wait, only the first four were Greek; the actual original set was `α β γ δ ε ζ η θ`) with descriptive ASCII slugs. The Greek letters were a math/CS-paper convention and they sort nicely, but they're a pain to type, render badly in some terminals, and made commit-history search awkward.
+
+Mapping:
+
+| Old | New |
+|---|---|
+| α | bridge-server |
+| flavor-split | flavor-split |
+| accessibility | accessibility |
+| bridge-ui | bridge-ui |
+| notif-listener | notif-listener |
+| safety-rails | safety-rails |
+| voice-intents | voice-intents |
+| vision-nav | vision-nav |
+
+Scope: 42 repo files (DEVLOG, CLAUDE, Kotlin sources, Python sources, manifests, Vue docs) + the canonical Obsidian plan at `Plans/Phase 3 — Bridge Channel.md`. Implementation was a single sed pass per file with all 8 substitutions in one invocation, applied via a bash for-loop. Verified with `grep -rc '[αβγδεζηθ]'` returning 0 across the affected trees.
+
+**Git history is not rewritten.** Existing commits and merge commits keep their original Greek-letter subjects (e.g., `merge(phase3-α): migrate legacy bridge relay`). Renaming history would require a force push and would invalidate every commit hash since the divergence point — not worth the cost for a cosmetic change. Going forward, new branches, commit messages, and marker blocks all use the ASCII slugs.
+
+**Marker block convention going forward:** `// === PHASE3-bridge-server: ... === / // === END PHASE3-bridge-server ===` (and the analogous Python `# === ... ===` and XML `<!-- === ... === -->` forms). Followup blocks use `PHASE3-<slug>-followup`.
+
 ## 2026-04-12 — Phase 3 / Wave 1 hotfix — dedupe AccessibilityService entry; Gradle deprecation cleanup
 
 Two small fixes discovered while smoke-testing Wave 1 in Android Studio.
 
-**Duplicate AccessibilityService entry in Android Settings.** Bailey noticed Settings → Accessibility → Installed services listed two Hermes entries (`Hermes-Relay` and `Hermes Bridge`). Root cause: a coordination miss between agents β and γ during the Wave 1 agent-team run. β created the flavor manifests *first* and stubbed `<service android:name=".accessibility.BridgeAccessibilityService" tools:ignore="MissingClass">` blocks in both flavor overlays, anticipating that γ would name the service class `BridgeAccessibilityService`. γ later named it `HermesAccessibilityService` instead. Manifest merger only collapses `<service>` elements with matching `android:name`, so two different names → two separate `<service>` entries in the merged manifest. The β-stub entry pointed at a class that doesn't exist anywhere — enabling that row in Android Settings would have crashed the bind.
+**Duplicate AccessibilityService entry in Android Settings.** Bailey noticed Settings → Accessibility → Installed services listed two Hermes entries (`Hermes-Relay` and `Hermes Bridge`). Root cause: a coordination miss between agents flavor-split and accessibility during the Wave 1 agent-team run. flavor-split created the flavor manifests *first* and stubbed `<service android:name=".accessibility.BridgeAccessibilityService" tools:ignore="MissingClass">` blocks in both flavor overlays, anticipating that accessibility would name the service class `BridgeAccessibilityService`. accessibility later named it `HermesAccessibilityService` instead. Manifest merger only collapses `<service>` elements with matching `android:name`, so two different names → two separate `<service>` entries in the merged manifest. The flavor-split-stub entry pointed at a class that doesn't exist anywhere — enabling that row in Android Settings would have crashed the bind.
 
 Fix: removed the stub `<service>` blocks from both `app/src/googlePlay/AndroidManifest.xml` and `app/src/sideload/AndroidManifest.xml` entirely (the flavor manifests are now empty `<application />` overlays kept around for future flavor-specific permissions / activities). The flavor distinction now lives purely at the resource layer — each flavor's `res/xml/accessibility_service_config.xml` carries its own use-case description and flag bitset, and Gradle's resource merger picks the right file at build time. Added `a11y_service_label` ("Hermes-Relay Bridge") to `app/src/main/res/values/strings.xml` so the single canonical service entry in `app/src/main/AndroidManifest.xml` can be labeled distinctly from the launcher icon.
 
@@ -60,7 +83,7 @@ Closed the user-doc gap left by Phase 3's googlePlay/sideload Gradle flavor spli
 
 Build verified locally with `npx vitepress build` — clean compile, all pages render, no errors.
 
-## 2026-04-12 — Phase 3 / Wave 2 / ζ: bridge safety rails
+## 2026-04-12 — Phase 3 / Wave 2 / safety-rails: bridge safety rails
 
 Branch: `feature/phase3-zeta-safety-rails` (off `main` @ 8d86a62 which has Wave 1 merged).
 
@@ -87,7 +110,7 @@ Branch: `feature/phase3-zeta-safety-rails` (off `main` @ 8d86a62 which has Wave 
 - `app/src/main/kotlin/com/hermesandroid/relay/ui/components/DestructiveVerbConfirmDialog.kt` (also hosts `BridgeStatusOverlayChip`)
 - `app/src/main/kotlin/com/hermesandroid/relay/ui/components/BridgeSafetySummaryCard.kt`
 
-**Shared-concern files touched (6)** — all marked with `// === PHASE3-ζ: ... === / === END PHASE3-ζ ===`:
+**Shared-concern files touched (6)** — all marked with `// === PHASE3-safety-rails: ... === / === END PHASE3-safety-rails ===`:
 
 - `BridgeCommandHandler.kt` — injects `safetyManager: BridgeSafetyManager?`, runs the three-stage check (blocklist → confirmation → reschedule timer) before dispatching each action.
 - `AndroidManifest.xml` — adds `SYSTEM_ALERT_WINDOW` + `FOREGROUND_SERVICE_SPECIAL_USE` uses-permission + a `<service android:name=".bridge.BridgeForegroundService" android:foregroundServiceType="specialUse"/>` declaration with the `PROPERTY_SPECIAL_USE_FGS_SUBTYPE` justification property.
@@ -107,7 +130,7 @@ Branch: `feature/phase3-zeta-safety-rails` (off `main` @ 8d86a62 which has Wave 
 
 - **Confirmation coroutine wiring.** The safety manager keeps a `ConcurrentHashMap<Long, PendingConfirmation>` keyed by a monotonic request id. `awaitConfirmation` registers an entry, asks the overlay host to show the modal, then `withTimeout(...) { deferred.await() }`. The overlay's Allow / Deny buttons call back with the result. Timeouts dismiss the overlay programmatically. The suspending `BridgeCommandHandler.dispatch` call is what holds the slot — the relay sees a slow response instead of a premature 403, which matches the intended UX (user gets 30s to react, agent waits).
 
-- **γ/δ API dependencies.** Relied on: `HermesAccessibilityService.currentApp` (γ, @Volatile String?), `HermesAccessibilityService.setMasterEnabled(context, enabled)` (γ), `HermesAccessibilityService.isMasterEnabled()` (γ), `BridgePreferencesRepository` pattern (δ), `relayDataStore` extension (existing), `BridgeViewModel.masterToggle: StateFlow<Boolean>` (δ). All used as-is — no edits in γ/δ territory.
+- **accessibility/bridge-ui API dependencies.** Relied on: `HermesAccessibilityService.currentApp` (accessibility, @Volatile String?), `HermesAccessibilityService.setMasterEnabled(context, enabled)` (accessibility), `HermesAccessibilityService.isMasterEnabled()` (accessibility), `BridgePreferencesRepository` pattern (bridge-ui), `relayDataStore` extension (existing), `BridgeViewModel.masterToggle: StateFlow<Boolean>` (bridge-ui). All used as-is — no edits in accessibility/bridge-ui territory.
 
 **What's next.**
 
@@ -115,11 +138,11 @@ Branch: `feature/phase3-zeta-safety-rails` (off `main` @ 8d86a62 which has Wave 
 - Record `BridgeActivityEntry` rows for blocked-package / denied-confirmation events so the bridge activity log shows *why* an agent command failed.
 - Wave 3 can add tests: unit tests for the destructive-verb regex word-boundary matching, an instrumented test for the foreground-service lifecycle, and a fake overlay host for `awaitConfirmation` timeout behavior.
 
-## 2026-04-12 — Phase 3 / Wave 2 / η: voice→bridge intent routing (sideload-only, Tier 3)
+## 2026-04-12 — Phase 3 / Wave 2 / voice-intents: voice→bridge intent routing (sideload-only, Tier 3)
 
 Wired voice mode to optionally route transcribed utterances through the bridge channel instead of chat. When the user holds the voice button and says "text Sam I'll be 10 min late" on a **sideload** build, a lightweight keyword classifier recognizes the SMS intent, the voice layer speaks a confirmation ("About to text Sam: I'll be 10 min late. Say cancel to stop."), and a `bridge` envelope is queued for dispatch after a 5-second cancel window. "Open camera" / "scroll down" / "go back" / etc. execute immediately with no countdown.
 
-**Cross-flavor compile pattern.** This is the first Wave 2 surface to exercise the `googlePlay` vs `sideload` flavor split that agent β is wiring up in parallel. `VoiceBridgeIntentHandler` is an interface + sealed `IntentResult` in `main/` so `VoiceViewModel` has a stable compile-time reference. Two separate implementations ship per-flavor with matching FQCNs and a shared top-level factory function `createVoiceBridgeIntentHandler(multiplexer)`:
+**Cross-flavor compile pattern.** This is the first Wave 2 surface to exercise the `googlePlay` vs `sideload` flavor split that agent flavor-split is wiring up in parallel. `VoiceBridgeIntentHandler` is an interface + sealed `IntentResult` in `main/` so `VoiceViewModel` has a stable compile-time reference. Two separate implementations ship per-flavor with matching FQCNs and a shared top-level factory function `createVoiceBridgeIntentHandler(multiplexer)`:
 
 - `app/src/googlePlay/kotlin/.../VoiceBridgeIntentHandlerImpl.kt` — `NoopVoiceBridgeIntentHandler` always returns `IntentResult.NotApplicable`, never touches the bridge, never references any device-control / accessibility class. Keeps the Play APK honest with its conservative feature description.
 - `app/src/sideload/kotlin/.../VoiceBridgeIntentHandlerImpl.kt` — `RealVoiceBridgeIntentHandler` + `VoiceIntentClassifier` with keyword/regex patterns for SendSms / OpenApp / Tap / Scroll / Back / Home. Destructive intents go through the 5 s countdown; safe intents dispatch immediately.
@@ -142,7 +165,7 @@ Design bias: **false negatives > false positives**. "Can you text me when you're
 
 **v1 confirmation simplification.** Full conversational confirmation ("About to text… say yes or cancel") would need a multi-turn voice state machine we don't have. Instead: destructive intents speak the confirmation via the existing sentence-TTS queue, start a 5 s countdown coroutine, and dispatch unless `VoiceViewModel.cancelPendingBridgeIntent()` is called first. The overlay's Cancel button wires into that method. Full voice-confirmation is a Wave 3 follow-up (see Phase 3 plan row `voice-bridge-confirmation`).
 
-**Bridge envelope wire shape.** Simple and documented so Wave 2 sibling ζ (`bridge-safety-rails`) owns the authoritative schema:
+**Bridge envelope wire shape.** Simple and documented so Wave 2 sibling safety-rails (`bridge-safety-rails`) owns the authoritative schema:
 
 ```
 { channel: "bridge",
@@ -170,17 +193,17 @@ New (sideload flavor):
 - `app/src/sideload/kotlin/com/hermesandroid/relay/voice/VoiceIntentClassifier.kt` — regex-based classifier + `VoiceIntent` sealed class
 
 Touched (main):
-- `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/VoiceViewModel.kt` — new `bridgeMultiplexer` param on `initialize()`; factory call at the bottom of init; intent-routing block at the top of `processVoiceInput` (between the Thinking-state update and the sentence-buffer reset); new `cancelPendingBridgeIntent()` public method for the overlay's Cancel button. All changes wrapped in `// === PHASE3-η: ... === / // === END PHASE3-η ===` markers.
+- `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/VoiceViewModel.kt` — new `bridgeMultiplexer` param on `initialize()`; factory call at the bottom of init; intent-routing block at the top of `processVoiceInput` (between the Thinking-state update and the sentence-buffer reset); new `cancelPendingBridgeIntent()` public method for the overlay's Cancel button. All changes wrapped in `// === PHASE3-voice-intents: ... === / // === END PHASE3-voice-intents ===` markers.
 
-**Known cross-worktree dependency.** This worktree assumes agent β's `productFlavors { googlePlay; sideload }` + `BuildFlavor.bridgeTier3` constant lands in `build.gradle.kts` / `FeatureFlags.kt` before this branch merges. Without β's flavor config, Gradle won't resolve the `createVoiceBridgeIntentHandler(...)` reference from `VoiceViewModel` because neither flavor source set is active. Order of merges: β first, then η (and ζ + θ).
+**Known cross-worktree dependency.** This worktree assumes agent flavor-split's `productFlavors { googlePlay; sideload }` + `BuildFlavor.bridgeTier3` constant lands in `build.gradle.kts` / `FeatureFlags.kt` before this branch merges. Without flavor-split's flavor config, Gradle won't resolve the `createVoiceBridgeIntentHandler(...)` reference from `VoiceViewModel` because neither flavor source set is active. Order of merges: flavor-split first, then voice-intents (and safety-rails + vision-nav).
 
 **Next steps (Wave 2 sibling + Wave 3):**
-- ζ owns the `bridge` envelope contract — if the wire-level field names change (`tool` → `name`, etc.), update `VoiceBridgeIntentHandlerImpl.buildXxxEnvelope` in one place.
+- safety-rails owns the `bridge` envelope contract — if the wire-level field names change (`tool` → `name`, etc.), update `VoiceBridgeIntentHandlerImpl.buildXxxEnvelope` in one place.
 - Overlay wire-up (Bailey or a future agent): show `IntentResult.Handled.intentLabel` in the voice overlay, add a Cancel button that calls `cancelPendingBridgeIntent()` when `requiresConfirmation=true`.
 - Wave 3 `voice-bridge-confirmation`: replace the 5 s countdown with a proper multi-turn confirmation ("say yes or cancel" → STT → classifier for yes/no).
 - Classifier unit tests: `extractNextSentence`-style unit tests for `VoiceIntentClassifier.classify()`. Top-level function already testable without an Application context.
 
-## 2026-04-12 — Phase 3 / Wave 2 / θ — android_navigate vision-driven navigation tool
+## 2026-04-12 — Phase 3 / Wave 2 / vision-nav — android_navigate vision-driven navigation tool
 
 Lands the Tier 4 "burner-phone trick, done sanely" plan row. New Hermes tool `android_navigate(intent, max_iterations=5)` closes the loop on high-level bridge automation: instead of the agent having to know exact node IDs or coordinates, it passes a natural-language intent ("compose a tweet about rainy weather") and the tool loops `screenshot → vision model → action → repeat` until the model emits `done` or hits the iteration cap.
 
@@ -254,73 +277,73 @@ Closed the "you must run our hermes-agent fork to get full features" gap. The Co
 
 **Removal path** (when PR #8556 reaches a released hermes-agent version): delete `hermes_relay_bootstrap/`, delete `hermes_relay_bootstrap.pth`, remove the `.pth` drop block from `install.sh`. The Android client `probeCapabilities()` + `streamingEndpoint = "auto"` plumbing stays — it's permanent infrastructure that handles mixed-version deployments.
 
-## 2026-04-12 — Phase 3 / Wave 1.5 — α-followup + ε-followup (post-merge polish)
+## 2026-04-12 — Phase 3 / Wave 1.5 — bridge-server-followup + notif-listener-followup (post-merge polish)
 
 Two small follow-ups discovered during the Wave 1 agent-team merge. Both gate clean smoke testing of the merged Wave 1 work in Android Studio.
 
-**α-followup — `POST /media/upload` route on the relay.** Agent γ's `ScreenCapture` posts screenshot bytes via multipart to `/media/upload`, but α only ported the existing `/media/register` (loopback + path-based). Phone has no shared filesystem with the relay, so `/media/register` was unusable for the bridge screenshot path. The new endpoint accepts a `file` multipart field with bearer auth (every paired phone has a session token), streams the bytes to a `NamedTemporaryFile` under `tempfile.gettempdir()` (which is in the default `MediaRegistry.allowed_roots`), enforces `MediaRegistry.max_size_bytes` while reading (returns 413 on overflow), then hands the path off to `MediaRegistry.register()` so token issuance / expiry / LRU eviction / `GET /media/{token}` are byte-for-byte identical to the loopback path. Marker block: `# === PHASE3-α-followup: /media/upload === / # === END PHASE3-α-followup ===` in `plugin/relay/server.py`. `tempfile` import added at the top. Route registered next to `/media/register`. py_compile clean.
+**bridge-server-followup — `POST /media/upload` route on the relay.** Agent accessibility's `ScreenCapture` posts screenshot bytes via multipart to `/media/upload`, but bridge-server only ported the existing `/media/register` (loopback + path-based). Phone has no shared filesystem with the relay, so `/media/register` was unusable for the bridge screenshot path. The new endpoint accepts a `file` multipart field with bearer auth (every paired phone has a session token), streams the bytes to a `NamedTemporaryFile` under `tempfile.gettempdir()` (which is in the default `MediaRegistry.allowed_roots`), enforces `MediaRegistry.max_size_bytes` while reading (returns 413 on overflow), then hands the path off to `MediaRegistry.register()` so token issuance / expiry / LRU eviction / `GET /media/{token}` are byte-for-byte identical to the loopback path. Marker block: `# === PHASE3-bridge-server-followup: /media/upload === / # === END PHASE3-bridge-server-followup ===` in `plugin/relay/server.py`. `tempfile` import added at the top. Route registered next to `/media/register`. py_compile clean.
 
-**ε-followup — wire `HermesNotificationCompanion.multiplexer` + Settings nav row.** Agent ε flagged two small touch-ups in its handoff:
+**notif-listener-followup — wire `HermesNotificationCompanion.multiplexer` + Settings nav row.** Agent notif-listener flagged two small touch-ups in its handoff:
 
-1. `ConnectionViewModel.init` now sets `HermesNotificationCompanion.multiplexer = multiplexer` once, immediately after the bridge handler registration. The companion service buffers up to 50 envelopes in its own `pendingEnvelopes` queue while the slot is null, so wiring it from here (rather than at service-bind time) is safe — the buffer drains on the next `onNotificationPosted` once the slot is set. Marker: `// === PHASE3-ε-followup: notification companion multiplexer wiring === / // === END PHASE3-ε-followup ===`.
+1. `ConnectionViewModel.init` now sets `HermesNotificationCompanion.multiplexer = multiplexer` once, immediately after the bridge handler registration. The companion service buffers up to 50 envelopes in its own `pendingEnvelopes` queue while the slot is null, so wiring it from here (rather than at service-bind time) is safe — the buffer drains on the next `onNotificationPosted` once the slot is set. Marker: `// === PHASE3-notif-listener-followup: notification companion multiplexer wiring === / // === END PHASE3-notif-listener-followup ===`.
 2. `SettingsScreen` gains a new `onNavigateToNotificationCompanion: () -> Unit` callback parameter and a `SettingsCategoryRow` between Voice mode and Media (`Icons.Filled.Notifications`, "Notification companion", "Let your assistant triage notifications you've shared"). `RelayApp` adds `Screen.NotificationCompanionSettings` (route `settings/notifications`), wires the new callback in the `SettingsScreen` call site, and registers a `composable(...)` that hosts `NotificationCompanionSettingsScreen(onBack = popBackStack)`. Both new imports added.
 
-After this entry the Bridge tab + Notification companion screen are both reachable through the normal navigation tree, and γ's screenshot pipeline has a working server-side endpoint. Wave 2 (ζ safety, η voice-bridge, θ vision) is unblocked once Bailey confirms both build flavors compile in Android Studio.
+After this entry the Bridge tab + Notification companion screen are both reachable through the normal navigation tree, and accessibility's screenshot pipeline has a working server-side endpoint. Wave 2 (safety-rails safety, voice-intents voice-bridge, vision-nav vision) is unblocked once Bailey confirms both build flavors compile in Android Studio.
 
-## 2026-04-12 — Phase 3 / Wave 1 / α — Migrated legacy bridge relay into unified relay (port 8767)
+## 2026-04-12 — Phase 3 / Wave 1 / bridge-server — Migrated legacy bridge relay into unified relay (port 8767)
 
-Retired the standalone bridge relay (`plugin/tools/android_relay.py` + the duplicate top-level `plugin/android_relay.py`, both listening on port 8766) and folded its functionality into the unified Hermes-Relay on port 8767 as the bridge channel. The wire protocol (`bridge.command` / `bridge.response` / `bridge.status`) stays byte-for-byte identical — only the transport changed. Agents γ, δ, ε can now build against a single port.
+Retired the standalone bridge relay (`plugin/tools/android_relay.py` + the duplicate top-level `plugin/android_relay.py`, both listening on port 8766) and folded its functionality into the unified Hermes-Relay on port 8767 as the bridge channel. The wire protocol (`bridge.command` / `bridge.response` / `bridge.status`) stays byte-for-byte identical — only the transport changed. Agents accessibility, bridge-ui, notif-listener can now build against a single port.
 
 - `plugin/relay/channels/bridge.py` — replaced the stub with a real `BridgeHandler`. One handler instance per `RelayServer`; holds `phone_ws` + `pending: dict[request_id, Future]` behind an `asyncio.Lock`. `handle_command(method, path, params, body)` mints a request_id, registers the future, sends a `bridge.command` envelope, and awaits a response with 30s timeout (matches the legacy `android_relay._RESPONSE_TIMEOUT`). `handle(ws, envelope)` opportunistically latches `phone_ws` and dispatches `bridge.response`/`bridge.status`. `detach_ws(ws, reason)` fails all pending futures with `ConnectionError` so HTTP callers don't hang when the phone drops.
-- `plugin/relay/server.py` — added 14 HTTP routes (`/ping`, `/screen`, `/screenshot`, `/get_apps`, `/apps` [legacy alias], `/current_app`, `/tap`, `/tap_text`, `/type`, `/swipe`, `/open_app`, `/press_key`, `/scroll`, `/wait`, `/setup`) each delegating to `_bridge_dispatch → server.bridge.handle_command`. BridgeError → 503/504/502 depending on message. Wired `server.bridge.detach_ws(ws)` into `_on_disconnect` so phone drops instantly fail in-flight commands instead of hanging to the 30s timeout. All additions are bracketed by `# === PHASE3-α: ... === / # === END PHASE3-α ===` markers so the Agent ε notification-listener merges are mechanical.
+- `plugin/relay/server.py` — added 14 HTTP routes (`/ping`, `/screen`, `/screenshot`, `/get_apps`, `/apps` [legacy alias], `/current_app`, `/tap`, `/tap_text`, `/type`, `/swipe`, `/open_app`, `/press_key`, `/scroll`, `/wait`, `/setup`) each delegating to `_bridge_dispatch → server.bridge.handle_command`. BridgeError → 503/504/502 depending on message. Wired `server.bridge.detach_ws(ws)` into `_on_disconnect` so phone drops instantly fail in-flight commands instead of hanging to the 30s timeout. All additions are bracketed by `# === PHASE3-bridge-server: ... === / # === END PHASE3-bridge-server ===` markers so the Agent notif-listener notification-listener merges are mechanical.
 - `plugin/android_tool.py` + `plugin/tools/android_tool.py` — BRIDGE_URL default changed from `http://localhost:8766` to `http://localhost:8767` (both copies; `plugin/android_tool.py` is the one imported by `plugin/__init__.py`, `plugin/tools/android_tool.py` is the standalone-toolset copy). `_relay_port()` falls back through `ANDROID_RELAY_PORT → RELAY_PORT → 8767`. `android_setup()` rewritten: no longer imports the deleted `android_relay` module, instead probes `http://localhost:<port>/health` to verify the unified relay is up and returns a structured error if not. Env-var side effects preserved so the existing `test_android_tool.py::TestSetup` still passes.
 - `plugin/android_relay.py` + `plugin/tools/android_relay.py` — **DELETED**. Both copies of the standalone relay are gone.
 - `plugin/tests/test_bridge_channel.py` — new unittest suite (7 tests) covering envelope routing, future resolution, timeout cleanup, disconnect cleanup, send-failure cleanup, and the legacy-timeout regression guard. Uses a `_FakeWs` stand-in and bypasses the pytest `conftest.py` that imports `responses`. Run with `python -m unittest plugin.tests.test_bridge_channel`. All 7 green locally; existing `test_relay_media_routes` / `test_qr_sign` / `test_session_grants` / `test_media_registry` still pass (22 + 47 assertions) so `create_app` + route registration hold.
 
-Auth model judgment call: the bridge HTTP routes are unauthenticated at the HTTP layer, matching the legacy standalone relay. Defensible because (a) the trust boundary is unchanged — only same-host processes reach `localhost:8767`, (b) a disconnected/unpaired phone naturally causes every call to fail with 503, and (c) the bridge grant is already tracked per-session in `Session.grants["bridge"]` so Wave 2 (safety-rails) can add a bearer wrapper without touching the handler. Noted inline in the PHASE3-α block so Agent ζ can find it.
+Auth model judgment call: the bridge HTTP routes are unauthenticated at the HTTP layer, matching the legacy standalone relay. Defensible because (a) the trust boundary is unchanged — only same-host processes reach `localhost:8767`, (b) a disconnected/unpaired phone naturally causes every call to fail with 503, and (c) the bridge grant is already tracked per-session in `Session.grants["bridge"]` so Wave 2 (safety-rails) can add a bearer wrapper without touching the handler. Noted inline in the PHASE3-bridge-server block so Agent safety-rails can find it.
 
 Branch: `feature/phase3-alpha-bridge-server-migration`.
 
-## 2026-04-12 — Phase 3 / Wave 1 / β — googlePlay + sideload build flavors
+## 2026-04-12 — Phase 3 / Wave 1 / flavor-split — googlePlay + sideload build flavors
 
-Agent β (`bridge-flavor-split`) adds the Gradle flavor split that the Phase 3 Bridge channel needs before any accessibility code lands. Google Play reviews AccessibilityService heavily, so Phase 3 ships two parallel release tracks from one codebase: a conservative `googlePlay` flavor with a notifications-and-confirmations use-case description, and a `sideload` flavor with the full agent-control description for GitHub Releases / F-Droid / ADB distribution.
+Agent flavor-split (`bridge-flavor-split`) adds the Gradle flavor split that the Phase 3 Bridge channel needs before any accessibility code lands. Google Play reviews AccessibilityService heavily, so Phase 3 ships two parallel release tracks from one codebase: a conservative `googlePlay` flavor with a notifications-and-confirmations use-case description, and a `sideload` flavor with the full agent-control description for GitHub Releases / F-Droid / ADB distribution.
 
 Scope of this change:
 
 - **`app/build.gradle.kts`** — `flavorDimensions += "track"` with two product flavors. The `sideload` flavor carries `applicationIdSuffix = ".sideload"` and `versionNameSuffix = "-sideload"` so both tracks can coexist on the same device during Phase 3 testing. The `googlePlay` flavor keeps the canonical `com.hermesandroid.relay` applicationId so existing v0.2.0 Play Store installs upgrade cleanly and Play Console keeps its release history. Decision trade-off: power users with both installed will see two launcher icons until we differentiate labels in a follow-up.
-- **`app/src/googlePlay/*`** — flavor manifest overlay declaring `.accessibility.BridgeAccessibilityService` (owned by Agent γ in `src/main/`), conservative `accessibility_service_config.xml` (event subset: `typeWindowStateChanged|typeWindowContentChanged|typeViewClicked`, `flagDefault` only, no gestures, `canRetrieveWindowContent=true`), and `a11y_description_googleplay` targeted at Play Store policy review.
+- **`app/src/googlePlay/*`** — flavor manifest overlay declaring `.accessibility.BridgeAccessibilityService` (owned by Agent accessibility in `src/main/`), conservative `accessibility_service_config.xml` (event subset: `typeWindowStateChanged|typeWindowContentChanged|typeViewClicked`, `flagDefault` only, no gestures, `canRetrieveWindowContent=true`), and `a11y_description_googleplay` targeted at Play Store policy review.
 - **`app/src/sideload/*`** — flavor manifest overlay, full-capability `accessibility_service_config.xml` (`typeAllMask`, `flagRetrieveInteractiveWindows|flagReportViewIds|flagRequestTouchExplorationMode`, `canPerformGestures=true`), and `a11y_description_sideload` with explicit voice/vision/logging language.
 - **`FeatureFlags.kt`** — new `BuildFlavor` object with `current` / `displayName` / six `bridgeTier1..6` flags. Tiers 1, 2, 5 are baseline-true for both tracks. Tiers 3 (voice-first), 4 (vision-first), 6 (ambitious future) are `get() = current == SIDELOAD` so UI code can do a single `if (BuildFlavor.bridgeTier3)` check and R8 can fold the branch at release-build time for the Play track.
-- **`AboutScreen.kt`** — added a small "Track: Google Play" / "Track: Sideload" row under the existing Version row (which owns the 7-tap dev-options reveal). Marked with `=== PHASE3-β ===` banners so δ and ε can land their own additions without merge conflicts.
+- **`AboutScreen.kt`** — added a small "Track: Google Play" / "Track: Sideload" row under the existing Version row (which owns the 7-tap dev-options reveal). Marked with `=== PHASE3-flavor-split ===` banners so bridge-ui and notif-listener can land their own additions without merge conflicts.
 
-Not shipped in this change: the actual `BridgeAccessibilityService` class (Agent γ) and any tier-gated UI surfaces (Agents δ/ε). The manifests reference `.accessibility.BridgeAccessibilityService` with `tools:ignore="MissingClass"` so the Gradle + AAPT check doesn't block Agent γ's landing.
+Not shipped in this change: the actual `BridgeAccessibilityService` class (Agent accessibility) and any tier-gated UI surfaces (Agents bridge-ui/notif-listener). The manifests reference `.accessibility.BridgeAccessibilityService` with `tools:ignore="MissingClass"` so the Gradle + AAPT check doesn't block Agent accessibility's landing.
 
 Branch: `feature/phase3-beta-bridge-flavor-split`.
 
-## 2026-04-12 — Phase 3 / Wave 1 / γ — accessibility runtime (service + reader + executor + capture)
+## 2026-04-12 — Phase 3 / Wave 1 / accessibility — accessibility runtime (service + reader + executor + capture)
 
-Wave 1 Agent γ (`accessibility-runtime`) landing the phone-side execution layer for the bridge channel. Five new files under a new `com.hermesandroid.relay.accessibility` package plus `BridgeCommandHandler` under `network/handlers`:
+Wave 1 Agent accessibility (`accessibility-runtime`) landing the phone-side execution layer for the bridge channel. Five new files under a new `com.hermesandroid.relay.accessibility` package plus `BridgeCommandHandler` under `network/handlers`:
 
 - **`HermesAccessibilityService`** — master `AccessibilityService` subclass. Self-registers as a `@Volatile` singleton on `onServiceConnected`, clears on unbind/destroy. Caches the foregrounded package from `TYPE_WINDOW_STATE_CHANGED` events (the only event type we consume — content-change events fire thousands/min and we read the tree on demand via `rootInActiveWindow`). Master enable flag lives in DataStore (`bridge_master_enabled`) so UI + safety rails can toggle it without killing the service.
 - **`ScreenReader`** — UI tree → `ScreenContent(rootBounds, nodes[], truncated)`. `@Serializable` output; one `ScreenNode` per interesting node (non-blank text, content description, clickable/longClickable/scrollable/editable). Hard caps: `MAX_NODES=512`, `MAX_TEXT_LEN=2000` per field. `findNodeBoundsByText` and `findFocusedInput` helpers for the executor. Recycles child nodes in a `try/finally` pattern per-iteration.
 - **`ActionExecutor`** — `tap`/`tapText`/`swipe`/`scroll` via `GestureDescription` wrapped in `suspendCancellableCoroutine` so the suspend form actually waits for `GestureResultCallback.onCompleted`. `typeText` uses `ACTION_SET_TEXT` with a `Bundle` arg. `pressKey` maps a curated string vocabulary (`home`/`back`/`recents`/`notifications`/`quick_settings`/`power_dialog`/`lock_screen`) to `AccessibilityService.GLOBAL_ACTION_*` constants — we deliberately don't accept raw `KeyEvent` codes so agents can't inject arbitrary keypresses. `wait(ms)` clamped to 15s. Every method returns `ActionResult(ok, data, error)` so the handler can map 1:1 to HTTP-style status codes.
-- **`ScreenCapture`** — `MediaProjection` → `VirtualDisplay` → `ImageReader` → PNG bytes → multipart upload to `POST /media/upload` on the relay. Crops `rowStride` padding before `Bitmap.copyPixelsFromBuffer`. 2.5s capture timeout. `MediaProjectionHolder` singleton holds the per-session grant — Bridge UI (Agent δ) is responsible for the `ActivityResultLauncher` flow that calls `onGranted(resultCode, data)`. Registers a `MediaProjection.Callback` to null the holder when the system revokes.
+- **`ScreenCapture`** — `MediaProjection` → `VirtualDisplay` → `ImageReader` → PNG bytes → multipart upload to `POST /media/upload` on the relay. Crops `rowStride` padding before `Bitmap.copyPixelsFromBuffer`. 2.5s capture timeout. `MediaProjectionHolder` singleton holds the per-session grant — Bridge UI (Agent bridge-ui) is responsible for the `ActivityResultLauncher` flow that calls `onGranted(resultCode, data)`. Registers a `MediaProjection.Callback` to null the holder when the system revokes.
 - **`BridgeStatusReporter`** — coroutine that emits `bridge.status` envelopes every 30s with `screen_on` (via `PowerManager.isInteractive`), `battery` (`BatteryManager.BATTERY_PROPERTY_CAPACITY` with a sticky-intent fallback for OEM quirks), `current_app` (from the service singleton), and `accessibility_enabled` (true when the service instance is non-null). Owned by `ConnectionViewModel`.
 - **`BridgeCommandHandler`** — routes inbound `bridge.command` envelopes to the executor and emits `bridge.response`. Wire paths: `/ping` (works without the service), `/tap`, `/tap_text`, `/type`, `/swipe`, `/scroll`, `/press_key`, `/wait`, `/screen`, `/screenshot`, `/current_app`. Gates everything except `/ping` and `/current_app` on the master-enable toggle, returning 503 if the service isn't connected or 403 if the soft master is off. `/screen` serializes the full `ScreenContent` via `kotlinx.serialization.json`.
 
-Wired into `ChannelMultiplexer.kt` via a `// === PHASE3-γ ===` marked section (simplified the existing bridge branch that was stubbed with a TODO), and `ConnectionViewModel.kt` gets a matching marker block that instantiates `ScreenCapture`, `BridgeCommandHandler`, and `BridgeStatusReporter`, registers the handler, and starts the reporter. `AndroidManifest.xml` declares the service with `BIND_ACCESSIBILITY_SERVICE` permission + intent filter + `@xml/accessibility_service_config` meta-data (the XML itself is flavor-provided by Agent β). Added `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MEDIA_PROJECTION`, and `POST_NOTIFICATIONS` for the Wave 2 persistent-notification work.
+Wired into `ChannelMultiplexer.kt` via a `// === PHASE3-accessibility ===` marked section (simplified the existing bridge branch that was stubbed with a TODO), and `ConnectionViewModel.kt` gets a matching marker block that instantiates `ScreenCapture`, `BridgeCommandHandler`, and `BridgeStatusReporter`, registers the handler, and starts the reporter. `AndroidManifest.xml` declares the service with `BIND_ACCESSIBILITY_SERVICE` permission + intent filter + `@xml/accessibility_service_config` meta-data (the XML itself is flavor-provided by Agent flavor-split). Added `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MEDIA_PROJECTION`, and `POST_NOTIFICATIONS` for the Wave 2 persistent-notification work.
 
-**Known blocker for δ to wire:** `MediaProjectionManager.createScreenCaptureIntent()` requires an `Activity`-scoped result. `ScreenCapture.createConsentIntent()` exposes the intent; the Bridge screen needs an `ActivityResultLauncher<Intent>` that forwards the result to `MediaProjectionHolder.onGranted(context, resultCode, data)`. Until that lands, `/screenshot` returns 503 with a clear error message.
+**Known blocker for bridge-ui to wire:** `MediaProjectionManager.createScreenCaptureIntent()` requires an `Activity`-scoped result. `ScreenCapture.createConsentIntent()` exposes the intent; the Bridge screen needs an `ActivityResultLauncher<Intent>` that forwards the result to `MediaProjectionHolder.onGranted(context, resultCode, data)`. Until that lands, `/screenshot` returns 503 with a clear error message.
 
-**Known blocker for α to fix:** the relay's `/media/register` endpoint is loopback-only and path-based (see `plugin/relay/media.py`). The phone can't use it — there's no shared filesystem. `ScreenCapture.uploadViaMultipart` POSTs to `/media/upload` (new endpoint; mirrors the `/voice/transcribe` multipart pattern) which doesn't exist yet. Until α ships it, `/screenshot` surfaces a 404 with the exact message `"relay /media/upload endpoint not found — server needs Phase 3 α migration"`. Token extraction uses the same `{"ok": true, "token": "..."}` shape as `/media/register`.
+**Known blocker for bridge-server to fix:** the relay's `/media/register` endpoint is loopback-only and path-based (see `plugin/relay/media.py`). The phone can't use it — there's no shared filesystem. `ScreenCapture.uploadViaMultipart` POSTs to `/media/upload` (new endpoint; mirrors the `/voice/transcribe` multipart pattern) which doesn't exist yet. Until bridge-server ships it, `/screenshot` surfaces a 404 with the exact message `"relay /media/upload endpoint not found — server needs Phase 3 bridge-server migration"`. Token extraction uses the same `{"ok": true, "token": "..."}` shape as `/media/register`.
 
 Branch: `feature/phase3-accessibility-runtime`.
 
-## 2026-04-12 — Phase 3 / Wave 1 / δ — BridgeScreen rewrite (bridge-screen-ui)
+## 2026-04-12 — Phase 3 / Wave 1 / bridge-ui — BridgeScreen rewrite (bridge-screen-ui)
 
 Replaced the `BridgeScreen` "Coming Soon" placeholder with the real Tier-1
-control surface from the Phase 3 plan. Wave 1 Agent δ (`bridge-screen-ui`)
-deliverable — the UI scaffold is now ready to render whatever state Agent γ's
+control surface from the Phase 3 plan. Wave 1 Agent bridge-ui (`bridge-screen-ui`)
+deliverable — the UI scaffold is now ready to render whatever state Agent accessibility's
 `HermesAccessibilityService` exposes once its runtime lands.
 
 New files:
@@ -336,16 +359,16 @@ New files:
   `Settings.canDrawOverlays`, notification listener via
   `enabled_notification_listeners`. Seeds `BridgeStatus` on init from
   `PowerManager.isInteractive` + `BatteryManager.BATTERY_PROPERTY_CAPACITY`
-  so the card isn't empty before γ lands. Four explicit `TODO(γ-handoff)`
+  so the card isn't empty before accessibility lands. Four explicit `TODO(accessibility-handoff)`
   markers documenting the StateFlow/class-name/activity-writer surface that
-  γ needs to expose for final wiring.
+  accessibility needs to expose for final wiring.
 - `app/src/main/kotlin/.../ui/components/BridgeMasterToggle.kt` — headline
   Switch card with status inlines (device / battery / screen / current app),
   explanation dialog (required by Play Store a11y review), and a11y-granted
   gate so users can't flip it on before enabling the service.
 - `app/src/main/kotlin/.../ui/components/BridgeStatusCard.kt` — standalone
   status card with `ConnectionStatusBadge` integration. Usable independently
-  of the master toggle so ζ can re-arrange the cards without losing state.
+  of the master toggle so safety-rails can re-arrange the cards without losing state.
 - `app/src/main/kotlin/.../ui/components/BridgePermissionChecklist.kt` —
   four-row checklist (Accessibility / Screen Capture / Overlay / Notification
   Listener) with tap-to-open Intent launchers wrapped in `runCatching` for
@@ -356,50 +379,50 @@ New files:
   `LazyColumn` (bounded at `heightIn(max = 320.dp)`) with tap-to-expand row
   showing full timestamp, status, result text, and optional screenshot token.
   `java.time.DateTimeFormatter` for `HH:mm:ss` / `yyyy-MM-dd HH:mm:ss`.
-  Stubbed screenshot thumbnail rendering with a TODO pointing at γ's
+  Stubbed screenshot thumbnail rendering with a TODO pointing at accessibility's
   MediaRegistry upload path.
 
-Shared-concern edits (marked with `PHASE3-δ:` banners):
+Shared-concern edits (marked with `PHASE3-bridge-ui:` banners):
 
 - `app/src/main/kotlin/.../ui/RelayApp.kt` — the existing `BridgeScreen()`
-  call wraps in the δ marker. Signature compatible: `BridgeScreen` defaults
+  call wraps in the bridge-ui marker. Signature compatible: `BridgeScreen` defaults
   its ViewModel via `viewModel()`, so no new nav-graph plumbing needed.
 
 Each new component carries a `@Preview` (or two — e.g.,
 `BridgeMasterTogglePreviewOn` vs `PreviewBlocked`) so Bailey can iterate in
 Android Studio's preview pane without rebuilding the whole app.
 
-γ-handoff points (in priority order, documented in `BridgeViewModel` KDoc):
+accessibility-handoff points (in priority order, documented in `BridgeViewModel` KDoc):
 
-1. `bridgeStatus` StateFlow — δ stubs a best-effort read from system APIs;
-   γ replaces with the real HermesAccessibilityService status flow.
-2. `A11Y_SERVICE_CLASS` constant — δ hard-codes
+1. `bridgeStatus` StateFlow — bridge-ui stubs a best-effort read from system APIs;
+   accessibility replaces with the real HermesAccessibilityService status flow.
+2. `A11Y_SERVICE_CLASS` constant — bridge-ui hard-codes
    `"com.hermesandroid.relay.accessibility.HermesAccessibilityService"`.
-   γ confirms the final FQCN.
-3. `recordActivity` write path — γ's command dispatcher calls
+   accessibility confirms the final FQCN.
+3. `recordActivity` write path — accessibility's command dispatcher calls
    `BridgeViewModel.recordActivity(entry)` on every `bridge.command` to
    populate the activity log. Until then the log stays empty and the empty-
    state copy shows.
-4. Master toggle read from γ — γ's service reads `bridge_master_enabled` from
+4. Master toggle read from accessibility — accessibility's service reads `bridge_master_enabled` from
    `BridgePreferencesRepository.settings` and treats it as the runtime disable
-   switch. No extra wiring needed from δ; γ just imports the repo.
+   switch. No extra wiring needed from bridge-ui; accessibility just imports the repo.
 
-Build-flavor flags (`BuildFlavor.bridgeTierN` from β) are not referenced yet
-— this worktree pre-dates β's landing. Once β's object lands on main, δ's
+Build-flavor flags (`BuildFlavor.bridgeTierN` from flavor-split) are not referenced yet
+— this worktree pre-dates flavor-split's landing. Once flavor-split's object lands on main, bridge-ui's
 components remain compatible (they don't tier-gate anything; Tier 1 is
 always-on in both flavors per the plan).
 
-Safety card is a placeholder stub — Agent ζ (Wave 2) owns the real safety
-UI. δ's `SafetyPlaceholderCard` just says "Configure in Bridge Safety
+Safety card is a placeholder stub — Agent safety-rails (Wave 2) owns the real safety
+UI. bridge-ui's `SafetyPlaceholderCard` just says "Configure in Bridge Safety
 Settings" with a Wave-2 teaser subtitle.
 
 Branch: `feature/phase3-delta-bridge-screen-ui`.
 
-## 2026-04-12 — Phase 3 / Wave 1 / ε — notification companion (opt-in triage helper)
+## 2026-04-12 — Phase 3 / Wave 1 / notif-listener — notification companion (opt-in triage helper)
 
 Adds an opt-in helper that lets the user's Hermes assistant read notifications they've explicitly granted access to via Android's standard `NotificationListenerService` API — the same one Wear OS, Android Auto, and Tasker have used for over a decade. Disabled by default; the user controls grant + revoke via Android Settings → Notification access.
 
-**Three pieces, all marked with `PHASE3-ε` block markers in shared files:**
+**Three pieces, all marked with `PHASE3-notif-listener` block markers in shared files:**
 
 1. **Phone — `NotificationListenerService` + Compose settings screen.** New `app/src/main/kotlin/.../notifications/` package with `HermesNotificationCompanion` (the bound service) + `NotificationModels` (`@Serializable NotificationEntry`) + `ui/screens/NotificationCompanionSettingsScreen` (About / Status / Test sections, mirrors `VoiceSettingsScreen` style). The service buffers up to 50 envelopes in a `ConcurrentLinkedQueue` if `companion.multiplexer` isn't wired yet (cold-start ordering), drains on the next `onNotificationPosted`, then sends via `multiplexer.sendNotification(envelope)` — a thin new wrapper in `ChannelMultiplexer` that fast-paths to no-op when `sendCallback == null` (relay offline). Notifications with empty title+text are skipped (background-sync placeholders that just confuse the LLM). The `Status` row uses `LifecycleEventObserver(ON_RESUME)` so the grant state updates immediately when the user comes back from Android Settings.
 

@@ -1,7 +1,7 @@
 package com.hermesandroid.relay.voice
 
 /**
- * === PHASE3-η (sideload flavor): keyword classifier ===
+ * === PHASE3-voice-intents (sideload flavor): keyword classifier ===
  *
  * Lightweight regex/keyword classifier for phone-control intents in voice
  * mode. Deliberately **not** an LLM — we want deterministic, fast, offline,
@@ -156,4 +156,4 @@ internal object VoiceIntentClassifier {
     }
 }
 
-// === END PHASE3-η (sideload classifier) ===
+// === END PHASE3-voice-intents (sideload classifier) ===

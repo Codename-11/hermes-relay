@@ -31,7 +31,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 
 /**
- * Phase 3 — ζ `bridge-safety-rails`
+ * Phase 3 — safety-rails `bridge-safety-rails`
  *
  * Destructive-verb confirmation modal content. Rendered inside a
  * [BridgeStatusOverlay] SYSTEM_ALERT_WINDOW ComposeView — NOT a Compose

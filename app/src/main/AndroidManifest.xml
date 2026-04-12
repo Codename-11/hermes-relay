@@ -7,20 +7,20 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
-    <!-- === PHASE3-γ: AccessibilityService + bridge permissions === -->
+    <!-- === PHASE3-accessibility: AccessibilityService + bridge permissions === -->
     <!-- BIND_ACCESSIBILITY_SERVICE is protected by the system — only
          granted to services that declare android:permission on their
          <service> tag (see below). FOREGROUND_SERVICE* are for the
-         persistent notification that Agent ζ will wire in Wave 2 for
+         persistent notification that Agent safety-rails will wire in Wave 2 for
          MediaProjection-backed screenshots. POST_NOTIFICATIONS is required
          on API 33+ for that same foreground-service notification. -->
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- === END PHASE3-γ === -->
+    <!-- === END PHASE3-accessibility === -->
 
-    <!-- === PHASE3-ζ: safety service + overlay === -->
+    <!-- === PHASE3-safety-rails: safety service + overlay === -->
     <!-- SYSTEM_ALERT_WINDOW is user-granted via Settings.ACTION_MANAGE_OVERLAY_PERMISSION.
          Used for (a) the destructive-verb confirmation modal that must be
          visible even when Hermes isn't in the foreground, and (b) the optional
@@ -33,7 +33,7 @@
          because the specialUse type needs its own declared permission.  -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <!-- === END PHASE3-ζ === -->
+    <!-- === END PHASE3-safety-rails === -->
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
@@ -67,10 +67,10 @@
                 android:resource="@xml/file_provider_paths" />
         </provider>
 
-        <!-- === PHASE3-γ: AccessibilityService declaration === -->
+        <!-- === PHASE3-accessibility: AccessibilityService declaration === -->
         <!-- The @xml/accessibility_service_config resource is provided by
              the flavor-specific source sets (app/src/googlePlay/ and
-             app/src/sideload/) owned by Agent β. Each flavor declares its
+             app/src/sideload/) owned by Agent flavor-split. Each flavor declares its
              own accessibility use-case description and flag bitset — the
              googlePlay track declares a conservative "notifications + reply
              with confirmation" use case, the sideload track declares the
@@ -89,9 +89,9 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service_config" />
         </service>
-        <!-- === END PHASE3-γ === -->
+        <!-- === END PHASE3-accessibility === -->
 
-        <!-- === PHASE3-ε: notification companion service === -->
+        <!-- === PHASE3-notif-listener: notification companion service === -->
         <service
             android:name=".notifications.HermesNotificationCompanion"
             android:label="@string/notification_companion_label"
@@ -101,9 +101,9 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
-        <!-- === END PHASE3-ε === -->
+        <!-- === END PHASE3-notif-listener === -->
 
-        <!-- === PHASE3-ζ: safety service + overlay === -->
+        <!-- === PHASE3-safety-rails: safety service + overlay === -->
         <!-- BridgeForegroundService is a plain (non-exported) foreground
              service driven by BridgeViewModel based on the master toggle.
              It owns the persistent "Hermes agent has device control"
@@ -121,7 +121,7 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Persistent indicator that the Hermes agent has device control, per the Tier 5 safety-rails design." />
         </service>
-        <!-- === END PHASE3-ζ === -->
+        <!-- === END PHASE3-safety-rails === -->
 
     </application>
 

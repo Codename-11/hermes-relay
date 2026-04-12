@@ -26,11 +26,11 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
-// === PHASE3-ζ: safety summary card ===
+// === PHASE3-safety-rails: safety summary card ===
 import com.hermesandroid.relay.bridge.BridgeSafetyManager
 import com.hermesandroid.relay.data.BridgeSafetySettings
 import com.hermesandroid.relay.ui.components.BridgeSafetySummaryCard
-// === END PHASE3-ζ ===
+// === END PHASE3-safety-rails ===
 import com.hermesandroid.relay.ui.components.BridgeActivityLog
 import com.hermesandroid.relay.ui.components.BridgeMasterToggle
 import com.hermesandroid.relay.ui.components.BridgePermissionChecklist
@@ -38,7 +38,7 @@ import com.hermesandroid.relay.ui.components.BridgeStatusCard
 import com.hermesandroid.relay.viewmodel.BridgeViewModel
 
 /**
- * Bridge tab — phase 3 Wave 1 rewrite (Agent δ, `bridge-screen-ui`).
+ * Bridge tab — phase 3 Wave 1 rewrite (Agent bridge-ui, `bridge-screen-ui`).
  *
  * Replaces the Phase 0 "Coming Soon" placeholder with the real control
  * surface described in `Plans/Phase 3 — Bridge Channel.md` §5. Four stacked
@@ -47,13 +47,13 @@ import com.hermesandroid.relay.viewmodel.BridgeViewModel
  *   1. [BridgeMasterToggle]        — "Allow Agent Control" + live status
  *   2. [BridgePermissionChecklist] — accessibility / capture / overlay / notif
  *   3. [BridgeActivityLog]         — scrollable recent-command history
- *   4. Safety placeholder          — stub owned by Agent ζ in Wave 2
+ *   4. Safety placeholder          — stub owned by Agent safety-rails in Wave 2
  *
  * State comes from [BridgeViewModel] which in turn reads from the
  * [com.hermesandroid.relay.data.BridgePreferencesRepository] DataStore for
  * anything persistent, and stubs the live bridge-runtime state until
- * Agent γ's `HermesAccessibilityService` exposes it. See [BridgeViewModel]'s
- * KDoc for the exact γ-handoff surface.
+ * Agent accessibility's `HermesAccessibilityService` exposes it. See [BridgeViewModel]'s
+ * KDoc for the exact accessibility-handoff surface.
  *
  * Lifecycle: we re-probe permission status on every ON_RESUME so that
  * returning from Android Settings immediately flips the accessibility
@@ -63,16 +63,16 @@ import com.hermesandroid.relay.viewmodel.BridgeViewModel
 @Composable
 fun BridgeScreen(
     viewModel: BridgeViewModel = viewModel(),
-    // === PHASE3-ζ: safety summary card ===
+    // === PHASE3-safety-rails: safety summary card ===
     onNavigateToBridgeSafety: () -> Unit = {},
-    // === END PHASE3-ζ ===
+    // === END PHASE3-safety-rails ===
 ) {
     val masterToggle by viewModel.masterToggle.collectAsState()
     val permissionStatus by viewModel.permissionStatus.collectAsState()
     val bridgeStatus by viewModel.bridgeStatus.collectAsState()
     val activityLog by viewModel.activityLog.collectAsState()
 
-    // === PHASE3-ζ: safety summary card ===
+    // === PHASE3-safety-rails: safety summary card ===
     // Pulls live safety settings + countdown off the process-wide
     // BridgeSafetyManager singleton. No ViewModel wiring required — the
     // manager is installed by ConnectionViewModel at app start.
@@ -83,7 +83,7 @@ fun BridgeScreen(
     val autoDisableAtMs by (safetyManager?.autoDisableAtMs
         ?: remember { kotlinx.coroutines.flow.MutableStateFlow<Long?>(null) })
         .collectAsState()
-    // === END PHASE3-ζ ===
+    // === END PHASE3-safety-rails ===
 
     // Re-run permission + system-status probes whenever the screen resumes.
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -124,7 +124,7 @@ fun BridgeScreen(
 
             BridgeStatusCard(
                 status = bridgeStatus,
-                // TODO(γ-handoff): once γ exposes a `bridgeConnected`
+                // TODO(accessibility-handoff): once accessibility exposes a `bridgeConnected`
                 // StateFlow from HermesAccessibilityService, drive this off
                 // that instead of the a11y-granted flag.
                 isConnected = permissionStatus.accessibilityServiceEnabled && masterToggle,
@@ -137,13 +137,13 @@ fun BridgeScreen(
                 onClear = { viewModel.clearActivityLog() }
             )
 
-            // === PHASE3-ζ: safety summary card ===
+            // === PHASE3-safety-rails: safety summary card ===
             BridgeSafetySummaryCard(
                 settings = safetySettings,
                 autoDisableAtMs = autoDisableAtMs,
                 onManage = onNavigateToBridgeSafety,
             )
-            // === END PHASE3-ζ ===
+            // === END PHASE3-safety-rails ===
 
             Spacer(modifier = Modifier.height(16.dp))
         }

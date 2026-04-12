@@ -38,7 +38,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
  * Pattern: a static `companion object` reference to the bound service
  * instance + a static [multiplexer] slot that the ViewModel injects.
  * This is the standard Android service-to-app handoff (matches
- * `HermesAccessibilityService` in agent γ's worktree).
+ * `HermesAccessibilityService` in agent accessibility's worktree).
  */
 class HermesNotificationCompanion : NotificationListenerService() {
 

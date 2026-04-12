@@ -5,7 +5,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import kotlinx.serialization.Serializable
 
 /**
- * Phase 3 — γ `accessibility-runtime`
+ * Phase 3 — accessibility `accessibility-runtime`
  *
  * Walks the active-window `AccessibilityNodeInfo` tree and produces a
  * structured, serializable snapshot the agent can reason about.

@@ -1,7 +1,7 @@
 package com.hermesandroid.relay.voice
 
 /**
- * === PHASE3-η: voice → bridge intent routing ===
+ * === PHASE3-voice-intents: voice → bridge intent routing ===
  *
  * Handles transcribed voice utterances that look like phone-control intents
  * ("text Sam I'll be 10 min late", "open camera", "scroll down"...) and
@@ -88,4 +88,4 @@ sealed class IntentResult {
     data object NotApplicable : IntentResult()
 }
 
-// === END PHASE3-η ===
+// === END PHASE3-voice-intents ===

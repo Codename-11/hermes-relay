@@ -18,7 +18,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * Phase 3 — γ `accessibility-runtime`
+ * Phase 3 — accessibility `accessibility-runtime`
  *
  * Coroutine-driven status reporter. Emits a `bridge.status` envelope every
  * [TICK_MS] (default 30 seconds) describing the phone's current state:

@@ -43,7 +43,7 @@ import com.hermesandroid.relay.viewmodel.BridgePermissionStatus
  * Settings screen so the user can grant the permission without leaving
  * their muscle-memory path.
  *
- * Phase 3 Wave 1 — δ (`bridge-screen-ui`). Uses vector Material icons to
+ * Phase 3 Wave 1 — bridge-ui (`bridge-screen-ui`). Uses vector Material icons to
  * stay inside the already-shipped icon set (no dependency on
  * compose-icons-extended, which has bitten us before — see
  * `fix(settings): revert ChevronRight…`).
@@ -93,7 +93,7 @@ fun BridgePermissionChecklist(
                 subtitle = "Take screenshots via MediaProjection (per-session)",
                 granted = status.screenCapturePermitted,
                 // MediaProjection has no direct Settings entry — the consent
-                // dialog fires each time γ's ScreenCapture.kt asks for it.
+                // dialog fires each time accessibility's ScreenCapture.kt asks for it.
                 // Tapping this row is informational-only until Tier 1 lands.
                 onClick = null
             )

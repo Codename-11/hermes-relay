@@ -3,7 +3,7 @@ package com.hermesandroid.relay.voice
 import com.hermesandroid.relay.network.ChannelMultiplexer
 
 /**
- * === PHASE3-η (sideload flavor): factory ===
+ * === PHASE3-voice-intents (sideload flavor): factory ===
  *
  * Flavor-specific factory function that [com.hermesandroid.relay.viewmodel.VoiceViewModel]
  * calls exactly once during `initialize()`. The sideload build returns the
@@ -17,4 +17,4 @@ fun createVoiceBridgeIntentHandler(
     multiplexer: ChannelMultiplexer?,
 ): VoiceBridgeIntentHandler = RealVoiceBridgeIntentHandler(multiplexer)
 
-// === END PHASE3-η (sideload factory) ===
+// === END PHASE3-voice-intents (sideload factory) ===

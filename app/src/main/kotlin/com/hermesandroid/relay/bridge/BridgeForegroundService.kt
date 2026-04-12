@@ -21,7 +21,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 /**
- * Phase 3 — ζ `bridge-safety-rails`
+ * Phase 3 — safety-rails `bridge-safety-rails`
  *
  * Persistent foreground service that signals "Hermes agent has device
  * control" to the user whenever the bridge master toggle is on. The
@@ -42,7 +42,7 @@ import kotlinx.coroutines.launch
  * manifest `<property name="...SPECIAL_USE"/>`.
  *
  * We deliberately do NOT use `FOREGROUND_SERVICE_MEDIA_PROJECTION` here
- * even though γ's `ScreenCapture.kt` uses MediaProjection — that
+ * even though accessibility's `ScreenCapture.kt` uses MediaProjection — that
  * permission is already declared, and binding the foreground service to
  * mediaProjection would couple its lifecycle to the current screen-grant,
  * which doesn't match our "always on while bridge is active" semantics.
@@ -111,14 +111,18 @@ class BridgeForegroundService : Service() {
                 return START_STICKY
             }
             ACTION_OPEN_SETTINGS -> {
-                Log.i(TAG, "ACTION_OPEN_SETTINGS → launching Settings activity")
-                // TODO(ζ-followup): wire a deep-link extra on MainActivity
-                // so we can jump straight to BridgeSafetySettingsScreen.
-                // Today we just reopen the app — the user taps Settings →
-                // Bridge safety from there. Two taps, but it keeps this
-                // service decoupled from nav internals.
+                Log.i(TAG, "ACTION_OPEN_SETTINGS → launching MainActivity with deep-link to bridge safety")
+                // PHASE3-safety-rails-followup: deep-link to BridgeSafetySettingsScreen.
+                // MainActivity reads EXTRA_NAV_ROUTE in onCreate / onNewIntent
+                // and emits it on the NavRouteRequest SharedFlow, which RelayApp
+                // collects and forwards to the NavController. The route string
+                // is hardcoded here on purpose to avoid pulling the entire
+                // ui.RelayApp graph into the bridge service classpath — if you
+                // change Screen.BridgeSafetySettings.route in RelayApp.kt,
+                // change it here too.
                 val launch = Intent(this, MainActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    putExtra(MainActivity.EXTRA_NAV_ROUTE, "settings/bridge_safety")
                 }
                 runCatching { startActivity(launch) }
                 return START_STICKY

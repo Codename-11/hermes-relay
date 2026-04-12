@@ -24,7 +24,7 @@ import com.hermesandroid.relay.ui.components.DestructiveVerbConfirmDialog
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Phase 3 — ζ `bridge-safety-rails`
+ * Phase 3 — safety-rails `bridge-safety-rails`
  *
  * WindowManager-backed overlay host. Serves two jobs in one place so we
  * only ever attach a single `SYSTEM_ALERT_WINDOW` View per process:

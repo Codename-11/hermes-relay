@@ -1,7 +1,7 @@
 package com.hermesandroid.relay.voice
 
 /**
- * === PHASE3-η (googlePlay flavor): no-op voice→bridge handler ===
+ * === PHASE3-voice-intents (googlePlay flavor): no-op voice→bridge handler ===
  *
  * On the Google Play track we ship the conservative feature description:
  * no accessibility-service usage, no device-control voice routing.
@@ -26,4 +26,4 @@ internal class NoopVoiceBridgeIntentHandler : VoiceBridgeIntentHandler {
     }
 }
 
-// === END PHASE3-η (googlePlay) ===
+// === END PHASE3-voice-intents (googlePlay) ===

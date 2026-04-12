@@ -27,11 +27,11 @@ import com.hermesandroid.relay.network.HermesApiClient
 import com.hermesandroid.relay.network.ServerCapabilities
 import com.hermesandroid.relay.network.RelayHttpClient
 import com.hermesandroid.relay.network.handlers.ChatHandler
-// === PHASE3-γ: bridge channel wiring ===
+// === PHASE3-accessibility: bridge channel wiring ===
 import com.hermesandroid.relay.accessibility.BridgeStatusReporter
 import com.hermesandroid.relay.accessibility.ScreenCapture
 import com.hermesandroid.relay.network.handlers.BridgeCommandHandler
-// === END PHASE3-γ ===
+// === END PHASE3-accessibility ===
 import com.hermesandroid.relay.util.MediaCacheWriter
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -444,7 +444,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    // === PHASE3-γ: bridge channel wiring ===
+    // === PHASE3-accessibility: bridge channel wiring ===
     // ScreenCapture needs a MediaProjection grant from the Bridge UI
     // (MediaProjectionHolder) — it's nullable here so the handler can be
     // constructed before the user has consented to screen capture.
@@ -462,7 +462,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         },
     )
 
-    // === PHASE3-ζ: safety manager + overlay wiring ===
+    // === PHASE3-safety-rails: safety manager + overlay wiring ===
     // Process-wide singletons — install() is idempotent and the overlay
     // host wires itself into ConfirmationOverlayHost.instance so the
     // safety manager can reach it without a hard ref.
@@ -476,15 +476,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     /** Exposed for BridgeScreen → safety summary card. */
     val bridgeSafety: com.hermesandroid.relay.bridge.BridgeSafetyManager get() = bridgeSafetyManager
-    // === END PHASE3-ζ ===
+    // === END PHASE3-safety-rails ===
 
     private val bridgeCommandHandler = BridgeCommandHandler(
         multiplexer = multiplexer,
         scope = viewModelScope,
         screenCapture = screenCapture,
-        // === PHASE3-ζ: safety enforcement ===
+        // === PHASE3-safety-rails: safety enforcement ===
         safetyManager = bridgeSafetyManager,
-        // === END PHASE3-ζ ===
+        // === END PHASE3-safety-rails ===
     )
 
     val bridgeStatusReporter = BridgeStatusReporter(
@@ -492,7 +492,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         multiplexer = multiplexer,
         scope = viewModelScope,
     )
-    // === END PHASE3-γ (plus ζ wiring above) ===
+    // === END PHASE3-accessibility (plus safety-rails wiring above) ===
 
     init {
         // Wire multiplexer to connection manager (for relay/bridge/terminal)
@@ -505,7 +505,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             authManager.authenticate()
         }
 
-        // === PHASE3-γ: bridge handler registration ===
+        // === PHASE3-accessibility: bridge handler registration ===
         // Route every incoming `bridge` channel envelope to the command
         // handler. Registering unconditionally is safe — the handler
         // itself checks whether HermesAccessibilityService is running and
@@ -517,9 +517,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             bridgeCommandHandler.onMessage(envelope)
         }
         bridgeStatusReporter.start()
-        // === END PHASE3-γ ===
+        // === END PHASE3-accessibility ===
 
-        // === PHASE3-ε-followup: notification companion multiplexer wiring ===
+        // === PHASE3-notif-listener-followup: notification companion multiplexer wiring ===
         // The bound NotificationListenerService instance buffers up to 50
         // envelopes in its own pendingEnvelopes queue while this slot is
         // null, so wiring it from here (rather than at service-bind time)
@@ -528,7 +528,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // own sendCallback gating handles the relay-disconnected case.
         com.hermesandroid.relay.notifications.HermesNotificationCompanion
             .multiplexer = multiplexer
-        // === END PHASE3-ε-followup ===
+        // === END PHASE3-notif-listener-followup ===
 
         // Load saved state — split into fast (UI-blocking) and slow (network) paths
         viewModelScope.launch {

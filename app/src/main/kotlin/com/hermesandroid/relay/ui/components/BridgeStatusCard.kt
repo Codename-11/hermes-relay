@@ -25,8 +25,8 @@ import com.hermesandroid.relay.viewmodel.BridgeStatus
  * glance" block when there's enough info to show but the user hasn't touched
  * the master toggle yet.
  *
- * Phase 3 Wave 1 — δ (`bridge-screen-ui`). Kept distinct from
- * [BridgeMasterToggle] so that Agent ζ in Wave 2 can relocate the master
+ * Phase 3 Wave 1 — bridge-ui (`bridge-screen-ui`). Kept distinct from
+ * [BridgeMasterToggle] so that Agent safety-rails in Wave 2 can relocate the master
  * toggle without losing the status surface (and so we can reuse this card
  * in the Settings → Connection section later if desired).
  */

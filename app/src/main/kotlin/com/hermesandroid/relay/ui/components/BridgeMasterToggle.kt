@@ -38,7 +38,7 @@ import com.hermesandroid.relay.viewmodel.BridgeStatus
 /**
  * Master "Allow Agent Control" card — the headline of the Bridge tab.
  *
- * Phase 3 Wave 1 — δ (`bridge-screen-ui`). Visual style mirrors the status
+ * Phase 3 Wave 1 — bridge-ui (`bridge-screen-ui`). Visual style mirrors the status
  * cards in `PairedDevicesScreen`: surfaceVariant background, 16dp padding,
  * 10dp row spacing. Uses [ConnectionStatusBadge] for the pulsing status dot
  * so the Bridge tab looks visually consistent with the Settings → Connection

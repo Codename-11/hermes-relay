@@ -3,7 +3,7 @@ package com.hermesandroid.relay.voice
 import com.hermesandroid.relay.network.ChannelMultiplexer
 
 /**
- * === PHASE3-η (googlePlay flavor): factory ===
+ * === PHASE3-voice-intents (googlePlay flavor): factory ===
  *
  * Flavor-specific factory function that [com.hermesandroid.relay.viewmodel.VoiceViewModel]
  * calls exactly once during `initialize()`. The Play build always returns
@@ -21,4 +21,4 @@ fun createVoiceBridgeIntentHandler(
     multiplexer: ChannelMultiplexer?,
 ): VoiceBridgeIntentHandler = NoopVoiceBridgeIntentHandler()
 
-// === END PHASE3-η (googlePlay) ===
+// === END PHASE3-voice-intents (googlePlay) ===

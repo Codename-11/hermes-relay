@@ -84,9 +84,9 @@ class RelayServer:
         self.chat = ChatHandler(webapi_url=config.webapi_url)
         self.terminal = TerminalHandler(default_shell=config.terminal_shell)
         self.bridge = BridgeHandler()
-        # === PHASE3-ε: notifications channel ===
+        # === PHASE3-notif-listener: notifications channel ===
         self.notifications = NotificationsChannel()
-        # === END PHASE3-ε ===
+        # === END PHASE3-notif-listener ===
 
         # Connected clients: ws → session token
         self._clients: dict[web.WebSocketResponse, str] = {}
@@ -650,9 +650,9 @@ async def handle_media_register(request: web.Request) -> web.Response:
     )
 
 
-# === PHASE3-α-followup: /media/upload ===
+# === PHASE3-bridge-server-followup: /media/upload ===
 #
-# γ's ScreenCapture (the phone-side accessibility runtime) needs to push
+# accessibility's ScreenCapture (the phone-side accessibility runtime) needs to push
 # screenshot bytes to the relay over the network. The pre-existing
 # /media/register endpoint is loopback + path-based — it assumes the
 # caller already has the bytes on the relay's filesystem, which is true
@@ -796,7 +796,7 @@ async def handle_media_upload(request: web.Request) -> web.Response:
     )
 
 
-# === END PHASE3-α-followup ===
+# === END PHASE3-bridge-server-followup ===
 
 
 async def handle_media_get(request: web.Request) -> web.StreamResponse:
@@ -969,7 +969,7 @@ async def handle_media_by_path(request: web.Request) -> web.StreamResponse:
     return web.FileResponse(real_path, headers=headers)
 
 
-# === PHASE3-α: bridge HTTP routes ===
+# === PHASE3-bridge-server: bridge HTTP routes ===
 #
 # The unified relay exposes the same HTTP shape as the legacy standalone
 # relay on port 8766 so ``plugin/tools/android_tool.py`` only needs a
@@ -1135,10 +1135,10 @@ async def handle_bridge_setup(request: web.Request) -> web.Response:
     return await _bridge_dispatch(request, "/setup")
 
 
-# === END PHASE3-α ===
+# === END PHASE3-bridge-server ===
 
 
-# === PHASE3-ε: notifications HTTP routes ===
+# === PHASE3-notif-listener: notifications HTTP routes ===
 #
 # Bearer-auth'd HTTP read endpoint for the cached notification deque
 # managed by ``NotificationsChannel``. The agent calls this through the
@@ -1202,7 +1202,7 @@ async def handle_notifications_recent(request: web.Request) -> web.Response:
     )
 
 
-# === END PHASE3-ε ===
+# === END PHASE3-notif-listener ===
 
 
 # ── WebSocket handler ────────────────────────────────────────────────────────
@@ -1472,11 +1472,11 @@ async def _on_message(
     elif channel == "bridge":
         task = asyncio.create_task(server.bridge.handle(ws, envelope))
         _track_task(server, ws, task)
-    # === PHASE3-ε: notifications channel dispatch ===
+    # === PHASE3-notif-listener: notifications channel dispatch ===
     elif channel == "notifications":
         task = asyncio.create_task(server.notifications.handle(ws, envelope))
         _track_task(server, ws, task)
-    # === END PHASE3-ε ===
+    # === END PHASE3-notif-listener ===
     else:
         logger.warning("Unknown channel: %s", channel)
         await _send_system(
@@ -1555,13 +1555,13 @@ async def _on_disconnect(
     token = server._clients.pop(ws, None)
     tasks = server._client_tasks.pop(ws, set())
 
-    # === PHASE3-α: fail in-flight bridge commands on phone disconnect ===
+    # === PHASE3-bridge-server: fail in-flight bridge commands on phone disconnect ===
     # If this ws was the currently-latched phone, detach_ws flips phone_ws
     # back to None and resolves every pending bridge command future with a
     # ConnectionError so the HTTP side returns 502 instead of hanging to
     # the 30s timeout on every in-flight request_id.
     await server.bridge.detach_ws(ws, reason=f"client {remote_ip} disconnected")
-    # === END PHASE3-α ===
+    # === END PHASE3-bridge-server ===
 
     # Cancel all in-flight tasks for this client
     for task in tasks:
@@ -1611,9 +1611,9 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_delete("/sessions/{token_prefix}", handle_sessions_revoke)
     app.router.add_patch("/sessions/{token_prefix}", handle_sessions_extend)
     app.router.add_post("/media/register", handle_media_register)
-    # === PHASE3-α-followup: /media/upload ===
+    # === PHASE3-bridge-server-followup: /media/upload ===
     app.router.add_post("/media/upload", handle_media_upload)
-    # === END PHASE3-α-followup ===
+    # === END PHASE3-bridge-server-followup ===
     # Order matters: the fixed-path "/media/by-path" route must be declared
     # before the wildcard "/media/{token}" route or aiohttp will swallow
     # "by-path" as a token literal and handle_media_get will 404.
@@ -1637,7 +1637,7 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_post("/voice/synthesize", _voice_synthesize)
     app.router.add_get("/voice/config", _voice_config)
 
-    # === PHASE3-α: bridge HTTP routes ===
+    # === PHASE3-bridge-server: bridge HTTP routes ===
     # 14 endpoints mirrored from the legacy standalone relay on port 8766.
     # Tool-side caller is plugin/tools/android_tool.py — only its
     # BRIDGE_URL changes, the wire shape is byte-for-byte identical.
@@ -1656,11 +1656,11 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_post("/scroll", handle_bridge_scroll)
     app.router.add_post("/wait", handle_bridge_wait)
     app.router.add_post("/setup", handle_bridge_setup)
-    # === END PHASE3-α ===
+    # === END PHASE3-bridge-server ===
 
-    # === PHASE3-ε: notifications HTTP routes ===
+    # === PHASE3-notif-listener: notifications HTTP routes ===
     app.router.add_get("/notifications/recent", handle_notifications_recent)
-    # === END PHASE3-ε ===
+    # === END PHASE3-notif-listener ===
 
     # Cleanup on shutdown
     app.on_shutdown.append(_on_app_shutdown)
