@@ -1,5 +1,6 @@
 # Hermes-Relay — Dev Log
 
+<<<<<<< HEAD
 ## 2026-04-12 — Phase 3 / Wave 1 hotfix — dedupe AccessibilityService entry; Gradle deprecation cleanup
 
 Two small fixes discovered while smoke-testing Wave 1 in Android Studio.
@@ -114,6 +115,71 @@ Branch: `feature/phase3-zeta-safety-rails` (off `main` @ 8d86a62 which has Wave 
 - Wire a deep-link extra on `MainActivity` so `BridgeForegroundService.ACTION_OPEN_SETTINGS` lands directly on `BridgeSafetySettingsScreen` (currently opens the app and the user taps through).
 - Record `BridgeActivityEntry` rows for blocked-package / denied-confirmation events so the bridge activity log shows *why* an agent command failed.
 - Wave 3 can add tests: unit tests for the destructive-verb regex word-boundary matching, an instrumented test for the foreground-service lifecycle, and a fake overlay host for `awaitConfirmation` timeout behavior.
+
+## 2026-04-12 — Phase 3 / Wave 2 / η: voice→bridge intent routing (sideload-only, Tier 3)
+
+Wired voice mode to optionally route transcribed utterances through the bridge channel instead of chat. When the user holds the voice button and says "text Sam I'll be 10 min late" on a **sideload** build, a lightweight keyword classifier recognizes the SMS intent, the voice layer speaks a confirmation ("About to text Sam: I'll be 10 min late. Say cancel to stop."), and a `bridge` envelope is queued for dispatch after a 5-second cancel window. "Open camera" / "scroll down" / "go back" / etc. execute immediately with no countdown.
+
+**Cross-flavor compile pattern.** This is the first Wave 2 surface to exercise the `googlePlay` vs `sideload` flavor split that agent β is wiring up in parallel. `VoiceBridgeIntentHandler` is an interface + sealed `IntentResult` in `main/` so `VoiceViewModel` has a stable compile-time reference. Two separate implementations ship per-flavor with matching FQCNs and a shared top-level factory function `createVoiceBridgeIntentHandler(multiplexer)`:
+
+- `app/src/googlePlay/kotlin/.../VoiceBridgeIntentHandlerImpl.kt` — `NoopVoiceBridgeIntentHandler` always returns `IntentResult.NotApplicable`, never touches the bridge, never references any device-control / accessibility class. Keeps the Play APK honest with its conservative feature description.
+- `app/src/sideload/kotlin/.../VoiceBridgeIntentHandlerImpl.kt` — `RealVoiceBridgeIntentHandler` + `VoiceIntentClassifier` with keyword/regex patterns for SendSms / OpenApp / Tap / Scroll / Back / Home. Destructive intents go through the 5 s countdown; safe intents dispatch immediately.
+
+`VoiceViewModel.initialize()` calls the factory exactly once; the ViewModel only ever holds the interface reference. No reflection, no runtime flavor check — Gradle picks the right impl at build time via the source-set flavor. The routing call site in `processVoiceInput` tries the handler first and falls through to `chatVm.sendMessage(text)` on `NotApplicable`.
+
+**Classifier heuristic.** Six intents, first-match-wins, all case-insensitive with a filler-stripping preamble ("hey", "okay", "please", "can you", …):
+
+| Intent | Pattern example | Parse |
+|---|---|---|
+| SendSms (with separator) | `text <contact> saying <body>` / `text <contact>: <body>` / `send a message to <contact> saying <body>` | `contact`, `body` |
+| SendSms (no separator) | `text <contact> <body≥2chars>` — conservative: 1-2 word contact, requires a body | `contact`, `body` |
+| OpenApp | `open|launch|start <app>` (optional `the`/`app` suffix) | `appName` |
+| Tap | `tap|press|click(?: on)? <target>` (optional `button` suffix) | `target` |
+| Scroll | `scroll (to the)? up|down|top|bottom` | `direction` |
+| Back | `(go|navigate)? back` | — |
+| Home | `(press|go)? home(?: screen)?` | — |
+
+Design bias: **false negatives > false positives**. "Can you text me when you're done?" falls through to chat because the SMS regex can't parse a contact + body from it. Anything that doesn't cleanly split into a structured action becomes a chat message. Each pattern is a single named-group regex so Wave 3 tuning is mechanical.
+
+**v1 confirmation simplification.** Full conversational confirmation ("About to text… say yes or cancel") would need a multi-turn voice state machine we don't have. Instead: destructive intents speak the confirmation via the existing sentence-TTS queue, start a 5 s countdown coroutine, and dispatch unless `VoiceViewModel.cancelPendingBridgeIntent()` is called first. The overlay's Cancel button wires into that method. Full voice-confirmation is a Wave 3 follow-up (see Phase 3 plan row `voice-bridge-confirmation`).
+
+**Bridge envelope wire shape.** Simple and documented so Wave 2 sibling ζ (`bridge-safety-rails`) owns the authoritative schema:
+
+```
+{ channel: "bridge",
+  type:    "tool.call",
+  payload: { tool: "android_send_sms" | "android_open_app" | ... ,
+             args: { ... },
+             requires_confirmation: true|false,
+             source: "voice" } }
+```
+
+Emission goes through `ChannelMultiplexer.send(envelope)` — the new `bridgeMultiplexer: ChannelMultiplexer? = null` parameter on `VoiceViewModel.initialize()` is optional so existing call sites keep compiling until they're updated to pass the instance. The googlePlay factory ignores the multiplexer entirely.
+
+**Files:**
+
+New (main):
+- `app/src/main/kotlin/com/hermesandroid/relay/voice/VoiceBridgeIntentHandler.kt` — interface + `sealed class IntentResult { Handled, NotApplicable }`
+
+New (googlePlay flavor):
+- `app/src/googlePlay/kotlin/com/hermesandroid/relay/voice/VoiceBridgeIntentHandlerImpl.kt` — `NoopVoiceBridgeIntentHandler`
+- `app/src/googlePlay/kotlin/com/hermesandroid/relay/voice/VoiceBridgeIntentFactory.kt` — factory returning the no-op
+
+New (sideload flavor):
+- `app/src/sideload/kotlin/com/hermesandroid/relay/voice/VoiceBridgeIntentHandlerImpl.kt` — `RealVoiceBridgeIntentHandler` with v1 countdown + envelope builders
+- `app/src/sideload/kotlin/com/hermesandroid/relay/voice/VoiceBridgeIntentFactory.kt` — factory returning the real impl
+- `app/src/sideload/kotlin/com/hermesandroid/relay/voice/VoiceIntentClassifier.kt` — regex-based classifier + `VoiceIntent` sealed class
+
+Touched (main):
+- `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/VoiceViewModel.kt` — new `bridgeMultiplexer` param on `initialize()`; factory call at the bottom of init; intent-routing block at the top of `processVoiceInput` (between the Thinking-state update and the sentence-buffer reset); new `cancelPendingBridgeIntent()` public method for the overlay's Cancel button. All changes wrapped in `// === PHASE3-η: ... === / // === END PHASE3-η ===` markers.
+
+**Known cross-worktree dependency.** This worktree assumes agent β's `productFlavors { googlePlay; sideload }` + `BuildFlavor.bridgeTier3` constant lands in `build.gradle.kts` / `FeatureFlags.kt` before this branch merges. Without β's flavor config, Gradle won't resolve the `createVoiceBridgeIntentHandler(...)` reference from `VoiceViewModel` because neither flavor source set is active. Order of merges: β first, then η (and ζ + θ).
+
+**Next steps (Wave 2 sibling + Wave 3):**
+- ζ owns the `bridge` envelope contract — if the wire-level field names change (`tool` → `name`, etc.), update `VoiceBridgeIntentHandlerImpl.buildXxxEnvelope` in one place.
+- Overlay wire-up (Bailey or a future agent): show `IntentResult.Handled.intentLabel` in the voice overlay, add a Cancel button that calls `cancelPendingBridgeIntent()` when `requiresConfirmation=true`.
+- Wave 3 `voice-bridge-confirmation`: replace the 5 s countdown with a proper multi-turn confirmation ("say yes or cancel" → STT → classifier for yes/no).
+- Classifier unit tests: `extractNextSentence`-style unit tests for `VoiceIntentClassifier.classify()`. Top-level function already testable without an Application context.
 
 ## 2026-04-12 — Add canonical uninstall.sh + bootstrap docs
 

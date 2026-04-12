@@ -8,9 +8,15 @@ import com.hermesandroid.relay.audio.VoicePlayer
 import com.hermesandroid.relay.audio.VoiceRecorder
 import com.hermesandroid.relay.audio.VoiceSfxPlayer
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.RelayVoiceClient
 import com.hermesandroid.relay.util.HumanError
 import com.hermesandroid.relay.util.classifyError
+// === PHASE3-η: voice→bridge intent routing ===
+import com.hermesandroid.relay.voice.IntentResult
+import com.hermesandroid.relay.voice.VoiceBridgeIntentHandler
+import com.hermesandroid.relay.voice.createVoiceBridgeIntentHandler
+// === END PHASE3-η ===
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
@@ -99,6 +105,16 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var player: VoicePlayer? = null
     private var sfxPlayer: VoiceSfxPlayer? = null
 
+    // === PHASE3-η: voice→bridge intent routing ===
+    // Bridge intent handler — the flavor-selected impl, set in initialize().
+    // On googlePlay this is the no-op that always returns NotApplicable.
+    // On sideload this is the real keyword-classifier + bridge emitter.
+    // See `VoiceBridgeIntentHandler` (main/) for the interface contract and
+    // cross-flavor compile pattern. No reflection: the factory lives in
+    // each flavor source set and Gradle picks the right one at build time.
+    private var voiceBridgeIntentHandler: VoiceBridgeIntentHandler? = null
+    // === END PHASE3-η ===
+
     // --- UI state --------------------------------------------------------
 
     private val _uiState = MutableStateFlow(VoiceUiState())
@@ -161,12 +177,28 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         recorder: VoiceRecorder,
         player: VoicePlayer,
         sfxPlayer: VoiceSfxPlayer,
+        // === PHASE3-η: voice→bridge intent routing ===
+        // Optional so existing call sites keep compiling until they're
+        // updated to pass the WSS multiplexer. On googlePlay the param is
+        // ignored by the no-op factory; on sideload it's the channel used
+        // to emit bridge tool envelopes.
+        bridgeMultiplexer: ChannelMultiplexer? = null,
+        // === END PHASE3-η ===
     ) {
         this.voiceClient = voiceClient
         this.chatViewModel = chatViewModel
         this.recorder = recorder
         this.player = player
         this.sfxPlayer = sfxPlayer
+
+        // === PHASE3-η: voice→bridge intent routing ===
+        // Call the flavor-selected factory exactly once. On googlePlay this
+        // returns a no-op handler; on sideload it returns the real
+        // classifier-backed handler. VoiceViewModel only ever sees the
+        // interface — the concrete impl is picked at compile time by the
+        // active product flavor. No runtime flavor check, no reflection.
+        voiceBridgeIntentHandler = createVoiceBridgeIntentHandler(bridgeMultiplexer)
+        // === END PHASE3-η ===
 
         startTtsConsumer()
         bridgeAmplitudeFlows()
@@ -298,6 +330,25 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(error = null) }
     }
 
+    // === PHASE3-η: voice→bridge intent routing ===
+    /**
+     * Cancel any voice-originated bridge action that is currently inside
+     * its v1 confirmation countdown window. Called from the voice overlay's
+     * Cancel button. No-op on googlePlay (the no-op handler has nothing to
+     * cancel) and no-op on sideload when nothing is pending.
+     *
+     * See [VoiceBridgeIntentHandler] for the v1 confirmation model and
+     * why full conversational cancellation ("say cancel") is a Wave 3
+     * follow-up.
+     */
+    fun cancelPendingBridgeIntent() {
+        voiceBridgeIntentHandler?.cancelPending()
+        if (_uiState.value.state == VoiceState.Speaking) {
+            _uiState.update { it.copy(state = VoiceState.Idle, responseText = "Cancelled.") }
+        }
+    }
+    // === END PHASE3-η ===
+
     // V2b EXTENSION --------------------------------------------------------
     // Fire a one-shot TTS synth+playback to verify the voice pipeline from
     // the settings screen without entering full voice mode. Runs outside
@@ -360,6 +411,58 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 responseText = "",
             )
         }
+
+        // === PHASE3-η: voice→bridge intent routing ===
+        // Before routing to chat, ask the flavor-specific intent handler
+        // whether this is a phone-control utterance ("text Sam I'll be
+        // late", "open camera", "scroll down"). On googlePlay the handler
+        // is a no-op and always returns NotApplicable → we fall straight
+        // through to chat, behaviour unchanged. On sideload a match fires
+        // a bridge envelope (with a 5 s cancel window for destructive
+        // actions) and we do NOT send the text to chat — the user's
+        // utterance was a command, not a question.
+        //
+        // Defense-in-depth note: the cross-flavor split at the FACTORY
+        // level is the real gate. The googlePlay factory returns a no-op
+        // that literally never references any bridge or accessibility
+        // class, so the Play APK stays clean even if this call site is
+        // ever mis-edited. If/when a `BuildFlavor.bridgeTier3` compile-
+        // time constant exists we should still short-circuit here for
+        // clarity, but today the factory already does the right thing.
+        val bridgeHandler = voiceBridgeIntentHandler
+        if (bridgeHandler != null) {
+            try {
+                val result = bridgeHandler.tryHandle(userText)
+                if (result is IntentResult.Handled) {
+                    Log.i(TAG, "voice intent handled by bridge: ${result.intentLabel}")
+                    // Speak the confirmation if one was provided, otherwise
+                    // just flip state so the UI shows the recognized intent
+                    // and the turn ends without spinning up chat SSE.
+                    val confirmation = result.spokenConfirmation
+                    if (confirmation != null) {
+                        sentenceBuffer = StringBuilder(confirmation)
+                        _uiState.update {
+                            it.copy(state = VoiceState.Speaking, responseText = confirmation)
+                        }
+                        flushRemainingBuffer()
+                    } else {
+                        _uiState.update {
+                            it.copy(
+                                state = VoiceState.Idle,
+                                responseText = "${result.intentLabel}: $userText",
+                            )
+                        }
+                    }
+                    return
+                }
+            } catch (e: Exception) {
+                // Classifier/bridge dispatch failed. Degrade gracefully to
+                // chat — the user said something, we'd rather answer it as
+                // a message than swallow the turn.
+                Log.w(TAG, "voiceBridgeIntentHandler.tryHandle failed: ${e.message}")
+            }
+        }
+        // === END PHASE3-η ===
 
         // Reset sentence buffering state for the new turn.
         sentenceBuffer = StringBuilder()
