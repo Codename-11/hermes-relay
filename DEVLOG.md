@@ -1,5 +1,65 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-11 — Paired Devices JSON unwrap fix + /media/by-path permissive sandbox (B+C)
+
+Two bugs surfaced on-device:
+
+### 1. Paired Devices crash — "Expected start of the array '[', but had '{'"
+
+`RelayHttpClient.listSessions` was parsing the response body as a bare `List<PairedDeviceInfo>`, but the server returns `{"sessions": [...]}` (`plugin/relay/server.py::handle_sessions_list`, line 406). Classic wire-format mismatch. The phone saw JSON starting with `{` and crashed kotlinx.serialization's list deserializer.
+
+**Fix**: parse the body to `JsonElement`, pull out the `sessions` field, then decode the array via `Json.decodeFromJsonElement(ListSerializer(PairedDeviceInfo.serializer()), arrayElement)`. If the `sessions` field is missing, return a descriptive `IOException` instead of the kotlinx parse error so the UI shows a meaningful message.
+
+One concept to internalize: `Json.decodeFromJsonElement(deserializer, element)` is a **member function** on the `Json` instance — no extension import needed. The reified-generic form (`Json.decodeFromJsonElement<T>(element)`) needs the `import kotlinx.serialization.json.decodeFromJsonElement` extension import; the explicit-deserializer form doesn't.
+
+### 2. "Path not allowed by relay sandbox" for legitimate LLM emits
+
+The `/media/by-path` route enforced `allowed_roots` against every phone-side fetch. When the LLM ran `search_files` and found an image somewhere like `~/projects/claw3d/readme.png`, the phone hit the sandbox and rendered a "Path not allowed" error card — even though the agent had already read the file's bytes via its own tools and would happily paste them into chat if asked.
+
+**Decision**: B + C (C as default).
+
+- **C (conceptual flip)**: drop the allowlist on `/media/by-path` by default. The trust boundary is the bearer-auth'd paired phone; the LLM can already exfiltrate bytes via plain text responses, so the sandbox was defense-in-depth with a high false-positive rate in practice. The token path (loopback-only `/media/register`) keeps its strict allowlist because it's trivially enforceable there.
+- **B (config knob)**: `RELAY_MEDIA_STRICT_SANDBOX=1` (or `RelayConfig.media_strict_sandbox = True`) re-enables the allowlist enforcement on the by-path route for operators who want the tighter default back.
+
+### Changes
+
+**`plugin/relay/media.py`**:
+- `validate_media_path(path, allowed_roots, max_size_bytes)` — `allowed_roots` now accepts `list[str] | None`. When None, the root-under-allowlist check is skipped entirely. All other checks (absolute path, realpath, exists, regular file, size cap) remain unconditional.
+- `MediaRegistry.__init__` gains `strict_sandbox: bool = False` parameter, stored as `self.strict_sandbox`. Logged at init time alongside the existing max_entries/ttl/max_size summary.
+
+**`plugin/relay/config.py`**:
+- `RelayConfig.media_strict_sandbox: bool = False` field.
+- `RELAY_MEDIA_STRICT_SANDBOX` env var parsed in `from_env()` — accepts `1`/`true`/`yes`/`on` (case-insensitive).
+
+**`plugin/relay/server.py`**:
+- `RelayServer.__init__` passes `strict_sandbox=config.media_strict_sandbox` to the `MediaRegistry`.
+- `handle_media_by_path` computes `roots_for_check = server.media.allowed_roots if server.media.strict_sandbox else None` and passes that to `validate_media_path`. Permissive mode ⇒ only file-level checks (absolute, exists, regular, size). Strict mode ⇒ full allowlist enforcement.
+- Docstring on `handle_media_by_path` rewritten to explain the permissive-by-default model and the opt-in path.
+
+**`app/src/main/kotlin/.../network/RelayHttpClient.kt`**:
+- `listSessions()` — unwraps `{"sessions": [...]}` before decoding the array. Missing-field path surfaces as a clean `IOException("Relay response missing 'sessions' field")`.
+
+**`plugin/tests/test_relay_media_routes.py`**:
+- Existing `RelayMediaRoutesTests` class pinned `config.media_strict_sandbox = True` so its legacy assertions (outside-sandbox → 403, etc.) still hold.
+- New sibling class `RelayMediaByPathPermissiveTests` exercises the production default:
+  - `test_by_path_outside_allowlist_still_streams_in_permissive_mode` — **the regression-guard test**. A file in a totally unrelated tmpdir streams successfully with a valid bearer. If this breaks, Bailey's claw3d workflow breaks again.
+  - `test_by_path_still_rejects_relative_in_permissive_mode` — absolute-path check is unconditional.
+  - `test_by_path_still_404s_nonexistent_in_permissive_mode` — file-existence check is unconditional.
+  - `test_register_still_enforces_allowlist_in_permissive_mode` — the token path (loopback `POST /media/register`) stays strict regardless of the flag.
+
+**`CLAUDE.md`**:
+- Updated the `plugin/relay/media.py` and "Inbound media fetch (path)" rows in the Key Files / Integration Points tables to document the permissive default and the opt-in `RELAY_MEDIA_STRICT_SANDBOX` knob.
+
+### Server deploy
+
+Python-side changes. Bailey needs to `git pull` on the server and restart the relay (`pkill -TERM -f "python -m plugin.relay"` + `nohup ... & disown` per the standard recipe) before the new by-path semantics take effect. Phone-side `listSessions` fix ships with the next Android Studio build.
+
+### Test plan (on-device after next build)
+
+- [ ] Paired Devices screen: open → loads without the "Couldn't load paired devices" error card. Should show the current device with transport badge, expiry, and grant chips.
+- [ ] Chat with `find an image`: LLM finds something in `~/projects/**` → card renders inline (not "Path not allowed by relay sandbox").
+- [ ] Optional: `RELAY_MEDIA_STRICT_SANDBOX=1` on the server → same image request now renders the "Path not allowed" card (strict-mode opt-in works).
+
 ## 2026-04-11 — Option B: Save & Test as HTTP health probe + pair-context gate on connectRelay
 
 Bailey flagged a trap in the Settings → Manual configuration flow: the **Connect** button fired `connectRelay(url)` unconditionally, even when the phone had no session token and no pending server-issued pair code. The WSS handshake would open, the phone would send an `auth` envelope with whatever code was lying around (usually the locally-generated phone→host Phase 3 code, which isn't registered on the relay), auth would fail, and after 5 such failures in 60 seconds the relay's rate limiter would block the IP for 5 minutes. Users fumbling with manual config could lock themselves out of pairing entirely.

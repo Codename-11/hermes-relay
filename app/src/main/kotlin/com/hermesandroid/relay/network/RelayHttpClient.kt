@@ -328,9 +328,17 @@ class RelayHttpClient(
                     return@withContext Result.failure(IOException(reason))
                 }
                 val body = response.body?.string().orEmpty()
-                val devices = sessionsJson.decodeFromString(
+                // Server shape: `{"sessions": [...]}`. Unwrap the array first —
+                // parsing as a bare list fails with "Expected start of array '['
+                // but had '{'" (exactly the crash from 2026-04-11 on-device).
+                val root = sessionsJson.parseToJsonElement(body).jsonObject
+                val arrayElement = root["sessions"]
+                    ?: return@withContext Result.failure(
+                        IOException("Relay response missing 'sessions' field")
+                    )
+                val devices = sessionsJson.decodeFromJsonElement(
                     ListSerializer(PairedDeviceInfo.serializer()),
-                    body
+                    arrayElement
                 )
                 Result.success(devices)
             }

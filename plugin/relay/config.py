@@ -44,6 +44,13 @@ class RelayConfig:
     # MediaRegistry always appends these on top of its own defaults — they
     # do not replace the base list.
     media_allowed_roots: list[str] = field(default_factory=list)
+    # Strict sandbox on /media/by-path. Default False: LLM-emitted
+    # MEDIA:/abs/path markers are served as long as the file exists, is
+    # a regular file, and fits under max_size. Set True (via
+    # RELAY_MEDIA_STRICT_SANDBOX=1) to re-enable the allowed_roots check
+    # on the phone-side direct-path route. The token path (loopback-only
+    # /media/register) is ALWAYS strict regardless of this flag.
+    media_strict_sandbox: bool = False
 
     @classmethod
     def from_env(cls) -> RelayConfig:
@@ -100,6 +107,10 @@ class RelayConfig:
             config.media_allowed_roots = [
                 r.strip() for r in media_roots.split(os.pathsep) if r.strip()
             ]
+
+        strict = os.getenv("RELAY_MEDIA_STRICT_SANDBOX", "").strip().lower()
+        if strict in ("1", "true", "yes", "on"):
+            config.media_strict_sandbox = True
 
         config.profiles = _load_profiles(config.hermes_config_path)
         return config

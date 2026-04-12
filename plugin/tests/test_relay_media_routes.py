@@ -33,7 +33,13 @@ def _write_file(root: str, name: str, content: bytes = b"hello-bytes") -> str:
 
 
 class RelayMediaRoutesTests(AioHTTPTestCase):
-    """Exercises the /media/* routes end-to-end against a live test server."""
+    """Exercises the /media/* routes end-to-end against a live test server.
+
+    Strict-mode test class — pins ``strict_sandbox=True`` so the by-path
+    route enforces ``allowed_roots``. The permissive-mode behavior (new
+    default as of 2026-04-11) is covered by
+    :class:`RelayMediaByPathPermissiveTests` below.
+    """
 
     async def get_application(self) -> web.Application:
         self._sandbox = tempfile.mkdtemp(prefix="hermes_relay_routes_")
@@ -42,6 +48,10 @@ class RelayMediaRoutesTests(AioHTTPTestCase):
         config = RelayConfig()
         # Only allow the sandbox — we'll pin this after app creation too.
         config.media_allowed_roots = [self._sandbox]
+        # Opt into strict-mode sandbox checks so the legacy test assertions
+        # (outside-sandbox → 403) still hold. Permissive mode is the default
+        # in production and is covered by the sibling test class below.
+        config.media_strict_sandbox = True
 
         app = create_app(config)
 
@@ -311,6 +321,109 @@ class RelayMediaRoutesTests(AioHTTPTestCase):
             self.assertEqual(resp.status, 403)
         finally:
             self._server().media.max_size_bytes = original
+
+
+class RelayMediaByPathPermissiveTests(AioHTTPTestCase):
+    """Covers the default (non-strict) /media/by-path behavior.
+
+    In permissive mode the by-path route serves any absolute regular file
+    that fits under the size cap, regardless of allowed_roots. This is the
+    default on-server behavior — it was introduced to fix the "LLM finds
+    a file in ~/projects and the phone says Path not allowed" friction.
+    The allowlist is still honored by the token path (/media/register) and
+    by by-path when ``RELAY_MEDIA_STRICT_SANDBOX=1`` is set.
+    """
+
+    async def get_application(self) -> web.Application:
+        self._sandbox = tempfile.mkdtemp(prefix="hermes_relay_permissive_")
+        self._outside = tempfile.mkdtemp(prefix="hermes_outside_permissive_")
+        self._cleanup_paths: list[str] = [self._sandbox, self._outside]
+
+        config = RelayConfig()
+        # Register _sandbox as the allowlist but leave strict_sandbox=False
+        # (the production default). by-path should serve files OUTSIDE this
+        # list just fine — the registry/register path still enforces it.
+        config.media_allowed_roots = [self._sandbox]
+        config.media_strict_sandbox = False
+
+        app = create_app(config)
+        server = app["server"]
+        server.media.allowed_roots = [os.path.realpath(self._sandbox)]
+        return app
+
+    async def tearDownAsync(self) -> None:
+        await super().tearDownAsync()
+        for path in getattr(self, "_cleanup_paths", []):
+            shutil.rmtree(path, ignore_errors=True)
+
+    def _server(self):
+        return self.app["server"]
+
+    async def _create_session_token(self) -> str:
+        session = self._server().sessions.create_session("test-device", "test-id")
+        return session.token
+
+    async def test_by_path_outside_allowlist_still_streams_in_permissive_mode(self) -> None:
+        """The killer test — regressions here re-break the Bailey workflow.
+
+        A file that lives outside any allowed root should still be served
+        when ``strict_sandbox`` is False. This matches real-world LLM emits
+        like ``MEDIA:/home/bailey/projects/foo/readme.png``.
+        """
+        contents = b"\x89PNG\r\n\x1a\npermissive-outside"
+        outside_file = _write_file(self._outside, "readme.png", content=contents)
+        token_bearer = await self._create_session_token()
+
+        resp = await self.client.get(
+            "/media/by-path",
+            params={"path": outside_file},
+            headers={"Authorization": f"Bearer {token_bearer}"},
+        )
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.headers.get("Content-Type"), "image/png")
+        body = await resp.read()
+        self.assertEqual(body, contents)
+
+    async def test_by_path_still_rejects_relative_in_permissive_mode(self) -> None:
+        """Absolute-path check is unconditional — not gated on strict mode."""
+        token_bearer = await self._create_session_token()
+        resp = await self.client.get(
+            "/media/by-path",
+            params={"path": "relative/path.jpg"},
+            headers={"Authorization": f"Bearer {token_bearer}"},
+        )
+        self.assertEqual(resp.status, 403)
+
+    async def test_by_path_still_404s_nonexistent_in_permissive_mode(self) -> None:
+        token_bearer = await self._create_session_token()
+        resp = await self.client.get(
+            "/media/by-path",
+            params={"path": os.path.join(self._outside, "ghost.png")},
+            headers={"Authorization": f"Bearer {token_bearer}"},
+        )
+        self.assertEqual(resp.status, 404)
+
+    async def test_register_still_enforces_allowlist_in_permissive_mode(self) -> None:
+        """The token path (POST /media/register) is ALWAYS strict regardless.
+
+        The tool-facing loopback route keeps defense-in-depth because it's
+        trivially enforceable there — tools register paths via a deterministic
+        API surface, unlike the LLM's free-form MEDIA: markers.
+        """
+        outside_file = _write_file(self._outside, "shot.jpg", content=b"\xff\xd8")
+        resp = await self.client.post(
+            "/media/register",
+            json={
+                "path": outside_file,
+                "content_type": "image/jpeg",
+            },
+        )
+        # Register still rejects files outside the allowlist — 400 with a
+        # validation-error body (handled by handle_media_register).
+        self.assertEqual(resp.status, 400)
+        body = await resp.json()
+        self.assertFalse(body["ok"])
+        self.assertIn("allowed root", body["error"])
 
 
 if __name__ == "__main__":

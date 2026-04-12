@@ -69,15 +69,24 @@ class _MediaEntry:
 
 def validate_media_path(
     path: str,
-    allowed_roots: list[str],
+    allowed_roots: list[str] | None,
     max_size_bytes: int,
 ) -> tuple[str, int]:
     """Validate that ``path`` is safe to serve as media content.
 
-    Performs the full sandbox check used by both :meth:`MediaRegistry.register`
-    (loopback-only tool register) and :func:`handle_media_by_path` (phone-side
-    bearer-auth'd direct fetch): absolute path → ``realpath`` → under at least
-    one allowed root → exists → is a regular file → under size cap.
+    Performs the file-level safety checks: absolute path → ``realpath`` →
+    exists → is a regular file → under size cap. When ``allowed_roots`` is
+    non-None, *also* enforces that the resolved path lives under at least
+    one of those roots (strict sandbox mode, used by
+    :meth:`MediaRegistry.register` and by :func:`handle_media_by_path` when
+    the operator opts into ``RELAY_MEDIA_STRICT_SANDBOX``).
+
+    Passing ``allowed_roots=None`` skips the root check entirely. This is
+    the default for LLM-emitted ``MEDIA:/abs/path`` markers served through
+    ``/media/by-path``: the trust boundary is the bearer-auth'd session, and
+    if the LLM can already read a file via its other tools it can already
+    exfiltrate the contents via plain text — the sandbox was a
+    defense-in-depth layer that cost more friction than it returned.
 
     Returns ``(real_path, size_bytes)`` on success.
 
@@ -91,7 +100,7 @@ def validate_media_path(
 
     real_path = os.path.realpath(path)
 
-    if not _is_under_any_root(real_path, allowed_roots):
+    if allowed_roots is not None and not _is_under_any_root(real_path, allowed_roots):
         raise MediaRegistrationError(
             f"path is not under an allowed root: {path!r}"
         )
@@ -183,10 +192,20 @@ class MediaRegistry:
         ttl_seconds: int = 24 * 60 * 60,
         max_size_bytes: int = 100 * 1024 * 1024,
         allowed_roots: Iterable[str] | None = None,
+        strict_sandbox: bool = False,
     ) -> None:
         self.max_entries = max_entries
         self.ttl_seconds = ttl_seconds
         self.max_size_bytes = max_size_bytes
+        # When True, /media/by-path enforces the `allowed_roots` allowlist.
+        # When False (default), by-path accepts any absolute readable file
+        # within the size cap. See validate_media_path docstring for the
+        # rationale — short version: the LLM can already exfil bytes via
+        # other tools, so the sandbox was defense-in-depth that mostly
+        # surfaced as false-positive friction in practice. The token path
+        # (/media/register, tool-facing, loopback-only) ALWAYS enforces the
+        # allowlist regardless of this flag.
+        self.strict_sandbox = strict_sandbox
 
         base_roots = _default_allowed_roots()
         if allowed_roots is not None:
@@ -202,10 +221,11 @@ class MediaRegistry:
 
         logger.info(
             "MediaRegistry initialized (max_entries=%d, ttl=%ds, "
-            "max_size=%d bytes, roots=%s)",
+            "max_size=%d bytes, strict_sandbox=%s, roots=%s)",
             max_entries,
             ttl_seconds,
             max_size_bytes,
+            strict_sandbox,
             self.allowed_roots,
         )
 

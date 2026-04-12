@@ -71,6 +71,7 @@ class RelayServer:
             ttl_seconds=config.media_ttl_seconds,
             max_size_bytes=config.media_max_size_mb * 1024 * 1024,
             allowed_roots=config.media_allowed_roots or None,
+            strict_sandbox=config.media_strict_sandbox,
         )
 
         # Channel handlers
@@ -699,31 +700,34 @@ async def handle_media_get(request: web.Request) -> web.StreamResponse:
 
 
 async def handle_media_by_path(request: web.Request) -> web.StreamResponse:
-    """Serve a media file by absolute path, with the same sandbox as /media/register.
+    """Serve a media file by absolute path for LLM-emitted ``MEDIA:/abs/path`` markers.
 
-    This endpoint exists for the case where an agent's LLM freeform-emits a
-    ``MEDIA:/abs/path.ext`` marker in its response text (which is exactly what
-    upstream ``hermes-agent/agent/prompt_builder.py`` instructs the model to
-    do). There is no token-registration step — the phone sees the bare path
-    in the chat stream and fetches it directly here.
+    The LLM freeform-emits ``MEDIA:/abs/path.ext`` in its response text per
+    upstream ``hermes-agent/agent/prompt_builder.py``. There is no token
+    registration step — the phone sees the bare path in the chat stream and
+    fetches it directly through this route.
 
     Security model:
       * **Bearer auth** — identical to ``/media/{token}``. Only a paired phone
         with a valid relay session token can fetch, so the trust boundary is
         the same as every other phone-facing relay channel.
-      * **Path sandboxing** — identical to ``/media/register`` via the shared
-        :func:`validate_media_path` helper. A paired phone cannot escape the
-        allowed-roots whitelist (default: ``tempfile.gettempdir()`` +
-        ``HERMES_WORKSPACE`` + ``RELAY_MEDIA_ALLOWED_ROOTS``). On Linux ``/tmp``
-        is world-readable anyway, so this doesn't widen what an authenticated
-        peer could already read through other paired channels.
-      * **Size cap** — ``RELAY_MEDIA_MAX_SIZE_MB``, same as register.
+      * **Path checks (always on)** — absolute path, ``realpath`` resolution,
+        exists, is a regular file, under ``RELAY_MEDIA_MAX_SIZE_MB``.
+      * **Allowed-roots sandbox (opt-in)** — off by default. Set
+        ``RELAY_MEDIA_STRICT_SANDBOX=1`` to re-enable the allowlist
+        enforcement. Rationale: if the LLM already has filesystem-reading
+        tools (search_files, read_file, etc.), it can exfiltrate bytes via
+        plain text responses, so the allowlist is defense-in-depth rather
+        than a hard boundary. In practice the allowlist surfaced mostly as
+        false positives — the LLM finds ``~/projects/foo/readme.png`` and
+        the phone renders a "Path not allowed" card. Operators who want the
+        tighter default back can opt in via env.
 
     GET /media/by-path?path=<urlencoded-abs-path>&content_type=<optional-type>
       → 200 file bytes
       → 400 missing path query param
       → 401 missing/invalid bearer
-      → 403 path outside sandbox / not absolute / other validation failure
+      → 403 path not absolute / other validation failure (or outside allowlist in strict mode)
       → 404 file does not exist or is not a regular file
       → 413 file exceeds RELAY_MEDIA_MAX_SIZE_MB
     """
@@ -756,10 +760,14 @@ async def handle_media_by_path(request: web.Request) -> web.StreamResponse:
     # Hint: phone may pass content_type=; if not, guess from extension.
     content_type_hint = request.query.get("content_type", "").strip() or None
 
+    # Strict mode → enforce allowlist. Default mode → None skips root check.
+    roots_for_check = (
+        server.media.allowed_roots if server.media.strict_sandbox else None
+    )
     try:
         real_path, size = validate_media_path(
             path,
-            server.media.allowed_roots,
+            roots_for_check,
             server.media.max_size_bytes,
         )
     except MediaRegistrationError as exc:
