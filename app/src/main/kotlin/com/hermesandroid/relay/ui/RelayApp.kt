@@ -29,14 +29,19 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -52,10 +57,18 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.hermesandroid.relay.ui.components.MorphingSphere
 import com.hermesandroid.relay.ui.components.WhatsNewDialog
+import com.hermesandroid.relay.util.HumanError
 import kotlinx.coroutines.delay
 import com.hermesandroid.relay.ui.onboarding.OnboardingScreen
+import com.hermesandroid.relay.ui.screens.AboutScreen
+import com.hermesandroid.relay.ui.screens.AnalyticsScreen
+import com.hermesandroid.relay.ui.screens.AppearanceSettingsScreen
 import com.hermesandroid.relay.ui.screens.BridgeScreen
 import com.hermesandroid.relay.ui.screens.ChatScreen
+import com.hermesandroid.relay.ui.screens.ChatSettingsScreen
+import com.hermesandroid.relay.ui.screens.ConnectionSettingsScreen
+import com.hermesandroid.relay.ui.screens.DeveloperSettingsScreen
+import com.hermesandroid.relay.ui.screens.MediaSettingsScreen
 import com.hermesandroid.relay.ui.screens.PairedDevicesScreen
 import com.hermesandroid.relay.ui.screens.SettingsScreen
 import com.hermesandroid.relay.ui.screens.TerminalScreen
@@ -71,6 +84,22 @@ import com.hermesandroid.relay.audio.VoiceSfxPlayer
 import com.hermesandroid.relay.network.RelayVoiceClient
 import com.hermesandroid.relay.auth.AuthState
 import androidx.lifecycle.viewModelScope
+
+// Global snackbar host so any screen can surface a HumanError without
+// plumbing a host through every ViewModel. Provided by RelayApp below.
+val LocalSnackbarHost = staticCompositionLocalOf<SnackbarHostState> {
+    error("LocalSnackbarHost not provided — wrap your UI in RelayApp's CompositionLocalProvider")
+}
+
+// Short-lived snackbar by default; retryable errors get Long so users have
+// time to tap the action before it auto-dismisses.
+suspend fun SnackbarHostState.showHumanError(err: HumanError) {
+    showSnackbar(
+        message = err.body,
+        actionLabel = err.actionLabel,
+        duration = if (err.retryable) SnackbarDuration.Long else SnackbarDuration.Short,
+    )
+}
 
 sealed class Screen(
     val route: String,
@@ -253,10 +282,16 @@ fun RelayApp() {
         // without the Chat/Terminal/Bridge/Settings tabs peeking through below.
         val voiceUiState by voiceViewModel.uiState.collectAsState()
 
+        // Single snackbar host for the whole app — exposed via LocalSnackbarHost
+        // so voice/chat/settings screens can call showHumanError from their
+        // error-collector LaunchedEffects without threading state downwards.
+        val snackbarHostState = remember { SnackbarHostState() }
+
         Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             contentWindowInsets = WindowInsets(0),
+            snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
                 if (!isOnboarding && !isKeyboardVisible && !voiceUiState.voiceMode) {
                     NavigationBar(
@@ -318,6 +353,7 @@ fun RelayApp() {
                 }
             }
         ) { innerPadding ->
+            CompositionLocalProvider(LocalSnackbarHost provides snackbarHostState) {
             NavHost(
                 navController = navController,
                 startDestination = startDestination,
@@ -477,6 +513,7 @@ fun RelayApp() {
                     )
                 }
             }
+            } // end CompositionLocalProvider
         }
 
         // Sphere intro overlay — fades out after 1.5s to reveal main UI

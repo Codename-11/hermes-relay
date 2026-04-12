@@ -18,9 +18,15 @@ import com.hermesandroid.relay.network.RelayHttpClient
 import com.hermesandroid.relay.network.handlers.ChatHandler
 import com.hermesandroid.relay.network.models.SkillInfo
 import com.hermesandroid.relay.network.models.UsageInfo
+import com.hermesandroid.relay.util.HumanError
 import com.hermesandroid.relay.util.MediaCacheWriter
+import com.hermesandroid.relay.util.classifyError
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
@@ -60,6 +66,21 @@ class ChatViewModel : ViewModel() {
 
     /** Callback to persist session ID — set by RelayApp */
     var onSessionChanged: ((String?) -> Unit)? = null
+
+    // --- Human-readable error events ---
+    // One-shot events consumed by ChatScreen via snackbar. Shape mirrors
+    // other VMs for consistency; DROP_OLDEST so a burst of errors never
+    // stalls the emitter.
+    private val _errorEvents = MutableSharedFlow<HumanError>(
+        replay = 0,
+        extraBufferCapacity = 4,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val errorEvents: SharedFlow<HumanError> = _errorEvents.asSharedFlow()
+
+    private fun emitError(t: Throwable?, context: String?) {
+        _errorEvents.tryEmit(classifyError(t, context = context))
+    }
 
     // --- Message queue ---
     private val _queuedMessages = MutableStateFlow<List<String>>(emptyList())
@@ -393,6 +414,7 @@ class ChatViewModel : ViewModel() {
                     handler.renameSessionLocal(session.id, autoTitle)
                 } else {
                     handler.onStreamError("Failed to create chat session")
+                    emitError(Exception("Failed to create chat session"), context = "send_message")
                 }
             }
         }
@@ -516,6 +538,10 @@ class ChatViewModel : ViewModel() {
             } else {
                 AppAnalytics.onStreamError()
                 handler.onStreamError(errorMsg)
+                // Keep the in-place error banner AND push to the global
+                // snackbar — classifier wraps the string into a throwable
+                // so context-specific copy kicks in for send_message.
+                emitError(Exception(errorMsg), context = "send_message")
             }
             activeStream = null
             _queuedMessages.value = emptyList()
@@ -811,21 +837,28 @@ class ChatViewModel : ViewModel() {
                         )
                     }
                 } catch (e: Exception) {
+                    // Classifier produces a specific label (disk full, bad
+                    // URI, permission, …) for both the in-card text and the
+                    // global snackbar — same event, two surfaces.
+                    val human = classifyError(e, context = "media_fetch")
                     updateAttachmentByToken(handler, messageId, fetchKey) { att ->
                         att.copy(
                             state = AttachmentState.FAILED,
-                            errorMessage = "Failed to cache: ${e.message ?: "unknown"}"
+                            errorMessage = human.body
                         )
                     }
+                    _errorEvents.tryEmit(human)
                 }
             },
             onFailure = { err ->
+                val human = classifyError(err, context = "media_fetch")
                 updateAttachmentByToken(handler, messageId, fetchKey) { att ->
                     att.copy(
                         state = AttachmentState.FAILED,
-                        errorMessage = err.message ?: "Fetch failed"
+                        errorMessage = human.body
                     )
                 }
+                _errorEvents.tryEmit(human)
             }
         )
     }

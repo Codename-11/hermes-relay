@@ -92,6 +92,7 @@ import com.hermesandroid.relay.ui.components.TransportSecuritySize
 import com.hermesandroid.relay.ui.components.defaultTtlSeconds
 import com.hermesandroid.relay.ui.components.isUrlSecure
 import com.hermesandroid.relay.ui.theme.gradientBorder
+import com.hermesandroid.relay.util.classifyError
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.first
@@ -700,11 +701,28 @@ fun ConnectionSettingsScreen(
                             )
                         }
                         is ConnectionViewModel.RelayReachable.Fail -> {
-                            Text(
-                                text = "✗ ${r.message}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error
+                            // RelayReachable.Fail only carries a String today
+                            // (no throwable). Re-wrap so the classifier can
+                            // still map it to human copy by keyword — a full
+                            // ViewModel refactor to surface the Throwable is
+                            // out of scope for this pass.
+                            // TODO: plumb raw Throwable through RelayReachable.Fail.
+                            val humanErr = classifyError(
+                                Exception(r.message),
+                                context = "save_and_test",
                             )
+                            Column {
+                                Text(
+                                    text = "✗ ${humanErr.title}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                                Text(
+                                    text = humanErr.body,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
                         }
                         null -> { /* idle — no row */ }
                     }
@@ -998,7 +1016,11 @@ fun ConnectionSettingsScreen(
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             } catch (e: Exception) {
                 manualPairingInProgress = false
-                manualPairingError = "Error: ${e.message ?: "unknown"}"
+                // Classifier distinguishes "relay unreachable" vs "code
+                // rejected" vs "auth rejected" — much better than the old
+                // "Error: Network is unreachable" blob.
+                val humanErr = classifyError(e, context = "pair")
+                manualPairingError = humanErr.body
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             }
         }

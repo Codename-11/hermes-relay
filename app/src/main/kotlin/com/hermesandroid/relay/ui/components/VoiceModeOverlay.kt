@@ -45,6 +45,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,9 +60,13 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.ui.LocalSnackbarHost
+import com.hermesandroid.relay.ui.showHumanError
+import com.hermesandroid.relay.util.HumanError
 import com.hermesandroid.relay.viewmodel.InteractionMode
 import com.hermesandroid.relay.viewmodel.VoiceState
 import com.hermesandroid.relay.viewmodel.VoiceUiState
+import kotlinx.coroutines.flow.SharedFlow
 
 /**
  * Full-screen voice-mode overlay. Renders the MorphingSphere in its voiceMode
@@ -79,11 +84,23 @@ fun VoiceModeOverlay(
     onModeChange: (InteractionMode) -> Unit,
     onClearError: () -> Unit,
     modifier: Modifier = Modifier,
+    // Nullable so existing call sites compile; when wired, voice errors
+    // surface as global snackbars in addition to the inline banner below.
+    errorEvents: SharedFlow<HumanError>? = null,
 ) {
     val surface = MaterialTheme.colorScheme.surface
     val haptic = LocalHapticFeedback.current
 
     var modeMenuOpen by remember { mutableStateOf(false) }
+
+    // Pipe classified voice errors to the app-wide snackbar host. The inline
+    // error banner stays as a belt-and-suspenders for longer-lived messages.
+    val snackbarHost = LocalSnackbarHost.current
+    LaunchedEffect(errorEvents) {
+        errorEvents?.collect { err ->
+            snackbarHost.showHumanError(err)
+        }
+    }
 
     Box(
         modifier = modifier

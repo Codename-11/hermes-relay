@@ -102,6 +102,9 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarDuration
 import android.content.ClipData
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import android.util.Base64
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -126,6 +129,8 @@ import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.ui.components.StreamingDots
 import com.hermesandroid.relay.ui.components.ToolProgressCard
 import com.hermesandroid.relay.ui.components.VoiceModeOverlay
+import com.hermesandroid.relay.ui.LocalSnackbarHost
+import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
@@ -166,6 +171,15 @@ fun ChatScreen(
         animationSpec = tween(300),
         label = "chatAlpha",
     )
+
+    // Route classified chat errors (media cache, streaming failures, …) to
+    // the app-wide snackbar. Same pattern every VM-bound screen uses.
+    val snackbarHost = LocalSnackbarHost.current
+    LaunchedEffect(chatViewModel) {
+        chatViewModel.errorEvents.collect { err ->
+            snackbarHost.showHumanError(err)
+        }
+    }
 
     // RECORD_AUDIO permission flow — user taps the mic FAB → if not granted,
     // request; on grant, latch the pending-enter and fire enterVoiceMode() in
@@ -1242,7 +1256,10 @@ fun ChatScreen(
             }
         } // end Column
 
-        // Mic permission denied banner
+        // Mic permission denied banner — title + body + Open Settings action.
+        // System "Don't ask again" gives no callback, so a toast would leave
+        // the user stranded. Banner + direct-to-app-details deep link is the
+        // only reliable recovery path.
         AnimatedVisibility(
             visible = micPermissionDenied && !voiceUiState.voiceMode,
             modifier = Modifier
@@ -1254,18 +1271,36 @@ fun ChatScreen(
                 color = MaterialTheme.colorScheme.errorContainer,
                 tonalElevation = 2.dp,
             ) {
-                Row(
+                Column(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "Microphone permission is required for voice mode",
+                        text = "Microphone permission needed",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                    Text(
+                        text = "Tap Open Settings and grant Microphone access to use voice mode.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onErrorContainer,
-                        modifier = Modifier.weight(1f),
                     )
-                    TextButton(onClick = { micPermissionDenied = false }) {
-                        Text("Dismiss")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        TextButton(onClick = { micPermissionDenied = false }) {
+                            Text("Dismiss")
+                        }
+                        TextButton(onClick = {
+                            val intent = Intent(
+                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.fromParts("package", context.packageName, null),
+                            )
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            context.startActivity(intent)
+                        }) {
+                            Text("Open Settings")
+                        }
                     }
                 }
             }
@@ -1286,6 +1321,9 @@ fun ChatScreen(
                 onDismiss = { voiceViewModel.exitVoiceMode() },
                 onModeChange = { voiceViewModel.setInteractionMode(it) },
                 onClearError = { voiceViewModel.clearError() },
+                // Agent B's overlay collects this flow and renders classified
+                // voice errors (mic capture, STT/TTS failures, relay drops).
+                errorEvents = voiceViewModel.errorEvents,
             )
         }
         } // end Box

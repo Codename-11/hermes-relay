@@ -47,6 +47,9 @@ import com.hermesandroid.relay.data.VoicePreferencesRepository
 import com.hermesandroid.relay.data.VoiceSettings
 import com.hermesandroid.relay.network.RelayVoiceClient
 import com.hermesandroid.relay.network.VoiceConfig
+import com.hermesandroid.relay.ui.LocalSnackbarHost
+import com.hermesandroid.relay.ui.showHumanError
+import com.hermesandroid.relay.util.classifyError
 import com.hermesandroid.relay.viewmodel.InteractionMode
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
 import kotlinx.coroutines.launch
@@ -76,6 +79,10 @@ fun VoiceSettingsScreen(
     var voiceConfig by remember { mutableStateOf<VoiceConfig?>(null) }
     var voiceConfigError by remember { mutableStateOf<String?>(null) }
 
+    // Global snackbar host — voice errors routed through the classifier get
+    // shown as snackbars here as well as the inline "unavailable" label below.
+    val snackbarHost = LocalSnackbarHost.current
+
     LaunchedEffect(voiceClient) {
         val client = voiceClient ?: return@LaunchedEffect
         val result = client.getVoiceConfig()
@@ -83,7 +90,19 @@ fun VoiceSettingsScreen(
             voiceConfig = result.getOrNull()
             voiceConfigError = null
         } else {
-            voiceConfigError = result.exceptionOrNull()?.message ?: "unknown"
+            // Use the classifier body so "unavailable" expands into something
+            // like "Relay unreachable" / "Voice provider offline".
+            val human = classifyError(result.exceptionOrNull(), context = "voice_config")
+            voiceConfigError = human.body
+            snackbarHost.showHumanError(human)
+        }
+    }
+
+    // Surface VoiceViewModel errors (testVoice synthesize failures etc.) as
+    // snackbars while the user is on this screen.
+    LaunchedEffect(voiceViewModel) {
+        voiceViewModel.errorEvents.collect { err ->
+            snackbarHost.showHumanError(err)
         }
     }
 

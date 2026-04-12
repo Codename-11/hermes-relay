@@ -9,10 +9,16 @@ import com.hermesandroid.relay.audio.VoiceRecorder
 import com.hermesandroid.relay.audio.VoiceSfxPlayer
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.network.RelayVoiceClient
+import com.hermesandroid.relay.util.HumanError
+import com.hermesandroid.relay.util.classifyError
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -97,6 +103,16 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(VoiceUiState())
     val uiState: StateFlow<VoiceUiState> = _uiState.asStateFlow()
+
+    // One-shot snackbar stream. DROP_OLDEST so a burst of errors during a
+    // flaky turn doesn't back-pressure the producer — we only need to show
+    // the latest couple to the user anyway.
+    private val _errorEvents = MutableSharedFlow<HumanError>(
+        replay = 0,
+        extraBufferCapacity = 4,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val errorEvents: SharedFlow<HumanError> = _errorEvents.asSharedFlow()
 
     // --- Internal streaming/playback state -------------------------------
 
@@ -222,7 +238,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             }
         } catch (e: Exception) {
             Log.e(TAG, "startListening failed: ${e.message}")
-            setError("Couldn't start recording: ${e.message ?: "unknown"}")
+            // SecurityException path becomes "Permission needed" via the classifier.
+            surfaceError(e, context = "record")
         }
     }
 
@@ -234,7 +251,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             rec.stopRecording()
         } catch (e: Exception) {
             Log.e(TAG, "stopListening failed: ${e.message}")
-            setError("Couldn't stop recording: ${e.message ?: "unknown"}")
+            surfaceError(e, context = "record")
             return
         }
 
@@ -295,7 +312,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val result = client.synthesize(sample)
             if (result.isFailure) {
-                setError("Test voice failed: ${result.exceptionOrNull()?.message ?: "unknown"}")
+                surfaceError(result.exceptionOrNull(), context = "synthesize")
                 return@launch
             }
             val file = result.getOrNull() ?: return@launch
@@ -327,7 +344,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         if (transcribeResult.isFailure) {
             val err = transcribeResult.exceptionOrNull()
             Log.w(TAG, "transcribe failed: ${err?.message}")
-            setError("Transcription failed: ${err?.message ?: "unknown"}")
+            surfaceError(err, context = "transcribe")
             return
         }
         val userText = transcribeResult.getOrNull().orEmpty()
@@ -467,7 +484,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 if (synthesizeResult.isFailure) {
                     val err = synthesizeResult.exceptionOrNull()
                     Log.w(TAG, "synthesize failed for sentence: ${err?.message}")
-                    setError("TTS failed: ${err?.message ?: "unknown"}")
+                    surfaceError(err, context = "synthesize")
                     continue
                 }
                 val file = synthesizeResult.getOrNull() ?: continue
@@ -600,6 +617,20 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun setError(msg: String) {
         _uiState.update { it.copy(state = VoiceState.Error, error = msg, amplitude = 0f) }
+    }
+
+    /**
+     * Classify an exception and surface it both as the in-overlay banner
+     * (uiState.error) and as a one-shot snackbar event (errorEvents). Callers
+     * pass a context string so generic exceptions still get a meaningful
+     * title — see RelayErrorClassifier for the supported contexts.
+     */
+    private fun surfaceError(t: Throwable?, context: String?) {
+        val err = classifyError(t, context = context)
+        _errorEvents.tryEmit(err)
+        _uiState.update {
+            it.copy(state = VoiceState.Error, error = err.body, amplitude = 0f)
+        }
     }
 
     override fun onCleared() {
