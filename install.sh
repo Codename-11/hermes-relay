@@ -77,24 +77,93 @@ SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 SERVICE_SRC="$RELAY_HOME/relay_server/hermes-relay.service"
 SERVICE_DST="$SYSTEMD_USER_DIR/hermes-relay.service"
 
+# ── TUI: colors + symbols (TTY-aware) ──────────────────────────────────────
+# All ANSI escapes resolve to empty strings when stdout is not a TTY
+# (curl | bash, CI logs, redirected output) so the script stays grep-friendly.
+# Override with NO_COLOR=1 to disable even on a TTY.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && command -v tput >/dev/null 2>&1; then
+    C_RESET="$(tput sgr0)"
+    C_BOLD="$(tput bold)"
+    C_DIM="$(tput dim 2>/dev/null || printf '\033[2m')"
+    C_RED="$(tput setaf 1)"
+    C_GREEN="$(tput setaf 2)"
+    C_YELLOW="$(tput setaf 3)"
+    C_BLUE="$(tput setaf 4)"
+    C_MAGENTA="$(tput setaf 5)"
+    C_CYAN="$(tput setaf 6)"
+    SYM_OK="✓"
+    SYM_ERR="✗"
+    SYM_WARN="⚠"
+    SYM_INFO="→"
+    SYM_STEP="▶"
+    SYM_PEND="◯"
+else
+    C_RESET=""; C_BOLD=""; C_DIM=""; C_RED=""; C_GREEN=""
+    C_YELLOW=""; C_BLUE=""; C_MAGENTA=""; C_CYAN=""
+    SYM_OK="[ok]"; SYM_ERR="[x]"; SYM_WARN="[!]"
+    SYM_INFO="->"; SYM_STEP=">"; SYM_PEND="o"
+fi
+
 # ── Helpers ────────────────────────────────────────────────────────────────
-die()  { echo "  [x] $*" >&2; exit 1; }
-info() { echo "  $*"; }
-ok()   { echo "  [ok] $*"; }
+die()  { printf "  ${C_RED}${C_BOLD}%s${C_RESET} %s\n" "$SYM_ERR" "$*" >&2; exit 1; }
+info() { printf "    ${C_DIM}%s${C_RESET} %s\n" "$SYM_INFO" "$*"; }
+ok()   { printf "    ${C_GREEN}%s${C_RESET} %s\n" "$SYM_OK" "$*"; }
+warn() { printf "    ${C_YELLOW}%s${C_RESET} %s\n" "$SYM_WARN" "$*"; }
+
+# Section header — used by [N/6] step lines.
+step() {
+    local num="$1" total="$2" title="$3"
+    printf "\n  ${C_BOLD}${C_CYAN}%s${C_RESET} ${C_BOLD}[%s/%s]${C_RESET} ${C_BOLD}%s${C_RESET}\n" \
+        "$SYM_STEP" "$num" "$total" "$title"
+}
+
+# Bash spinner — runs while a backgrounded PID is alive. No-op (waits silently)
+# when stdout isn't a TTY so curl | bash logs don't fill with spinner cruft.
+# Usage:
+#     long_command &
+#     spin $! "Doing the thing"
+spin() {
+    local pid=$1 msg=$2
+    if [ ! -t 1 ]; then
+        wait "$pid"
+        return $?
+    fi
+    local frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    local i=0
+    # Hide cursor for the duration of the spin.
+    printf '\033[?25l'
+    while kill -0 "$pid" 2>/dev/null; do
+        printf "\r    ${C_CYAN}%s${C_RESET} %s " "${frames:$((i % ${#frames})):1}" "$msg"
+        i=$((i+1))
+        sleep 0.08
+    done
+    # Reap and capture exit code.
+    wait "$pid"
+    local rc=$?
+    # Show cursor + clear the spinner line.
+    printf '\r\033[K\033[?25h'
+    return $rc
+}
 
 require() {
     command -v "$1" >/dev/null 2>&1 || die "$1 is required but not installed"
 }
 
-# ── Preflight ──────────────────────────────────────────────────────────────
-echo ""
-echo "  Hermes-Relay Installer"
-echo "  ----------------------"
-echo "  Repo:       $REPO_URL ($BRANCH)"
-echo "  Target:     $RELAY_HOME"
-echo "  Venv:       $VENV_PY"
-echo "  Hermes cfg: $HERMES_CONFIG"
-echo ""
+# ── Banner ─────────────────────────────────────────────────────────────────
+banner() {
+    printf "\n"
+    printf "  ${C_BOLD}${C_CYAN}╭─────────────────────────────────────────╮${C_RESET}\n"
+    printf "  ${C_BOLD}${C_CYAN}│${C_RESET}  ${C_BOLD}Hermes-Relay Installer${C_RESET}                 ${C_BOLD}${C_CYAN}│${C_RESET}\n"
+    printf "  ${C_BOLD}${C_CYAN}│${C_RESET}  ${C_DIM}Phase 3 — Bridge channel + status tool${C_RESET}  ${C_BOLD}${C_CYAN}│${C_RESET}\n"
+    printf "  ${C_BOLD}${C_CYAN}╰─────────────────────────────────────────╯${C_RESET}\n"
+    printf "\n"
+    printf "    ${C_DIM}%-12s${C_RESET} %s\n" "Repo:"     "$REPO_URL ${C_DIM}($BRANCH)${C_RESET}"
+    printf "    ${C_DIM}%-12s${C_RESET} %s\n" "Target:"   "$RELAY_HOME"
+    printf "    ${C_DIM}%-12s${C_RESET} %s\n" "Venv:"     "$VENV_PY"
+    printf "    ${C_DIM}%-12s${C_RESET} %s\n" "Hermes:"   "$HERMES_CONFIG"
+}
+
+banner
 
 require git
 require python3
@@ -108,7 +177,7 @@ if [ ! -x "$VENV_PY" ]; then
 fi
 
 # ── 1/6  Clone or update the repo ──────────────────────────────────────────
-info "[1/6] Syncing repo..."
+step 1 6 "Syncing repo"
 if [ -d "$RELAY_HOME/.git" ]; then
     (cd "$RELAY_HOME" && git fetch --quiet origin "$BRANCH" && git checkout --quiet "$BRANCH" && git pull --ff-only --quiet) \
         || die "Failed to update existing clone at $RELAY_HOME"
@@ -123,9 +192,15 @@ else
 fi
 
 # ── 2/6  Install Python package editable into the hermes venv ──────────────
-info "[2/6] Installing plugin into hermes venv (editable)..."
+step 2 6 "Installing plugin into hermes venv (editable)"
 "$VENV_PY" -m pip install --quiet --upgrade pip >/dev/null 2>&1 || true
-"$VENV_PY" -m pip install --quiet -e "$RELAY_HOME" \
+# Run the long pip install in the background and spin while we wait — keeps
+# the user oriented during the 5-30s install. spin() falls back to a silent
+# wait when stdout isn't a TTY (curl | bash) so log capture stays clean.
+(
+    "$VENV_PY" -m pip install --quiet -e "$RELAY_HOME" >/dev/null 2>&1
+) &
+spin $! "pip install -e $(basename "$RELAY_HOME")" \
     || die "pip install -e $RELAY_HOME failed"
 ok "Installed $("$VENV_PY" -m pip show hermes-relay 2>/dev/null | awk '/^Name:/{n=$2}/^Version:/{print n" "$2}')"
 
@@ -152,7 +227,7 @@ else
 fi
 
 # ── 3/6  Symlink plugin into Hermes plugin dir ─────────────────────────────
-info "[3/6] Registering plugin with Hermes..."
+step 3 6 "Registering plugin with Hermes"
 mkdir -p "$(dirname "$PLUGIN_LINK")"
 # Remove an old install (dir, symlink, or mismatched target)
 if [ -L "$PLUGIN_LINK" ] || [ -e "$PLUGIN_LINK" ]; then
@@ -170,7 +245,7 @@ for stale in "$HERMES_HOME/plugins/hermes-android" "$HERMES_HOME/hermes-agent/pl
 done
 
 # ── 4/6  Register skills dir in Hermes config (external_dirs) ──────────────
-info "[4/6] Registering skills directory..."
+step 4 6 "Registering skills directory"
 "$VENV_PY" - <<PY
 import sys
 from pathlib import Path
@@ -224,7 +299,7 @@ else:
 PY
 
 # ── 5/6  Install the hermes-pair + hermes-status shell shims ──────────────
-info "[5/6] Installing hermes-pair + hermes-status shell shims..."
+step 5 6 "Installing hermes-pair + hermes-status shell shims"
 mkdir -p "$(dirname "$SHIM_PATH")"
 cat > "$SHIM_PATH" <<SHIM
 #!/usr/bin/env bash
@@ -276,7 +351,7 @@ ok "Installed $STATUS_SHIM_PATH"
 # ~/.hermes/.env into os.environ on startup, mirroring how the gateway
 # handles API keys. Any future `systemctl --user restart hermes-relay`
 # picks up fresh values from .env automatically.
-info "[6/6] Installing systemd user service..."
+step 6 6 "Installing systemd user service"
 
 if [ -n "${HERMES_RELAY_NO_SYSTEMD:-}" ]; then
     info "  HERMES_RELAY_NO_SYSTEMD set — skipping"
@@ -344,69 +419,55 @@ if [ -z "${HERMES_RELAY_NO_SYSTEMD:-}" ] \
     if [ -n "${HERMES_RELAY_RESTART_GATEWAY:-}" ]; then
         do_restart="yes"
     elif [ -t 0 ]; then
-        echo ""
-        info "hermes-gateway is running — restart it to re-import new plugin tools?"
-        info "  (interrupts active chat sessions for ~2 seconds)"
-        printf "  Restart hermes-gateway now? [y/N] "
+        printf "\n"
+        printf "    ${C_YELLOW}%s${C_RESET} %s\n" "$SYM_WARN" "${C_BOLD}hermes-gateway is running${C_RESET}"
+        printf "    ${C_DIM}%s${C_RESET}\n" "Restarting it lets the gateway re-import the updated plugin code"
+        printf "    ${C_DIM}%s${C_RESET}\n" "(new tools, skills, etc). Active chat sessions are interrupted for ~2s."
+        printf "\n    ${C_BOLD}Restart hermes-gateway now?${C_RESET} ${C_DIM}[y/N]${C_RESET} "
         read -r reply </dev/tty || reply=""
         case "$reply" in
             [Yy]*) do_restart="yes" ;;
             *)     do_restart="" ;;
         esac
     else
-        info "hermes-gateway is running. To re-import new plugin tools, run:"
-        info "    systemctl --user restart hermes-gateway"
-        info "  (or re-run install.sh with HERMES_RELAY_RESTART_GATEWAY=1 to do it automatically)"
+        warn "hermes-gateway is running with stale plugin imports"
+        info "To re-import: ${C_BOLD}systemctl --user restart hermes-gateway${C_RESET}"
+        info "Or re-run with HERMES_RELAY_RESTART_GATEWAY=1 to do it automatically"
     fi
 
     if [ -n "$do_restart" ]; then
-        info "Restarting hermes-gateway..."
-        if systemctl --user restart hermes-gateway.service >/dev/null 2>&1; then
-            ok "hermes-gateway restarted — new plugin tools are now live"
+        ( systemctl --user restart hermes-gateway.service >/dev/null 2>&1 ) &
+        if spin $! "Restarting hermes-gateway"; then
+            ok "hermes-gateway restarted — new plugin tools are live"
         else
-            info "  Could not restart hermes-gateway.service automatically"
-            info "  Run manually:  systemctl --user restart hermes-gateway"
+            warn "Could not restart hermes-gateway automatically"
+            info "Run manually: ${C_BOLD}systemctl --user restart hermes-gateway${C_RESET}"
         fi
     fi
 fi
 
 # ── Done ───────────────────────────────────────────────────────────────────
-echo ""
-echo "  [OK] Hermes-Relay installed."
-echo ""
-echo "  Three ways to pair your phone:"
-echo ""
-echo "    1. From a Hermes chat session:"
-echo "         /hermes-relay-pair"
-echo ""
-echo "    2. From any shell:"
-echo "         hermes-pair"
-echo ""
-echo "    3. Directly via the venv Python:"
-echo "         $VENV_PY -m plugin.pair"
-echo ""
-echo "  To update later (one command, fully idempotent):"
-echo "    curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash"
-echo ""
-echo "  Or if you already have the clone:"
-echo "    bash $RELAY_HOME/install.sh"
-echo ""
-echo "  Re-running install.sh will:"
-echo "    - git pull the latest main"
-echo "    - refresh the editable pip install"
-echo "    - re-create both shims (hermes-pair, hermes-status)"
-echo "    - restart hermes-relay (so new endpoints/cache are live)"
-echo "    - restart hermes-gateway (so new plugin tools/skills are imported)"
-echo ""
-echo "  To uninstall:"
-echo "    bash $RELAY_HOME/uninstall.sh"
-echo "    bash $RELAY_HOME/uninstall.sh --dry-run  # preview without changing anything"
-echo ""
-echo "  Manage the relay service (if installed):"
-echo "    systemctl --user status hermes-relay"
-echo "    systemctl --user restart hermes-relay"
-echo "    journalctl --user -u hermes-relay -f"
-echo ""
-echo "  Scan the resulting QR from the Hermes-Relay app's Settings screen"
-echo "  (Connection → Scan Pairing QR) or during first-run onboarding."
-echo ""
+printf "\n"
+printf "  ${C_BOLD}${C_GREEN}╭─────────────────────────────────────────╮${C_RESET}\n"
+printf "  ${C_BOLD}${C_GREEN}│${C_RESET}  ${C_BOLD}${SYM_OK} Hermes-Relay installed${C_RESET}                ${C_BOLD}${C_GREEN}│${C_RESET}\n"
+printf "  ${C_BOLD}${C_GREEN}╰─────────────────────────────────────────╯${C_RESET}\n"
+printf "\n"
+printf "  ${C_BOLD}${C_CYAN}Pair your phone${C_RESET}\n"
+printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}/hermes-relay-pair${C_RESET}     ${C_DIM}# from any Hermes chat${C_RESET}\n" "$SYM_INFO"
+printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}hermes-pair${C_RESET}            ${C_DIM}# from any shell${C_RESET}\n" "$SYM_INFO"
+printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}hermes-status${C_RESET}          ${C_DIM}# show live phone state${C_RESET}\n" "$SYM_INFO"
+printf "\n"
+printf "  ${C_BOLD}${C_CYAN}Update later${C_RESET} ${C_DIM}(idempotent — same one-liner)${C_RESET}\n"
+printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash${C_RESET}\n" "$SYM_INFO"
+printf "\n"
+printf "  ${C_BOLD}${C_CYAN}Manage the relay service${C_RESET}\n"
+printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}systemctl --user status hermes-relay${C_RESET}\n" "$SYM_INFO"
+printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}systemctl --user restart hermes-relay${C_RESET}\n" "$SYM_INFO"
+printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}journalctl --user -u hermes-relay -f${C_RESET}\n" "$SYM_INFO"
+printf "\n"
+printf "  ${C_BOLD}${C_CYAN}Uninstall${C_RESET}\n"
+printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}bash $RELAY_HOME/uninstall.sh${C_RESET}\n" "$SYM_INFO"
+printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}bash $RELAY_HOME/uninstall.sh --dry-run${C_RESET}  ${C_DIM}# preview only${C_RESET}\n" "$SYM_INFO"
+printf "\n"
+printf "  ${C_DIM}Scan the QR from the Hermes-Relay app: Settings → Connection → Scan Pairing QR${C_RESET}\n"
+printf "\n"
