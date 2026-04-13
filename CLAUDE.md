@@ -117,7 +117,8 @@ hermes-android/                  ← Android Studio opens this root
 - **kotlinx.serialization** — not Gson. Type-safe, faster.
 - **OkHttp** for WebSocket + SSE — `okhttp` for WSS relay, `okhttp-sse` for API streaming
 - **Single-activity** — Compose Navigation for all routing
-- **Package:** `com.hermesandroid.relay`
+- **Namespace (Kotlin source tree):** `com.hermesandroid.relay` — stable, drives on-disk layout + class FQCNs + Class.forName lookups
+- **applicationId (Play Store / Android runtime identity):** `com.axiomlabs.hermesrelay` (googlePlay), `com.axiomlabs.hermesrelay.sideload` (sideload) — under Axiom-Labs, LLC Play Console account since 2026-04-13
 - **Min SDK 26, Target SDK 35, Compile SDK 36**
 - **Kotlin 2.0+**, JVM toolchain 17
 

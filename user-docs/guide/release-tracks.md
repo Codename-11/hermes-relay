@@ -30,7 +30,7 @@ If you want the full feature set — including the parts where the agent actuall
 
 ## Can I switch later?
 
-Yes — and you don't even have to choose just one. The two builds use different application IDs (`com.hermesandroid.relay` for Google Play and `com.hermesandroid.relay.sideload` for sideload), which means Android treats them as two completely separate apps. Each gets its own launcher icon, its own settings, and its own paired-device entry on the relay.
+Yes — and you don't even have to choose just one. The two builds use different application IDs (`com.axiomlabs.hermesrelay` for Google Play and `com.axiomlabs.hermesrelay.sideload` for sideload), which means Android treats them as two completely separate apps. Each gets its own launcher icon, its own settings, and its own paired-device entry on the relay.
 
 If you want to migrate fully from one to the other, just uninstall the one you no longer use. Sessions, attachments, and pairings are stored per-app, so wiping the old one only affects that one.
 
@@ -40,7 +40,7 @@ If you want to migrate fully from one to the other, just uninstall the one you n
 
 One tap from the Play Store listing. Updates arrive automatically.
 
-[Open the Play Store listing →](https://play.google.com/store/apps/details?id=com.hermesandroid.relay)
+[Open the Play Store listing →](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay)
 
 ### Sideload
 

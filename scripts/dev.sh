@@ -15,12 +15,18 @@ case "${1:-help}" in
     echo "Building and installing to connected device..."
     ./gradlew installDebug
     echo "Launching app..."
-    adb shell am start -n com.hermesandroid.relay/.MainActivity
+    # Explicit FQCN: applicationId is com.axiomlabs.hermesrelay but the
+    # namespace (and thus the real class FQCN) is still com.hermesandroid.relay,
+    # so the `.MainActivity` shorthand no longer resolves correctly.
+    adb shell am start -n com.axiomlabs.hermesrelay/com.hermesandroid.relay.MainActivity
     ;;
   run)
     echo "Building, installing, and launching..."
     ./gradlew installDebug
-    adb shell am start -n com.hermesandroid.relay/.MainActivity
+    # Explicit FQCN: applicationId is com.axiomlabs.hermesrelay but the
+    # namespace (and thus the real class FQCN) is still com.hermesandroid.relay,
+    # so the `.MainActivity` shorthand no longer resolves correctly.
+    adb shell am start -n com.axiomlabs.hermesrelay/com.hermesandroid.relay.MainActivity
     adb logcat -s HermesRelay:* --format=brief
     ;;
   test)

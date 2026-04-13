@@ -51,13 +51,19 @@ goto end
 echo Building and installing to connected device...
 call gradlew.bat installDebug
 echo Launching app...
-adb shell am start -n com.hermesandroid.relay/.MainActivity
+REM Explicit FQCN: applicationId is com.axiomlabs.hermesrelay but the
+REM namespace (and thus the real class FQCN) is still com.hermesandroid.relay,
+REM so the `.MainActivity` shorthand no longer resolves correctly.
+adb shell am start -n com.axiomlabs.hermesrelay/com.hermesandroid.relay.MainActivity
 goto end
 
 :run
 echo Building, installing, and launching...
 call gradlew.bat installDebug
-adb shell am start -n com.hermesandroid.relay/.MainActivity
+REM Explicit FQCN: applicationId is com.axiomlabs.hermesrelay but the
+REM namespace (and thus the real class FQCN) is still com.hermesandroid.relay,
+REM so the `.MainActivity` shorthand no longer resolves correctly.
+adb shell am start -n com.axiomlabs.hermesrelay/com.hermesandroid.relay.MainActivity
 adb logcat -s HermesRelay:* --format=brief
 goto end
 

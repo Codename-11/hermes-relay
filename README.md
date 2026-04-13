@@ -36,7 +36,7 @@ Two steps: install the Android app on your phone, then install the plugin on you
 ### 1. Install the Android app
 
 <!-- TODO: Uncomment when Play Store listing is live
-<a href="https://play.google.com/store/apps/details?id=com.hermesandroid.relay"><img src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" alt="Get it on Google Play" height="80"></a>
+<a href="https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay"><img src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" alt="Get it on Google Play" height="80"></a>
 -->
 
 - **Google Play** — coming soon (currently on Internal testing)

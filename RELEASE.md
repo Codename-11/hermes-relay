@@ -183,17 +183,40 @@ file afterward.
 
 ### 2. Google Play Console developer account
 
+Hermes-Relay ships under the **Axiom-Labs, LLC** Play Console account
+(D-U-N-S verified organization). The applicationId is
+`com.axiomlabs.hermesrelay` (googlePlay flavor) and
+`com.axiomlabs.hermesrelay.sideload` (sideload flavor — not shipped through
+Play at all). The Kotlin namespace / source tree stays at
+`com.hermesandroid.relay` for historical reasons; see `app/build.gradle.kts`
+for the decoupling rationale.
+
+If you're setting up a fresh account (for a fork or a new downstream):
+
 1. Register at <https://play.google.com/console/signup> ($25 one-time fee).
 2. Complete identity verification (personal accounts need a government ID;
    organization accounts need a D-U-N-S number).
 3. Create the app listing: name, language, free/paid, declarations.
 
-**New personal accounts only**: Google requires an app to run in
-**closed testing** with **at least 12 opted-in testers** for **14
-continuous days** before it can be promoted to production. Internal testing
-does NOT satisfy this requirement — only the closed testing track starts
-the 14-day clock. Organization (D-U-N-S) accounts are exempt. See
-[Google's policy](https://support.google.com/googleplay/android-developer/answer/14151465).
+**The 14-day closed-testing rule does NOT apply to Hermes-Relay.** Google
+requires *new personal* developer accounts to run an app in closed testing
+with ≥12 opted-in testers for 14 continuous days before promotion to
+production. Organization accounts with a verified D-U-N-S number are exempt
+from this policy, and Axiom-Labs is a D-U-N-S-verified org account. See
+[Google's policy](https://support.google.com/googleplay/android-developer/answer/14151465)
+for the full text.
+
+> **Historical note (2026-04-13 migration):** v0.1.x through v0.3.0 shipped
+> on Internal testing under Bailey's personal Play Console account with
+> applicationId `com.hermesandroid.relay`. That listing was retired as part
+> of the org-account migration. Play Store package names are permanently
+> reserved once used — `com.hermesandroid.relay` can never be reclaimed —
+> so all releases from v0.3.1 onwards ship fresh under the new
+> `com.axiomlabs.hermesrelay` listing. The upload keystore identity is
+> unchanged (same `CN=Bailey Dixon, Codename-11` cert, same SHA256
+> fingerprint), so existing GitHub Secrets and the CI signing flow need no
+> changes. Google Play App Signing mints a new server-side app signing key
+> per listing — that's invisible to us since App Signing is enabled.
 
 ### 3. Play Developer API service account (optional)
 
@@ -311,8 +334,9 @@ run under the **Actions** tab.
    Release assets (for example, `hermes-relay-0.3.0-googlePlay-release.aab`),
    or use your local build at
    `app\build\outputs\bundle\googlePlayRelease\hermes-relay-<version>-googlePlay-release.aab`.
-2. In Play Console: **Release > Testing > Internal testing** (or **Closed
-   testing** for the 14-day clock).
+2. In Play Console: **Release > Testing > Internal testing** (the 14-day
+   closed-testing rule does NOT apply to this account — see "Google Play
+   Console developer account" above).
 3. **Create new release** > upload the AAB.
 4. Paste `RELEASE_NOTES.md` into the release notes field.
 5. **Review release** > **Start rollout.**
@@ -340,8 +364,9 @@ gradlew promoteReleaseArtifact --from-track=internal --promote-track=alpha
 Typical path:
 
 1. **Internal testing** — personal smoke test (no tester or time minimum)
-2. **Closed testing (alpha)** — starts the 14-day clock for new personal
-   accounts; needs at least 12 opted-in testers
+2. **Closed testing (alpha)** — optional for staged rollout; Axiom-Labs'
+   org account is exempt from the 14-day / 12-tester rule, so you can skip
+   straight from Internal to Production if the build is ready
 3. **Open testing (beta)** — optional public beta
 4. **Production** — live on the Play Store
 

@@ -19,11 +19,24 @@ base {
 }
 
 android {
+    // Kotlin package / on-disk source layout / R class namespace. Decoupled
+    // from `applicationId` below as of the Axiom-Labs org-account migration:
+    // the repo's source tree stays under `com.hermesandroid.relay` (so all
+    // 130+ Kotlin files and their package declarations keep working) while
+    // the Play Store / Android-system identity lives under `com.axiomlabs.*`.
+    // This is an AGP-supported pattern — `namespace` is a build-time concept
+    // and `applicationId` is the runtime install identity; they don't have
+    // to match.
     namespace = "com.hermesandroid.relay"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.hermesandroid.relay"
+        // Axiom-Labs, LLC Play Console listing. Changed from the original
+        // `com.hermesandroid.relay` on 2026-04-13 during the org-account
+        // migration. The old Internal-testing listing under Bailey's personal
+        // account is being deleted; the DUNS-verified Axiom-Labs account is
+        // exempt from Play's 14-day closed-testing rule. See RELEASE.md.
+        applicationId = "com.axiomlabs.hermesrelay"
         minSdk = 26
         targetSdk = 35
         versionCode = libs.versions.appVersionCode.get().toInt()
@@ -72,11 +85,18 @@ android {
     //                 tiers enabled.
     //
     // applicationIdSuffix decision: sideload gets `.sideload` so both tracks can
-    // coexist on the same device. The Play build keeps the canonical
-    // `com.hermesandroid.relay` applicationId so existing installs upgrade
-    // cleanly from v0.2.0 and Play Console keeps its history. Cost: anyone with
-    // both installed sees two launcher icons — we'll differentiate with a label
-    // suffix once the flavored strings.xml lands.
+    // coexist on the same device. The Play build keeps the base
+    // `com.axiomlabs.hermesrelay` applicationId as the canonical Play Store
+    // install; sideload becomes `com.axiomlabs.hermesrelay.sideload`. Cost:
+    // anyone with both installed sees two launcher icons — we differentiate
+    // via the flavored strings.xml label suffix.
+    //
+    // Note: the previous `com.hermesandroid.relay` applicationId (Internal
+    // testing under Bailey's personal Play account) is being retired as part
+    // of the Axiom-Labs org-account migration. Play Store package names are
+    // permanently reserved once used, so the old ID can never be reclaimed —
+    // existing Internal-testing installs won't auto-upgrade to the new listing
+    // and will need a manual reinstall (limited blast radius, single tester).
     flavorDimensions += "track"
     productFlavors {
         create("googlePlay") {
