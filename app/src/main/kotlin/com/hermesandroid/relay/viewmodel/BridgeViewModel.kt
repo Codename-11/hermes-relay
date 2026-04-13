@@ -272,11 +272,40 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
      * via the system consent dialog. Routes through [ScreenCaptureRequester]
      * which `MainActivity` keeps installed for the lifetime of its window.
      *
+     * # Android 14+ FGS prerequisite
+     *
+     * On Android 14 (API 34) and above, `getMediaProjection(...)` returns
+     * a projection that the system auto-revokes within frames UNLESS a
+     * foreground service has already called
+     * `startForeground(type=mediaProjection)`. In our app that FGS is
+     * [com.hermesandroid.relay.bridge.BridgeForegroundService], which only
+     * runs while the master toggle is on. So this method gates on the
+     * master toggle — no point firing the consent dialog if the grant is
+     * going to evaporate on the way back. Tell the user to enable Bridge
+     * first and the consent will then stick.
+     *
      * No-op (with a snackbar) if the request can't be dispatched — usually
      * because MainActivity is destroyed (process restarted from a notification
      * tap, etc.) and we'd need to be brought to the foreground first.
      */
     fun requestScreenCapture() {
+        // === PHASE3-bridge-ui-followup: gate consent on master toggle ===
+        // BridgeForegroundService must already be running with type
+        // mediaProjection BEFORE we call MediaProjectionManager.getMediaProjection,
+        // or Android 14+ silently revokes the grant. The FGS only runs
+        // while the master toggle is on, so refuse the consent flow when
+        // the toggle is off and tell the user what to do.
+        if (!masterToggle.value) {
+            viewModelScope.launch {
+                _testEvents.emit(
+                    "Screen capture · Enable Allow Agent Control first, then tap " +
+                        "Screen Capture again."
+                )
+            }
+            return
+        }
+        // === END PHASE3-bridge-ui-followup ===
+
         val dispatched = ScreenCaptureRequester.request()
         val msg = if (dispatched) {
             "Asking for screen-capture consent…"

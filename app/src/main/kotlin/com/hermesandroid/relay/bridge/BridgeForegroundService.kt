@@ -143,11 +143,22 @@ class BridgeForegroundService : Service() {
         val notification = buildNotification()
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                startForeground(
-                    NOTIFICATION_ID,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
-                )
+                // === PHASE3-bridge-ui-followup: Android 14+ MediaProjection FGS ===
+                // OR both type slots:
+                //   - SPECIAL_USE for the persistent "bridge active" indicator
+                //   - MEDIA_PROJECTION so MediaProjectionManager.getMediaProjection()
+                //     can actually return a usable projection. Without this slot
+                //     declared at startForeground time, Android 14+ silently
+                //     auto-revokes the projection within frames of the consent
+                //     dialog closing. Symptom: "I tapped Allow but the grant
+                //     never sticks" — exactly what tripped us up on 2026-04-12.
+                // Both subtypes share this single notification + this single
+                // service. Manifest must list both in `foregroundServiceType`.
+                val combinedType =
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                startForeground(NOTIFICATION_ID, notification, combinedType)
+                // === END PHASE3-bridge-ui-followup ===
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 // Q..U: the type arg is required on Q+ too, but
                 // FOREGROUND_SERVICE_TYPE_SPECIAL_USE is Android 14+.

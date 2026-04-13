@@ -107,16 +107,36 @@
         <!-- BridgeForegroundService is a plain (non-exported) foreground
              service driven by BridgeViewModel based on the master toggle.
              It owns the persistent "Hermes agent has device control"
-             notification. foregroundServiceType is "specialUse" on API 34+
-             to match the SPECIAL_USE foreground-service permission and the
-             Play Console policy we declared when shipping Tier 5.
+             notification.
 
-             Android 14+ additionally requires a <property> tag justifying
-             the specialUse type. Kept conservative and honest. -->
+             foregroundServiceType is the OR of two API 34+ subtypes:
+
+               - specialUse — backs the persistent "bridge active"
+                 indicator we shipped with Tier 5 safety rails. Comes
+                 with the SPECIAL_USE foreground-service permission and
+                 the Play Console policy declaration.
+
+               - mediaProjection — REQUIRED by Android 14+ before any
+                 call to MediaProjectionManager.getMediaProjection().
+                 Without this declaration, getMediaProjection() returns
+                 a projection that the system auto-revokes within a
+                 frame, leaving us with a permanently-null
+                 MediaProjectionHolder.projection. Symptom on the
+                 device: consent dialog appears, user allows full
+                 screen, dialog closes, grant evaporates. Sample-tested
+                 on a Samsung S24 / Android 14 on 2026-04-12.
+
+             Both types share the same notification + same lifecycle —
+             one service, one notification, two type slots.
+
+             Android 14+ requires a <property> tag justifying the
+             specialUse subtype. The mediaProjection subtype does NOT
+             need a property tag because it has its own dedicated
+             permission (FOREGROUND_SERVICE_MEDIA_PROJECTION). -->
         <service
             android:name=".bridge.BridgeForegroundService"
             android:exported="false"
-            android:foregroundServiceType="specialUse">
+            android:foregroundServiceType="specialUse|mediaProjection">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Persistent indicator that the Hermes agent has device control, per the Tier 5 safety-rails design." />
