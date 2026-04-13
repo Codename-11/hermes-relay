@@ -18,7 +18,7 @@ jobs:
     steps:
       - name: Check collaborator status
         id: check
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             if (context.eventName === 'issues' && ['opened', 'labeled'].includes(context.payload.action)) {
