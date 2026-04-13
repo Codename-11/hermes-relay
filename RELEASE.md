@@ -249,16 +249,19 @@ three carrying the new version string.
 
 - `RELEASE_NOTES.md` — body of the GitHub Release for this version
   (rewritten each release; the workflow uses this as-is). Keep the
-  **Download** section near the top — it tells users to grab
-  `app-release.apk` (not the `.aab`) and links to the sideload guide.
-  The v0.1.0 body is a good template.
+  **Download** section near the top — it should spell out which file
+  to grab by its `-sideload-release.apk` / `-googlePlay-release.aab`
+  suffix (every artifact is version-tagged as
+  `hermes-relay-<version>-<flavor>-<buildType>` via `archivesName`
+  in `app/build.gradle.kts`) and link to the sideload guide.
+  The v0.3.0 body is a good template.
 - `CHANGELOG.md` — cumulative history; append a new section.
 
 ### 3. Build and verify locally
 
 ```bat
 scripts\dev.bat bundle
-keytool -list -printcert -jarfile app\build\outputs\bundle\release\app-release.aab
+keytool -list -printcert -jarfile app\build\outputs\bundle\googlePlayRelease\hermes-relay-*-googlePlay-release.aab
 ```
 
 The `keytool` output must show your release certificate (the CN/OU/O
@@ -266,8 +269,14 @@ values you entered during `keytool -genkey`). If it shows
 `CN=Android Debug, O=Android, C=US`, the keystore wasn't picked up —
 recheck `local.properties` before continuing.
 
+Product flavors (`googlePlay`, `sideload`) nest outputs under a flavor
+directory: APKs live in `app/build/outputs/apk/<flavor>/release/` and
+AABs live in `app/build/outputs/bundle/<flavor>Release/`. Every file is
+prefixed `hermes-relay-<version>-` via `archivesName` in
+`app/build.gradle.kts`.
+
 Optional device smoke test: `scripts\dev.bat release` then
-`adb install -r app\build\outputs\apk\release\app-release.apk`.
+`adb install -r app\build\outputs\apk\sideload\release\hermes-relay-*-sideload-release.apk`.
 
 ### 4. Commit and tag
 
@@ -298,8 +307,10 @@ run under the **Actions** tab.
 
 **Manual upload (default):**
 
-1. Download `app-release.aab` from the GitHub Release assets, or use your
-   local build at `app\build\outputs\bundle\release\app-release.aab`.
+1. Download the file ending in `-googlePlay-release.aab` from the GitHub
+   Release assets (for example, `hermes-relay-0.3.0-googlePlay-release.aab`),
+   or use your local build at
+   `app\build\outputs\bundle\googlePlayRelease\hermes-relay-<version>-googlePlay-release.aab`.
 2. In Play Console: **Release > Testing > Internal testing** (or **Closed
    testing** for the 14-day clock).
 3. **Create new release** > upload the AAB.

@@ -8,6 +8,16 @@ plugins {
     alias(libs.plugins.play.publisher)
 }
 
+// Rename output artifacts to include the app version. AGP respects
+// `archivesName` for both APK (assemble*) and AAB (bundle*) outputs, so
+// this single line produces `hermes-relay-<version>-<flavor>-<buildType>`
+// filenames across debug, release, and per-flavor variants. The version
+// is pulled from libs.versions.toml so bumping via scripts/bump-version.sh
+// keeps artifact names in sync with no second source of truth.
+base {
+    archivesName.set("hermes-relay-${libs.versions.appVersionName.get()}")
+}
+
 android {
     namespace = "com.hermesandroid.relay"
     compileSdk = 36

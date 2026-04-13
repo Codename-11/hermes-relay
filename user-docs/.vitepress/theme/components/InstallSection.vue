@@ -85,7 +85,7 @@ async function copy(key: string, text: string) {
       <div class="install-extra-card">
         <h3>Sideload the APK</h3>
         <p>
-          Prefer not to use Google Play? Grab <code>app-release.apk</code> from the latest GitHub Release and install it directly. The <code>.aab</code> file is a Google Play format — make sure you download the <code>.apk</code>.
+          Prefer not to use Google Play? Grab the file ending in <code>-sideload-release.apk</code> from the latest GitHub Release and install it directly — that's the full-featured "Hermes Dev" build. Any <code>.aab</code> file is a Google Play bundle format and won't install directly — always pick the <code>.apk</code>.
         </p>
         <p class="install-extra-actions">
           <a

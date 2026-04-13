@@ -23,7 +23,7 @@ Hermes-Relay ships in **two flavors** built from the same codebase:
 
 The two builds use different application IDs, so you can install both side-by-side and try them out. Most users want the Google Play version. Read the [Release tracks](/guide/release-tracks) page for the full feature comparison and a decision guide before you pick.
 
-Once you've decided: install from the [Play Store listing](https://play.google.com/store/apps/details?id=com.hermesandroid.relay), or grab `app-release.apk` from the [latest GitHub Release](https://github.com/Codename-11/hermes-relay/releases/latest) and follow the [Sideload APK](#sideload-apk) section below for step-by-step install and integrity-verification instructions.
+Once you've decided: install from the [Play Store listing](https://play.google.com/store/apps/details?id=com.hermesandroid.relay), or grab the file ending in `-sideload-release.apk` from the [latest GitHub Release](https://github.com/Codename-11/hermes-relay/releases/latest) and follow the [Sideload APK](#sideload-apk) section below for step-by-step install and integrity-verification instructions.
 
 ### 2. Install the server plugin
 
@@ -192,10 +192,14 @@ If you'd rather not use Google Play, you can install the signed APK directly fro
 
 ### 1. Download the APK
 
-Head to [github.com/Codename-11/hermes-relay/releases/latest](https://github.com/Codename-11/hermes-relay/releases/latest) and grab **`app-release.apk`** from the assets list.
+Head to [github.com/Codename-11/hermes-relay/releases/latest](https://github.com/Codename-11/hermes-relay/releases/latest) and grab the file ending in **`-sideload-release.apk`** from the assets list — for example, `hermes-relay-0.3.0-sideload-release.apk`. Every release is version-tagged, so the exact prefix changes each version but the `-sideload-release.apk` suffix stays constant.
+
+::: tip Why "sideload" and not "googlePlay"?
+Each release ships both a `-sideload-release.apk` (full Phase 3 feature set — bridge channel, voice-to-bridge intents, vision-driven navigation) and a `-googlePlay-release.apk` (conservative Play Store build). Most sideloaders want the `-sideload-` flavor. The two builds install with different application IDs, so you can have both side-by-side.
+:::
 
 ::: warning Download the .apk, not the .aab
-Each release also ships an `app-release.aab` file. That's the Android App Bundle format Google Play uses internally — it **won't install directly** on your device. Always pick `app-release.apk` for sideloading.
+Each release also ships `-release.aab` files. That's the Android App Bundle format Google Play uses internally — it **won't install directly** on your device. Always pick a file ending in `.apk` for sideloading.
 :::
 
 ### 2. Allow installs from your browser (first time only)
@@ -219,14 +223,14 @@ Every release ships a `SHA256SUMS.txt` file alongside the APK. Compare the check
 **macOS / Linux / Git Bash:**
 
 ```bash
-sha256sum app-release.apk
+sha256sum hermes-relay-*-sideload-release.apk
 # Compare the output against the matching line in SHA256SUMS.txt
 ```
 
 **Windows PowerShell:**
 
 ```powershell
-Get-FileHash -Algorithm SHA256 app-release.apk
+Get-FileHash -Algorithm SHA256 hermes-relay-*-sideload-release.apk
 # Compare the Hash column against the matching line in SHA256SUMS.txt
 ```
 
@@ -245,7 +249,7 @@ The APK is signed with the Codename-11 release keystore. If you want to confirm 
 You can inspect it yourself with:
 
 ```bash
-keytool -printcert -jarfile app-release.apk
+keytool -printcert -jarfile hermes-relay-*-sideload-release.apk
 ```
 
 ## Manual Install (from source)

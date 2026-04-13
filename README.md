@@ -46,7 +46,7 @@ Two steps: install the Android app on your phone, then install the plugin on you
 
 Prefer not to wait for Google Play? Grab the signed APK directly:
 
-1. Download **`app-release.apk`** from [the latest release](https://github.com/Codename-11/hermes-relay/releases/latest) (not `app-release.aab` — that's the Google Play format).
+1. Download the file ending in **`-sideload-release.apk`** from [the latest release](https://github.com/Codename-11/hermes-relay/releases/latest) — that's the full-featured "Hermes Dev" build. (Skip any `.aab` file — those are the Google Play bundle format and won't install directly.)
 2. On your phone: **Settings → Apps → Special app access → Install unknown apps** and allow your browser (first time only).
 3. Open the APK from your downloads and tap **Install**.
 4. Optionally verify integrity against `SHA256SUMS.txt` from the same release (`sha256sum` on macOS/Linux, `Get-FileHash -Algorithm SHA256` on Windows).

@@ -96,11 +96,13 @@ jobs:
           HERMES_KEY_PASSWORD: ${{ secrets.HERMES_KEY_PASSWORD }}
         # `assembleRelease` and `bundleRelease` are flavor-wide task aliases
         # (added by `flavorDimensions += "track"` in app/build.gradle.kts), so
-        # this one line builds ALL four artifacts at once:
-        #   app/build/outputs/apk/googlePlay/release/app-googlePlay-release.apk
-        #   app/build/outputs/apk/sideload/release/app-sideload-release.apk
-        #   app/build/outputs/bundle/googlePlayRelease/app-googlePlay-release.aab
-        #   app/build/outputs/bundle/sideloadRelease/app-sideload-release.aab
+        # this one line builds ALL four artifacts at once. Filenames come from
+        # `archivesName` (set in app/build.gradle.kts) which injects the app
+        # version, so `<version>` below is `libs.versions.appVersionName`:
+        #   app/build/outputs/apk/googlePlay/release/hermes-relay-<version>-googlePlay-release.apk
+        #   app/build/outputs/apk/sideload/release/hermes-relay-<version>-sideload-release.apk
+        #   app/build/outputs/bundle/googlePlayRelease/hermes-relay-<version>-googlePlay-release.aab
+        #   app/build/outputs/bundle/sideloadRelease/hermes-relay-<version>-sideload-release.aab
         run: ./gradlew bundleRelease assembleRelease
 
       - name: List produced artifacts (debug aid)
@@ -127,8 +129,9 @@ jobs:
           body_path: RELEASE_NOTES.md
           prerelease: ${{ contains(needs.validate.outputs.version, '-') }}
           # Attach all four flavored artifacts — users sideload the
-          # `app-sideload-release.apk` for the full Phase 3 / Tier 3/4/6
-          # feature set; the `app-googlePlay-release.aab` is what gets
+          # `hermes-relay-<version>-sideload-release.apk` for the full
+          # Phase 3 / Tier 3/4/6 feature set; the
+          # `hermes-relay-<version>-googlePlay-release.aab` is what gets
           # uploaded to Play Console. APK twin of the googlePlay flavor
           # and AAB twin of the sideload flavor are included for parity
           # (useful for diff tooling, not primary downloads).

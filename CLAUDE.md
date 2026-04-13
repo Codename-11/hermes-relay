@@ -422,7 +422,7 @@ Quick reference:
 - **Version source of truth**: `gradle/libs.versions.toml` (`appVersionName`, `appVersionCode`)
 - **SemVer with optional prereleases**: `v0.1.0`, `v0.1.1`, `v0.2.0-beta.1`, `v1.0.0-rc.1`
 - **`appVersionCode` is monotonic** — always increment, even across prereleases (Play Console rejects collisions)
-- **Build AAB locally**: `scripts/dev.bat bundle` → `app/build/outputs/bundle/release/app-release.aab`
+- **Build AAB locally**: `scripts/dev.bat bundle` → `app/build/outputs/bundle/<flavor>Release/hermes-relay-<version>-<flavor>-release.aab`. Product flavors nest outputs: `googlePlayRelease/hermes-relay-0.3.0-googlePlay-release.aab`, `sideloadRelease/hermes-relay-0.3.0-sideload-release.aab`. Every artifact is version-prefixed via `archivesName` in `app/build.gradle.kts`.
 - **Verify signing**: `keytool -list -printcert -jarfile <aab>` — must NOT show `CN=Android Debug`
 - **Cut a release**: bump version → commit → `git tag vMAJOR.MINOR.PATCH` → `git push origin <tag>` → CI builds APK + AAB and creates GitHub Release
 - **Required GitHub Secrets** for signed CI builds: `HERMES_KEYSTORE_BASE64`, `HERMES_KEYSTORE_PASSWORD`, `HERMES_KEY_ALIAS`, `HERMES_KEY_PASSWORD` (without these the workflow still runs but produces debug-signed artifacts that Play Console will reject)
