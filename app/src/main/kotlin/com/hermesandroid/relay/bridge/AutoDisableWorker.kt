@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.bridge
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -64,6 +65,13 @@ class AutoDisableWorker(private val context: Context) {
         postNotification()
     }
 
+    // Lint can't trace through [hasPostNotificationsPermission] to see that
+    // we early-return when the runtime grant isn't held, and the notify()
+    // call is also wrapped in runCatching to swallow SecurityException as
+    // a belt-and-braces. Suppress here rather than inlining the check —
+    // the helper exists so the same gate can grow more conditions later
+    // without each call site re-implementing it.
+    @SuppressLint("MissingPermission")
     private fun postNotification() {
         ensureChannel()
         if (!hasPostNotificationsPermission()) {
