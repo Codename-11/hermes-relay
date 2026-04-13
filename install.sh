@@ -322,6 +322,34 @@ else
     info "  Linger tip: 'loginctl enable-linger $USER' keeps it running after logout"
 fi
 
+# ── 6b/6  Re-import plugin tools by restarting hermes-gateway ──────────────
+# The hermes-agent gateway caches plugin tools (android_*, etc.) and skills
+# at import time, so a fresh `git pull` of the plugin code does NOT take
+# effect until the gateway process re-imports. Without this restart, new
+# tools added via this update silently fail to register and the user wonders
+# why their feature doesn't work.
+#
+# We only restart it if it's already running as a user systemd service
+# (the canonical install pattern). If the user runs hermes-gateway some
+# other way (manual python invocation, system service, container), we
+# print a clear hint instead of guessing.
+#
+# Skipped along with step 6 when HERMES_RELAY_NO_SYSTEMD is set.
+if [ -z "${HERMES_RELAY_NO_SYSTEMD:-}" ] && command -v systemctl >/dev/null 2>&1; then
+    if systemctl --user is-active hermes-gateway.service >/dev/null 2>&1; then
+        info "Restarting hermes-gateway to re-import plugin tools..."
+        if systemctl --user restart hermes-gateway.service >/dev/null 2>&1; then
+            ok "hermes-gateway restarted — new plugin tools are now live"
+        else
+            info "  Could not restart hermes-gateway.service automatically"
+            info "  Run manually:  systemctl --user restart hermes-gateway"
+        fi
+    else
+        info "hermes-gateway is not running as a user service — skipping auto-restart"
+        info "  If you added new plugin tools, restart your gateway manually so they re-import"
+    fi
+fi
+
 # ── Done ───────────────────────────────────────────────────────────────────
 echo ""
 echo "  [OK] Hermes-Relay installed."
@@ -337,11 +365,18 @@ echo ""
 echo "    3. Directly via the venv Python:"
 echo "         $VENV_PY -m plugin.pair"
 echo ""
-echo "  To update later:"
-echo "    cd $RELAY_HOME && git pull"
-echo "    bash $RELAY_HOME/install.sh           # re-runs all steps idempotently"
-echo "    systemctl --user restart hermes-relay   # if installed as a service"
-echo "    systemctl --user restart hermes-gateway # if you changed bootstrap code"
+echo "  To update later (one command, fully idempotent):"
+echo "    curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash"
+echo ""
+echo "  Or if you already have the clone:"
+echo "    bash $RELAY_HOME/install.sh"
+echo ""
+echo "  Re-running install.sh will:"
+echo "    - git pull the latest main"
+echo "    - refresh the editable pip install"
+echo "    - re-create both shims (hermes-pair, hermes-status)"
+echo "    - restart hermes-relay (so new endpoints/cache are live)"
+echo "    - restart hermes-gateway (so new plugin tools/skills are imported)"
 echo ""
 echo "  To uninstall:"
 echo "    bash $RELAY_HOME/uninstall.sh"
