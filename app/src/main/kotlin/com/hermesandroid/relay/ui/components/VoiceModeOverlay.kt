@@ -204,37 +204,16 @@ fun VoiceModeOverlay(
                 .padding(top = 64.dp, bottom = 160.dp, start = 24.dp, end = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            // Pinned "you said" chip — stays put while the response scrolls
-            // below it. Mirrors how Siri / Assistant keep the user's input
-            // visible after the agent starts answering, so the user always
-            // has the question they asked in view.
-            AnimatedVisibility(
-                visible = !uiState.transcribedText.isNullOrBlank(),
-                enter = fadeIn(),
-                exit = fadeOut(),
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    tonalElevation = 1.dp,
-                    modifier = Modifier.padding(bottom = 8.dp),
-                ) {
-                    Text(
-                        text = uiState.transcribedText.orEmpty(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                    )
-                }
-            }
-
-            // Sphere — fixed share of the column. weight(fill=true) keeps it
-            // from collapsing or drifting when the response text grows.
+            // Sphere — dominant share of the column. Compose's `weight()`
+            // splits *remaining* space (after fixed-size children) among
+            // weighted children, so 1.5f vs the response's 1f gives the
+            // sphere ~60% of the available area — matching the old
+            // `fillMaxHeight(0.6f)` look without drifting as the response
+            // grows. weight(fill=true) keeps it from collapsing.
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(0.55f),
+                    .weight(1.5f),
                 contentAlignment = Alignment.Center,
             ) {
                 MorphingSphere(
@@ -254,6 +233,40 @@ fun VoiceModeOverlay(
             )
 
             Spacer(Modifier.height(12.dp))
+
+            // "You said" block — sits directly above the agent response so
+            // the eye flows from the waveform straight down through the
+            // transcribed text into the answer in one motion. The old top-
+            // anchored chip forced the user to look up after stopping the
+            // mic, then back down to read the response — splitting attention.
+            // Left-aligned + small uppercase caption so it visually pairs
+            // with the response below it like a mini chat thread.
+            AnimatedVisibility(
+                visible = !uiState.transcribedText.isNullOrBlank(),
+                enter = fadeIn(),
+                exit = fadeOut(),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 6.dp),
+                    horizontalAlignment = Alignment.Start,
+                ) {
+                    Text(
+                        text = "YOU",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = uiState.transcribedText.orEmpty(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Start,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
 
             // Response area. Plain Text — no AnimatedContent — so streaming
             // tokens accrete in place instead of fade-flickering on every
