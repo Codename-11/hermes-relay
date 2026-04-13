@@ -378,19 +378,33 @@ else
         info "  Stop it first:  pkill -f 'python -m plugin.relay'"
         info "  Then:           systemctl --user enable --now hermes-relay.service"
     else
-        if systemctl --user enable --now hermes-relay.service >/dev/null 2>&1; then
+        # Was the service already running? If yes we MUST `restart` it
+        # explicitly — `enable --now` is a no-op on already-active services
+        # and the editable-install code refresh would never reach the live
+        # process. (Spent way too long debugging this on Docker-Server
+        # 2026-04-12 — every install.sh run looked successful but the live
+        # relay kept serving stale code from before the last git pull.)
+        if systemctl --user is-active hermes-relay.service >/dev/null 2>&1; then
+            ( systemctl --user restart hermes-relay.service >/dev/null 2>&1 ) &
+            if spin $! "Restarting hermes-relay (already active — picking up new code)"; then
+                ok "hermes-relay restarted — new code is live"
+            else
+                warn "Could not restart hermes-relay automatically"
+                info "Check:  journalctl --user -u hermes-relay -n 30 --no-pager"
+            fi
+        elif systemctl --user enable --now hermes-relay.service >/dev/null 2>&1; then
             ok "Enabled + started hermes-relay.service"
             # Give aiohttp a second to bind before checking state.
             sleep 1
             if systemctl --user is-active hermes-relay.service >/dev/null 2>&1; then
                 ok "hermes-relay is running"
             else
-                info "  hermes-relay failed to start"
-                info "  Check:  journalctl --user -u hermes-relay -n 30 --no-pager"
+                warn "hermes-relay failed to start"
+                info "Check:  journalctl --user -u hermes-relay -n 30 --no-pager"
             fi
         else
-            info "  Could not enable hermes-relay.service"
-            info "  Check:  systemctl --user status hermes-relay.service"
+            warn "Could not enable hermes-relay.service"
+            info "Check:  systemctl --user status hermes-relay.service"
         fi
     fi
 
