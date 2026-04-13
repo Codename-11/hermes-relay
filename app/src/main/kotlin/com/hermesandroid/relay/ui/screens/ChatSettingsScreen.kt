@@ -60,6 +60,12 @@ fun ChatSettingsScreen(
     val showThinkingSetting by connectionViewModel.showThinking.collectAsState()
     val toolDisplay by connectionViewModel.toolDisplay.collectAsState()
     val appContextEnabled by connectionViewModel.appContextEnabled.collectAsState()
+    // === PHASE3-status: granular phone-status sub-toggles ===
+    val appContextBridgeState by connectionViewModel.appContextBridgeState.collectAsState()
+    val appContextCurrentApp by connectionViewModel.appContextCurrentApp.collectAsState()
+    val appContextBattery by connectionViewModel.appContextBattery.collectAsState()
+    val appContextSafetyStatus by connectionViewModel.appContextSafetyStatus.collectAsState()
+    // === END PHASE3-status ===
     val parseToolAnnotations by connectionViewModel.parseToolAnnotations.collectAsState()
     val streamingEndpoint by connectionViewModel.streamingEndpoint.collectAsState()
     val maxAttachmentMb by connectionViewModel.maxAttachmentMb.collectAsState()
@@ -193,7 +199,9 @@ fun ChatSettingsScreen(
 
                     HorizontalDivider()
 
-                    // App context prompt toggle
+                    // === PHASE3-status: granular phone-status prompt block ===
+                    // Master toggle — hides every sub-toggle and the preview
+                    // card when off. Privacy-sensitive sub-toggles default off.
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -201,11 +209,11 @@ fun ChatSettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "App context prompt",
+                                text = "Share phone status with agent",
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(
-                                text = "Tell the agent you're on mobile for concise responses",
+                                text = "Include a short system message about the app and phone on every chat turn",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -215,6 +223,152 @@ fun ChatSettingsScreen(
                             onCheckedChange = { connectionViewModel.setAppContext(it) }
                         )
                     }
+
+                    AnimatedVisibility(visible = appContextEnabled) {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            // Sub-toggle: bridge state
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Bridge + permissions",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    Text(
+                                        text = "Whether accessibility, screen capture, overlay, notifications are granted",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = appContextBridgeState,
+                                    onCheckedChange = { connectionViewModel.setAppContextBridgeState(it) }
+                                )
+                            }
+
+                            // Sub-toggle: current app (privacy-sensitive, default off)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Foreground app",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    Text(
+                                        text = "The package name of whatever app is currently visible. Off by default.",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = appContextCurrentApp,
+                                    onCheckedChange = { connectionViewModel.setAppContextCurrentApp(it) }
+                                )
+                            }
+
+                            // Sub-toggle: battery (privacy-sensitive, default off)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Battery level",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    Text(
+                                        text = "Current battery percent. Off by default.",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = appContextBattery,
+                                    onCheckedChange = { connectionViewModel.setAppContextBattery(it) }
+                                )
+                            }
+
+                            // Sub-toggle: safety rails
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Safety rails",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    Text(
+                                        text = "Blocklist count, destructive-verb count, and auto-disable timer",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = appContextSafetyStatus,
+                                    onCheckedChange = { connectionViewModel.setAppContextSafetyStatus(it) }
+                                )
+                            }
+
+                            // Live preview of the exact text that will be sent.
+                            // Rebuilds on every toggle change via remember(key1..key5).
+                            val previewText = remember(
+                                appContextEnabled,
+                                appContextBridgeState,
+                                appContextCurrentApp,
+                                appContextBattery,
+                                appContextSafetyStatus,
+                            ) {
+                                com.hermesandroid.relay.util.buildPromptBlock(
+                                    settings = com.hermesandroid.relay.util.AppContextSettings(
+                                        master = appContextEnabled,
+                                        bridgeState = appContextBridgeState,
+                                        currentApp = appContextCurrentApp,
+                                        battery = appContextBattery,
+                                        safetyStatus = appContextSafetyStatus,
+                                    ),
+                                    // Preview uses a neutral "nothing bound" snapshot so the
+                                    // user sees the shape without leaking their current
+                                    // phone state into the settings screen.
+                                    snapshot = com.hermesandroid.relay.util.PhoneSnapshot(),
+                                )
+                            }
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surface
+                                )
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Text(
+                                        text = "Preview",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        text = previewText ?: "(no system message will be sent)",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (previewText == null)
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        else
+                                            MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    // === END PHASE3-status ===
 
                     HorizontalDivider()
 

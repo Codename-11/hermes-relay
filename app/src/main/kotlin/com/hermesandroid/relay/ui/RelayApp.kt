@@ -255,11 +255,28 @@ fun RelayApp() {
         }
     }
 
-    // Sync app context toggle from settings to chat
+    // === PHASE3-status: sync granular phone-status settings to chat ===
     val appContextEnabled by connectionViewModel.appContextEnabled.collectAsState()
-    LaunchedEffect(appContextEnabled) {
-        chatViewModel.appContextEnabled = appContextEnabled
+    val appContextBridgeState by connectionViewModel.appContextBridgeState.collectAsState()
+    val appContextCurrentApp by connectionViewModel.appContextCurrentApp.collectAsState()
+    val appContextBattery by connectionViewModel.appContextBattery.collectAsState()
+    val appContextSafetyStatus by connectionViewModel.appContextSafetyStatus.collectAsState()
+    LaunchedEffect(
+        appContextEnabled,
+        appContextBridgeState,
+        appContextCurrentApp,
+        appContextBattery,
+        appContextSafetyStatus,
+    ) {
+        chatViewModel.appContextSettings = com.hermesandroid.relay.util.AppContextSettings(
+            master = appContextEnabled,
+            bridgeState = appContextBridgeState,
+            currentApp = appContextCurrentApp,
+            battery = appContextBattery,
+            safetyStatus = appContextSafetyStatus,
+        )
     }
+    // === END PHASE3-status ===
 
     // Sync tool annotation parsing toggle to ChatHandler
     val parseAnnotations by connectionViewModel.parseToolAnnotations.collectAsState()

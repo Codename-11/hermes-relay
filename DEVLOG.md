@@ -1,5 +1,70 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-12 — Phase 3 / status — relay `GET /bridge/status` endpoint + expanded `BridgeStatusReporter`
+
+Backend half of the `android_phone_status()` work. The phone (`BridgeStatusReporter.kt`) now pushes a structured status envelope every 30 s with three nested groups:
+
+- **`device`** — `Build.MODEL`, battery, `PowerManager.isInteractive`, `HermesAccessibilityService.instance?.currentApp`
+- **`bridge`** — `master_enabled`, `accessibility_granted`, `screen_capture_granted`, `overlay_granted`, `notification_listener_granted`
+- **`safety`** — blocklist count, destructive verb count, auto-disable timer minutes, `auto_disable_at_ms`
+
+Old flat keys kept alongside the new structure for backwards compat. New `pushNow()` method on the reporter for out-of-band emissions; `ConnectionViewModel` calls it whenever the master toggle flips so the relay-side cache refreshes immediately instead of waiting up to 30 s.
+
+**Relay side**: `BridgeHandler` gained `latest_status: dict | None` and `last_seen_at: float | None`, populated in `handle_status`. New `handle_bridge_status` route at `GET /bridge/status`, gated to loopback only (mirrors `/pairing/register`). Empty cache → 503; populated → 200 with `last_seen_seconds_ago` computed at response time. Stale-cache disconnects return 200 — the cached snapshot is still useful.
+
+**Tests**: `plugin/tests/test_bridge_status.py` — 7 stdlib `unittest` cases (empty cache 503, populated 200, disconnected, non-loopback rejection, IPv6 `::1`, snapshot-not-reference regression, dual-field stamping). All pass; existing `test_bridge_channel.py` still green.
+
+Markers: `# === PHASE3-status: ... === / # === END PHASE3-status ===` for the new Python blocks; `// === PHASE3-status: ... ===` for Kotlin.
+
+## 2026-04-12 — Phase 3 / bridge UI hardening — master gate, MediaProjection consent, label disambiguation
+
+Three follow-ups discovered while smoke-testing the merged Phase 3 build on a real device.
+
+**Master gate fix.** `HermesAccessibilityService.cachedMasterEnabled` was supposed to be fed by an external `updateMasterEnabledCache(...)` writer, but **nothing was calling it** — the cache was permanently `false` and `BridgeCommandHandler` was 403'ing every command except `/ping` and `/current_app` regardless of the toggle state. Fix: the service now starts a `serviceScope` coroutine on `onServiceConnected` that observes `masterEnabledFlow(this)` and pumps every emission into the cache. Service-owned scope is cancelled on `onUnbind`/`onDestroy` and re-created on each connect (cancelled `SupervisorJob`s can't be reused). Cache is reset to `false` on teardown so a stale-but-bound state can't leak through.
+
+**MediaProjection consent flow.** `MediaProjectionHolder.onGranted(...)` existed but **nothing called it** — there was no `ActivityResultLauncher` registered anywhere. Fix: `MainActivity` now registers a launcher in `onCreate` and a new `ScreenCaptureRequester` process-singleton holds the launch closure (installed on Activity create, cleared on destroy). `BridgeViewModel.requestScreenCapture()` calls `ScreenCaptureRequester.request()` to ask the user; the system consent dialog fires; the result callback feeds `MediaProjectionHolder.onGranted(...)` which closes the loop with the existing `ScreenCapture.kt`. Bridge tab's Screen Capture row is now tappable instead of inert; the row's checkmark reflects `MediaProjectionHolder.projection != null`.
+
+**Notification Listener Test button parity.** Added `BridgeViewModel.testNotificationListener()` and an `onTestNotificationListener` lambda through `BridgePermissionChecklist` so the row gets a Test button matching the other three. The dedicated functional test on `NotificationCompanionSettingsScreen` still ships.
+
+**Launcher label disambiguation per flavor.** With `googlePlayDebug` and `sideloadDebug` installed side-by-side (same icon, same name), there was no way to tell which install you were tapping in the launcher / recents / Settings → Apps. Fix: sideload's `res/values/strings.xml` now overrides three strings:
+- `app_name` → `Hermes Dev` (10 chars, fits launcher icon, mirrors `Slack Dev` / `Chrome Dev` convention)
+- `a11y_service_label` → `Hermes-Bridge Dev` (Accessibility settings list)
+- `notification_companion_label` → `Hermes Dev notification companion`
+
+googlePlay's `a11y_service_label` also flipped to `Hermes-Bridge` (with hyphen) for consistency. The Play track inherits all other strings from main.
+
+**Other small fixes**: `BridgeForegroundService.kt` `Intent.flags = ...` → `addFlags(...)` (the property setter form doesn't compile because `Intent.setFlags` returns `Intent`, not void). `BridgeViewModel.kt` removed `StateFlow.distinctUntilChanged()` (deprecated no-op since StateFlow already deduplicates).
+
+Markers: new code blocks tagged `// === PHASE3-bridge-ui-followup: ... === / // === END PHASE3-bridge-ui-followup ===`.
+
+## 2026-04-12 — Phase 3 / status trio — `android_phone_status` tool + `hermes-status` CLI + `/hermes-relay-status` skill
+
+Symmetric read-only counterpart to the pair trio. The relay ships `GET /bridge/status` (loopback, in a parallel agent's scope) that exposes live phone state — connection, battery, screen, foreground app, bridge permission flags, safety-rail config. This change builds the three consumers that wrap it so the agent, operators, and chat users all have a clean entry point.
+
+**`plugin/tools/android_phone_status.py`.** New Hermes tool registered via the canonical `tools.registry` import pattern, modeled after `plugin/tools/android_notifications.py`. Zero args. Calls `http://127.0.0.1:8767/bridge/status` over loopback (no bearer — same trust model as `/media/register` and `/pairing/register`), returns `{"status": "ok"|"error", "phone_status": {...}|null, "error": str|null}`. Stdlib `urllib.request` only — no `requests`/`httpx`. Handles three canonical paths:
+
+- **200 OK** → `status=ok` with the parsed relay body as `phone_status`.
+- **503** (relay alive but no phone has ever connected) → `status=ok` with `phone_status={"phone_connected": false, ...}`. From the agent's perspective the phone not being connected isn't an error — it's just the current state, and the LLM should render it as prose.
+- **URLError/OSError/timeout** → `status=error` with `error="relay unreachable"`. This is the only case where the agent should bail.
+
+The tool's description is explicit about *when* to call it: before attempting any bridge operation (`android_tap`, `android_type`, `android_screenshot`) so the agent can check `phone_connected` + `bridge.*_granted` upfront instead of eating failures one by one. `check_fn=lambda: True` because gating status on bridge connectivity would be circular — it IS the connectivity check.
+
+**`plugin/status.py`.** New CLI module modeled after `plugin/pair.py`. Probes the same endpoint, pretty-prints with a small ANSI `_Palette` helper that's a no-op when stdout isn't a TTY. Three distinct exit codes so shell scripts can distinguish the cases: `0` success + connected, `1` relay unreachable, `2` relay alive but no phone. `--json` flag emits raw JSON pass-through (always a stable envelope so callers can `jq` over it even on failure). `--port N` overrides `RELAY_PORT`. Invokable via `python -m plugin.status` or the `hermes-status` shim. `fetch_status(port)` is factored out as a pure-function core so the tests can exercise it without mocking argparse.
+
+**`skills/devops/hermes-relay-status/SKILL.md`.** New slash-command skill mirroring `hermes-relay-pair`'s structure verbatim — same frontmatter shape, same `metadata.hermes.category: devops`, same "When to Use / Prerequisites / Procedure / Pitfalls / Verification" section layout. Explains how to interpret the three exit codes, when to re-pair vs. when to restart the relay, and how to read the permission flags when the user's "accessibility is granted" but status says otherwise (OS killed the service). Picked up automatically by the `external_dirs` scan installer registers — no config change needed on upgrade.
+
+**`install.sh` / `uninstall.sh` — hermes-status shim.** Added step [5/6] sibling block that writes `~/.local/bin/hermes-status` alongside `hermes-pair`. Same template: a tiny bash shim that execs `$HERMES_VENV_PY -m plugin.status "$@"` with a friendly error if the venv python can't be found. Uninstaller mirrors it for removal — both shims come out together under `[5/6]`. Header comments in both scripts updated to reference the plural "shims".
+
+**`plugin/tests/test_android_phone_status.py` — 19 tests, stdlib `unittest` only.** Covers the tool's success path, 503 mapping, 503 with empty body, connection refused (URLError), raw OSError, other HTTP errors (500), non-JSON body, non-object JSON (`[1,2,3]`, `42`), schema sanity (`parameters.required == []`, `properties == {}`), and the registry handler wrapper. Also covers the CLI's `fetch_status` return-triple shape across all three exit codes + `main(["--json"])` happy path + all three failure modes. The rendering pass has two smoke tests: one verifies the happy path includes all the expected fields (device name, battery %, current app, blocklist count, destructive verbs, permission labels), one verifies the disconnected short-circuit omits the Device/Bridge/Safety sections entirely. Mocks `urllib.request.urlopen` via `unittest.mock.patch`, uses a tiny `_FakeResponse` context-manager stub and `_http_error(code, body)` helper that builds a real `urllib.error.HTTPError` whose `.read()` returns the fixture body (critical: the 503 handler reads the body to extract the phone-state envelope, so the mock has to wrap a `BytesIO` in the `fp` slot, not just pass bytes). All tests run green:
+
+```
+python -m unittest plugin.tests.test_android_phone_status -v
+Ran 19 tests in 0.010s
+OK
+```
+
+**Files touched:** new `plugin/tools/android_phone_status.py`, new `plugin/status.py`, new `skills/devops/hermes-relay-status/SKILL.md`, new `plugin/tests/test_android_phone_status.py`, edits to `install.sh` + `uninstall.sh` for the shim pair. No relay-side changes — the `/bridge/status` endpoint is owned by a parallel agent working in the `plugin/relay/server.py` scope. This change is pure consumer.
+
 ## 2026-04-12 — Phase 3 / safety-rails followup — deep link, overlay nag, in-app permission Test buttons
 
 Three small UX wins on top of the merged Wave 2 safety rails. All gate cleaner first-run smoke testing on a real device.
@@ -243,6 +308,24 @@ Lands the Tier 4 "burner-phone trick, done sanely" plan row. New Hermes tool `an
 **Files NOT touched:** `plugin/relay/*`, `plugin/relay/channels/bridge.py`, `plugin/tools/android_tool.py`, `plugin/tools/android_relay.py`, `plugin/relay/auth.py`, `plugin/relay/media.py`, `plugin/relay/voice.py`, anything under `app/`. The slice is self-contained in `plugin/tools/` as scoped.
 
 **Test results:** `python -m unittest plugin.tests.test_android_navigate` → 35 tests, all pass in ~0.05 s.
+
+## 2026-04-12 — Dynamic phone-status system prompt block
+
+Replaced the single hardcoded "app context prompt" sentence with a transparent, granular block that reflects real Phase 3 bridge/permission state. The old toggle promised far more than it delivered — one static line, regardless of anything actually happening on the phone. The new block is a master toggle + 4 sub-toggles with a live preview card in Chat Settings.
+
+**New file:** `app/src/main/kotlin/com/hermesandroid/relay/util/PhoneStatusPromptBuilder.kt` — pure function `buildPromptBlock(settings, snapshot)` returning `String?`. Returns `null` when master is off so no empty system message is sent. Defines `AppContextSettings` (5 booleans) and `PhoneSnapshot` (11 nullable fields). Output capped under ~100 words; the brief suggests calling `android_phone_status` for full detail, keeping per-turn token cost down while giving the agent a permission-lit entrypoint.
+
+**ConnectionViewModel:** Four new DataStore keys alongside the existing `KEY_APP_CONTEXT` — `KEY_APP_CONTEXT_BRIDGE_STATE` (default true), `KEY_APP_CONTEXT_CURRENT_APP` (default **false** — privacy), `KEY_APP_CONTEXT_BATTERY` (default **false** — privacy), `KEY_APP_CONTEXT_SAFETY_STATUS` (default true). Each gets a StateFlow + setter mirroring the `appContextEnabled` pattern.
+
+**ChatViewModel:** Deleted `APP_CONTEXT_PROMPT` constant, replaced `var appContextEnabled: Boolean` with `var appContextSettings: AppContextSettings`. `send()` now calls `buildPromptBlock(appContextSettings, capturePhoneSnapshot())`. The `capturePhoneSnapshot()` helper uses guarded reflection (`runCatching` on every lookup) to read Phase 3 classes — `HermesAccessibilityService.instance`, `MediaProjectionHolder.projection`, `BridgeSafetyManager.peek()`. The reflection path exists so ChatViewModel compiles cleanly before those classes land in this worktree (they're being built by a parallel agent); once they exist, reads light up with zero further code changes here. Non-Phase-3 sources (battery, overlay permission, notification listener flat-string) use direct platform APIs.
+
+**RelayApp.kt:** Single `LaunchedEffect` now keys on all 5 toggles and writes a fresh `AppContextSettings` into `chatViewModel.appContextSettings` on any change.
+
+**ChatSettingsScreen.kt:** Master toggle renamed to "Share phone status with agent". When enabled, `AnimatedVisibility` reveals 4 sub-toggle rows + a "Preview" Card. The preview uses `remember(master, bridgeState, currentApp, battery, safetyStatus)` to regenerate exact output text on every toggle change, calling the same `buildPromptBlock` with a neutral empty snapshot so the user sees the shape without leaking current phone state into the settings screen. Shows "(no system message will be sent)" when builder returns `null`.
+
+**Privacy model:** Default configuration sends "mobile-friendly preamble + bridge permission summary + safety rails count" — no package names, no battery level. Users opt in explicitly to each privacy-sensitive field. The `android_phone_status` tool (being built in a parallel worktree) is the disclosure path for full detail so per-turn cost stays bounded.
+
+Markers: all new blocks tagged `// === PHASE3-status: ... === / // === END PHASE3-status ===` for grep.
 
 ## 2026-04-12 — Add canonical uninstall.sh + bootstrap docs
 

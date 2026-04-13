@@ -121,7 +121,7 @@ class BridgeForegroundService : Service() {
                 // change Screen.BridgeSafetySettings.route in RelayApp.kt,
                 // change it here too.
                 val launch = Intent(this, MainActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                     putExtra(MainActivity.EXTRA_NAV_ROUTE, "settings/bridge_safety")
                 }
                 runCatching { startActivity(launch) }

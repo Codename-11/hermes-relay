@@ -23,9 +23,10 @@
 #   4. The skill(s) under skills/ into ~/.hermes/config.yaml as a scanned
 #      external_dirs entry — Hermes follows that path at runtime, so
 #      `git pull` on the clone auto-updates the SKILL.md files
-#   5. A shell shim at ~/.local/bin/hermes-pair that execs
-#      `<venv>/python -m plugin.pair "$@"` — the canonical shell-side entry
-#      point while the upstream `hermes pair` plugin CLI path is blocked
+#   5. Shell shims at ~/.local/bin/hermes-pair and ~/.local/bin/hermes-status
+#      that exec `<venv>/python -m plugin.pair "$@"` / `plugin.status "$@"` —
+#      the canonical shell-side entry points while the upstream `hermes pair`
+#      plugin CLI path is blocked
 #   6. A systemd user unit at ~/.config/systemd/user/hermes-relay.service
 #      (optional — only on hosts with a systemd user session; skipped on
 #      macOS, WSL-without-systemd, bare chroots, etc.). When installed,
@@ -71,6 +72,7 @@ PLUGIN_LINK="$HERMES_HOME/plugins/hermes-relay"
 SKILLS_DIR_IN_REPO="$RELAY_HOME/skills"
 HERMES_CONFIG="$HERMES_HOME/config.yaml"
 SHIM_PATH="$HOME/.local/bin/hermes-pair"
+STATUS_SHIM_PATH="$HOME/.local/bin/hermes-status"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 SERVICE_SRC="$RELAY_HOME/relay_server/hermes-relay.service"
 SERVICE_DST="$SYSTEMD_USER_DIR/hermes-relay.service"
@@ -221,8 +223,8 @@ else:
     print(f"  [ok] Added {target} to skills.external_dirs in {cfg_path}")
 PY
 
-# ── 5/6  Install the hermes-pair shell shim ────────────────────────────────
-info "[5/6] Installing hermes-pair shell shim..."
+# ── 5/6  Install the hermes-pair + hermes-status shell shims ──────────────
+info "[5/6] Installing hermes-pair + hermes-status shell shims..."
 mkdir -p "$(dirname "$SHIM_PATH")"
 cat > "$SHIM_PATH" <<SHIM
 #!/usr/bin/env bash
@@ -243,6 +245,26 @@ exec "\$HERMES_VENV_PY" -m plugin.pair "\$@"
 SHIM
 chmod +x "$SHIM_PATH"
 ok "Installed $SHIM_PATH"
+
+cat > "$STATUS_SHIM_PATH" <<SHIM
+#!/usr/bin/env bash
+# Hermes-Relay phone-status shim — routes to \`python -m plugin.status\`
+# inside the hermes-agent venv where the hermes-relay plugin is installed.
+#
+# Also available: /hermes-relay-status slash command in any Hermes chat session.
+#
+# Override the venv python path with \$HERMES_VENV_PY if needed.
+
+HERMES_VENV_PY="\${HERMES_VENV_PY:-\$HOME/.hermes/hermes-agent/venv/bin/python}"
+if [ ! -x "\$HERMES_VENV_PY" ]; then
+    echo "hermes-status: cannot find hermes venv python at \$HERMES_VENV_PY" >&2
+    echo "hermes-status: set HERMES_VENV_PY or reinstall hermes-agent" >&2
+    exit 1
+fi
+exec "\$HERMES_VENV_PY" -m plugin.status "\$@"
+SHIM
+chmod +x "$STATUS_SHIM_PATH"
+ok "Installed $STATUS_SHIM_PATH"
 
 # ── 6/6  Install systemd user service (optional) ───────────────────────────
 # Idempotent: safe to re-run. Skipped gracefully on hosts without a systemd

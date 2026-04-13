@@ -18,8 +18,11 @@ import com.hermesandroid.relay.network.RelayHttpClient
 import com.hermesandroid.relay.network.handlers.ChatHandler
 import com.hermesandroid.relay.network.models.SkillInfo
 import com.hermesandroid.relay.network.models.UsageInfo
+import com.hermesandroid.relay.util.AppContextSettings
 import com.hermesandroid.relay.util.HumanError
 import com.hermesandroid.relay.util.MediaCacheWriter
+import com.hermesandroid.relay.util.PhoneSnapshot
+import com.hermesandroid.relay.util.buildPromptBlock
 import com.hermesandroid.relay.util.classifyError
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -59,8 +62,12 @@ class ChatViewModel : ViewModel() {
      * for the FAILED/LOADED cases.
      */
     companion object {
-        /** Brief app context sent as system_message when enabled in settings. */
-        const val APP_CONTEXT_PROMPT = "The user is chatting via the Hermes-Relay Android app. Keep responses mobile-friendly and concise when possible."
+        // === PHASE3-status: APP_CONTEXT_PROMPT removed ===
+        // The old static one-liner used to live here. Replaced by the
+        // dynamic block built in PhoneStatusPromptBuilder.buildPromptBlock()
+        // from `appContextSettings` + a freshly-read PhoneSnapshot. See
+        // `send()` below for the construction site.
+        // === END PHASE3-status ===
         const val MEDIA_TAP_TO_DOWNLOAD = "Tap to download"
     }
 
@@ -122,8 +129,17 @@ class ChatViewModel : ViewModel() {
     private val _serverModelName = MutableStateFlow("")
     val serverModelName: StateFlow<String> = _serverModelName.asStateFlow()
 
-    /** Whether to include the brief app context system message */
-    var appContextEnabled: Boolean = true
+    // === PHASE3-status: dynamic app-context settings ===
+    /**
+     * Granular phone-status settings. Written from RelayApp via a collect
+     * on the five `appContext*` StateFlows in ConnectionViewModel. Read on
+     * every send() to build the system-prompt block.
+     *
+     * Defaults match ConnectionViewModel's default values — master on,
+     * bridgeState on, currentApp/battery off (privacy), safetyStatus on.
+     */
+    var appContextSettings: AppContextSettings = AppContextSettings()
+    // === END PHASE3-status ===
 
     /**
      * Streaming endpoint to use for the next chat turn. Always one of
@@ -444,10 +460,12 @@ class ChatViewModel : ViewModel() {
             // Non-default personality selected — send its system prompt to override server default
             personalityPrompts[selected]
         } else null
-        val appContext = if (appContextEnabled) APP_CONTEXT_PROMPT else null
+        // === PHASE3-status: dynamic phone-status block ===
+        val appContext = buildPromptBlock(appContextSettings, capturePhoneSnapshot())
         val systemMsg = listOfNotNull(personalityPrompt, appContext)
             .joinToString("\n\n")
             .ifBlank { null }
+        // === END PHASE3-status ===
 
         // Set agent name for display on chat bubbles
         handler.activeAgentName = activePersonalityName.replaceFirstChar { it.uppercase() }
@@ -917,6 +935,149 @@ class ChatViewModel : ViewModel() {
             msg.copy(attachments = updated)
         }
     }
+
+    // === PHASE3-status: cached-state snapshot for the dynamic prompt block ===
+    /**
+     * Construct a [PhoneSnapshot] from whatever cached state is reachable
+     * *without* network calls or suspend functions. Every field is guarded
+     * with `runCatching` so this is safe to call on a fresh install where
+     * the Phase 3 accessibility/bridge/safety classes may not exist yet.
+     *
+     * Reflection is used for the Phase 3 classes (HermesAccessibilityService,
+     * MediaProjectionHolder, BridgeSafetyManager, HermesNotificationCompanion)
+     * so this file compiles before those classes land in the worktree. When
+     * they do land, the reflective reads start returning real values with
+     * zero further code changes here. Stay alert: if any of those classes
+     * change their FQCN or their singleton accessor shape, update the
+     * reflective lookups below.
+     *
+     * Privacy-sensitive fields (currentApp, batteryPercent) are gated by
+     * the caller's [AppContextSettings] — this function always reads them
+     * when they're cheap, but the builder drops them when the sub-toggle
+     * is off. We do honour the gate for battery because `BATTERY_PROPERTY_CAPACITY`
+     * may wake the battery stats service; when the sub-toggle is off we
+     * simply don't read it.
+     */
+    private fun capturePhoneSnapshot(): PhoneSnapshot {
+        val ctx = appContext ?: return PhoneSnapshot()
+
+        // --- Accessibility service (Phase 3) ---
+        // Reflective lookup of HermesAccessibilityService.instance — a
+        // @Volatile companion singleton set in onServiceConnected. Kotlin
+        // compiles companion object properties to either a static field on
+        // the enclosing class (when @JvmStatic is used) or to a
+        // Companion.getInstance() accessor. Try both shapes.
+        var bridgeBound = false
+        var masterEnabled = false
+        var accessibilityGranted = false
+        var currentAppPkg: String? = null
+        runCatching {
+            val cls = Class.forName("com.hermesandroid.relay.accessibility.HermesAccessibilityService")
+            val instance: Any? = runCatching {
+                // Shape A: @JvmStatic — static field on the outer class
+                val f = cls.getDeclaredField("instance").apply { isAccessible = true }
+                f.get(null)
+            }.getOrNull() ?: runCatching {
+                // Shape B: companion property with generated accessor
+                val companionField = cls.getDeclaredField("Companion").apply { isAccessible = true }
+                val companion = companionField.get(null)
+                companion.javaClass.getMethod("getInstance").invoke(companion)
+            }.getOrNull()
+
+            if (instance != null) {
+                bridgeBound = true
+                accessibilityGranted = true
+                runCatching {
+                    val m = instance.javaClass.getMethod("isMasterEnabled")
+                    masterEnabled = (m.invoke(instance) as? Boolean) == true
+                }
+                if (appContextSettings.currentApp) {
+                    // Kotlin `val currentApp: String?` compiles to getCurrentApp()
+                    runCatching {
+                        val m = instance.javaClass.getMethod("getCurrentApp")
+                        currentAppPkg = m.invoke(instance) as? String
+                    }
+                }
+            }
+        }
+
+        // --- Screen capture (Phase 3 MediaProjectionHolder) ---
+        var screenCaptureGranted = false
+        runCatching {
+            val cls = Class.forName("com.hermesandroid.relay.accessibility.MediaProjectionHolder")
+            val instanceField = cls.getDeclaredField("INSTANCE").apply { isAccessible = true }
+            val instance = instanceField.get(null)
+            val m = instance.javaClass.getMethod("getProjection")
+            screenCaptureGranted = m.invoke(instance) != null
+        }
+
+        // --- Overlay permission (platform API, always available) ---
+        val overlayGranted = runCatching {
+            android.provider.Settings.canDrawOverlays(ctx)
+        }.getOrDefault(false)
+
+        // --- Notification listener (Phase 3 HermesNotificationCompanion) ---
+        val notificationsGranted = runCatching {
+            val flat = android.provider.Settings.Secure.getString(
+                ctx.contentResolver,
+                "enabled_notification_listeners",
+            ) ?: ""
+            flat.contains(ctx.packageName)
+        }.getOrDefault(false)
+
+        // --- Battery (platform API, privacy-gated) ---
+        val batteryPercent: Int? = if (appContextSettings.battery) {
+            runCatching {
+                val bm = ctx.getSystemService(Context.BATTERY_SERVICE) as? android.os.BatteryManager
+                val pct = bm?.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                if (pct != null && pct in 0..100) pct else null
+            }.getOrNull()
+        } else null
+
+        // --- Safety manager (Phase 3 BridgeSafetyManager.peek()) ---
+        var blocklistCount: Int? = null
+        var destructiveVerbCount: Int? = null
+        var autoDisableMinutes: Int? = null
+        runCatching {
+            val cls = Class.forName("com.hermesandroid.relay.bridge.BridgeSafetyManager")
+            val companionField = cls.getDeclaredField("Companion").apply { isAccessible = true }
+            val companion = companionField.get(null)
+            val manager = companion.javaClass.getMethod("peek").invoke(companion)
+            if (manager != null) {
+                val settingsFlow = manager.javaClass.getMethod("getSettings").invoke(manager)
+                val settings = settingsFlow?.javaClass?.getMethod("getValue")?.invoke(settingsFlow)
+                if (settings != null) {
+                    runCatching {
+                        val blocklist = settings.javaClass.getMethod("getBlocklist").invoke(settings) as? Collection<*>
+                        blocklistCount = blocklist?.size
+                    }
+                    runCatching {
+                        val verbs = settings.javaClass.getMethod("getDestructiveVerbs").invoke(settings) as? Collection<*>
+                        destructiveVerbCount = verbs?.size
+                    }
+                    runCatching {
+                        val m = settings.javaClass.getMethod("getAutoDisableMinutes")
+                        autoDisableMinutes = m.invoke(settings) as? Int
+                    }
+                }
+            }
+        }
+
+        return PhoneSnapshot(
+            bridgeBound = bridgeBound,
+            masterEnabled = masterEnabled,
+            accessibilityGranted = accessibilityGranted,
+            screenCaptureGranted = screenCaptureGranted,
+            overlayGranted = overlayGranted,
+            notificationsGranted = notificationsGranted,
+            currentApp = currentAppPkg,
+            batteryPercent = batteryPercent,
+            blocklistCount = blocklistCount,
+            destructiveVerbCount = destructiveVerbCount,
+            autoDisableMinutes = autoDisableMinutes,
+        )
+    }
+    // === END PHASE3-status ===
 
     /**
      * True when the currently active network is cellular (metered LTE/5G).

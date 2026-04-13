@@ -39,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
 from typing import Any
 
@@ -87,6 +88,20 @@ class BridgeHandler:
 
         # Last bridge.status envelope payload — exposed for Phase 3 health UI.
         self.phone_status: dict[str, Any] = {}
+
+        # === PHASE3-status: structured status cache ===
+        # Raw payload of the most recent ``bridge.status`` envelope the
+        # phone sent. Served via ``GET /bridge/status`` on the relay so
+        # the ``android_phone_status()`` tool can answer "is the phone
+        # connected + which permissions are granted?" without blocking
+        # on a round-trip through the WSS bridge channel.
+        #
+        # ``None`` means no phone has ever pushed a status to this relay
+        # process — the endpoint returns 503 in that case so the agent
+        # can distinguish "no phone" from "stale phone".
+        self.latest_status: dict[str, Any] | None = None
+        self.last_seen_at: float | None = None
+        # === END PHASE3-status ===
 
     # ── Envelope dispatch ────────────────────────────────────────────────
 
@@ -220,6 +235,13 @@ class BridgeHandler:
         if not isinstance(payload, dict):
             return
         self.phone_status = dict(payload)
+        # === PHASE3-status: feed structured cache for /bridge/status ===
+        # We snapshot the whole payload — the phone sends both the new
+        # nested ``device``/``bridge``/``safety`` groups and the legacy
+        # flat keys, and it's cheaper to cache everything than to pick.
+        self.latest_status = dict(payload)
+        self.last_seen_at = time.time()
+        # === END PHASE3-status ===
         logger.debug("bridge: status update %s", self.phone_status)
 
     # ── Lifecycle ───────────────────────────────────────────────────────

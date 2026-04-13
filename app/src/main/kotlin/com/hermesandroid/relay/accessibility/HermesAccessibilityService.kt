@@ -10,8 +10,13 @@ import android.view.accessibility.AccessibilityNodeInfo
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import com.hermesandroid.relay.data.relayDataStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 /**
  * Phase 3 — accessibility `accessibility-runtime`
@@ -94,6 +99,24 @@ class HermesAccessibilityService : AccessibilityService() {
     private var _actionExecutor: ActionExecutor? = null
 
     /**
+     * Service-scoped coroutine context. Started fresh in
+     * [onServiceConnected], cancelled in [onUnbind] / [onDestroy]. Used to
+     * observe the DataStore-backed master toggle and pump it into
+     * [cachedMasterEnabled] so [BridgeCommandHandler] can do a non-suspend
+     * gate check on every inbound command.
+     *
+     * Without this collector the cache stays at its `false` default and
+     * the gate refuses every command — that was the original Phase 3
+     * "bridge always disabled" bug.
+     *
+     * Re-created on each connect because cancelled `SupervisorJob`s can't
+     * be reused, and Android may rebind the same service instance after
+     * an unbind on rare config changes.
+     */
+    @Volatile
+    private var serviceScope: CoroutineScope? = null
+
+    /**
      * Cached package name of the currently-foregrounded app. Updated on
      * every `TYPE_WINDOW_STATE_CHANGED` event. Read by the status reporter
      * for the `current_app` field in `bridge.status`.
@@ -117,6 +140,16 @@ class HermesAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         instance = this
         Log.i(TAG, "HermesAccessibilityService connected")
+        // Feed the master-toggle cache for the lifetime of this service
+        // binding. Re-created on each connect — see [serviceScope] KDoc.
+        val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+        serviceScope = scope
+        scope.launch {
+            masterEnabledFlow(this@HermesAccessibilityService).collect { enabled ->
+                cachedMasterEnabled = enabled
+                Log.d(TAG, "master toggle cached: $enabled")
+            }
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -150,29 +183,33 @@ class HermesAccessibilityService : AccessibilityService() {
     override fun onUnbind(intent: Intent?): Boolean {
         Log.i(TAG, "HermesAccessibilityService unbinding")
         if (instance === this) instance = null
+        serviceScope?.cancel()
+        serviceScope = null
+        cachedMasterEnabled = false
         return super.onUnbind(intent)
     }
 
     override fun onDestroy() {
         if (instance === this) instance = null
+        serviceScope?.cancel()
+        serviceScope = null
+        cachedMasterEnabled = false
         super.onDestroy()
     }
 
     /**
-     * Check whether the soft master toggle is on. This is a best-effort
-     * blocking read — the canonical source of truth is the DataStore Flow
-     * observed by UI. We cache the value on every observed event so command
-     * handlers can check it without a suspend call.
+     * Soft master-toggle cache. Fed by the [serviceScope] collector started
+     * in [onServiceConnected] — DO NOT write directly. Read by
+     * [BridgeCommandHandler] on every inbound command via [isMasterEnabled].
+     *
+     * Volatile because the writer runs on Dispatchers.Default and the
+     * reader runs on whichever multiplexer thread the bridge envelope
+     * arrives on.
      */
     @Volatile
     private var cachedMasterEnabled: Boolean = false
 
     fun isMasterEnabled(): Boolean = cachedMasterEnabled
-
-    /** Called by the app-level observer to feed the cached value. */
-    fun updateMasterEnabledCache(enabled: Boolean) {
-        cachedMasterEnabled = enabled
-    }
 
     /**
      * Snapshot the current root node of the active window. Returns null if

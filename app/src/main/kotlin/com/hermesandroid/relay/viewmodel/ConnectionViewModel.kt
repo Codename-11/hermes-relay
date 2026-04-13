@@ -72,6 +72,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         private val KEY_SHOW_THINKING = booleanPreferencesKey("show_thinking")
         private val KEY_TOOL_DISPLAY = stringPreferencesKey("tool_display")
         private val KEY_APP_CONTEXT = booleanPreferencesKey("app_context_prompt")
+        // === PHASE3-status: granular phone-status sub-toggles ===
+        // Gated by the master KEY_APP_CONTEXT. Privacy-sensitive fields
+        // (current_app, battery) default false; everything else defaults true.
+        private val KEY_APP_CONTEXT_BRIDGE_STATE = booleanPreferencesKey("app_context_bridge_state")
+        private val KEY_APP_CONTEXT_CURRENT_APP = booleanPreferencesKey("app_context_current_app")
+        private val KEY_APP_CONTEXT_BATTERY = booleanPreferencesKey("app_context_battery")
+        private val KEY_APP_CONTEXT_SAFETY_STATUS = booleanPreferencesKey("app_context_safety_status")
+        // === END PHASE3-status ===
         private val KEY_STREAMING_ENDPOINT = stringPreferencesKey("streaming_endpoint")
         private val KEY_PARSE_TOOL_ANNOTATIONS = booleanPreferencesKey("parse_tool_annotations")
         private val KEY_MAX_ATTACHMENT_MB = intPreferencesKey("max_attachment_mb")
@@ -328,6 +336,60 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    // === PHASE3-status: granular sub-toggle flows + setters ===
+    // Mirror the appContextEnabled pattern above. All four are gated by the
+    // master toggle in PhoneStatusPromptBuilder.buildPromptBlock(), so when
+    // master is off these values don't matter — we still expose them as
+    // StateFlow so the ChatSettingsScreen preview card stays in sync.
+    val appContextBridgeState: StateFlow<Boolean> = application.relayDataStore.data
+        .map { it[KEY_APP_CONTEXT_BRIDGE_STATE] ?: true }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    fun setAppContextBridgeState(enabled: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_APP_CONTEXT_BRIDGE_STATE] = enabled
+            }
+        }
+    }
+
+    val appContextCurrentApp: StateFlow<Boolean> = application.relayDataStore.data
+        .map { it[KEY_APP_CONTEXT_CURRENT_APP] ?: false }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    fun setAppContextCurrentApp(enabled: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_APP_CONTEXT_CURRENT_APP] = enabled
+            }
+        }
+    }
+
+    val appContextBattery: StateFlow<Boolean> = application.relayDataStore.data
+        .map { it[KEY_APP_CONTEXT_BATTERY] ?: false }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    fun setAppContextBattery(enabled: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_APP_CONTEXT_BATTERY] = enabled
+            }
+        }
+    }
+
+    val appContextSafetyStatus: StateFlow<Boolean> = application.relayDataStore.data
+        .map { it[KEY_APP_CONTEXT_SAFETY_STATUS] ?: true }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    fun setAppContextSafetyStatus(enabled: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_APP_CONTEXT_SAFETY_STATUS] = enabled
+            }
+        }
+    }
+    // === END PHASE3-status ===
+
     // Streaming endpoint preference. Three values:
     //   "auto"     — pick based on per-endpoint capability detection (default
     //                for new installs as of v0.3.0). Resolves to "sessions"
@@ -517,6 +579,23 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             bridgeCommandHandler.onMessage(envelope)
         }
         bridgeStatusReporter.start()
+
+        // === PHASE3-status: push status immediately on master toggle flip ===
+        // The periodic tick is 30 s, but the relay-side cache (and the
+        // agent's `android_phone_status()` tool that reads it) should see
+        // the new master_enabled value right away — not up to 30 s later.
+        // drop(1) skips the initial DataStore replay so we don't double
+        // up with the first periodic tick on boot.
+        viewModelScope.launch {
+            com.hermesandroid.relay.accessibility.HermesAccessibilityService
+                .masterEnabledFlow(application)
+                .distinctUntilChanged()
+                .drop(1)
+                .collect {
+                    bridgeStatusReporter.pushNow()
+                }
+        }
+        // === END PHASE3-status ===
         // === END PHASE3-accessibility ===
 
         // === PHASE3-notif-listener-followup: notification companion multiplexer wiring ===

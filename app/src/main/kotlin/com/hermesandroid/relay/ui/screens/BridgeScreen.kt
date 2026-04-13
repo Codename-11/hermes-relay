@@ -188,6 +188,10 @@ fun BridgeScreen(
                 onTestScreenCapture = { viewModel.testScreenCapture() },
                 onTestOverlay = { viewModel.testOverlayPermission() },
                 // === END PHASE3-safety-rails-followup ===
+                // === PHASE3-bridge-ui-followup: extended interactions ===
+                onRequestScreenCapture = { viewModel.requestScreenCapture() },
+                onTestNotificationListener = { viewModel.testNotificationListener() },
+                // === END PHASE3-bridge-ui-followup ===
             )
 
             BridgeActivityLog(

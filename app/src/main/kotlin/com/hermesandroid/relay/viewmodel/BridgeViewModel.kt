@@ -19,6 +19,9 @@ import com.hermesandroid.relay.bridge.BridgeStatusOverlay
 import com.hermesandroid.relay.accessibility.HermesAccessibilityService
 import com.hermesandroid.relay.accessibility.MediaProjectionHolder
 // === END PHASE3-safety-rails-followup ===
+// === PHASE3-bridge-ui-followup: screen capture consent flow ===
+import com.hermesandroid.relay.accessibility.ScreenCaptureRequester
+// === END PHASE3-bridge-ui-followup ===
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -147,7 +150,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         // auto-disable timer when the user flips the toggle off manually
         // (otherwise we race a pending timer against the user).
         viewModelScope.launch {
-            masterToggle.distinctUntilChanged().collect { enabled ->
+            masterToggle.collect { enabled ->
                 val ctx = getApplication<Application>()
                 if (enabled) {
                     runCatching { BridgeForegroundService.start(ctx) }
@@ -256,8 +259,29 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         val msg = if (projection != null) {
             "OK — MediaProjection grant is active for this session."
         } else {
-            "No active grant. The bridge will request consent the next " +
-                "time the agent calls /screenshot."
+            "No active grant. Tap the row to grant now, or wait for the " +
+                "agent's first /screenshot request."
+        }
+        // Refresh the row's checkmark to reflect what we just observed.
+        refreshPermissionStatus()
+        viewModelScope.launch { _testEvents.emit("Screen capture · $msg") }
+    }
+
+    /**
+     * Proactively ask the user for the per-session MediaProjection grant
+     * via the system consent dialog. Routes through [ScreenCaptureRequester]
+     * which `MainActivity` keeps installed for the lifetime of its window.
+     *
+     * No-op (with a snackbar) if the request can't be dispatched — usually
+     * because MainActivity is destroyed (process restarted from a notification
+     * tap, etc.) and we'd need to be brought to the foreground first.
+     */
+    fun requestScreenCapture() {
+        val dispatched = ScreenCaptureRequester.request()
+        val msg = if (dispatched) {
+            "Asking for screen-capture consent…"
+        } else {
+            "Open the Hermes app to your foreground to grant screen capture."
         }
         viewModelScope.launch { _testEvents.emit("Screen capture · $msg") }
     }
@@ -279,6 +303,26 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         }
         viewModelScope.launch { _testEvents.emit("Display over other apps · $msg") }
     }
+
+    /**
+     * Verify the NotificationListenerService is enabled. The full
+     * functional test (round-trip a notification through the bridge) lives
+     * on NotificationCompanionSettingsScreen — this is just a parity Test
+     * button on the Bridge tab so users don't have to navigate away to
+     * verify the permission is granted.
+     */
+    fun testNotificationListener() {
+        val ctx = getApplication<Application>()
+        val granted = isNotificationListenerEnabled(ctx)
+        val msg = if (granted) {
+            "OK — Hermes can read posted notifications."
+        } else {
+            "Not granted. Tap the row to open Android's Notification access page."
+        }
+        // Refresh in case the user just flipped the switch in Settings.
+        refreshPermissionStatus()
+        viewModelScope.launch { _testEvents.emit("Notification listener · $msg") }
+    }
     // === END PHASE3-safety-rails-followup ===
 
     // ── Internals ────────────────────────────────────────────────────────
@@ -287,11 +331,12 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         val ctx = getApplication<Application>()
 
         val a11yEnabled = isAccessibilityServiceEnabled(ctx)
-        // MediaProjection permission is **per-session** on Android — there's
-        // no way to ask "do I already hold it?" so we report "unknown / grant
-        // on first use" as a positive. The real gate is the consent dialog
-        // that accessibility's ScreenCapture.kt will fire on each fresh projection session.
-        val screenCaptureGranted = false
+        // MediaProjection permission is **per-session** on Android. We can,
+        // however, observe whether MediaProjectionHolder is currently
+        // holding a live grant — that's the green-check signal we want
+        // on the row. "No active grant" is the normal state until the
+        // user taps the row (or the agent calls /screenshot).
+        val screenCaptureGranted = MediaProjectionHolder.projection != null
         // Overlay permission (SYSTEM_ALERT_WINDOW) — standard API. Safe even
         // though safety-rails owns the actual overlay composer; we just surface the state.
         val overlayGranted = Settings.canDrawOverlays(ctx)

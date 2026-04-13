@@ -15,7 +15,8 @@
 # What it removes (in reverse install order):
 #   [6] systemd user service             — `systemctl --user disable --now`,
 #                                            unit file deletion, daemon-reload
-#   [5] hermes-pair shell shim           — ~/.local/bin/hermes-pair
+#   [5] hermes-pair + hermes-status      — ~/.local/bin/hermes-pair,
+#       shell shims                        ~/.local/bin/hermes-status
 #   [4] skills external_dirs entry       — removes the relay's path from
 #                                            ~/.hermes/config.yaml (other
 #                                            entries preserved)
@@ -69,6 +70,7 @@ PLUGIN_LINK="$HERMES_HOME/plugins/hermes-relay"
 HERMES_CONFIG="$HERMES_HOME/config.yaml"
 QR_SECRET="$HERMES_HOME/hermes-relay-qr-secret"
 SHIM_PATH="$HOME/.local/bin/hermes-pair"
+STATUS_SHIM_PATH="$HOME/.local/bin/hermes-status"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 SERVICE_DST="$SYSTEMD_USER_DIR/hermes-relay.service"
 PTH_NAME="hermes_relay_bootstrap.pth"
@@ -126,13 +128,19 @@ else
     fi
 fi
 
-# ── 5/6  Remove hermes-pair shell shim ─────────────────────────────────────
-info "[5/6] Removing hermes-pair shell shim..."
+# ── 5/6  Remove hermes-pair + hermes-status shell shims ───────────────────
+info "[5/6] Removing hermes-pair + hermes-status shell shims..."
 if [ -f "$SHIM_PATH" ] || [ -L "$SHIM_PATH" ]; then
     run "rm -f \"$SHIM_PATH\""
     ok "Removed $SHIM_PATH"
 else
     warn "$SHIM_PATH does not exist"
+fi
+if [ -f "$STATUS_SHIM_PATH" ] || [ -L "$STATUS_SHIM_PATH" ]; then
+    run "rm -f \"$STATUS_SHIM_PATH\""
+    ok "Removed $STATUS_SHIM_PATH"
+else
+    warn "$STATUS_SHIM_PATH does not exist"
 fi
 
 # ── 4/6  Remove skills external_dirs entry from config.yaml ────────────────

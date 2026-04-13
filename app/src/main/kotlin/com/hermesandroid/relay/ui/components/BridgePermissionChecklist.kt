@@ -58,6 +58,15 @@ fun BridgePermissionChecklist(
     onTestScreenCapture: (() -> Unit)? = null,
     onTestOverlay: (() -> Unit)? = null,
     // === END PHASE3-safety-rails-followup ===
+    // === PHASE3-bridge-ui-followup: extended interactions ===
+    // Tapping the Screen Capture row launches the system MediaProjection
+    // consent dialog (no Settings page exists for this permission, so
+    // the row's onClick was previously null). Notification Listener gets
+    // its own Test button on the Bridge tab for parity with the others —
+    // the dedicated test on NotificationCompanionSettingsScreen still ships.
+    onRequestScreenCapture: (() -> Unit)? = null,
+    onTestNotificationListener: (() -> Unit)? = null,
+    // === END PHASE3-bridge-ui-followup ===
 ) {
     val context = LocalContext.current
 
@@ -97,12 +106,16 @@ fun BridgePermissionChecklist(
             PermissionRow(
                 icon = Icons.Filled.ScreenShare,
                 title = "Screen Capture",
-                subtitle = "Take screenshots via MediaProjection (per-session)",
+                subtitle = if (status.screenCapturePermitted)
+                    "Granted for this session — agent can take screenshots"
+                else
+                    "Tap to grant — agent needs this for /screenshot",
                 granted = status.screenCapturePermitted,
-                // MediaProjection has no direct Settings entry — the consent
-                // dialog fires each time accessibility's ScreenCapture.kt asks for it.
-                // The Test button reports whether a session grant is currently held.
-                onClick = null,
+                // MediaProjection has no Android Settings page; tapping the
+                // row launches the system consent dialog directly via
+                // ScreenCaptureRequester. Falls back to inert (no chevron)
+                // if the parent didn't provide a launcher (e.g., previews).
+                onClick = onRequestScreenCapture,
                 onTest = onTestScreenCapture,
             )
             PermissionRow(
@@ -119,9 +132,9 @@ fun BridgePermissionChecklist(
                 subtitle = "Read notifications for agent summaries",
                 granted = status.notificationListenerPermitted,
                 onClick = { openNotificationListenerSettings(context) },
-                // Notification companion has its own dedicated Test on
-                // NotificationCompanionSettingsScreen — no need to duplicate.
-                onTest = null,
+                // Parity Test button on the Bridge tab. The full functional
+                // round-trip test still lives on NotificationCompanionSettingsScreen.
+                onTest = onTestNotificationListener,
             )
         }
     }

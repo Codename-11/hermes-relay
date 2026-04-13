@@ -13,6 +13,6 @@
     off for this flavor via FeatureFlags.BuildFlavor.
 -->
 <resources>
-    <string name="a11y_service_label">Hermes Bridge</string>
+    <string name="a11y_service_label">Hermes-Bridge</string>
     <string name="a11y_description_googleplay">Hermes assists you by reading notifications, summarizing messages, and replying with your confirmation. The service is dormant until you explicitly enable Bridge mode in the app.</string>
 </resources>

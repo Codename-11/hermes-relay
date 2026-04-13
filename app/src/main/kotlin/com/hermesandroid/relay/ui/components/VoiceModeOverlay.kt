@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -53,7 +52,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -161,18 +165,76 @@ fun VoiceModeOverlay(
             }
         }
 
-        // Center column: sphere + transcript + response
+        // Center column: pinned "you said" chip → sphere → waveform → scrolling response.
+        //
+        // Layout uses fixed-weight slots (sphere 0.55, response 1f) instead of
+        // SpaceBetween so the sphere/waveform don't drift around as the response
+        // grows. The response area owns its own scroll state with auto-scroll-to-tail
+        // and a top/bottom fade mask for overflow indication.
+        val textScrollState = rememberScrollState()
+
+        // Auto-scroll to the tail every time the response length changes.
+        // Without this, streaming tokens accumulate below the viewport and
+        // the user has to drag down by hand — that's the "feels behind"
+        // sensation we were chasing. animateScrollTo gives a smooth follow
+        // rather than a snap on every token.
+        LaunchedEffect(uiState.responseText.length) {
+            if (uiState.responseText.isNotEmpty()) {
+                textScrollState.animateScrollTo(textScrollState.maxValue)
+            }
+        }
+
+        // Vertical fade brush for the scroll area: top + bottom edges fade
+        // into the surface so overflow is visually obvious without showing a
+        // scrollbar. Applied via BlendMode.DstIn inside an offscreen
+        // compositing layer so the gradient multiplies the alpha of the
+        // text underneath rather than tinting the surface behind.
+        val fadeBrush = remember {
+            Brush.verticalGradient(
+                0f to Color.Transparent,
+                0.08f to Color.Black,
+                0.92f to Color.Black,
+                1f to Color.Transparent,
+            )
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(top = 64.dp, bottom = 160.dp, start = 24.dp, end = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween,
         ) {
+            // Pinned "you said" chip — stays put while the response scrolls
+            // below it. Mirrors how Siri / Assistant keep the user's input
+            // visible after the agent starts answering, so the user always
+            // has the question they asked in view.
+            AnimatedVisibility(
+                visible = !uiState.transcribedText.isNullOrBlank(),
+                enter = fadeIn(),
+                exit = fadeOut(),
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    tonalElevation = 1.dp,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                ) {
+                    Text(
+                        text = uiState.transcribedText.orEmpty(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                    )
+                }
+            }
+
+            // Sphere — fixed share of the column. weight(fill=true) keeps it
+            // from collapsing or drifting when the response text grows.
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .fillMaxHeight(0.6f),
+                    .weight(0.55f),
                 contentAlignment = Alignment.Center,
             ) {
                 MorphingSphere(
@@ -191,57 +253,59 @@ fun VoiceModeOverlay(
                     .padding(horizontal = 32.dp, vertical = 8.dp),
             )
 
-            // weight(fill=false) lets this block take only what's left between
-            // the waveform and the bottom mic padding; verticalScroll keeps long
-            // agent responses from clipping off-screen. Transcript scrolls with
-            // the response so layout stays simple — one scroll state, one column.
-            val textScrollState = rememberScrollState()
-            Column(
+            Spacer(Modifier.height(12.dp))
+
+            // Response area. Plain Text — no AnimatedContent — so streaming
+            // tokens accrete in place instead of fade-flickering on every
+            // delta. The empty-state hint keeps a small AnimatedContent
+            // because that's a real discrete swap (Idle → Listening → ...).
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f, fill = false)
-                    .verticalScroll(textScrollState)
-                    .padding(top = 16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                    .weight(1f, fill = true),
             ) {
-                AnimatedContent(
-                    targetState = uiState.transcribedText ?: "",
-                    transitionSpec = { fadeIn(tween(250)) togetherWith fadeOut(tween(250)) },
-                    label = "transcribed",
-                ) { text ->
-                    if (text.isNotBlank()) {
+                if (uiState.responseText.isNotBlank()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                            .drawWithContent {
+                                drawContent()
+                                drawRect(brush = fadeBrush, blendMode = BlendMode.DstIn)
+                            }
+                            .verticalScroll(textScrollState)
+                            .padding(vertical = 12.dp),
+                    ) {
                         Text(
-                            text = text,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                            textAlign = TextAlign.Center,
+                            text = uiState.responseText,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            // Long paragraph responses read poorly when centered.
+                            // Empty-state hint stays Center via the else branch.
+                            textAlign = TextAlign.Start,
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
-                }
-
-                AnimatedContent(
-                    targetState = uiState.responseText,
-                    transitionSpec = { fadeIn(tween(250)) togetherWith fadeOut(tween(250)) },
-                    label = "response",
-                ) { text ->
-                    if (text.isNotBlank()) {
-                        Text(
-                            text = text,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    } else {
-                        Text(
-                            text = stateHint(uiState.state),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+                } else {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        AnimatedContent(
+                            targetState = stateHint(uiState.state),
+                            transitionSpec = {
+                                fadeIn(tween(200)) togetherWith fadeOut(tween(200))
+                            },
+                            label = "stateHint",
+                        ) { hint ->
+                            Text(
+                                text = hint,
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
                     }
                 }
             }

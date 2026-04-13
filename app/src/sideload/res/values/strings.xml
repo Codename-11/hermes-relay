@@ -13,6 +13,8 @@
     outside the declared use case.
 -->
 <resources>
-    <string name="a11y_service_label">Hermes Bridge</string>
+    <string name="app_name">Hermes Dev</string>
+    <string name="a11y_service_label">Hermes-Bridge Dev</string>
+    <string name="notification_companion_label">Hermes Dev notification companion</string>
     <string name="a11y_description_sideload">Hermes Bridge gives the agent full read/write access to the phone for hands-free control via voice and vision. All actions are logged in the Activity Log and destructive actions require your confirmation.</string>
 </resources>

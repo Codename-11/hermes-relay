@@ -1138,6 +1138,82 @@ async def handle_bridge_setup(request: web.Request) -> web.Response:
 # === END PHASE3-bridge-server ===
 
 
+# === PHASE3-status: GET /bridge/status ===
+#
+# Loopback-only HTTP read endpoint for the cached bridge.status payload
+# managed by ``BridgeHandler``. Called by the host-local
+# ``android_phone_status()`` tool so the agent can see which phone-side
+# permissions are granted BEFORE it makes a bridge command that would
+# otherwise 403.
+#
+# Trust model matches ``/pairing/register`` and ``/media/register``:
+# only processes on the same host (loopback) can read this. The agent's
+# tool runs in the same Python venv as the relay, so 127.0.0.1 /::1 is
+# always how it arrives. The data leaks package names + battery level,
+# which is fine to share with a co-hosted agent but not something we
+# want exposed to the LAN.
+#
+# Response shape matches the JSON contract consumed by
+# ``android_phone_status()``. The phone-side ``BridgeStatusReporter``
+# emits the nested groups verbatim, so the endpoint just wraps them
+# with ``phone_connected`` + ``last_seen_seconds_ago`` and returns.
+
+
+async def handle_bridge_status(request: web.Request) -> web.Response:
+    """Return the most recent cached phone status.
+
+    GET /bridge/status
+      → 200 {"phone_connected": true, "last_seen_seconds_ago": N, ...}
+        when the phone has pushed at least one bridge.status envelope
+      → 503 {"phone_connected": false, "error": "no phone connected"}
+        when no phone has ever connected to this relay process
+      → 403 non-loopback caller
+    """
+    remote = request.remote or ""
+    if remote not in ("127.0.0.1", "::1"):
+        logger.warning(
+            "Rejected /bridge/status from non-loopback peer %s", remote
+        )
+        raise web.HTTPForbidden(
+            text="/bridge/status is restricted to localhost callers",
+        )
+
+    server: RelayServer = request.app["server"]
+    bridge_handler = server.bridge
+
+    if bridge_handler.latest_status is None:
+        return web.json_response(
+            {
+                "phone_connected": False,
+                "last_seen_seconds_ago": None,
+                "error": "no phone connected",
+            },
+            status=503,
+        )
+
+    payload: dict[str, Any] = dict(bridge_handler.latest_status)
+    last_seen_at = bridge_handler.last_seen_at
+    if last_seen_at is None:
+        last_seen_seconds_ago: int | None = None
+    else:
+        # Round to whole seconds — sub-second resolution is noise for a
+        # status-cache consumer and keeps the JSON compact.
+        last_seen_seconds_ago = max(0, int(time.time() - last_seen_at))
+
+    response = {
+        "phone_connected": bridge_handler.is_phone_connected(),
+        "last_seen_seconds_ago": last_seen_seconds_ago,
+    }
+    # Merge the phone-provided groups (device / bridge / safety + any
+    # legacy fields) into the top-level response. If the phone is on an
+    # older build that only sends flat keys, they come through here too.
+    response.update(payload)
+    return web.json_response(response)
+
+
+# === END PHASE3-status ===
+
+
 # === PHASE3-notif-listener: notifications HTTP routes ===
 #
 # Bearer-auth'd HTTP read endpoint for the cached notification deque
@@ -1657,6 +1733,10 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_post("/wait", handle_bridge_wait)
     app.router.add_post("/setup", handle_bridge_setup)
     # === END PHASE3-bridge-server ===
+
+    # === PHASE3-status: loopback-gated structured phone status ===
+    app.router.add_get("/bridge/status", handle_bridge_status)
+    # === END PHASE3-status ===
 
     # === PHASE3-notif-listener: notifications HTTP routes ===
     app.router.add_get("/notifications/recent", handle_notifications_recent)
