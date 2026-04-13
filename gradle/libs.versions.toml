@@ -18,7 +18,7 @@ splashscreen = "1.2.0"
 markdown-renderer = "0.30.0"
 haze = "1.7.2"
 mlkit-barcode = "17.3.0"
-camera = "1.4.1"
+camera = "1.6.0"
 play-publisher = "4.0.0"
 
 [libraries]
