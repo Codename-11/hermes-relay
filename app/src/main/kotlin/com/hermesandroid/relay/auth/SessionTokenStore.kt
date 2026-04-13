@@ -65,9 +65,61 @@ interface SessionTokenStore {
  * phone.
  */
 class KeystoreTokenStore private constructor(
-    private val prefs: SharedPreferences,
+    private val context: Context,
+    private val wantsStrongBox: Boolean,
     override val hasHardwareBackedStorage: Boolean
 ) : SessionTokenStore {
+
+    // Mutable so [resetPrefs] can swap in a fresh instance after a corrupted
+    // file is deleted. Built lazily via [buildPrefs] so the constructor can't
+    // throw — [tryCreate] still controls the "is this device usable at all"
+    // decision via its init probe below.
+    private var prefs: SharedPreferences = buildPrefs()
+
+    private fun buildPrefs(): SharedPreferences {
+        val builder = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+        if (wantsStrongBox) {
+            try {
+                builder.setRequestStrongBoxBacked(true)
+            } catch (e: Exception) {
+                Log.w(TAG, "StrongBox request failed, falling back: ${e.message}")
+            }
+        }
+        val masterKey = builder.build()
+        return EncryptedSharedPreferences.create(
+            context,
+            PREFS_NAME,
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+    }
+
+    /**
+     * Nuke a corrupted EncryptedSharedPreferences file and rebuild a fresh
+     * one. Triggered from any read/write that throws — the typical failure
+     * mode is the master key getting rotated out from under us during a
+     * Studio reinstall, after which every decrypt fails with
+     * `AEADBadTagException` (or sometimes a wrapped `GeneralSecurityException`)
+     * forever. The cure is to delete the file so the next pair flow re-stores
+     * everything against a fresh key.
+     *
+     * Best-effort: swallow exceptions from the `clear()` and
+     * `deleteSharedPreferences` calls themselves, since they can also throw
+     * when the underlying state is wedged.
+     */
+    private fun resetPrefs() {
+        try {
+            prefs.edit().clear().apply()
+        } catch (_: Exception) { /* expected on a wedged file */ }
+        try {
+            context.deleteSharedPreferences(PREFS_NAME)
+        } catch (e: Exception) {
+            Log.w(TAG, "deleteSharedPreferences($PREFS_NAME) failed: ${e.message}")
+        }
+        prefs = buildPrefs()
+    }
 
     companion object {
         private const val TAG = "KeystoreTokenStore"
@@ -78,6 +130,12 @@ class KeystoreTokenStore private constructor(
          * null when any step throws (some older OEM ROMs have broken
          * AndroidKeystore implementations — we don't want the app to brick
          * itself trying to create a master key).
+         *
+         * Also fires a one-shot read probe so a pre-corrupted file from a
+         * previous install gets healed during construction rather than on the
+         * first user-driven read. The probe routes through the instance's
+         * own [getString], so if it throws, [resetPrefs] runs and we end up
+         * with a fresh empty prefs file — not a permanently broken store.
          */
         fun tryCreate(context: Context): KeystoreTokenStore? {
             return try {
@@ -85,29 +143,15 @@ class KeystoreTokenStore private constructor(
                     context.packageManager.hasSystemFeature(
                         android.content.pm.PackageManager.FEATURE_STRONGBOX_KEYSTORE
                     )
-
-                val builder = MasterKey.Builder(context)
-                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-
-                if (wantsStrongBox) {
-                    try {
-                        builder.setRequestStrongBoxBacked(true)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "StrongBox request failed, falling back: ${e.message}")
-                    }
-                }
-
-                val masterKey = builder.build()
-
-                val prefs = EncryptedSharedPreferences.create(
-                    context,
-                    PREFS_NAME,
-                    masterKey,
-                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+                val store = KeystoreTokenStore(
+                    context = context.applicationContext,
+                    wantsStrongBox = wantsStrongBox,
+                    hasHardwareBackedStorage = wantsStrongBox,
                 )
-
-                KeystoreTokenStore(prefs, wantsStrongBox)
+                // Force a read so a wedged file from a prior install heals
+                // here rather than at the first user-visible call.
+                store.contains("__init_probe__")
+                store
             } catch (e: Exception) {
                 // Broken Keystore, expired key, etc. — fall back to legacy.
                 Log.w(TAG, "KeystoreTokenStore init failed: ${e.message}")
@@ -116,20 +160,56 @@ class KeystoreTokenStore private constructor(
         }
     }
 
-    override fun getString(key: String): String? = prefs.getString(key, null)
+    override fun getString(key: String): String? {
+        return try {
+            prefs.getString(key, null)
+        } catch (e: Exception) {
+            Log.w(TAG, "getString($key) failed — wiping corrupted prefs: ${e.message}")
+            resetPrefs()
+            null
+        }
+    }
 
     override fun putString(key: String, value: String) {
-        prefs.edit().putString(key, value).apply()
+        try {
+            prefs.edit().putString(key, value).apply()
+        } catch (e: Exception) {
+            Log.w(TAG, "putString($key) failed — rebuilding prefs and retrying: ${e.message}")
+            resetPrefs()
+            try {
+                prefs.edit().putString(key, value).apply()
+            } catch (e2: Exception) {
+                Log.w(TAG, "putString($key) retry after reset failed: ${e2.message}")
+            }
+        }
     }
 
     override fun remove(key: String) {
-        prefs.edit().remove(key).apply()
+        try {
+            prefs.edit().remove(key).apply()
+        } catch (e: Exception) {
+            Log.w(TAG, "remove($key) failed: ${e.message}")
+            resetPrefs()
+        }
     }
 
-    override fun contains(key: String): Boolean = prefs.contains(key)
+    override fun contains(key: String): Boolean {
+        return try {
+            prefs.contains(key)
+        } catch (e: Exception) {
+            Log.w(TAG, "contains($key) failed — wiping corrupted prefs: ${e.message}")
+            resetPrefs()
+            false
+        }
+    }
 
     override fun clearAll() {
-        prefs.edit().clear().apply()
+        try {
+            prefs.edit().clear().apply()
+        } catch (e: Exception) {
+            Log.w(TAG, "clearAll failed — falling back to file delete: ${e.message}")
+            resetPrefs()
+        }
     }
 }
 
@@ -148,19 +228,38 @@ class LegacyEncryptedPrefsTokenStore(context: Context) : SessionTokenStore {
 
     companion object {
         const val LEGACY_PREFS_NAME = "hermes_companion_auth"
+        private const val TAG = "LegacyEncryptedPrefs"
     }
 
-    private val prefs: SharedPreferences = run {
-        val masterKey = MasterKey.Builder(context)
+    private val appContext: Context = context.applicationContext
+
+    // Mutable so [resetPrefs] can swap in a fresh instance after a corrupted
+    // file is deleted. See [KeystoreTokenStore.resetPrefs] for the rationale.
+    private var prefs: SharedPreferences = buildPrefs()
+
+    private fun buildPrefs(): SharedPreferences {
+        val masterKey = MasterKey.Builder(appContext)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .build()
-        EncryptedSharedPreferences.create(
-            context,
+        return EncryptedSharedPreferences.create(
+            appContext,
             LEGACY_PREFS_NAME,
             masterKey,
             EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
         )
+    }
+
+    private fun resetPrefs() {
+        try {
+            prefs.edit().clear().apply()
+        } catch (_: Exception) { /* expected on a wedged file */ }
+        try {
+            appContext.deleteSharedPreferences(LEGACY_PREFS_NAME)
+        } catch (e: Exception) {
+            Log.w(TAG, "deleteSharedPreferences($LEGACY_PREFS_NAME) failed: ${e.message}")
+        }
+        prefs = buildPrefs()
     }
 
     // AES256_GCM via MasterKey is hardware-backed (TEE) on essentially every
@@ -169,17 +268,55 @@ class LegacyEncryptedPrefsTokenStore(context: Context) : SessionTokenStore {
     // to render the shield badge.
     override val hasHardwareBackedStorage: Boolean = false
 
-    override fun getString(key: String): String? = prefs.getString(key, null)
+    override fun getString(key: String): String? {
+        return try {
+            prefs.getString(key, null)
+        } catch (e: Exception) {
+            Log.w(TAG, "getString($key) failed — wiping legacy prefs: ${e.message}")
+            resetPrefs()
+            null
+        }
+    }
+
     override fun putString(key: String, value: String) {
-        prefs.edit().putString(key, value).apply()
+        try {
+            prefs.edit().putString(key, value).apply()
+        } catch (e: Exception) {
+            Log.w(TAG, "putString($key) failed — rebuilding legacy prefs and retrying: ${e.message}")
+            resetPrefs()
+            try {
+                prefs.edit().putString(key, value).apply()
+            } catch (e2: Exception) {
+                Log.w(TAG, "putString($key) retry after reset failed: ${e2.message}")
+            }
+        }
     }
 
     override fun remove(key: String) {
-        prefs.edit().remove(key).apply()
+        try {
+            prefs.edit().remove(key).apply()
+        } catch (e: Exception) {
+            Log.w(TAG, "remove($key) failed: ${e.message}")
+            resetPrefs()
+        }
     }
 
-    override fun contains(key: String): Boolean = prefs.contains(key)
+    override fun contains(key: String): Boolean {
+        return try {
+            prefs.contains(key)
+        } catch (e: Exception) {
+            Log.w(TAG, "contains($key) failed — wiping legacy prefs: ${e.message}")
+            resetPrefs()
+            false
+        }
+    }
+
     override fun clearAll() {
-        prefs.edit().clear().apply()
+        try {
+            prefs.edit().clear().apply()
+        } catch (e: Exception) {
+            Log.w(TAG, "clearAll failed — falling back to file delete: ${e.message}")
+            resetPrefs()
+        }
     }
 }
