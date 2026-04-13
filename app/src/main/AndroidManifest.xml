@@ -8,13 +8,16 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <!-- === PHASE3-accessibility: AccessibilityService + bridge permissions === -->
-    <!-- BIND_ACCESSIBILITY_SERVICE is protected by the system — only
-         granted to services that declare android:permission on their
-         <service> tag (see below). FOREGROUND_SERVICE* are for the
-         persistent notification that Agent safety-rails will wire in Wave 2 for
-         MediaProjection-backed screenshots. POST_NOTIFICATIONS is required
-         on API 33+ for that same foreground-service notification. -->
-    <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
+    <!-- BIND_ACCESSIBILITY_SERVICE is intentionally NOT declared as a
+         <uses-permission> here — it's a system-only permission granted to
+         services that declare android:permission on their <service> tag
+         (see the BridgeAccessibilityService entry below). Declaring it as
+         a uses-permission trips lint's [ProtectedPermissions] check.
+
+         FOREGROUND_SERVICE* are for the persistent notification that
+         Agent safety-rails will wire in Wave 2 for MediaProjection-backed
+         screenshots. POST_NOTIFICATIONS is required on API 33+ for that
+         same foreground-service notification. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
