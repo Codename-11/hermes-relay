@@ -15,8 +15,9 @@
 # What it removes (in reverse install order):
 #   [6] systemd user service             — `systemctl --user disable --now`,
 #                                            unit file deletion, daemon-reload
-#   [5] hermes-pair + hermes-status      — ~/.local/bin/hermes-pair,
-#       shell shims                        ~/.local/bin/hermes-status
+#   [5] hermes-pair + hermes-status     — ~/.local/bin/hermes-pair,
+#       + hermes-relay-update shims         ~/.local/bin/hermes-status,
+#                                           ~/.local/bin/hermes-relay-update
 #   [4] skills external_dirs entry       — removes the relay's path from
 #                                            ~/.hermes/config.yaml (other
 #                                            entries preserved)
@@ -71,6 +72,7 @@ HERMES_CONFIG="$HERMES_HOME/config.yaml"
 QR_SECRET="$HERMES_HOME/hermes-relay-qr-secret"
 SHIM_PATH="$HOME/.local/bin/hermes-pair"
 STATUS_SHIM_PATH="$HOME/.local/bin/hermes-status"
+UPDATE_SHIM_PATH="$HOME/.local/bin/hermes-relay-update"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 SERVICE_DST="$SYSTEMD_USER_DIR/hermes-relay.service"
 PTH_NAME="hermes_relay_bootstrap.pth"
@@ -128,8 +130,8 @@ else
     fi
 fi
 
-# ── 5/6  Remove hermes-pair + hermes-status shell shims ───────────────────
-info "[5/6] Removing hermes-pair + hermes-status shell shims..."
+# ── 5/6  Remove hermes-pair + hermes-status + hermes-relay-update shims ───
+info "[5/6] Removing hermes-pair + hermes-status + hermes-relay-update shims..."
 if [ -f "$SHIM_PATH" ] || [ -L "$SHIM_PATH" ]; then
     run "rm -f \"$SHIM_PATH\""
     ok "Removed $SHIM_PATH"
@@ -141,6 +143,12 @@ if [ -f "$STATUS_SHIM_PATH" ] || [ -L "$STATUS_SHIM_PATH" ]; then
     ok "Removed $STATUS_SHIM_PATH"
 else
     warn "$STATUS_SHIM_PATH does not exist"
+fi
+if [ -f "$UPDATE_SHIM_PATH" ] || [ -L "$UPDATE_SHIM_PATH" ]; then
+    run "rm -f \"$UPDATE_SHIM_PATH\""
+    ok "Removed $UPDATE_SHIM_PATH"
+else
+    warn "$UPDATE_SHIM_PATH does not exist"
 fi
 
 # ── 4/6  Remove skills external_dirs entry from config.yaml ────────────────

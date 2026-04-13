@@ -23,10 +23,14 @@
 #   4. The skill(s) under skills/ into ~/.hermes/config.yaml as a scanned
 #      external_dirs entry — Hermes follows that path at runtime, so
 #      `git pull` on the clone auto-updates the SKILL.md files
-#   5. Shell shims at ~/.local/bin/hermes-pair and ~/.local/bin/hermes-status
-#      that exec `<venv>/python -m plugin.pair "$@"` / `plugin.status "$@"` —
-#      the canonical shell-side entry points while the upstream `hermes pair`
-#      plugin CLI path is blocked
+#   5. Shell shims at:
+#      - ~/.local/bin/hermes-pair          → `<venv>/python -m plugin.pair "$@"`
+#      - ~/.local/bin/hermes-status        → `<venv>/python -m plugin.status "$@"`
+#      - ~/.local/bin/hermes-relay-update  → curl-pipe re-runs install.sh
+#      The pair/status shims exist because the upstream `hermes pair` plugin
+#      CLI path is blocked. The update shim is just a discoverable name for
+#      "re-run the canonical curl-pipe installer" — convenience UX, not a
+#      separate code path.
 #   6. A systemd user unit at ~/.config/systemd/user/hermes-relay.service
 #      (optional — only on hosts with a systemd user session; skipped on
 #      macOS, WSL-without-systemd, bare chroots, etc.). When installed,
@@ -73,6 +77,7 @@ SKILLS_DIR_IN_REPO="$RELAY_HOME/skills"
 HERMES_CONFIG="$HERMES_HOME/config.yaml"
 SHIM_PATH="$HOME/.local/bin/hermes-pair"
 STATUS_SHIM_PATH="$HOME/.local/bin/hermes-status"
+UPDATE_SHIM_PATH="$HOME/.local/bin/hermes-relay-update"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 SERVICE_SRC="$RELAY_HOME/relay_server/hermes-relay.service"
 SERVICE_DST="$SYSTEMD_USER_DIR/hermes-relay.service"
@@ -298,8 +303,8 @@ else:
     print(f"  [ok] Added {target} to skills.external_dirs in {cfg_path}")
 PY
 
-# ── 5/6  Install the hermes-pair + hermes-status shell shims ──────────────
-step 5 6 "Installing hermes-pair + hermes-status shell shims"
+# ── 5/6  Install hermes-pair + hermes-status + hermes-relay-update shims ──
+step 5 6 "Installing hermes-pair + hermes-status + hermes-relay-update shims"
 mkdir -p "$(dirname "$SHIM_PATH")"
 cat > "$SHIM_PATH" <<SHIM
 #!/usr/bin/env bash
@@ -340,6 +345,30 @@ exec "\$HERMES_VENV_PY" -m plugin.status "\$@"
 SHIM
 chmod +x "$STATUS_SHIM_PATH"
 ok "Installed $STATUS_SHIM_PATH"
+
+# hermes-relay-update — discoverable name for "update Hermes-Relay". Just
+# re-runs the canonical curl-pipe installer (which is idempotent and does
+# all the work). Forwards any args to install.sh via `bash -s --` so e.g.
+# \`hermes-relay-update --restart-gateway\` works once we ever add that flag.
+# Honors the existing HERMES_RELAY_RESTART_GATEWAY / HERMES_RELAY_NO_RESTART_GATEWAY
+# env vars without any wrapping logic — they pass through naturally.
+cat > "$UPDATE_SHIM_PATH" <<'SHIM'
+#!/usr/bin/env bash
+# Hermes-Relay updater shim — re-runs the canonical one-line installer.
+#
+# Equivalent to:
+#   curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
+#
+# install.sh is fully idempotent — it pulls latest main, refreshes the
+# editable pip install, recreates both shims, restarts hermes-relay, and
+# prompts before restarting hermes-gateway. Set HERMES_RELAY_RESTART_GATEWAY=1
+# to opt into the gateway restart non-interactively.
+#
+# Any args passed to this shim are forwarded to install.sh via bash -s --.
+exec curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash -s -- "$@"
+SHIM
+chmod +x "$UPDATE_SHIM_PATH"
+ok "Installed $UPDATE_SHIM_PATH"
 
 # ── 6/6  Install systemd user service (optional) ───────────────────────────
 # Idempotent: safe to re-run. Skipped gracefully on hosts without a systemd
@@ -474,7 +503,8 @@ printf "\n"
 printf "  ${C_BOLD}${C_CYAN}Self-setup / troubleshoot${C_RESET}\n"
 printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}/hermes-relay-self-setup${C_RESET}  ${C_DIM}# agent walks you through verify, re-pair, fix${C_RESET}\n" "$SYM_INFO"
 printf "\n"
-printf "  ${C_BOLD}${C_CYAN}Update later${C_RESET} ${C_DIM}(idempotent — same one-liner)${C_RESET}\n"
+printf "  ${C_BOLD}${C_CYAN}Update later${C_RESET} ${C_DIM}(idempotent — pick whichever you remember)${C_RESET}\n"
+printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}hermes-relay-update${C_RESET}             ${C_DIM}# shortest path${C_RESET}\n" "$SYM_INFO"
 printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash${C_RESET}\n" "$SYM_INFO"
 printf "\n"
 printf "  ${C_BOLD}${C_CYAN}Manage the relay service${C_RESET}\n"
