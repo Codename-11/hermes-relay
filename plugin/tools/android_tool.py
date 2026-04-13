@@ -325,25 +325,32 @@ def _get_public_ip() -> str:
         return "<your-server-ip>"
 
 
-def android_setup(pairing_code: str) -> str:
+def android_setup(bridge_session_token: str) -> str:
     """
-    Configure the Android bridge to point at the unified Hermes-Relay.
+    FALLBACK helper — tell the android_* tools about an existing session token.
 
-    The unified relay (``plugin/relay/server.py``, port 8767) is the single
-    WSS endpoint for chat, terminal, bridge, media, and voice. It's meant
-    to run as a persistent service (``systemctl --user start hermes-relay``)
-    rather than being spawned on demand per tool call, so this function no
-    longer starts a standalone relay — it just updates the environment
-    variables the ``android_*`` tools read and verifies the relay is up.
+    This is NOT the canonical pairing flow. For first-time setup, use
+    ``hermes-pair`` (shell) or ``/hermes-relay-pair`` (slash command) — both
+    generate a QR code that the phone scans once, which handles credential
+    exchange end-to-end and gives the phone a long-lived session token.
 
-    For the actual pairing dance (generating + pre-registering a fresh
-    code, producing a QR for the phone to scan), use ``hermes-pair`` or
-    ``/hermes-relay-pair``. This function is the fallback for cases where
-    the operator already has a code and just wants to tell the tool about
-    it.
+    Use this function only when you already have a session token from a
+    previous successful pair and want to teach the host's android_* tools
+    about it (e.g., after re-installing the plugin without re-pairing the
+    phone). It writes ``ANDROID_BRIDGE_TOKEN`` (the bearer token used for
+    every bridge HTTP call) and ``ANDROID_BRIDGE_URL`` to ``~/.hermes/.env``
+    and verifies the unified relay is reachable. It does NOT register a
+    pairing code with the relay — that's ``plugin.pair``'s job.
 
-    Example: android_setup("K7V3NP")
+    The parameter name was historically ``pairing_code``, but the value is
+    actually used as a long-lived bearer token, not a one-shot pairing code.
+    Renamed for clarity.
+
+    Example: android_setup("eyJraWQiOi...long-token...")
     """
+    # Local alias keeps the rest of the function readable without
+    # propagating the rename through every line.
+    pairing_code = bridge_session_token
     try:
         port = _relay_port()
         public_ip = _get_public_ip()
@@ -412,16 +419,18 @@ def android_setup(pairing_code: str) -> str:
         return json.dumps({
             "status": "ok",
             "message": (
-                "Relay is running. Pair the phone via `hermes-pair` "
-                "or /hermes-relay-pair, then retry."
+                "Relay is running but no phone is currently connected. "
+                "Pair the phone via `hermes-pair` or /hermes-relay-pair "
+                "(canonical QR flow), then retry. android_setup is a "
+                "fallback for when you already have a session token."
             ),
             "phone_connected": False,
             "server_address": server_address,
             "user_instructions": (
-                f"Open the Hermes app on your phone and scan the pairing QR.\n"
-                f"  Server: {server_address}\n"
-                f"  Pairing code: {pairing_code}\n"
-                f"Then tap Connect."
+                "Run `hermes-pair` on this host, scan the resulting QR "
+                "from the Hermes-Relay app (Settings → Connection → Scan "
+                "Pairing QR), then re-run android_setup or any other "
+                "android_* tool."
             ),
         })
 

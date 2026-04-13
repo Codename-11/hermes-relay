@@ -9,8 +9,8 @@ The relay server is a lightweight Python WSS service that enables **terminal** (
 | Chat | No |
 | Voice Mode | Yes (for TTS/STT endpoints) |
 | Inbound media (screenshots from tools) | Yes |
-| Terminal (Phase 2) | Yes |
-| Bridge (Phase 3) | Yes |
+| Terminal | Yes |
+| Bridge (sideload track only) | Yes |
 
 ## Quick Start
 

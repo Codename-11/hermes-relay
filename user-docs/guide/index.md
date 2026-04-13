@@ -48,8 +48,8 @@ Chat connects directly to the Hermes API Server using the Sessions API with SSE 
 | Tool progress cards (Off/Compact/Detailed) | Complete |
 | In-app analytics (Stats for Nerds) | Complete |
 | Animated splash screen | Complete |
-| Terminal (remote shell) | Phase 2 |
-| Bridge (device control) | Phase 3 |
+| Terminal (remote shell) | Beta (sideload track) |
+| Bridge (device control) | Beta (sideload track) |
 
 ## Quick Links
 

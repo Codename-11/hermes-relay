@@ -807,16 +807,22 @@ fun ConnectionSettingsScreen(
                 }
             }
 
-            // Card 3 — Bridge pairing code (collapsible, relay-gated)
+            // Card 3 — Manual pairing code (collapsible, relay-gated).
+            // Fallback for when the QR scan flow can't be used (no camera,
+            // host can't render a QR, etc). The code below is sent as the
+            // pairing_code in AuthManager.authenticate() when no QR-issued
+            // code is set, and the relay must have it pre-registered.
+            // Bridge control itself is gated by the master toggle on the
+            // Bridge tab, NOT by this code.
             if (relayEnabled) {
                 SettingsExpandableCard(
-                    title = "Bridge pairing code",
+                    title = "Manual pairing code (fallback)",
                     expanded = bridgePairingExpanded,
                     onToggle = { bridgePairingExpanded = !bridgePairingExpanded },
                     isDarkTheme = isDarkTheme
                 ) {
                     Text(
-                        text = "For Phase 3 bridge feature — the host approves this code to enable Android tool control. Not used for initial pairing.",
+                        text = "Fallback for when you can't scan the pairing QR. The host operator pre-registers this code with the relay, then you tap Connect. Bridge control itself is gated by the master toggle on the Bridge tab — not by this code.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
