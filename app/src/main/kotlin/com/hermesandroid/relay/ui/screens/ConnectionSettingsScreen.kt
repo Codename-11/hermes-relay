@@ -73,6 +73,7 @@ import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.network.ConnectionState
+import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.components.ApiServerInfoSheet
 import com.hermesandroid.relay.ui.components.ConnectionStatusRow
 import com.hermesandroid.relay.ui.components.ConnectionWizard
@@ -83,6 +84,7 @@ import com.hermesandroid.relay.ui.components.SettingsExpandableCard
 import com.hermesandroid.relay.ui.components.TransportSecurityBadge
 import com.hermesandroid.relay.ui.components.TransportSecuritySize
 import com.hermesandroid.relay.ui.components.isUrlSecure
+import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.util.classifyError
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
@@ -142,6 +144,15 @@ fun ConnectionSettingsScreen(
     var manualPairingError by remember { mutableStateOf<String?>(null) }
     var manualPairingAttempt by remember { mutableStateOf(0) }
 
+    // === MANUAL-PAIR-FOLLOWUP: in-card connect state ===
+    // Card 3's "Connect" button has its own in-flight state, separate from
+    // the dialog flow above so the spinner only blocks the card's own
+    // Connect action and not the rest of the screen.
+    var card3ConnectInProgress by remember { mutableStateOf(false) }
+    var card3ConnectAttempt by remember { mutableStateOf(0) }
+    var card3ExplainerExpanded by rememberSaveable { mutableStateOf(false) }
+    // === END MANUAL-PAIR-FOLLOWUP ===
+
     // Tap-for-info sheets — mirror the chat "tap agent name" overlay
     // pattern so users can dig into what each Connection status row means.
     var showSessionInfoSheet by remember { mutableStateOf(false) }
@@ -156,6 +167,10 @@ fun ConnectionSettingsScreen(
     val clipboard = LocalClipboard.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    // === MANUAL-PAIR-FOLLOWUP: snackbar host for Card 3 Connect feedback ===
+    val snackbarHost = LocalSnackbarHost.current
+    // === END MANUAL-PAIR-FOLLOWUP ===
 
     // Feature flags
     val relayEnabled by FeatureFlags.relayEnabled(context).collectAsState(initial = FeatureFlags.isDevBuild)
@@ -188,6 +203,48 @@ fun ConnectionSettingsScreen(
             isAutoReconnecting = false
         }
     }
+
+    // === MANUAL-PAIR-FOLLOWUP: observe authState for Card 3 Connect ===
+    // Tracks the in-flight "Connect" tap from Card 3 (Manual pairing code
+    // fallback). Keyed on the attempt counter so each tap restarts the
+    // watcher with a fresh 15s budget. Surfaces success / failure through
+    // the global snackbar host so the user gets feedback without having to
+    // scroll up to the Session status row.
+    LaunchedEffect(card3ConnectAttempt) {
+        if (card3ConnectAttempt == 0) return@LaunchedEffect
+        try {
+            val terminal = withTimeout(15_000) {
+                connectionViewModel.authState.first {
+                    it is AuthState.Paired || it is AuthState.Failed
+                }
+            }
+            card3ConnectInProgress = false
+            when (terminal) {
+                is AuthState.Paired -> {
+                    snackbarHost.showSnackbar("Paired successfully")
+                }
+                is AuthState.Failed -> {
+                    val human = classifyError(
+                        IllegalStateException(terminal.reason),
+                        context = "pair",
+                    )
+                    snackbarHost.showHumanError(human)
+                }
+                else -> Unit
+            }
+        } catch (_: TimeoutCancellationException) {
+            card3ConnectInProgress = false
+            val human = classifyError(
+                java.io.IOException("No response from relay"),
+                context = "pair",
+            )
+            snackbarHost.showHumanError(human)
+        } catch (e: Exception) {
+            card3ConnectInProgress = false
+            snackbarHost.showHumanError(classifyError(e, context = "pair"))
+        }
+    }
+    // === END MANUAL-PAIR-FOLLOWUP ===
 
     // Connection section expand state — seeded from the current pair/reach
     // status on first composition, then driven by the user. rememberSaveable
@@ -821,53 +878,207 @@ fun ConnectionSettingsScreen(
                     onToggle = { bridgePairingExpanded = !bridgePairingExpanded },
                     isDarkTheme = isDarkTheme
                 ) {
+                    // === MANUAL-PAIR-FOLLOWUP: step-by-step body ===
+                    // Three numbered steps walk the user through the manual
+                    // (host-side --register-code) flow end-to-end. Replaces
+                    // the previous "code + copy + regen" stub which left
+                    // users guessing what to do with the code.
+
                     Text(
-                        text = "Fallback for when you can't scan the pairing QR. The host operator pre-registers this code with the relay, then you tap Connect. Bridge control itself is gated by the master toggle on the Bridge tab — not by this code.",
+                        text = "Use this when you can't scan the pairing QR. " +
+                            "Follow the three steps — they're meant to be done " +
+                            "in order on whatever machine you have shell access to.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
-                    Text(
-                        text = "Pairing Code",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    // ── Step 1 — Copy the code ───────────────────────────
+                    ManualPairStep(
+                        number = 1,
+                        title = "Copy the code below",
                     ) {
-                        Text(
-                            text = pairingCode,
-                            style = MaterialTheme.typography.headlineMedium.copy(
-                                fontFamily = FontFamily.Monospace,
-                                letterSpacing = MaterialTheme.typography.headlineMedium.fontSize * 0.15
-                            ),
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = pairingCode,
+                                style = MaterialTheme.typography.headlineMedium.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                    letterSpacing = MaterialTheme.typography.headlineMedium.fontSize * 0.15
+                                ),
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f)
+                            )
 
-                        IconButton(onClick = {
-                            scope.launch {
-                                clipboard.setClipEntry(
-                                    ClipEntry(
-                                        ClipData.newPlainText("Pairing code", pairingCode)
+                            IconButton(onClick = {
+                                scope.launch {
+                                    clipboard.setClipEntry(
+                                        ClipEntry(
+                                            ClipData.newPlainText(
+                                                "Pairing code",
+                                                pairingCode
+                                            )
+                                        )
                                     )
+                                    snackbarHost.showSnackbar("Pairing code copied")
+                                }
+                            }) {
+                                Icon(
+                                    imageVector = Icons.Filled.ContentCopy,
+                                    contentDescription = "Copy pairing code"
                                 )
                             }
-                        }) {
-                            Icon(
-                                imageVector = Icons.Filled.ContentCopy,
-                                contentDescription = "Copy pairing code"
-                            )
-                        }
 
-                        IconButton(onClick = { connectionViewModel.regeneratePairingCode() }) {
-                            Icon(
-                                imageVector = Icons.Filled.Refresh,
-                                contentDescription = "Generate new code"
+                            IconButton(
+                                onClick = { connectionViewModel.regeneratePairingCode() }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Refresh,
+                                    contentDescription = "Generate new code"
+                                )
+                            }
+                        }
+                    }
+
+                    // ── Step 2 — Register the code on the host ───────────
+                    ManualPairStep(
+                        number = 2,
+                        title = "On the host running Hermes-Relay, run:",
+                    ) {
+                        // Monospace shell-command surface — visually distinct
+                        // from the body copy so the user understands it's a
+                        // command they should paste into their shell.
+                        androidx.compose.material3.Surface(
+                            color = MaterialTheme.colorScheme.surface,
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .padding(horizontal = 10.dp, vertical = 8.dp)
+                            ) {
+                                Text(
+                                    text = "hermes-pair --register-code $pairingCode",
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontFamily = FontFamily.Monospace
+                                    ),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                IconButton(
+                                    onClick = {
+                                        val cmd = "hermes-pair --register-code $pairingCode"
+                                        scope.launch {
+                                            clipboard.setClipEntry(
+                                                ClipEntry(
+                                                    ClipData.newPlainText(
+                                                        "hermes-pair command",
+                                                        cmd
+                                                    )
+                                                )
+                                            )
+                                            snackbarHost.showSnackbar("Command copied")
+                                        }
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.ContentCopy,
+                                        contentDescription = "Copy hermes-pair command",
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Step 3 — Connect ─────────────────────────────────
+                    ManualPairStep(
+                        number = 3,
+                        title = "Come back here and tap Connect",
+                    ) {
+                        val canConnect = !card3ConnectInProgress &&
+                            relayUrlInput.isNotBlank() &&
+                            pairingCode.isNotBlank()
+                        Button(
+                            onClick = {
+                                card3ConnectInProgress = true
+                                card3ConnectAttempt += 1
+                                // Mirror the existing manual-pair dialog
+                                // path: clobber any stale session, then
+                                // kick a fresh authenticate() with the
+                                // currently-displayed pairing code as the
+                                // server-issued code.
+                                connectionViewModel.authManager
+                                    .applyServerIssuedCodeAndReset(pairingCode)
+                                connectionViewModel.disconnectRelay()
+                                connectionViewModel.connectRelay(relayUrlInput)
+                            },
+                            enabled = canConnect,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            if (card3ConnectInProgress) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                                Spacer(modifier = Modifier.size(8.dp))
+                                Text("Connecting…")
+                            } else {
+                                Text("Connect")
+                            }
+                        }
+                        if (relayUrlInput.isBlank()) {
+                            Text(
+                                text = "Relay URL not set — open Manual configuration above to set it.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
                             )
                         }
                     }
+
+                    HorizontalDivider()
+
+                    // ── "How does this work?" expandable explainer ───────
+                    TextButton(
+                        onClick = { card3ExplainerExpanded = !card3ExplainerExpanded },
+                        contentPadding = PaddingValues(horizontal = 0.dp),
+                    ) {
+                        Text(
+                            text = if (card3ExplainerExpanded)
+                                "Hide explanation"
+                            else
+                                "How does this work?",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    if (card3ExplainerExpanded) {
+                        Text(
+                            text = "This is a fallback for when you can't scan " +
+                                "the pairing QR — for example, no camera, the " +
+                                "host can't render a QR, or you only have SSH " +
+                                "access from a single device. The canonical " +
+                                "flow is the QR scan from `/hermes-relay-pair` " +
+                                "or `hermes-pair`.\n\n" +
+                                "How it works: the phone generates a 6-character " +
+                                "code locally. You paste that code into the host's " +
+                                "`hermes-pair --register-code` command, which " +
+                                "pre-registers it with the relay. When you tap " +
+                                "Connect here, the phone presents the same code " +
+                                "to the relay and gets a long-lived session " +
+                                "token in return.\n\n" +
+                                "Bridge / device-control is gated by the master " +
+                                "toggle on the Bridge tab, NOT by this pairing " +
+                                "code. Pairing only authorizes the relay session.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    // === END MANUAL-PAIR-FOLLOWUP ===
                 }
             }
             // ── end Connection section ──────────────────────────────────────
@@ -1185,3 +1396,56 @@ fun ConnectionSettingsScreen(
         )
     }
 }
+
+// === MANUAL-PAIR-FOLLOWUP: numbered-step row helper ===
+/**
+ * One row in the Manual pairing code (fallback) card. Renders a small
+ * circular step badge on the left and the step's body on the right.
+ *
+ * Kept private to this file because it's tightly coupled to Card 3's
+ * layout — number badge sizing, monospace command surface, etc. If we
+ * ever want this on another screen, lift it into [ui.components].
+ */
+@Composable
+private fun ManualPairStep(
+    number: Int,
+    title: String,
+    content: @Composable () -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        // Step badge — small filled circle with the step number centered.
+        androidx.compose.material3.Surface(
+            color = MaterialTheme.colorScheme.primary,
+            shape = RoundedCornerShape(percent = 50),
+            modifier = Modifier.size(24.dp),
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                Text(
+                    text = number.toString(),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                )
+            }
+        }
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            content()
+        }
+    }
+}
+// === END MANUAL-PAIR-FOLLOWUP ===

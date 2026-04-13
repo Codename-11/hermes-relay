@@ -56,6 +56,7 @@ Do NOT use this skill to start or install the relay server itself — that is a 
    - `--no-qr` — text only, no QR at all. Use when the agent is running in a non-TTY context and QR output would be wasted.
    - `--no-relay` — skip relay pre-pairing, render API-only QR. Use if the relay is intentionally offline.
    - `--host <ip>` / `--port <n>` — override the API server host or port when config auto-detection picks the wrong values.
+   - `--register-code <code>` — **manual fallback**. Skip QR rendering entirely and just pre-register a 6-char code the user is reading off the phone screen. See "Manual fallback" below.
 
 4. **Show the output verbatim.** `plugin.pair` prints, in order:
    - Text block with `Server` URL, masked `API Key`, and (if relay is up) a `Relay (terminal + bridge)` section with `URL` and `Code`.
@@ -73,6 +74,45 @@ Do NOT use this skill to start or install the relay server itself — that is a 
    5. Watch for the success toast and the status summary.
 
 6. **Time constraint.** The relay pairing code expires 10 minutes after generation and is single-use. If the user won't scan within that window, re-run the skill to mint a fresh code.
+
+## Manual fallback (`--register-code`)
+
+Use this when QR scanning is **physically impossible**:
+
+- The user is SSH'd into the host from their phone (the only camera-equipped device) and there's no second device to point at the screen.
+- The host has no display attached (a headless server you ssh into from a terminal that can't render Unicode QR blocks, or where copying a PNG off-host is awkward).
+- The user's phone is the device with the camera *and* the device that needs to pair — there's no way to scan its own screen.
+
+**Workflow:**
+
+1. Tell the user to open the Hermes-Relay app → **Settings** → **Connection** → **Manual pairing code (fallback)**. The app displays a locally-generated 6-char code (A-Z / 0-9). They read it to you (or paste it into the chat).
+2. On the host, run:
+
+   ```bash
+   hermes-pair --register-code ABCD12
+   ```
+
+   Replace `ABCD12` with the code from the phone. The command pre-registers it with the relay via the same loopback `/pairing/register` endpoint the QR flow uses, then prints a confirmation block listing the code, transport hint, session TTL, and what the user should tap next.
+
+3. Tell the user to tap **Connect** in that same Manual pairing code card. The relay accepts the code, mints a session token, and the phone is paired.
+
+**TTL + grants compose with `--register-code` exactly like they do with the QR flow:**
+
+```bash
+hermes-pair --register-code ABCD12 --ttl 30d --grants chat:never,bridge:7d
+hermes-pair --register-code ABCD12 --ttl never
+hermes-pair --register-code ABCD12 --transport-hint wss
+```
+
+Pass `--transport-hint wss` only when you know the relay is actually running behind TLS (e.g. an external reverse proxy) but the host-side check can't tell. Otherwise it's auto-detected from `RELAY_SSL_CERT`.
+
+**Exit codes:**
+
+- `0` — code accepted, pairing pre-registered. Phone can now tap Connect.
+- `1` — relay was unreachable, OR relay was reachable but rejected the code (loopback-only endpoint — confirm you're on the same host as the relay).
+- `2` — argument validation failed (bad code format, wrong length, invalid TTL/grants spec).
+
+**Same 10-minute expiry rules apply** — once the operator runs `hermes-pair --register-code`, the user has 10 minutes to tap Connect or the code is invalidated and they need a fresh one from the app + a fresh `--register-code` invocation.
 
 ## Pitfalls
 

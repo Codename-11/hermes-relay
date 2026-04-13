@@ -65,6 +65,7 @@ The installer clones Hermes-Relay to `~/.hermes/hermes-relay/` (override with `$
 
 - **From any Hermes chat surface** (CLI, Discord, Telegram, etc.): type `/hermes-relay-pair` and the `hermes-relay-pair` skill renders the QR inline. Shortest path if you're already chatting with the agent.
 - **From a shell**: `hermes-pair` (dashed) — a thin wrapper around `python -m plugin.pair` in the hermes-agent venv. Use this in scripts or when you want the raw output.
+- **No camera?** `hermes-pair --register-code ABCD12` — manual fallback for SSH-only / camera-less setups. Read the 6-char code from the app's **Settings → Connection → Manual pairing code (fallback)** card, pre-register it on the host with this command, then tap **Connect** in the app. Composes with `--ttl` / `--grants`.
 
 Scan the QR from the Android app's onboarding screen and you're connected. One scan configures **both** the direct-chat API server **and** the WSS relay (for terminal/bridge) — if a local relay is running at `localhost:8767`, the pair command pre-registers a fresh 6-char pairing code with it and embeds the relay URL + code in the same QR. If you only want direct chat, pass `--no-relay` (or just don't start the relay). Plain-text connection details are always printed alongside the QR so you can copy values by hand if your terminal can't render QR blocks.
 

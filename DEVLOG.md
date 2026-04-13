@@ -1,5 +1,52 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-12 — Manual pairing fallback — `hermes-pair --register-code <code>`
+
+Wired the host-side half of the in-app fallback pairing flow. The phone has been generating a local 6-char code in `Settings → Connection → Manual pairing code (fallback)` and `AuthManager.authenticate()` already sent that code as `pairing_code` when no server-issued code was present, but there was no convenient way for an operator to pre-register an arbitrary code with the relay without going through the QR flow. Now there is.
+
+**Use case**: Bailey wants to pair a phone he's already SSH'd in *from*, where there's no second device with a camera to scan a QR off the host's display. The QR flow is unusable in that scenario; the new flag is the only path.
+
+**`plugin/pair.py` additions:**
+
+- New `normalize_pairing_code(code)` helper — upper-cases, strips, validates against `PAIRING_ALPHABET` (A-Z / 0-9) and `PAIRING_CODE_LENGTH` (6). Raises `InvalidPairingCodeError` (a `ValueError` subclass) with a clear message on length or alphabet mismatches so the CLI can fail fast instead of letting the operator find out via an HTTP 400.
+- New `register_code_command(args)` — separate code path from the QR pipeline. Validates the code, parses `--ttl` / `--grants` (same parser as the QR flow, default `30d`), resolves the relay port from `read_relay_config()`, probes `/health` first so we can give a precise "relay not running" message instead of a generic post failure, then calls the existing `register_relay_code()` helper with all the optional metadata. Prints a clean success block listing the code, transport hint, session TTL, grants, and the exact 3-step "tap Connect in the app" instructions. Distinct exit codes: `0` success, `1` relay unreachable / rejected, `2` argument validation failed.
+- `pair_command()` short-circuits to `register_code_command` when `args.register_code` is set, so the QR pipeline is skipped entirely (no relay code minted, no QR rendered, no API config probed).
+- New CLI flags on the standalone `python -m plugin.pair` argparser: `--register-code <CODE>` (the trigger), `--transport-hint {ws,wss}` (override the auto-detected transport hint when running behind an external TLS proxy that the host can't see). All existing flags (`--ttl`, `--grants`, `--host`, `--port`, etc.) compose with `--register-code` exactly the way they compose with the QR flow.
+
+**New CLI shape:**
+
+```bash
+hermes-pair --register-code ABCD12
+hermes-pair --register-code ABCD12 --ttl 30d --grants terminal=7d,bridge=1d
+hermes-pair --register-code ABCD12 --ttl never --transport-hint wss
+```
+
+The relay endpoint (`POST /pairing/register` in `plugin/relay/server.py`) and `PairingManager.register_code` were not touched — they already accepted user-supplied codes with optional TTL/grants/transport-hint metadata. This change just exposes that capability via a CLI flag so the operator doesn't have to hand-craft a `curl` POST.
+
+**`plugin/tests/test_register_code.py` — 25 tests, stdlib `unittest` only.** Three test classes:
+
+- `NormalizePairingCodeTests` (13 tests) — happy path (uppercase / lowercase / whitespace-stripped / all-digit / all-letter), every rejection branch (empty / whitespace-only / `None` / too short / too long / dash / punctuation / unicode).
+- `RegisterCodeCommandTests` (10 tests) — happy path with default TTL (verifies it posts `30 * 24 * 3600` seconds and `transport_hint="ws"`); happy path with `--ttl 7d --grants terminal=1d,bridge=1d` and `tls=True` in the relay config (verifies `transport_hint="wss"` and the auto-uppercase of `abcd12 → ABCD12`); explicit `--transport-hint wss` override; every error path (invalid chars, wrong length, empty, relay unreachable → exit 1, relay rejection → exit 1, invalid `--ttl` → exit 2, invalid `--grants` → exit 2). Each error-path test asserts the network was NOT touched if validation failed first.
+- `RegisterRelayCodeWireShapeTests` (2 tests) — patches `urllib.request.urlopen` directly and verifies the bytes the manual flow puts on the wire match what `handle_pairing_register` already parses: `{"code": ..., "ttl_seconds": ..., "grants": ..., "transport_hint": ...}`. Also covers the minimal-body case (just `{"code": ...}` when no metadata is supplied) so we don't accidentally start sending `null` fields the server's `_parse_pairing_metadata` would have to filter.
+
+Run via `python -m unittest plugin.tests.test_register_code` — 25 passed in 0.006s.
+
+**Docs touched:**
+
+- `skills/devops/hermes-relay-pair/SKILL.md` — added `--register-code` to the "Useful flags" bullet list and a full "Manual fallback (`--register-code`)" section between Procedure and Pitfalls covering when to use it, the 3-step workflow, how `--ttl` / `--grants` / `--transport-hint` compose, and the exit codes.
+- `skills/devops/hermes-relay-self-setup/SKILL.md` — added an "If you can't scan a QR" subsection inside section D pointing operators at the `hermes-relay-pair` skill's manual-fallback recipe.
+- `user-docs/reference/configuration.md` — expanded the "Manual pairing code (fallback)" bullet from a one-liner into a full 3-step workflow walkthrough so users can find this without leaving the app's docs.
+- `user-docs/guide/getting-started.md` — added a "Camera unavailable? Use manual pairing" callout under the "Choosing session lifetime + channel grants" section.
+- `README.md` — added a one-line bullet under the install section listing `hermes-pair --register-code` alongside the slash command and the dashed shim.
+
+**Conventions:** No Kotlin touched (parallel agent owns the in-app UI cleanup). Did not modify `plugin/relay/server.py` or `PairingManager` — endpoint already supported user-supplied codes. Tests run via stdlib `unittest` to bypass the `conftest.py` that imports `responses`.
+
+## 2026-04-12 — Connection UX — Manual pairing code walkthrough + per-channel grant revoke
+
+**Manual pairing code card.** Settings → Connection → "Manual pairing code (fallback)" used to be a bare-bones code + copy/regen stub that left users guessing what to do with the 6-character code. Replaced the body with a proper three-step walkthrough: (1) copy the code (with both an instant copy button and the existing regenerate button), (2) on the host, run `hermes-pair --register-code <code>` rendered in a copyable monospace shell-command surface, (3) tap **Connect** to fire the pair flow. Step 3 is a real `Button` that calls `applyServerIssuedCodeAndReset` → `disconnectRelay` → `connectRelay` (mirroring the existing dialog flow), tracks an in-flight `card3ConnectInProgress` flag with a `CircularProgressIndicator` + "Connecting…" label, and reports success/failure through `LocalSnackbarHost.showHumanError` with the "pair" classifier context. Below the steps is an expandable "How does this work?" explainer that spells out when this is the right flow vs. the QR scan, and reminds users that bridge control is gated by the master toggle on the Bridge tab — not by the pairing code itself. New private `ManualPairStep` helper renders the numbered step badges. Pairs cleanly with the parallel agent's host-side `hermes-pair --register-code` work above. Markers: `// === MANUAL-PAIR-FOLLOWUP: ... === / // === END MANUAL-PAIR-FOLLOWUP ===`.
+
+**Per-channel grant revoke.** Paired Devices → device card grant chips are now individually revocable. Each chip got an inline `Close` icon button (a small clickable `Box` instead of `IconButton` to avoid the 48dp touch-target inflation that would blow up the `FlowRow`). Tapping the x opens an `AlertDialog` confirming "Revoke <channel> access for <device>?" with an explicit reminder that the session itself stays paired and other channels keep their current expiry. New `ConnectionViewModel.revokeChannelGrant(tokenPrefix, channel)` builds the full grants map by reading the device's current `PairedDeviceInfo.grants`, converting absolute-epoch grants back to seconds-from-now (clamped to ≥ 1 since `0` means "never expire" on the relay side), and replacing only the target channel with `1L` (≈ instantly expired by the time the PATCH lands). Then it reuses `RelayHttpClient.extendSession` with `ttlSeconds = null, grants = rebuilt` and refreshes the device list on success. The chip label also got a relative TTL helper (`formatRelativeTtl`) that renders "never" / "in 6d" / "in 23h" / "expired" instead of the previous absolute short date. The full per-session "Revoke" button stays — per-channel chips are additive, not a replacement. Markers: `// === PER-CHANNEL-REVOKE: ... === / // === END PER-CHANNEL-REVOKE ===`.
+
 ## 2026-04-12 — Phase 3 / status — relay `GET /bridge/status` endpoint + expanded `BridgeStatusReporter`
 
 Backend half of the `android_phone_status()` work. The phone (`BridgeStatusReporter.kt`) now pushes a structured status envelope every 30 s with three nested groups:

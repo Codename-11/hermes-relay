@@ -1334,6 +1334,88 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    // === PER-CHANNEL-REVOKE: revoke a single channel grant on a device ===
+    /**
+     * Revoke a single per-channel grant on a paired device without touching
+     * the rest of the session.
+     *
+     * The relay's `PATCH /sessions/{prefix}` accepts a `grants` map of
+     * `channel → seconds-from-now`. The server-side `_materialize_grants`
+     * helper rebuilds the entire grants table from whatever we send (plus
+     * the relay's defaults for channels we omit), so we must reconstruct
+     * the FULL current grants map and only swap the target channel.
+     *
+     * Quirks of the relay-side encoding we have to honor:
+     *  * `0` means "never expire" (NOT "expired").
+     *  * Omitted channels default to `_default_grants`, which would extend
+     *    a previously-shorter grant. So we re-send every existing channel
+     *    explicitly, converted from absolute-epoch back to seconds-from-now.
+     *  * To express "revoked", we send `1` second — the round trip alone
+     *    pushes us past the expiry, and `_materialize_grants` clamps the
+     *    candidate to the session lifetime so a stale `1` is harmless.
+     *
+     * @param tokenPrefix the device's token prefix from `PairedDeviceInfo`.
+     * @param channel the channel name to revoke (`"chat"`, `"voice"`,
+     *   `"terminal"`, `"bridge"`, …).
+     * @return `true` on success.
+     */
+    suspend fun revokeChannelGrant(
+        tokenPrefix: String,
+        channel: String,
+    ): Boolean {
+        // Look up the device locally so we can rebuild the full grants
+        // map from its current state. If the device list is stale we
+        // bail rather than guessing.
+        val device = _pairedDevices.value
+            .firstOrNull { it.tokenPrefix == tokenPrefix }
+            ?: return run {
+                _pairedDevicesError.value = "Device not in cache — refresh and retry"
+                false
+            }
+
+        val nowSec = System.currentTimeMillis() / 1000.0
+        val rebuilt: MutableMap<String, Long> = mutableMapOf()
+        for ((existingChannel, expiryEpoch) in device.grants) {
+            if (existingChannel == channel) {
+                // Target channel — encode as expired (1s from now → past
+                // by the time the relay processes the PATCH).
+                rebuilt[existingChannel] = 1L
+            } else if (expiryEpoch == null) {
+                // Existing "never expire" grant — preserve via 0.
+                rebuilt[existingChannel] = 0L
+            } else {
+                // Existing capped grant — convert absolute epoch to
+                // seconds-from-now, clamped to >= 1 so the relay
+                // accepts it as a valid non-negative integer.
+                val secsFromNow = (expiryEpoch - nowSec).toLong().coerceAtLeast(1L)
+                rebuilt[existingChannel] = secsFromNow
+            }
+        }
+        if (rebuilt.isEmpty()) {
+            _pairedDevicesError.value = "Device has no grants to revoke"
+            return false
+        }
+        if (channel !in rebuilt) {
+            // The channel wasn't in the device's grant table — nothing
+            // to do. Treat as success so the UI updates cleanly.
+            return true
+        }
+
+        val result = relayHttpClient.extendSession(
+            tokenPrefix = tokenPrefix,
+            ttlSeconds = null,
+            grants = rebuilt,
+        )
+        return if (result.isSuccess) {
+            loadPairedDevices()
+            true
+        } else {
+            _pairedDevicesError.value = result.exceptionOrNull()?.message
+            false
+        }
+    }
+    // === END PER-CHANNEL-REVOKE ===
+
     // --- Insecure-ack helpers ---------------------------------------------
 
     /**

@@ -311,10 +311,45 @@ _RELAY_CODE_ALPHABET = string.ascii_uppercase + string.digits
 _RELAY_CODE_LENGTH = 6
 
 
+class InvalidPairingCodeError(ValueError):
+    """Raised when a user-supplied pairing code fails format validation."""
+
+
 def _generate_relay_code() -> str:
     """Generate a fresh 6-char pairing code (A-Z / 0-9)."""
     rng = random.SystemRandom()
     return "".join(rng.choice(_RELAY_CODE_ALPHABET) for _ in range(_RELAY_CODE_LENGTH))
+
+
+def normalize_pairing_code(code: str) -> str:
+    """Validate a user-supplied pairing code and return its canonical form.
+
+    The relay's :class:`PairingManager` upper-cases codes internally and
+    accepts only characters from ``PAIRING_ALPHABET`` at exactly
+    ``PAIRING_CODE_LENGTH`` chars (6). We mirror that here so the CLI can
+    fail fast with a clear message instead of letting the operator find
+    out via an HTTP 400.
+
+    Raises :class:`InvalidPairingCodeError` on length or alphabet
+    mismatches. Returns the upper-cased code on success.
+    """
+    if code is None:
+        raise InvalidPairingCodeError("pairing code is required")
+    normalized = code.strip().upper()
+    if not normalized:
+        raise InvalidPairingCodeError("pairing code is empty")
+    if len(normalized) != _RELAY_CODE_LENGTH:
+        raise InvalidPairingCodeError(
+            f"pairing code must be exactly {_RELAY_CODE_LENGTH} characters "
+            f"(got {len(normalized)}: {code!r})"
+        )
+    bad = [c for c in normalized if c not in _RELAY_CODE_ALPHABET]
+    if bad:
+        raise InvalidPairingCodeError(
+            f"pairing code contains invalid characters {bad!r} — "
+            f"only A-Z and 0-9 are allowed"
+        )
+    return normalized
 
 
 def _relay_lan_base_url(relay_host: str, relay_port: int, tls: bool = False) -> str:
@@ -525,8 +560,123 @@ def render_qr_png(payload: str, path: Optional[str] = None) -> Optional[str]:
         return None
 
 
+def register_code_command(args) -> int:
+    """CLI entry point for ``hermes-pair --register-code <code>``.
+
+    Skips QR rendering entirely. Validates the user-supplied code against
+    ``PAIRING_ALPHABET`` + length, probes the local relay, then calls the
+    same loopback ``/pairing/register`` HTTP endpoint that the QR flow
+    uses — including any ``--ttl`` / ``--grants`` / ``--transport-hint``
+    options so a manual-paired session has the same gating as a QR-paired
+    one.
+
+    Use case: the operator can't render a QR or there's no second device
+    to scan with (SSH-only / camera unavailable / phone displaying a
+    locally-generated code in Settings → Connection → Manual pairing
+    code). The phone displays a code, the operator types it into a host
+    shell, this command pre-registers it with the relay, the phone taps
+    Connect.
+
+    Returns a process exit code (0 on success, non-zero on failure).
+    """
+    raw_code = getattr(args, "register_code", None)
+    try:
+        code = normalize_pairing_code(raw_code or "")
+    except InvalidPairingCodeError as exc:
+        print(f"  [error] --register-code: {exc}", file=sys.stderr)
+        return 2
+
+    # ── TTL + grants from CLI flags (same shape as the QR flow) ───────────
+    ttl_spec = getattr(args, "ttl", None) or "30d"
+    try:
+        ttl_seconds = parse_duration(ttl_spec)
+    except ValueError as exc:
+        print(f"  [error] --ttl: {exc}", file=sys.stderr)
+        return 2
+
+    grants_spec = getattr(args, "grants", None)
+    grants_dict: Optional[dict[str, int]] = None
+    if grants_spec:
+        try:
+            grants_dict = parse_grants(grants_spec)
+        except ValueError as exc:
+            print(f"  [error] --grants: {exc}", file=sys.stderr)
+            return 2
+
+    # Resolve relay host/port + transport hint. The CLI flag overrides
+    # the env-derived default so the operator can register against a
+    # non-default relay or pretend the transport is wss (e.g. when
+    # running behind an external reverse proxy that terminates TLS).
+    relay_cfg = read_relay_config()
+    relay_port = relay_cfg["port"]
+    relay_tls = bool(relay_cfg.get("tls"))
+    transport_hint = getattr(args, "transport_hint", None) or (
+        "wss" if relay_tls else "ws"
+    )
+
+    # Probe the relay first so we can give a precise error message
+    # instead of a generic "post failed".
+    health = probe_relay(relay_port)
+    if health is None:
+        print(
+            f"  [error] No relay reachable at http://127.0.0.1:{relay_port}.\n"
+            f"          Start the relay first: hermes relay start "
+            f"(or python -m plugin.relay --no-ssl)",
+            file=sys.stderr,
+        )
+        return 1
+
+    ok = register_relay_code(
+        relay_port,
+        code,
+        ttl_seconds=ttl_seconds,
+        grants=grants_dict,
+        transport_hint=transport_hint,
+    )
+    if not ok:
+        print(
+            "  [error] Relay rejected the pairing code. The relay's "
+            "/pairing/register endpoint is loopback-only — make sure "
+            "you're running this command on the same host as the relay.",
+            file=sys.stderr,
+        )
+        return 1
+
+    # ── Success — tell the operator exactly what to do next ──────────────
+    ttl_label = format_duration_label(ttl_seconds)
+    print()
+    print("  Hermes-Relay manual pairing")
+    print("  " + "-" * 40)
+    print(f"  Code         : {code}")
+    print(f"  Relay        : http://127.0.0.1:{relay_port}")
+    print(f"  Transport    : {transport_hint}")
+    if ttl_seconds == 0:
+        print(f"  Session TTL  : {ttl_label} (never expires)")
+    else:
+        print(f"  Session TTL  : {ttl_label}")
+    if grants_dict:
+        grant_parts = [
+            f"{ch}={format_duration_label(int(d))}" for ch, d in grants_dict.items()
+        ]
+        print(f"  Grants       : {', '.join(grant_parts)}")
+    print()
+    print("  Code registered. The pairing code is single-use and expires")
+    print("  in 10 minutes.")
+    print()
+    print("  In the Hermes-Relay app:")
+    print("    1. Open Settings -> Connection -> Manual pairing code (fallback).")
+    print(f"    2. Confirm the displayed code matches: {code}")
+    print("    3. Tap Connect.")
+    print()
+    return 0
+
+
 def pair_command(args) -> None:
     """CLI entry point for `hermes pair`. Called by argparse dispatch."""
+    # Manual-fallback flow: skip QR entirely and just pre-register the code.
+    if getattr(args, "register_code", None):
+        sys.exit(register_code_command(args))
+
     config = read_server_config()
 
     # Apply CLI overrides
@@ -669,6 +819,32 @@ if __name__ == "__main__":
             "Per-channel grants, comma-separated channel=duration pairs, "
             "e.g. 'terminal=7d,bridge=1d'. Unspecified channels get server "
             "defaults."
+        ),
+    )
+    parser.add_argument(
+        "--register-code",
+        dest="register_code",
+        default=None,
+        help=(
+            "Manual-fallback flow: pre-register a 6-char pairing code "
+            "(A-Z / 0-9) supplied by the phone and exit. Skips QR "
+            "rendering entirely. Composes with --ttl / --grants / "
+            "--transport-hint. Use this when you can't scan a QR "
+            "(camera unavailable, SSH-only access, second-device pair "
+            "impossible) — the phone displays a code in Settings -> "
+            "Connection -> Manual pairing code (fallback), you type it "
+            "into this command, and then tap Connect in the app."
+        ),
+    )
+    parser.add_argument(
+        "--transport-hint",
+        dest="transport_hint",
+        default=None,
+        choices=["ws", "wss"],
+        help=(
+            "Override the transport hint stored alongside the session "
+            "(only meaningful with --register-code). Defaults to 'wss' "
+            "when RELAY_SSL_CERT is set, otherwise 'ws'."
         ),
     )
     pair_command(parser.parse_args())

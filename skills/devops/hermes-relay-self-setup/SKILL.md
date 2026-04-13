@@ -117,7 +117,21 @@ Or, from any Hermes chat session:
 
 Both invoke the `hermes-relay-pair` skill which generates a single QR code that configures both the chat (API server) and bridge/terminal (relay) channels. Tell the user to open the Hermes-Relay Android app → `Settings` → `Connection` → `Scan Pairing QR` (or the Connect page during onboarding).
 
-After scan, verify with:
+#### If you can't scan a QR
+
+If the user is SSH'd in from the same phone they want to pair, the host has no display attached, or there's otherwise no second camera-equipped device available, fall back to the manual code flow instead of the QR:
+
+1. Have the user open the Hermes-Relay app → `Settings` → `Connection` → `Manual pairing code (fallback)`. The card displays a locally-generated 6-char code (A-Z / 0-9). Ask them to read it back.
+2. On the host, run:
+   ```bash
+   hermes-pair --register-code ABCD12
+   ```
+   Replace `ABCD12` with the code from the phone. The command pre-registers it with the relay over the same loopback `/pairing/register` endpoint the QR flow uses and prints a confirmation block. Same TTL / grants flags compose: `hermes-pair --register-code ABCD12 --ttl 30d --grants chat:never,bridge:7d`.
+3. Tell the user to tap **Connect** in that same Manual pairing code card. The relay accepts the code, the phone is paired.
+
+The full procedure lives in the `hermes-relay-pair` skill under "Manual fallback (`--register-code`)" — defer to that for the canonical recipe.
+
+After scan (or after manual `--register-code` + Connect), verify with:
 ```bash
 hermes-status
 ```

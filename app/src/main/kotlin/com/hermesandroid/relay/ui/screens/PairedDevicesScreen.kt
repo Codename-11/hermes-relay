@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,11 +13,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Shield
@@ -94,6 +97,12 @@ fun PairedDevicesScreen(
     var pendingExtend by remember { mutableStateOf<PairedDeviceInfo?>(null) }
     val isTailscaleDetected by connectionViewModel.isTailscaleDetected.collectAsState()
 
+    // === PER-CHANNEL-REVOKE: state for per-channel revoke confirm dialog ===
+    var pendingChannelRevoke by remember {
+        mutableStateOf<Pair<PairedDeviceInfo, String>?>(null)
+    }
+    // === END PER-CHANNEL-REVOKE ===
+
     // Kick off the initial fetch when the screen is first composed.
     LaunchedEffect(Unit) {
         connectionViewModel.loadPairedDevices()
@@ -142,7 +151,12 @@ fun PairedDevicesScreen(
                     devices = devices,
                     currentToken = currentPairedSession?.token,
                     onRevoke = { pendingRevoke = it },
-                    onExtend = { pendingExtend = it }
+                    onExtend = { pendingExtend = it },
+                    // === PER-CHANNEL-REVOKE: forward the per-channel chip tap ===
+                    onRevokeChannel = { device, channel ->
+                        pendingChannelRevoke = device to channel
+                    },
+                    // === END PER-CHANNEL-REVOKE ===
                 )
             }
         }
@@ -255,6 +269,63 @@ fun PairedDevicesScreen(
             onCancel = { pendingExtend = null }
         )
     }
+
+    // === PER-CHANNEL-REVOKE: confirm dialog ===
+    pendingChannelRevoke?.let { (device, channel) ->
+        val otherChannels = device.grants.keys
+            .filter { it != channel }
+            .joinToString(", ")
+            .ifBlank { "none" }
+        AlertDialog(
+            onDismissRequest = { pendingChannelRevoke = null },
+            title = { Text("Revoke channel access?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Revoke $channel access for " +
+                            device.deviceName.ifBlank { "this device" } + "?",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        text = "The session itself stays paired — only the " +
+                            "$channel grant is removed. Other channels " +
+                            "($otherChannels) keep their current expiry.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val (target, ch) = device to channel
+                        pendingChannelRevoke = null
+                        scope.launch {
+                            val ok = connectionViewModel.revokeChannelGrant(
+                                target.tokenPrefix,
+                                ch,
+                            )
+                            snackbarHostState.showSnackbar(
+                                if (ok) "$ch access revoked"
+                                else "Failed to revoke $ch access"
+                            )
+                        }
+                    },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error,
+                    ),
+                ) {
+                    Text("Revoke")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingChannelRevoke = null }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+    // === END PER-CHANNEL-REVOKE ===
 }
 
 @Composable
@@ -338,6 +409,9 @@ private fun DeviceList(
     currentToken: String?,
     onRevoke: (PairedDeviceInfo) -> Unit,
     onExtend: (PairedDeviceInfo) -> Unit,
+    // === PER-CHANNEL-REVOKE: per-chip revoke callback ===
+    onRevokeChannel: (PairedDeviceInfo, String) -> Unit,
+    // === END PER-CHANNEL-REVOKE ===
 ) {
     LazyColumn(
         contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
@@ -348,7 +422,10 @@ private fun DeviceList(
                 device = device,
                 isCurrent = device.isCurrent || (currentToken?.startsWith(device.tokenPrefix) == true),
                 onRevoke = { onRevoke(device) },
-                onExtend = { onExtend(device) }
+                onExtend = { onExtend(device) },
+                // === PER-CHANNEL-REVOKE: forward to card ===
+                onRevokeChannel = { channel -> onRevokeChannel(device, channel) },
+                // === END PER-CHANNEL-REVOKE ===
             )
         }
     }
@@ -361,6 +438,9 @@ private fun DeviceCard(
     isCurrent: Boolean,
     onRevoke: () -> Unit,
     onExtend: () -> Unit,
+    // === PER-CHANNEL-REVOKE: per-chip revoke callback ===
+    onRevokeChannel: (String) -> Unit,
+    // === END PER-CHANNEL-REVOKE ===
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -431,7 +511,13 @@ private fun DeviceCard(
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     for ((channel, expiry) in device.grants) {
-                        GrantChip(channel = channel, expiresAt = expiry)
+                        // === PER-CHANNEL-REVOKE: tap-x to revoke a single channel ===
+                        GrantChip(
+                            channel = channel,
+                            expiresAt = expiry,
+                            onRevoke = { onRevokeChannel(channel) },
+                        )
+                        // === END PER-CHANNEL-REVOKE ===
                     }
                 }
             }
@@ -511,33 +597,84 @@ private fun ExpiryRow(expiresAt: Double?) {
     )
 }
 
+// === PER-CHANNEL-REVOKE: GrantChip now has an x button for revoke ===
 @Composable
-private fun GrantChip(channel: String, expiresAt: Double?) {
+private fun GrantChip(
+    channel: String,
+    expiresAt: Double?,
+    onRevoke: () -> Unit,
+) {
     val bg = MaterialTheme.colorScheme.surface
-    val fg = MaterialTheme.colorScheme.onSurface
+    val nowSec = System.currentTimeMillis() / 1000.0
+    val isExpired = expiresAt != null && expiresAt < nowSec
+    val fg = if (isExpired) {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
 
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(8.dp))
             .background(bg)
-            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .padding(start = 8.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = buildString {
-                append(channel)
-                append(" · ")
-                append(
-                    when {
-                        expiresAt == null -> "never"
-                        else -> formatEpochShort(expiresAt.toLong())
-                    }
-                )
-            },
+            text = "$channel · ${formatRelativeTtl(expiresAt, nowSec)}",
             style = MaterialTheme.typography.labelSmall,
-            color = fg
+            color = fg,
         )
+        Spacer(Modifier.width(4.dp))
+        // Small clickable Box instead of IconButton — IconButton inflates
+        // to a 48dp touch target which would make the chip explode in
+        // FlowRow. The chip lives in a settings list, not a content feed,
+        // so the smaller touch target is acceptable for the revoke action.
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(percent = 50))
+                .clickable(
+                    onClick = onRevoke,
+                    role = androidx.compose.ui.semantics.Role.Button,
+                )
+                .padding(2.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Close,
+                contentDescription = "Revoke $channel access",
+                modifier = Modifier.height(14.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
+
+/**
+ * Render a relative TTL label for a grant expiry epoch.
+ *
+ *   null      → "never"
+ *   in past   → "expired"
+ *   < 1m      → "in <1m"
+ *   minutes   → "in Nm"
+ *   hours     → "in Nh"
+ *   days      → "in Nd"
+ */
+private fun formatRelativeTtl(expiresAt: Double?, nowSec: Double): String {
+    if (expiresAt == null) return "never"
+    val deltaSec = (expiresAt - nowSec).toLong()
+    if (deltaSec <= 0) return "expired"
+    val days = deltaSec / 86_400
+    val hours = deltaSec / 3_600
+    val minutes = deltaSec / 60
+    return when {
+        days >= 1 -> "in ${days}d"
+        hours >= 1 -> "in ${hours}h"
+        minutes >= 1 -> "in ${minutes}m"
+        else -> "in <1m"
+    }
+}
+// === END PER-CHANNEL-REVOKE ===
 
 @Composable
 private fun MetaRow(label: String, value: String) {
@@ -566,10 +703,3 @@ private fun formatEpoch(epochSeconds: Long): String {
     }
 }
 
-private fun formatEpochShort(epochSeconds: Long): String {
-    return try {
-        DateFormat.getDateInstance(DateFormat.SHORT).format(Date(epochSeconds * 1000L))
-    } catch (_: Exception) {
-        "—"
-    }
-}

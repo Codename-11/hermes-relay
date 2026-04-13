@@ -134,6 +134,17 @@ hermes-pair --ttl 1d
 
 Supported duration formats: `1d`, `7d`, `30d`, `90d`, `1y`, `never` (or any `<number><unit>` combo where unit is `s`/`m`/`h`/`d`/`w`/`y`). Grants can be pre-set for the `terminal` and `bridge` channels and are automatically clamped to the overall session TTL — a grant cannot outlive its session.
 
+::: tip Camera unavailable? Use manual pairing
+If you can't scan a QR — for example you're SSH'd into the host from the same phone you want to pair, the host has no display attached, or there's no second camera-equipped device handy — Hermes-Relay ships a manual fallback flow. Open the app's **Settings → Connection → Manual pairing code (fallback)** card to read its locally-generated 6-char code, then on the host run:
+
+```bash
+hermes-pair --register-code ABCD12             # default 30d session
+hermes-pair --register-code ABCD12 --ttl 7d    # composes with --ttl / --grants
+```
+
+The command pre-registers your code with the local relay over loopback and prints a confirmation. Tap **Connect** in the same card and you're paired. Same 10-minute single-use expiry as QR codes; same TTL/grant rules — `--ttl` and `--grants` flags compose with `--register-code` exactly the same way they compose with the default QR flow.
+:::
+
 The phone's TTL picker dialog always opens on scan, preselected with your chosen values, so you have one final chance to confirm or override before the session is created. The selection you make is persisted as the new default for future pairs.
 
 ::: tip Never expire
