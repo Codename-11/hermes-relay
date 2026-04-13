@@ -44,6 +44,89 @@ Never decrement `appVersionCode` — Play Console rejects any upload whose
 code is lower than or equal to a previous upload on the same track. Confirm
 current values with `scripts\dev.bat version`.
 
+### The three version sources (MUST stay in lockstep)
+
+There are **three** places the version lives, and they MUST all match on
+every release commit. Drift is silent and painful — we chased a "why does
+/health say 0.2.0" bug for hours on 2026-04-12 because `pyproject.toml`
+had drifted to `0.5.0` speculatively and `plugin/relay/__init__.py` was
+still at a stale `0.2.0`.
+
+| File | Line | Written by |
+|---|---|---|
+| `gradle/libs.versions.toml` | `appVersionName = "…"` | You (canonical) |
+| `pyproject.toml` | `version = "…"` | You (Python package) |
+| `plugin/relay/__init__.py` | `__version__ = "…"` | You (runtime, reported by `/health`) |
+
+**Always bump them atomically via `scripts/bump-version.sh`**:
+
+```bash
+bash scripts/bump-version.sh 0.3.0
+```
+
+The script validates SemVer, bumps `appVersionCode` monotonically, rewrites
+all three files, runs a post-bump sanity grep, prints the diff, and tells
+you the next steps. It deliberately does NOT commit, tag, or touch
+`CHANGELOG.md` / `RELEASE_NOTES.md` — those need human prose.
+
+## Branching policy
+
+Hermes-Relay uses **feature branches + no-ff merges**, with version bumps
+gated to release-prep commits on `main`. `main` is always "last release +
+unreleased features," never mid-refactor.
+
+### Branch names
+
+| Prefix | When | Example |
+|---|---|---|
+| `feature/<name>` | New feature (>1-2 commits) | `feature/bridge-scroll-tool` |
+| `fix/<name>` | Focused bug fix | `fix/media-projection-fgs` |
+| `docs/<name>` | Docs-only changes larger than a typo | `docs/sideload-guide` |
+| `chore/<name>` | Cleanup / refactor / tooling | `chore/sync-version-sources` |
+
+Straight-to-main is still OK for **single-file typo fixes** and **tiny
+one-liner tweaks**. Judgment call — if in doubt, branch.
+
+### Merge style: `--no-ff`
+
+Always merge with `git merge --no-ff <branch>` (or the "Create a merge
+commit" option in the GitHub PR UI). This preserves the branch context
+as a visible merge commit in `git log --graph`, which is valuable when:
+
+- An agent team pushed several commits to a branch — the per-commit trail
+  is useful for "which agent did what"
+- `git bisect` needs to treat the whole branch as one unit
+- Someone reviews history in 6 months and wants to know "what was the
+  bundle of changes that introduced feature X"
+
+Squash merges lose that detail and are **not** the house style.
+
+### Version bumps happen at release-prep, NOT on feature branches
+
+Feature branches **never** touch `gradle/libs.versions.toml`,
+`pyproject.toml`, or `plugin/relay/__init__.py`. If two feature branches
+both bumped the version, they'd collide on `appVersionCode` (which must
+be monotonic) and you'd hit a merge conflict for no good reason.
+
+The version-bump commit lives on `main`, created via
+`scripts/bump-version.sh`, immediately before `git tag`. It's a dedicated
+commit with the message `release: vX.Y.Z` that also lands the CHANGELOG
+and RELEASE_NOTES updates.
+
+### Branch protection on `main`
+
+Light branch protection is enabled on `main` to enforce the above:
+
+- Direct pushes blocked (must go through PR)
+- PR must pass CI (build + unit tests) before merge
+- Force push and branch deletion blocked
+- Signed commits + review approval NOT required (solo-dev overhead)
+
+Release-prep commits (`release: vX.Y.Z`) are an exception — they're the
+one time direct push is allowed via a short-lived bypass, because they
+include the version bump + tag push in one transaction. Everything else
+goes through a PR.
+
 ## One-time Setup
 
 ### 1. Release signing keystore
@@ -142,21 +225,25 @@ artifacts will not be accepted by Play Console.
 
 ## Release Process
 
-### 1. Bump the version
+### 1. Bump the version (atomic across all three sources)
 
-Edit `gradle/libs.versions.toml`:
+Use `scripts/bump-version.sh` — it rewrites `libs.versions.toml`,
+`pyproject.toml`, AND `plugin/relay/__init__.py::__version__` in lockstep,
+increments `appVersionCode` monotonically, and runs a sanity check. Don't
+edit the files by hand; drift is silent and painful.
 
-```toml
-[versions]
-appVersionName = "0.1.1"   # bump per SemVer
-appVersionCode = "2"       # ALWAYS increment, even for prereleases
+```bash
+bash scripts/bump-version.sh 0.3.0
 ```
 
-Confirm:
+Confirm the bump:
 
 ```bat
 scripts\dev.bat version
 ```
+
+The script's diff output should show exactly three files changed and all
+three carrying the new version string.
 
 ### 2. Update release notes and changelog
 
@@ -184,18 +271,28 @@ Optional device smoke test: `scripts\dev.bat release` then
 
 ### 4. Commit and tag
 
+The release-prep commit is one of the few allowed direct-to-main pushes
+(see Branching Policy above — branch protection exempts the
+`release: vX.Y.Z` pattern because tagging + bumping must be atomic):
+
 ```bash
-git add gradle/libs.versions.toml RELEASE_NOTES.md CHANGELOG.md
-git commit -m "release: v0.1.1"
+git add gradle/libs.versions.toml pyproject.toml plugin/relay/__init__.py \
+        RELEASE_NOTES.md CHANGELOG.md
+git commit -m "release: v0.3.0"
 git push origin main
 
-git tag v0.1.1
-git push origin v0.1.1
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
 Pushing a tag matching `v*` triggers `.github/workflows/release.yml`,
 which builds, signs, checksums, and creates a GitHub Release. Watch the
 run under the **Actions** tab.
+
+> **Why all three files in the commit?** See "The three version sources"
+> above — `bump-version.sh` rewrites them atomically, so they must be
+> staged + committed atomically too. Missing one creates the same drift
+> the script was built to prevent.
 
 ### 5. Upload to Play Console
 

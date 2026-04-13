@@ -6,6 +6,196 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-13
+
+### Added
+
+**Phase 3 — Bridge channel (the big one)** — the agent can now read the
+phone's screen, tap, type, swipe, and take screenshots. Gated behind a
+deliberate in-app master toggle, per-channel session grants, Android
+Accessibility Service permission, MediaProjection consent, and Tier 5
+safety rails (blocklist, destructive-verb confirmation modal, idle
+auto-disable timer, optional persistent status overlay).
+
+- **`HermesAccessibilityService`** — Android `AccessibilityService`
+  subclass that reads the active window's UI tree, dispatches taps /
+  types / swipes / scrolls / key presses via `GestureDescription` and
+  `ACTION_SET_TEXT`, and caches the foregrounded package
+- **`ScreenCapture.kt`** — `MediaProjection` → `VirtualDisplay` →
+  `ImageReader` → PNG bytes, uploaded to the relay via `/media/upload`
+- **`BridgeCommandHandler`** — routes inbound `bridge.command` envelopes
+  to the executor, with the three-stage Tier 5 safety check
+  (blocklist → destructive-verb confirmation → auto-disable reschedule)
+- **`BridgeSafetyManager`** — process-wide safety enforcement singleton
+  with DataStore-backed blocklist (30 default banking/payments/2FA
+  apps), destructive verb list (`send`/`pay`/`delete`/`transfer`/etc.),
+  auto-disable timer, and confirmation timeout
+- **`BridgeForegroundService`** — persistent "Hermes has device control"
+  notification with Disable + Settings actions, deep-linked to the
+  Bridge Safety settings screen
+- **`BridgeStatusOverlay`** — `WindowManager` overlay host for the
+  destructive-verb confirmation modal and optional floating status chip
+- **Bridge UI** — new Bridge tab with master toggle, permission
+  checklist (accessibility / screen capture / overlay / notification
+  listener), status card, activity log, and safety summary card
+- **Bridge Safety settings screen** — blocklist editor (searchable
+  package picker), destructive verb editor, auto-disable timer slider,
+  status overlay toggle, confirmation timeout slider
+- **14 `android_*` plugin tools** routed through the new unified bridge
+  channel (migrated from the legacy standalone `android_relay.py`)
+- **`android_navigate`** — vision-driven close-the-loop navigation tool
+  (sideload track only)
+- **`android_phone_status`** — agent-callable introspection tool that
+  reports live bridge state (`device`, `bridge` permissions, `safety`
+  config) via the new `/bridge/status` relay endpoint
+
+**Voice mode** — real-time voice conversation via relay TTS/STT:
+
+- Tap the mic in the chat bar to enter voice mode with the ASCII
+  morphing sphere, layered-sine-wave waveform visualizer, and
+  streaming sentence-level TTS playback
+- Three interaction modes (Tap-to-talk, Hold-to-talk, Continuous)
+- Sphere voice states — Listening (blue/purple), Speaking (green/teal)
+- Voice settings screen (interaction mode, silence threshold, provider
+  info, Test Voice)
+- New relay endpoints — `POST /voice/transcribe`, `POST /voice/synthesize`,
+  `GET /voice/config`
+- **Voice-to-bridge intent routing** (sideload track only, Tier 3) —
+  spoken commands like "text Mom saying on my way" route to the bridge
+  channel instead of the chat channel, with destructive-verb
+  confirmation flow
+
+**Notification companion** — `HermesNotificationCompanion`
+(`NotificationListenerService`) reads posted notifications and forwards
+them to the relay over a new `notifications` channel for agent
+summaries. Opt-in via the standard Android notification-access grant.
+
+**Self-setup skill** — `/hermes-relay-self-setup` and
+`skills/devops/hermes-relay-self-setup/SKILL.md`. Single-source agent
+install recipe — raw URL fetch for pre-install users, Hermes skill
+discovery for post-install users. Zero drift.
+
+**Manual pairing fallback** — `hermes-pair --register-code ABCD12`
+pre-registers an arbitrary 6-char code with the relay for the rare
+"no camera available" case (SSH-only, single-device pair). Phone-side
+"Manual pairing code (fallback)" card in Settings → Connection walks
+the user through the three-step workflow with a real Connect button.
+
+**Per-channel grant revoke** — each device on the Paired Devices screen
+now has tappable per-channel grant chips (chat / voice / terminal /
+bridge) with an inline x icon. Revoking a single channel leaves the
+other channels' expiries intact.
+
+**`hermes-status`** and **`hermes-relay-update`** shell shims — alongside
+`hermes-pair`, these three shims give full discoverable CLI coverage for
+pair / status / update.
+
+**`/health` + `/bridge/status` relay endpoints** — loopback-only
+structured phone-status endpoint (device, bridge permissions, safety
+state) that backs `hermes-status`, `android_phone_status()`, and the
+`/hermes-relay-status` skill.
+
+**ConnectionWizard + onboarding unification** — shared three-step
+pairing wizard (Scan → Confirm → Verify) used by both first-run
+onboarding and re-pair from Settings. Eliminates the "half-paired" state
+where onboarding configured the API side but dropped the relay block.
+
+**Lifecycle-aware health checks** — `ConnectionViewModel.revalidate()`
+fires on `ON_RESUME` and on `ConnectivityObserver` `Available`
+transitions, with a new `Probing` tri-state and a new gray pulsing
+`ConnectionStatusBadge` pose. Kills the "foreground lag flash" where
+badges showed stale Connected/Disconnected for 30s after foregrounding.
+
+**Two build flavors** — `googlePlay` (Play Store track, conservative
+Accessibility use case) and `sideload` (`.sideload` applicationId
+suffix, full Phase 3 tiers including voice-to-bridge and
+`android_navigate`). `sideload` shows as "Hermes Dev" in the launcher
+for side-by-side disambiguation.
+
+**TOFU cert pinning**, **Android Keystore session token storage**
+(StrongBox-preferred with `EncryptedSharedPreferences` fallback),
+**transport security badge**, **session TTL picker dialog** (1d / 7d /
+30d / 90d / 1y / never), **Paired Devices screen** with full revoke
+flow, **Tailscale detector**, **insecure-mode ack dialog** with reason
+picker.
+
+### Changed
+
+- **`install.sh` TUI polish** — ANSI colors (TTY-aware, `NO_COLOR`
+  respected), boxed banner, unicode step bullets, spinner for the long
+  pip install, polished closing message with structured Pair / Update /
+  Manage / Uninstall sections
+- **`install.sh` restart semantics** — the restart-relay path now uses
+  explicit `systemctl --user restart` instead of `enable --now` (the
+  latter is a no-op on already-active services and silently left
+  editable-install code refreshes stranded)
+- **`install.sh` step 6b** — offer (don't force) hermes-gateway restart
+  so new plugin tools re-import. Interactive prompt (default no), env
+  var opt-in via `HERMES_RELAY_RESTART_GATEWAY=1`, or flag opt-out
+- **Connection settings card rename** — "Bridge pairing code" → "Manual
+  pairing code (fallback)" with a walkthrough UX instead of a bare
+  code display. The old label implied bridge-specific 2FA; it's
+  actually the auth fallback for the whole handshake.
+- **Sideload flavor strings** — `app_name` → `Hermes Dev`,
+  `a11y_service_label` → `Hermes-Bridge Dev`, notification companion
+  label → `Hermes Dev notification companion`. Disambiguates side-by-side
+  installs in launcher / recents / Settings → Apps.
+- **Google Play flavor a11y label** → `Hermes-Bridge` (with hyphen)
+  for consistency with the sideload naming
+- **`BridgeStatusReporter`** — pushed envelope now includes the full
+  nested `device` / `bridge` / `safety` contract instead of four flat
+  keys, with a new `pushNow()` method for out-of-band emission on
+  master toggle flips
+- **`hermes-relay.service` systemd unit** — runs the relay on port
+  8767 with `--no-ssl --log-level INFO`, loads `~/.hermes/.env` via
+  `_env_bootstrap.py` at import time (no `EnvironmentFile=` needed)
+
+### Fixed
+
+- **Android 14 MediaProjection grant evaporation** — on API 34+,
+  `getMediaProjection()` returned projections the system auto-revoked
+  within frames because `BridgeForegroundService` was declared as
+  `specialUse` only. Added `mediaProjection` to the FGS type slot,
+  updated `startForeground()` to OR both type constants, and gated
+  `requestScreenCapture()` on the master toggle so the FGS is
+  guaranteed running before consent fires.
+- **Master toggle gate broken end-to-end** — `cachedMasterEnabled` was
+  never written because nothing called `updateMasterEnabledCache`. The
+  cache was permanently `false` and `BridgeCommandHandler` 403'd every
+  command except `/ping` and `/current_app`. Service now owns a
+  coroutine that observes the DataStore flow and feeds the cache.
+- **MediaProjection consent flow never wired** — `MediaProjectionHolder.
+  onGranted` existed but no `ActivityResultLauncher` was registered.
+  `MainActivity` now registers a launcher and a new
+  `ScreenCaptureRequester` process-singleton bridges non-Activity
+  callers (`BridgeViewModel.requestScreenCapture()`).
+- **Manifest dedupe** — duplicate `HermesAccessibilityService` entry in
+  Android Settings caused by a stub `<service>` block in the flavor
+  manifests that pointed at a class that didn't exist
+- **Gradle deprecation** — `android.dependency.
+  excludeLibraryComponentsFromConstraints=true` collapsed into
+  `useConstraints=false`
+- **Version drift** — `pyproject.toml` had speculatively bumped to
+  `0.5.0` and `plugin/relay/__init__.py::__version__` was stuck at
+  `0.2.0`. Both synced to `0.3.0` via the new `bump-version.sh` script.
+
+### Docs
+
+- **`hermes-relay-self-setup`**, **`hermes-relay-pair`**, and
+  **`hermes-relay-status`** skills — agent-readable setup / pair /
+  status recipes via the Hermes skills system
+- **`RELEASE.md`** — expanded with the three-source version contract,
+  feature-branch workflow, `--no-ff` merge style, branch protection
+  policy, and `bump-version.sh` recipe
+- **`CLAUDE.md`** — updated Git section with the new branching policy,
+  added file-table entries for `hermes-relay-update`,
+  `register_code_command`, and the expanded `install.sh`
+- **`TODO.md`** — captures open research questions around proper
+  Hermes plugin/skill/tool distribution
+- **`user-docs` vitepress site** — new "For AI Agents" copy-paste
+  block on the home view, Feature Matrix component, two-track explainer,
+  manual-pair workflow walkthrough in configuration.md
+
 ## [0.2.0] - 2026-04-12
 
 ### Added

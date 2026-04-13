@@ -128,8 +128,15 @@ hermes-android/                  ← Android Studio opens this root
 - **Structured logging** — use `logging` module, not print()
 
 ### Git
-- **Commit messages:** `type: description` — e.g. `feat: add chat channel UI`, `fix: WSS reconnect race condition`
-- **Branch from main** — feature branches for anything non-trivial
+- **Commit messages:** Conventional Commits — `type: description` — e.g. `feat: add chat channel UI`, `fix: WSS reconnect race condition`, `docs: rename Bridge pairing card`, `chore: sync version sources`
+- **Feature branches are the house style** as of 2026-04-13. Straight-to-main is reserved for single-file typos and tiny one-liners — everything else goes on a branch and merges via PR.
+  - `feature/<name>` — new feature (>1-2 commits)
+  - `fix/<name>` — focused bug fix
+  - `docs/<name>` — docs-only changes larger than a typo
+  - `chore/<name>` — cleanup / refactor / tooling
+- **Merge style:** always `git merge --no-ff <branch>` (or the GitHub "Create a merge commit" option in the PR UI). Squash is NOT the house style — no-ff preserves the per-commit trail which is critical for agent-team branches where you want to see "which agent did what" in `git log --graph`.
+- **Version bumps happen on `main` at release-prep time, NEVER on feature branches.** Three version sources (`gradle/libs.versions.toml`, `pyproject.toml`, `plugin/relay/__init__.py::__version__`) must stay in lockstep. Use `bash scripts/bump-version.sh <new-version>` to bump them atomically — the script validates SemVer, bumps `appVersionCode` monotonically, rewrites all three files, runs a sanity grep, and prints next steps. Don't edit by hand. See `RELEASE.md` for the full recipe.
+- **Branch protection** is enabled on `main` (as of 0.3.0): direct pushes blocked except for the `release: vX.Y.Z` pattern, PR must pass CI before merge, force push + branch deletion blocked. No required reviews (solo-dev overhead). Release-prep commits are the one carve-out — they need atomic bump+tag, so direct push is allowed.
 
 ### Testing
 - **Android:** JUnit + Compose testing for UI, MockK for mocks
