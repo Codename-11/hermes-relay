@@ -2,6 +2,7 @@ package com.hermesandroid.relay.viewmodel
 
 import android.app.Application
 import android.util.Log
+import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.hermesandroid.relay.audio.VoicePlayer
@@ -321,8 +322,17 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         lastObservedMessageId = null
         lastObservedContentLength = 0
         speakEnvelope = 0f
+        // Deliberately do NOT clear responseText here. "Stop" should freeze
+        // the visible response so the user can read whatever was already
+        // said before they hit stop — Bailey hit this and pointed out the
+        // old behavior felt like the screen evaporated under his hand. The
+        // chat history was always preserved server-side; the bug was the
+        // voice overlay's local copy getting blanked. The next [startListening]
+        // resets responseText at the moment the user explicitly starts a
+        // new turn, so old text only sticks around until they choose to
+        // move on.
         _uiState.update {
-            it.copy(state = VoiceState.Idle, responseText = "", amplitude = 0f)
+            it.copy(state = VoiceState.Idle, amplitude = 0f)
         }
     }
 
@@ -353,26 +363,49 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // Fire a one-shot TTS synth+playback to verify the voice pipeline from
     // the settings screen without entering full voice mode. Runs outside
     // the turn state machine so it doesn't disturb uiState.
+    //
+    // Three toasts so the user knows what's happening: "Testing voice…" on
+    // trigger, "Voice test successful" on completion, "Voice test failed" on
+    // any error. The trigger toast is held in [triggerToast] so it can be
+    // cancelled the moment the result toast fires — without that the two
+    // would briefly overlap on screen. viewModelScope.launch defaults to
+    // Main.immediate so Toast.show() is safe inline without a dispatcher
+    // switch.
     fun testVoice(sample: String = "Hello, this is Hermes. Voice mode is working.") {
+        val app = getApplication<Application>()
         val client = voiceClient
         val p = player
         if (client == null || p == null) {
+            Toast.makeText(app, "Voice test failed: pipeline not initialized", Toast.LENGTH_SHORT).show()
             setError("Voice pipeline not initialized")
             return
         }
+        val triggerToast = Toast.makeText(app, "Testing voice…", Toast.LENGTH_SHORT).also { it.show() }
         viewModelScope.launch {
             val result = client.synthesize(sample)
             if (result.isFailure) {
+                triggerToast.cancel()
+                val msg = result.exceptionOrNull()?.message ?: "synthesize failed"
+                Toast.makeText(app, "Voice test failed: $msg", Toast.LENGTH_LONG).show()
                 surfaceError(result.exceptionOrNull(), context = "synthesize")
                 return@launch
             }
-            val file = result.getOrNull() ?: return@launch
+            val file = result.getOrNull()
+            if (file == null) {
+                triggerToast.cancel()
+                Toast.makeText(app, "Voice test failed: no audio returned", Toast.LENGTH_LONG).show()
+                return@launch
+            }
             trackTtsFile(file)
             try {
                 p.play(file)
                 p.awaitCompletion()
+                triggerToast.cancel()
+                Toast.makeText(app, "Voice test successful", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Log.w(TAG, "test playback failed: ${e.message}")
+                triggerToast.cancel()
+                Toast.makeText(app, "Voice test failed: ${e.message ?: "playback error"}", Toast.LENGTH_LONG).show()
             }
         }
     }
