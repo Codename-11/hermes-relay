@@ -322,31 +322,51 @@ else
     info "  Linger tip: 'loginctl enable-linger $USER' keeps it running after logout"
 fi
 
-# ── 6b/6  Re-import plugin tools by restarting hermes-gateway ──────────────
+# ── 6b/6  Offer (don't force) hermes-gateway restart ──────────────────────
 # The hermes-agent gateway caches plugin tools (android_*, etc.) and skills
-# at import time, so a fresh `git pull` of the plugin code does NOT take
-# effect until the gateway process re-imports. Without this restart, new
-# tools added via this update silently fail to register and the user wonders
-# why their feature doesn't work.
+# at import time, so a fresh `git pull` of the plugin does NOT take effect
+# until the gateway re-imports. We could auto-restart it, but that interrupts
+# any active chat sessions and feels presumptuous since we don't own the
+# gateway process. Instead:
 #
-# We only restart it if it's already running as a user systemd service
-# (the canonical install pattern). If the user runs hermes-gateway some
-# other way (manual python invocation, system service, container), we
-# print a clear hint instead of guessing.
+#   - If --restart-gateway was passed, restart unconditionally (scripted use)
+#   - If --no-restart-gateway was passed, skip silently
+#   - If stdin is a TTY (interactive), prompt with default "no"
+#   - If stdin is NOT a TTY (curl | bash), print a clear hint and skip
 #
-# Skipped along with step 6 when HERMES_RELAY_NO_SYSTEMD is set.
-if [ -z "${HERMES_RELAY_NO_SYSTEMD:-}" ] && command -v systemctl >/dev/null 2>&1; then
-    if systemctl --user is-active hermes-gateway.service >/dev/null 2>&1; then
-        info "Restarting hermes-gateway to re-import plugin tools..."
+# Either way, the user is in control. No surprise restarts.
+if [ -z "${HERMES_RELAY_NO_SYSTEMD:-}" ] \
+   && [ -z "${HERMES_RELAY_NO_RESTART_GATEWAY:-}" ] \
+   && command -v systemctl >/dev/null 2>&1 \
+   && systemctl --user is-active hermes-gateway.service >/dev/null 2>&1; then
+
+    do_restart=""
+    if [ -n "${HERMES_RELAY_RESTART_GATEWAY:-}" ]; then
+        do_restart="yes"
+    elif [ -t 0 ]; then
+        echo ""
+        info "hermes-gateway is running — restart it to re-import new plugin tools?"
+        info "  (interrupts active chat sessions for ~2 seconds)"
+        printf "  Restart hermes-gateway now? [y/N] "
+        read -r reply </dev/tty || reply=""
+        case "$reply" in
+            [Yy]*) do_restart="yes" ;;
+            *)     do_restart="" ;;
+        esac
+    else
+        info "hermes-gateway is running. To re-import new plugin tools, run:"
+        info "    systemctl --user restart hermes-gateway"
+        info "  (or re-run install.sh with HERMES_RELAY_RESTART_GATEWAY=1 to do it automatically)"
+    fi
+
+    if [ -n "$do_restart" ]; then
+        info "Restarting hermes-gateway..."
         if systemctl --user restart hermes-gateway.service >/dev/null 2>&1; then
             ok "hermes-gateway restarted — new plugin tools are now live"
         else
             info "  Could not restart hermes-gateway.service automatically"
             info "  Run manually:  systemctl --user restart hermes-gateway"
         fi
-    else
-        info "hermes-gateway is not running as a user service — skipping auto-restart"
-        info "  If you added new plugin tools, restart your gateway manually so they re-import"
     fi
 fi
 
