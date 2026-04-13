@@ -247,7 +247,9 @@ hermes-android/                  ← Android Studio opens this root
 | `plugin/cli.py` | Registers plugin CLI sub-commands via the v0.8.0 plugin CLI API. **Note:** the top-level `hermes pair` sub-command is not currently reachable — upstream `hermes_cli/main.py` only reads `plugins.memory.discover_plugin_cli_commands()` and never consults the generic plugin CLI dict. Use `/hermes-relay-pair` (skill) or `hermes-pair` (shell shim) instead. |
 | `skills/devops/hermes-relay-pair/SKILL.md` | `/hermes-relay-pair` slash command — canonical category layout (`devops`), matches `metadata.hermes.category` frontmatter. Discovered via `skills.external_dirs` entry added by the installer. |
 | `plugin/relay/_env_bootstrap.py` | `load_hermes_env() → list[Path]` — loads `~/.hermes/.env` into `os.environ` before the relay server imports anything that reads env vars. Prefers `hermes_cli.env_loader.load_hermes_dotenv` when importable, falls back to direct `python-dotenv`, silent no-op in stripped containers. Called from both `plugin/relay/__main__.py` and `relay_server/__main__.py` so both entry points bootstrap identically. This is why neither `hermes-relay.service` nor `hermes-gateway.service` carries an `EnvironmentFile=` directive. |
-| `install.sh` | Canonical installer — 6 steps: [1] clone repo, [2] `pip install -e`, [3] symlink plugin, [4] register skills in `config.yaml`, [5] `hermes-pair` shell shim, [6] systemd user unit (optional — skipped on macOS/WSL-without-systemd/containers, or via `$HERMES_RELAY_NO_SYSTEMD`). Updates via `git pull` in the clone + `systemctl --user restart hermes-relay`. |
+| `install.sh` | Canonical installer — 6 steps + 1 sub-step. [1] clone repo, [2] `pip install -e`, [3] symlink plugin, [4] register skills in `config.yaml`, [5] write three shell shims (`hermes-pair`, `hermes-status`, `hermes-relay-update`), [6] systemd user unit (optional — skipped on macOS/WSL-without-systemd/containers, or via `$HERMES_RELAY_NO_SYSTEMD`), [6b] OFFER (don't force) hermes-gateway restart so re-imported plugin tools take effect. Idempotent: the relay-restart path uses explicit `systemctl --user restart` instead of `enable --now` (the latter is a no-op on already-active services and was the source of the 2026-04-12 "install ran clean but relay is still on stale code" debug rabbit hole). The canonical update flow is `hermes-relay-update` (a thin shim that re-runs the curl pipe) or the curl pipe itself — both are equivalent. |
+| `plugin/pair.py::register_code_command` | Manual fallback for pre-registering an arbitrary 6-char pairing code with the relay without going through QR rendering. Invoked via `hermes-pair --register-code ABCD12 [--ttl 30d --grants chat:never,bridge:7d]`. Use case: phone is the only device with a camera, host is SSH-only. The phone's app-side "Manual pairing code (fallback)" card in Settings → Connection generates a code, the user types it into this CLI on the host, then taps Connect in the app. The fallback path in `AuthManager.authenticate()` sends `_pairingCode.value` as the `pairing_code` field when no `serverIssuedCode` is set. Tests: `plugin/tests/test_register_code.py` (25 stdlib unittest cases). |
+| `~/.local/bin/hermes-relay-update` | Discoverable shell shim for "update Hermes-Relay". Two-line wrapper around the canonical curl pipe (`curl -fsSL .../install.sh \| bash -s -- "$@"`) — re-fetches the latest install.sh on every invocation, so improvements to install.sh itself take effect immediately. Forwards args via `bash -s --`. Honors `HERMES_RELAY_RESTART_GATEWAY=1` / `HERMES_RELAY_NO_RESTART_GATEWAY=1` env vars naturally. |
 | `app/build.gradle.kts` (Phase 3) | `flavorDimensions += "track"` + `googlePlay` / `sideload` product flavors. `sideload` gets `applicationIdSuffix = ".sideload"` + `versionNameSuffix = "-sideload"` so both tracks coexist on the same device; `googlePlay` keeps the canonical applicationId for clean Play Store upgrades from v0.2.0. |
 | `app/src/googlePlay/AndroidManifest.xml` | Google Play flavor manifest overlay — declares `BridgeAccessibilityService` with the conservative use-case description (`@string/a11y_description_googleplay`) and the conservative `@xml/accessibility_service_config`. Merged onto `app/src/main/AndroidManifest.xml` by AGP at build time. |
 | `app/src/googlePlay/res/xml/accessibility_service_config.xml` | Conservative a11y config — `typeWindowStateChanged\|typeWindowContentChanged\|typeViewClicked` event subset, `flagDefault` only, no gestures. Targeted at Play Store policy review. |
@@ -337,6 +339,21 @@ The server is a Linux box on Bailey's LAN running hermes-agent with the hermes-r
 **Standard update cycle on the server** (run manually via `ssh` — connection details in `~/SYSTEM.md` server-side):
 
 ```bash
+# CANONICAL ONE-LINER (idempotent — covers everything below in one command):
+hermes-relay-update                                 # if the shim is installed
+HERMES_RELAY_RESTART_GATEWAY=1 hermes-relay-update  # opt into auto gateway restart
+
+# Or via the curl pipe directly (same thing — the shim is just a wrapper):
+curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
+
+# IMPORTANT: when running over `ssh user@host '...'` non-interactively, use
+# `bash -c` to wrap the env var so it actually inherits to the bash subshell:
+ssh user@host 'bash -c "HERMES_RELAY_RESTART_GATEWAY=1 curl -fsSL .../install.sh | bash"'
+# (Naked `HERMES_RELAY_RESTART_GATEWAY=1 curl ... | bash` only sets the var
+# for curl, NOT for the bash subprocess that actually reads it. Confirmed
+# the hard way on 2026-04-12.)
+
+# Manual breakdown if you need to do it piecewise:
 cd ~/.hermes/hermes-relay
 git pull --ff-only origin main
 
@@ -348,6 +365,7 @@ systemctl --user restart hermes-relay
 
 # Verify health
 curl -s http://localhost:8767/health
+hermes-status   # pretty version of the same + bridge state
 
 # Verify the process has ~/.hermes/.env loaded (all expected keys as <set>):
 PID=$(systemctl --user show -p MainPID --value hermes-relay)
