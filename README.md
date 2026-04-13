@@ -74,6 +74,27 @@ Scan the QR from the Android app's onboarding screen and you're connected. One s
 
 **Requirements:** Android 8.0+ (SDK 26), [hermes-agent](https://github.com/NousResearch/hermes-agent) v0.8.0+, Python 3.11+.
 
+### For AI Agents
+
+If you have an AI assistant (Claude, GPT, etc.) and want it to install or maintain Hermes-Relay for you, paste the block below into the chat. The agent will fetch the canonical setup recipe from this repo and walk you through it — verification, pairing, troubleshooting included.
+
+```text
+You are helping me install and maintain Hermes-Relay (https://github.com/Codename-11/hermes-relay), a native Android client + Python plugin for the Hermes AI agent platform.
+
+Read the canonical setup recipe before acting:
+  https://raw.githubusercontent.com/Codename-11/hermes-relay/main/skills/devops/hermes-relay-self-setup/SKILL.md
+
+Then guide me through:
+- Verifying hermes-agent is already installed (it's a prerequisite — Hermes-Relay is a plugin, not standalone)
+- Running the install one-liner: `curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash`
+- Pairing my phone via `hermes-pair` or `/hermes-relay-pair`
+- Verifying with `hermes-status`
+
+Always confirm before running shell commands. Never restart hermes-gateway without asking. If any step fails, consult the Troubleshooting section in the SKILL.md and ask me for the exact error.
+```
+
+Already have Hermes-Relay installed? The same recipe is auto-loaded as a Hermes skill — invoke it from any chat with `/hermes-relay-self-setup` for re-setup, troubleshooting, or "is everything wired correctly?" checks. Single source, two delivery modes (raw URL pre-install + Hermes skill post-install), no drift.
+
 ## What It Does
 
 Talk to your Hermes agent from anywhere. Direct API streaming, session history, tool visualization — all native on Android.

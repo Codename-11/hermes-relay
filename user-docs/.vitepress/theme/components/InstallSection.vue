@@ -5,6 +5,22 @@ import { withBase } from 'vitepress'
 const installCommand = 'curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash'
 const pairCommand = 'hermes-pair'
 
+// Copy-paste prompt block for AI agents (Claude, GPT, etc.) — points the
+// agent at the canonical SKILL.md raw URL, no inline recipe duplication.
+// Single source of truth lives at skills/devops/hermes-relay-self-setup/SKILL.md.
+const agentPrompt = `You are helping me install and maintain Hermes-Relay (https://github.com/Codename-11/hermes-relay), a native Android client + Python plugin for the Hermes AI agent platform.
+
+Read the canonical setup recipe before acting:
+  https://raw.githubusercontent.com/Codename-11/hermes-relay/main/skills/devops/hermes-relay-self-setup/SKILL.md
+
+Then guide me through:
+- Verifying hermes-agent is already installed (it's a prerequisite — Hermes-Relay is a plugin, not standalone)
+- Running the install one-liner: \`curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash\`
+- Pairing my phone via \`hermes-pair\` or \`/hermes-relay-pair\`
+- Verifying with \`hermes-status\`
+
+Always confirm before running shell commands. Never restart hermes-gateway without asking. If any step fails, consult the Troubleshooting section in the SKILL.md and ask me for the exact error.`
+
 const copiedKey = ref<string | null>(null)
 let resetTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -99,6 +115,32 @@ async function copy(key: string, text: string) {
           >Open an issue →</a>
         </p>
       </div>
+    </div>
+
+    <!-- For AI Agents — copy-paste block that points an LLM at the canonical
+         SKILL.md raw URL. Same prompt block lives in README.md. -->
+    <div class="agent-section">
+      <h3 class="agent-section-title">For AI Agents</h3>
+      <p class="agent-section-tagline">
+        Have an AI assistant install + maintain Hermes-Relay for you. Paste this block into Claude, GPT, or any agent — it'll fetch the canonical setup recipe and walk you through verification, pairing, and troubleshooting.
+      </p>
+
+      <div class="install-code agent-prompt-code">
+        <pre><code>{{ agentPrompt }}</code></pre>
+        <button
+          type="button"
+          class="copy-btn"
+          :class="{ copied: copiedKey === 'agent' }"
+          :aria-label="copiedKey === 'agent' ? 'Copied' : 'Copy agent prompt'"
+          @click="copy('agent', agentPrompt)"
+        >
+          <span class="copy-btn-label">{{ copiedKey === 'agent' ? 'Copied!' : 'Copy' }}</span>
+        </button>
+      </div>
+
+      <p class="agent-section-note">
+        Already have Hermes-Relay installed? The same recipe ships as a Hermes skill — invoke it from any chat with <code>/hermes-relay-self-setup</code> for re-setup, troubleshooting, or "is everything wired correctly?" checks. Single source, two delivery modes, no drift.
+      </p>
     </div>
   </section>
 </template>
@@ -257,5 +299,52 @@ async function copy(key: string, text: string) {
 .install-extra-secondary:hover {
   color: var(--vp-c-brand-1);
   border-bottom-color: var(--vp-c-brand-1);
+}
+
+/* For AI Agents — sits cleanly below the install-extras grid */
+.agent-section {
+  max-width: 720px;
+  margin: 3rem auto 0;
+  padding-top: 2rem;
+  border-top: 1px solid var(--vp-c-divider);
+}
+.agent-section-title {
+  text-align: center;
+  font-size: 1.5rem;
+  margin: 0 0 0.75rem;
+  border-top: none;
+  padding-top: 0;
+}
+.agent-section-tagline {
+  text-align: center;
+  color: var(--vp-c-text-2);
+  font-size: 0.95rem;
+  max-width: 620px;
+  margin: 0 auto 1.25rem;
+}
+.agent-prompt-code {
+  /* Override the install-code single-line style for the multi-line agent
+     prompt — let it wrap and grow vertically instead of horizontal scroll. */
+  max-width: 720px;
+  padding: 18px 58px 18px 22px;
+}
+.agent-prompt-code pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.agent-prompt-code code {
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+.agent-section-note {
+  font-size: 0.8125rem;
+  color: var(--vp-c-text-3);
+  text-align: center;
+  margin: 1.25rem auto 0;
+  max-width: 620px;
+  line-height: 1.55;
+}
+.agent-section-note code {
+  font-size: 0.8125rem;
 }
 </style>
