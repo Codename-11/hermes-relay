@@ -4,10 +4,14 @@
 
 ## Download
 
-- **Most people**: grab **`app-release.apk`** below and sideload it. See the [sideload guide](https://codename-11.github.io/hermes-relay/guide/getting-started.html#sideload-apk) for step-by-step instructions.
-- **Google Play users**: rolling to Internal testing after this release.
-- **`app-release.aab`** is the Google Play format — *not* installable directly.
+v0.3.0 ships two build flavors, so there are two APKs + two AABs to pick from:
+
+- **Most people**: grab **`app-sideload-release.apk`** below and sideload it. That's the full-featured "Hermes Dev" install with all Phase 3 tiers unlocked (bridge channel, voice-to-bridge intents, vision-driven `android_navigate`). See the [sideload guide](https://codename-11.github.io/hermes-relay/guide/getting-started.html#sideload-apk) for step-by-step instructions.
+- **Google Play users**: rolling to Internal testing after this release. The Play Store listing uses **`app-googlePlay-release.aab`** from this release as its upload.
+- **`app-googlePlay-release.apk`** and **`app-sideload-release.aab`** are included for parity and diff tooling — not primary downloads.
 - **Verify integrity** with `SHA256SUMS.txt` before installing.
+
+> **Why two flavors?** The `googlePlay` build is conservative by design to match Play Store's Accessibility policy (Tier 1+2+5: chat, voice, safety rails). The `sideload` build unlocks the full Phase 3 stack and installs with a `.sideload` applicationId suffix so both can coexist on the same device. The sideload launcher shows "Hermes Dev" for disambiguation.
 
 ## Two build flavors
 
