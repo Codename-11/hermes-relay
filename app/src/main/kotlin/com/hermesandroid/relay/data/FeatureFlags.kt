@@ -86,6 +86,21 @@ object BuildFlavor {
     const val SIDELOAD = "sideload"
     val current: String get() = BuildConfig.FLAVOR
 
+    /**
+     * True when the current build is the sideload track. Kept as a property
+     * getter (not a compile-time `val`) so the call site reads cleanly —
+     * `BuildFlavor.isSideload` is easier to eyeball in `BridgeCommandHandler`
+     * than `BuildFlavor.current == BuildFlavor.SIDELOAD`. R8 folds the
+     * comparison away in release builds because `current` resolves to a
+     * compile-time `BuildConfig.FLAVOR` string constant.
+     *
+     * Used by Tier C (C1-C4) tool gates — `android_location`,
+     * `android_search_contacts`, `android_call`, `android_send_sms` — to
+     * return `"sideload-only"` 403 responses on googlePlay builds instead
+     * of crashing on a missing permission declaration.
+     */
+    val isSideload: Boolean get() = current == SIDELOAD
+
     val bridgeTier1: Boolean = true                              // baseline — both tracks
     val bridgeTier2: Boolean = true                              // notifications, calendar — both tracks
     val bridgeTier3: Boolean get() = current == SIDELOAD         // voice-first

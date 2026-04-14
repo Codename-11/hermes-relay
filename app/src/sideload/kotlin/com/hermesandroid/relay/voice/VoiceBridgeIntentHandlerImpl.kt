@@ -176,19 +176,56 @@ internal class RealVoiceBridgeIntentHandler(
     // Envelope builders — see class-level comment for the wire shape.
     // ---------------------------------------------------------------------
 
+    /**
+     * === PHASE3-tier-C4: direct /send_sms bridge command ===
+     *
+     * Replaces the pre-C4 implementation which emitted a generic
+     * `tool.call` envelope that nothing on the phone side actually
+     * handled (which is why the old voice-to-SMS flow fell through to
+     * tapping through the SMS app UI). Now emits a real `bridge.command`
+     * envelope targeting the `/send_sms` path that [BridgeCommandHandler]
+     * routes to [ActionExecutor.sendSms].
+     *
+     * **One caveat, marked TODO(C4):** the voice classifier captures a
+     * *contact name* (e.g. "Sam"), not a phone number. True name→number
+     * resolution requires calling `/search_contacts` first, picking the
+     * best match, and then calling `/send_sms` with the resolved number.
+     * Doing that from this fire-and-forget dispatch path needs response
+     * correlation (each `bridge.command` returns a `bridge.response`
+     * with a matching `request_id`) — which this impl doesn't currently
+     * wire. Until it does, we pass the raw contact name as the `to`
+     * field; the phone-side `sendSms` will reject it for failing the
+     * number-shape regex, which surfaces as a user-visible error.
+     *
+     * 3-line sketch of how to fix properly:
+     *   1. Emit `/search_contacts` with `query=i.contact`, `request_id=X`.
+     *   2. Register a one-shot listener on `request_id=X` → extract the
+     *      first `phones` entry from the response payload.
+     *   3. Re-emit `/send_sms` with `to=<resolvedNumber>, body=i.body`
+     *      and `request_id=Y`; safety-rails confirmation modal handles
+     *      the rest.
+     *
+     * The phone's destructive-verb confirmation still fires via
+     * [BridgeCommandHandler]'s hard-coded `/send_sms` gate so even the
+     * interim "raw contact name" fallback is safe.
+     */
     private fun buildSmsEnvelope(i: VoiceIntent.SendSms): Envelope = Envelope(
         channel = "bridge",
-        type = "tool.call",
+        type = "bridge.command",
         payload = buildJsonObject {
-            put("tool", "android_send_sms")
-            put("args", buildJsonObject {
-                put("contact", i.contact)
+            put("request_id", java.util.UUID.randomUUID().toString())
+            put("method", "POST")
+            put("path", "/send_sms")
+            put("body", buildJsonObject {
+                // TODO(C4): resolve contact name → phone number via
+                // /search_contacts first; see doc comment above.
+                put("to", i.contact)
                 put("body", i.body)
             })
-            put("requires_confirmation", true)
             put("source", "voice")
         },
     )
+    // === END PHASE3-tier-C4 ===
 
     private fun buildOpenAppEnvelope(i: VoiceIntent.OpenApp): Envelope = Envelope(
         channel = "bridge",

@@ -1217,6 +1217,28 @@ async def handle_bridge_events_stream(request: web.Request) -> web.Response:
     return await _bridge_dispatch(request, "/events/stream")
 
 
+# ── Tier C routes (C1-C4) — sideload-only on the phone side ──────────────────
+#
+# The Android client gates these paths on `BuildFlavor.isSideload` and
+# returns 403 with `"sideload-only"` on googlePlay builds. The relay still
+# exposes the routes on both flavors because it's flavor-blind — the gate
+# lives on the phone.
+async def handle_bridge_location(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/location")
+
+
+async def handle_bridge_search_contacts(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/search_contacts")
+
+
+async def handle_bridge_call(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/call")
+
+
+async def handle_bridge_send_sms(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/send_sms")
+
+
 # === END PHASE3-bridge-server ===
 
 
@@ -1833,6 +1855,11 @@ def create_app(config: RelayConfig) -> web.Application:
     # B1: event-stream — poll + toggle AccessibilityEvent capture
     app.router.add_get("/events", handle_bridge_events_recent)
     app.router.add_post("/events/stream", handle_bridge_events_stream)
+    # Tier C (C1-C4): sideload-gated on the phone side
+    app.router.add_get("/location", handle_bridge_location)
+    app.router.add_post("/search_contacts", handle_bridge_search_contacts)
+    app.router.add_post("/call", handle_bridge_call)
+    app.router.add_post("/send_sms", handle_bridge_send_sms)
     # === END PHASE3-bridge-server ===
 
     # === PHASE3-status: loopback-gated structured phone status ===
