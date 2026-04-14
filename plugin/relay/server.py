@@ -1110,6 +1110,14 @@ async def handle_bridge_swipe(request: web.Request) -> web.Response:
     return await _bridge_dispatch(request, "/swipe")
 
 
+async def handle_bridge_drag(request: web.Request) -> web.Response:
+    # Phase 3 / v0.4 bridge expansion A2: point-to-point drag with
+    # explicit duration control. Routed to the phone via the same bridge
+    # channel as /swipe — the phone's ActionExecutor.drag wraps a
+    # single-stroke GestureDescription in a wake-lock scope.
+    return await _bridge_dispatch(request, "/drag")
+
+
 async def handle_bridge_open_app(request: web.Request) -> web.Response:
     return await _bridge_dispatch(request, "/open_app")
 
@@ -1727,6 +1735,7 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_post("/tap_text", handle_bridge_tap_text)
     app.router.add_post("/type", handle_bridge_type)
     app.router.add_post("/swipe", handle_bridge_swipe)
+    app.router.add_post("/drag", handle_bridge_drag)
     app.router.add_post("/open_app", handle_bridge_open_app)
     app.router.add_post("/press_key", handle_bridge_press_key)
     app.router.add_post("/scroll", handle_bridge_scroll)

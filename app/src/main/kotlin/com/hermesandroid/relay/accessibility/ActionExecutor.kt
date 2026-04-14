@@ -9,6 +9,7 @@ import android.os.Looper
 import android.util.Log
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.hermesandroid.relay.power.WakeLockManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
@@ -47,6 +48,18 @@ class ActionExecutor(private val service: AccessibilityService) {
 
         /** Default swipe duration in milliseconds. */
         private const val DEFAULT_SWIPE_DURATION_MS = 400L
+
+        /** Default drag duration in milliseconds. */
+        private const val DEFAULT_DRAG_DURATION_MS = 500L
+
+        /** Drag duration clamp — below ~100ms gesture is treated as a fling. */
+        private const val MIN_DRAG_DURATION_MS = 100L
+
+        /**
+         * Drag duration clamp — above ~3000ms the accessibility gesture
+         * dispatcher starts timing out strokes.
+         */
+        private const val MAX_DRAG_DURATION_MS = 3000L
 
         /** Hard cap on `wait` — prevents runaway agents from pinning the channel. */
         private const val MAX_WAIT_MS = 15_000L
@@ -139,6 +152,62 @@ class ActionExecutor(private val service: AccessibilityService) {
             )
         } else {
             ActionResult.failure("swipe gesture dispatch failed")
+        }
+    }
+
+    /**
+     * Precise point-to-point drag from (startX, startY) to (endX, endY)
+     * over [durationMs] milliseconds.
+     *
+     * Distinct from [swipe] in intent: swipe is "flick in a direction",
+     * drag is "touch down, move slowly, release" — the kind of gesture
+     * that rearranges home screen icons, pulls the notification shade
+     * a deliberate distance, drags map pins, or reorders list items.
+     *
+     * Internally builds a single-stroke [GestureDescription] with a
+     * straight line from A → B. The stroke duration is clamped to
+     * [MIN_DRAG_DURATION_MS]..[MAX_DRAG_DURATION_MS] because the
+     * accessibility gesture dispatcher rejects strokes outside that
+     * window (flings on the low end, timeouts on the high end).
+     *
+     * Wrapped in [WakeLockManager.wakeForAction] so the drag still
+     * completes when the screen is about to sleep — accessibility
+     * gestures only run against the interactive window, and without
+     * a wake scope a backgrounded drag can get cancelled mid-stroke.
+     */
+    suspend fun drag(
+        startX: Int,
+        startY: Int,
+        endX: Int,
+        endY: Int,
+        durationMs: Long = DEFAULT_DRAG_DURATION_MS,
+    ): ActionResult = WakeLockManager.wakeForAction {
+        if (startX < 0 || startY < 0 || endX < 0 || endY < 0) {
+            return@wakeForAction ActionResult.failure(
+                "drag coordinates must be non-negative " +
+                    "(got start=($startX,$startY) end=($endX,$endY))"
+            )
+        }
+        val clamped = durationMs.coerceIn(MIN_DRAG_DURATION_MS, MAX_DRAG_DURATION_MS)
+        val path = Path().apply {
+            moveTo(startX.toFloat(), startY.toFloat())
+            lineTo(endX.toFloat(), endY.toFloat())
+        }
+        val stroke = GestureDescription.StrokeDescription(path, 0, clamped)
+        val gesture = GestureDescription.Builder().addStroke(stroke).build()
+        val dispatched = dispatchGesture(gesture)
+        if (dispatched) {
+            ActionResult.ok(
+                mapOf(
+                    "start_x" to startX,
+                    "start_y" to startY,
+                    "end_x" to endX,
+                    "end_y" to endY,
+                    "duration_ms" to clamped,
+                )
+            )
+        } else {
+            ActionResult.failure("drag gesture dispatch failed")
         }
     }
 
