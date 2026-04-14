@@ -1135,6 +1135,15 @@ async def handle_bridge_setup(request: web.Request) -> web.Response:
     return await _bridge_dispatch(request, "/setup")
 
 
+async def handle_bridge_find_nodes(request: web.Request) -> web.Response:
+    # Filtered accessibility-tree search — the phone's BridgeCommandHandler
+    # delegates to ScreenReader.searchNodes which walks all windows and
+    # filters by text/class_name/clickable, returning up to `limit` matches.
+    # Body shape (all optional except limit defaulting): {text, class_name,
+    # clickable, limit}.
+    return await _bridge_dispatch(request, "/find_nodes")
+
+
 # === END PHASE3-bridge-server ===
 
 
@@ -1732,6 +1741,7 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_post("/scroll", handle_bridge_scroll)
     app.router.add_post("/wait", handle_bridge_wait)
     app.router.add_post("/setup", handle_bridge_setup)
+    app.router.add_post("/find_nodes", handle_bridge_find_nodes)
     # === END PHASE3-bridge-server ===
 
     # === PHASE3-status: loopback-gated structured phone status ===

@@ -14,6 +14,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -66,6 +68,8 @@ import kotlinx.serialization.json.put
  *  - `/press_key` body `{key}` — `home`/`back`/`recents`/etc
  *  - `/wait` body `{ms}`
  *  - `/screen` → returns full `ScreenContent` JSON
+ *  - `/find_nodes` body `{text?, class_name?, clickable?, limit?}` →
+ *    returns `{matches: [ScreenNode...], count}` filtered by criteria
  *  - `/screenshot` → returns `{media: "MEDIA:hermes-relay://<token>"}`
  *  - `/current_app` → returns `{package: "com.whatever"}`
  *
@@ -311,6 +315,58 @@ class BridgeCommandHandler(
                     screen
                 ).jsonObject
                 respond(requestId, 200, screenJson)
+            }
+
+            "/find_nodes" -> {
+                // Filtered targeted search — avoids dumping the full tree for
+                // simple existence queries. All three filters (text/class_name/
+                // clickable) AND together; omitted filters mean "any".
+                val searchText = body["text"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+                val searchClass = body["class_name"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+                val searchClickable = body["clickable"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
+                val limit = body["limit"]?.jsonPrimitive?.content?.toIntOrNull()
+                    ?.coerceIn(1, ScreenReader.MAX_NODES)
+                    ?: 20
+
+                val roots = service.snapshotAllWindows()
+                if (roots.isEmpty()) {
+                    return respond(
+                        requestId, 500,
+                        buildJsonObject { put("error", "no active window available") }
+                    )
+                }
+
+                try {
+                    val matches = service.reader.searchNodes(
+                        roots = roots,
+                        text = searchText,
+                        className = searchClass,
+                        clickable = searchClickable,
+                        limit = limit,
+                    )
+                    val matchesJson = buildJsonArray {
+                        for (node in matches) {
+                            add(
+                                json.encodeToJsonElement(
+                                    ScreenReader.ScreenNode.serializer(),
+                                    node
+                                )
+                            )
+                        }
+                    }
+                    respond(
+                        requestId, 200,
+                        buildJsonObject {
+                            put("matches", matchesJson)
+                            put("count", matches.size)
+                        }
+                    )
+                } finally {
+                    @Suppress("DEPRECATION")
+                    for (r in roots) {
+                        try { r.recycle() } catch (_: Throwable) { }
+                    }
+                }
             }
 
             "/screenshot" -> {
