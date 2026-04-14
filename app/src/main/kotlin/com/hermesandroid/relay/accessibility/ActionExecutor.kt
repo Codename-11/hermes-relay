@@ -61,7 +61,14 @@ import kotlin.coroutines.resume
  * where available. Power and volume are out of scope — they require
  * system-privileged APIs that AccessibilityService can't reach.
  */
-class ActionExecutor(private val service: AccessibilityService) {
+// service is typed as the HermesAccessibilityService subclass (not the framework
+// AccessibilityService base) so this class can reach the subclass-only members
+// added in wave 1/2/3 — primarily `service.reader` for the M4 long-press
+// node_id resolver. The single caller (HermesAccessibilityService.actionExecutor
+// getter) passes `this` so the narrowed type is always satisfied; all existing
+// AccessibilityService calls (dispatchGesture, performGlobalAction, etc.)
+// still work because the subclass IS an AccessibilityService.
+class ActionExecutor(private val service: HermesAccessibilityService) {
 
     companion object {
         private const val TAG = "ActionExecutor"
