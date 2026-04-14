@@ -39,7 +39,6 @@ _INJECTED_PATHS: frozenset[str] = frozenset({
     "/api/sessions/{session_id}/fork",
     "/api/memory",
     "/api/skills",
-    "/api/skills/categories",
     "/api/skills/{name}",
     "/api/config",
     "/api/available-models",

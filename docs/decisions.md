@@ -508,6 +508,7 @@ We considered four options:
 **Risks accepted:**
 - **Plugin load order** — verified: `.pth` files are processed by Python's `site` module BEFORE any application code runs, so our import hook is in place before hermes-agent imports `aiohttp.web`.
 - **Upstream refactor of the route-registration block in `connect()`** — handled by feature detection on route path. Worst case: bootstrap logs a warning and gateway runs without injected routes. The Android client falls back to `/v1/runs` automatically.
+- **Upstream symbol removal in `tools/skills_tool.py`** — `skills_categories` was removed in upstream commit `8d023e43` as dead code. The bootstrap no longer imports or re-injects it. The app uses `/api/skills?category=` for category filtering; the standalone `/api/skills/categories` endpoint was never called by the app. The bootstrap stays in sync with upstream by not re-introducing removed symbols.
 - **Editable pip install doesn't ship `.pth` files reliably** — verified empirically (test in `/tmp/pth-test` on the server during scoping). Solved by `install.sh` copying the `.pth` directly into the venv's `site-packages/` after `pip install -e`.
 
 **File locations:**
