@@ -116,7 +116,7 @@ Connection lifecycle, auth, keepalive.
 | `transport_hint` | `"wss"` / `"ws"` / `"unknown"` | What the server believes the phone is actually connected over. Drives the transport security badge and the TTL picker's default option on re-pair. |
 
 #### Channel: `chat`
-**Note:** Chat now connects directly to the Hermes API Server via HTTP/SSE (see Section 6.2). The relay server is not involved in chat. The SSE event types from the Hermes API are:
+**Note:** Chat connects directly to the Hermes API Server via HTTP/SSE (see Section 6.2) — it does not traverse the relay. Voice, bridge, terminal, notifications, and inbound media DO go through the relay. The chat SSE event types are:
 
 | Event | Direction | Payload |
 |-------|-----------|---------|
@@ -282,8 +282,8 @@ Implementation references:
 - **WebSocket:** OkHttp 4.x (already in upstream, supports `wss://`)
 - **Terminal:** WebView + xterm.js (v1), consider native Compose terminal later
 - **Serialization:** kotlinx.serialization (replace Gson — faster, type-safe)
-- **Storage:** EncryptedSharedPreferences (tokens), DataStore (preferences)
-- **DI:** Hilt or manual (lean for MVP)
+- **Storage:** Android Keystore (StrongBox-preferred via `KeystoreTokenStore`) + `EncryptedSharedPreferences` legacy fallback via `LegacyEncryptedPrefsTokenStore`; DataStore (preferences + TOFU cert pins)
+- **DI:** Manual dependency injection (no Hilt). Constructor-wired ViewModels, process-singletons where needed. Decided lean because the graph is small and dependencies are explicit.
 - **Biometric:** AndroidX Biometric
 - **Min SDK:** 26 (Android 8.0)
 - **Target SDK:** 35
@@ -293,7 +293,7 @@ Implementation references:
 - **Framework:** aiohttp (matches existing relay)
 - **Terminal:** `asyncio` + `pty` module for PTY, `libtmux` for session management
 - **Chat proxy:** HTTP client to Hermes WebAPI (localhost:8642 or direct `run_agent`)
-- **Port:** 8767 (WSS) — separate from existing bridge relay (8766)
+- **Port:** 8767 (WSS). The legacy standalone bridge relay on 8766 was retired in Phase 3 Wave 1 (2026-04-12) — the bridge channel is now multiplexed alongside chat, terminal, voice, and media on the unified relay.
 - **TLS:** Let's Encrypt via certbot, or reverse proxy through Caddy/nginx
 
 ### CI/CD (GitHub Actions)
@@ -350,9 +350,10 @@ Shipped in v0.3.0. Four-card control surface rendered by `BridgeScreen.kt` + `Br
 The bridge UI drives — and is driven by — Tier 5 safety-rails (`BridgeSafetyManager`, `BridgeForegroundService`, `BridgeStatusOverlay`, `AutoDisableWorker`). See `docs/decisions.md` and `CLAUDE.md`'s file table for the full wiring.
 
 ### Settings Tab
-- **API Server** — URL, API key, health check indicator
-- **Relay Server** — URL, pairing code, connection status
-- **Chat** — Show reasoning toggle, smooth auto-scroll toggle (live-follow streaming, default on), show token usage toggle, app context prompt toggle, tool call display (Off/Compact/Detailed), Stats for Nerds (analytics charts)
+- **Connection** — unified "Pair with your server" card (primary action: Scan QR) with a single status summary covering API server, relay, and the active paired session. Collapsible "Manual configuration" card exposes API URL / API key / Relay URL / insecure-transport toggle + "Save & Test" (calls `RelayHttpClient.probeHealth`). Collapsible "Manual pairing code (fallback)" card for camera-less / SSH-only setups. Transport security badge (🔒 secure / 🔓 insecure-with-reason / 🔓 insecure-unknown) rendered inline. Paired Devices screen linked from here for the full device list + per-channel grant revoke.
+- **Chat** — Show reasoning toggle, smooth auto-scroll toggle (live-follow streaming, default on), show token usage toggle, app context prompt toggle, tool call display (Off/Compact/Detailed), streaming endpoint selector (`auto` / `sessions` / `runs`), Stats for Nerds (analytics charts)
+- **Voice** — interaction mode (tap / hold / continuous), silence threshold slider, Auto-TTS toggle, provider info read from `/voice/config`, language picker, Test Voice button
+- **Notification companion** — opt-in status, "Open Android Settings" action, test notification dump
 - **Appearance** — theme (auto/light/dark), dynamic colors toggle
 - **Data** — Backup, restore, reset with confirmation dialogs
 - **About** — logo on dark background, dynamic version from BuildConfig, Source + Docs link buttons, credits. What's New dialog.
@@ -517,7 +518,7 @@ Uses `asyncio.create_subprocess_exec` with PTY for non-blocking I/O. tmux gives 
 
 Wraps the existing relay protocol. When the agent calls `android_*` tools, the tool handler routes through the relay server's bridge channel to the phone.
 
-**Change from upstream:** The bridge channel is now part of the multiplexed WSS connection instead of a separate `ws://` relay on port 8766. The plugin's `android_relay.py` gets updated to route through the relay server.
+**Change from upstream:** The bridge channel is part of the multiplexed WSS connection instead of a separate `ws://` relay on port 8766. The legacy standalone `plugin/tools/android_relay.py` was retired in Phase 3 Wave 1 (2026-04-12) and its functionality migrated to two files in the unified relay: `plugin/tools/android_tool.py` (14 Hermes tools pointing at `http://localhost:8767` — plus the v0.4 bridge expansion tools landing on `feature/bridge-feature-expansion`) and `plugin/relay/channels/bridge.py` (the `BridgeHandler.handle_command(...)` dispatcher that mints request IDs, sends `bridge.command` envelopes over the shared WSS pipe, and awaits matching `bridge.response` envelopes). Wire protocol is frozen — envelopes match the legacy relay byte-for-byte.
 
 ---
 
@@ -620,11 +621,12 @@ See `docs/decisions.md` → **Voice Mode — Architecture** for the four key dec
 ### Phase 6 — Future
 **Priority: P3 — not for MVP**
 
-- [ ] Notification listener (agent reads phone notifications)
-- [ ] Clipboard bridge
-- [ ] File transfer (phone ↔ server)
-- [ ] Multi-device support
-- [ ] On-device model fallback
+- [x] Notification listener — shipped v0.3.0 via `HermesNotificationCompanion` (opt-in `NotificationListenerService`), exposed to the agent via `android_notifications_recent(limit=20)` over a bounded relay-side deque in `plugin/relay/channels/notifications.py`.
+- [x] Clipboard bridge — shipped on the v0.4 bridge-expansion branch (`feature/A6-clipboard`): `android_clipboard_read` / `android_clipboard_write`.
+- [ ] Reverse file transfer (phone → server direct upload; inbound agent → phone already shipped in v0.2.0)
+- [ ] Multi-device session routing (per-device tool-call routing with an explicit "add another device" flow)
+- [ ] On-device model fallback (Gemma / Qwen via MediaPipe or llama.cpp, for offline + hybrid routing)
+- [ ] iOS client (evaluate Shortcuts + accessibility + App Intents feasibility first)
 
 ---
 
@@ -645,15 +647,29 @@ See `Appendix A — Original Phase 0 Scope` at the end of this document for the 
 
 ## 9. Key Dependencies
 
+Current versions as of v0.3.0. Source of truth is `gradle/libs.versions.toml` — this table is a human-readable snapshot, not authoritative.
+
 | Dependency | Version | Purpose |
 |------------|---------|---------|
-| Jetpack Compose BOM | 2024.12+ | UI framework |
-| Material 3 | 1.3+ | Design system |
-| OkHttp | 4.12+ | WebSocket + HTTP |
-| kotlinx.serialization | 1.7+ | JSON handling |
+| Android Gradle Plugin | 8.13.2 | Build toolchain |
+| Kotlin | 2.3.20 | Language + Compose compiler plugin |
+| Jetpack Compose BOM | 2026.03.01 | UI framework |
+| Material 3 (via BOM) | — | Design system |
+| Navigation Compose | 2.9.7 | Type-safe navigation |
+| Lifecycle | 2.10.0 | ViewModel + state |
+| OkHttp | 5.3.2 | WebSocket + SSE + HTTP |
+| kotlinx.serialization | 1.11.0 | JSON handling |
+| kotlinx.coroutines | 1.10.2 | Structured concurrency |
+| DataStore Preferences | 1.1.1 | Key-value settings |
+| Security Crypto | 1.1.0 | `EncryptedSharedPreferences` legacy token fallback |
+| markdown-renderer (mikepenz) | 0.30.0 | Chat message rendering |
+| Haze | 1.7.2 | Glassmorphism blur |
+| ML Kit Barcode Scanning | 17.3.0 | QR pairing scan |
+| CameraX | 1.6.0 | QR camera preview |
 | xterm.js | 5.x | Terminal emulator (WebView) |
 | aiohttp | 3.9+ | Server relay |
-| libtmux | 0.37+ | tmux management |
+| libtmux | 0.37+ | tmux session management |
+| gradle-play-publisher | 4.0.0 | Automated Play Console upload (optional) |
 
 ---
 
