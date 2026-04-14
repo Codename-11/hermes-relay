@@ -20,6 +20,30 @@
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!--
+        Tier C (C1-C4) sideload-only permissions.
+
+        These are deliberately NOT declared in the main manifest: Google Play
+        policy forbids CALL_PHONE / SEND_SMS / READ_CONTACTS without a default-
+        dialer / default-SMS-app justification, and ACCESS_FINE_LOCATION is
+        flagged alongside auto-dial on the `googlePlay` track. The `sideload`
+        flavor is the only track that ships them.
+
+        Each of the four `android_*` tools (location, search_contacts, call,
+        send_sms) runtime-checks the corresponding permission in
+        `ActionExecutor` and returns a helpful error if the user hasn't granted
+        it in system Settings. The tools themselves are additionally flavor-
+        gated in `BridgeCommandHandler` so the googlePlay build returns
+        `sideload-only` 403s instead of crashing on a missing permission.
+
+        Source: docs/plans/2026-04-13-bridge-feature-expansion.md § Tier C.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.SEND_SMS" />
+
     <application />
 
 </manifest>

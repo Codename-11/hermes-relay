@@ -308,6 +308,98 @@ def android_current_app() -> str:
         return json.dumps({"error": str(e)})
 
 
+# ── Tier C tools (C1-C4) ───────────────────────────────────────────────────────
+#
+# All four tools below are SIDELOAD FLAVOR ONLY. The Android tool dispatch
+# layer on the googlePlay build returns 403 with a `"sideload-only"` error
+# because the `CALL_PHONE` / `SEND_SMS` / `READ_CONTACTS` / `ACCESS_FINE_LOCATION`
+# permissions are not declared in the googlePlay manifest overlay. The tools
+# are still *registered* here on both flavors because Python plugin code has
+# no compile-time flavor awareness — the guard lives on the phone side.
+
+
+def android_location() -> str:
+    """
+    Get the phone's last-known GPS location (C1).
+
+    **Sideload flavor only.** Returns an error on googlePlay builds because
+    ``ACCESS_FINE_LOCATION`` is not declared in the Play Store manifest.
+
+    Returns latitude / longitude / accuracy / altitude / provider /
+    timestamp / staleness_ms. If the last-known fix is older than 5 minutes
+    a ``warning`` field is included and the agent should ask the user to
+    open a maps app briefly to refresh the fix.
+    """
+    try:
+        data = _get("/location")
+        return json.dumps(data)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def android_search_contacts(query: str, limit: int = 20) -> str:
+    """
+    Search the phone's contact database by name (C2).
+
+    **Sideload flavor only.** Returns an error on googlePlay builds because
+    ``READ_CONTACTS`` is not declared in the Play Store manifest.
+
+    Returns a list of matching contacts with their phone numbers. Each
+    entry has ``id``, ``name``, and a comma-separated ``phones`` string.
+    Useful for "text Sam saying X" flows where the agent needs to resolve
+    a name to a number before calling ``android_send_sms`` or ``android_call``.
+    """
+    try:
+        data = _post("/search_contacts", {"query": query, "limit": limit})
+        return json.dumps(data)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def android_call(number: str) -> str:
+    """
+    Dial a phone number (C3).
+
+    **Sideload flavor auto-dials via ACTION_CALL (requires CALL_PHONE).**
+    **googlePlay flavor falls back to opening the dialer via ACTION_DIAL**
+    — no permission needed, but the user has to tap Call manually.
+
+    The phone's safety-rails *always* show a destructive-verb confirmation
+    modal before the call is placed, regardless of flavor. The agent
+    should make the user's intent explicit before invoking this tool.
+    """
+    try:
+        data = _post("/call", {"number": number})
+        return json.dumps(data)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def android_send_sms(to: str, body: str) -> str:
+    """
+    Send an SMS directly via SmsManager (C4).
+
+    **Sideload flavor only.** Returns an error on googlePlay builds because
+    ``SEND_SMS`` requires a Play Store policy declaration + default-SMS-app
+    status that Hermes-Relay deliberately doesn't carry.
+
+    Replaces the older voice-to-bridge flow that tapped through the default
+    SMS app's UI (fragile against Samsung Messages / Google Messages / carrier
+    variants). This path uses ``SmsManager.sendTextMessage`` +
+    ``sendMultipartTextMessage`` for long messages, with a ``PendingIntent``
+    result callback so the phone reports real success/failure/timeout.
+
+    The phone's safety-rails *always* show a destructive-verb confirmation
+    modal before the SMS is sent. A 15 s send timeout ensures we don't hang
+    if the radio is off or the carrier never acks.
+    """
+    try:
+        data = _post("/send_sms", {"to": to, "body": body})
+        return json.dumps(data)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
 def _get_public_ip() -> str:
     """Detect this server's public IP address."""
     for service in ["https://api.ipify.org", "https://ifconfig.me/ip", "https://icanhazip.com"]:
@@ -607,6 +699,89 @@ _SCHEMAS = {
             "required": ["pairing_code"],
         },
     },
+    # ── Tier C (sideload flavor only — googlePlay returns 403) ───────────────
+    "android_location": {
+        "name": "android_location",
+        "description": (
+            "Sideload flavor only. Returns the phone's last-known GPS "
+            "location (latitude, longitude, accuracy, altitude, provider, "
+            "timestamp, staleness_ms). On googlePlay builds returns a "
+            "'sideload-only' error. If staleness_ms exceeds 5 minutes a "
+            "warning field is included — the agent should ask the user to "
+            "open a maps app briefly to refresh the fix."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+    "android_search_contacts": {
+        "name": "android_search_contacts",
+        "description": (
+            "Sideload flavor only. Search the phone's contact database by "
+            "name and return matching entries with phone numbers. On "
+            "googlePlay builds returns a 'sideload-only' error. Use this "
+            "to resolve a name to a number before calling android_call or "
+            "android_send_sms."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Contact name or fragment to search for",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of results (default 20, max 100)",
+                    "default": 20,
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    "android_call": {
+        "name": "android_call",
+        "description": (
+            "Dial a phone number. Sideload flavor auto-dials via ACTION_CALL. "
+            "googlePlay flavor falls back to opening the system dialer pre-"
+            "populated (user taps Call manually). The phone's safety-rails "
+            "ALWAYS show a destructive-verb confirmation modal before the "
+            "call is placed."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "number": {
+                    "type": "string",
+                    "description": "Phone number to dial (any user-readable format)",
+                },
+            },
+            "required": ["number"],
+        },
+    },
+    "android_send_sms": {
+        "name": "android_send_sms",
+        "description": (
+            "Sideload flavor only. Send an SMS directly via SmsManager. "
+            "On googlePlay builds returns a 'sideload-only' error (SEND_SMS "
+            "is not declared on the Play Store track). Handles multi-part "
+            "messages automatically via divideMessage. The phone's safety-"
+            "rails ALWAYS show a destructive-verb confirmation modal before "
+            "the SMS is sent."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "to": {
+                    "type": "string",
+                    "description": "Recipient phone number (E.164 or local format)",
+                },
+                "body": {
+                    "type": "string",
+                    "description": "SMS body text",
+                },
+            },
+            "required": ["to", "body"],
+        },
+    },
 }
 
 # ── Tool handlers map ──────────────────────────────────────────────────────────
@@ -626,6 +801,11 @@ _HANDLERS = {
     "android_get_apps":     lambda args, **kw: android_get_apps(),
     "android_current_app":  lambda args, **kw: android_current_app(),
     "android_setup":        lambda args, **kw: android_setup(**args),
+    # Tier C (C1-C4) — sideload-only; phone returns 403 on googlePlay.
+    "android_location":         lambda args, **kw: android_location(),
+    "android_search_contacts":  lambda args, **kw: android_search_contacts(**args),
+    "android_call":             lambda args, **kw: android_call(**args),
+    "android_send_sms":         lambda args, **kw: android_send_sms(**args),
 }
 
 # ── Registry registration ──────────────────────────────────────────────────────

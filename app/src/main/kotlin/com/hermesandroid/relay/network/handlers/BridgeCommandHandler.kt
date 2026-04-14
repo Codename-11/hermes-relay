@@ -8,6 +8,9 @@ import com.hermesandroid.relay.accessibility.ScreenReader
 // === PHASE3-safety-rails: safety enforcement ===
 import com.hermesandroid.relay.bridge.BridgeSafetyManager
 // === END PHASE3-safety-rails ===
+// === PHASE3-tier-C: flavor gate for sideload-only tools ===
+import com.hermesandroid.relay.data.BuildFlavor
+// === END PHASE3-tier-C ===
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.models.Envelope
 import kotlinx.coroutines.CoroutineScope
@@ -293,6 +296,135 @@ class BridgeCommandHandler(
                 val ms = body["ms"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
                 respondFromResult(requestId, executor.wait(ms))
             }
+
+            // === PHASE3-tier-C: sideload-only tools (C1-C4) ==================
+            //
+            // All four tools are declared sideload-only — their permissions
+            // live in `app/src/sideload/AndroidManifest.xml` only, so the
+            // googlePlay build doesn't even ship the manifest entries. We
+            // still need a gate here because the Python tool registrations
+            // are flavor-blind (Python has no compile-time flavor awareness)
+            // and users on the Play track will see the tools in the agent's
+            // tool list and may try to invoke them. Returning 403 with a
+            // "sideload-only" body is clearer than a cryptic "permission
+            // denied" crash.
+
+            "/location" -> {
+                if (!BuildFlavor.isSideload) {
+                    respond(
+                        requestId, 403,
+                        buildJsonObject {
+                            put("error", "android_location is sideload-only")
+                        }
+                    )
+                    return
+                }
+                respondFromResult(requestId, executor.location())
+            }
+
+            "/search_contacts" -> {
+                if (!BuildFlavor.isSideload) {
+                    respond(
+                        requestId, 403,
+                        buildJsonObject {
+                            put("error", "android_search_contacts is sideload-only")
+                        }
+                    )
+                    return
+                }
+                val query = body["query"]?.jsonPrimitive?.content.orEmpty()
+                if (query.isBlank()) {
+                    respond(
+                        requestId, 400,
+                        buildJsonObject { put("error", "missing 'query' in body") }
+                    )
+                    return
+                }
+                val limit = body["limit"]?.jsonPrimitive?.content?.toIntOrNull() ?: 20
+                respondFromResult(requestId, executor.searchContacts(query, limit))
+            }
+
+            "/call" -> {
+                if (!BuildFlavor.isSideload) {
+                    respond(
+                        requestId, 403,
+                        buildJsonObject {
+                            put("error", "android_call auto-dial is sideload-only")
+                        }
+                    )
+                    return
+                }
+                val number = body["number"]?.jsonPrimitive?.content.orEmpty()
+                if (number.isBlank()) {
+                    respond(
+                        requestId, 400,
+                        buildJsonObject { put("error", "missing 'number' in body") }
+                    )
+                    return
+                }
+                // Phone calls are irreversible — always go through the
+                // destructive-verb confirmation modal, regardless of the
+                // `bodyText` verb match result. We bypass requiresConfirmation
+                // here deliberately: "make a phone call" is itself the
+                // destructive action.
+                if (safetyManager != null) {
+                    val confirmText = "Call $number?"
+                    val allowed = safetyManager.awaitConfirmation("/call", confirmText)
+                    if (!allowed) {
+                        respond(
+                            requestId, 403,
+                            buildJsonObject {
+                                put("error", "user denied destructive action")
+                                put("reason", "confirmation_denied_or_timeout")
+                            }
+                        )
+                        return
+                    }
+                }
+                respondFromResult(requestId, executor.makeCall(number))
+            }
+
+            "/send_sms" -> {
+                if (!BuildFlavor.isSideload) {
+                    respond(
+                        requestId, 403,
+                        buildJsonObject {
+                            put("error", "android_send_sms is sideload-only")
+                        }
+                    )
+                    return
+                }
+                val to = body["to"]?.jsonPrimitive?.content.orEmpty()
+                val smsBody = body["body"]?.jsonPrimitive?.content.orEmpty()
+                if (to.isBlank() || smsBody.isEmpty()) {
+                    respond(
+                        requestId, 400,
+                        buildJsonObject {
+                            put("error", "missing 'to' or 'body' in body")
+                        }
+                    )
+                    return
+                }
+                // Always confirm SMS sends — destructive action regardless
+                // of verb match.
+                if (safetyManager != null) {
+                    val confirmText = "Send '$smsBody' to $to?"
+                    val allowed = safetyManager.awaitConfirmation("/send_sms", confirmText)
+                    if (!allowed) {
+                        respond(
+                            requestId, 403,
+                            buildJsonObject {
+                                put("error", "user denied destructive action")
+                                put("reason", "confirmation_denied_or_timeout")
+                            }
+                        )
+                        return
+                    }
+                }
+                respondFromResult(requestId, executor.sendSms(to, smsBody))
+            }
+            // === END PHASE3-tier-C ===
+
 
             "/screen" -> {
                 val root = service.snapshotRoot()

@@ -25,11 +25,15 @@ from tools.android_tool import (
 
 
 class TestSchemas:
-    def test_all_14_tools_have_schemas(self):
-        assert len(_SCHEMAS) == 14
+    # 14 baseline tools (Phase 3 Wave 1) + 4 Tier C sideload tools
+    # (C1 location, C2 search_contacts, C3 call, C4 send_sms) = 18.
+    EXPECTED_TOOL_COUNT = 18
 
-    def test_all_14_tools_have_handlers(self):
-        assert len(_HANDLERS) == 14
+    def test_all_tools_have_schemas(self):
+        assert len(_SCHEMAS) == self.EXPECTED_TOOL_COUNT
+
+    def test_all_tools_have_handlers(self):
+        assert len(_HANDLERS) == self.EXPECTED_TOOL_COUNT
 
     def test_schema_names_match_handler_names(self):
         assert set(_SCHEMAS.keys()) == set(_HANDLERS.keys())
