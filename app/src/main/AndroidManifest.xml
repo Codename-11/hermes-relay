@@ -6,6 +6,11 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- === A8 wake-lock: keep CPU awake while dispatching bridge gestures === -->
+    <!-- Normal-protection permission (no runtime prompt). Held only inside
+         WakeLockManager.wakeForAction { ... }, with a 10s hard timeout and
+         ref-counted release. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- === PHASE3-accessibility: AccessibilityService + bridge permissions === -->
     <!-- BIND_ACCESSIBILITY_SERVICE is intentionally NOT declared as a

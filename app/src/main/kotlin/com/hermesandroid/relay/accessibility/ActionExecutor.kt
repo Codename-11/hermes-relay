@@ -9,6 +9,7 @@ import android.os.Looper
 import android.util.Log
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.hermesandroid.relay.power.WakeLockManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
@@ -78,36 +79,45 @@ class ActionExecutor(private val service: AccessibilityService) {
         x: Int,
         y: Int,
         durationMs: Long = DEFAULT_TAP_DURATION_MS,
-    ): ActionResult {
+    ): ActionResult = WakeLockManager.wakeForAction {
         if (x < 0 || y < 0) {
-            return ActionResult.failure("tap coordinates must be non-negative (got x=$x, y=$y)")
+            return@wakeForAction ActionResult.failure(
+                "tap coordinates must be non-negative (got x=$x, y=$y)"
+            )
         }
         val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
         val stroke = GestureDescription.StrokeDescription(path, 0, durationMs)
         val gesture = GestureDescription.Builder().addStroke(stroke).build()
         val dispatched = dispatchGesture(gesture)
-        return if (dispatched) {
+        if (dispatched) {
             ActionResult.ok(mapOf("x" to x, "y" to y, "duration_ms" to durationMs))
         } else {
             ActionResult.failure("gesture dispatch failed or was cancelled")
         }
     }
 
-    suspend fun tapText(needle: String): ActionResult {
+    suspend fun tapText(needle: String): ActionResult = WakeLockManager.wakeForAction {
         if (needle.isBlank()) {
-            return ActionResult.failure("tap_text: text must be non-blank")
+            return@wakeForAction ActionResult.failure("tap_text: text must be non-blank")
         }
         val root = (service as? HermesAccessibilityService)?.snapshotRoot()
             ?: service.rootInActiveWindow
-            ?: return ActionResult.failure("no active window available")
+            ?: return@wakeForAction ActionResult.failure("no active window available")
 
         val reader = (service as? HermesAccessibilityService)?.reader ?: ScreenReader()
         val bounds = reader.findNodeBoundsByText(root, needle)
-            ?: return ActionResult.failure("no node matching text '$needle' on screen")
+            ?: return@wakeForAction ActionResult.failure(
+                "no node matching text '$needle' on screen"
+            )
         if (bounds.isEmpty) {
-            return ActionResult.failure("matched node has empty bounds (off-screen?)")
+            return@wakeForAction ActionResult.failure(
+                "matched node has empty bounds (off-screen?)"
+            )
         }
-        return tap(bounds.centerX, bounds.centerY)
+        // Nested wakeForAction: the inner tap() call will re-enter
+        // WakeLockManager, bump the ref count, and share our lock —
+        // no premature release.
+        tap(bounds.centerX, bounds.centerY)
     }
 
     suspend fun swipe(
@@ -116,9 +126,11 @@ class ActionExecutor(private val service: AccessibilityService) {
         endX: Int,
         endY: Int,
         durationMs: Long = DEFAULT_SWIPE_DURATION_MS,
-    ): ActionResult {
+    ): ActionResult = WakeLockManager.wakeForAction {
         if (durationMs <= 0) {
-            return ActionResult.failure("swipe duration must be positive (got $durationMs)")
+            return@wakeForAction ActionResult.failure(
+                "swipe duration must be positive (got $durationMs)"
+            )
         }
         val path = Path().apply {
             moveTo(startX.toFloat(), startY.toFloat())
@@ -127,7 +139,7 @@ class ActionExecutor(private val service: AccessibilityService) {
         val stroke = GestureDescription.StrokeDescription(path, 0, durationMs)
         val gesture = GestureDescription.Builder().addStroke(stroke).build()
         val dispatched = dispatchGesture(gesture)
-        return if (dispatched) {
+        if (dispatched) {
             ActionResult.ok(
                 mapOf(
                     "start_x" to startX,
@@ -144,14 +156,14 @@ class ActionExecutor(private val service: AccessibilityService) {
 
     // ─── type / scroll / press_key / wait ─────────────────────────────────
 
-    fun typeText(text: String): ActionResult {
+    suspend fun typeText(text: String): ActionResult = WakeLockManager.wakeForAction {
         val root = (service as? HermesAccessibilityService)?.snapshotRoot()
             ?: service.rootInActiveWindow
-            ?: return ActionResult.failure("no active window available")
+            ?: return@wakeForAction ActionResult.failure("no active window available")
 
         val reader = (service as? HermesAccessibilityService)?.reader ?: ScreenReader()
         val focused = reader.findFocusedInput(root)
-            ?: return ActionResult.failure("no focused editable field")
+            ?: return@wakeForAction ActionResult.failure("no focused editable field")
 
         val args = Bundle().apply {
             putCharSequence(
@@ -169,7 +181,7 @@ class ActionExecutor(private val service: AccessibilityService) {
             try { focused.recycle() } catch (_: Throwable) { }
         }
 
-        return if (performed) {
+        if (performed) {
             ActionResult.ok(mapOf("length" to text.length))
         } else {
             ActionResult.failure("ACTION_SET_TEXT refused by target view")
@@ -187,16 +199,18 @@ class ActionExecutor(private val service: AccessibilityService) {
     suspend fun scroll(
         direction: String,
         durationMs: Long = DEFAULT_SWIPE_DURATION_MS,
-    ): ActionResult {
+    ): ActionResult = WakeLockManager.wakeForAction {
         val root = service.rootInActiveWindow
-            ?: return ActionResult.failure("no active window available")
+            ?: return@wakeForAction ActionResult.failure("no active window available")
         val bounds = android.graphics.Rect().also { root.getBoundsInScreen(it) }
         val cx = bounds.centerX()
         val cy = bounds.centerY()
         val qx = bounds.width() / 4
         val qy = bounds.height() / 4
 
-        return when (direction.lowercase()) {
+        // The inner swipe() re-enters WakeLockManager; ref-counting
+        // ensures both scopes share one physical lock.
+        when (direction.lowercase()) {
             "up" -> swipe(cx, cy - qy, cx, cy + qy, durationMs)
             "down" -> swipe(cx, cy + qy, cx, cy - qy, durationMs)
             "left" -> swipe(cx - qx, cy, cx + qx, cy, durationMs)
