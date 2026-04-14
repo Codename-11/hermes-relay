@@ -250,10 +250,10 @@ GET /api/memory?target=memory    // or target=user
 
 ### Skills
 ```
-GET /api/skills
-GET /api/skills/categories
+GET /api/skills          # optional ?category= filter
 GET /api/skills/{name}
 ```
+> `/api/skills/categories` was removed from upstream as dead code (commit 8d023e43) and is not re-injected by the bootstrap.
 
 ## Capability Detection
 

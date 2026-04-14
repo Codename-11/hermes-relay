@@ -23,7 +23,6 @@ Endpoints injected (all bearer-auth gated via `adapter._check_auth`):
   DELETE /api/memory                            — remove memory entry
 
   GET    /api/skills                            — list skills (optional ?category=)
-  GET    /api/skills/categories                 — list skill categories
   GET    /api/skills/{name}                     — fetch skill body
 
   GET    /api/config                            — read model + config
@@ -31,11 +30,18 @@ Endpoints injected (all bearer-auth gated via `adapter._check_auth`):
 
   GET    /api/available-models                  — provider model list
 
-NOT injected — chat streaming intentionally goes through upstream's standard
-`/v1/runs` endpoint, which already emits `tool.started`/`tool.completed` SSE
-events. Avoiding the chat handlers also means we don't have to coordinate
-with `_create_agent` / `agent.run_conversation`, which the fork modified in
-ways we'd otherwise have to mirror exactly.
+NOT injected:
+
+- `POST /api/sessions/{session_id}/chat/stream` — chat streaming intentionally
+  goes through upstream's standard `/v1/runs`, which emits structured
+  `tool.started`/`tool.completed` SSE events in real time. Injecting the
+  sessions chat handler would require coordinating with `_create_agent` /
+  `run_conversation` — the fork's riskiest cross-cutting dependencies.
+
+- `GET /api/skills/categories` — removed from upstream as dead code in commit
+  8d023e43 ("refactor: remove dead code — 1,784 lines across 77 files"). The
+  app does not call this endpoint; skill browsing uses `/api/skills?category=`.
+  Re-injecting it would require importing a symbol that no longer exists.
 
 Removal note: when upstream PR #8556 merges and a released hermes-agent
 version contains these endpoints, this entire file becomes dead weight. The
@@ -74,7 +80,7 @@ def _resolve_upstream():
         curated_models_for_provider,
         list_available_providers,
     )
-    from tools.skills_tool import skill_view, skills_categories, skills_list
+    from tools.skills_tool import skill_view, skills_list
 
     # MemoryStore lives at tools/memory_tool.py upstream. We import it lazily
     # because it pulls in a chain of optional deps that we don't want to crash
@@ -94,7 +100,6 @@ def _resolve_upstream():
         "curated_models_for_provider": curated_models_for_provider,
         "list_available_providers": list_available_providers,
         "skills_list": skills_list,
-        "skills_categories": skills_categories,
         "skill_view": skill_view,
     }
 
@@ -497,7 +502,6 @@ def _make_memory_handlers(adapter, upstream):
 def _make_skills_handlers(adapter, upstream):
     web = upstream["web"]
     skills_list = upstream["skills_list"]
-    skills_categories = upstream["skills_categories"]
     skill_view = upstream["skill_view"]
 
     async def list_skills(request):
@@ -506,12 +510,6 @@ def _make_skills_handlers(adapter, upstream):
             return auth_err
         category = (request.query.get("category") or "").strip() or None
         return web.json_response(json.loads(skills_list(category=category)))
-
-    async def skill_categories(request):
-        auth_err = adapter._check_auth(request)
-        if auth_err:
-            return auth_err
-        return web.json_response(json.loads(skills_categories()))
 
     async def view_skill(request):
         auth_err = adapter._check_auth(request)
@@ -523,7 +521,6 @@ def _make_skills_handlers(adapter, upstream):
 
     return {
         "list_skills": list_skills,
-        "skill_categories": skill_categories,
         "view_skill": view_skill,
     }
 
@@ -648,7 +645,6 @@ def register_routes(app, adapter) -> None:
     app.router.add_delete("/api/memory", memory["delete_memory"])
 
     app.router.add_get("/api/skills", skills["list_skills"])
-    app.router.add_get("/api/skills/categories", skills["skill_categories"])
     app.router.add_get("/api/skills/{name}", skills["view_skill"])
 
     app.router.add_get("/api/config", config["get_config"])
