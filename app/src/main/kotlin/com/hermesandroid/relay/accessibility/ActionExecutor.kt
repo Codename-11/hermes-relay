@@ -2,6 +2,7 @@ package com.hermesandroid.relay.accessibility
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.Intent
 import android.graphics.Path
 import android.os.Bundle
 import android.os.Handler
@@ -240,6 +241,54 @@ class ActionExecutor(private val service: AccessibilityService) {
         }
         return if (ok) ActionResult.ok(mapOf("key" to keyName))
         else ActionResult.failure("performGlobalAction returned false for '$keyName'")
+    }
+
+    /**
+     * System-wide media playback control via [Intent.ACTION_MEDIA_BUTTON]
+     * ordered broadcast. Works against whatever media app is currently
+     * playing (Spotify, YouTube Music, Pocket Casts, etc.) — every
+     * compliant media app registers a receiver for this broadcast.
+     *
+     * Actions:
+     *   * `play`     → [KeyEvent.KEYCODE_MEDIA_PLAY]
+     *   * `pause`    → [KeyEvent.KEYCODE_MEDIA_PAUSE]
+     *   * `toggle`   → [KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE]
+     *   * `next`     → [KeyEvent.KEYCODE_MEDIA_NEXT]
+     *   * `previous` → [KeyEvent.KEYCODE_MEDIA_PREVIOUS]
+     *
+     * We send an ACTION_DOWN broadcast followed by an ACTION_UP with the
+     * same keycode — the DOWN+UP pair is what compliant media apps
+     * actually react to. No special permissions required: media button
+     * broadcasts are a system-wide interface available to any app.
+     *
+     * Synchronous — [Intent.sendOrderedBroadcast] fires and returns; the
+     * receivers handle delivery on their own. We do not block on the
+     * result.
+     */
+    fun mediaControl(action: String): ActionResult {
+        val keycode = when (action.lowercase().trim()) {
+            "play" -> KeyEvent.KEYCODE_MEDIA_PLAY
+            "pause" -> KeyEvent.KEYCODE_MEDIA_PAUSE
+            "toggle" -> KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+            "next" -> KeyEvent.KEYCODE_MEDIA_NEXT
+            "previous" -> KeyEvent.KEYCODE_MEDIA_PREVIOUS
+            else -> return ActionResult.failure("Unknown media action: $action")
+        }
+        return try {
+            val context = service.applicationContext ?: service
+            val down = Intent(Intent.ACTION_MEDIA_BUTTON).apply {
+                putExtra(Intent.EXTRA_KEY_EVENT, KeyEvent(KeyEvent.ACTION_DOWN, keycode))
+            }
+            context.sendOrderedBroadcast(down, null)
+            val up = Intent(Intent.ACTION_MEDIA_BUTTON).apply {
+                putExtra(Intent.EXTRA_KEY_EVENT, KeyEvent(KeyEvent.ACTION_UP, keycode))
+            }
+            context.sendOrderedBroadcast(up, null)
+            ActionResult.ok(mapOf("action" to action, "keycode" to keycode))
+        } catch (t: Throwable) {
+            Log.w(TAG, "mediaControl broadcast failed: ${t.message}", t)
+            ActionResult.failure("media broadcast failed: ${t.message ?: "unknown error"}")
+        }
     }
 
     /**

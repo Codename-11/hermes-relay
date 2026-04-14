@@ -65,6 +65,7 @@ import kotlinx.serialization.json.put
  *  - `/scroll` body `{direction}` — `up`/`down`/`left`/`right`
  *  - `/press_key` body `{key}` — `home`/`back`/`recents`/etc
  *  - `/wait` body `{ms}`
+ *  - `/media` body `{action}` — `play`/`pause`/`toggle`/`next`/`previous`
  *  - `/screen` → returns full `ScreenContent` JSON
  *  - `/screenshot` → returns `{media: "MEDIA:hermes-relay://<token>"}`
  *  - `/current_app` → returns `{package: "com.whatever"}`
@@ -292,6 +293,18 @@ class BridgeCommandHandler(
             "/wait" -> {
                 val ms = body["ms"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
                 respondFromResult(requestId, executor.wait(ms))
+            }
+
+            "/media" -> {
+                val action = body["action"]?.jsonPrimitive?.content.orEmpty()
+                if (action.isBlank()) {
+                    respond(
+                        requestId, 400,
+                        buildJsonObject { put("error", "missing 'action' in body") }
+                    )
+                    return
+                }
+                respondFromResult(requestId, executor.mediaControl(action))
             }
 
             "/screen" -> {

@@ -15,6 +15,7 @@ Tools registered:
   - android_wait          wait for element to appear
   - android_get_apps      list installed apps
   - android_current_app   get foreground app package name
+  - android_media         control system-wide media playback
   - android_setup         configure bridge URL and pairing code
 """
 
@@ -308,6 +309,35 @@ def android_current_app() -> str:
         return json.dumps({"error": str(e)})
 
 
+_MEDIA_ACTIONS = ("play", "pause", "toggle", "next", "previous")
+
+
+def android_media(action: str) -> str:
+    """
+    Control system-wide media playback on the Android device.
+
+    Works against whatever media app is currently playing (Spotify,
+    YouTube Music, Pocket Casts, etc.) via the system's ACTION_MEDIA_BUTTON
+    broadcast — every compliant player handles it. No app-specific
+    integration required.
+
+    action: one of ``play``, ``pause``, ``toggle``, ``next``, ``previous``.
+    """
+    try:
+        if not isinstance(action, str) or not action.strip():
+            return json.dumps({"error": "action is required"})
+        normalized = action.strip().lower()
+        if normalized not in _MEDIA_ACTIONS:
+            return json.dumps({
+                "error": f"Unknown media action: {action}",
+                "valid_actions": list(_MEDIA_ACTIONS),
+            })
+        data = _post("/media", {"action": normalized})
+        return json.dumps(data)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
 def _get_public_ip() -> str:
     """Detect this server's public IP address."""
     for service in ["https://api.ipify.org", "https://ifconfig.me/ip", "https://icanhazip.com"]:
@@ -593,6 +623,21 @@ _SCHEMAS = {
         "description": "Get the package name and activity name of the currently active (foreground) Android app.",
         "parameters": {"type": "object", "properties": {}, "required": []},
     },
+    "android_media": {
+        "name": "android_media",
+        "description": "Control system-wide media playback (play/pause/toggle/next/previous). Works against whatever media app is currently playing — Spotify, YouTube Music, Pocket Casts, etc. — via the system media-button broadcast.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["play", "pause", "toggle", "next", "previous"],
+                    "description": "Playback action to dispatch",
+                },
+            },
+            "required": ["action"],
+        },
+    },
     "android_setup": {
         "name": "android_setup",
         "description": "Start the Android bridge relay and set the pairing code. Call this when the user wants to connect their phone. The relay runs on this server — the phone connects to it remotely via WebSocket. Only needs the pairing code shown in the Hermes Bridge app on the phone.",
@@ -625,6 +670,7 @@ _HANDLERS = {
     "android_wait":         lambda args, **kw: android_wait(**args),
     "android_get_apps":     lambda args, **kw: android_get_apps(),
     "android_current_app":  lambda args, **kw: android_current_app(),
+    "android_media":        lambda args, **kw: android_media(**args),
     "android_setup":        lambda args, **kw: android_setup(**args),
 }
 

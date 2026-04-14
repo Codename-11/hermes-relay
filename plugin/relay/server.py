@@ -1135,6 +1135,13 @@ async def handle_bridge_setup(request: web.Request) -> web.Response:
     return await _bridge_dispatch(request, "/setup")
 
 
+async def handle_bridge_media(request: web.Request) -> web.Response:
+    # Media playback control — play/pause/toggle/next/previous via
+    # system-wide ACTION_MEDIA_BUTTON broadcast on the phone side. The
+    # body is forwarded verbatim; the phone validates the action string.
+    return await _bridge_dispatch(request, "/media")
+
+
 # === END PHASE3-bridge-server ===
 
 
@@ -1732,6 +1739,7 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_post("/scroll", handle_bridge_scroll)
     app.router.add_post("/wait", handle_bridge_wait)
     app.router.add_post("/setup", handle_bridge_setup)
+    app.router.add_post("/media", handle_bridge_media)
     # === END PHASE3-bridge-server ===
 
     # === PHASE3-status: loopback-gated structured phone status ===
