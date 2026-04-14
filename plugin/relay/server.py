@@ -1166,6 +1166,15 @@ async def handle_bridge_media(request: web.Request) -> web.Response:
     return await _bridge_dispatch(request, "/media")
 
 
+# A3: filtered accessibility-tree search — the phone's BridgeCommandHandler
+# delegates to ScreenReader.searchNodes which walks all windows and
+# filters by text/class_name/clickable, returning up to `limit` matches.
+# Body shape (all optional except limit defaulting): {text, class_name,
+# clickable, limit}.
+async def handle_bridge_find_nodes(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/find_nodes")
+
+
 # === END PHASE3-bridge-server ===
 
 
@@ -1770,6 +1779,8 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_post("/clipboard", handle_bridge_clipboard)
     # A7: media playback control
     app.router.add_post("/media", handle_bridge_media)
+    # A3: filtered accessibility-tree search
+    app.router.add_post("/find_nodes", handle_bridge_find_nodes)
     # === END PHASE3-bridge-server ===
 
     # === PHASE3-status: loopback-gated structured phone status ===

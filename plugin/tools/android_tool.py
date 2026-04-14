@@ -4,6 +4,7 @@ hermes-relay plugin — registers android_* tools into hermes-agent registry.
 Tools registered:
   - android_ping          check bridge connectivity
   - android_read_screen   get accessibility tree of current screen
+  - android_find_nodes    filtered search for nodes by text/class/clickable
   - android_tap           tap at coordinates or by node id
   - android_tap_text      tap element by visible text
   - android_long_press    long-press at coordinates or by node id
@@ -104,6 +105,42 @@ def android_read_screen(include_bounds: bool = False) -> str:
     """
     try:
         data = _get(f"/screen?bounds={str(include_bounds).lower()}")
+        return json.dumps(data)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def android_find_nodes(text: Optional[str] = None,
+                       class_name: Optional[str] = None,
+                       clickable: Optional[bool] = None,
+                       limit: int = 20) -> str:
+    """
+    Targeted filtered search across the current accessibility tree.
+    Avoids dumping the entire screen when you only need "does X exist?"
+    or "find the Send button".
+
+    Filters (all optional, all ANDed together):
+      text       - case-insensitive substring match against node text OR
+                   contentDescription
+      class_name - exact match against the node's class name, e.g.
+                   "android.widget.Button"
+      clickable  - filter by whether the node is clickable (True/False)
+
+    Returns up to ``limit`` matches (default 20, capped server-side at
+    the accessibility walk budget of 512 nodes). Each match is a
+    ScreenNode in the same shape ``android_read_screen`` emits, including
+    a stable ``nodeId`` of the form ``"w<window>:<index>"`` you can feed
+    back into ``android_tap(node_id=...)``.
+    """
+    try:
+        payload: dict = {"limit": int(limit)}
+        if text is not None:
+            payload["text"] = text
+        if class_name is not None:
+            payload["class_name"] = class_name
+        if clickable is not None:
+            payload["clickable"] = bool(clickable)
+        data = _post("/find_nodes", payload)
         return json.dumps(data)
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -880,6 +917,44 @@ _SCHEMAS = {
             "required": [],
         },
     },
+    "android_find_nodes": {
+        "name": "android_find_nodes",
+        "description": (
+            "Targeted filtered search for accessibility nodes on the current "
+            "Android screen. Prefer this over android_read_screen when you "
+            "only need to check whether a specific element exists or find "
+            "a small set of interactive widgets — it avoids dumping the full "
+            "tree (which can be several KB). Filters are all optional and "
+            "AND together: text (case-insensitive substring match against "
+            "node text OR contentDescription), class_name (exact match), "
+            "clickable (True/False). Returns up to `limit` matches in the "
+            "same ScreenNode shape as android_read_screen, including node "
+            "IDs you can feed into android_tap(node_id=...)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "Case-insensitive substring to match against node text or contentDescription.",
+                },
+                "class_name": {
+                    "type": "string",
+                    "description": "Exact Android class name to match, e.g. 'android.widget.Button'.",
+                },
+                "clickable": {
+                    "type": "boolean",
+                    "description": "If set, only return nodes with matching isClickable flag.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max number of matches to return (default 20, hard-capped at 512).",
+                    "default": 20,
+                },
+            },
+            "required": [],
+        },
+    },
     "android_tap": {
         "name": "android_tap",
         "description": "Tap a UI element by node_id (preferred) or by screen coordinates (x, y). Always prefer node_id over coordinates — it's more reliable. Get node_ids from android_read_screen.",
@@ -1181,6 +1256,7 @@ _SCHEMAS = {
 _HANDLERS = {
     "android_ping":         lambda args, **kw: android_ping(),
     "android_read_screen":  lambda args, **kw: android_read_screen(**args),
+    "android_find_nodes":   lambda args, **kw: android_find_nodes(**args),
     "android_tap":          lambda args, **kw: android_tap(**args),
     "android_tap_text":     lambda args, **kw: android_tap_text(**args),
     "android_long_press":   lambda args, **kw: android_long_press(**args),

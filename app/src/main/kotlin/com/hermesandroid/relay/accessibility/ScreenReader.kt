@@ -105,6 +105,9 @@ class ScreenReader {
          * node was produced by [readAllWindows]; may be null for callers
          * that bypass the multi-window entry point (legacy tests).
          *
+         * Also re-used by A3 `searchNodes` so filtered results feed back
+         * into `tap nodeId` and other node-ID-addressable commands.
+         *
          * The Python `android_tool` layer has long advertised a `nodeId`
          * field in its doc-comments; P1 is the first version that actually
          * emits it on the wire.
@@ -311,6 +314,153 @@ class ScreenReader {
         }
 
         return false
+    }
+
+    /**
+     * Filtered search across all provided window roots. Used by
+     * `android_find_nodes` — returns up to [limit] matches without
+     * dumping the whole accessibility tree.
+     *
+     * Filter semantics (all optional, all ANDed):
+     *  - [text]: case-insensitive substring match against each node's
+     *    `text` OR `contentDescription`.
+     *  - [className]: exact match against `node.className.toString()`.
+     *  - [clickable]: when non-null, filters on `node.isClickable`.
+     *
+     * The underlying traversal honors [MAX_NODES] as a safety rail even
+     * when [limit] is higher — we stop walking after visiting 512 nodes
+     * regardless of how many matched. Node recycling follows the same
+     * per-child `try/finally` pattern as [walk], so this function is
+     * leak-free w.r.t. the accessibility node pool.
+     *
+     * Returns a list of [ScreenNode] in the same shape that
+     * [readAllWindows] / [readScreen] emits, including the P1 `nodeId`
+     * field (`"w<windowIndex>:<sequentialIndex>"`) so callers can feed
+     * results back into `tap nodeId`.
+     */
+    fun searchNodes(
+        roots: List<AccessibilityNodeInfo>,
+        text: String? = null,
+        className: String? = null,
+        clickable: Boolean? = null,
+        limit: Int = 20,
+    ): List<ScreenNode> {
+        if (limit <= 0) return emptyList()
+        val loweredText = text?.takeIf { it.isNotBlank() }?.lowercase()
+        val effectiveLimit = limit.coerceAtLeast(0)
+
+        val out = ArrayList<ScreenNode>(effectiveLimit.coerceAtMost(64))
+        // Shared visit counter across all windows — the MAX_NODES cap is
+        // global, matching how `readAllWindows` (P1) bounds traversal.
+        val visited = intArrayOf(0)
+
+        for ((windowIndex, root) in roots.withIndex()) {
+            if (out.size >= effectiveLimit) break
+            if (visited[0] >= MAX_NODES) break
+            searchWalk(
+                node = root,
+                windowIndex = windowIndex,
+                nextIndex = intArrayOf(0),
+                visited = visited,
+                loweredText = loweredText,
+                className = className,
+                clickable = clickable,
+                limit = effectiveLimit,
+                out = out,
+            )
+        }
+        return out
+    }
+
+    /**
+     * Recursive walker for [searchNodes]. Returns nothing; accumulates
+     * matches into [out] and respects both [MAX_NODES] (via [visited])
+     * and [limit] (via `out.size`).
+     *
+     * [nextIndex] is the per-window sequential counter used to build the
+     * `w<windowIndex>:<N>` node ID — mirrors the scheme P1 introduced in
+     * [readAllWindows] so the two surfaces produce stable, comparable IDs.
+     */
+    private fun searchWalk(
+        node: AccessibilityNodeInfo?,
+        windowIndex: Int,
+        nextIndex: IntArray,
+        visited: IntArray,
+        loweredText: String?,
+        className: String?,
+        clickable: Boolean?,
+        limit: Int,
+        out: MutableList<ScreenNode>,
+    ) {
+        if (node == null) return
+        if (out.size >= limit) return
+        if (visited[0] >= MAX_NODES) return
+
+        visited[0] += 1
+        val thisNodeIndex = nextIndex[0]
+        nextIndex[0] += 1
+
+        val nodeText = node.text?.toString()?.takeIf { it.isNotBlank() }?.take(MAX_TEXT_LEN)
+        val contentDesc = node.contentDescription?.toString()
+            ?.takeIf { it.isNotBlank() }
+            ?.take(MAX_TEXT_LEN)
+        val nodeClassName = node.className?.toString()
+        val nodeClickable = node.isClickable
+
+        val matchesText = loweredText == null ||
+            (nodeText?.lowercase()?.contains(loweredText) == true) ||
+            (contentDesc?.lowercase()?.contains(loweredText) == true)
+        val matchesClass = className == null || nodeClassName == className
+        val matchesClickable = clickable == null || nodeClickable == clickable
+
+        if (matchesText && matchesClass && matchesClickable) {
+            val rect = Rect()
+            node.getBoundsInScreen(rect)
+            val bounds = rect.toBoundsOrZero()
+            if (!bounds.isEmpty || loweredText != null || className != null) {
+                out.add(
+                    ScreenNode(
+                        nodeId = "w$windowIndex:$thisNodeIndex",
+                        text = nodeText,
+                        contentDescription = contentDesc,
+                        className = nodeClassName,
+                        viewId = node.viewIdResourceName,
+                        bounds = bounds,
+                        clickable = nodeClickable,
+                        longClickable = node.isLongClickable,
+                        scrollable = node.isScrollable,
+                        editable = node.isEditable,
+                        focused = node.isFocused,
+                        selected = node.isSelected,
+                        enabled = node.isEnabled,
+                    )
+                )
+                if (out.size >= limit) return
+            }
+        }
+
+        val childCount = node.childCount
+        for (i in 0 until childCount) {
+            if (out.size >= limit) return
+            if (visited[0] >= MAX_NODES) return
+            val child = node.getChild(i) ?: continue
+            try {
+                searchWalk(
+                    node = child,
+                    windowIndex = windowIndex,
+                    nextIndex = nextIndex,
+                    visited = visited,
+                    loweredText = loweredText,
+                    className = className,
+                    clickable = clickable,
+                    limit = limit,
+                    out = out,
+                )
+            } finally {
+                @Suppress("DEPRECATION")
+                try { child.recycle() } catch (_: Throwable) { }
+            }
+        }
     }
 
     /**
