@@ -21,6 +21,7 @@ Tools registered:
   - android_macro             batched workflow orchestrator (dispatches to other android_* tools)
   - android_clipboard_read    read system clipboard as plain text
   - android_clipboard_write   write plain text to system clipboard
+  - android_media             control system-wide media playback (play/pause/next/previous/toggle)
 """
 
 import json
@@ -440,6 +441,35 @@ def android_current_app() -> str:
     """Get the package name and activity of the current foreground app."""
     try:
         data = _get("/current_app")
+        return json.dumps(data)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+_MEDIA_ACTIONS = ("play", "pause", "toggle", "next", "previous")
+
+
+def android_media(action: str) -> str:
+    """
+    Control system-wide media playback on the Android device.
+
+    Works against whatever media app is currently playing (Spotify,
+    YouTube Music, Pocket Casts, etc.) via the system's ACTION_MEDIA_BUTTON
+    broadcast — every compliant player handles it. No app-specific
+    integration required.
+
+    action: one of ``play``, ``pause``, ``toggle``, ``next``, ``previous``.
+    """
+    try:
+        if not isinstance(action, str) or not action.strip():
+            return json.dumps({"error": "action is required"})
+        normalized = action.strip().lower()
+        if normalized not in _MEDIA_ACTIONS:
+            return json.dumps({
+                "error": f"Unknown media action: {action}",
+                "valid_actions": list(_MEDIA_ACTIONS),
+            })
+        data = _post("/media", {"action": normalized})
         return json.dumps(data)
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -1016,6 +1046,21 @@ _SCHEMAS = {
         "description": "Get the package name and activity name of the currently active (foreground) Android app.",
         "parameters": {"type": "object", "properties": {}, "required": []},
     },
+    "android_media": {
+        "name": "android_media",
+        "description": "Control system-wide media playback (play/pause/toggle/next/previous). Works against whatever media app is currently playing — Spotify, YouTube Music, Pocket Casts, etc. — via the system media-button broadcast.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["play", "pause", "toggle", "next", "previous"],
+                    "description": "Playback action to dispatch",
+                },
+            },
+            "required": ["action"],
+        },
+    },
     "android_setup": {
         "name": "android_setup",
         "description": "Start the Android bridge relay and set the pairing code. Call this when the user wants to connect their phone. The relay runs on this server — the phone connects to it remotely via WebSocket. Only needs the pairing code shown in the Hermes Bridge app on the phone.",
@@ -1153,6 +1198,7 @@ _HANDLERS = {
     "android_macro":            lambda args, **kw: android_macro(**args),
     "android_clipboard_read":   lambda args, **kw: android_clipboard_read(),
     "android_clipboard_write":  lambda args, **kw: android_clipboard_write(**args),
+    "android_media":            lambda args, **kw: android_media(**args),
 }
 
 # ── Registry registration ──────────────────────────────────────────────────────

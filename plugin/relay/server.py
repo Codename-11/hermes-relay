@@ -1159,6 +1159,13 @@ async def handle_bridge_clipboard(request: web.Request) -> web.Response:
     return await _bridge_dispatch(request, "/clipboard")
 
 
+# A7: media playback control — play/pause/toggle/next/previous via
+# system-wide ACTION_MEDIA_BUTTON broadcast on the phone side. The
+# body is forwarded verbatim; the phone validates the action string.
+async def handle_bridge_media(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/media")
+
+
 # === END PHASE3-bridge-server ===
 
 
@@ -1761,6 +1768,8 @@ def create_app(config: RelayConfig) -> web.Application:
     # A6: clipboard bridge — one path, two methods
     app.router.add_get("/clipboard", handle_bridge_clipboard)
     app.router.add_post("/clipboard", handle_bridge_clipboard)
+    # A7: media playback control
+    app.router.add_post("/media", handle_bridge_media)
     # === END PHASE3-bridge-server ===
 
     # === PHASE3-status: loopback-gated structured phone status ===
