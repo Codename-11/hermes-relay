@@ -99,7 +99,19 @@ curl_path() {
     local args=(-sS -o "$BODY_FILE" -w '%{http_code}' --max-time 10)
     [[ -n "$TOKEN" ]] && args+=(-H "Authorization: Bearer $TOKEN")
     if [[ "$method" == "POST" ]]; then
-        args+=(-X POST -H 'Content-Type: application/json' -d "${body:-{}}")
+        # Body default — DO NOT use `${body:-{}}` here. Bash parses that as
+        # `${body:-{}` (closing the parameter expansion at the first `}`)
+        # plus a literal trailing `}`, so a non-empty body like
+        # `{"key":"home"}` expands to `{"key":"home"}}` (broken JSON, two
+        # closing braces). The relay's request.json() falls back to `{}` on
+        # parse failure, the phone receives an empty body, and every POST
+        # path returns `400 missing 'X' in body`. Silent and infuriating.
+        # Discovered live during the v0.4 smoke test on 2026-04-14.
+        local effective_body="$body"
+        if [[ -z "$effective_body" ]]; then
+            effective_body='{}'
+        fi
+        args+=(-X POST -H 'Content-Type: application/json' -d "$effective_body")
     fi
     # Suppress stderr; ignore curl's non-zero exit on connect failures —
     # the body file may be empty and the caller will see status 000.
