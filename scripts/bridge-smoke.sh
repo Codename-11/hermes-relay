@@ -204,7 +204,10 @@ run "GET  /screen"          GET  /screen
 run "GET  /screen_hash"     GET  /screen_hash
 run "POST /find_nodes"      POST /find_nodes      '{"clickable":true,"limit":5}'
 run "GET  /clipboard"       GET  /clipboard
-run "POST /events"          POST /events          '{"limit":10}'
+# /events is GET with query params (limit + since), not POST with body —
+# matches the Python android_events tool's `_get("/events?limit=N&since=T")`
+# call. Sending POST would get a 405 from the relay's HTTP router.
+run "GET  /events"          GET  "/events?limit=10"
 run "GET  /screenshot"      GET  /screenshot
 
 # ── Destructive suite ─────────────────────────────────────────────────────────
