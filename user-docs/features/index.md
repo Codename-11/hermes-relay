@@ -21,17 +21,47 @@ A **<span class="track-badge track-badge--sideload">Sideload only</span>** badge
 
 ## Bridge — Phone Control
 
+**Reading the screen**
+
 | Feature | Description | Track |
 |---------|-------------|-------|
-| Read what's on screen | Agent can see the active screen so it can answer "what does this say?" | Both |
+| Read what's on screen | Agent sees the active window so it can answer "what does this say?" | Both |
+| Multi-window read | Sees system overlays, popups, and the notification shade — not just the foregrounded app | Both |
+| Filtered node search | "Find every clickable labelled 'Save'" — precise accessibility-tree queries instead of guessing | Both |
+| Per-node property lookups | Stable node IDs that can be handed back to tap/scroll, plus full property bags for resolution | Both |
+| Screen change detection | Cheap screen-hash + diff so the agent can wait for a screen to actually change without polling | Both |
+| Real-time UI event stream | Live accessibility-event stream for "wait until this loads" and "notice when a dialog opens" waits | Both |
 | Notification triage | Agent reads incoming notifications and summarizes them for you | Both |
 | Calendar read | "What's on my schedule today?" — read-only access to your calendar | Both |
-| Tap, type, and swipe with confirmation | Agent performs UI actions on your behalf | Both <sup>*</sup> |
+
+**Acting on the phone**
+
+| Feature | Description | Track |
+|---------|-------------|-------|
+| Tap, type, swipe, scroll | Core UI actions with destructive-verb confirmation | Both <sup>*</sup> |
+| Long-press | Context menus, text selection, widget rearranging — by coordinate or node ID | Both <sup>*</sup> |
+| Drag | Rearrange icons, pull notification shade, drag map pins — point A → point B over a duration | Both <sup>*</sup> |
+| Smarter tap fallbacks | Three-tier cascade handles apps that wrap labels in non-clickable parents | Both <sup>*</sup> |
+| Clipboard bridge | Read and write the system clipboard from the agent side | Both <sup>*</sup> |
+| System media control | Play / pause / next / previous / volume on whichever app is playing | Both <sup>*</sup> |
+| Macro batching | Run a sequence of actions as one workflow without a round-trip per step | Both <sup>*</sup> |
+| Raw Intent escape hatch | Send a direct Android Intent or broadcast for apps that expose deep-link actions | Both <sup>*</sup> |
+| Gesture reliability under idle | Short-lived wake-lock keeps gestures landing on dim/idle screens | Both <sup>*</sup> |
+| Per-app playbooks | Bundled `android` skill with reusable flows for common apps | Both |
 | Voice → bridge intent routing | "Text Sam I'll be 10 min late" — fully hands-free | <span class="track-badge track-badge--sideload">Sideload only</span> |
 | Vision-driven navigation (`android_navigate`) | Agent looks at the screen and figures out what to tap on its own | <span class="track-badge track-badge--sideload">Sideload only</span> |
 | Workflow recording | Show the agent something once, ask it to repeat the workflow later | <span class="track-badge track-badge--sideload">Sideload only</span> |
 
-<sup>*</sup> On Google Play, the accessibility service is read-only — the gesture-synthesis code is compiled out for policy reasons. The action UI still surfaces but write actions silently no-op. Sideload ships the full gesture surface.
+**Phone utilities** <span class="track-badge track-badge--sideload">Sideload only</span>
+
+| Feature | Description |
+|---------|-------------|
+| Direct SMS | Send text messages via `SmsManager` with send-result confirmation — no dialer bounce |
+| Contact search | Look up a phone number by contact name for voice intents like "text Mom" |
+| One-tap dialing | Place a call directly, with a dialer-opener fallback on Google Play |
+| Location awareness | GPS last-known-location read for "where am I?" and location-scoped commands |
+
+<sup>*</sup> On Google Play, the accessibility service is read-only — the gesture-synthesis code is compiled out for policy reasons. The action UI still surfaces but write actions silently no-op. Sideload ships the full gesture surface and the phone-utility tools above.
 
 ## Bridge — Safety Rails (always on, both tracks)
 
