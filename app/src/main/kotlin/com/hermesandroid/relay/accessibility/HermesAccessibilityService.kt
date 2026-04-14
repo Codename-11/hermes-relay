@@ -220,12 +220,79 @@ class HermesAccessibilityService : AccessibilityService() {
      * On API 34+, [AccessibilityNodeInfo.recycle] is deprecated but still
      * safe to call — the system just no-ops. We support min SDK 26 so we
      * keep calling it for the older branch.
+     *
+     * Prefer [snapshotAllWindows] for /screen + tap_text / type_text — it
+     * catches system overlays, popup menus, and the notification shade.
+     * This single-root form is retained for callers that genuinely only
+     * care about the foregrounded app window (e.g. [ActionExecutor.scroll],
+     * which uses the active window's bounds as the scroll gesture's frame).
      */
     fun snapshotRoot(): AccessibilityNodeInfo? = try {
         rootInActiveWindow
     } catch (t: Throwable) {
         Log.w(TAG, "rootInActiveWindow threw: ${t.message}")
         null
+    }
+
+    /**
+     * P1 — Snapshot the root nodes of **all** live accessibility windows,
+     * top-of-stack first. Catches system overlays, popup menus, the
+     * notification shade when pulled down, permission dialogs, and
+     * multi-window split-screen state — all of which [snapshotRoot] misses.
+     *
+     * Every [android.view.accessibility.AccessibilityWindowInfo.getRoot]
+     * returns a fresh [AccessibilityNodeInfo] that the caller MUST
+     * `recycle()` when done. Recycling is the single biggest landmine in
+     * this area — leaking window roots makes subsequent gesture dispatches
+     * fail silently because the system runs out of node handles.
+     *
+     * # Fallback semantics
+     *
+     * `service.windows` returns an empty list unless the accessibility
+     * config XML requests `flagRetrieveInteractiveWindows`. That flag is
+     * **only** set in the `sideload` flavor — the `googlePlay` flavor
+     * deliberately runs on the conservative config subset to pass Play
+     * Store policy review. When `windows` is empty (or throws, or every
+     * window's root is null) we fall back to a single-element list
+     * wrapping [rootInActiveWindow], preserving pre-P1 behaviour on
+     * `googlePlay` builds.
+     *
+     * Returns an empty list only if the service cannot read any window
+     * root at all (e.g. lock screen, master-off state). Callers should
+     * treat an empty return the same as `snapshotRoot() == null`.
+     */
+    fun snapshotAllWindows(): List<AccessibilityNodeInfo> {
+        // Try the full multi-window path first. `service.windows` is
+        // available on API 21+ and we target min SDK 26, so no version
+        // guard needed.
+        val windowList: List<android.view.accessibility.AccessibilityWindowInfo> = try {
+            this.windows ?: emptyList()
+        } catch (t: Throwable) {
+            Log.w(TAG, "service.windows threw: ${t.message}")
+            emptyList()
+        }
+
+        if (windowList.isNotEmpty()) {
+            val roots = ArrayList<AccessibilityNodeInfo>(windowList.size)
+            for (wi in windowList) {
+                val root: AccessibilityNodeInfo? = try {
+                    wi.root
+                } catch (t: Throwable) {
+                    Log.w(TAG, "AccessibilityWindowInfo.getRoot threw: ${t.message}")
+                    null
+                }
+                if (root != null) roots.add(root)
+            }
+            if (roots.isNotEmpty()) return roots
+            // Else fall through — all window roots were null, try the
+            // single-window fallback in case it can still see the active
+            // window.
+        }
+
+        // googlePlay fallback (or empty-windows edge case): mimic the
+        // pre-P1 single-root behaviour.
+        val active = snapshotRoot() ?: return emptyList()
+        return listOf(active)
     }
 
     /**

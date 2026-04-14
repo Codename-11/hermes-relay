@@ -97,17 +97,37 @@ class ActionExecutor(private val service: AccessibilityService) {
         if (needle.isBlank()) {
             return ActionResult.failure("tap_text: text must be non-blank")
         }
-        val root = (service as? HermesAccessibilityService)?.snapshotRoot()
-            ?: service.rootInActiveWindow
-            ?: return ActionResult.failure("no active window available")
 
-        val reader = (service as? HermesAccessibilityService)?.reader ?: ScreenReader()
-        val bounds = reader.findNodeBoundsByText(root, needle)
-            ?: return ActionResult.failure("no node matching text '$needle' on screen")
-        if (bounds.isEmpty) {
-            return ActionResult.failure("matched node has empty bounds (off-screen?)")
+        // P1 — prefer the multi-window snapshot so we can tap text inside
+        // system overlays, popup menus, and notification shade content.
+        // Falls back to a single-root list derived from rootInActiveWindow
+        // when the service is a bare AccessibilityService stub (tests) or
+        // when windows is unavailable.
+        val hermes = service as? HermesAccessibilityService
+        val ownedRoots: List<AccessibilityNodeInfo> = if (hermes != null) {
+            hermes.snapshotAllWindows()
+        } else {
+            val legacy = service.rootInActiveWindow
+            if (legacy != null) listOf(legacy) else emptyList()
         }
-        return tap(bounds.centerX, bounds.centerY)
+        if (ownedRoots.isEmpty()) {
+            return ActionResult.failure("no active window available")
+        }
+
+        val reader = hermes?.reader ?: ScreenReader()
+        try {
+            val bounds = reader.findNodeBoundsByText(ownedRoots, needle)
+                ?: return ActionResult.failure("no node matching text '$needle' on screen")
+            if (bounds.isEmpty) {
+                return ActionResult.failure("matched node has empty bounds (off-screen?)")
+            }
+            return tap(bounds.centerX, bounds.centerY)
+        } finally {
+            for (r in ownedRoots) {
+                @Suppress("DEPRECATION")
+                try { r.recycle() } catch (_: Throwable) { }
+            }
+        }
     }
 
     suspend fun swipe(
@@ -145,34 +165,51 @@ class ActionExecutor(private val service: AccessibilityService) {
     // ─── type / scroll / press_key / wait ─────────────────────────────────
 
     fun typeText(text: String): ActionResult {
-        val root = (service as? HermesAccessibilityService)?.snapshotRoot()
-            ?: service.rootInActiveWindow
-            ?: return ActionResult.failure("no active window available")
-
-        val reader = (service as? HermesAccessibilityService)?.reader ?: ScreenReader()
-        val focused = reader.findFocusedInput(root)
-            ?: return ActionResult.failure("no focused editable field")
-
-        val args = Bundle().apply {
-            putCharSequence(
-                AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
-                text
-            )
-        }
-        val performed = try {
-            focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-        } catch (t: Throwable) {
-            Log.w(TAG, "ACTION_SET_TEXT threw: ${t.message}")
-            false
-        } finally {
-            @Suppress("DEPRECATION")
-            try { focused.recycle() } catch (_: Throwable) { }
-        }
-
-        return if (performed) {
-            ActionResult.ok(mapOf("length" to text.length))
+        // P1 — look for the focused input across every live window so an
+        // IME-hosted text field, a dialog field, or a split-screen sibling
+        // can be targeted too.
+        val hermes = service as? HermesAccessibilityService
+        val ownedRoots: List<AccessibilityNodeInfo> = if (hermes != null) {
+            hermes.snapshotAllWindows()
         } else {
-            ActionResult.failure("ACTION_SET_TEXT refused by target view")
+            val legacy = service.rootInActiveWindow
+            if (legacy != null) listOf(legacy) else emptyList()
+        }
+        if (ownedRoots.isEmpty()) {
+            return ActionResult.failure("no active window available")
+        }
+
+        val reader = hermes?.reader ?: ScreenReader()
+        try {
+            val focused = reader.findFocusedInput(ownedRoots)
+                ?: return ActionResult.failure("no focused editable field")
+
+            val args = Bundle().apply {
+                putCharSequence(
+                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                    text
+                )
+            }
+            val performed = try {
+                focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+            } catch (t: Throwable) {
+                Log.w(TAG, "ACTION_SET_TEXT threw: ${t.message}")
+                false
+            } finally {
+                @Suppress("DEPRECATION")
+                try { focused.recycle() } catch (_: Throwable) { }
+            }
+
+            return if (performed) {
+                ActionResult.ok(mapOf("length" to text.length))
+            } else {
+                ActionResult.failure("ACTION_SET_TEXT refused by target view")
+            }
+        } finally {
+            for (r in ownedRoots) {
+                @Suppress("DEPRECATION")
+                try { r.recycle() } catch (_: Throwable) { }
+            }
         }
     }
 

@@ -295,22 +295,34 @@ class BridgeCommandHandler(
             }
 
             "/screen" -> {
-                val root = service.snapshotRoot()
-                    ?: return respond(
+                // P1 — walk every live accessibility window, not just
+                // rootInActiveWindow. On googlePlay (no
+                // flagRetrieveInteractiveWindows) this falls back to a
+                // single-element list so behaviour is unchanged.
+                val roots = service.snapshotAllWindows()
+                if (roots.isEmpty()) {
+                    return respond(
                         requestId, 500,
                         buildJsonObject { put("error", "no active window available") }
                     )
+                }
                 val includeBounds = body["include_bounds"]
                     ?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true
-                val screen = service.reader.readScreen(root, includeBounds)
-                @Suppress("DEPRECATION")
-                try { root.recycle() } catch (_: Throwable) { }
-
-                val screenJson = json.encodeToJsonElement(
-                    ScreenReader.ScreenContent.serializer(),
-                    screen
-                ).jsonObject
-                respond(requestId, 200, screenJson)
+                try {
+                    val screen = service.reader.readAllWindows(roots, includeBounds)
+                    val screenJson = json.encodeToJsonElement(
+                        ScreenReader.ScreenContent.serializer(),
+                        screen
+                    ).jsonObject
+                    respond(requestId, 200, screenJson)
+                } finally {
+                    // Every root fetched via snapshotAllWindows() is a
+                    // fresh AccessibilityNodeInfo and MUST be recycled.
+                    for (r in roots) {
+                        @Suppress("DEPRECATION")
+                        try { r.recycle() } catch (_: Throwable) { }
+                    }
+                }
             }
 
             "/screenshot" -> {
