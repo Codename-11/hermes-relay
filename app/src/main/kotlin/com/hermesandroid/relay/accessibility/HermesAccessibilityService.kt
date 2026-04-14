@@ -10,6 +10,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import com.hermesandroid.relay.data.relayDataStore
+import com.hermesandroid.relay.event.EventStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -170,6 +171,16 @@ class HermesAccessibilityService : AccessibilityService() {
                 // so we never even receive most events.
             }
         }
+
+        // === PHASE3-event-stream: B1 android_events / android_event_stream ===
+        // Feed signal-rich events into the bounded ring buffer when the
+        // agent has explicitly opted in via android_event_stream(true).
+        // EventStore does its own type-filter + throttle + thread-safety
+        // — we just hand it the raw event.
+        if (EventStore.isStreaming) {
+            EventStore.append(event)
+        }
+        // === END PHASE3-event-stream ===
     }
 
     override fun onInterrupt() {

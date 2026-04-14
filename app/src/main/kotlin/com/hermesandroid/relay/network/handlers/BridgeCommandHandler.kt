@@ -8,6 +8,13 @@ import com.hermesandroid.relay.accessibility.ScreenReader
 // === PHASE3-safety-rails: safety enforcement ===
 import com.hermesandroid.relay.bridge.BridgeSafetyManager
 // === END PHASE3-safety-rails ===
+// === PHASE3-event-stream: B1 EventStore polling + toggle ===
+import com.hermesandroid.relay.event.EventStore
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.booleanOrNull
+// === END PHASE3-event-stream ===
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.models.Envelope
 import kotlinx.coroutines.CoroutineScope
@@ -152,6 +159,44 @@ class BridgeCommandHandler(
             return
         }
 
+        // === PHASE3-event-stream: B1 android_events read-only polling ===
+        // /events is a read-only peek at the EventStore ring buffer. The
+        // buffer lives in our own process so there's no safety gate —
+        // the agent already opted into streaming via /events/stream
+        // which IS gated. This mirrors the /ping early-return path so
+        // polling works even when the service is transiently unbound.
+        if (path == "/events") {
+            val limitRaw = body["limit"]?.jsonPrimitive?.content?.toIntOrNull() ?: 50
+            val limit = limitRaw.coerceIn(1, EventStore.MAX_ENTRIES)
+            val since = body["since"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
+            val entries = EventStore.recent(limit = limit, since = since)
+            val arr: JsonArray = buildJsonArray {
+                for (e in entries) {
+                    add(
+                        buildJsonObject {
+                            put("timestamp", e.timestamp)
+                            put("event_type", e.eventType)
+                            e.packageName?.let { put("package_name", it) }
+                            e.className?.let { put("class_name", it) }
+                            e.text?.let { put("text", it) }
+                            e.contentDescription?.let { put("content_description", it) }
+                            put("source", e.source)
+                        }
+                    )
+                }
+            }
+            respond(
+                requestId, 200,
+                buildJsonObject {
+                    put("entries", arr)
+                    put("count", entries.size)
+                    put("streaming", EventStore.isStreaming)
+                }
+            )
+            return
+        }
+        // === END PHASE3-event-stream ===
+
         val service = HermesAccessibilityService.instance
             ?: return respond(
                 requestId, 503,
@@ -215,6 +260,32 @@ class BridgeCommandHandler(
                     put("package", service.currentApp ?: "unknown")
                 }
             )
+
+            // === PHASE3-event-stream: B1 android_event_stream toggle ===
+            // Toggle inbound AccessibilityEvent capture. Privacy-sensitive:
+            // events can leak typed text + search queries, so the default
+            // is false and transitions always wipe the buffer.
+            "/events/stream" -> {
+                val enabled = body["enabled"]?.jsonPrimitive?.booleanOrNull
+                if (enabled == null) {
+                    respond(
+                        requestId, 400,
+                        buildJsonObject {
+                            put("error", "missing or invalid 'enabled' (must be boolean) in body")
+                        }
+                    )
+                    return
+                }
+                EventStore.setStreaming(enabled)
+                respond(
+                    requestId, 200,
+                    buildJsonObject {
+                        put("streaming", EventStore.isStreaming)
+                        put("buffer_cleared", true)
+                    }
+                )
+            }
+            // === END PHASE3-event-stream ===
 
             "/tap" -> {
                 val x = body["x"]?.jsonPrimitive?.content?.toIntOrNull()
