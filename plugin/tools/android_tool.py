@@ -2,22 +2,23 @@
 hermes-relay plugin — registers android_* tools into hermes-agent registry.
 
 Tools registered:
-  - android_ping          check bridge connectivity
-  - android_read_screen   get accessibility tree of current screen
-  - android_find_nodes    filtered search for nodes by text/class/clickable
-  - android_tap           tap at coordinates or by node id
-  - android_tap_text      tap element by visible text
-  - android_long_press    long-press at coordinates or by node id
-  - android_type          type text into focused field
-  - android_swipe         swipe gesture
-  - android_drag          precise point-to-point drag (duration-controlled)
-  - android_open_app      launch app by package name
-  - android_press_key     press hardware/software key (back, home, recents)
-  - android_screenshot    capture screenshot as base64
-  - android_scroll        scroll in direction
-  - android_wait          wait for element to appear
-  - android_get_apps      list installed apps
-  - android_current_app   get foreground app package name
+  - android_ping              check bridge connectivity
+  - android_read_screen       get accessibility tree of current screen
+  - android_find_nodes        filtered search for nodes by text/class/clickable
+  - android_tap               tap at coordinates or by node id
+  - android_tap_text          tap element by visible text
+  - android_long_press        long-press at coordinates or by node id
+  - android_type              type text into focused field
+  - android_swipe             swipe gesture
+  - android_drag              precise point-to-point drag (duration-controlled)
+  - android_open_app          launch app by package name
+  - android_press_key         press hardware/software key (back, home, recents)
+  - android_screenshot        capture screenshot as base64
+  - android_scroll            scroll in direction
+  - android_wait              wait for element to appear
+  - android_get_apps          list installed apps
+  - android_current_app       get foreground app package name
+  - android_describe_node     full property bag for a node by id (A4)
   - android_setup             configure bridge URL and pairing code
   - android_macro             batched workflow orchestrator (dispatches to other android_* tools)
   - android_clipboard_read    read system clipboard as plain text
@@ -557,6 +558,33 @@ def android_diff_screen(previous_hash: str) -> str:
     """
     try:
         data = _post("/diff_screen", {"previous_hash": previous_hash})
+        return json.dumps(data)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def android_describe_node(node_id: str) -> str:
+    """
+    Return the full property bag for a single accessibility node by ID.
+
+    Accepts a nodeId from `android_read_screen` (format: `w<windowIndex>:<seq>`)
+    and returns a richer view than the compact tree: bounds, className, text,
+    contentDescription, hintText, viewIdResourceName, childCount, plus every
+    state flag (clickable / longClickable / focusable / focused / editable /
+    scrollable / checkable / checked / enabled / selected / password).
+
+    `checked` is `null` when the node isn't checkable (so the agent can
+    distinguish "not a toggle" from "unchecked toggle"). `hintText` is API 26+
+    only; older devices return `null`.
+
+    Use this when `read_screen` gives you a node you want to reason about
+    more deeply before deciding to tap/scroll it — e.g. "is this toggle
+    currently checked?" or "what's the input's placeholder hint?".
+    """
+    try:
+        if not node_id:
+            return json.dumps({"error": "node_id is required"})
+        data = _post("/describe_node", {"nodeId": node_id})
         return json.dumps(data)
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -1186,6 +1214,28 @@ _SCHEMAS = {
             "required": ["action"],
         },
     },
+    "android_describe_node": {
+        "name": "android_describe_node",
+        "description": (
+            "Return the full property bag for a specific accessibility node by ID. "
+            "Use this after android_read_screen when you need richer details about "
+            "one node than the compact tree provides — e.g. 'is this toggle checked?', "
+            "'what hint text does this input show?', or 'is this button clickable?'. "
+            "Returns bounds, className, text, contentDescription, hintText, viewIdResourceName, "
+            "childCount, and state flags (clickable, checkable, checked, enabled, etc). "
+            "`checked` is null when the node isn't a toggle."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "node_id": {
+                    "type": "string",
+                    "description": "Stable node ID from android_read_screen (e.g. 'w0:42')",
+                },
+            },
+            "required": ["node_id"],
+        },
+    },
     "android_setup": {
         "name": "android_setup",
         "description": "Start the Android bridge relay and set the pairing code. Call this when the user wants to connect their phone. The relay runs on this server — the phone connects to it remotely via WebSocket. Only needs the pairing code shown in the Hermes Bridge app on the phone.",
@@ -1352,6 +1402,7 @@ _HANDLERS = {
     "android_wait":         lambda args, **kw: android_wait(**args),
     "android_get_apps":     lambda args, **kw: android_get_apps(),
     "android_current_app":  lambda args, **kw: android_current_app(),
+    "android_describe_node":    lambda args, **kw: android_describe_node(**args),
     "android_setup":            lambda args, **kw: android_setup(**args),
     "android_macro":            lambda args, **kw: android_macro(**args),
     "android_clipboard_read":   lambda args, **kw: android_clipboard_read(),

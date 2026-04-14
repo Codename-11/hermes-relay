@@ -677,16 +677,27 @@ class ActionExecutor(private val service: AccessibilityService) {
      * dispatch a swipe gesture in the opposite direction (to scroll the
      * viewport *up*, fingers move *down*), with a generous starting offset
      * so the gesture begins safely inside the viewport.
+     *
+     * A4: `centerX` / `centerY` are optional override coordinates. When
+     * supplied (via `/scroll` with a `nodeId`), `BridgeCommandHandler`
+     * resolves the node's bounds center and hands them in here so we swipe
+     * within the targeted scrollable instead of the whole root. When null
+     * (the legacy path — `/scroll` with just a direction), we fall back to
+     * the root-window bounds as before. The width/height used for the swipe
+     * offset comes from the root window either way — it's a "length of
+     * swipe" proxy, not a "where the scrollable lives" coordinate.
      */
     suspend fun scroll(
         direction: String,
         durationMs: Long = DEFAULT_SWIPE_DURATION_MS,
+        centerX: Int? = null,
+        centerY: Int? = null,
     ): ActionResult = WakeLockManager.wakeForAction {
         val root = service.rootInActiveWindow
             ?: return@wakeForAction ActionResult.failure("no active window available")
         val bounds = android.graphics.Rect().also { root.getBoundsInScreen(it) }
-        val cx = bounds.centerX()
-        val cy = bounds.centerY()
+        val cx = centerX ?: bounds.centerX()
+        val cy = centerY ?: bounds.centerY()
         val qx = bounds.width() / 4
         val qy = bounds.height() / 4
 

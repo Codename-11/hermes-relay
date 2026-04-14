@@ -81,6 +81,17 @@ import kotlinx.serialization.json.put
  *  - `/current_app` → returns `{package: "com.whatever"}`
  *  - `/clipboard` (GET) → returns `{text: "..."}` (empty string = nothing copied)
  *  - `/clipboard` (POST) body `{text}` → returns `{success: true}`
+ *  - `/describe_node` body `{nodeId}` — A4: full property bag for a node
+ *
+ * # nodeId semantics (A4)
+ *
+ * `/tap` and `/scroll` accept an optional `nodeId` in the body. When
+ * present, we resolve it against the live window tree via
+ * [ScreenReader.findNodeById], extract the node's screen-bounds center,
+ * and dispatch the gesture against those coords. `nodeId` wins over any
+ * explicit `(x, y)` in the same body — matches the "prefer node_id"
+ * contract documented on the Python `android_tap` / `android_scroll` tools.
+ * A non-resolvable nodeId returns a 404-style error envelope.
  *
  * # Master enable gate
  *
@@ -236,6 +247,51 @@ class BridgeCommandHandler(
             )
 
             "/tap" -> {
+                // A4: accept an optional `nodeId` from the body. Python side
+                // (android_tool.android_tap) already forwards this — we were
+                // ignoring it. If present, resolve via ScreenReader.findNodeById,
+                // take the node bounds center, and dispatch the gesture there.
+                // nodeId wins over (x,y) when both are provided — matches the
+                // Python tool's "prefer node_id" docstring.
+                val nodeId = body["nodeId"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+                if (nodeId != null) {
+                    val roots = service.snapshotAllWindows()
+                    if (roots.isEmpty()) {
+                        respond(
+                            requestId, 500,
+                            buildJsonObject { put("error", "no active window available") }
+                        )
+                        return
+                    }
+                    val node = service.reader.findNodeById(roots, nodeId)
+                    if (node == null) {
+                        recycleWindowRoots(roots)
+                        respond(
+                            requestId, 404,
+                            buildJsonObject { put("error", "node not resolvable: $nodeId") }
+                        )
+                        return
+                    }
+                    val rect = android.graphics.Rect().also { node.getBoundsInScreen(it) }
+                    @Suppress("DEPRECATION")
+                    try { node.recycle() } catch (_: Throwable) { }
+                    recycleWindowRoots(roots)
+                    if (rect.isEmpty) {
+                        respond(
+                            requestId, 400,
+                            buildJsonObject {
+                                put("error", "node '$nodeId' has empty bounds (off-screen?)")
+                            }
+                        )
+                        return
+                    }
+                    val cx = rect.centerX()
+                    val cy = rect.centerY()
+                    val duration = body["duration_ms"]?.jsonPrimitive?.content?.toLongOrNull() ?: 100L
+                    respondFromResult(requestId, executor.tap(cx, cy, duration))
+                    return
+                }
+
                 val x = body["x"]?.jsonPrimitive?.content?.toIntOrNull()
                 val y = body["y"]?.jsonPrimitive?.content?.toIntOrNull()
                 if (x == null || y == null) {
@@ -328,7 +384,87 @@ class BridgeCommandHandler(
 
             "/scroll" -> {
                 val direction = body["direction"]?.jsonPrimitive?.content.orEmpty()
+                // A4: optional nodeId targets the scroll at a specific
+                // scrollable container. If present, resolve to its bounds
+                // center; otherwise fall back to the legacy root-window
+                // centered scroll. nodeId wins over any explicit center coords
+                // in the body (though the Python tool doesn't send those).
+                val nodeId = body["nodeId"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+                if (nodeId != null) {
+                    val roots = service.snapshotAllWindows()
+                    if (roots.isEmpty()) {
+                        respond(
+                            requestId, 500,
+                            buildJsonObject { put("error", "no active window available") }
+                        )
+                        return
+                    }
+                    val node = service.reader.findNodeById(roots, nodeId)
+                    if (node == null) {
+                        recycleWindowRoots(roots)
+                        respond(
+                            requestId, 404,
+                            buildJsonObject { put("error", "node not resolvable: $nodeId") }
+                        )
+                        return
+                    }
+                    val rect = android.graphics.Rect().also { node.getBoundsInScreen(it) }
+                    @Suppress("DEPRECATION")
+                    try { node.recycle() } catch (_: Throwable) { }
+                    recycleWindowRoots(roots)
+                    if (rect.isEmpty) {
+                        respond(
+                            requestId, 400,
+                            buildJsonObject {
+                                put("error", "node '$nodeId' has empty bounds (off-screen?)")
+                            }
+                        )
+                        return
+                    }
+                    respondFromResult(
+                        requestId,
+                        executor.scroll(
+                            direction = direction,
+                            centerX = rect.centerX(),
+                            centerY = rect.centerY(),
+                        )
+                    )
+                    return
+                }
                 respondFromResult(requestId, executor.scroll(direction))
+            }
+
+            "/describe_node" -> {
+                // A4: return the full property bag for a specific node by ID.
+                val targetId = body["nodeId"]?.jsonPrimitive?.content
+                    ?: body["node_id"]?.jsonPrimitive?.content
+                if (targetId.isNullOrBlank()) {
+                    respond(
+                        requestId, 400,
+                        buildJsonObject { put("error", "missing 'nodeId' in body") }
+                    )
+                    return
+                }
+                val roots = service.snapshotAllWindows()
+                if (roots.isEmpty()) {
+                    respond(
+                        requestId, 500,
+                        buildJsonObject { put("error", "no active window available") }
+                    )
+                    return
+                }
+                val described = service.reader.describeNode(roots, targetId)
+                recycleWindowRoots(roots)
+                if (described.found && described.properties != null) {
+                    respond(requestId, 200, described.properties)
+                } else {
+                    respond(
+                        requestId, 404,
+                        buildJsonObject {
+                            put("error", described.error ?: "node not found: $targetId")
+                        }
+                    )
+                }
             }
 
             "/press_key" -> {
@@ -593,6 +729,18 @@ class BridgeCommandHandler(
             }
         }
         respond(requestId, status, payload)
+    }
+
+    /**
+     * A4: recycle a list of window roots returned by
+     * [HermesAccessibilityService.snapshotAllWindows]. Matches the same
+     * contract the A1 `/screen` handler uses after serializing.
+     */
+    private fun recycleWindowRoots(roots: List<android.view.accessibility.AccessibilityNodeInfo>) {
+        for (root in roots) {
+            @Suppress("DEPRECATION")
+            try { root.recycle() } catch (_: Throwable) { }
+        }
     }
 
     private fun respond(requestId: String, status: Int, result: JsonObject) {

@@ -1058,10 +1058,10 @@ async def _bridge_dispatch(
 # close over the path string here. One adapter per endpoint keeps the
 # route registration self-documenting at the call site.
 #
-# Endpoint inventory mirrors ``plugin/tools/android_tool.py``'s 14 tools:
+# Endpoint inventory mirrors ``plugin/tools/android_tool.py``'s 15 tools:
 #   GET  /ping, /screen, /screenshot, /get_apps, /current_app
 #   POST /tap, /tap_text, /type, /swipe, /open_app, /press_key,
-#        /scroll, /wait, /setup
+#        /scroll, /describe_node, /wait, /setup
 #
 # NOTE: the legacy relay used ``/apps`` for list apps but the Android app
 # expects ``/get_apps`` and the tool at line ~230 of android_tool.py calls
@@ -1135,6 +1135,13 @@ async def handle_bridge_press_key(request: web.Request) -> web.Response:
 
 async def handle_bridge_scroll(request: web.Request) -> web.Response:
     return await _bridge_dispatch(request, "/scroll")
+
+
+async def handle_bridge_describe_node(request: web.Request) -> web.Response:
+    # A4: forwards POST /describe_node with a `{nodeId}` body through the
+    # bridge channel. The phone resolves the ID via ScreenReader.findNodeById
+    # and returns the full property bag.
+    return await _bridge_dispatch(request, "/describe_node")
 
 
 async def handle_bridge_wait(request: web.Request) -> web.Response:
@@ -1783,6 +1790,7 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_post("/open_app", handle_bridge_open_app)
     app.router.add_post("/press_key", handle_bridge_press_key)
     app.router.add_post("/scroll", handle_bridge_scroll)
+    app.router.add_post("/describe_node", handle_bridge_describe_node)  # A4
     app.router.add_post("/wait", handle_bridge_wait)
     app.router.add_post("/setup", handle_bridge_setup)
     # A6: clipboard bridge — one path, two methods
