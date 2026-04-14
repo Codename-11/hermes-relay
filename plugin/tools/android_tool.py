@@ -16,6 +16,7 @@ Tools registered:
   - android_get_apps      list installed apps
   - android_current_app   get foreground app package name
   - android_setup         configure bridge URL and pairing code
+  - android_macro         batched workflow orchestrator (dispatches to other android_* tools)
 """
 
 import json
@@ -438,6 +439,197 @@ def android_setup(bridge_session_token: str) -> str:
         return json.dumps({"status": "error", "message": str(e)})
 
 
+def android_macro(steps: list, name: str = "unnamed", pace_ms: int = 500) -> str:
+    """
+    Execute a batched workflow of android_* tool calls in order.
+
+    Use this for KNOWN workflows (e.g. "open Spotify, tap Search, type X, tap
+    first result, tap Play"). For unknown ones, use ``android_navigate``
+    (vision-driven). If a step needs vision to decide what to do next, don't
+    batch past that point — split the workflow into two macros with a
+    read_screen / navigate call between them.
+
+    Args:
+        steps: Ordered list of dicts. Each dict must have a ``"tool"`` key
+            naming one of the ``android_*`` tools and may have an ``"args"``
+            key with kwargs for that tool. Example::
+
+                [
+                    {"tool": "android_open_app", "args": {"package": "com.spotify.music"}},
+                    {"tool": "android_tap_text", "args": {"text": "Search"}},
+                    {"tool": "android_type", "args": {"text": "Daft Punk"}},
+                ]
+
+        name: Human-readable label for the macro (appears in the trace and
+            error messages). Defaults to ``"unnamed"``.
+        pace_ms: Milliseconds to sleep between steps. Defaults to 500.
+            Set to 0 for no pacing. Negative values are rejected.
+
+    Returns:
+        A JSON string describing the outcome:
+
+        * On full success::
+
+            {
+                "success": true,
+                "name": "<name>",
+                "completed": <len(steps)>,
+                "results": [<per-step result dicts>, ...]
+            }
+
+        * On first failure or malformed step::
+
+            {
+                "success": false,
+                "name": "<name>",
+                "completed": <index of failed step>,
+                "results": [<results up to but not including the failure>],
+                "error": "<reason>"
+            }
+
+        * On empty ``steps`` list: immediate success with ``completed=0``.
+
+    Behaviour:
+        * Iterates ``steps`` in order.
+        * For each step, looks up ``step["tool"]`` in ``_HANDLERS`` and calls
+          it with ``step.get("args", {})``.
+        * Parses the result as JSON. A result with ``"success": false`` or an
+          ``"error"`` key is treated as a failure; the loop stops and the
+          partial trace is returned.
+        * Sleeps ``pace_ms`` milliseconds between steps (skipped after the
+          last step). ``pace_ms=0`` disables pacing entirely.
+    """
+    results: list = []
+
+    if pace_ms < 0:
+        return json.dumps({
+            "success": False,
+            "name": name,
+            "completed": 0,
+            "results": results,
+            "error": f"pace_ms must be >= 0 (got {pace_ms})",
+        })
+
+    if not isinstance(steps, list):
+        return json.dumps({
+            "success": False,
+            "name": name,
+            "completed": 0,
+            "results": results,
+            "error": "steps must be a list",
+        })
+
+    total = len(steps)
+    sleep_s = pace_ms / 1000.0
+
+    for i, step in enumerate(steps):
+        if not isinstance(step, dict):
+            return json.dumps({
+                "success": False,
+                "name": name,
+                "completed": i,
+                "results": results,
+                "error": f"step {i}: must be a dict (got {type(step).__name__})",
+            })
+
+        tool_name = step.get("tool")
+        if not tool_name:
+            return json.dumps({
+                "success": False,
+                "name": name,
+                "completed": i,
+                "results": results,
+                "error": f"step {i}: missing 'tool' key",
+            })
+
+        handler = _HANDLERS.get(tool_name)
+        if handler is None:
+            return json.dumps({
+                "success": False,
+                "name": name,
+                "completed": i,
+                "results": results,
+                "error": f"step {i}: unknown tool: {tool_name}",
+            })
+
+        args = step.get("args") or {}
+        if not isinstance(args, dict):
+            return json.dumps({
+                "success": False,
+                "name": name,
+                "completed": i,
+                "results": results,
+                "error": f"step {i} ({tool_name}): 'args' must be a dict",
+            })
+
+        # Dispatch to the underlying handler. Existing _HANDLERS entries are
+        # `lambda args, **kw: android_foo(**args)` — we call them with the
+        # positional args dict and let kwargs default.
+        try:
+            raw = handler(args)
+        except Exception as exc:  # pragma: no cover — defensive
+            return json.dumps({
+                "success": False,
+                "name": name,
+                "completed": i,
+                "results": results,
+                "error": f"step {i} ({tool_name}): handler raised: {exc}",
+            })
+
+        # Most android_* tools return JSON strings. A couple return plain
+        # strings with MEDIA: markers (android_screenshot) — we wrap those
+        # into a structured dict for the trace instead of trying to parse.
+        parsed: dict
+        if isinstance(raw, str):
+            try:
+                parsed = json.loads(raw)
+                if not isinstance(parsed, dict):
+                    parsed = {"raw": raw}
+            except (json.JSONDecodeError, TypeError):
+                parsed = {"raw": raw}
+        elif isinstance(raw, dict):
+            parsed = raw
+        else:
+            parsed = {"raw": raw}
+
+        # Failure check: explicit `success: False`, or an `error` key, or
+        # `status: "error"`.
+        failed = False
+        err_msg: Optional[str] = None
+        if parsed.get("success") is False:
+            failed = True
+            err_msg = parsed.get("error") or parsed.get("message") or "step reported success=false"
+        elif "error" in parsed and parsed["error"]:
+            failed = True
+            err_msg = str(parsed["error"])
+        elif parsed.get("status") == "error":
+            failed = True
+            err_msg = parsed.get("message") or parsed.get("error") or "step reported status=error"
+
+        if failed:
+            results.append({"tool": tool_name, "result": parsed})
+            return json.dumps({
+                "success": False,
+                "name": name,
+                "completed": i,
+                "results": results,
+                "error": f"step {i} ({tool_name}): {err_msg}",
+            })
+
+        results.append({"tool": tool_name, "result": parsed})
+
+        # Pace between steps, but skip after the last.
+        if sleep_s > 0 and i < total - 1:
+            time.sleep(sleep_s)
+
+    return json.dumps({
+        "success": True,
+        "name": name,
+        "completed": total,
+        "results": results,
+    })
+
+
 def _update_env_file(env_path, key: str, value: str):
     """Simple .env file updater (fallback when hermes_cli.config not available)."""
     lines = []
@@ -607,9 +799,74 @@ _SCHEMAS = {
             "required": ["pairing_code"],
         },
     },
+    "android_macro": {
+        "name": "android_macro",
+        "description": (
+            "Execute a batched workflow of android_* tool calls in order, "
+            "stopping on the first failure. Use this for KNOWN workflows where "
+            "the steps are deterministic (e.g. 'open Spotify, tap Search, type "
+            "X, tap first result, tap Play'). For unknown workflows that need "
+            "vision to decide what to do next, use `android_navigate` instead. "
+            "If a step might need vision to decide the next action, don't "
+            "batch past that point — split into two macros with a read_screen "
+            "or navigate call between them. Returns a structured trace with "
+            "per-step results, the completed count, and an error field on "
+            "failure."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "steps": {
+                    "type": "array",
+                    "description": (
+                        "Ordered list of step dicts. Each step must have a "
+                        "'tool' key (one of the android_* tool names) and may "
+                        "have an 'args' key (kwargs for that tool). Example: "
+                        "[{\"tool\": \"android_tap\", \"args\": {\"x\": 100, "
+                        "\"y\": 200}}, {\"tool\": \"android_type\", \"args\": "
+                        "{\"text\": \"hello\"}}]"
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "tool": {"type": "string", "description": "android_* tool name"},
+                            "args": {"type": "object", "description": "kwargs for the tool (optional)"},
+                        },
+                        "required": ["tool"],
+                    },
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Human-readable label for the macro (for logs/traces).",
+                    "default": "unnamed",
+                },
+                "pace_ms": {
+                    "type": "integer",
+                    "description": "Milliseconds to sleep between steps. 0 disables pacing.",
+                    "default": 500,
+                },
+            },
+            "required": ["steps"],
+        },
+    },
 }
 
 # ── Tool handlers map ──────────────────────────────────────────────────────────
+#
+# Dispatch table mapping tool names to their handler callables. Used by the
+# registry (below) AND by `android_macro`, which walks this dict to resolve
+# step["tool"] → handler function at runtime.
+#
+# NOTE: When a new android_* tool lands in this file, add it here too —
+# otherwise `android_macro` can't dispatch to it and the registry won't see
+# the handler. Parallel Wave 2 branches (A1 long_press, A2 drag, A3 find_nodes,
+# A4 describe_node, A5 screen_hash/diff_screen, A6 clipboard, A7 media,
+# B4 send_intent) each add their own entries; this file lists only the tools
+# that exist in THIS worktree at the time of writing.
+#
+# Handler signature: `lambda args, **kw: android_<tool>(**args)` — the extra
+# `**kw` swallows any future keyword-only params the registry might pass.
+# `android_macro` only ever calls `handler(args)` with the positional dict.
 
 _HANDLERS = {
     "android_ping":         lambda args, **kw: android_ping(),
@@ -626,6 +883,7 @@ _HANDLERS = {
     "android_get_apps":     lambda args, **kw: android_get_apps(),
     "android_current_app":  lambda args, **kw: android_current_app(),
     "android_setup":        lambda args, **kw: android_setup(**args),
+    "android_macro":        lambda args, **kw: android_macro(**args),
 }
 
 # ── Registry registration ──────────────────────────────────────────────────────
