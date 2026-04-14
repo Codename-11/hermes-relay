@@ -230,14 +230,31 @@ fi
 # ── 1/6  Clone or update the repo ──────────────────────────────────────────
 step 1 6 "Syncing repo"
 if [ -d "$RELAY_HOME/.git" ]; then
-    (cd "$RELAY_HOME" && git fetch --quiet origin "$BRANCH" && git checkout --quiet "$BRANCH" && git pull --ff-only --quiet) \
+    # Widen the remote refspec to the standard "all branches" form BEFORE
+    # fetching. Pre-v0.4 installs used `git clone --single-branch` which
+    # pinned the refspec to `+refs/heads/main:refs/remotes/origin/main` —
+    # that prevents `git checkout feature/...` from working even after an
+    # explicit `git fetch origin feature/...`, because no remote-tracking
+    # ref gets created. Widening the refspec is idempotent: sets it to
+    # the standard form if narrow, no-op if already wide. This lets
+    # `--branch <name>` and `HERMES_RELAY_BRANCH=<name> hermes-relay-update`
+    # work cleanly on clones that pre-date v0.4.
+    (cd "$RELAY_HOME" \
+        && git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*" \
+        && git fetch --quiet origin "$BRANCH" \
+        && git checkout --quiet "$BRANCH" \
+        && git pull --ff-only --quiet) \
         || die "Failed to update existing clone at $RELAY_HOME"
     ok "Updated existing clone at $RELAY_HOME"
 elif [ -e "$RELAY_HOME" ]; then
     die "$RELAY_HOME exists but is not a git clone — remove it or set HERMES_RELAY_HOME to a different path"
 else
     mkdir -p "$(dirname "$RELAY_HOME")"
-    git clone --quiet --branch "$BRANCH" --single-branch "$REPO_URL" "$RELAY_HOME" \
+    # Deliberately NOT passing --single-branch here: we want future branch
+    # switches (`--branch feature/foo`) to work without a retroactive
+    # refspec fix. The clone is a few KB larger but the ergonomic win is
+    # much bigger than the disk cost.
+    git clone --quiet --branch "$BRANCH" "$REPO_URL" "$RELAY_HOME" \
         || die "Failed to clone $REPO_URL into $RELAY_HOME"
     ok "Cloned $REPO_URL to $RELAY_HOME"
 fi
