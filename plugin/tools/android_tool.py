@@ -23,6 +23,8 @@ Tools registered:
   - android_clipboard_read    read system clipboard as plain text
   - android_clipboard_write   write plain text to system clipboard
   - android_media             control system-wide media playback (play/pause/next/previous/toggle)
+  - android_screen_hash       cheap SHA-256 fingerprint of current screen (A5)
+  - android_diff_screen       compare current screen to a prior hash (A5)
 """
 
 import json
@@ -507,6 +509,54 @@ def android_media(action: str) -> str:
                 "valid_actions": list(_MEDIA_ACTIONS),
             })
         data = _post("/media", {"action": normalized})
+        return json.dumps(data)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def android_screen_hash() -> str:
+    """
+    Return a cheap SHA-256 fingerprint of the current Android screen.
+
+    Walks the accessibility tree across all visible windows and hashes a
+    stable per-node signature (className + text + contentDescription +
+    bounds + viewIdResourceName). The hash is deterministic across
+    unchanged screens so the agent can use it for "did anything change?"
+    polling ~100x cheaper than re-reading the full tree.
+
+    Returns JSON: ``{"hash": "<hex>", "node_count": N, "truncated": bool}``.
+
+    Known limitation: screens with live counters, scrolling tickers, or
+    animated progress % will churn the hash every frame. Use
+    ``android_read_screen`` for those edge cases.
+    """
+    try:
+        data = _get("/screen_hash")
+        return json.dumps(data)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def android_diff_screen(previous_hash: str) -> str:
+    """
+    Compare the current screen to a prior hash and report whether it
+    changed.
+
+    Returns JSON: ``{"changed": bool, "hash": "<hex>", "node_count": N,
+    "truncated": bool}``. The new hash is always returned so the agent
+    can update its reference without a second call.
+
+    Typical usage::
+
+        before = json.loads(android_screen_hash())["hash"]
+        android_tap(...)
+        result = json.loads(android_diff_screen(before))
+        if result["changed"]:
+            # something on screen changed — maybe read_screen to decide what
+            ...
+    """
+    try:
+        data = _post("/diff_screen", {"previous_hash": previous_hash})
         return json.dumps(data)
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -1234,6 +1284,38 @@ _SCHEMAS = {
             "required": ["text"],
         },
     },
+    "android_screen_hash": {
+        "name": "android_screen_hash",
+        "description": (
+            "Return a cheap SHA-256 fingerprint of the current Android screen, "
+            "computed from the accessibility tree. Deterministic across "
+            "unchanged screens — use for fast change detection in navigation "
+            "loops (~100x cheaper than android_read_screen). Returns "
+            "{hash, node_count, truncated}. Known limitation: live counters "
+            "and animated text will churn the hash."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+    "android_diff_screen": {
+        "name": "android_diff_screen",
+        "description": (
+            "Compare the current Android screen to a previous hash and report "
+            "whether anything changed. Returns {changed, hash, node_count, "
+            "truncated} in one call so the agent can update its reference "
+            "without a second round-trip. Use after a tap/swipe to confirm "
+            "something actually happened."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "previous_hash": {
+                    "type": "string",
+                    "description": "Prior hash from android_screen_hash.",
+                },
+            },
+            "required": ["previous_hash"],
+        },
+    },
 }
 
 # ── Tool handlers map ──────────────────────────────────────────────────────────
@@ -1275,6 +1357,8 @@ _HANDLERS = {
     "android_clipboard_read":   lambda args, **kw: android_clipboard_read(),
     "android_clipboard_write":  lambda args, **kw: android_clipboard_write(**args),
     "android_media":            lambda args, **kw: android_media(**args),
+    "android_screen_hash":      lambda args, **kw: android_screen_hash(),
+    "android_diff_screen":      lambda args, **kw: android_diff_screen(**args),
 }
 
 # ── Registry registration ──────────────────────────────────────────────────────

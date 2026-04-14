@@ -1175,6 +1175,17 @@ async def handle_bridge_find_nodes(request: web.Request) -> web.Response:
     return await _bridge_dispatch(request, "/find_nodes")
 
 
+# A5 — cheap change detection. /screen_hash is a GET so the tool side
+# can call it from a simple `_get(...)`; /diff_screen takes the prior
+# hash in a JSON body and is therefore POST.
+async def handle_bridge_screen_hash(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/screen_hash")
+
+
+async def handle_bridge_diff_screen(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/diff_screen")
+
+
 # === END PHASE3-bridge-server ===
 
 
@@ -1781,6 +1792,9 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_post("/media", handle_bridge_media)
     # A3: filtered accessibility-tree search
     app.router.add_post("/find_nodes", handle_bridge_find_nodes)
+    # A5: screen-hash change detection
+    app.router.add_get("/screen_hash", handle_bridge_screen_hash)
+    app.router.add_post("/diff_screen", handle_bridge_diff_screen)
     # === END PHASE3-bridge-server ===
 
     # === PHASE3-status: loopback-gated structured phone status ===
