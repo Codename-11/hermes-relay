@@ -1,8 +1,15 @@
 package com.hermesandroid.relay.accessibility
 
 import android.graphics.Rect
+import android.os.Build
 import android.view.accessibility.AccessibilityNodeInfo
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /**
  * Phase 3 — accessibility `accessibility-runtime`
@@ -228,6 +235,184 @@ class ScreenReader {
             try { child.recycle() } catch (_: Throwable) { }
         }
         return null
+    }
+
+    // ─── A4: describe_node + stable nodeId lookup ────────────────────────────
+    //
+    // `findNodeById` re-walks the window tree every call. We deliberately do
+    // NOT cache IDs between calls — the UI changes, nodes come and go, and a
+    // cached lookup table would be stale the moment the user scrolled. The
+    // walker assigns the same `w<windowIndex>:<sequentialIndex>` IDs that the
+    // P1 multi-window walker emits, so a nodeId from `read_screen` round-trips
+    // cleanly into `describe_node`, `/tap`, and `/scroll` during the same
+    // screen dwell.
+    //
+    // IMPORTANT: the caller takes ownership of the returned node and is
+    // responsible for `node.recycle()`. We stop recycling at the match frontier
+    // and let it bubble up. `describeNode` below handles this contract.
+
+    /**
+     * Walk every window root in [roots] and return the first node whose
+     * assigned stable ID matches [nodeId]. Returns `null` if no match.
+     *
+     * ID format is `w<windowIndex>:<sequentialIndex>` — the same scheme the
+     * P1 multi-window `ScreenReader.readAllWindows` walker emits when
+     * serializing `ScreenNode.nodeId`. Sequential index is a 0-based pre-order
+     * counter that increments for every visited node within that window's
+     * traversal (NOT just nodes that end up in the ScreenContent output —
+     * we walk the full raw tree so the ID space is stable regardless of
+     * interest filtering).
+     *
+     * The caller takes ownership of the returned [AccessibilityNodeInfo] and
+     * MUST recycle it (on API <= 33) when done. We stop recycling at the
+     * match frontier so the node survives the return trip.
+     */
+    fun findNodeById(
+        roots: List<AccessibilityNodeInfo>,
+        nodeId: String,
+    ): AccessibilityNodeInfo? {
+        if (nodeId.isBlank()) return null
+        // Parse `w<windowIdx>:<seqIdx>`. Reject malformed IDs up front so we
+        // don't spend O(tree) walking when the input can't possibly match.
+        val colonIdx = nodeId.indexOf(':')
+        if (colonIdx <= 1 || nodeId[0] != 'w') return null
+        val wantedWindow = nodeId.substring(1, colonIdx).toIntOrNull() ?: return null
+        val wantedSeq = nodeId.substring(colonIdx + 1).toIntOrNull() ?: return null
+        if (wantedWindow < 0 || wantedWindow >= roots.size || wantedSeq < 0) return null
+
+        val root = roots[wantedWindow]
+        val counter = IntArray(1) // mutable seq counter, boxed so the recursion can mutate it
+        return walkForId(root, wantedSeq, counter)
+    }
+
+    /**
+     * Recursive node-id walker. Returns a non-null match (to be owned by the
+     * caller and recycled by them) OR null if this subtree doesn't contain it.
+     *
+     * Recycling rules:
+     *  - Children that don't contain the match are recycled in-place.
+     *  - The matched node bubbles up un-recycled — the outermost caller owns
+     *    it.
+     *  - The root node itself is never recycled here; the caller of
+     *    `findNodeById` owns window roots (same contract as `snapshotAllWindows`).
+     */
+    private fun walkForId(
+        node: AccessibilityNodeInfo?,
+        wantedSeq: Int,
+        counter: IntArray,
+    ): AccessibilityNodeInfo? {
+        if (node == null) return null
+        val mySeq = counter[0]
+        counter[0] = mySeq + 1
+        if (mySeq == wantedSeq) {
+            // Match at this node. Bubble up without recycling.
+            return node
+        }
+        // If we've already passed the target index without finding it, there's
+        // no point descending further — sequential indices are monotonically
+        // increasing and children always get higher numbers than their parent.
+        if (mySeq > wantedSeq) return null
+
+        val childCount = node.childCount
+        for (i in 0 until childCount) {
+            val child = node.getChild(i) ?: continue
+            val hit = walkForId(child, wantedSeq, counter)
+            if (hit != null) {
+                // Found the match in this subtree. Don't recycle `child` if
+                // it IS the hit (the caller needs it); otherwise the recursive
+                // call already handled sibling recycling on its way down.
+                return hit
+            }
+            @Suppress("DEPRECATION")
+            try { child.recycle() } catch (_: Throwable) { }
+        }
+        return null
+    }
+
+    /**
+     * A4: result of a `describe_node` lookup. Serialized directly into the
+     * `bridge.response` result payload by [BridgeCommandHandler].
+     *
+     * When [found] is false, [properties] is null and [error] explains why.
+     */
+    data class DescribeNodeResult(
+        val found: Boolean,
+        val properties: JsonObject? = null,
+        val error: String? = null,
+    )
+
+    /**
+     * A4: return the full property bag for [nodeId] on the current window
+     * set. Props: `nodeId`, `bounds`, `className`, `text`, `contentDescription`,
+     * `hintText` (API 26+), `viewIdResourceName`, `childCount`, plus a dozen
+     * state flags. `checked` is null when the node isn't checkable so callers
+     * can distinguish "not a toggle" from "unchecked toggle".
+     *
+     * Walks the tree via [findNodeById], builds the JSON, and recycles the
+     * resolved node before returning.
+     */
+    fun describeNode(
+        roots: List<AccessibilityNodeInfo>,
+        nodeId: String,
+    ): DescribeNodeResult {
+        val node = findNodeById(roots, nodeId)
+            ?: return DescribeNodeResult(found = false, error = "node not found: $nodeId")
+
+        try {
+            val rect = Rect().also { node.getBoundsInScreen(it) }
+            val bounds = rect.toBoundsOrZero()
+
+            // hintText is API 26+. minSdk on this project is 26, so in practice
+            // it's always available — but we guard anyway to keep the property
+            // out of the payload on devices where the API call would throw.
+            val hintText: String? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                node.hintText?.toString()
+            } else null
+
+            // Local helper to collapse blank/null strings to JsonNull. A
+            // local lambda rather than an extension `put` overload so we
+            // don't shadow `JsonObjectBuilder.put(String, String?)`.
+            fun strOrNull(raw: String?): JsonElement =
+                if (raw.isNullOrBlank()) JsonNull else JsonPrimitive(raw)
+
+            val props: JsonObject = buildJsonObject {
+                put("nodeId", nodeId)
+                put("bounds", buildJsonObject {
+                    put("left", bounds.left)
+                    put("top", bounds.top)
+                    put("right", bounds.right)
+                    put("bottom", bounds.bottom)
+                    put("centerX", bounds.centerX)
+                    put("centerY", bounds.centerY)
+                    put("width", bounds.width)
+                    put("height", bounds.height)
+                })
+                put("className", strOrNull(node.className?.toString()))
+                put("text", strOrNull(node.text?.toString()))
+                put("contentDescription", strOrNull(node.contentDescription?.toString()))
+                put("hintText", strOrNull(hintText))
+                put("viewIdResourceName", strOrNull(node.viewIdResourceName))
+                put("childCount", node.childCount)
+                put("clickable", node.isClickable)
+                put("longClickable", node.isLongClickable)
+                put("focusable", node.isFocusable)
+                put("focused", node.isFocused)
+                put("editable", node.isEditable)
+                put("scrollable", node.isScrollable)
+                put("checkable", node.isCheckable)
+                // Null vs false is load-bearing: null = "not a toggle",
+                // false = "unchecked toggle".
+                put("checked", if (node.isCheckable) JsonPrimitive(node.isChecked) else JsonNull)
+                put("enabled", node.isEnabled)
+                put("selected", node.isSelected)
+                put("password", node.isPassword)
+            }
+
+            return DescribeNodeResult(found = true, properties = props)
+        } finally {
+            @Suppress("DEPRECATION")
+            try { node.recycle() } catch (_: Throwable) { }
+        }
     }
 
     private fun Rect.toBoundsOrZero(): Bounds =
