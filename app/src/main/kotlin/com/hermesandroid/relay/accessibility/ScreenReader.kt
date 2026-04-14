@@ -7,8 +7,9 @@ import kotlinx.serialization.Serializable
 /**
  * Phase 3 — accessibility `accessibility-runtime`
  *
- * Walks the active-window `AccessibilityNodeInfo` tree and produces a
- * structured, serializable snapshot the agent can reason about.
+ * Walks the `AccessibilityNodeInfo` trees of every active accessibility
+ * window and produces a single structured, serializable snapshot the agent
+ * can reason about.
  *
  * The output shape is deliberately flat: the agent overwhelmingly cares
  * about *"what text can I see, and where is it?"* — not the exact widget
@@ -16,6 +17,47 @@ import kotlinx.serialization.Serializable
  * non-blank text, content description, or a click / long-click action) and
  * include its screen bounds so [ActionExecutor.tapText] can hand them to
  * `dispatchGesture` without re-walking the tree.
+ *
+ * # Multi-window walk (P1)
+ *
+ * As of P1 (`feature/P1-all-windows`) the reader walks *every* live
+ * accessibility window, not just `rootInActiveWindow`. This catches system
+ * overlays, popup menus, the notification shade when pulled down,
+ * permission dialogs, and multi-window split-screen state — all of which
+ * were previously invisible to the agent.
+ *
+ * ## Tree-merging strategy
+ *
+ * We flatten all windows into **one** `ScreenContent` rather than returning
+ * per-window trees. This is deliberate: the existing public contract
+ * (consumed by `BridgeCommandHandler` and the Python-side LLM prompt) is
+ * "one JSON object with a `nodes[]` array". Preserving that contract means
+ * no wire-format change and no consumer refactor.
+ *
+ * To disambiguate nodes that belong to different windows we prefix every
+ * `nodeId` with `w<windowIndex>:<sequentialIndex>`. `windowIndex` is the
+ * position in `service.windows` (top-of-stack first, per Android docs),
+ * `sequentialIndex` is the 0-based collection order within the combined
+ * walk. The root bounds emitted on `ScreenContent.rootBounds` are the
+ * **union** of every window's root bounds, so geometric callers still see
+ * a single enclosing rectangle.
+ *
+ * ## MAX_NODES cap
+ *
+ * The 512-node cap applies to the *combined* tree, not per-window. If the
+ * first window alone exceeds the cap we short-circuit the whole walk and
+ * set `truncated = true` without descending into later windows — the agent
+ * already has more than it can reasonably use.
+ *
+ * ## Node recycling landmine
+ *
+ * Every `AccessibilityWindowInfo.getRoot()` returns a **fresh**
+ * `AccessibilityNodeInfo` that must be recycled by the caller. Every
+ * `info.getChild(i)` also returns a fresh ref. The public methods here
+ * do NOT recycle their input roots — the caller
+ * ([HermesAccessibilityService.snapshotAllWindows] in practice) owns the
+ * lifetime of the roots it produced. Child nodes fetched during the walk
+ * are recycled per-iteration in `try/finally`.
  *
  * The tree is bounded by [MAX_NODES] to prevent pathological apps (grids
  * with thousands of cells) from producing multi-megabyte screen dumps.
@@ -29,7 +71,8 @@ class ScreenReader {
         /**
          * Hard cap on node count. 512 is comfortable for a typical app
          * screen (most have 30–150 interesting nodes) while keeping the
-         * wire payload under ~40 KB in the worst case.
+         * wire payload under ~40 KB in the worst case. With P1 the cap
+         * now spans the *combined* tree across all live windows.
          */
         const val MAX_NODES = 512
 
@@ -40,7 +83,8 @@ class ScreenReader {
     /**
      * Structured representation of a screen, ready for JSON serialization.
      * The [rootBounds] are in absolute screen pixels (what `dispatchGesture`
-     * uses).
+     * uses). When P1 merges multiple windows, [rootBounds] is the union of
+     * every window's root bounds.
      */
     @Serializable
     data class ScreenContent(
@@ -53,6 +97,19 @@ class ScreenReader {
 
     @Serializable
     data class ScreenNode(
+        /**
+         * Stable, walk-scoped identifier for this node. Format:
+         * `w<windowIndex>:<sequentialIndex>` — e.g. `w0:42` for the 43rd
+         * emitted node from the top-of-stack window, `w1:7` for the 8th
+         * emitted node of the next window down. Always present when the
+         * node was produced by [readAllWindows]; may be null for callers
+         * that bypass the multi-window entry point (legacy tests).
+         *
+         * The Python `android_tool` layer has long advertised a `nodeId`
+         * field in its doc-comments; P1 is the first version that actually
+         * emits it on the wire.
+         */
+        val nodeId: String? = null,
         val text: String? = null,
         val contentDescription: String? = null,
         val className: String? = null,
@@ -82,11 +139,12 @@ class ScreenReader {
     }
 
     /**
-     * Traverse the tree rooted at [rootNode] and return a [ScreenContent]
-     * snapshot.
+     * Back-compat single-root entry point. Delegates to [readAllWindows]
+     * with a single-element list so the walk semantics (cap, recycling,
+     * node-id prefix) stay identical regardless of which public method
+     * the caller picked.
      *
-     * This method does NOT recycle [rootNode] — the caller owns it (the
-     * caller also owns the lifetime contract with `rootInActiveWindow`).
+     * This method does NOT recycle [rootNode] — the caller owns it.
      *
      * @param includeBounds when false, we still collect bounds for
      *        traversal decisions but zero them in the output to shrink the
@@ -96,15 +154,78 @@ class ScreenReader {
     fun readScreen(
         rootNode: AccessibilityNodeInfo,
         includeBounds: Boolean = true,
+    ): ScreenContent = readAllWindows(listOf(rootNode), includeBounds)
+
+    /**
+     * P1 multi-window entry point. Walks every root in [windowRoots] in
+     * order (top-of-stack first) and emits a single flat [ScreenContent]
+     * with node IDs prefixed by window index.
+     *
+     * The [windowRoots] list is NOT recycled by this method — callers
+     * ([HermesAccessibilityService.snapshotAllWindows] + finally blocks
+     * in `BridgeCommandHandler`) own the roots they produced. Child nodes
+     * fetched during traversal ARE recycled per-iteration.
+     *
+     * @param includeBounds see [readScreen].
+     */
+    fun readAllWindows(
+        windowRoots: List<AccessibilityNodeInfo>,
+        includeBounds: Boolean = true,
     ): ScreenContent {
         val collected = ArrayList<ScreenNode>(128)
-        val rootRect = Rect().also { rootNode.getBoundsInScreen(it) }
-        val rootBounds = rootRect.toBoundsOrZero()
+        var truncated = false
 
-        val truncated = walk(rootNode, collected, includeBounds)
+        // Union of every window's root bounds. Starts empty and absorbs
+        // each window's root rect via Rect.union(), so one-window callers
+        // see identical output to the pre-P1 code path.
+        val unionRect = Rect()
+        var unionInitialized = false
+        var packageName: String? = null
+
+        for ((windowIndex, rootNode) in windowRoots.withIndex()) {
+            if (collected.size >= MAX_NODES) {
+                // Cap already exhausted by an earlier window — do not
+                // descend. This is intentional: the agent has more than
+                // it can reason about and we'd rather be honest about it
+                // than silently clip the later-window content.
+                truncated = true
+                break
+            }
+
+            // Latch the first window's package name as the "primary" one.
+            // Multi-window state with different packages (e.g. a popup from
+            // a different process) is rare, and the agent can still see
+            // the full package-name string on each node via className if
+            // it needs finer-grained attribution.
+            if (packageName == null) {
+                packageName = rootNode.packageName?.toString()
+            }
+
+            val rootRect = Rect()
+            rootNode.getBoundsInScreen(rootRect)
+            if (!unionInitialized) {
+                unionRect.set(rootRect)
+                unionInitialized = true
+            } else {
+                unionRect.union(rootRect)
+            }
+
+            val hit = walk(
+                node = rootNode,
+                windowIndex = windowIndex,
+                out = collected,
+                includeBounds = includeBounds,
+            )
+            if (hit) {
+                truncated = true
+                break
+            }
+        }
+
+        val rootBounds = if (unionInitialized) unionRect.toBoundsOrZero() else ZERO_BOUNDS
 
         return ScreenContent(
-            packageName = rootNode.packageName?.toString(),
+            packageName = packageName,
             rootBounds = rootBounds,
             nodes = collected,
             truncated = truncated,
@@ -114,9 +235,13 @@ class ScreenReader {
     /**
      * Recursive walker. Returns `true` if the cap was hit (signaling
      * caller to mark output as truncated).
+     *
+     * [windowIndex] is the position in the parent walk's `windowRoots`
+     * list and becomes the `w<n>:` prefix on every emitted node ID.
      */
     private fun walk(
         node: AccessibilityNodeInfo?,
+        windowIndex: Int,
         out: MutableList<ScreenNode>,
         includeBounds: Boolean,
     ): Boolean {
@@ -146,8 +271,16 @@ class ScreenReader {
             !bounds.isEmpty
 
         if (interesting) {
+            // Node ID is `w<windowIndex>:<sequentialIndex>`. Using the
+            // sequential emission index (not a hash of the node) keeps
+            // IDs stable within a single snapshot and compact on the
+            // wire, at the cost of being snapshot-scoped (not durable
+            // across successive /screen calls). That's the right tradeoff
+            // — the agent re-reads the screen before each action anyway.
+            val nodeId = "w$windowIndex:${out.size}"
             out.add(
                 ScreenNode(
+                    nodeId = nodeId,
                     text = text,
                     contentDescription = contentDesc,
                     className = node.className?.toString(),
@@ -169,7 +302,7 @@ class ScreenReader {
             if (out.size >= MAX_NODES) return true
             val child = node.getChild(i) ?: continue
             try {
-                val hit = walk(child, out, includeBounds)
+                val hit = walk(child, windowIndex, out, includeBounds)
                 if (hit) return true
             } finally {
                 @Suppress("DEPRECATION")
@@ -181,37 +314,67 @@ class ScreenReader {
     }
 
     /**
-     * Find the first descendant node whose text or content-description
-     * contains [needle] (case-insensitive). Used by
-     * [ActionExecutor.tapText]. Returns the node's center bounds, or null
-     * if no match.
+     * Find the first node across [windowRoots] whose text or
+     * content-description contains [needle] (case-insensitive). Used by
+     * [ActionExecutor.tapText]. Returns the node's bounds, or null if no
+     * match anywhere.
      *
      * We walk fresh (not against a cached [ScreenContent]) so the result
      * is always current — tapping into stale bounds is the single most
      * common "bridge tapped the wrong thing" bug.
      */
-    fun findNodeBoundsByText(rootNode: AccessibilityNodeInfo, needle: String): Bounds? {
+    fun findNodeBoundsByText(
+        windowRoots: List<AccessibilityNodeInfo>,
+        needle: String,
+    ): Bounds? {
         if (needle.isBlank()) return null
         val lowered = needle.lowercase()
-        return findFirst(rootNode) { node ->
-            val text = node.text?.toString()?.lowercase()
-            val desc = node.contentDescription?.toString()?.lowercase()
-            (text?.contains(lowered) == true) || (desc?.contains(lowered) == true)
-        }?.let { found ->
-            val r = Rect()
-            found.getBoundsInScreen(r)
-            r.toBoundsOrZero()
+        for (root in windowRoots) {
+            val hit = findFirst(root) { node ->
+                val text = node.text?.toString()?.lowercase()
+                val desc = node.contentDescription?.toString()?.lowercase()
+                (text?.contains(lowered) == true) || (desc?.contains(lowered) == true)
+            }
+            if (hit != null) {
+                val r = Rect()
+                hit.getBoundsInScreen(r)
+                return r.toBoundsOrZero()
+            }
         }
+        return null
     }
 
     /**
-     * Find the currently-focused input node (for [ActionExecutor.typeText]).
-     * Prefers `FOCUS_INPUT` focus, falls back to the first editable node.
+     * Back-compat single-root overload. Delegates to the multi-window
+     * form so tests and any legacy call site still compile unchanged.
      */
-    fun findFocusedInput(rootNode: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        rootNode.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.let { return it }
-        return findFirst(rootNode) { it.isEditable }
+    fun findNodeBoundsByText(rootNode: AccessibilityNodeInfo, needle: String): Bounds? =
+        findNodeBoundsByText(listOf(rootNode), needle)
+
+    /**
+     * Find the currently-focused input node across [windowRoots] (for
+     * [ActionExecutor.typeText]). Prefers `FOCUS_INPUT` focus on each
+     * window in order, falls back to the first editable node found in any
+     * window.
+     *
+     * Returned node is caller-owned — must be `recycle()`d on API < 33.
+     */
+    fun findFocusedInput(windowRoots: List<AccessibilityNodeInfo>): AccessibilityNodeInfo? {
+        for (root in windowRoots) {
+            root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.let { return it }
+        }
+        for (root in windowRoots) {
+            findFirst(root) { it.isEditable }?.let { return it }
+        }
+        return null
     }
+
+    /**
+     * Back-compat single-root overload. Delegates to the multi-window
+     * form.
+     */
+    fun findFocusedInput(rootNode: AccessibilityNodeInfo): AccessibilityNodeInfo? =
+        findFocusedInput(listOf(rootNode))
 
     private fun findFirst(
         node: AccessibilityNodeInfo?,
