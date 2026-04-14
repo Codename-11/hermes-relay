@@ -1,10 +1,10 @@
 # Hermes-Relay — Android App
 
-## Specification v1.1
+## Specification v1.3
 
-**Status:** v0.1.0 — Phase 0 + Phase 1 complete  
+**Status:** v0.3.0 shipped to Play Store internal testing + sideload track. Phase 0, Phase 1, Phase 2 (terminal preview), Phase 3 (bridge channel), Phase 4 (security hardening per ADR 15), and Phase 5 (polish + CI/CD) are partially-or-fully shipped. Phase V (voice mode) shipped 2026-04-12. v0.4 bridge feature expansion in progress on `feature/bridge-feature-expansion` — see `docs/plans/2026-04-13-bridge-feature-expansion.md`.  
 **Repo:** [Codename-11/hermes-relay](https://github.com/Codename-11/hermes-relay)  
-**Updated:** 2026-04-07
+**Updated:** 2026-04-13
 
 ---
 
@@ -100,11 +100,20 @@ Connection lifecycle, auth, keepalive.
 
 | Type | Direction | Payload |
 |------|-----------|---------|
-| `auth` | App → Server | `{ pairing_code, device_name, device_id }` |
-| `auth.ok` | Server → App | `{ session_token, server_version, profiles[] }` |
+| `auth` (pairing mode) | App → Server | `{ pairing_code, ttl_seconds?, grants?, device_name, device_id }` — `ttl_seconds` / `grants` come from the phone's TTL picker dialog; host metadata wins over phone metadata when both are present |
+| `auth` (session mode) | App → Server | `{ session_token, device_name, device_id }` — ttl/grants are not re-sent; server keeps the grant table keyed on the original pair |
+| `auth.ok` | Server → App | `{ session_token, server_version, profiles[], expires_at, grants, transport_hint }` — see below |
 | `auth.fail` | Server → App | `{ reason }` |
 | `ping` | Both | `{ ts }` |
 | `pong` | Both | `{ ts }` |
+
+**`auth.ok` extended fields** (added in ADR 15 — see `docs/decisions.md`):
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `expires_at` | epoch seconds or `null` | Session lifetime. `null` means never-expire (user explicitly picked "Never" in the TTL picker). Server-side `math.inf` serializes as `null`. |
+| `grants` | `{ channel: epoch \| null }` | Per-channel expiries. Keys today: `chat`, `terminal`, `bridge`. Each grant is clamped to the session lifetime — a grant cannot outlive its session. `null` means the grant shares the session's never-expire. |
+| `transport_hint` | `"wss"` / `"ws"` / `"unknown"` | What the server believes the phone is actually connected over. Drives the transport security badge and the TTL picker's default option on re-pair. |
 
 #### Channel: `chat`
 **Note:** Chat now connects directly to the Hermes API Server via HTTP/SSE (see Section 6.2). The relay server is not involved in chat. The SSE event types from the Hermes API are:
@@ -330,10 +339,15 @@ Bottom navigation bar with 4 tabs:
 - Supports: full ANSI color, scrollback, text selection, copy/paste
 
 ### Bridge Tab
-- **Connection status** — connected/disconnected, latency, battery
-- **Permission checklist** — accessibility service, overlay, etc.
-- **Activity log** — recent commands executed by the agent on the phone
-- **Quick actions** — screenshot, screen read (manual triggers for testing)
+Shipped in v0.3.0. Four-card control surface rendered by `BridgeScreen.kt` + `BridgeViewModel`:
+
+- **Master toggle card** (`BridgeMasterToggle`) — headline "Allow Agent Control" switch. Gated on accessibility permission being granted. Inline device / battery / screen / current-app rows. Info icon opens a Play-review explanation dialog.
+- **Status card** (`BridgeStatusCard`) — reuses `ConnectionStatusBadge` for the pulsing connected/disconnected dot. Seeded from `PowerManager.isInteractive` + `BatteryManager.BATTERY_PROPERTY_CAPACITY` via `BridgeViewModel`.
+- **Permission checklist** (`BridgePermissionChecklist`) — four rows: Accessibility / Screen Capture / Overlay / Notification Listener. Tap-to-open Android Settings via `ACTION_ACCESSIBILITY_SETTINGS`, `ACTION_MANAGE_OVERLAY_PERMISSION`, `enabled_notification_listeners`. Re-probes on `Lifecycle.Event.ON_RESUME` so returning from Android Settings flips rows from red to green without navigation churn.
+- **Activity log** (`BridgeActivityLog`) — scrollable `LazyColumn` capped at 320dp + `MAX_LOG_ENTRIES=100`. Tap-to-expand rows showing timestamp, status (Pending / Success / Failed / Blocked), result text, and optional screenshot token. DataStore-backed via `BridgePreferences`.
+- **Safety summary card** (`BridgeSafetySummaryCard`) — replaces the earlier inert placeholder. Displays blocklist count / destructive-verb count / countdown timer (`in MM:SS` during an active idle window, else `N min idle`). Tap-through to `BridgeSafetySettingsScreen` for editing the blocklist / destructive verbs / auto-disable timer / status overlay / confirmation timeout.
+
+The bridge UI drives — and is driven by — Tier 5 safety-rails (`BridgeSafetyManager`, `BridgeForegroundService`, `BridgeStatusOverlay`, `AutoDisableWorker`). See `docs/decisions.md` and `CLAUDE.md`'s file table for the full wiring.
 
 ### Settings Tab
 - **API Server** — URL, API key, health check indicator
@@ -534,44 +548,53 @@ Wraps the existing relay protocol. When the agent calls `android_*` tools, the t
 - [ ] App: Auto-reconnect with exponential backoff
 
 ### Phase 2 — Terminal Channel
-**Priority: P1**
+**Status: preview shipped in v0.2.0 (2026-04-12). Biometric gate is the one open item.**
 
-- [ ] Server: PTY/tmux integration
-- [ ] Server: Terminal channel handler (attach, input, output, resize)
-- [ ] App: WebView + xterm.js terminal emulator
-- [ ] App: Soft keyboard toolbar (Ctrl, Tab, Esc, arrows)
-- [ ] App: tmux session picker
-- [ ] App: Biometric gate before terminal access
-- [ ] App: Terminal resize on orientation change
+- [x] Server: PTY/tmux integration (`plugin/relay/channels/terminal.py`)
+- [x] Server: Terminal channel handler (attach, input, output, resize)
+- [x] App: WebView + xterm.js terminal emulator (`TerminalWebView.kt`)
+- [x] App: Soft keyboard toolbar — Ctrl / Tab / Esc / arrows (`ExtraKeysToolbar.kt`)
+- [x] App: tmux session picker with tabs (`TerminalTabBar.kt`, `TerminalSessionInfoSheet.kt`), scrollback search (`TerminalSearchBar.kt`)
+- [ ] App: Biometric gate before terminal access (planned — see Phase 4)
+- [x] App: Terminal resize on orientation change
 
 ### Phase 3 — Bridge Channel
-**Priority: P1**
+**Status: shipped in v0.3.0 (2026-04-13). v0.4 bridge feature expansion is in progress on `feature/bridge-feature-expansion` — adds long-press / drag / macro / clipboard / intent-send / location / contacts / call / SMS and multi-window screen reading.**
 
-- [ ] Migrate upstream bridge protocol into multiplexed WSS
-- [ ] Update `android_relay.py` to route through relay server
-- [ ] App: Bridge status UI
-- [ ] App: Permission management (accessibility, overlay)
-- [ ] App: Activity log (recent agent commands)
-- [ ] AccessibilityService integration (carry forward from upstream)
+- [x] Migrate upstream bridge protocol into multiplexed WSS (14 HTTP routes registered in `plugin/relay/server.py` delegating to `plugin/relay/channels/bridge.py`)
+- [x] Update `plugin/tools/android_tool.py` to route through the unified relay on port 8767 (was the standalone `android_relay.py` on 8766)
+- [x] App: Bridge status UI (see §5 Bridge Tab above)
+- [x] App: Permission management (`BridgePermissionChecklist` — accessibility, screen capture, overlay, notification listener)
+- [x] App: Activity log (`BridgeActivityLog` + `BridgePreferences`, capped at 100 entries)
+- [x] AccessibilityService integration (`HermesAccessibilityService` + `ScreenReader` + `ActionExecutor` + `BridgeCommandHandler`)
+- [x] Tier 5 safety-rails — `BridgeSafetyManager` (blocklist + destructive-verb confirmation + auto-disable timer), `BridgeForegroundService` (persistent "Hermes has device control" notification), `BridgeStatusOverlay` (confirmation modal + optional floating chip)
 
 ### Phase 4 — Security Hardening
-**Priority: P1**
+**Status: ADR 15 landed in v0.2.0 (2026-04-11/12). Biometric gate is the one remaining item.**
 
-- [ ] TLS certificate setup (Let's Encrypt or self-signed with pinning)
-- [ ] EncryptedSharedPreferences for token storage
-- [ ] Biometric authentication (AndroidX Biometric)
-- [ ] Token expiry and rotation
-- [ ] Rate limiting on auth endpoint
+- [x] TLS support + TOFU certificate pinning (`CertPinStore` — SHA-256 SPKI fingerprints per `host:port`, wiped explicitly on re-pair via `applyServerIssuedCodeAndReset`; plain `ws://` short-circuits pinning)
+- [x] Android Keystore session token storage (`SessionTokenStore` — `KeystoreTokenStore` with StrongBox-preferred via `setRequestStrongBoxBacked`, `LegacyEncryptedPrefsTokenStore` TEE-backed fallback, one-shot lossless migration on first launch)
+- [x] User-chosen session TTL at pair time (`SessionTtlPickerDialog` — 1d / 7d / 30d / 90d / 1y / Never)
+- [x] Per-channel grants on one session token (`Session.grants` — chat / terminal / bridge, clamped to session lifetime)
+- [x] Paired Devices screen (`PairedDevicesScreen` + `GET /sessions` + `DELETE /sessions/{prefix}` + `PATCH /sessions/{prefix}` for extend)
+- [x] Transport security badge (`TransportSecurityBadge` — three states: secure / insecure-with-reason / insecure-unknown)
+- [x] First-time insecure-mode ack dialog with reason picker (`InsecureConnectionAckDialog`)
+- [x] Tailscale detection (`TailscaleDetector` — informational only)
+- [x] HMAC-SHA256 QR signing (`plugin/relay/qr_sign.py` with host-local secret at `~/.hermes/hermes-relay-qr-secret`; phone parses + stores `sig` but does not verify yet — secret distribution is a follow-up)
+- [x] Rate limiting on auth endpoint (`RateLimiter` — 5 attempts / 60s → 5-min block; `/pairing/register` clears all blocks on success so legitimate re-pair after relay restart works immediately)
+- [x] Session expiry + rotation (`expires_at` in `auth.ok`, server-side `SessionManager` enforcement)
+- [ ] Biometric gate for terminal access (AndroidX Biometric — not wired yet)
 
 ### Phase 5 — Polish & CI/CD
-**Priority: P2**
+**Status: largely shipped. v0.1.0 shipped to the Play Store under Axiom-Labs, LLC. Notification-channel-for-agent-messages is the one open item.**
 
-- [ ] GitHub Actions: lint, build, test matrix
-- [ ] GitHub Actions: release workflow (tag → signed APK → GitHub Release)
-- [ ] Material You dynamic theming
-- [ ] Proper error states and empty states
-- [ ] Notification channel for agent messages
-- [ ] App icon and branding
+- [x] GitHub Actions: lint + build + test on every push (`.github/workflows/ci.yml`)
+- [x] GitHub Actions: release workflow — tag-triggered signed APK + AAB upload to GitHub Release (`.github/workflows/release.yml`)
+- [x] Material You dynamic theming (Material 3 + dynamic color, user toggle in Appearance settings)
+- [x] Proper error states and empty states (`RelayErrorClassifier` → `HumanError` → global `LocalSnackbarHost`; MorphingSphere-backed empty chat state)
+- [x] App icon and branding (`ic_launcher*`, animated splash via `splash_icon_animated.xml`, MorphingSphere)
+- [x] Two build flavors: `googlePlay` (Play Store track, conservative Accessibility use case) and `sideload` (`.sideload` applicationId suffix, full feature set)
+- [ ] Notification channel for agent messages (not wired; Phase 6 territory)
 
 ### Phase V — Voice Mode
 **Status: shipped 2026-04-12**
@@ -605,23 +628,18 @@ See `docs/decisions.md` → **Voice Mode — Architecture** for the four key dec
 
 ---
 
-## 8. MVP Scope (Tonight)
+## 8. Current Scope
 
-Focus: **Phase 0 + start of Phase 1**
+As of v0.3.0, Phases 0–5 plus Phase V (voice) have shipped in some form. The current release cadence focuses on **v0.4 bridge feature expansion** — see `docs/plans/2026-04-13-bridge-feature-expansion.md`.
 
-Deliverables:
-1. Compose project with bottom nav scaffold
-2. WSS connection manager with channel multiplexing
-3. Basic pairing/auth flow
-4. Chat tab: send message → get streaming response
-5. Server: relay with chat channel routing
-6. GitHub Actions: build APK
+**Still non-goals for the current cadence:**
+- Biometric session lock (fingerprint/face gate on terminal and/or chat resume). Tracked under Phase 4.
+- Push notifications for agent messages (requires FCM + a notification channel on the relay side). Tracked under Phase 5.
+- iOS client. Not on the roadmap.
+- Reverse file transfer (phone → server direct upload). Inbound media (agent → phone) shipped in v0.2.0; outbound is attachments via the chat stream only.
+- On-device model fallback (Phase 6).
 
-Non-goals for tonight:
-- Terminal (Phase 2)
-- Bridge (Phase 3)
-- Biometrics (Phase 4)
-- Release workflow (Phase 5)
+See `Appendix A — Original Phase 0 Scope` at the end of this document for the historical "what we needed to build the first night" list, preserved for reference.
 
 ---
 
@@ -657,4 +675,30 @@ Non-goals for tonight:
 
 - **ARC** — CI/CD patterns, project structure conventions
 - **Hermes Agent** — Gateway, WebAPI, plugin system, SSE streaming
+
+---
+
+## Appendix A — Original Phase 0 Scope
+
+Preserved verbatim from the original scoping session. This is a historical snapshot, not a current MVP definition. See §8 for the current scope.
+
+> **MVP Scope (Tonight)**
+>
+> Focus: **Phase 0 + start of Phase 1**
+>
+> Deliverables:
+> 1. Compose project with bottom nav scaffold
+> 2. WSS connection manager with channel multiplexing
+> 3. Basic pairing/auth flow
+> 4. Chat tab: send message → get streaming response
+> 5. Server: relay with chat channel routing
+> 6. GitHub Actions: build APK
+>
+> Non-goals for tonight:
+> - Terminal (Phase 2)
+> - Bridge (Phase 3)
+> - Biometrics (Phase 4)
+> - Release workflow (Phase 5)
+
+All six deliverables shipped in v0.1.0. Four of the five "non-goals for tonight" have since shipped in v0.2.0 / v0.3.0; biometrics is the one remaining open item.
 - **ClawPort** — Web dashboard (parallel effort, different interface surface)
