@@ -60,6 +60,7 @@ import kotlinx.serialization.json.put
  *  - `/ping` → returns `{pong: true, ts: ...}`
  *  - `/tap` body `{x, y, duration_ms?}`
  *  - `/tap_text` body `{text}`
+ *  - `/long_press` body `{x?, y?, node_id?, duration?}`
  *  - `/type` body `{text}`
  *  - `/swipe` body `{start_x, start_y, end_x, end_y, duration_ms?}`
  *  - `/scroll` body `{direction}` — `up`/`down`/`left`/`right`
@@ -240,6 +241,23 @@ class BridgeCommandHandler(
                     return
                 }
                 respondFromResult(requestId, executor.tapText(text))
+            }
+
+            // A1 long_press — body `{x?, y?, node_id?, duration?}` with
+            // exactly one of (x,y) or node_id. Duration defaults to 500ms
+            // and is clamped by ActionExecutor.longPress to 100..3000.
+            "/long_press" -> {
+                val lx = body["x"]?.jsonPrimitive?.content?.toIntOrNull()
+                val ly = body["y"]?.jsonPrimitive?.content?.toIntOrNull()
+                val nodeId = body["node_id"]?.jsonPrimitive?.content
+                    ?: body["nodeId"]?.jsonPrimitive?.content
+                val duration = body["duration"]?.jsonPrimitive?.content?.toLongOrNull()
+                    ?: body["duration_ms"]?.jsonPrimitive?.content?.toLongOrNull()
+                    ?: 500L
+                respondFromResult(
+                    requestId,
+                    executor.longPress(lx, ly, nodeId, duration)
+                )
             }
 
             "/type" -> {

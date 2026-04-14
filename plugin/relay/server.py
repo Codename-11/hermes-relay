@@ -1102,6 +1102,13 @@ async def handle_bridge_tap_text(request: web.Request) -> web.Response:
     return await _bridge_dispatch(request, "/tap_text")
 
 
+async def handle_bridge_long_press(request: web.Request) -> web.Response:
+    # A1 long_press — new in v0.4 bridge feature expansion. Same forward-
+    # through-to-phone pattern as /tap and /tap_text; the phone-side
+    # BridgeCommandHandler validates args and clamps duration.
+    return await _bridge_dispatch(request, "/long_press")
+
+
 async def handle_bridge_type(request: web.Request) -> web.Response:
     return await _bridge_dispatch(request, "/type")
 
@@ -1725,6 +1732,7 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_get("/current_app", handle_bridge_current_app)
     app.router.add_post("/tap", handle_bridge_tap)
     app.router.add_post("/tap_text", handle_bridge_tap_text)
+    app.router.add_post("/long_press", handle_bridge_long_press)
     app.router.add_post("/type", handle_bridge_type)
     app.router.add_post("/swipe", handle_bridge_swipe)
     app.router.add_post("/open_app", handle_bridge_open_app)

@@ -6,6 +6,7 @@ Tools registered:
   - android_read_screen   get accessibility tree of current screen
   - android_tap           tap at coordinates or by node id
   - android_tap_text      tap element by visible text
+  - android_long_press    long-press at coordinates or by node id
   - android_type          type text into focused field
   - android_swipe         swipe gesture
   - android_open_app      launch app by package name
@@ -132,6 +133,86 @@ def android_tap_text(text: str, exact: bool = False) -> str:
     """
     try:
         data = _post("/tap_text", {"text": text, "exact": exact})
+        return json.dumps(data)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+# A1 long-press — new in v0.4 bridge feature expansion. Context menus,
+# text selection, widget rearranging, "hold to confirm" all require this.
+_MIN_LONG_PRESS_DURATION_MS = 100
+_MAX_LONG_PRESS_DURATION_MS = 3000
+
+
+def android_long_press(
+    x: Optional[int] = None,
+    y: Optional[int] = None,
+    node_id: Optional[str] = None,
+    duration: int = 500,
+) -> str:
+    """
+    Perform a long press at screen coordinates ``(x, y)`` or on an
+    accessibility ``node_id``. Exactly one of the two must be provided.
+
+    ``duration`` is the hold time in milliseconds. Defaults to 500 ms
+    (the platform default long-press threshold). Accepted range is
+    100–3000 ms; values outside that range are rejected by this tool
+    before hitting the bridge so the agent gets a fast, structured
+    error instead of a gesture dispatch failure.
+
+    Use cases:
+
+    * **Context menus** — long-press on a chat message, a gallery
+      image, a launcher icon, etc. to open its contextual actions.
+    * **Text selection** — long-press on any visible text to pop the
+      native selection handles, then chain ``/swipe`` or
+      ``/press_key`` as needed.
+    * **Widget rearranging** — launchers put icons into edit mode on
+      long-press before they accept drags.
+    * **Hold-to-confirm** — some apps (banking, delete-all,
+      destructive dialogs) require a held press as a safety
+      interlock.
+
+    Prefer ``node_id`` over ``(x, y)`` when you have it — node-id
+    dispatches use ``AccessibilityNodeInfo.ACTION_LONG_CLICK`` which
+    mirrors the platform's own long-press semantics exactly and is
+    more robust to screen reflows than absolute coordinates.
+    """
+    try:
+        has_coords = x is not None and y is not None
+        has_node = node_id is not None and str(node_id).strip() != ""
+        if not has_coords and not has_node:
+            return json.dumps(
+                {"error": "Provide either (x, y) or node_id"}
+            )
+        if has_coords and has_node:
+            return json.dumps(
+                {"error": "Provide either (x, y) or node_id, not both"}
+            )
+        if not isinstance(duration, int) or isinstance(duration, bool):
+            return json.dumps({"error": "duration must be an integer (ms)"})
+        if (
+            duration < _MIN_LONG_PRESS_DURATION_MS
+            or duration > _MAX_LONG_PRESS_DURATION_MS
+        ):
+            return json.dumps(
+                {
+                    "error": (
+                        "duration must be "
+                        f"{_MIN_LONG_PRESS_DURATION_MS}"
+                        f"..{_MAX_LONG_PRESS_DURATION_MS} ms "
+                        f"(got {duration})"
+                    )
+                }
+            )
+
+        payload: dict = {"duration": duration}
+        if has_node:
+            payload["node_id"] = node_id
+        else:
+            payload["x"] = x
+            payload["y"] = y
+        data = _post("/long_press", payload)
         return json.dumps(data)
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -504,6 +585,33 @@ _SCHEMAS = {
             "required": ["text"],
         },
     },
+    "android_long_press": {
+        "name": "android_long_press",
+        "description": (
+            "Perform a long press at screen coordinates (x, y) or on an "
+            "accessibility node_id. Prefer node_id when available — it's "
+            "more reliable than coordinates. Use for context menus, text "
+            "selection, widget rearranging, and hold-to-confirm UI. "
+            "Duration defaults to 500 ms and is clamped to 100..3000 ms."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "x": {"type": "integer", "description": "X coordinate in pixels"},
+                "y": {"type": "integer", "description": "Y coordinate in pixels"},
+                "node_id": {
+                    "type": "string",
+                    "description": "Accessibility node ID from android_read_screen",
+                },
+                "duration": {
+                    "type": "integer",
+                    "description": "Hold duration in milliseconds (100..3000)",
+                    "default": 500,
+                },
+            },
+            "required": [],
+        },
+    },
     "android_type": {
         "name": "android_type",
         "description": "Type text into the currently focused input field. Tap the field first using android_tap or android_tap_text.",
@@ -616,6 +724,7 @@ _HANDLERS = {
     "android_read_screen":  lambda args, **kw: android_read_screen(**args),
     "android_tap":          lambda args, **kw: android_tap(**args),
     "android_tap_text":     lambda args, **kw: android_tap_text(**args),
+    "android_long_press":   lambda args, **kw: android_long_press(**args),
     "android_type":         lambda args, **kw: android_type(**args),
     "android_swipe":        lambda args, **kw: android_swipe(**args),
     "android_open_app":     lambda args, **kw: android_open_app(**args),
