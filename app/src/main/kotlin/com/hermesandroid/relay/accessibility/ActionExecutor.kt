@@ -7,6 +7,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Path
+import android.graphics.Rect
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -84,6 +85,14 @@ class ActionExecutor(private val service: AccessibilityService) {
          *  has almost certainly made a mistake — anything over 3 s ties up
          *  the gesture queue and risks ANRing the target app. */
         private const val MAX_LONG_PRESS_DURATION_MS = 3_000L
+
+        /**
+         * Maximum depth for the Tier 2 parent-walk cascade in [tapText].
+         * Real-world apps wrap clickable content 2–4 levels deep
+         * (TextView → inner LinearLayout → Card → clickable row). 8 is
+         * generous and still bounds pathologically deep trees.
+         */
+        private const val PARENT_WALK_MAX = 8
     }
 
     /**
@@ -129,6 +138,46 @@ class ActionExecutor(private val service: AccessibilityService) {
         }
     }
 
+    /**
+     * Three-tier fallback cascade for text-based tapping, wrapped in the
+     * A8 wake scope and running against the P1 multi-window snapshot.
+     *
+     * Real-world Android apps wrap clickable content in non-clickable
+     * text/image views all the time (Uber, Spotify, Instagram, Tinder).
+     * An old "direct click only" strategy bails on those. The cascade:
+     *
+     *  1. **Direct click** — matched text node `isClickable` → fire
+     *     `ACTION_CLICK` on it.
+     *  2. **Parent walk** — walk the parent chain up to [PARENT_WALK_MAX]
+     *     levels; first clickable ancestor wins.
+     *  3. **Coordinate fallback** — tap at the matched node's
+     *     `getBoundsInScreen` center, capturing bounds *before* recycling.
+     *
+     * The `data.via` field on the returned [ActionResult] tells the agent
+     * which tier succeeded so the activity log can show "tapped via parent
+     * click" / "coordinate fallback" instead of an opaque success.
+     *
+     * ### Multi-window (P1)
+     *
+     * We walk every live accessibility window's root in order (top-of-stack
+     * first) using [HermesAccessibilityService.snapshotAllWindows], so
+     * tap_text works against system overlays, popup menus, notification
+     * shade, split-screen siblings. Each window is probed via the A9
+     * `findNodeByText` helper and the first match wins — matching
+     * `ScreenReader.findNodeBoundsByText` behaviour but preserving the
+     * node reference for the Tier 2 parent walk.
+     *
+     * ### Recycling contract
+     *
+     * Every `AccessibilityNodeInfo.parent` call returns a fresh reference
+     * that must be explicitly recycled. The walk-up loop recycles the
+     * previous node before reassigning, but **defers** recycling the
+     * originally-matched node until the Tier 3 coordinate path has
+     * captured its bounds. The `try/finally` at the bottom guarantees
+     * both `matched` and `current` (plus all window roots from
+     * snapshotAllWindows) are released on every exit path, including
+     * exception propagation.
+     */
     suspend fun tapText(needle: String): ActionResult = WakeLockManager.wakeForAction {
         if (needle.isBlank()) {
             return@wakeForAction ActionResult.failure("tap_text: text must be non-blank")
@@ -136,9 +185,6 @@ class ActionExecutor(private val service: AccessibilityService) {
 
         // P1 — prefer the multi-window snapshot so we can tap text inside
         // system overlays, popup menus, and notification shade content.
-        // Falls back to a single-root list derived from rootInActiveWindow
-        // when the service is a bare AccessibilityService stub (tests) or
-        // when windows is unavailable.
         val hermes = service as? HermesAccessibilityService
         val ownedRoots: List<AccessibilityNodeInfo> = if (hermes != null) {
             hermes.snapshotAllWindows()
@@ -150,27 +196,167 @@ class ActionExecutor(private val service: AccessibilityService) {
             return@wakeForAction ActionResult.failure("no active window available")
         }
 
-        val reader = hermes?.reader ?: ScreenReader()
         try {
-            val bounds = reader.findNodeBoundsByText(ownedRoots, needle)
-                ?: return@wakeForAction ActionResult.failure(
-                    "no node matching text '$needle' on screen"
-                )
-            if (bounds.isEmpty) {
+            // Scan every window root for the needle; first match wins.
+            var matched: AccessibilityNodeInfo? = null
+            for (r in ownedRoots) {
+                matched = findNodeByText(r, needle)
+                if (matched != null) break
+            }
+            if (matched == null) {
                 return@wakeForAction ActionResult.failure(
-                    "matched node has empty bounds (off-screen?)"
+                    "no node found matching text: $needle"
                 )
             }
-            // Nested wakeForAction: the inner tap() call will re-enter
-            // WakeLockManager, bump the ref count, and share our lock —
-            // no premature release.
-            return@wakeForAction tap(bounds.centerX, bounds.centerY)
+
+            var current: AccessibilityNodeInfo? = matched
+            var depth = 0
+            try {
+                // ─── Tier 1 + Tier 2: direct click or walk-up to clickable ancestor ───
+                // PARENT_WALK_MAX bounds TOTAL iterations (matched node + up to
+                // PARENT_WALK_MAX-1 ancestors). Matches the reference cascade
+                // in the A9 brief and keeps pathological trees from pinning us.
+                while (current != null && depth < PARENT_WALK_MAX) {
+                    if (current.isClickable) {
+                        val clicked = try {
+                            current.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        } catch (t: Throwable) {
+                            Log.w(TAG, "performAction(ACTION_CLICK) threw: ${t.message}")
+                            false
+                        }
+                        if (clicked) {
+                            val via = if (depth == 0) "direct click" else "parent click ($depth levels up)"
+                            val message = if (depth == 0) "tapped via direct click"
+                            else "tapped via parent click ($depth levels up)"
+                            return@wakeForAction ActionResult.ok(
+                                mapOf(
+                                    "ok" to true,
+                                    "via" to via,
+                                    "message" to message,
+                                    "depth" to depth,
+                                    "needle" to needle,
+                                )
+                            )
+                        }
+                        // performAction returned false → treat as "not really clickable",
+                        // keep walking the ancestors to try the next candidate.
+                    }
+
+                    val parent = try {
+                        current.parent
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "node.parent threw at depth $depth: ${t.message}")
+                        null
+                    }
+                    // Recycle the previous link in the chain — but NEVER recycle
+                    // `matched` here; Tier 3 still needs its bounds, and the outer
+                    // finally owns its lifetime.
+                    if (current !== matched) {
+                        @Suppress("DEPRECATION")
+                        try { current.recycle() } catch (_: Throwable) { }
+                    }
+                    current = parent
+                    depth++
+                }
+
+                // ─── Tier 3: coordinate fallback at the ORIGINAL matched node's bounds ───
+                val rect = Rect()
+                try {
+                    matched.getBoundsInScreen(rect)
+                } catch (t: Throwable) {
+                    return@wakeForAction ActionResult.failure(
+                        "no clickable ancestor within $PARENT_WALK_MAX levels and bounds read failed: ${t.message}"
+                    )
+                }
+                if (rect.isEmpty) {
+                    return@wakeForAction ActionResult.failure(
+                        "no clickable ancestor within $PARENT_WALK_MAX levels and matched node has empty bounds (off-screen?)"
+                    )
+                }
+                val cx = rect.centerX()
+                val cy = rect.centerY()
+                val tapResult = tap(cx, cy)
+                if (!tapResult.ok) return@wakeForAction tapResult
+                return@wakeForAction ActionResult.ok(
+                    mapOf(
+                        "ok" to true,
+                        "via" to "coordinate fallback",
+                        "message" to "tapped via coordinate fallback at ($cx, $cy)",
+                        "x" to cx,
+                        "y" to cy,
+                        "needle" to needle,
+                    )
+                )
+            } finally {
+                // Release the walk cursor if it's distinct from `matched`.
+                if (current != null && current !== matched) {
+                    @Suppress("DEPRECATION")
+                    try { current!!.recycle() } catch (_: Throwable) { }
+                }
+                // Release the originally-matched node last — Tier 3 is done with it.
+                @Suppress("DEPRECATION")
+                try { matched.recycle() } catch (_: Throwable) { }
+            }
         } finally {
             for (r in ownedRoots) {
                 @Suppress("DEPRECATION")
                 try { r.recycle() } catch (_: Throwable) { }
             }
         }
+    }
+
+    /**
+     * Find the first descendant of [root] whose text or content description
+     * contains [needle] (case-insensitive), and return the node itself so
+     * the caller can walk parents / perform clicks / read bounds. The
+     * caller takes ownership and MUST recycle the returned node.
+     *
+     * This is a local helper — `ScreenReader.findNodeBoundsByText` throws
+     * the node away after reading bounds, which is useless for the
+     * Tier 2 parent walk. We duplicate a tiny amount of traversal here
+     * to preserve the node reference.
+     */
+    private fun findNodeByText(
+        root: AccessibilityNodeInfo,
+        needle: String,
+    ): AccessibilityNodeInfo? {
+        val lowered = needle.lowercase()
+        return findFirstNode(root) { node ->
+            val text = node.text?.toString()?.lowercase()
+            val desc = node.contentDescription?.toString()?.lowercase()
+            (text?.contains(lowered) == true) || (desc?.contains(lowered) == true)
+        }
+    }
+
+    /**
+     * Depth-first scan that returns the first node matching [predicate].
+     * The returned node is NOT recycled by this function — caller owns it.
+     * Every non-matching child is recycled in a per-iteration `finally`.
+     */
+    private fun findFirstNode(
+        root: AccessibilityNodeInfo?,
+        predicate: (AccessibilityNodeInfo) -> Boolean,
+    ): AccessibilityNodeInfo? {
+        if (root == null) return null
+        if (predicate(root)) return root
+        val childCount = root.childCount
+        for (i in 0 until childCount) {
+            val child = root.getChild(i) ?: continue
+            val hit = findFirstNode(child, predicate)
+            if (hit != null) {
+                // Don't recycle `child` here if it IS the hit — caller owns it.
+                // But if the hit came from a deeper descendant, `child` is a
+                // now-unused intermediate and must be recycled.
+                if (hit !== child) {
+                    @Suppress("DEPRECATION")
+                    try { child.recycle() } catch (_: Throwable) { }
+                }
+                return hit
+            }
+            @Suppress("DEPRECATION")
+            try { child.recycle() } catch (_: Throwable) { }
+        }
+        return null
     }
 
     suspend fun swipe(
