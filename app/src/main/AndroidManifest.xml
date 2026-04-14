@@ -45,6 +45,30 @@
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
+    <!-- === PHASE3-baseline-handlers: package visibility for /get_apps + /open_app === -->
+    <!-- On Android 11+ (API 30+), apps can only see other packages that
+         are implicitly visible (own UID, system apps, etc.) unless they
+         declare a <queries> filter or hold QUERY_ALL_PACKAGES. The
+         BridgeCommandHandler /get_apps route uses
+         queryIntentActivities(ACTION_MAIN + CATEGORY_LAUNCHER) to enumerate
+         launchable apps, and BridgeSafetySettingsScreen uses the same call
+         to populate the blocklist UI — both need this declaration to see
+         the full launcher set. Without it queryIntentActivities silently
+         returns a near-empty list (typical symptom: blocklist UI shows
+         only Hermes-Relay itself + a handful of system apps).
+
+         Declaring an <intent> filter with ACTION_MAIN + CATEGORY_LAUNCHER
+         is the Play-policy-safe approach — it does NOT require the
+         restricted QUERY_ALL_PACKAGES permission, which Play would
+         otherwise demand a policy declaration for. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+    <!-- === END PHASE3-baseline-handlers === -->
+
     <application
         android:name=".HermesRelayApp"
         android:allowBackup="true"

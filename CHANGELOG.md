@@ -6,6 +6,103 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-14
+
+### Added — Bridge feature expansion (the big one)
+
+v0.4 roughly triples the bridge surface. The agent can now do everything
+v0.3 could do, plus long-press, drag, full clipboard access, system-wide
+media control, raw Android Intents, an accessibility-event stream, app
+launching, app listing, multi-window screen reads, filtered node search,
+screen-hash change detection, stable per-node IDs, three-tier
+`tap_text` fallback, a batched macro dispatcher, wake-lock-guarded
+gesture dispatch, and a per-app skill playbook for common flows. The
+sideload track additionally ships direct SMS, contact lookup, one-tap
+dialing, and location awareness.
+
+**Read surface**
+
+- **`/long_press`** (A1) — long-press gesture by coordinate or node ID,
+  covering context menus, text selection, and widget rearranging
+- **`/drag`** (A2) — drag gesture from point A → point B over a
+  configurable duration
+- **`/find_nodes`** (A3) — filtered accessibility-tree search (text,
+  clickable flag, class name, resource ID) instead of returning the
+  whole tree
+- **`/describe_node`** (A4) — full property bag for a stable node ID,
+  plus `nodeId` wiring for `/tap` and `/scroll` so the agent can hand
+  IDs forward without re-resolving coordinates
+- **`/screen_hash`** + **`/diff_screen`** (A5) — cheap SHA-256 screen
+  fingerprint and diff tools for "wait until this screen changes"
+  loops without re-downloading the full accessibility tree
+- **`/events`** + **`/events/stream`** (B1) — accessibility-event
+  stream. In-memory `EventStore` buffers recent `AccessibilityEvent`
+  objects so the agent can poll for UI events or wait for a specific
+  trigger instead of hammering `/screen`. Toggle capture on/off via
+  `/events/stream`.
+- **Multi-window `ScreenReader`** (P1) — `/screen` now walks every
+  accessibility window (system UI, popups, notification shade) instead
+  of only the active app's window
+
+**Act surface**
+
+- **`/clipboard`** (A6) — bidirectional system clipboard read/write
+- **`/media`** (A7) — system-wide playback control (play, pause, next,
+  previous, volume) via `MediaSessionManager`
+- **`/send_intent`** + **`/broadcast`** (B4) — raw Android Intent /
+  broadcast escape hatch for apps that expose deep-link actions
+- **Three-tier `tap_text` cascade** (A9) — exact match → clickable
+  ancestor walk → substring fallback, fixes apps that wrap labels in
+  non-clickable parents
+- **`android_macro`** (A10) — batched workflow dispatcher runs a
+  sequence of bridge commands as one call with configurable pacing,
+  no round-trip per step
+- **`WakeLockManager`** (A8) — `PARTIAL_WAKE_LOCK` scope wrapper around
+  gesture dispatch so commands still land on dim or idle screens.
+  Scoped try/finally semantics, never a stale hold.
+
+**Tier C — sideload-only phone utilities**
+
+- **`/location`** (C1) — GPS last-known-location read for "where am
+  I?" and location-scoped commands
+- **`/search_contacts`** (C2) — contact lookup by name → phone number
+  for voice intents like "text Mom"
+- **`/call`** (C3) — direct call via `ACTION_CALL`, with an
+  `ACTION_DIAL` fallback where the flavor can't hold `CALL_PHONE`
+- **`/send_sms`** (C4) — direct SMS send via `SmsManager` with
+  send-result confirmation (no dialer bounce)
+
+**Docs + skills**
+
+- **`skills/android/SKILL.md`** (A11) — per-app playbook with reusable
+  flows for common apps, agent-discoverable via the Hermes skills
+  system
+- **`docs/spec.md` + `docs/decisions.md`** — v0.4 bridge surface
+  documented, Phase 3 status marked shipped, 15-item spec rot pass
+
+### Fixed
+
+- **Missing Kotlin handlers for `/open_app`, `/get_apps`, `/apps`,
+  and `/setup`** — latent v0.3.0 regression. The Python relay side had
+  the routes and the plugin tools were calling them, but the in-app
+  `BridgeCommandHandler` had never wired the corresponding `when (path)
+  ->` branches. Commands silent-dropped until this release.
+- **Android 11+ package visibility for `/get_apps`** — added a
+  `<queries>` element to the main manifest so
+  `PackageManager.queryIntentActivities(ACTION_MAIN + CATEGORY_LAUNCHER)`
+  returns the full launchable app list. Without this, the tool returned
+  an empty list on modern Android targets.
+
+### Docs
+
+- **`user-docs` expansion** — added the full 27-route bridge HTTP
+  inventory to `reference/relay-server.md`, rewrote
+  `architecture/security.md` around the five-stage safety gate + Tier 5
+  rails, added ADR-9 through ADR-13 (bridge safety gate, wake-scope,
+  event stream, MediaProjection FGS type, build flavors), and retired
+  all remaining "Bridge :8766" references now that the bridge is
+  unified on `:8767`.
+
 ## [0.3.0] - 2026-04-13
 
 ### Added

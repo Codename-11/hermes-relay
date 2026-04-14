@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.network.handlers
 
+import android.content.Intent
 import android.util.Log
 import com.hermesandroid.relay.accessibility.ActionExecutor
 import com.hermesandroid.relay.accessibility.HermesAccessibilityService
@@ -88,6 +89,11 @@ import kotlinx.serialization.json.contentOrNull
  *    node_count, truncated}` — compares current hash to [previous_hash]
  *  - `/screenshot` → returns `{media: "MEDIA:hermes-relay://<token>"}`
  *  - `/current_app` → returns `{package: "com.whatever"}`
+ *  - `/get_apps` (and `/apps` legacy alias) → returns
+ *    `{apps: [{package, label}], count}` enumerated via PackageManager
+ *  - `/open_app` body `{package}` → launches via `getLaunchIntentForPackage`
+ *    (target-package blocklist enforced)
+ *  - `/setup` → 200 no-op (host-side helper, phone has no setup work)
  *  - `/clipboard` (GET) → returns `{text: "..."}` (empty string = nothing copied)
  *  - `/clipboard` (POST) body `{text}` → returns `{success: true}`
  *  - `/describe_node` body `{nodeId}` — A4: full property bag for a node
@@ -229,6 +235,25 @@ class BridgeCommandHandler(
         }
         // === END PHASE3-event-stream ===
 
+        // /setup exists on the relay as a legacy bridge HTTP route, but
+        // android_setup() in plugin/tools/android_tool.py is host-side
+        // only (it just writes ANDROID_BRIDGE_TOKEN to ~/.hermes/.env)
+        // and never actually forwards anything to the phone. The route
+        // is still registered on the relay, so we answer with a 200 no-op
+        // instead of letting the command silent-drop into the unknown-
+        // path 404. Joins the /ping + /events early-return cluster so it
+        // works even when the accessibility service is transiently unbound.
+        if (path == "/setup") {
+            respond(
+                requestId, 200,
+                buildJsonObject {
+                    put("ok", true)
+                    put("note", "setup is host-side only — phone has no setup work")
+                }
+            )
+            return
+        }
+
         val service = HermesAccessibilityService.instance
             ?: return respond(
                 requestId, 503,
@@ -292,6 +317,108 @@ class BridgeCommandHandler(
                     put("package", service.currentApp ?: "unknown")
                 }
             )
+
+            // === PHASE3-baseline-handlers: /get_apps + /open_app ===
+            // Latent v0.3.0 regressions surfaced by the v0.4 gap-fix audit
+            // on 2026-04-14: the Python relay registered these routes
+            // during Wave 1 but the Kotlin dispatcher silent-dropped them
+            // into the unknown-path 404 — so android_get_apps() and
+            // android_open_app() have been broken since v0.3.0 shipped.
+            // Pure-read /get_apps runs through the master + blocklist
+            // gate above; /open_app additionally checks the *target*
+            // package against the blocklist (defense-in-depth, mirrors
+            // the /send_intent + /broadcast B4 pattern) since the gate
+            // above only checks the foreground app.
+
+            // /get_apps and /apps (legacy alias) — list launchable apps
+            // via PackageManager. Requires the <queries> launcher-intent
+            // declaration in AndroidManifest.xml, otherwise Android 11+
+            // returns a near-empty list.
+            "/get_apps", "/apps" -> {
+                val pm = service.packageManager
+                val launcher = Intent(Intent.ACTION_MAIN)
+                    .addCategory(Intent.CATEGORY_LAUNCHER)
+                val resolved = runCatching { pm.queryIntentActivities(launcher, 0) }
+                    .getOrDefault(emptyList())
+                val seen = HashSet<String>(resolved.size)
+                val appsArray = buildJsonArray {
+                    for (resolve in resolved) {
+                        val info = resolve.activityInfo?.applicationInfo ?: continue
+                        val pkg = info.packageName ?: continue
+                        if (!seen.add(pkg)) continue
+                        val label = runCatching { pm.getApplicationLabel(info).toString() }
+                            .getOrDefault(pkg)
+                        add(
+                            buildJsonObject {
+                                put("package", pkg)
+                                put("label", label)
+                            }
+                        )
+                    }
+                }
+                respond(
+                    requestId, 200,
+                    buildJsonObject {
+                        put("apps", appsArray)
+                        put("count", seen.size)
+                    }
+                )
+            }
+
+            // /open_app body {package} — launch via PackageManager.
+            // Defense-in-depth: blocklist-check the *target* package
+            // (the gate above only checks foreground). Returns 400 on
+            // missing package, 403 on blocked, 404 on no-launch-intent,
+            // 500 on startActivity failure.
+            "/open_app" -> {
+                val pkg = body["package"]?.jsonPrimitive?.content.orEmpty()
+                if (pkg.isBlank()) {
+                    respond(
+                        requestId, 400,
+                        buildJsonObject { put("error", "missing 'package' in body") }
+                    )
+                    return
+                }
+                val targetAllowed = safetyManager?.checkPackageAllowed(pkg) ?: true
+                if (!targetAllowed) {
+                    respond(
+                        requestId, 403,
+                        buildJsonObject { put("error", "blocked package $pkg") }
+                    )
+                    return
+                }
+                val pm = service.packageManager
+                val intent = runCatching { pm.getLaunchIntentForPackage(pkg) }.getOrNull()
+                if (intent == null) {
+                    respond(
+                        requestId, 404,
+                        buildJsonObject {
+                            put("error", "no launch intent for package '$pkg'")
+                        }
+                    )
+                    return
+                }
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                val launchResult = runCatching { service.startActivity(intent) }
+                if (launchResult.isFailure) {
+                    val err = launchResult.exceptionOrNull()
+                    respond(
+                        requestId, 500,
+                        buildJsonObject {
+                            put("error", err?.message ?: "startActivity failed for $pkg")
+                        }
+                    )
+                    return
+                }
+                respond(
+                    requestId, 200,
+                    buildJsonObject {
+                        put("ok", true)
+                        put("package", pkg)
+                    }
+                )
+            }
+            // === END PHASE3-baseline-handlers ===
 
             // === PHASE3-event-stream: B1 android_event_stream toggle ===
             // Toggle inbound AccessibilityEvent capture. Privacy-sensitive:

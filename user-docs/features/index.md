@@ -32,7 +32,6 @@ A **<span class="track-badge track-badge--sideload">Sideload only</span>** badge
 | Screen change detection | Cheap screen-hash + diff so the agent can wait for a screen to actually change without polling | Both |
 | Real-time UI event stream | Live accessibility-event stream for "wait until this loads" and "notice when a dialog opens" waits | Both |
 | Notification triage | Agent reads incoming notifications and summarizes them for you | Both |
-| Calendar read | "What's on my schedule today?" — read-only access to your calendar | Both |
 
 **Acting on the phone**
 

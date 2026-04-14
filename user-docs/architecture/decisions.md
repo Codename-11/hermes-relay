@@ -38,15 +38,19 @@ If one channel floods (e.g., terminal output), it could delay others. Mitigated 
 
 ---
 
-## ADR-3: Relay Server as Separate Service
+## ADR-3: Unified Relay Server as Separate Service
 
-**Decision:** Python relay service on port 8767, separate from the bridge relay (8766) and the Hermes gateway.
+**Decision:** One Python relay service on port 8767 hosts chat (terminal), bridge, voice, and notifications channels. It runs alongside — not inside — the Hermes gateway.
 
 ### Rationale
 
-- The existing bridge relay is single-purpose. Extending it risks breaking upstream compatibility.
-- Separate service means independent deployment and restart cycles.
-- Future option to merge into gateway as a platform adapter if it stabilizes.
+- Separate service means independent deployment and restart cycles from the gateway.
+- Single WSS port keeps the phone's connection model simple: one persistent socket, channel-multiplexed envelopes.
+- Future option to merge into the gateway as a platform adapter if the footprint stabilizes.
+
+### History
+
+v0.2 ran the bridge as a standalone service on port 8766 (`plugin/tools/android_relay.py`). v0.3 consolidated that onto the unified relay port 8767 as part of the Phase 3 bridge rollout. The wire protocol was kept byte-for-byte identical so the `android_*` plugin tools only needed a `BRIDGE_URL` change to cut over.
 
 ---
 
@@ -69,8 +73,7 @@ Chat was originally proxied through the relay server, which converted SSE respon
 
 ```
 Phone (HTTP/SSE) → Hermes API Server (:8642)   [chat — direct]
-Phone (WSS)      → Relay Server (:8767)          [terminal]
-Phone (WSS)      → Bridge Relay (:8766)          [bridge]
+Phone (WSS)      → Relay Server   (:8767)      [terminal, bridge, voice, notifications]
 ```
 
 Auth uses optional Bearer token (`API_SERVER_KEY`). Most local setups run without one.
@@ -126,7 +129,80 @@ Auth uses optional Bearer token (`API_SERVER_KEY`). Most local setups run withou
 
 - Terminal = shell access to your server — highest privilege.
 - Chat is conversational — no more dangerous than a chat app.
-- Bridge is agent-controlled, not user-controlled — gating behind biometrics adds no security.
+- Bridge enforces its own five-stage safety system (see ADR-9); adding a biometric on top doesn't add security because the bridge is initiated by the agent, not the user.
+
+---
+
+## ADR-9: Bridge Five-Stage Safety Gate
+
+**Decision:** Every bridge command (v0.3+) must pass five independent gates before a gesture dispatches: session grant → in-app master toggle → `HermesAccessibilityService` permission → `MediaProjection` consent → Tier 5 safety rails (blocklist → destructive-verb confirmation → auto-disable reschedule).
+
+### Rationale
+
+- Agent-controlled device access is structurally different from user-controlled device access. A single "allow" toggle is not enough — a compromised or confused agent can issue commands just as easily as a trusted one.
+- Each gate is a *different* trust decision: the session grant says "this pairing may use the bridge channel at all"; the master toggle says "right now, the bridge may act"; the a11y/MediaProjection grants are OS-level and survive reboots; the Tier 5 rails are per-command and content-aware.
+- Failing any gate fails the command at the phone side, not the relay — so a network-side attacker with the session token still cannot bypass safety rails.
+- Blocklisted packages (banking / password managers / 2FA / email / work apps) get a hard 403, matched against the *target* of `/open_app` as well as the currently foregrounded app.
+- Destructive-verb words (`send` / `pay` / `delete` / `transfer` / etc.) trigger a full-screen `WindowManager` overlay confirmation — rendered outside the Hermes activity so it's visible even when the agent sends commands while another app is in the foreground.
+- An idle auto-disable timer (5–120 min, resets on every command) keeps a stale grant from surviving a crash or a forgotten session.
+
+### Trade-off
+
+The confirmation overlay adds latency and a manual tap to every destructive command. This is the entire point — the user must deliberately authorize state-changing actions even when the agent is otherwise trusted.
+
+---
+
+## ADR-10: Bridge Wake-Scope for Reliable Gesture Dispatch
+
+**Decision:** Wrap gesture dispatch in a short-lived `PowerManager.PARTIAL_WAKE_LOCK` via `WakeLockManager` so commands issued while the screen is dim or idle still land.
+
+### Rationale
+
+Android aggressively throttles `GestureDescription` dispatch on a dim or doze-mode screen. Agent commands that fire during a long session were unreliable — a `/tap` might succeed at 5-second intervals and silently drop at 30-second intervals. Holding a partial wake lock around the gesture dispatch (released immediately after the callback fires) keeps the CPU awake just long enough for the dispatcher to run, without affecting screen state or battery life meaningfully.
+
+### Trade-off
+
+Wake-lock abuse is a real Android antipattern — stale locks drain batteries. The implementation uses scoped try/finally semantics so the lock is always released, even on gesture failure or crash. No long-held locks.
+
+---
+
+## ADR-11: Accessibility Event Stream Instead of Polling
+
+**Decision:** The bridge exposes `/events` (poll) and `/events/stream` (toggle) over an in-memory `EventStore` that buffers recent `AccessibilityEvent` objects, rather than making the agent poll `/screen` repeatedly to detect change.
+
+### Rationale
+
+- `/screen` is expensive — it walks the full accessibility tree and serializes every node.
+- Waiting for "has the screen changed?" is a very common agent primitive (`wait until this loads`, `notice when the dialog opens`, `monitor for a toast`).
+- `AccessibilityEvent` is exactly the right level: the OS already dispatches it, the phone just needs to buffer recent events in a bounded store and hand them out on request.
+- Combining `/events` with `/screen_hash` + `/diff_screen` gives the agent a cheap "did anything happen, and if so what?" loop without ever re-downloading the full tree.
+
+---
+
+## ADR-12: Android 14+ MediaProjection Foreground Service Type
+
+**Decision:** `BridgeForegroundService` declares `foregroundServiceType="specialUse|mediaProjection"` and the app ORs both type constants on `startForeground()`.
+
+### Rationale
+
+Android 14 introduced a requirement that any FGS using `MediaProjection` must declare `mediaProjection` in its foreground service type slot. A `specialUse`-only declaration silently revokes the `MediaProjection` grant within frames of it being issued — the consent dialog appears, the user allows, the dialog closes, and the grant evaporates before any screen can be captured.
+
+### Trade-off
+
+`specialUse` remains on the type slot because the bridge FGS is used for more than just screen capture (gesture dispatch continues without the projection). Declaring both types and ORing the constants is what lets the same FGS host both surfaces.
+
+---
+
+## ADR-13: Google Play vs Sideload Build Flavors
+
+**Decision:** Hermes-Relay ships two distinct APKs from the same source tree — `googlePlay` (conservative, Play-policy-compliant) and `sideload` (full-feature, GitHub Releases only). They install with different application IDs so both can coexist on the same device.
+
+### Rationale
+
+- Google Play's Accessibility Service policy review is strict and slow. Some Phase 3 features — vision-driven navigation, voice-to-bridge intents, direct SMS / contact / call / location tools — are not compatible with the conservative use-case that Play will approve.
+- Rather than water down the whole app, we compile out the sensitive tiers in the `googlePlay` flavor and keep them in `sideload`. Users who want "safe + autopatch" pick Play; users who want "full agent control" pick sideload.
+- `BuildFlavor.current` + compile-time constants let R8 fold the disabled tiers out of the Play build entirely — not a runtime flag.
+- The `sideload` flavor carries `.sideload` as an applicationId suffix and `Hermes Dev` as the launcher label so side-by-side installs are disambiguated visually.
 
 ---
 
@@ -136,6 +212,5 @@ Auth uses optional Bearer token (`API_SERVER_KEY`). Most local setups run withou
 |---------|--------|------|
 | iOS support | Android-first, platform-specific APIs | v2+ |
 | Multi-device | Single-device simplifies auth and state | Future |
-| Voice mode | Depends on Hermes TTS/STT maturity | Future |
 | File transfer | Terminal tools work as a workaround | Future |
 | Gateway adapter | WebAPI proxy works well, adapter is overengineering for now | If WebAPI becomes limiting |
