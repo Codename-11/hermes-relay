@@ -68,6 +68,21 @@ class ActionExecutor(private val service: AccessibilityService) {
 
         /** Hard cap on `wait` — prevents runaway agents from pinning the channel. */
         private const val MAX_WAIT_MS = 15_000L
+
+        // ── A1 long_press ────────────────────────────────────────────────
+        /** Default long-press duration. Android's ViewConfiguration default
+         *  is ~500 ms, which is what the platform itself uses to decide
+         *  "this was a long press". */
+        private const val DEFAULT_LONG_PRESS_DURATION_MS = 500L
+
+        /** Minimum accepted long-press duration (ms). Below this you're
+         *  really asking for a regular tap. */
+        private const val MIN_LONG_PRESS_DURATION_MS = 100L
+
+        /** Maximum accepted long-press duration (ms). Above this the user
+         *  has almost certainly made a mistake — anything over 3 s ties up
+         *  the gesture queue and risks ANRing the target app. */
+        private const val MAX_LONG_PRESS_DURATION_MS = 3_000L
     }
 
     /**
@@ -245,6 +260,176 @@ class ActionExecutor(private val service: AccessibilityService) {
         } else {
             ActionResult.failure("drag gesture dispatch failed")
         }
+    }
+
+    // ─── long_press (A1) ──────────────────────────────────────────────────
+
+    /**
+     * Perform a long press either at a screen coordinate or on an
+     * accessibility node.
+     *
+     * Two entry points — exactly one of `(x, y)` or `nodeId` must be
+     * provided. The nodeId path prefers [AccessibilityNodeInfo.ACTION_LONG_CLICK]
+     * which is the semantic equivalent of the platform's own long-press;
+     * the coord path falls back to a single-stroke [GestureDescription]
+     * whose duration determines how long the finger "holds".
+     *
+     * [duration] is clamped to the `[MIN_LONG_PRESS_DURATION_MS,
+     * MAX_LONG_PRESS_DURATION_MS]` range. Values outside that range are
+     * rejected rather than silently clamped — if an agent asked for
+     * `duration=50` they probably meant `tap`, and if they asked for
+     * `duration=10_000` they're about to ANR the target app.
+     *
+     * The entire body runs inside [WakeLockManager.wakeForAction] so the
+     * screen stays lit through the gesture — long presses are useless if
+     * the device falls asleep halfway through the hold.
+     *
+     * NOTE: `nodeId` here is an Android `viewIdResourceName` (e.g.
+     * `com.app:id/button`) — distinct from P1's `w<n>:<idx>` sequential
+     * walk IDs. We walk all live accessibility windows per the P1
+     * multi-window pattern so long-press can target system overlays and
+     * popups too.
+     */
+    suspend fun longPress(
+        x: Int?,
+        y: Int?,
+        nodeId: String?,
+        duration: Long = DEFAULT_LONG_PRESS_DURATION_MS,
+    ): ActionResult = WakeLockManager.wakeForAction {
+        // ── arg validation ────────────────────────────────────────────
+        val hasCoords = x != null && y != null
+        val hasNodeId = !nodeId.isNullOrBlank()
+        if (!hasCoords && !hasNodeId) {
+            return@wakeForAction ActionResult.failure(
+                "long_press requires either (x, y) or node_id"
+            )
+        }
+        if (hasCoords && hasNodeId) {
+            return@wakeForAction ActionResult.failure(
+                "long_press accepts (x, y) OR node_id, not both"
+            )
+        }
+        if (duration !in MIN_LONG_PRESS_DURATION_MS..MAX_LONG_PRESS_DURATION_MS) {
+            return@wakeForAction ActionResult.failure(
+                "long_press duration must be " +
+                    "$MIN_LONG_PRESS_DURATION_MS..$MAX_LONG_PRESS_DURATION_MS ms " +
+                    "(got $duration)"
+            )
+        }
+
+        // ── nodeId branch: ACTION_LONG_CLICK on the matched node ──────
+        if (hasNodeId) {
+            // P1 — walk every live accessibility window so we can
+            // long-press nodes inside system overlays, popup menus, and
+            // split-screen siblings. Falls back to rootInActiveWindow
+            // when running against a bare AccessibilityService stub.
+            val hermes = service as? HermesAccessibilityService
+            val ownedRoots: List<AccessibilityNodeInfo> = if (hermes != null) {
+                hermes.snapshotAllWindows()
+            } else {
+                val legacy = service.rootInActiveWindow
+                if (legacy != null) listOf(legacy) else emptyList()
+            }
+            if (ownedRoots.isEmpty()) {
+                return@wakeForAction ActionResult.failure("no active window available")
+            }
+
+            try {
+                var target: AccessibilityNodeInfo? = null
+                for (r in ownedRoots) {
+                    target = findNodeByResourceId(r, nodeId!!)
+                    if (target != null) break
+                }
+                if (target == null) {
+                    return@wakeForAction ActionResult.failure(
+                        "no node matching node_id '$nodeId' on screen"
+                    )
+                }
+
+                val performed = try {
+                    target.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "ACTION_LONG_CLICK threw: ${t.message}")
+                    false
+                } finally {
+                    @Suppress("DEPRECATION")
+                    try { target.recycle() } catch (_: Throwable) { }
+                }
+
+                return@wakeForAction if (performed) {
+                    ActionResult.ok(
+                        mapOf(
+                            "node_id" to nodeId,
+                            "mode" to "action_long_click",
+                        )
+                    )
+                } else {
+                    ActionResult.failure(
+                        "ACTION_LONG_CLICK refused by node '$nodeId' " +
+                            "(node may not be long-clickable)"
+                    )
+                }
+            } finally {
+                for (r in ownedRoots) {
+                    @Suppress("DEPRECATION")
+                    try { r.recycle() } catch (_: Throwable) { }
+                }
+            }
+        }
+
+        // ── coordinate branch: held-finger GestureDescription ─────────
+        val safeX = x!!
+        val safeY = y!!
+        if (safeX < 0 || safeY < 0) {
+            return@wakeForAction ActionResult.failure(
+                "long_press coordinates must be non-negative (got x=$safeX, y=$safeY)"
+            )
+        }
+        val path = Path().apply { moveTo(safeX.toFloat(), safeY.toFloat()) }
+        val stroke = GestureDescription.StrokeDescription(path, 0, duration)
+        val gesture = GestureDescription.Builder().addStroke(stroke).build()
+        val dispatched = dispatchGesture(gesture)
+        return@wakeForAction if (dispatched) {
+            ActionResult.ok(
+                mapOf(
+                    "x" to safeX,
+                    "y" to safeY,
+                    "duration_ms" to duration,
+                    "mode" to "gesture",
+                )
+            )
+        } else {
+            ActionResult.failure("long_press gesture dispatch failed or was cancelled")
+        }
+    }
+
+    /**
+     * Walk the accessibility tree rooted at [root] and return the first
+     * node whose `viewIdResourceName` equals [nodeId]. This matches the
+     * `viewId` field emitted by [ScreenReader] in `/screen` responses —
+     * agents pass that value straight back as `node_id`.
+     *
+     * The caller owns the returned node and must `recycle()` it.
+     */
+    private fun findNodeByResourceId(
+        root: AccessibilityNodeInfo,
+        nodeId: String,
+    ): AccessibilityNodeInfo? {
+        if (root.viewIdResourceName == nodeId) {
+            return AccessibilityNodeInfo.obtain(root)
+        }
+        val childCount = root.childCount
+        for (i in 0 until childCount) {
+            val child = root.getChild(i) ?: continue
+            try {
+                val hit = findNodeByResourceId(child, nodeId)
+                if (hit != null) return hit
+            } finally {
+                @Suppress("DEPRECATION")
+                try { child.recycle() } catch (_: Throwable) { }
+            }
+        }
+        return null
     }
 
     // ─── type / scroll / press_key / wait ─────────────────────────────────
