@@ -545,11 +545,16 @@ class ActionExecutor(private val service: AccessibilityService) {
             }
 
             try {
-                var target: AccessibilityNodeInfo? = null
-                for (r in ownedRoots) {
-                    target = findNodeByResourceId(r, nodeId!!)
-                    if (target != null) break
-                }
+                // M4 fix: previously this used findNodeByResourceId which
+                // matches on viewIdResourceName (e.g. "com.foo:id/button"),
+                // but /tap and /scroll resolve via reader.findNodeById which
+                // matches on the P1 sequential scheme ("w0:42"). The Python
+                // schema for android_long_press advertises node_id as the
+                // value returned by android_read_screen — i.e. the sequential
+                // form. Aligning the resolver here makes the round trip
+                // android_read_screen → android_long_press(node_id=...) work.
+                val target: AccessibilityNodeInfo? =
+                    service.reader.findNodeById(ownedRoots, nodeId!!)
                 if (target == null) {
                     return@wakeForAction ActionResult.failure(
                         "no node matching node_id '$nodeId' on screen"
@@ -613,34 +618,9 @@ class ActionExecutor(private val service: AccessibilityService) {
         }
     }
 
-    /**
-     * Walk the accessibility tree rooted at [root] and return the first
-     * node whose `viewIdResourceName` equals [nodeId]. This matches the
-     * `viewId` field emitted by [ScreenReader] in `/screen` responses —
-     * agents pass that value straight back as `node_id`.
-     *
-     * The caller owns the returned node and must `recycle()` it.
-     */
-    private fun findNodeByResourceId(
-        root: AccessibilityNodeInfo,
-        nodeId: String,
-    ): AccessibilityNodeInfo? {
-        if (root.viewIdResourceName == nodeId) {
-            return AccessibilityNodeInfo.obtain(root)
-        }
-        val childCount = root.childCount
-        for (i in 0 until childCount) {
-            val child = root.getChild(i) ?: continue
-            try {
-                val hit = findNodeByResourceId(child, nodeId)
-                if (hit != null) return hit
-            } finally {
-                @Suppress("DEPRECATION")
-                try { child.recycle() } catch (_: Throwable) { }
-            }
-        }
-        return null
-    }
+    // M4 fix: removed unused `findNodeByResourceId` helper. The longPress
+    // nodeId branch now uses ScreenReader.findNodeById (the P1 sequential
+    // scheme) so it matches /tap and /scroll.
 
     // ─── type / scroll / press_key / wait ─────────────────────────────────
 
@@ -716,13 +696,27 @@ class ActionExecutor(private val service: AccessibilityService) {
         centerX: Int? = null,
         centerY: Int? = null,
     ): ActionResult = WakeLockManager.wakeForAction {
+        // H3 fix: previously `service.rootInActiveWindow` was read into a
+        // local but never recycled, leaking an AccessibilityNodeInfo handle
+        // on every scroll. Sustained agent scroll loops would exhaust the
+        // system's node pool. Read the bounds inside a try/finally and
+        // recycle on every path before delegating to swipe().
         val root = service.rootInActiveWindow
             ?: return@wakeForAction ActionResult.failure("no active window available")
-        val bounds = android.graphics.Rect().also { root.getBoundsInScreen(it) }
-        val cx = centerX ?: bounds.centerX()
-        val cy = centerY ?: bounds.centerY()
-        val qx = bounds.width() / 4
-        val qy = bounds.height() / 4
+        val cx: Int
+        val cy: Int
+        val qx: Int
+        val qy: Int
+        try {
+            val bounds = android.graphics.Rect().also { root.getBoundsInScreen(it) }
+            cx = centerX ?: bounds.centerX()
+            cy = centerY ?: bounds.centerY()
+            qx = bounds.width() / 4
+            qy = bounds.height() / 4
+        } finally {
+            @Suppress("DEPRECATION")
+            try { root.recycle() } catch (_: Throwable) { }
+        }
 
         // The inner swipe() re-enters WakeLockManager; ref-counting
         // ensures both scopes share one physical lock.
@@ -1443,11 +1437,21 @@ class ActionExecutor(private val service: AccessibilityService) {
         // Pack a list of part-result codes so we know whether EVERY part
         // of a multi-part message succeeded.
         val partsResults = mutableListOf<Int>()
-        val expectedParts = try {
-            smsManager.divideMessage(body).size.coerceAtLeast(1)
+        // H4 fix: divideMessage was previously called twice (here and again
+        // inside the send try block at line ~1505). On OEMs with encoding
+        // quirks the two calls could theoretically produce different
+        // segmentations, leaving expectedParts and the actual sentPi count
+        // out of sync — the receiver would then wait forever for parts that
+        // were never sent and trip the 15s timeout. Cache the result once.
+        val parts: ArrayList<String> = try {
+            ArrayList(smsManager.divideMessage(body) ?: emptyList())
         } catch (t: Throwable) {
-            1
+            ArrayList<String>().apply { add(body) }
         }
+        if (parts.isEmpty()) {
+            parts.add(body)
+        }
+        val expectedParts = parts.size
 
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx2: Context?, intent: Intent?) {
@@ -1488,7 +1492,8 @@ class ActionExecutor(private val service: AccessibilityService) {
         }
 
         try {
-            val parts = smsManager.divideMessage(body)
+            // H4: reuse the cached `parts` from above instead of calling
+            // divideMessage a second time. `expectedParts == parts.size`.
             if (parts.size <= 1) {
                 val sentPi = PendingIntent.getBroadcast(
                     ctx, 0, Intent(sentAction).setPackage(ctx.packageName), pendingFlags

@@ -82,17 +82,25 @@ object WakeLockManager {
      * no-ops.
      */
     fun initialize(context: Context) {
-        if (wakeLock != null) return
-        val pm = context.applicationContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
-        if (pm == null) {
-            Log.w(TAG, "PowerManager unavailable — WakeLockManager will no-op")
-            return
-        }
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG).apply {
-            // We manage ref-counting ourselves; setReferenceCounted(false)
-            // means release() always fully releases, regardless of how many
-            // acquire() calls preceded it.
-            setReferenceCounted(false)
+        // L3 fix: previously the `if (wakeLock != null) return` check and
+        // the subsequent assignment were not synchronized, so two concurrent
+        // initialize() calls could each create their own WakeLock and the
+        // second would overwrite the first. Benign in practice (only called
+        // from Application.onCreate which is main-thread) but trivial to
+        // harden by reusing the existing countLock.
+        synchronized(countLock) {
+            if (wakeLock != null) return
+            val pm = context.applicationContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            if (pm == null) {
+                Log.w(TAG, "PowerManager unavailable — WakeLockManager will no-op")
+                return
+            }
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG).apply {
+                // We manage ref-counting ourselves; setReferenceCounted(false)
+                // means release() always fully releases, regardless of how many
+                // acquire() calls preceded it.
+                setReferenceCounted(false)
+            }
         }
     }
 

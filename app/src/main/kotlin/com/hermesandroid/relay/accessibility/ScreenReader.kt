@@ -360,6 +360,13 @@ class ScreenReader {
         // Shared visit counter across all windows — the MAX_NODES cap is
         // global, matching how `readAllWindows` (P1) bounds traversal.
         val visited = intArrayOf(0)
+        // H2 fix: hoist the emission-id counter OUTSIDE the per-window loop
+        // so it mirrors `walk`/`findNodeById`'s GLOBAL "interesting" counter
+        // exactly. Previously this was scoped to each window, producing IDs
+        // like `w1:0` when the canonical scheme is `w1:N` (N = global). Round
+        // trips through `find_nodes → tap nodeId` then resolved to the wrong
+        // node on any screen with >1 window.
+        val nextIndex = intArrayOf(0)
 
         for ((windowIndex, root) in roots.withIndex()) {
             if (out.size >= effectiveLimit) break
@@ -367,7 +374,7 @@ class ScreenReader {
             searchWalk(
                 node = root,
                 windowIndex = windowIndex,
-                nextIndex = intArrayOf(0),
+                nextIndex = nextIndex,
                 visited = visited,
                 loweredText = loweredText,
                 className = className,
@@ -404,8 +411,6 @@ class ScreenReader {
         if (visited[0] >= MAX_NODES) return
 
         visited[0] += 1
-        val thisNodeIndex = nextIndex[0]
-        nextIndex[0] += 1
 
         val nodeText = node.text?.toString()?.takeIf { it.isNotBlank() }?.take(MAX_TEXT_LEN)
         val contentDesc = node.contentDescription?.toString()
@@ -413,6 +418,31 @@ class ScreenReader {
             ?.take(MAX_TEXT_LEN)
         val nodeClassName = node.className?.toString()
         val nodeClickable = node.isClickable
+        val nodeLongClickable = node.isLongClickable
+        val nodeScrollable = node.isScrollable
+        val nodeEditable = node.isEditable
+
+        // H2 fix: nextIndex must mirror `walk`/`findNodeById`'s emission
+        // counter exactly — increment ONLY for nodes that pass the canonical
+        // "interesting" predicate (text || contentDesc || clickable ||
+        // longClickable || scrollable || editable, with non-empty bounds),
+        // not for every visited node. Otherwise the IDs handed back from
+        // find_nodes drift relative to readAllWindows + findNodeById and
+        // round-trip lookups silently resolve to the wrong node.
+        val rect = Rect()
+        node.getBoundsInScreen(rect)
+        val bounds = rect.toBoundsOrZero()
+        val canonicalInteresting = (nodeText != null || contentDesc != null ||
+            nodeClickable || nodeLongClickable || nodeScrollable || nodeEditable) &&
+            !bounds.isEmpty
+
+        val thisNodeIndex: Int
+        if (canonicalInteresting) {
+            thisNodeIndex = nextIndex[0]
+            nextIndex[0] += 1
+        } else {
+            thisNodeIndex = -1
+        }
 
         val matchesText = loweredText == null ||
             (nodeText?.lowercase()?.contains(loweredText) == true) ||
@@ -420,10 +450,11 @@ class ScreenReader {
         val matchesClass = className == null || nodeClassName == className
         val matchesClickable = clickable == null || nodeClickable == clickable
 
-        if (matchesText && matchesClass && matchesClickable) {
-            val rect = Rect()
-            node.getBoundsInScreen(rect)
-            val bounds = rect.toBoundsOrZero()
+        // Only emit nodes that BOTH match the search filter AND are
+        // canonically-interesting (i.e. would also be emitted by `walk`).
+        // Restricting emission to canonical nodes is what makes the round
+        // trip find_nodes → tap nodeId reliable.
+        if (canonicalInteresting && matchesText && matchesClass && matchesClickable) {
             if (!bounds.isEmpty || loweredText != null || className != null) {
                 out.add(
                     ScreenNode(

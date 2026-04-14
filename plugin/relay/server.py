@@ -1032,6 +1032,15 @@ async def _bridge_dispatch(
                 body = raw
         except (json.JSONDecodeError, ValueError, aiohttp.ContentTypeError):
             body = {}
+    else:
+        # H1/M5 fix: phone-side BridgeCommandHandler reads its arguments from
+        # the envelope body, with a `params` fallback that's dead code because
+        # an empty {} JsonObject is not null. For GET requests we therefore
+        # merge query-string params into the body so handlers like /events
+        # (limit/since) and /screen (include_bounds) actually see them.
+        # Values from request.query are strings; phone-side parsers must use
+        # .content.toIntOrNull() etc. rather than .intOrNull.
+        body = dict(request.query)
 
     try:
         response = await server.bridge.handle_command(

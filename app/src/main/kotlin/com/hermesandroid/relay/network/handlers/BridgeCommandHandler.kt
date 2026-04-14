@@ -669,19 +669,31 @@ class BridgeCommandHandler(
                 // `bodyText` verb match result. We bypass requiresConfirmation
                 // here deliberately: "make a phone call" is itself the
                 // destructive action.
-                if (safetyManager != null) {
-                    val confirmText = "Call $number?"
-                    val allowed = safetyManager.awaitConfirmation("/call", confirmText)
-                    if (!allowed) {
-                        respond(
-                            requestId, 403,
-                            buildJsonObject {
-                                put("error", "user denied destructive action")
-                                put("reason", "confirmation_denied_or_timeout")
-                            }
-                        )
-                        return
-                    }
+                //
+                // M1 fix: previously the awaitConfirmation call was wrapped
+                // in `if (safetyManager != null)`, which silently bypassed
+                // the modal whenever safetyManager was null (test harness or
+                // failed init). For irreversible actions we MUST fail closed.
+                if (safetyManager == null) {
+                    respond(
+                        requestId, 503,
+                        buildJsonObject {
+                            put("error", "safety manager not initialized — refusing destructive action")
+                        }
+                    )
+                    return
+                }
+                val confirmText = "Call $number?"
+                val allowed = safetyManager.awaitConfirmation("/call", confirmText)
+                if (!allowed) {
+                    respond(
+                        requestId, 403,
+                        buildJsonObject {
+                            put("error", "user denied destructive action")
+                            put("reason", "confirmation_denied_or_timeout")
+                        }
+                    )
+                    return
                 }
                 respondFromResult(requestId, executor.makeCall(number))
             }
@@ -709,19 +721,30 @@ class BridgeCommandHandler(
                 }
                 // Always confirm SMS sends — destructive action regardless
                 // of verb match.
-                if (safetyManager != null) {
-                    val confirmText = "Send '$smsBody' to $to?"
-                    val allowed = safetyManager.awaitConfirmation("/send_sms", confirmText)
-                    if (!allowed) {
-                        respond(
-                            requestId, 403,
-                            buildJsonObject {
-                                put("error", "user denied destructive action")
-                                put("reason", "confirmation_denied_or_timeout")
-                            }
-                        )
-                        return
-                    }
+                //
+                // M1 fix: same fail-closed treatment as /call above. Don't
+                // silently dispatch a destructive SMS just because safety
+                // wasn't wired.
+                if (safetyManager == null) {
+                    respond(
+                        requestId, 503,
+                        buildJsonObject {
+                            put("error", "safety manager not initialized — refusing destructive action")
+                        }
+                    )
+                    return
+                }
+                val confirmText = "Send '$smsBody' to $to?"
+                val allowed = safetyManager.awaitConfirmation("/send_sms", confirmText)
+                if (!allowed) {
+                    respond(
+                        requestId, 403,
+                        buildJsonObject {
+                            put("error", "user denied destructive action")
+                            put("reason", "confirmation_denied_or_timeout")
+                        }
+                    )
+                    return
                 }
                 respondFromResult(requestId, executor.sendSms(to, smsBody))
             }

@@ -102,11 +102,11 @@ internal class RealVoiceBridgeIntentHandler(
             )
             VoiceIntent.Back -> handleSafe(
                 label = "Navigate back",
-                envelope = buildSimpleEnvelope("android_press_back"),
+                envelope = buildPressKeyEnvelope("back"),
             )
             VoiceIntent.Home -> handleSafe(
                 label = "Home",
-                envelope = buildSimpleEnvelope("android_press_home"),
+                envelope = buildPressKeyEnvelope("home"),
             )
         }
     }
@@ -227,48 +227,72 @@ internal class RealVoiceBridgeIntentHandler(
     )
     // === END PHASE3-tier-C4 ===
 
+    // H5 fix: previously these emitted `type = "tool.call"` envelopes, which
+    // BridgeCommandHandler (which only routes `type == "bridge.command"`)
+    // silently dropped on the floor. Voice intents APPEARED to dispatch but
+    // the phone never executed them. Convert all builders to the same
+    // `bridge.command` shape that buildSmsEnvelope uses, with `request_id`,
+    // `method`, `path`, and `body` fields.
+    //
+    // Note on /open_app: VoiceIntent.OpenApp captures a human app name (e.g.
+    // "Spotify"), not a Play Store package name. The instructions specify a
+    // body of `{"package": "<pkg>"}`. We pass appName as `package` for now;
+    // a future improvement would resolve via a launcher-package lookup. The
+    // /open_app phone-side handler is also a separate gap (no case in
+    // BridgeCommandHandler at the time of this fix — flagged for follow-up).
+
     private fun buildOpenAppEnvelope(i: VoiceIntent.OpenApp): Envelope = Envelope(
         channel = "bridge",
-        type = "tool.call",
+        type = "bridge.command",
         payload = buildJsonObject {
-            put("tool", "android_open_app")
-            put("args", buildJsonObject { put("app_name", i.appName) })
-            put("requires_confirmation", false)
+            put("request_id", java.util.UUID.randomUUID().toString())
+            put("method", "POST")
+            put("path", "/open_app")
+            put("body", buildJsonObject {
+                put("package", i.appName)
+            })
             put("source", "voice")
         },
     )
 
     private fun buildTapEnvelope(i: VoiceIntent.Tap): Envelope = Envelope(
         channel = "bridge",
-        type = "tool.call",
+        type = "bridge.command",
         payload = buildJsonObject {
-            put("tool", "android_tap")
-            put("args", buildJsonObject { put("target", i.target) })
-            put("requires_confirmation", false)
+            put("request_id", java.util.UUID.randomUUID().toString())
+            put("method", "POST")
+            put("path", "/tap_text")
+            put("body", buildJsonObject {
+                put("text", i.target)
+            })
             put("source", "voice")
         },
     )
 
     private fun buildScrollEnvelope(i: VoiceIntent.Scroll): Envelope = Envelope(
         channel = "bridge",
-        type = "tool.call",
+        type = "bridge.command",
         payload = buildJsonObject {
-            put("tool", "android_scroll")
-            put("args", buildJsonObject {
+            put("request_id", java.util.UUID.randomUUID().toString())
+            put("method", "POST")
+            put("path", "/scroll")
+            put("body", buildJsonObject {
                 put("direction", i.direction.name.lowercase())
             })
-            put("requires_confirmation", false)
             put("source", "voice")
         },
     )
 
-    private fun buildSimpleEnvelope(toolName: String): Envelope = Envelope(
+    private fun buildPressKeyEnvelope(key: String): Envelope = Envelope(
         channel = "bridge",
-        type = "tool.call",
+        type = "bridge.command",
         payload = buildJsonObject {
-            put("tool", toolName)
-            put("args", buildJsonObject {})
-            put("requires_confirmation", false)
+            put("request_id", java.util.UUID.randomUUID().toString())
+            put("method", "POST")
+            put("path", "/press_key")
+            put("body", buildJsonObject {
+                put("key", key)
+            })
             put("source", "voice")
         },
     )

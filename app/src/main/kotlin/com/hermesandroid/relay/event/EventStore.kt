@@ -131,6 +131,13 @@ object EventStore {
      * us unconditionally.
      */
     fun append(event: AccessibilityEvent) {
+        // M2 fix: previously the `isStreaming` check happened OUTSIDE the
+        // lock, creating a TOCTOU window. A binder-thread append could read
+        // `isStreaming == true` and then enter the lock AFTER `setStreaming
+        // (false)` had already cleared the buffer, adding a stale entry.
+        // Move the check INSIDE the synchronized block so the streaming gate
+        // and the buffer mutation are atomic. The @Volatile on `isStreaming`
+        // stays as a cheap fast-path hint outside the hot lock.
         if (!isStreaming) return
 
         val eventTypeInt = event.eventType
@@ -139,6 +146,9 @@ object EventStore {
         val now = System.currentTimeMillis()
 
         synchronized(lock) {
+            // Re-check under the lock so a concurrent setStreaming(false)
+            // can't race a stale entry past the volatile read above.
+            if (!isStreaming) return
             // Throttle: drop if we saw a same-kind event in the last window.
             val key = Pair(eventTypeInt, pkg ?: "")
             val last = throttleMap[key]

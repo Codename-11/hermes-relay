@@ -115,7 +115,7 @@ def android_read_screen(include_bounds: bool = False) -> str:
                    clickable, focusable, bounds (if include_bounds=True)
     """
     try:
-        data = _get(f"/screen?bounds={str(include_bounds).lower()}")
+        data = _get(f"/screen?include_bounds={str(include_bounds).lower()}")
         return json.dumps(data)
     except Exception as e:
         return json.dumps({"error": str(e)})
