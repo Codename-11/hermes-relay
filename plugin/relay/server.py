@@ -1205,6 +1205,18 @@ async def handle_bridge_broadcast(request: web.Request) -> web.Response:
     return await _bridge_dispatch(request, "/broadcast")
 
 
+# B1 event-stream: poll recent AccessibilityEvents + toggle capture.
+# Same trust model as the other bridge HTTP routes (host-gated via
+# loopback), delegated straight through to the phone's EventStore via
+# the bridge channel.
+async def handle_bridge_events_recent(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/events")
+
+
+async def handle_bridge_events_stream(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/events/stream")
+
+
 # === END PHASE3-bridge-server ===
 
 
@@ -1818,6 +1830,9 @@ def create_app(config: RelayConfig) -> web.Application:
     # B4: raw Intent escape hatch
     app.router.add_post("/send_intent", handle_bridge_send_intent)
     app.router.add_post("/broadcast", handle_bridge_broadcast)
+    # B1: event-stream — poll + toggle AccessibilityEvent capture
+    app.router.add_get("/events", handle_bridge_events_recent)
+    app.router.add_post("/events/stream", handle_bridge_events_stream)
     # === END PHASE3-bridge-server ===
 
     # === PHASE3-status: loopback-gated structured phone status ===

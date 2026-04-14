@@ -28,6 +28,8 @@ Tools registered:
   - android_diff_screen       compare current screen to a prior hash (A5)
   - android_send_intent       launch arbitrary Activity via raw Intent (B4)
   - android_broadcast         send arbitrary broadcast Intent (B4)
+  - android_events            poll the phone's AccessibilityEvent ring buffer (B1)
+  - android_event_stream      toggle AccessibilityEvent capture on the phone (B1)
 """
 
 import json
@@ -590,6 +592,101 @@ def android_describe_node(node_id: str) -> str:
         return json.dumps(data)
     except Exception as e:
         return json.dumps({"error": str(e)})
+
+
+def android_events(limit: int = 50, since: int = 0) -> str:
+    """
+    Poll the phone's AccessibilityEvent ring buffer.
+
+    Returns the most-recent events the phone has captured (up to 500
+    buffered). Capture must have been enabled first via
+    android_event_stream(enabled=True), otherwise the buffer is empty.
+
+    Privacy-sensitive — event streams can leak search queries, messages,
+    and passwords typed into input fields. Default is disabled. User
+    must explicitly enable via android_event_stream(true). Clears
+    automatically on disable.
+
+    Args:
+      limit: max entries to return (1-500, default 50). Clamped.
+      since: only return entries with timestamp > `since` (epoch ms).
+             Use this to poll incrementally without re-fetching history.
+
+    Returns JSON envelope:
+      {"status": "ok", "count": N, "entries": [{timestamp, event_type,
+       package_name, class_name, text, content_description, source}, ...]}
+    or an error envelope on relay/bridge failure.
+    """
+    # Clamp defensively — LLM may emit silly values.
+    if not isinstance(limit, int) or limit < 1:
+        limit = 50
+    if limit > 500:
+        limit = 500
+    if not isinstance(since, int) or since < 0:
+        since = 0
+
+    try:
+        # GET /events?limit=N&since=T
+        data = _get(f"/events?limit={limit}&since={since}")
+        entries = data.get("entries") or []
+        return json.dumps(
+            {
+                "status": "ok",
+                "count": len(entries),
+                "entries": entries,
+                "streaming": data.get("streaming"),
+            }
+        )
+    except Exception as e:
+        return json.dumps({"status": "error", "message": str(e)})
+
+
+def android_event_stream(enabled: bool = True) -> str:
+    """
+    Toggle AccessibilityEvent capture on the phone.
+
+    Privacy-sensitive — event streams can leak search queries, messages,
+    and passwords typed into input fields. Default is disabled. User
+    must explicitly enable via android_event_stream(true). Clears
+    automatically on disable.
+
+    Enabling starts appending filtered events (click, text changed,
+    window content changed, window state changed, scroll) into a
+    bounded ring buffer (500 entries max, throttled to 1 per type+
+    package per 100ms). Disabling stops capture AND clears the buffer
+    so no stale data persists into the next enable cycle.
+
+    Args:
+      enabled: True to start capture, False to stop + clear.
+
+    Returns JSON envelope:
+      {"status": "ok", "streaming": bool, "buffer_cleared": true}
+    or an error envelope on tool- or bridge-side failure.
+    """
+    # Strict type check — accept only real booleans so the LLM can't
+    # accidentally toggle streaming with a truthy string like "yes".
+    if not isinstance(enabled, bool):
+        return json.dumps(
+            {
+                "status": "error",
+                "message": (
+                    "android_event_stream requires a boolean `enabled` "
+                    f"argument, got {type(enabled).__name__}"
+                ),
+            }
+        )
+
+    try:
+        data = _post("/events/stream", {"enabled": enabled})
+        return json.dumps(
+            {
+                "status": "ok",
+                "streaming": data.get("streaming", enabled),
+                "buffer_cleared": data.get("buffer_cleared", True),
+            }
+        )
+    except Exception as e:
+        return json.dumps({"status": "error", "message": str(e)})
 
 
 def _get_public_ip() -> str:
@@ -1542,6 +1639,71 @@ _SCHEMAS = {
             "required": ["action"],
         },
     },
+    "android_events": {
+        "name": "android_events",
+        "description": (
+            "Poll the phone's recent AccessibilityEvent ring buffer (clicks, "
+            "text changes, window transitions, scrolls). Use this for reactive "
+            "agent scenarios — 'tell me when the user opens Slack', 'watch for "
+            "the next message typed into the search box', 'what's happening on "
+            "the phone right now?'. Capture is OFF by default — you must call "
+            "android_event_stream(enabled=true) first. The buffer is bounded "
+            "at 500 entries and throttled to one entry per (event_type, "
+            "package) per 100ms so scroll storms don't flood the stream. "
+            "Privacy-sensitive — event streams can leak search queries, "
+            "messages, and passwords typed into input fields. Default is "
+            "disabled. User must explicitly enable via "
+            "android_event_stream(true). Clears automatically on disable."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Max entries to return (1-500, default 50)",
+                    "default": 50,
+                },
+                "since": {
+                    "type": "integer",
+                    "description": (
+                        "Only return entries with timestamp > this epoch "
+                        "millisecond value. Use the timestamp of the last "
+                        "entry you saw to poll incrementally. Default 0 "
+                        "(return everything in the buffer)."
+                    ),
+                    "default": 0,
+                },
+            },
+            "required": [],
+        },
+    },
+    "android_event_stream": {
+        "name": "android_event_stream",
+        "description": (
+            "Toggle AccessibilityEvent capture on the phone. Pass "
+            "enabled=true to start recording clicks, text changes, window "
+            "transitions, and scrolls into a bounded ring buffer that "
+            "android_events then polls. Pass enabled=false to stop and wipe "
+            "the buffer. Privacy-sensitive — event streams can leak search "
+            "queries, messages, and passwords typed into input fields. "
+            "Default is disabled. User must explicitly enable via "
+            "android_event_stream(true). Clears automatically on disable. "
+            "Use only when the user has asked for reactive monitoring and "
+            "be explicit in chat about what you're turning on."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "description": (
+                        "true = start capture, false = stop + clear buffer"
+                    ),
+                },
+            },
+            "required": ["enabled"],
+        },
+    },
 }
 
 # ── Tool handlers map ──────────────────────────────────────────────────────────
@@ -1588,6 +1750,8 @@ _HANDLERS = {
     "android_diff_screen":      lambda args, **kw: android_diff_screen(**args),
     "android_send_intent":      lambda args, **kw: android_send_intent(**args),
     "android_broadcast":        lambda args, **kw: android_broadcast(**args),
+    "android_events":           lambda args, **kw: android_events(**args),
+    "android_event_stream":     lambda args, **kw: android_event_stream(**args),
 }
 
 # ── Registry registration ──────────────────────────────────────────────────────
