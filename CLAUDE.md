@@ -309,6 +309,27 @@ scripts/dev.bat version    # Show current version from libs.versions.toml
 scripts/dev.bat relay      # Start relay server (dev mode, no SSL)
 ```
 
+### Bridge smoke test (run on hermes-host, not local PC)
+
+```bash
+scripts/bridge-smoke.sh                   # full suite, destructive ON
+scripts/bridge-smoke.sh --no-destructive  # read-only paths only
+scripts/bridge-smoke.sh --filter open_app # re-run a single test
+scripts/bridge-smoke.sh --pair ABCDEF     # register pairing code first
+```
+
+End-to-end smoke test for the bridge channel — curls every documented
+bridge HTTP route via `localhost:8767`, mirroring exactly how
+`plugin/tools/android_tool.py` talks to the relay. Reads
+`ANDROID_BRIDGE_TOKEN` from `~/.hermes/.env` by default. Catches the
+silent-drop class of regression where the Python relay registers a route
+but the Kotlin dispatcher's `when (path)` block has no branch — that
+exact gap (latent v0.3.0 → v0.4.0 `/open_app` `/get_apps` `/setup`) is
+what motivated this script. Exit 0 = all pass, 1 = test failure, 2 =
+preflight failure (relay down / no token / phone not connected). Run
+this after every `systemctl --user restart hermes-relay` to confirm the
+phone is still reachable before kicking off agent-driven QA.
+
 Open repo root in Android Studio for Compose previews and device deployment.
 
 ### Typical Dev Loop (Claude-driven edits + Bailey's local testing)
