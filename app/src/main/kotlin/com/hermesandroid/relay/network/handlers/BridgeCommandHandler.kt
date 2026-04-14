@@ -66,6 +66,10 @@ import kotlinx.serialization.json.put
  *  - `/press_key` body `{key}` — `home`/`back`/`recents`/etc
  *  - `/wait` body `{ms}`
  *  - `/screen` → returns full `ScreenContent` JSON
+ *  - `/screen_hash` → returns `{hash, node_count, truncated}` — cheap change
+ *    detection for navigation loops (A5, see [ScreenHasher])
+ *  - `/diff_screen` body `{previous_hash}` → returns `{changed, hash,
+ *    node_count, truncated}` — compares current hash to [previous_hash]
  *  - `/screenshot` → returns `{media: "MEDIA:hermes-relay://<token>"}`
  *  - `/current_app` → returns `{package: "com.whatever"}`
  *
@@ -311,6 +315,75 @@ class BridgeCommandHandler(
                     screen
                 ).jsonObject
                 respond(requestId, 200, screenJson)
+            }
+
+            "/screen_hash" -> {
+                // A5 — cheap change detection. Walks the multi-window
+                // accessibility tree from Wave 1 / P1's snapshotAllWindows
+                // and returns SHA-256 of a stable per-node fingerprint.
+                val roots = service.snapshotAllWindows()
+                if (roots.isEmpty()) {
+                    respond(
+                        requestId, 500,
+                        buildJsonObject { put("error", "no active windows available") }
+                    )
+                    return
+                }
+                try {
+                    val result = service.hasher.screenHash(roots)
+                    respond(
+                        requestId, 200,
+                        buildJsonObject {
+                            put("hash", result.hash)
+                            put("node_count", result.nodeCount)
+                            put("truncated", result.truncated)
+                        }
+                    )
+                } finally {
+                    // snapshotAllWindows() hands us fresh references the
+                    // caller owns — recycle them on the way out, matching
+                    // the /screen path's contract.
+                    for (r in roots) {
+                        @Suppress("DEPRECATION")
+                        try { r.recycle() } catch (_: Throwable) { }
+                    }
+                }
+            }
+
+            "/diff_screen" -> {
+                val previousHash = body["previous_hash"]?.jsonPrimitive?.content.orEmpty()
+                if (previousHash.isBlank()) {
+                    respond(
+                        requestId, 400,
+                        buildJsonObject { put("error", "missing 'previous_hash' in body") }
+                    )
+                    return
+                }
+                val roots = service.snapshotAllWindows()
+                if (roots.isEmpty()) {
+                    respond(
+                        requestId, 500,
+                        buildJsonObject { put("error", "no active windows available") }
+                    )
+                    return
+                }
+                try {
+                    val result = service.hasher.diffScreen(roots, previousHash)
+                    respond(
+                        requestId, 200,
+                        buildJsonObject {
+                            put("changed", result.changed)
+                            put("hash", result.hash)
+                            put("node_count", result.nodeCount)
+                            put("truncated", result.truncated)
+                        }
+                    )
+                } finally {
+                    for (r in roots) {
+                        @Suppress("DEPRECATION")
+                        try { r.recycle() } catch (_: Throwable) { }
+                    }
+                }
             }
 
             "/screenshot" -> {

@@ -96,6 +96,7 @@ class HermesAccessibilityService : AccessibilityService() {
     }
 
     private val screenReader = ScreenReader()
+    private val screenHasher = ScreenHasher()
     private var _actionExecutor: ActionExecutor? = null
 
     /**
@@ -135,6 +136,12 @@ class HermesAccessibilityService : AccessibilityService() {
 
     /** Convenience wrapper — the service uses its own [ScreenReader] instance. */
     val reader: ScreenReader get() = screenReader
+
+    /**
+     * Convenience wrapper for the service's [ScreenHasher] instance.
+     * Used by `BridgeCommandHandler` for `/screen_hash` + `/diff_screen`.
+     */
+    val hasher: ScreenHasher get() = screenHasher
 
     override fun onServiceConnected() {
         super.onServiceConnected()

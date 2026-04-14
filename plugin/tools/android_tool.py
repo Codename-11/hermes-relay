@@ -16,6 +16,8 @@ Tools registered:
   - android_get_apps      list installed apps
   - android_current_app   get foreground app package name
   - android_setup         configure bridge URL and pairing code
+  - android_screen_hash   cheap SHA-256 fingerprint of current screen (A5)
+  - android_diff_screen   compare current screen to a prior hash (A5)
 """
 
 import json
@@ -303,6 +305,54 @@ def android_current_app() -> str:
     """Get the package name and activity of the current foreground app."""
     try:
         data = _get("/current_app")
+        return json.dumps(data)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def android_screen_hash() -> str:
+    """
+    Return a cheap SHA-256 fingerprint of the current Android screen.
+
+    Walks the accessibility tree across all visible windows and hashes a
+    stable per-node signature (className + text + contentDescription +
+    bounds + viewIdResourceName). The hash is deterministic across
+    unchanged screens so the agent can use it for "did anything change?"
+    polling ~100x cheaper than re-reading the full tree.
+
+    Returns JSON: ``{"hash": "<hex>", "node_count": N, "truncated": bool}``.
+
+    Known limitation: screens with live counters, scrolling tickers, or
+    animated progress % will churn the hash every frame. Use
+    ``android_read_screen`` for those edge cases.
+    """
+    try:
+        data = _get("/screen_hash")
+        return json.dumps(data)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def android_diff_screen(previous_hash: str) -> str:
+    """
+    Compare the current screen to a prior hash and report whether it
+    changed.
+
+    Returns JSON: ``{"changed": bool, "hash": "<hex>", "node_count": N,
+    "truncated": bool}``. The new hash is always returned so the agent
+    can update its reference without a second call.
+
+    Typical usage::
+
+        before = json.loads(android_screen_hash())["hash"]
+        android_tap(...)
+        result = json.loads(android_diff_screen(before))
+        if result["changed"]:
+            # something on screen changed — maybe read_screen to decide what
+            ...
+    """
+    try:
+        data = _post("/diff_screen", {"previous_hash": previous_hash})
         return json.dumps(data)
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -607,6 +657,38 @@ _SCHEMAS = {
             "required": ["pairing_code"],
         },
     },
+    "android_screen_hash": {
+        "name": "android_screen_hash",
+        "description": (
+            "Return a cheap SHA-256 fingerprint of the current Android screen, "
+            "computed from the accessibility tree. Deterministic across "
+            "unchanged screens — use for fast change detection in navigation "
+            "loops (~100x cheaper than android_read_screen). Returns "
+            "{hash, node_count, truncated}. Known limitation: live counters "
+            "and animated text will churn the hash."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+    "android_diff_screen": {
+        "name": "android_diff_screen",
+        "description": (
+            "Compare the current Android screen to a previous hash and report "
+            "whether anything changed. Returns {changed, hash, node_count, "
+            "truncated} in one call so the agent can update its reference "
+            "without a second round-trip. Use after a tap/swipe to confirm "
+            "something actually happened."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "previous_hash": {
+                    "type": "string",
+                    "description": "Prior hash from android_screen_hash.",
+                },
+            },
+            "required": ["previous_hash"],
+        },
+    },
 }
 
 # ── Tool handlers map ──────────────────────────────────────────────────────────
@@ -626,6 +708,8 @@ _HANDLERS = {
     "android_get_apps":     lambda args, **kw: android_get_apps(),
     "android_current_app":  lambda args, **kw: android_current_app(),
     "android_setup":        lambda args, **kw: android_setup(**args),
+    "android_screen_hash":  lambda args, **kw: android_screen_hash(),
+    "android_diff_screen":  lambda args, **kw: android_diff_screen(**args),
 }
 
 # ── Registry registration ──────────────────────────────────────────────────────
