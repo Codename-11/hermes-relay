@@ -26,6 +26,8 @@ Tools registered:
   - android_media             control system-wide media playback (play/pause/next/previous/toggle)
   - android_screen_hash       cheap SHA-256 fingerprint of current screen (A5)
   - android_diff_screen       compare current screen to a prior hash (A5)
+  - android_send_intent       launch arbitrary Activity via raw Intent (B4)
+  - android_broadcast         send arbitrary broadcast Intent (B4)
 """
 
 import json
@@ -954,6 +956,104 @@ def android_clipboard_write(text: str) -> str:
         return json.dumps({"error": str(e)})
 
 
+# ── B4: raw Intent escape hatches ──────────────────────────────────────────────
+#
+# These tools are power-user escape hatches. The phone will refuse any
+# request whose target ``package`` is on the Bridge safety blocklist
+# (banking/password managers/2FA by default) — see BridgeCommandHandler's
+# `/send_intent` and `/broadcast` cases. Extras are string-valued only;
+# wire a richer tool if you need Parcelable/Serializable support.
+
+
+def android_send_intent(action: str,
+                        data: Optional[str] = None,
+                        package: Optional[str] = None,
+                        component: Optional[str] = None,
+                        extras: Optional[dict] = None,
+                        category: Optional[str] = None) -> str:
+    """
+    Launch an arbitrary Android Activity via a raw Intent.
+
+    Examples:
+      - Open Google Maps directions: action="android.intent.action.VIEW",
+        data="google.navigation:q=1600+Amphitheatre+Parkway"
+      - Dial a number: action="android.intent.action.DIAL", data="tel:5551234"
+      - Compose SMS: action="android.intent.action.SENDTO", data="smsto:5551234",
+        extras={"sms_body": "hello"}
+      - Open a custom deep link: action="android.intent.action.VIEW",
+        data="myapp://some/path"
+      - Launch a specific Activity: action="android.intent.action.MAIN",
+        component="com.example/com.example.MainActivity"
+
+    Args:
+      action:    Android action string (required). E.g. "android.intent.action.VIEW".
+      data:      Optional data URI for the Intent. Parsed with Uri.parse on the phone.
+      package:   Optional target package name. Forces the Intent to a specific app.
+                 **Must not be on the Bridge safety blocklist** — the phone refuses
+                 blocklisted targets with a 403.
+      component: Optional fully-qualified component in the form "pkg/classname".
+                 Invalid formats are rejected with a 400.
+      extras:    Optional dict of string-keyed, string-valued Intent extras.
+                 Non-string values are not supported — stringify them first.
+      category:  Optional category string (e.g. "android.intent.category.LAUNCHER").
+
+    The phone adds `FLAG_ACTIVITY_NEW_TASK` automatically since the Bridge
+    accessibility service isn't an Activity context.
+    """
+    try:
+        payload: dict = {"action": action}
+        if data is not None:
+            payload["data"] = data
+        if package is not None:
+            payload["package"] = package
+        if component is not None:
+            payload["component"] = component
+        if extras is not None:
+            payload["extras"] = extras
+        if category is not None:
+            payload["category"] = category
+        response = _post("/send_intent", payload)
+        return json.dumps(response)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def android_broadcast(action: str,
+                      data: Optional[str] = None,
+                      package: Optional[str] = None,
+                      extras: Optional[dict] = None) -> str:
+    """
+    Send an arbitrary broadcast Intent on the phone.
+
+    Examples:
+      - Media key: action="android.intent.action.MEDIA_BUTTON"
+      - Airplane mode changed (system intents require platform-signed apps
+        and will usually 403 with "permission denied").
+      - Custom app broadcast: action="com.example.MY_BROADCAST",
+        package="com.example", extras={"key": "value"}
+
+    Args:
+      action:  Android action string (required).
+      data:    Optional data URI.
+      package: Optional target package — scopes the broadcast to a single app.
+               **Must not be on the Bridge safety blocklist** — 403 if it is.
+      extras:  Optional dict of string-keyed, string-valued Intent extras.
+               Non-string values are not supported in v1.
+    """
+    try:
+        payload: dict = {"action": action}
+        if data is not None:
+            payload["data"] = data
+        if package is not None:
+            payload["package"] = package
+        if extras is not None:
+            payload["extras"] = extras
+        response = _post("/broadcast", payload)
+        return json.dumps(response)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
 def _update_env_file(env_path, key: str, value: str):
     """Simple .env file updater (fallback when hermes_cli.config not available)."""
     lines = []
@@ -1366,6 +1466,82 @@ _SCHEMAS = {
             "required": ["previous_hash"],
         },
     },
+    "android_send_intent": {
+        "name": "android_send_intent",
+        "description": (
+            "Power-user escape hatch — launch an arbitrary Android Activity via a "
+            "raw Intent. Useful for Maps directions (google.navigation:q=...), "
+            "dialer (tel:), SMS composer (smsto:), mail (mailto:), and custom "
+            "deep links. The phone adds FLAG_ACTIVITY_NEW_TASK automatically. "
+            "Extras are string-only in v1 — stringify non-string values. The "
+            "target 'package' must NOT be on the Bridge safety blocklist "
+            "(banking/passwords/2FA by default) or the phone returns 403."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "description": "Android action string, e.g. 'android.intent.action.VIEW'",
+                },
+                "data": {
+                    "type": "string",
+                    "description": "Optional data URI for the Intent",
+                },
+                "package": {
+                    "type": "string",
+                    "description": "Optional target package — forces the Intent to a specific app",
+                },
+                "component": {
+                    "type": "string",
+                    "description": "Optional fully-qualified component 'pkg/classname'",
+                },
+                "extras": {
+                    "type": "object",
+                    "description": "Optional string-keyed/string-valued Intent extras",
+                    "additionalProperties": {"type": "string"},
+                },
+                "category": {
+                    "type": "string",
+                    "description": "Optional Intent category (e.g. 'android.intent.category.LAUNCHER')",
+                },
+            },
+            "required": ["action"],
+        },
+    },
+    "android_broadcast": {
+        "name": "android_broadcast",
+        "description": (
+            "Power-user escape hatch — send an arbitrary broadcast Intent on the "
+            "phone via Context.sendBroadcast. Extras are string-only in v1. The "
+            "target 'package' must NOT be on the Bridge safety blocklist or the "
+            "phone returns 403. System broadcasts that require platform-signed "
+            "apps will be refused with 'permission denied'."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "description": "Android action string (required)",
+                },
+                "data": {
+                    "type": "string",
+                    "description": "Optional data URI",
+                },
+                "package": {
+                    "type": "string",
+                    "description": "Optional target package — scopes the broadcast to a single app",
+                },
+                "extras": {
+                    "type": "object",
+                    "description": "Optional string-keyed/string-valued Intent extras",
+                    "additionalProperties": {"type": "string"},
+                },
+            },
+            "required": ["action"],
+        },
+    },
 }
 
 # ── Tool handlers map ──────────────────────────────────────────────────────────
@@ -1410,6 +1586,8 @@ _HANDLERS = {
     "android_media":            lambda args, **kw: android_media(**args),
     "android_screen_hash":      lambda args, **kw: android_screen_hash(),
     "android_diff_screen":      lambda args, **kw: android_diff_screen(**args),
+    "android_send_intent":      lambda args, **kw: android_send_intent(**args),
+    "android_broadcast":        lambda args, **kw: android_broadcast(**args),
 }
 
 # ── Registry registration ──────────────────────────────────────────────────────

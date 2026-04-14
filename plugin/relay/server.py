@@ -1193,6 +1193,18 @@ async def handle_bridge_diff_screen(request: web.Request) -> web.Response:
     return await _bridge_dispatch(request, "/diff_screen")
 
 
+# B4 — raw Intent escape hatch. `/send_intent` launches an Activity via
+# `Context.startActivity` on the phone; `/broadcast` fires a broadcast
+# via `Context.sendBroadcast`. Both accept an optional `package` field
+# for blocklist gating on the phone side.
+async def handle_bridge_send_intent(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/send_intent")
+
+
+async def handle_bridge_broadcast(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/broadcast")
+
+
 # === END PHASE3-bridge-server ===
 
 
@@ -1803,6 +1815,9 @@ def create_app(config: RelayConfig) -> web.Application:
     # A5: screen-hash change detection
     app.router.add_get("/screen_hash", handle_bridge_screen_hash)
     app.router.add_post("/diff_screen", handle_bridge_diff_screen)
+    # B4: raw Intent escape hatch
+    app.router.add_post("/send_intent", handle_bridge_send_intent)
+    app.router.add_post("/broadcast", handle_bridge_broadcast)
     # === END PHASE3-bridge-server ===
 
     # === PHASE3-status: loopback-gated structured phone status ===

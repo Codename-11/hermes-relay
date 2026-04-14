@@ -20,6 +20,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.contentOrNull
 
 /**
  * Phase 3 — accessibility `accessibility-runtime`
@@ -702,11 +703,91 @@ class BridgeCommandHandler(
                 }
             }
 
+            // === PHASE3-B4: send_intent / broadcast ===
+            // Raw Intent escape hatch. Both paths accept a target `pkg`
+            // field; if it's on the safety blocklist we refuse here (the
+            // top-level currentApp blocklist check above gates the *source*
+            // app, this gates the *target* app). String-only extras map.
+            "/send_intent" -> {
+                val action = body["action"]?.jsonPrimitive?.content.orEmpty()
+                if (action.isBlank()) {
+                    respond(
+                        requestId, 400,
+                        buildJsonObject { put("error", "missing 'action' in body") }
+                    )
+                    return
+                }
+                val targetPkg = body["package"]?.jsonPrimitive?.contentOrNull
+                val targetAllowed = safetyManager?.checkPackageAllowed(targetPkg) ?: true
+                if (!targetAllowed) {
+                    respond(
+                        requestId, 403,
+                        buildJsonObject {
+                            put("error", "blocked package ${targetPkg ?: "unknown"}")
+                        }
+                    )
+                    return
+                }
+                val data = body["data"]?.jsonPrimitive?.contentOrNull
+                val component = body["component"]?.jsonPrimitive?.contentOrNull
+                val category = body["category"]?.jsonPrimitive?.contentOrNull
+                val extras = extractStringMap(body["extras"] as? JsonObject)
+                respondFromResult(
+                    requestId,
+                    executor.sendIntent(action, data, targetPkg, component, extras, category)
+                )
+            }
+
+            "/broadcast" -> {
+                val action = body["action"]?.jsonPrimitive?.content.orEmpty()
+                if (action.isBlank()) {
+                    respond(
+                        requestId, 400,
+                        buildJsonObject { put("error", "missing 'action' in body") }
+                    )
+                    return
+                }
+                val targetPkg = body["package"]?.jsonPrimitive?.contentOrNull
+                val targetAllowed = safetyManager?.checkPackageAllowed(targetPkg) ?: true
+                if (!targetAllowed) {
+                    respond(
+                        requestId, 403,
+                        buildJsonObject {
+                            put("error", "blocked package ${targetPkg ?: "unknown"}")
+                        }
+                    )
+                    return
+                }
+                val data = body["data"]?.jsonPrimitive?.contentOrNull
+                val extras = extractStringMap(body["extras"] as? JsonObject)
+                respondFromResult(
+                    requestId,
+                    executor.sendBroadcast(action, data, targetPkg, extras)
+                )
+            }
+            // === END PHASE3-B4 ===
+
             else -> respond(
                 requestId, 404,
                 buildJsonObject { put("error", "unknown bridge path '$path'") }
             )
         }
+    }
+
+    /**
+     * Convert a JSON object into a `Map<String, String>`, coercing every
+     * value via [jsonPrimitive].content. Null / non-primitive values are
+     * dropped rather than raising — the agent shouldn't get a 400 just
+     * because it sent a nested object as an extra.
+     */
+    private fun extractStringMap(obj: JsonObject?): Map<String, String>? {
+        if (obj == null || obj.isEmpty()) return null
+        val out = LinkedHashMap<String, String>(obj.size)
+        for ((k, v) in obj) {
+            val s = (v as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
+            if (s != null) out[k] = s
+        }
+        return if (out.isEmpty()) null else out
     }
 
     private fun respondFromResult(requestId: String, result: ActionExecutor.ActionResult) {
