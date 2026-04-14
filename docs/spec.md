@@ -503,7 +503,91 @@ Uses `asyncio.create_subprocess_exec` with PTY for non-blocking I/O. tmux gives 
 
 Wraps the existing relay protocol. When the agent calls `android_*` tools, the tool handler routes through the relay server's bridge channel to the phone.
 
-**Change from upstream:** The bridge channel is now part of the multiplexed WSS connection instead of a separate `ws://` relay on port 8766. The plugin's `android_relay.py` gets updated to route through the relay server.
+**Change from upstream:** The bridge channel is now part of the multiplexed WSS connection instead of a separate `ws://` relay on port 8766. The plugin's `android_relay.py` (now `plugin/tools/android_tool.py`) points `BRIDGE_URL` at the unified relay (localhost:8767). HTTP routes that used to be owned by a standalone bridge server are now registered on `plugin/relay/server.py` between `# === PHASE3-bridge-server ===` markers and delegate through `BridgeHandler.handle_command(method, path, params, body)`. Each command mints a `request_id`, sends a `bridge.command` envelope over WSS, and awaits a matching `bridge.response` with a 30s timeout.
+
+#### 6.4.1 `android_*` tool surface
+
+Tools register against the Hermes plugin API in `plugin/tools/android_tool.py` (plus `plugin/tools/android_notifications.py`, `plugin/tools/android_navigate.py`). The Python-side tool issues an HTTP request to the relay on loopback; the relay forwards it to the phone over WSS; the phone executes it via the accessibility service and returns a structured response. Flavor gating: tools marked **sideload-only** are gated on `BuildFlavor.current == SIDELOAD` via `FeatureFlags.BuildFlavor` and/or require manifest permissions only declared in `app/src/sideload/AndroidManifest.xml`.
+
+**Baseline (pre-v0.4 — shipped in Phase 3 Wave 1):**
+
+| Tool | HTTP route | Purpose | Flavor |
+|------|-----------|---------|--------|
+| `android_ping` | `GET /ping` | Liveness check — does not require master enable | both |
+| `android_screen` | `GET /screen` | Serialize the accessibility tree → `ScreenContent` | both |
+| `android_screenshot` | `GET /screenshot` | `MediaProjection` PNG → `MEDIA:hermes-relay://<token>` | both |
+| `android_current_app` | `GET /current_app` | Foregrounded package name | both |
+| `android_get_apps` (`/apps` legacy) | `GET /get_apps` | Installed launcher apps | both |
+| `android_tap` | `POST /tap` | Tap at `(x, y)` or on resolved `node_id` | both |
+| `android_tap_text` | `POST /tap_text` | Find text via accessibility tree, tap it (see A9 cascade below) | both |
+| `android_type` | `POST /type` | `ACTION_SET_TEXT` on focused input field | both |
+| `android_swipe` | `POST /swipe` | Gesture swipe with direction + distance | both |
+| `android_scroll` | `POST /scroll` | Scroll a specific container (resolves `node_id`) | both |
+| `android_open_app` | `POST /open_app` | Launch an app by package name | both |
+| `android_press_key` | `POST /press_key` | Curated global-action vocab (home/back/recents/notifications/quick_settings) — no raw `KeyEvent` injection | both |
+| `android_wait` | `POST /wait` | Clamped idle — max 15s | both |
+| `android_setup` | `POST /setup` | Permission bootstrap helper | both |
+| `android_navigate` | (dispatches `/screenshot` + `/tap_text`/`/tap`/`/type`/`/swipe`/`/press_key`) | Tier 4 vision-driven close-the-loop navigation | both |
+| `android_notifications_recent` | `GET /notifications/recent` | Poll the notif-listener ring buffer (loopback-only for Python tool callers) | both |
+
+**v0.4 additions — Tier A (both flavors):**
+
+| Tool | HTTP route | Purpose |
+|------|-----------|---------|
+| `android_long_press(x, y, node_id, duration=500)` | `POST /long_press` | Long-press gesture at coords or on resolved node. Gesture path wrapped in `WakeLockManager.wakeForAction` (see §6.4.2). |
+| `android_drag(start_x, start_y, end_x, end_y, duration)` | `POST /drag` | Single-stroke drag via `GestureDescription`. Wrapped in wake-lock. |
+| `android_find_nodes(text?, class_name?, clickable?, limit)` | `POST /find_nodes` | Filtered accessibility-node search across **all** windows (see P1 in §6.4.2). Returns a list of `{node_id, text, bounds, class, clickable}` records. |
+| `android_describe_node(node_id)` | `POST /describe_node` | Full property bag for a single node resolved by stable `node_id`. Round-trips the same ID scheme emitted by `android_screen` / `android_find_nodes`. A4 also completes the `node_id` resolution path in the existing `/tap` and `/scroll` routes — the IDs were previously emitted but not accepted as input. |
+| `android_screen_hash()` | `GET /screen_hash` | Returns `{hash, node_count}`. SHA-256 over a canonical per-node fingerprint (`className + text + bounds + viewId`) across the full accessibility tree. See `ScreenHasher` in §6.4.2. |
+| `android_diff_screen(previous_hash)` | `POST /diff_screen` | Returns `{changed, hash, node_count}` in a single call. Used as a cheap "did anything change?" check to skip full screen re-reads inside agent loops. |
+| `android_clipboard_read()` | `GET /clipboard` | Read primary clip via `ClipboardManager.primaryClip`. |
+| `android_clipboard_write(text)` | `POST /clipboard` | Set primary clip. |
+| `android_media(action)` | `POST /media` | System-wide media control via `AudioManager.dispatchMediaKeyEvent` + `ACTION_MEDIA_BUTTON` broadcast. Actions: `play` / `pause` / `toggle` / `next` / `previous`. |
+| `android_macro(steps, name, pace_ms)` | (Python-side only) | Pure-Python batched workflow dispatcher. Iterates `steps` (each `{tool, args}`), stops on first failure, returns the full trace. No new HTTP route — dispatches to the existing tool handlers in-process. |
+
+**v0.4 additions — Tier B (both flavors):**
+
+| Tool | HTTP route | Purpose |
+|------|-----------|---------|
+| `android_events(limit, since)` | `GET /events` | Poll the real-time `AccessibilityEvent` ring buffer. **Off by default** — a session must enable forwarding via `android_event_stream(enabled=true)` before events are recorded. Privacy-sensitive; keep off unless an agent flow needs it. |
+| `android_event_stream(enabled)` | `POST /events/stream` | Opt in / out of event capture for the current session. |
+| `android_send_intent(action, data, package, component, extras, category)` | `POST /send_intent` | Raw `Intent` escape hatch — `startActivity`. Safety-gated on the target package blocklist via `BridgeSafetyManager.checkPackageAllowed`. |
+| `android_broadcast(action, data, package, extras)` | `POST /broadcast` | Raw `sendBroadcast`. Same blocklist gate as `/send_intent`. |
+
+**v0.4 additions — Tier C (sideload-only):**
+
+Tier C tools add runtime permissions that trigger Google Play policy review and are intentionally scoped to the sideload flavor only. The permissions are declared in `app/src/sideload/AndroidManifest.xml`; the googlePlay manifest does not declare them and the tools no-op via the `BuildFlavor.current == SIDELOAD` guard.
+
+| Tool | HTTP route | Purpose | Permission |
+|------|-----------|---------|------------|
+| `android_location()` | `GET /location` | Last-known GPS fix via `LocationManager.getLastKnownLocation` | `ACCESS_FINE_LOCATION` |
+| `android_search_contacts(query, limit)` | `POST /search_contacts` | `ContactsContract` name → phone number lookup, cap on result count | `READ_CONTACTS` |
+| `android_call(number)` | `POST /call` | Auto-dial via `ACTION_CALL` on sideload; googlePlay stub falls back to `ACTION_DIAL` (user must confirm in the dialer). **Every call is gated on the destructive-verb confirmation modal**; see §6.4.2 safety notes. | `CALL_PHONE` |
+| `android_send_sms(to, body)` | `POST /send_sms` | Direct `SmsManager.sendTextMessage` (or `sendMultipartTextMessage` for long bodies) with a `PendingIntent` result callback. **Every send is gated on the destructive-verb confirmation modal.** | `SEND_SMS` |
+
+**Safety integration.** All HTTP routes except `/ping` and `/current_app` are gated in `BridgeCommandHandler` on the Bridge master toggle (`bridge_master_enabled` DataStore flag) and the Tier 5 three-stage safety check:
+1. **Blocklist gate** — `BridgeSafetyManager.checkPackageAllowed(currentApp)` returns 403 `{"error": "blocked package <name>"}` when the foreground package is in the blocklist (~30 banking/payments/password-manager/2FA defaults seeded via `DEFAULT_BLOCKLIST`).
+2. **Destructive-verb confirmation** — `/tap_text` and `/type` commands whose text matches the user's destructive-verb regex list (`send` / `pay` / `delete` / `transfer` / `confirm` / `submit` / ...) suspend on a `CompletableDeferred<Boolean>` under a `withTimeout`, waiting for the user to Allow / Deny via the `BridgeStatusOverlay` modal. **Tier C `android_call` and `android_send_sms` always go through this gate regardless of body content** — a phone call or SMS is definitionally destructive. Denied or timed-out commands return 403 `{"error": "user denied destructive action", "reason": "confirmation_denied_or_timeout"}`.
+3. **Auto-disable reschedule** — every successful command resets the idle countdown on `BridgeSafetyManager.rescheduleAutoDisable`, which flips master off after the configured idle window (default 30 min, clamped 5..120).
+
+The newly added Tier A/B tools all flow through the same `BridgeCommandHandler` dispatch and are covered by the existing gates without additional wiring. Tier A tools that only *read* (e.g. `android_screen_hash`, `android_clipboard_read`, `android_describe_node`) skip the destructive-verb check but still hit the blocklist and master-enable gates. `android_send_intent` and `android_broadcast` hit the blocklist gate keyed on the target `package` (not just the foreground app) so an agent can't bypass the blocklist by firing an Intent at a blocked target from an allowed foreground.
+
+#### 6.4.2 Architectural patterns adopted in v0.4
+
+The v0.4 wave includes three reliability patterns applied to existing code and one new primitive. They're listed here because they cut across every tool added above and anchor the tool surface to a more predictable baseline.
+
+**WakeLockManager — wake-scope wrapping for gesture dispatch.** New `object WakeLockManager` at `app/src/main/kotlin/com/hermesandroid/relay/power/WakeLockManager.kt` exposes `suspend fun <T> wakeForAction(block: suspend () -> T): T`. Uses `PowerManager.PARTIAL_WAKE_LOCK`, ref-counted so nested calls don't release each other prematurely, with a hard 10-second timeout as a battery safety rail. `ActionExecutor` wraps every gesture-dispatching function (`tap`, `tapText`, `typeText`, `swipe`, `scroll`, `longPress`, `drag`) in `wakeForAction { ... }`. Read-only accessibility calls (`readScreen`, `findNodes`, `describeNode`, `screenHash`, `diffScreen`, `currentApp`, `clipboardRead/Write`, `mediaControl`) are not wrapped — they don't need the screen on. Closes the "gesture fires into the void when the screen is off" failure mode that silently broke `android_tap` / `android_swipe` whenever Bailey's phone hit idle between commands. Requires `android.permission.WAKE_LOCK` in the main manifest.
+
+**Multi-window ScreenReader (P1).** `ScreenReader.readCurrentScreen` now iterates `service.windows.mapNotNull { it.root }` instead of the single `rootInActiveWindow`. Returns a merged tree where each `AccessibilityNodeInfo` is walked per-window and recycled in the per-iteration `try/finally`. Catches system overlays, popup menus, notification shade, and split-screen secondary windows — the previous single-root path silently ignored them. **Node-ID scheme update:** stable IDs are now prefixed `w<windowIndex>:<sequentialIndex>` (e.g. `w0:42`, `w1:7`) so IDs are disambiguated across windows. A single-window fallback kicks in when `service.windows` is empty, which happens on the googlePlay flavor without `flagRetrieveInteractiveWindows` (the conservative a11y config that survives Play Store policy review). Node IDs are end-to-end resolvable after A4 wired parsing into `/tap` and `/scroll` — `android_find_nodes` and `android_describe_node` emit them, and `android_tap` / `android_scroll` accept them as input, so an agent can search → describe → act without re-reading the tree.
+
+**A9 three-tier `tapText` cascade.** `ActionExecutor.tapText` replaces the single-shot `findNodeBoundsByText → performAction(ACTION_CLICK)` path with a 3-tier fallback:
+1. Find node by text across all windows. If `node.isClickable` → `performAction(ACTION_CLICK)`.
+2. Otherwise walk up the parent chain (capped at 8 levels) looking for a clickable ancestor. If found → `performAction(ACTION_CLICK)` on it.
+3. Otherwise capture the node's `getBoundsInScreen()` center and fall back to a coordinate `tap(cx, cy)`.
+
+The `ActionResult.data` field indicates which tier succeeded (`"direct"` / `"parent"` / `"coords"`) so the activity log and agent trace show how the click was resolved. Fixes a whole class of failures in real-world apps (Uber, Spotify, Instagram, Tinder) that wrap clickable content in non-clickable text or image views. Parent-chain traversal is bounded to avoid leaks — every `AccessibilityNodeInfo` returned by `.parent` is explicitly recycled before the loop reassigns.
+
+**ScreenHasher — content fingerprint for change detection.** New primitive backing A5 `android_screen_hash` / `android_diff_screen`. Walks the full (multi-window) accessibility tree and computes SHA-256 over a canonical joined fingerprint of per-node triples (`className + text + bounds + viewId`). Returns `{hash, node_count}`. The hash is deliberately **not** stable across animation frames or live-updating text — documented limitation. Rationale: `android_navigate` previously re-read the full tree on every loop iteration to decide whether the last action did anything; a hash comparison is ~100× cheaper in both compute and token cost, and an agent polling for "has the page loaded yet?" can do so without dragging a full `ScreenContent` JSON back across the WSS each time. Phone-side: new `ScreenHasher.kt` alongside `ScreenReader.kt`. Exposed via a `computeHash()` extension on the serialized node model so the server can also hash a prior `ScreenContent` snapshot for free.
 
 ---
 
@@ -547,12 +631,14 @@ Wraps the existing relay protocol. When the agent calls `android_*` tools, the t
 ### Phase 3 — Bridge Channel
 **Priority: P1**
 
-- [ ] Migrate upstream bridge protocol into multiplexed WSS
-- [ ] Update `android_relay.py` to route through relay server
-- [ ] App: Bridge status UI
-- [ ] App: Permission management (accessibility, overlay)
-- [ ] App: Activity log (recent agent commands)
-- [ ] AccessibilityService integration (carry forward from upstream)
+- [x] Migrate upstream bridge protocol into multiplexed WSS (Wave 1, 2026-04-12)
+- [x] Update `android_relay.py` (now `plugin/tools/android_tool.py`) to route through the unified relay
+- [x] App: Bridge status UI + permission checklist + activity log
+- [x] App: Accessibility service (`HermesAccessibilityService`) + `ScreenReader` + `ActionExecutor`
+- [x] App: Tier 5 safety rails — blocklist, destructive-verb confirmation modal, auto-disable idle timer, foreground service
+- [x] App: Flavor split — googlePlay (conservative a11y config) and sideload (full capabilities)
+- [x] Plugin: notification-listener companion channel (`android_notifications_recent`) + `android_navigate` vision loop
+- [x] **v0.4 bridge feature expansion** — 10 Tier A tools (long_press, drag, find_nodes, describe_node, screen_hash + diff_screen, clipboard r/w, media, macro) + 2 Tier B tools (events/event_stream, send_intent + broadcast) + 4 Tier C sideload-only tools (location, search_contacts, call, send_sms); architectural patterns — `WakeLockManager` wake-scope wrapping, multi-window `ScreenReader`, A9 three-tier `tapText` cascade, `ScreenHasher` content fingerprinting. See §6.4.1 for the tool surface table and §6.4.2 for the patterns.
 
 ### Phase 4 — Security Hardening
 **Priority: P1**
