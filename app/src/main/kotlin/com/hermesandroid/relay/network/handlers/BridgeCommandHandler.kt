@@ -62,6 +62,7 @@ import kotlinx.serialization.json.put
  *  - `/tap_text` body `{text}`
  *  - `/type` body `{text}`
  *  - `/swipe` body `{start_x, start_y, end_x, end_y, duration_ms?}`
+ *  - `/drag` body `{start_x, start_y, end_x, end_y, duration_ms?}` (100-3000ms)
  *  - `/scroll` body `{direction}` — `up`/`down`/`left`/`right`
  *  - `/press_key` body `{key}` — `home`/`back`/`recents`/etc
  *  - `/wait` body `{ms}`
@@ -278,6 +279,24 @@ class BridgeCommandHandler(
                 }
                 val duration = body["duration_ms"]?.jsonPrimitive?.content?.toLongOrNull() ?: 400L
                 respondFromResult(requestId, executor.swipe(sx, sy, ex, ey, duration))
+            }
+
+            "/drag" -> {
+                val sx = body["start_x"]?.jsonPrimitive?.content?.toIntOrNull()
+                val sy = body["start_y"]?.jsonPrimitive?.content?.toIntOrNull()
+                val ex = body["end_x"]?.jsonPrimitive?.content?.toIntOrNull()
+                val ey = body["end_y"]?.jsonPrimitive?.content?.toIntOrNull()
+                if (sx == null || sy == null || ex == null || ey == null) {
+                    respond(
+                        requestId, 400,
+                        buildJsonObject {
+                            put("error", "drag requires start_x, start_y, end_x, end_y")
+                        }
+                    )
+                    return
+                }
+                val duration = body["duration_ms"]?.jsonPrimitive?.content?.toLongOrNull() ?: 500L
+                respondFromResult(requestId, executor.drag(sx, sy, ex, ey, duration))
             }
 
             "/scroll" -> {

@@ -8,6 +8,7 @@ Tools registered:
   - android_tap_text      tap element by visible text
   - android_type          type text into focused field
   - android_swipe         swipe gesture
+  - android_drag          precise point-to-point drag (duration-controlled)
   - android_open_app      launch app by package name
   - android_press_key     press hardware/software key (back, home, recents)
   - android_screenshot    capture screenshot as base64
@@ -159,6 +160,58 @@ def android_swipe(direction: str, distance: str = "medium") -> str:
     """
     try:
         data = _post("/swipe", {"direction": direction, "distance": distance})
+        return json.dumps(data)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+# Drag duration clamps — below ~100ms the system can treat it as a fling or
+# drop the gesture, above ~3000ms AccessibilityService's gesture dispatcher
+# starts rejecting strokes as "too long".
+_DRAG_MIN_DURATION_MS = 100
+_DRAG_MAX_DURATION_MS = 3000
+_DRAG_DEFAULT_DURATION_MS = 500
+
+
+def android_drag(start_x: int, start_y: int, end_x: int, end_y: int,
+                 duration: int = _DRAG_DEFAULT_DURATION_MS) -> str:
+    """
+    Drag from (start_x, start_y) to (end_x, end_y) over ``duration`` ms.
+
+    Use for rearranging home screen icons, pulling the notification shade
+    a precise distance, dragging map pins, or reordering list items —
+    anything a swipe can't express because you need a deliberate, slow
+    touch-down-hold-move-release sequence.
+
+    Coordinates are in pixels from the top-left of the screen. ``duration``
+    is clamped to the 100–3000 ms window; values outside that range are
+    silently coerced because the accessibility gesture dispatcher refuses
+    strokes outside it.
+    """
+    try:
+        # Validate coordinate types up-front — bad args should return a
+        # friendly error, not a 500 from the bridge.
+        for name, value in (("start_x", start_x), ("start_y", start_y),
+                            ("end_x", end_x), ("end_y", end_y)):
+            if not isinstance(value, int) or isinstance(value, bool):
+                return json.dumps({"error": f"{name} must be an int"})
+            if value < 0:
+                return json.dumps({"error": f"{name} must be non-negative"})
+
+        if not isinstance(duration, int) or isinstance(duration, bool):
+            return json.dumps({"error": "duration must be an int (ms)"})
+
+        clamped_duration = max(_DRAG_MIN_DURATION_MS,
+                               min(_DRAG_MAX_DURATION_MS, duration))
+
+        payload = {
+            "start_x": start_x,
+            "start_y": start_y,
+            "end_x": end_x,
+            "end_y": end_y,
+            "duration_ms": clamped_duration,
+        }
+        data = _post("/drag", payload)
         return json.dumps(data)
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -765,6 +818,31 @@ _SCHEMAS = {
             "required": ["direction"],
         },
     },
+    "android_drag": {
+        "name": "android_drag",
+        "description": (
+            "Drag from (start_x, start_y) to (end_x, end_y) over a duration "
+            "in milliseconds. Use for rearranging home screen icons, pulling "
+            "the notification shade a precise distance, dragging map pins, "
+            "or reordering list items — anything a coarse swipe can't express. "
+            "Duration is clamped to 100–3000 ms."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "start_x": {"type": "integer", "description": "Start X coordinate in pixels"},
+                "start_y": {"type": "integer", "description": "Start Y coordinate in pixels"},
+                "end_x": {"type": "integer", "description": "End X coordinate in pixels"},
+                "end_y": {"type": "integer", "description": "End Y coordinate in pixels"},
+                "duration": {
+                    "type": "integer",
+                    "description": "Gesture duration in milliseconds (100–3000, default 500)",
+                    "default": _DRAG_DEFAULT_DURATION_MS,
+                },
+            },
+            "required": ["start_x", "start_y", "end_x", "end_y"],
+        },
+    },
     "android_open_app": {
         "name": "android_open_app",
         "description": "Launch an Android app by its package name. Use android_get_apps to find package names.",
@@ -954,6 +1032,7 @@ _HANDLERS = {
     "android_tap_text":     lambda args, **kw: android_tap_text(**args),
     "android_type":         lambda args, **kw: android_type(**args),
     "android_swipe":        lambda args, **kw: android_swipe(**args),
+    "android_drag":         lambda args, **kw: android_drag(**args),
     "android_open_app":     lambda args, **kw: android_open_app(**args),
     "android_press_key":    lambda args, **kw: android_press_key(**args),
     "android_screenshot":   lambda args, **kw: android_screenshot(),
