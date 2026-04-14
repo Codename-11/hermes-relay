@@ -2,15 +2,21 @@ package com.hermesandroid.relay.accessibility
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.ActivityNotFoundException
+import android.content.ComponentName
+import android.content.Intent
 import android.graphics.Path
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 
 /**
@@ -251,6 +257,159 @@ class ActionExecutor(private val service: AccessibilityService) {
         val clamped = ms.coerceIn(0L, MAX_WAIT_MS)
         delay(clamped)
         return ActionResult.ok(mapOf("slept_ms" to clamped))
+    }
+
+    // ─── send_intent / broadcast ─────────────────────────────────────────
+    //
+    // Phase 3 / B4 — `android_send_intent` + `android_broadcast`.
+    //
+    // Raw Intent escape hatch. These are NOT gesture dispatches — they go
+    // through the normal `Context.startActivity` / `Context.sendBroadcast`
+    // APIs so there's no `dispatchGesture` wakeup wrapper. We still run on
+    // [Dispatchers.Main] because `startActivity` wants to post to the main
+    // looper on some OEMs and the call is effectively free.
+    //
+    // Extras are restricted to `Map<String, String>` in v1 — full
+    // Parcelable/Serializable support is overkill and would leak the
+    // binder wire format to the agent. String extras cover the vast
+    // majority of real-world intent URIs (`google.navigation:q=`,
+    // `tel:`, `mailto:`, `smsto:`, custom deep links).
+    //
+    // FLAG_ACTIVITY_NEW_TASK is added unconditionally to activity-launching
+    // intents because we're calling from a Service context — without it
+    // `startActivity` throws `AndroidRuntimeException: Calling startActivity
+    // from outside of an Activity context requires FLAG_ACTIVITY_NEW_TASK`.
+    //
+    // Blocklist gating happens at the BridgeCommandHandler level BEFORE we
+    // get here — the handler looks at the target `pkg` field and refuses
+    // if it's on the safety blocklist. This keeps the executor layer
+    // context-free and testable.
+
+    /**
+     * Launch an Activity via an arbitrary [Intent].
+     *
+     * @param action Android action string, e.g. `android.intent.action.VIEW`
+     * @param data Optional data URI. Parsed via [Uri.parse].
+     * @param pkg Optional target package — forces the intent to a specific app.
+     * @param component Optional fully-qualified component (`"pkg/classname"`).
+     *        Parsed via [ComponentName.unflattenFromString]; returns an error
+     *        if the format is invalid.
+     * @param extras Optional string-keyed/string-valued extras. Non-string
+     *        values are not supported in v1.
+     * @param category Optional category to add via [Intent.addCategory].
+     */
+    suspend fun sendIntent(
+        action: String,
+        data: String?,
+        pkg: String?,
+        component: String?,
+        extras: Map<String, String>?,
+        category: String?,
+    ): ActionResult {
+        if (action.isBlank()) {
+            return ActionResult.failure("send_intent: 'action' must be non-blank")
+        }
+        val intent = Intent(action)
+        try {
+            if (!data.isNullOrBlank()) {
+                intent.data = Uri.parse(data)
+            }
+            if (!pkg.isNullOrBlank()) {
+                intent.setPackage(pkg)
+            }
+            if (!component.isNullOrBlank()) {
+                val cn = ComponentName.unflattenFromString(component)
+                    ?: return ActionResult.failure(
+                        "send_intent: invalid component '$component' " +
+                            "(expected 'pkg/classname')"
+                    )
+                intent.component = cn
+            }
+            if (!category.isNullOrBlank()) {
+                intent.addCategory(category)
+            }
+            if (extras != null) {
+                for ((k, v) in extras) {
+                    intent.putExtra(k, v)
+                }
+            }
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        } catch (t: Throwable) {
+            Log.w(TAG, "send_intent: failed to build intent: ${t.message}")
+            return ActionResult.failure("send_intent: bad intent payload: ${t.message}")
+        }
+
+        return withContext(Dispatchers.Main) {
+            try {
+                service.applicationContext.startActivity(intent)
+                ActionResult.ok(
+                    mapOf(
+                        "action" to action,
+                        "package" to (pkg ?: ""),
+                        "component" to (component ?: ""),
+                        "data" to (data ?: ""),
+                    )
+                )
+            } catch (e: ActivityNotFoundException) {
+                Log.w(TAG, "send_intent: no activity found for '$action'")
+                ActionResult.failure("no activity found for intent")
+            } catch (e: SecurityException) {
+                Log.w(TAG, "send_intent: permission denied: ${e.message}")
+                ActionResult.failure("permission denied: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Broadcast an arbitrary [Intent] to any registered receivers.
+     *
+     * @param action Android action string.
+     * @param data Optional data URI.
+     * @param pkg Optional target package — scopes the broadcast to a single app.
+     * @param extras Optional string-keyed/string-valued extras.
+     */
+    suspend fun sendBroadcast(
+        action: String,
+        data: String?,
+        pkg: String?,
+        extras: Map<String, String>?,
+    ): ActionResult {
+        if (action.isBlank()) {
+            return ActionResult.failure("broadcast: 'action' must be non-blank")
+        }
+        val intent = Intent(action)
+        try {
+            if (!data.isNullOrBlank()) {
+                intent.data = Uri.parse(data)
+            }
+            if (!pkg.isNullOrBlank()) {
+                intent.setPackage(pkg)
+            }
+            if (extras != null) {
+                for ((k, v) in extras) {
+                    intent.putExtra(k, v)
+                }
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "broadcast: failed to build intent: ${t.message}")
+            return ActionResult.failure("broadcast: bad intent payload: ${t.message}")
+        }
+
+        return withContext(Dispatchers.Main) {
+            try {
+                service.applicationContext.sendBroadcast(intent)
+                ActionResult.ok(
+                    mapOf(
+                        "action" to action,
+                        "package" to (pkg ?: ""),
+                        "data" to (data ?: ""),
+                    )
+                )
+            } catch (e: SecurityException) {
+                Log.w(TAG, "broadcast: permission denied: ${e.message}")
+                ActionResult.failure("permission denied: ${e.message}")
+            }
+        }
     }
 
     // ─── gesture dispatch plumbing ────────────────────────────────────────

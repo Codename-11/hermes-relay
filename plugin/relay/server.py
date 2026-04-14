@@ -1135,6 +1135,18 @@ async def handle_bridge_setup(request: web.Request) -> web.Response:
     return await _bridge_dispatch(request, "/setup")
 
 
+# B4 — raw Intent escape hatch. `/send_intent` launches an Activity via
+# `Context.startActivity` on the phone; `/broadcast` fires a broadcast
+# via `Context.sendBroadcast`. Both accept an optional `package` field
+# for blocklist gating on the phone side.
+async def handle_bridge_send_intent(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/send_intent")
+
+
+async def handle_bridge_broadcast(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/broadcast")
+
+
 # === END PHASE3-bridge-server ===
 
 
@@ -1732,6 +1744,9 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_post("/scroll", handle_bridge_scroll)
     app.router.add_post("/wait", handle_bridge_wait)
     app.router.add_post("/setup", handle_bridge_setup)
+    # B4 — raw Intent escape hatch
+    app.router.add_post("/send_intent", handle_bridge_send_intent)
+    app.router.add_post("/broadcast", handle_bridge_broadcast)
     # === END PHASE3-bridge-server ===
 
     # === PHASE3-status: loopback-gated structured phone status ===
