@@ -55,9 +55,18 @@
 #   tree in place, --remove-secret to also wipe the QR signing identity,
 #   --dry-run to preview without changing anything.
 #
+# Flags:
+#   --branch <name>         Git branch to install (default: main). Same effect
+#                           as HERMES_RELAY_BRANCH; flag wins over env var.
+#                           Useful for testing feature branches before merging
+#                           to main, e.g. `hermes-relay-update --branch
+#                           feature/bridge-feature-expansion`.
+#   --help                  Print this header and exit.
+#
 # Overrides:
 #   HERMES_RELAY_HOME       Target directory (default: ~/.hermes/hermes-relay)
-#   HERMES_RELAY_BRANCH     Git branch to install (default: main)
+#   HERMES_RELAY_BRANCH     Git branch to install (default: main). Superseded
+#                           by --branch when both are provided.
 #   HERMES_VENV_PY          Path to hermes-agent venv python
 #                           (default: ~/.hermes/hermes-agent/venv/bin/python)
 #   HERMES_HOME             Hermes config home (default: ~/.hermes)
@@ -66,9 +75,46 @@
 
 set -euo pipefail
 
+# ── Argument parsing ──────────────────────────────────────────────────────
+# Parse CLI flags BEFORE setting config defaults so flags can override env
+# vars. Currently only --branch is supported; everything else still goes
+# through env vars (HERMES_RELAY_HOME, HERMES_VENV_PY, etc). The flag is
+# pass-through-friendly for `hermes-relay-update --branch <name>` since
+# the shim forwards args via `bash -s --`.
+_BRANCH_FLAG=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --branch)
+            if [ $# -lt 2 ]; then
+                echo "install.sh: --branch needs an argument (e.g. --branch feature/foo)" >&2
+                exit 2
+            fi
+            _BRANCH_FLAG="$2"
+            shift 2
+            ;;
+        --branch=*)
+            _BRANCH_FLAG="${1#--branch=}"
+            shift
+            ;;
+        -h|--help)
+            sed -n '3,66p' "$0" | sed 's/^# \{0,1\}//'
+            exit 0
+            ;;
+        *)
+            # Unknown args silently passed through to the rest of the
+            # script — currently nothing else consumes them, but keeping
+            # this lenient avoids breaking on future shim extensions.
+            shift
+            ;;
+    esac
+done
+
 # ── Config ─────────────────────────────────────────────────────────────────
 REPO_URL="https://github.com/Codename-11/hermes-relay.git"
-BRANCH="${HERMES_RELAY_BRANCH:-main}"
+# Branch precedence: --branch flag wins over HERMES_RELAY_BRANCH env var
+# wins over the default ("main"). The env var is kept for backwards
+# compat with anyone scripting against the pre-flag interface.
+BRANCH="${_BRANCH_FLAG:-${HERMES_RELAY_BRANCH:-main}}"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 RELAY_HOME="${HERMES_RELAY_HOME:-$HERMES_HOME/hermes-relay}"
 VENV_PY="${HERMES_VENV_PY:-$HERMES_HOME/hermes-agent/venv/bin/python}"
@@ -356,16 +402,32 @@ cat > "$UPDATE_SHIM_PATH" <<'SHIM'
 #!/usr/bin/env bash
 # Hermes-Relay updater shim — re-runs the canonical one-line installer.
 #
-# Equivalent to:
-#   curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
+# Common usage:
+#   hermes-relay-update                                    # update to latest main
+#   hermes-relay-update --branch feature/bridge-feature-expansion  # switch to a branch
+#   hermes-relay-update --branch main                      # return to main
+#   HERMES_RELAY_RESTART_GATEWAY=1 hermes-relay-update     # also restart gateway
 #
-# install.sh is fully idempotent — it pulls latest main, refreshes the
-# editable pip install, recreates both shims, restarts hermes-relay, and
-# prompts before restarting hermes-gateway. Set HERMES_RELAY_RESTART_GATEWAY=1
-# to opt into the gateway restart non-interactively.
+# Bootstrap caveat (only relevant before --branch lands on main):
+#   The shim normally fetches install.sh from main, so --branch only works
+#   if main's install.sh already understands the flag (it does as of v0.4.0).
+#   To install a feature branch BEFORE it has been merged to main, override
+#   the install.sh URL with HERMES_RELAY_INSTALL_URL:
 #
-# Any args passed to this shim are forwarded to install.sh via bash -s --.
-exec curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash -s -- "$@"
+#     HERMES_RELAY_INSTALL_URL=https://raw.githubusercontent.com/Codename-11/hermes-relay/feature/foo/install.sh \
+#       hermes-relay-update --branch feature/foo
+#
+#   This is a one-shot escape hatch — after the install lands the host has
+#   the new install.sh on disk + the regular shim works for all subsequent
+#   updates, including switching back to main.
+#
+# install.sh is fully idempotent — it pulls the requested branch (default
+# main), refreshes the editable pip install, recreates both shims, restarts
+# hermes-relay, and prompts before restarting hermes-gateway. Set
+# HERMES_RELAY_RESTART_GATEWAY=1 to opt into the gateway restart non-
+# interactively.
+INSTALL_URL="${HERMES_RELAY_INSTALL_URL:-https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh}"
+exec curl -fsSL "$INSTALL_URL" | bash -s -- "$@"
 SHIM
 chmod +x "$UPDATE_SHIM_PATH"
 ok "Installed $UPDATE_SHIM_PATH"
