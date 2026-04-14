@@ -68,6 +68,8 @@ import kotlinx.serialization.json.put
  *  - `/screen` → returns full `ScreenContent` JSON
  *  - `/screenshot` → returns `{media: "MEDIA:hermes-relay://<token>"}`
  *  - `/current_app` → returns `{package: "com.whatever"}`
+ *  - `/clipboard` (GET) → returns `{text: "..."}` (empty string = nothing copied)
+ *  - `/clipboard` (POST) body `{text}` → returns `{success: true}`
  *
  * # Master enable gate
  *
@@ -115,6 +117,7 @@ class BridgeCommandHandler(
             }
 
         val path = envelope.payload["path"]?.jsonPrimitive?.content.orEmpty()
+        val method = envelope.payload["method"]?.jsonPrimitive?.content.orEmpty()
         val body = envelope.payload["body"] as? JsonObject
             ?: envelope.payload["params"] as? JsonObject
             ?: buildJsonObject { }
@@ -124,7 +127,7 @@ class BridgeCommandHandler(
         // calling [respond] exactly once — we leak a request otherwise.
         scope.launch {
             try {
-                dispatch(requestId, path, body)
+                dispatch(requestId, path, method, body)
             } catch (t: Throwable) {
                 Log.w(TAG, "bridge command '$path' threw: ${t.message}", t)
                 respond(
@@ -138,7 +141,12 @@ class BridgeCommandHandler(
         }
     }
 
-    private suspend fun dispatch(requestId: String, path: String, body: JsonObject) {
+    private suspend fun dispatch(
+        requestId: String,
+        path: String,
+        method: String,
+        body: JsonObject,
+    ) {
         // /ping is the only command that works without the a11y service —
         // everything else needs the service to be connected.
         if (path == "/ping") {
@@ -292,6 +300,35 @@ class BridgeCommandHandler(
             "/wait" -> {
                 val ms = body["ms"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
                 respondFromResult(requestId, executor.wait(ms))
+            }
+
+            // A6: clipboard bridge. HTTP shape is `GET /clipboard`
+            // (read) and `POST /clipboard` (write) — one path, two
+            // methods — so we dispatch on `method` here instead of
+            // splitting paths like /get_apps etc. Empty clipboard
+            // returns `{"text": ""}` (NOT an error); empty-string
+            // writes are allowed (effectively clear the clipboard).
+            "/clipboard" -> {
+                when (method.uppercase()) {
+                    "GET" -> respondFromResult(requestId, executor.clipboardRead())
+                    "POST" -> {
+                        val text = body["text"]?.jsonPrimitive?.content
+                        if (text == null) {
+                            respond(
+                                requestId, 400,
+                                buildJsonObject { put("error", "missing 'text' in body") }
+                            )
+                            return
+                        }
+                        respondFromResult(requestId, executor.clipboardWrite(text))
+                    }
+                    else -> respond(
+                        requestId, 405,
+                        buildJsonObject {
+                            put("error", "unsupported method '$method' for /clipboard")
+                        }
+                    )
+                }
             }
 
             "/screen" -> {

@@ -16,6 +16,8 @@ Tools registered:
   - android_get_apps      list installed apps
   - android_current_app   get foreground app package name
   - android_setup         configure bridge URL and pairing code
+  - android_clipboard_read    read system clipboard as plain text
+  - android_clipboard_write   write plain text to system clipboard
 """
 
 import json
@@ -438,6 +440,49 @@ def android_setup(bridge_session_token: str) -> str:
         return json.dumps({"status": "error", "message": str(e)})
 
 
+def android_clipboard_read() -> str:
+    """
+    Read the current Android system clipboard as plain text.
+
+    Returns JSON: {"text": "..."} on success, where text is an empty
+    string when the clipboard is empty (an empty clipboard is NOT
+    treated as an error — the user simply hasn't copied anything).
+
+    Android 12+ privacy note: on API 31+, reading the clipboard from a
+    background app shows a system toast like "Hermes-Relay pasted from
+    your clipboard". This is a system-level privacy feature we can't
+    suppress and shouldn't try to.
+    """
+    try:
+        data = _get("/clipboard")
+        return json.dumps(data)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def android_clipboard_write(text: str) -> str:
+    """
+    Write a plain-text value to the Android system clipboard.
+
+    Empty strings are allowed — they effectively clear the clipboard
+    from the agent's perspective — so passing "" is not an error.
+
+    The clipboard entry is labeled "hermes" so any other app that
+    inspects primaryClipDescription.label can see the content came
+    from Hermes-Relay (useful for attribution or audit trails).
+
+    Android 12+ privacy note: on API 31+, writing to the clipboard
+    shows a system toast like "Hermes-Relay copied". This is a
+    system-level privacy feature we can't suppress and shouldn't try
+    to — the user always knows when the agent touched their clipboard.
+    """
+    try:
+        data = _post("/clipboard", {"text": text})
+        return json.dumps(data)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
 def _update_env_file(env_path, key: str, value: str):
     """Simple .env file updater (fallback when hermes_cli.config not available)."""
     lines = []
@@ -607,6 +652,40 @@ _SCHEMAS = {
             "required": ["pairing_code"],
         },
     },
+    "android_clipboard_read": {
+        "name": "android_clipboard_read",
+        "description": (
+            "Read the Android system clipboard as plain text. Returns "
+            "{\"text\": \"...\"} on success; an empty string means nothing "
+            "is currently copied (empty is NOT an error). Note: on Android "
+            "12+ (API 31+) reading the clipboard shows a system toast "
+            "'Hermes-Relay pasted from your clipboard' — this is a "
+            "system-level privacy feature and cannot be suppressed."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+    "android_clipboard_write": {
+        "name": "android_clipboard_write",
+        "description": (
+            "Write a plain-text value to the Android system clipboard. "
+            "Empty strings are allowed (they effectively clear the "
+            "clipboard). The clip is labeled 'hermes' so other apps can "
+            "see the source. Note: on Android 12+ (API 31+) writing to "
+            "the clipboard shows a system toast 'Hermes-Relay copied' — "
+            "this is a system-level privacy feature and cannot be "
+            "suppressed."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "Text to copy to the clipboard",
+                },
+            },
+            "required": ["text"],
+        },
+    },
 }
 
 # ── Tool handlers map ──────────────────────────────────────────────────────────
@@ -626,6 +705,8 @@ _HANDLERS = {
     "android_get_apps":     lambda args, **kw: android_get_apps(),
     "android_current_app":  lambda args, **kw: android_current_app(),
     "android_setup":        lambda args, **kw: android_setup(**args),
+    "android_clipboard_read":  lambda args, **kw: android_clipboard_read(),
+    "android_clipboard_write": lambda args, **kw: android_clipboard_write(**args),
 }
 
 # ── Registry registration ──────────────────────────────────────────────────────

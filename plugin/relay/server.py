@@ -1135,6 +1135,15 @@ async def handle_bridge_setup(request: web.Request) -> web.Response:
     return await _bridge_dispatch(request, "/setup")
 
 
+# A6: clipboard bridge. One path, two methods — GET reads, POST writes.
+# The phone's BridgeCommandHandler dispatches on the `method` field inside
+# the bridge.command envelope, so we forward the method unchanged via the
+# existing _bridge_dispatch helper (which already carries request.method
+# through to BridgeHandler.handle_command → envelope payload).
+async def handle_bridge_clipboard(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/clipboard")
+
+
 # === END PHASE3-bridge-server ===
 
 
@@ -1732,6 +1741,9 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_post("/scroll", handle_bridge_scroll)
     app.router.add_post("/wait", handle_bridge_wait)
     app.router.add_post("/setup", handle_bridge_setup)
+    # A6: clipboard bridge — one path, two methods
+    app.router.add_get("/clipboard", handle_bridge_clipboard)
+    app.router.add_post("/clipboard", handle_bridge_clipboard)
     # === END PHASE3-bridge-server ===
 
     # === PHASE3-status: loopback-gated structured phone status ===

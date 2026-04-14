@@ -2,6 +2,9 @@ package com.hermesandroid.relay.accessibility
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.graphics.Path
 import android.os.Bundle
 import android.os.Handler
@@ -9,8 +12,10 @@ import android.os.Looper
 import android.util.Log
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 
 /**
@@ -251,6 +256,74 @@ class ActionExecutor(private val service: AccessibilityService) {
         val clamped = ms.coerceIn(0L, MAX_WAIT_MS)
         delay(clamped)
         return ActionResult.ok(mapOf("slept_ms" to clamped))
+    }
+
+    // ─── clipboard (A6) ───────────────────────────────────────────────────
+
+    /**
+     * Read the current system clipboard as plain text.
+     *
+     * Returns `{"text": ""}` when the clipboard is empty — empty is NOT an
+     * error condition, it's a legitimate state ("user hasn't copied anything
+     * yet"). Callers should treat an empty string and a failure differently.
+     *
+     * Android's [ClipboardManager] API must be touched from the main thread
+     * on several Android versions (framework internals post IPC to the main
+     * looper), so we hop to [Dispatchers.Main] here instead of relying on
+     * whatever dispatcher the command handler coroutine happens to be on.
+     *
+     * Android 12+ privacy note: reading the clipboard from a background app
+     * on API 31+ shows a system toast "Hermes-Relay pasted from your
+     * clipboard". We can't suppress that — it's a system-level privacy
+     * feature and it's the right call. Document this in the tool description
+     * so the LLM knows to expect it.
+     */
+    suspend fun clipboardRead(): ActionResult = withContext(Dispatchers.Main) {
+        try {
+            val cm = service.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                ?: return@withContext ActionResult.failure("ClipboardManager unavailable")
+            val clip = cm.primaryClip
+            val text = if (clip != null && clip.itemCount > 0) {
+                clip.getItemAt(0)?.text?.toString() ?: ""
+            } else {
+                ""
+            }
+            ActionResult.ok(mapOf("text" to text))
+        } catch (t: Throwable) {
+            Log.w(TAG, "clipboardRead threw: ${t.message}")
+            ActionResult.failure("clipboardRead failed: ${t.message ?: "unknown error"}")
+        }
+    }
+
+    /**
+     * Write a plain-text value to the system clipboard.
+     *
+     * We label the [ClipData] with `"hermes"` so any other app that inspects
+     * `primaryClipDescription.label` can see the content came from
+     * Hermes-Relay (e.g., for attribution or audit). Empty strings are
+     * allowed — they effectively clear the clipboard from our perspective —
+     * so we do NOT reject them.
+     *
+     * Same main-thread hop as [clipboardRead]: [ClipboardManager.setPrimaryClip]
+     * is documented as safe on any thread but has historically thrown on
+     * some OEM Android builds when called off-main, and hopping is cheap.
+     *
+     * Android 12+ privacy note: on API 31+, writing to the clipboard shows a
+     * system toast like "Hermes-Relay copied". This is a system-level
+     * privacy feature we can't suppress and shouldn't try to. Document this
+     * in the tool description.
+     */
+    suspend fun clipboardWrite(text: String): ActionResult = withContext(Dispatchers.Main) {
+        try {
+            val cm = service.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                ?: return@withContext ActionResult.failure("ClipboardManager unavailable")
+            val clip = ClipData.newPlainText("hermes", text)
+            cm.setPrimaryClip(clip)
+            ActionResult.ok(mapOf("success" to true, "length" to text.length))
+        } catch (t: Throwable) {
+            Log.w(TAG, "clipboardWrite threw: ${t.message}")
+            ActionResult.failure("clipboardWrite failed: ${t.message ?: "unknown error"}")
+        }
     }
 
     // ─── gesture dispatch plumbing ────────────────────────────────────────
