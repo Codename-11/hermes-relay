@@ -230,6 +230,15 @@ fun RelayApp() {
             recorder = recorder,
             player = player,
             sfxPlayer = voiceSfxPlayer,
+            // === PHASE3-voice-intents: wire bridge multiplexer ===
+            // Without this the sideload voice→bridge intent handler silently
+            // no-ops on dispatch (the multiplexer is null and `dispatch()`
+            // bails on the null guard). Voice utterances would still get
+            // CLASSIFIED correctly and the chat would show "Open App: ..."
+            // as the recognition acknowledgement, but no `/open_app`
+            // envelope would actually reach the relay. Discovered live
+            // 2026-04-14 during the v0.4 voice-flow on-device test.
+            bridgeMultiplexer = connectionViewModel.multiplexer,
         )
     }
 
