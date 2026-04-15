@@ -34,6 +34,25 @@ Expands the bridge channel's tool surface substantially, ports reliability patte
 
 **Sideload-only additions.** Location (`ACCESS_FINE_LOCATION`), contact search (`READ_CONTACTS`), direct SMS (`SEND_SMS`), and direct-dial calling (`CALL_PHONE`). All gated behind the existing sideload flavor to preserve Play Store policy compliance on the `googlePlay` track.
 
+## Next-next — v0.4.1: Bridge fast-follows
+
+Small follow-ons to v0.4 deliberately deferred to keep the v0.4.0 release surface focused.
+
+**Unattended access mode** *(sideload-only).* Opt-in toggle on the Bridge tab that acquires `FULL_WAKE_LOCK + ACQUIRE_CAUSES_WAKEUP`, raises `SCREEN_OFF_TIMEOUT` to max while active, and requests `KeyguardManager.requestDismissKeyguard()` so the agent can drive the device while the user is away. Hard-bounded by the existing bridge auto-disable timer, fronted by a persistent foreground-service notification + status-overlay chip, and gated behind a scary opt-in dialog that explains the security model. **Documented hard limit:** Android does not let third-party apps dismiss credential locks (PIN / pattern / biometric) — the user has to set their lock screen to **None** or **Swipe** themselves for the wake to land them past the keyguard. Without that, the screen wakes but stays on the lock screen, and the bridge gracefully reports `keyguard_blocked`. Auto-revokes when the pairing token expires or the device leaves WiFi (failsafe).
+
+**Voice intent local dispatch loop.** The v0.4 voice intent handler builds `bridge.command` envelopes and routes them through the `ChannelMultiplexer` → WSS → relay → back-to-phone path, which the relay correctly rejects with `ignoring unexpected bridge.command from phone` (the wire protocol is server→phone only by design). Voice intents are phone-local, so the dispatch should be local: extend `BridgeCommandHandler` with a `handleLocalCommand(envelope)` entry point that runs the existing `when(path)` dispatch + the full Tier 5 safety check pipeline (blocklist → destructive verb modal → action executor) in-process, and have `RealVoiceBridgeIntentHandler.dispatch()` call it instead of `multiplexer.send()`. Single source of truth for "bridge command → action" preserved; safety modals still fire for destructive verbs; no WSS round-trip for an action that's happening on the same device. Caught by Bailey's on-device test 2026-04-14 after the multiplexer-wiring fix unblocked the dispatch path.
+
+**Tiered permission checklist with JIT permission errors** *(sideload-only sections gated on `BuildFlavor.SIDELOAD`).* Extend `BridgePermissionChecklist.kt` from the current 4-row design to a tiered surface with explicit grant affordances for every dangerous permission Hermes-Relay actually declares:
+
+- **Core bridge** (both flavors) — Accessibility, Screen Capture, Overlay, **Notifications (Android 13+, currently missing)**
+- **Notification companion** (both flavors, optional) — Notification Listener
+- **Voice & camera** (both flavors) — Microphone, Camera
+- **Sideload features** (sideload-only, optional) — Contacts, SMS, Phone, Location
+
+Each row uses `rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission)` for runtime grants and `ACTION_APPLICATION_DETAILS_SETTINGS` deep-links for special perms. Status re-probes on `Lifecycle.Event.ON_RESUME` (same pattern as the existing 4 rows). Optional perms get an "Optional" badge so users don't feel pressured to grant the full set.
+
+**JIT permission-denied surfacing.** When a tool fails because of a missing runtime permission (e.g., `resolveContactPhone` returns null because `READ_CONTACTS` is denied), the failure path returns a structured `permission_denied` error code instead of generic "I couldn't find...". The voice flow speaks **"I need Contacts permission to look up Sam — open Settings to grant"** with a tap-target that deep-links to the app's permission page. The chat flow surfaces the same structured error to the agent so the LLM can recommend the fix in plain language instead of hallucinating about why the tool failed. Requires (a) splitting the resolver return type into a `sealed class ResolveResult<T> { Found / NotFound / PermissionDenied(perm, reason) }`, (b) adding a `code` field to bridge tool error envelopes, (c) the agent tool wrapper interpreting `code: permission_denied` and feeding it back to the LLM with context.
+
 ## Future — v0.5+
 
 Shape subject to change. Each theme needs a separate design + plan pass before implementation; file design notes as research matures.
