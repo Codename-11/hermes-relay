@@ -241,8 +241,18 @@ if [[ $DESTRUCTIVE -eq 1 ]]; then
     run "POST /press_key home"  POST /press_key  '{"key":"home"}'
 
     # Round-trip clipboard test — write then read back.
+    # Android 10+ blocks background clipboard READS for privacy: only the
+    # app with current window focus can call ClipboardManager.getPrimaryClip().
+    # Writes work regardless. So foreground the Hermes sideload app first,
+    # otherwise the read silently returns "" and the round-trip "fails"
+    # for non-code reasons. The write+read pair both run while the Hermes
+    # app holds focus, then we drop back to home as the final step so the
+    # device is left on a clean state.
     sentinel="hermes-smoke-$(date +%s)"
     if [[ -z "$FILTER" || "POST /clipboard write" =~ $FILTER ]]; then
+        run "POST /open_app sideload" POST /open_app \
+            '{"package":"com.axiomlabs.hermesrelay.sideload"}'
+        sleep 0.6
         printf "  %s•%s clipboard round-trip with sentinel '%s'\n" "$DIM" "$NC" "$sentinel"
         run "POST /clipboard write" POST /clipboard "{\"text\":\"$sentinel\"}"
         sleep 0.3
@@ -258,6 +268,9 @@ if [[ $DESTRUCTIVE -eq 1 ]]; then
             FAIL=$((FAIL+1))
             FAILED_NAMES+=("GET  /clipboard echo")
         fi
+        # Leave the device on home rather than parked on the Hermes app.
+        sleep 0.3
+        run "POST /press_key home (cleanup)" POST /press_key '{"key":"home"}'
     fi
 fi
 
