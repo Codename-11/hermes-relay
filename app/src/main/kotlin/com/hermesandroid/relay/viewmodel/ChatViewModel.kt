@@ -378,6 +378,20 @@ class ChatViewModel : ViewModel() {
         sendMessageInternal(client, handler, text)
     }
 
+    /**
+     * Append a local-only voice-intent trace to chat history. Used by
+     * VoiceViewModel so phone-control utterances ("open Chrome", "text
+     * Sam") leave a visible record in the chat scroll instead of vanishing
+     * into a side channel. Local-only — does not hit the server, does not
+     * call the LLM, does not stream. See [ChatHandler.appendLocalVoiceIntentTrace]
+     * for the full design + why this isn't enough on its own to give the
+     * LLM context for follow-up turns (server session sync is v0.4.1).
+     */
+    fun recordVoiceIntent(userText: String, actionDescription: String) {
+        val handler = chatHandler ?: return
+        handler.appendLocalVoiceIntentTrace(userText, actionDescription)
+    }
+
     fun clearQueue() {
         _queuedMessages.value = emptyList()
     }

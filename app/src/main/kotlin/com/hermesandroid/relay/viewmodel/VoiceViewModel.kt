@@ -476,6 +476,32 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 val result = bridgeHandler.tryHandle(userText)
                 if (result is IntentResult.Handled) {
                     Log.i(TAG, "voice intent handled by bridge: ${result.intentLabel}")
+
+                    // === PHASE3-voice-intents-chathistory ===
+                    // Append a local-only trace to chat history so the user
+                    // sees a record of what they said and what was done. Pre-
+                    // v0.4.0 the voice intent path returned silently here and
+                    // the chat scroll had zero record of voice utterances —
+                    // making follow-up questions feel like the chat had
+                    // "reset". The trace is local-only (does NOT reach the
+                    // server-side session) so the gateway-side LLM still won't
+                    // see prior voice actions in its session memory; that's a
+                    // v0.4.1 follow-up tracked in ROADMAP.md.
+                    val actionDescription = buildString {
+                        append(result.intentLabel)
+                        if (result.spokenConfirmation != null) {
+                            append(": ")
+                            append(result.spokenConfirmation)
+                        } else {
+                            append(" — done")
+                        }
+                    }
+                    chatVm.recordVoiceIntent(
+                        userText = userText,
+                        actionDescription = actionDescription,
+                    )
+                    // === END PHASE3-voice-intents-chathistory ===
+
                     // Speak the confirmation if one was provided, otherwise
                     // just flip state so the UI shows the recognized intent
                     // and the turn ends without spinning up chat SSE.

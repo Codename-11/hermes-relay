@@ -156,6 +156,59 @@ class ChatHandler {
     }
 
     /**
+     * Append a local-only voice-intent trace to the chat scroll. Used by
+     * the sideload voice intent flow (`RealVoiceBridgeIntentHandler`) so
+     * phone-control utterances like "open Chrome" or "text Sam" leave a
+     * visible record in chat history rather than vanishing into a side-
+     * channel the user can't see.
+     *
+     * Adds two messages back-to-back:
+     *  - a user message with the raw transcribed text
+     *  - an assistant message with the action description
+     *
+     * Both are local-only — they're injected straight into [_messages]
+     * without touching the server-side session, so the gateway-side LLM
+     * does NOT see them in its session memory. That means follow-up
+     * questions like "did the SMS send?" still go to the LLM with only
+     * the bare follow-up as context.
+     *
+     * Server-side session sync (so the LLM can reason about voice actions
+     * from prior turns) is a v0.4.1 follow-up — it needs either a new
+     * "log message without LLM round-trip" gateway endpoint or a fait-
+     * accompli prompt prefix scheme. See ROADMAP.md.
+     *
+     * @param userText The raw transcribed voice utterance.
+     * @param actionDescription Human-readable description of what the
+     *   bridge layer did (or is about to do). Shown verbatim in the
+     *   assistant message bubble.
+     */
+    fun appendLocalVoiceIntentTrace(userText: String, actionDescription: String) {
+        val ts = System.currentTimeMillis()
+        val userMsg = ChatMessage(
+            id = "voice-intent-user-$ts",
+            role = MessageRole.USER,
+            content = userText,
+            timestamp = ts,
+        )
+        val assistantMsg = ChatMessage(
+            id = "voice-intent-action-$ts",
+            role = MessageRole.ASSISTANT,
+            content = actionDescription,
+            timestamp = ts + 1,
+            // Mark the personality so the bubble doesn't render under the
+            // current personality's avatar (which would imply the LLM said
+            // it). The chat UI's existing agentName plumbing handles the
+            // alternate label automatically.
+            agentName = "Voice action",
+        )
+        _messages.update { list ->
+            (list + userMsg + assistantMsg).let {
+                if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it
+            }
+        }
+    }
+
+    /**
      * Add a placeholder assistant message immediately after the user sends,
      * showing streaming dots before the first SSE delta arrives.
      * Gets filled in naturally when onTextDelta finds the matching ID.
