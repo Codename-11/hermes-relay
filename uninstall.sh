@@ -73,6 +73,7 @@ QR_SECRET="$HERMES_HOME/hermes-relay-qr-secret"
 SHIM_PATH="$HOME/.local/bin/hermes-pair"
 STATUS_SHIM_PATH="$HOME/.local/bin/hermes-status"
 UPDATE_SHIM_PATH="$HOME/.local/bin/hermes-relay-update"
+DOCTOR_SHIM_PATH="$HOME/.local/bin/hermes-relay-doctor"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 SERVICE_DST="$SYSTEMD_USER_DIR/hermes-relay.service"
 PTH_NAME="hermes_relay_bootstrap.pth"
@@ -131,7 +132,7 @@ else
 fi
 
 # ── 5/6  Remove hermes-pair + hermes-status + hermes-relay-update shims ───
-info "[5/6] Removing hermes-pair + hermes-status + hermes-relay-update shims..."
+info "[5/6] Removing hermes-pair + hermes-status + hermes-relay-update + hermes-relay-doctor shims..."
 if [ -f "$SHIM_PATH" ] || [ -L "$SHIM_PATH" ]; then
     run "rm -f \"$SHIM_PATH\""
     ok "Removed $SHIM_PATH"
@@ -149,6 +150,12 @@ if [ -f "$UPDATE_SHIM_PATH" ] || [ -L "$UPDATE_SHIM_PATH" ]; then
     ok "Removed $UPDATE_SHIM_PATH"
 else
     warn "$UPDATE_SHIM_PATH does not exist"
+fi
+if [ -f "$DOCTOR_SHIM_PATH" ] || [ -L "$DOCTOR_SHIM_PATH" ]; then
+    run "rm -f \"$DOCTOR_SHIM_PATH\""
+    ok "Removed $DOCTOR_SHIM_PATH"
+else
+    warn "$DOCTOR_SHIM_PATH does not exist"
 fi
 
 # ── 4/6  Remove skills external_dirs entry from config.yaml ────────────────

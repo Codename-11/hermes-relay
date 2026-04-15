@@ -818,6 +818,28 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         payload: com.hermesandroid.relay.ui.components.HermesPairingPayload,
         ttlSeconds: Long,
     ) {
+        android.util.Log.i(
+            "ConnectionVM",
+            "applyPairingPayload: serverUrl=${payload.serverUrl} keyPresent=${payload.key.isNotBlank()} " +
+                "relayBlock=${payload.relay != null} relayUrl=${payload.relay?.url} " +
+                "code=${payload.relay?.code} ttlSeconds=$ttlSeconds"
+        )
+        // SYNCHRONOUS RESET — must happen before this function returns so any
+        // wizard / verify watcher that observes authState immediately after
+        // sees Unpaired, not a stale Paired(token) from a prior install.
+        // applyServerIssuedCodeAndReset writes _authState.value synchronously,
+        // setPendingGrants/setPendingTtlSeconds are also sync. Putting these
+        // inside the coroutine below let the wizard race ahead and trip
+        // onComplete() against the stale Paired before the new pair started.
+        payload.relay?.let { relay ->
+            authManager.applyServerIssuedCodeAndReset(
+                code = relay.code,
+                relayUrl = relay.url,
+            )
+            authManager.setPendingGrants(relay.grants)
+        }
+        authManager.setPendingTtlSeconds(ttlSeconds)
+
         viewModelScope.launch {
             // API side — always present in any QR.
             updateApiServerUrl(payload.serverUrl)
@@ -831,28 +853,22 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 if (relay.url.startsWith("ws://")) {
                     setInsecureMode(true)
                 }
-                // Wipe any TOFU pin for the new host + apply the code so the
-                // next WSS auth envelope rides the fresh server-issued code
-                // instead of the locally-generated fallback.
-                authManager.applyServerIssuedCodeAndReset(
-                    code = relay.code,
-                    relayUrl = relay.url,
-                )
-                authManager.setPendingGrants(relay.grants)
             }
-
-            // Stash TTL for the next authenticate() call. Done unconditionally
-            // so even relay-less QRs persist the user's chosen TTL for the
-            // next pair attempt.
-            authManager.setPendingTtlSeconds(ttlSeconds)
 
             // Kick the WSS handshake now if we have a relay. AuthManager is
             // holding a fresh server-issued code so the pair-context gate on
             // connectRelay will let it through.
             payload.relay?.let { relay ->
+                android.util.Log.i(
+                    "ConnectionVM",
+                    "applyPairingPayload: disconnecting old relay + connecting to ${relay.url}"
+                )
                 disconnectRelay()
                 connectRelay(relay.url)
-            }
+            } ?: android.util.Log.w(
+                "ConnectionVM",
+                "applyPairingPayload: NO relay block in QR — relay/session will NOT pair"
+            )
 
             // Fresh probe so the badges update without waiting for the next
             // periodic tick.
@@ -1443,5 +1459,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         connectionManager.shutdown()
         _apiClient.value?.shutdown()
         tailscaleDetector.shutdown()
+        // Release the cached VirtualDisplay + ImageReader + HandlerThread
+        // built by ScreenCapture on the first /screenshot call. Without
+        // this, a process-rare VM teardown would leak the capture pipeline
+        // until the OS cleans up on exit.
+        runCatching { screenCapture.releaseCache() }
     }
 }

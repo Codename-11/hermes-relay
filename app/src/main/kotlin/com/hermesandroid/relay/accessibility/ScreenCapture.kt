@@ -16,7 +16,7 @@ import android.util.DisplayMetrics
 import android.util.Log
 import android.view.WindowManager
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
@@ -26,9 +26,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
-import java.nio.ByteBuffer
 import java.util.concurrent.TimeUnit
-import kotlin.coroutines.resume
 
 /**
  * Phase 3 — accessibility `accessibility-runtime`
@@ -109,18 +107,78 @@ class ScreenCapture(
         /** PNG quality is a no-op for PNG, but Bitmap.compress expects the arg. */
         private const val PNG_QUALITY = 100
 
-        /** ImageReader buffer count — 2 is enough for our one-shot-at-a-time use. */
+        /**
+         * ImageReader buffer count — we only need the latest frame, but the
+         * reader requires at least 2 slots so the producer (VirtualDisplay)
+         * can keep writing while we acquire the previous one.
+         */
         private const val MAX_IMAGES = 2
 
         /** Capture timeout — if no frame arrives in this window, fail loudly. */
         private const val CAPTURE_TIMEOUT_MS = 2_500L
     }
 
+    // === PHASE3-bridge-ui-followup: MediaProjection reuse fix ===
+    //
+    // Starting in Android 14 (API 34), each MediaProjection instance supports
+    // exactly ONE createVirtualDisplay() call per session. Calling it a
+    // second time throws with the error:
+    //     "Don't re-use the resultData... Don't take multiple captures by
+    //      invoking MediaProjection#createVirtualDisplay multiple times on
+    //      the same instance."
+    //
+    // The old implementation built a fresh VirtualDisplay + ImageReader on
+    // EVERY screenshot call and released it after, which worked on Android
+    // 13 and below but breaks the second /screenshot request on 14+.
+    //
+    // Fix: keep the VirtualDisplay + ImageReader + HandlerThread alive
+    // across captures, keyed by the MediaProjection instance. Rebuild only
+    // when the projection reference changes (fresh consent grant) or the
+    // dimensions change (orientation flip). The ImageReader's
+    // setOnImageAvailableListener drains the buffer continuously; each
+    // captureAndUpload() installs a one-shot [pendingCapture] callback
+    // that fires on the next frame.
+    //
+    // Thread model:
+    //  - `captureMutex` serializes concurrent captureAndUpload() calls
+    //  - `cacheLock` protects the cached-state fields against the listener
+    //     thread (which runs on `captureThread.looper`) racing with rebuild
+    //  - The listener always acquires the latest frame; the pendingCapture
+    //    deferred is completed with the encoded PNG bytes inside the
+    //    listener callback on the capture thread.
+    private val captureMutex = kotlinx.coroutines.sync.Mutex()
+    private val cacheLock = Any()
+    private var cachedProjection: MediaProjection? = null
+    private var cachedReader: ImageReader? = null
+    private var cachedDisplay: VirtualDisplay? = null
+    private var cachedThread: HandlerThread? = null
+    private var cachedHandler: Handler? = null
+    private var cachedWidth: Int = 0
+    private var cachedHeight: Int = 0
+    private var cachedDensity: Int = 0
+
+    /**
+     * Pending capture request, populated on [captureAndUpload] entry and
+     * completed by the persistent ImageReader listener on the next frame.
+     * `@Volatile` so the listener thread sees assignments made from the
+     * capture coroutine. AtomicReference-style swap semantics via
+     * [pendingCaptureRef] avoid a stale completion racing a new request.
+     */
+    private val pendingCaptureRef = java.util.concurrent.atomic.AtomicReference<
+        kotlinx.coroutines.CompletableDeferred<ByteArray>?
+    >(null)
+    // === END PHASE3-bridge-ui-followup ===
+
     /**
      * Build the consent intent that `BridgeScreen` launches via an
      * `ActivityResultLauncher`. Callers should launch the intent with
-     * `StartActivityForResult` and on success call
-     * [MediaProjectionHolder.onGranted] with the result code + data Intent.
+     * `StartActivityForResult` and on success route the result to
+     * `BridgeForegroundService.grantMediaProjection(...)`, which handles
+     * the Android 14+ FGS-type-upgrade dance and stores the projection
+     * inside the holder. Calling
+     * [MediaProjectionHolder.acceptGrantInsideForegroundService] from
+     * outside a foreground service is a known footgun — see that method's
+     * docstring for the full explanation.
      */
     fun createConsentIntent(): Intent =
         (context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager)
@@ -147,10 +205,16 @@ class ScreenCapture(
                 )
             )
 
+        // Serialize concurrent capture requests so only one pendingCapture
+        // is in flight at a time. The bridge command handler is the usual
+        // caller and it's single-threaded per /screenshot request, but the
+        // mutex keeps us honest if anything ever parallelizes.
         val pngBytes = try {
-            captureOnce(projection)
+            captureMutex.withLock {
+                captureFrame(projection)
+            }
         } catch (e: Exception) {
-            Log.w(TAG, "captureOnce failed: ${e.message}")
+            Log.w(TAG, "captureFrame failed: ${e.message}")
             return@withContext Result.failure(e)
         }
 
@@ -158,72 +222,149 @@ class ScreenCapture(
     }
 
     /**
-     * Synchronously (inside a suspendCancellableCoroutine) capture exactly
-     * one frame from a freshly-built VirtualDisplay + ImageReader, encode
-     * it to PNG, and return the bytes.
+     * Release any cached VirtualDisplay / ImageReader / HandlerThread. Call
+     * this when the MediaProjection is revoked (the holder's `onStop`
+     * callback, or an explicit revoke) so a subsequent grant starts with
+     * a clean slate. Safe to call multiple times.
+     *
+     * NOTE: this does NOT stop the MediaProjection itself — that's the
+     * holder's responsibility. We only own the capture pipeline built on
+     * top of the projection.
      */
-    private suspend fun captureOnce(projection: MediaProjection): ByteArray =
-        suspendCancellableCoroutine { cont ->
-            val metrics = DisplayMetrics()
-            @Suppress("DEPRECATION")
-            (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager)
-                .defaultDisplay.getRealMetrics(metrics)
+    fun releaseCache() {
+        synchronized(cacheLock) {
+            runCatching { cachedDisplay?.release() }
+            runCatching { cachedReader?.close() }
+            runCatching { cachedThread?.quitSafely() }
+            cachedDisplay = null
+            cachedReader = null
+            cachedThread = null
+            cachedHandler = null
+            cachedProjection = null
+            cachedWidth = 0
+            cachedHeight = 0
+            cachedDensity = 0
+        }
+        // Fail any pending capture with a descriptive error so the caller
+        // doesn't hang for the timeout.
+        pendingCaptureRef.getAndSet(null)?.takeIf { it.isActive }?.completeExceptionally(
+            IOException("capture pipeline released before frame arrived")
+        )
+    }
 
-            val width = metrics.widthPixels
-            val height = metrics.heightPixels
-            val densityDpi = metrics.densityDpi
+    /**
+     * Capture one frame from the cached VirtualDisplay + ImageReader,
+     * rebuilding them if the projection reference changed or dimensions
+     * drifted (orientation flip). Returns the PNG-encoded bytes.
+     *
+     * The ImageReader's persistent listener is set up once inside
+     * [ensureCacheFor]. Each call here installs a fresh
+     * [pendingCaptureRef] deferred that the listener completes on the
+     * next frame; the listener drains non-waiting frames so the buffer
+     * doesn't back up while nothing is asking for screenshots.
+     */
+    private suspend fun captureFrame(projection: MediaProjection): ByteArray {
+        val metrics = DisplayMetrics()
+        @Suppress("DEPRECATION")
+        (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager)
+            .defaultDisplay.getRealMetrics(metrics)
+        val width = metrics.widthPixels
+        val height = metrics.heightPixels
+        val densityDpi = metrics.densityDpi
 
+        ensureCacheFor(projection, width, height, densityDpi)
+
+        val deferred = kotlinx.coroutines.CompletableDeferred<ByteArray>()
+        // Replace any stale pending capture (shouldn't exist because of
+        // the mutex, but defensive). If there's a previous one, fail it
+        // so nobody ends up stuck.
+        val previous = pendingCaptureRef.getAndSet(deferred)
+        if (previous != null && previous.isActive) {
+            previous.completeExceptionally(
+                IOException("capture superseded by a newer request")
+            )
+        }
+
+        return try {
+            kotlinx.coroutines.withTimeout(CAPTURE_TIMEOUT_MS) { deferred.await() }
+        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            pendingCaptureRef.compareAndSet(deferred, null)
+            throw IOException("screen capture timed out")
+        } catch (t: Throwable) {
+            pendingCaptureRef.compareAndSet(deferred, null)
+            throw t
+        }
+    }
+
+    /**
+     * Build (or reuse) the cached VirtualDisplay + ImageReader + HandlerThread
+     * for this projection. Rebuilds when:
+     *
+     *  - The projection reference has changed (new consent grant landed)
+     *  - The captured dimensions don't match the current display (orientation
+     *    flipped, foldable opened/closed, display switched)
+     *
+     * Must be called while [captureMutex] is held so the cached fields
+     * aren't racing another capture.
+     */
+    private fun ensureCacheFor(
+        projection: MediaProjection,
+        width: Int,
+        height: Int,
+        densityDpi: Int,
+    ) {
+        synchronized(cacheLock) {
+            val projectionChanged = cachedProjection !== projection
+            val dimensionsChanged = width != cachedWidth || height != cachedHeight
+            if (!projectionChanged && !dimensionsChanged && cachedDisplay != null && cachedReader != null) {
+                return
+            }
+
+            // Tear down any stale cache before building fresh.
+            runCatching { cachedDisplay?.release() }
+            runCatching { cachedReader?.close() }
+            runCatching { cachedThread?.quitSafely() }
+
+            val thread = HandlerThread("HermesScreenCapture").apply { start() }
+            val handler = Handler(thread.looper)
             val reader = ImageReader.newInstance(
                 width, height, PixelFormat.RGBA_8888, MAX_IMAGES
             )
 
-            val captureThread = HandlerThread("HermesScreenCapture").apply { start() }
-            val captureHandler = Handler(captureThread.looper)
-
-            var virtualDisplay: VirtualDisplay? = null
-            var resolved = false
-
-            fun cleanup() {
-                try { virtualDisplay?.release() } catch (_: Throwable) {}
-                try { reader.close() } catch (_: Throwable) {}
-                try { captureThread.quitSafely() } catch (_: Throwable) {}
-            }
-
-            val postedTimeout = Handler(captureThread.looper)
-            postedTimeout.postDelayed({
-                if (!resolved) {
-                    resolved = true
-                    cleanup()
-                    if (cont.isActive) {
-                        cont.resumeWith(
-                            Result.failure(IOException("screen capture timed out"))
-                        )
-                    }
-                }
-            }, CAPTURE_TIMEOUT_MS)
-
+            // Persistent listener — fires on every frame the VirtualDisplay
+            // produces. If there's a pending capture request, we encode
+            // the frame and complete it; otherwise we just drain the image
+            // so the ImageReader buffer stays clear.
             reader.setOnImageAvailableListener({ r ->
-                if (resolved) return@setOnImageAvailableListener
+                val waiter = pendingCaptureRef.get()
+                if (waiter == null || !waiter.isActive) {
+                    // Drain-and-drop — nobody's asking for a screenshot
+                    // right now but frames are still arriving.
+                    runCatching { r.acquireLatestImage() }.getOrNull()?.close()
+                    return@setOnImageAvailableListener
+                }
                 var image: Image? = null
                 try {
-                    image = r.acquireLatestImage() ?: return@setOnImageAvailableListener
+                    image = r.acquireLatestImage()
+                        ?: return@setOnImageAvailableListener
                     val png = imageToPngBytes(image, width, height)
-                    resolved = true
-                    cleanup()
-                    if (cont.isActive) cont.resume(png)
+                    // Only complete the EXACT deferred we latched onto,
+                    // so a stale listener firing after supersession doesn't
+                    // resolve a new request.
+                    if (pendingCaptureRef.compareAndSet(waiter, null)) {
+                        waiter.complete(png)
+                    }
                 } catch (t: Throwable) {
-                    resolved = true
-                    cleanup()
-                    if (cont.isActive) {
-                        cont.resumeWith(Result.failure(t))
+                    if (pendingCaptureRef.compareAndSet(waiter, null)) {
+                        waiter.completeExceptionally(t)
                     }
                 } finally {
-                    try { image?.close() } catch (_: Throwable) {}
+                    runCatching { image?.close() }
                 }
-            }, captureHandler)
+            }, handler)
 
-            try {
-                virtualDisplay = projection.createVirtualDisplay(
+            val display = try {
+                projection.createVirtualDisplay(
                     "hermes-bridge-capture",
                     width,
                     height,
@@ -231,23 +372,42 @@ class ScreenCapture(
                     DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                     reader.surface,
                     null,
-                    captureHandler
+                    handler,
                 )
             } catch (t: Throwable) {
-                resolved = true
-                cleanup()
-                if (cont.isActive) {
-                    cont.resumeWith(Result.failure(t))
-                }
+                // Build failed — roll back so the next attempt tries fresh.
+                runCatching { reader.close() }
+                runCatching { thread.quitSafely() }
+                throw t
             }
 
-            cont.invokeOnCancellation {
-                if (!resolved) {
-                    resolved = true
-                    cleanup()
-                }
+            // Register the MediaProjection.Callback so if the system stops
+            // this projection out from under us, we release our cache
+            // instead of holding dead handles. The holder's own callback
+            // is separate — it clears projectionFlow; ours clears the
+            // capture pipeline. Both are safe and complementary.
+            try {
+                projection.registerCallback(object : MediaProjection.Callback() {
+                    override fun onStop() {
+                        releaseCache()
+                    }
+                }, handler)
+            } catch (_: Throwable) {
+                // Some OEMs log but don't throw if the callback is already
+                // registered by another party (e.g. the holder). Ignore.
             }
+
+            cachedProjection = projection
+            cachedReader = reader
+            cachedDisplay = display
+            cachedThread = thread
+            cachedHandler = handler
+            cachedWidth = width
+            cachedHeight = height
+            cachedDensity = densityDpi
+            Log.i(TAG, "screen capture pipeline built ${width}x$height dpi=$densityDpi")
         }
+    }
 
     /**
      * Convert an [Image] from `ImageReader` into a PNG byte array. The
@@ -379,25 +539,65 @@ class ScreenCapture(
 }
 
 /**
- * Holds the per-session [MediaProjection] grant. The Bridge UI (Agent bridge-ui)
- * calls [onGranted] from its `ActivityResultLauncher` callback; [ScreenCapture]
- * reads [projection] through the lambda passed to its constructor.
+ * Holds the per-session [MediaProjection] grant.
+ *
+ * # Android 14+ rule
+ *
+ * `MediaProjectionManager.getMediaProjection()` MUST be called only after a
+ * foreground service has called `startForeground()` with type
+ * `FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION`, and that call must happen
+ * AFTER the user has granted the consent dialog. Calling it before — even
+ * if you're inside the launcher result callback — gives you a projection
+ * that the system auto-revokes within a frame, with no error visible to
+ * the app. Symptom: consent dialog appears, user allows, dialog closes,
+ * grant evaporates. Sample-tested on Samsung S24 / Android 14, 2026-04-12.
+ *
+ * Because of that rule, this holder no longer constructs the projection
+ * itself — it can only be populated from inside a foreground service that
+ * has already called `startForeground(type=mediaProjection)`. The phone-side
+ * entry point is `BridgeForegroundService.handleGrantedIntent`, which is
+ * dispatched from `MainActivity.mediaProjectionLauncher`.
+ *
+ * The projection state is exposed as a [StateFlow] so the UI can react to
+ * grants/revocations without polling. [BridgeViewModel] observes this and
+ * calls `refreshPermissionStatus()` on every emission, so the green check
+ * lights up immediately rather than waiting for the next lifecycle resume.
  *
  * Cleared on [revoke] (user disabled screenshots) or when the projection's
  * own `onStop` callback fires (system revoked it).
  */
 object MediaProjectionHolder {
-    @Volatile
-    private var _projection: MediaProjection? = null
-
-    val projection: MediaProjection? get() = _projection
+    private val _projectionFlow = kotlinx.coroutines.flow.MutableStateFlow<MediaProjection?>(null)
 
     /**
-     * Call from the Bridge UI's `ActivityResultLauncher` callback.
-     * Returns true on success, false on user-rejected consent.
+     * Reactive view of the current projection. Emits a fresh value every
+     * time the holder is populated or cleared; null means "no active grant."
      */
-    fun onGranted(context: Context, resultCode: Int, data: Intent?): Boolean {
+    val projectionFlow: kotlinx.coroutines.flow.StateFlow<MediaProjection?> = _projectionFlow
+
+    /**
+     * Synchronous read used by [ScreenCapture] on each capture call. Always
+     * matches the latest [projectionFlow] value.
+     */
+    val projection: MediaProjection? get() = _projectionFlow.value
+
+    /**
+     * Build a [MediaProjection] from a consent intent result and store it.
+     * **Caller must already be inside a foreground service that has called
+     * `startForeground(type=mediaProjection)`** — otherwise Android 14+ will
+     * silently auto-revoke the projection. The canonical caller is
+     * [com.hermesandroid.relay.bridge.BridgeForegroundService.handleGrantedIntent].
+     *
+     * Returns true on success, false on user-rejected consent or any
+     * downstream API error.
+     */
+    fun acceptGrantInsideForegroundService(
+        context: Context,
+        resultCode: Int,
+        data: Intent?,
+    ): Boolean {
         if (resultCode != android.app.Activity.RESULT_OK || data == null) {
+            Log.i("MediaProjectionHolder", "consent rejected (resultCode=$resultCode)")
             return false
         }
         val manager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE)
@@ -405,22 +605,27 @@ object MediaProjectionHolder {
         val newProjection = try {
             manager.getMediaProjection(resultCode, data)
         } catch (t: Throwable) {
-            Log.w("MediaProjectionHolder", "getMediaProjection threw: ${t.message}")
+            Log.w(
+                "MediaProjectionHolder",
+                "getMediaProjection threw: ${t.message} — is this called inside a " +
+                    "foreground service that already did startForeground(mediaProjection)?"
+            )
             null
         } ?: return false
 
         newProjection.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() {
-                _projection = null
+                _projectionFlow.value = null
             }
         }, Handler(android.os.Looper.getMainLooper()))
 
-        _projection = newProjection
+        _projectionFlow.value = newProjection
+        Log.i("MediaProjectionHolder", "MediaProjection grant accepted and stored")
         return true
     }
 
     fun revoke() {
-        try { _projection?.stop() } catch (_: Throwable) {}
-        _projection = null
+        try { _projectionFlow.value?.stop() } catch (_: Throwable) {}
+        _projectionFlow.value = null
     }
 }

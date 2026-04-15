@@ -1,0 +1,22 @@
+#!/bin/bash
+# @subframe-version 0.15.1-beta
+# @subframe-managed
+# SubFrame pre-push hook
+# Triggers pipeline workflows configured with "on: { push: true }"
+# To bypass: git push --no-verify
+
+SUBFRAME_DIR=".subframe"
+PIPELINES_DIR="$SUBFRAME_DIR/pipelines"
+TRIGGER_FILE="$PIPELINES_DIR/.pre-push-trigger"
+
+# Only trigger if SubFrame is initialized
+if [ ! -d "$SUBFRAME_DIR" ]; then
+  exit 0
+fi
+
+# Write trigger file for SubFrame to detect
+mkdir -p "$PIPELINES_DIR"
+echo "{\"trigger\": \"pre-push\", \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > "$TRIGGER_FILE"
+
+# Don't block the push — pipeline runs async via SubFrame UI
+exit 0

@@ -107,12 +107,12 @@ dialing, and location awareness.
 
 ### Added
 
-**Phase 3 — Bridge channel (the big one)** — the agent can now read the
-phone's screen, tap, type, swipe, and take screenshots. Gated behind a
+**Bridge channel (the big one)** — the agent can now read the phone's
+screen, tap, type, swipe, and take screenshots. Gated behind a
 deliberate in-app master toggle, per-channel session grants, Android
-Accessibility Service permission, MediaProjection consent, and Tier 5
-safety rails (blocklist, destructive-verb confirmation modal, idle
-auto-disable timer, optional persistent status overlay).
+Accessibility Service permission, MediaProjection consent, and the
+safety rails system (blocklist, destructive-verb confirmation modal,
+idle auto-disable timer, optional persistent status overlay).
 
 - **`HermesAccessibilityService`** — Android `AccessibilityService`
   subclass that reads the active window's UI tree, dispatches taps /
@@ -121,7 +121,7 @@ auto-disable timer, optional persistent status overlay).
 - **`ScreenCapture.kt`** — `MediaProjection` → `VirtualDisplay` →
   `ImageReader` → PNG bytes, uploaded to the relay via `/media/upload`
 - **`BridgeCommandHandler`** — routes inbound `bridge.command` envelopes
-  to the executor, with the three-stage Tier 5 safety check
+  to the executor, with the three-stage safety check
   (blocklist → destructive-verb confirmation → auto-disable reschedule)
 - **`BridgeSafetyManager`** — process-wide safety enforcement singleton
   with DataStore-backed blocklist (30 default banking/payments/2FA
@@ -157,7 +157,7 @@ auto-disable timer, optional persistent status overlay).
   info, Test Voice)
 - New relay endpoints — `POST /voice/transcribe`, `POST /voice/synthesize`,
   `GET /voice/config`
-- **Voice-to-bridge intent routing** (sideload track only, Tier 3) —
+- **Voice-to-bridge intent routing** (sideload track only) —
   spoken commands like "text Mom saying on my way" route to the bridge
   channel instead of the chat channel, with destructive-verb
   confirmation flow
@@ -205,7 +205,7 @@ badges showed stale Connected/Disconnected for 30s after foregrounding.
 
 **Two build flavors** — `googlePlay` (Play Store track, conservative
 Accessibility use case) and `sideload` (`.sideload` applicationId
-suffix, full Phase 3 tiers including voice-to-bridge and
+suffix, full feature set including voice-to-bridge intents and
 `android_navigate`). `sideload` shows as "Hermes Dev" in the launcher
 for side-by-side disambiguation.
 
@@ -307,7 +307,7 @@ picker.
   - Voice messages appear as normal chat messages in session history
 - **Reactive layered-sine waveform** — three overlapping waves with amplitude-driven phase velocity (`withFrameNanos` ticker), pill-shaped edge merge (geometric `sin(πt)` taper + `BlendMode.DstIn` gradient mask), color-keyed to voice state
 - **Enter/exit voice chimes** — synthesized 200ms PCM sweeps via AudioTrack (440→660 Hz enter, mirror exit)
-- **Terminal (Phase 2)** — tmux-backed persistent shells with tabs, scrollback search, and session info sheet
+- **Terminal (preview)** — tmux-backed persistent shells with tabs, scrollback search, and session info sheet
 - **Session TTL picker** — choose 1d / 7d / 30d / 90d / 1y / Never at pair time
 - **Per-channel grants** — control terminal/bridge access per paired device
 - **Android Keystore token storage** — StrongBox-preferred hardware-backed encrypted storage with TEE fallback

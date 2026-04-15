@@ -14,6 +14,7 @@ import androidx.core.app.NotificationCompat
 import com.hermesandroid.relay.MainActivity
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.accessibility.HermesAccessibilityService
+import com.hermesandroid.relay.accessibility.MediaProjectionHolder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -70,6 +71,27 @@ class BridgeForegroundService : Service() {
         const val ACTION_DISABLE = "com.hermesandroid.relay.bridge.DISABLE"
         const val ACTION_OPEN_SETTINGS = "com.hermesandroid.relay.bridge.OPEN_SETTINGS"
 
+        // === PHASE3-bridge-ui-followup: MediaProjection upgrade action ===
+        // Fired by MainActivity.mediaProjectionLauncher after the user has
+        // granted the system consent dialog. Carries the resultCode + data
+        // Intent the launcher received. The service handles this by:
+        //   1. Calling startForeground AGAIN with the dual SPECIAL_USE |
+        //      MEDIA_PROJECTION type bitmask (legal NOW because consent
+        //      has been granted).
+        //   2. Calling MediaProjectionHolder.acceptGrantInsideForegroundService
+        //      to construct and store the projection.
+        // Splitting the FGS type slot out of the initial start-up is
+        // critical: Android 14+ silently auto-revokes any projection created
+        // by a service that called startForeground(type=mediaProjection)
+        // BEFORE the consent dialog was granted. The previous code had
+        // mediaProjection in the initial type bitmask the moment the master
+        // toggle flipped on, which is exactly that violation. Symptom:
+        // "I tap Allow but the row never turns green" — Bailey, 2026-04-13.
+        const val ACTION_GRANT_PROJECTION = "com.hermesandroid.relay.bridge.GRANT_PROJECTION"
+        const val EXTRA_RESULT_CODE = "com.hermesandroid.relay.bridge.RESULT_CODE"
+        const val EXTRA_RESULT_DATA = "com.hermesandroid.relay.bridge.RESULT_DATA"
+        // === END PHASE3-bridge-ui-followup ===
+
         fun start(context: Context) {
             val intent = Intent(context.applicationContext, BridgeForegroundService::class.java)
                 .setAction(ACTION_START)
@@ -81,20 +103,80 @@ class BridgeForegroundService : Service() {
         }
 
         fun stop(context: Context) {
+            // Use stopService() rather than startService(ACTION_STOP) — on
+            // Android 15+ (target SDK 35), the system routes ANY intent to
+            // a service with foregroundServiceType through the foreground
+            // watchdog and demands a startForeground call within 5s, even
+            // if the intent is an internal "please shut down" message. By
+            // going through stopService() we bypass onStartCommand entirely
+            // and call onDestroy directly — clean shutdown, no watchdog.
             val intent = Intent(context.applicationContext, BridgeForegroundService::class.java)
-                .setAction(ACTION_STOP)
-            context.applicationContext.startService(intent)
+            context.applicationContext.stopService(intent)
+        }
+
+        /**
+         * Fire-and-forget: hand the consent result off to the foreground
+         * service so it can upgrade its FGS type to include MEDIA_PROJECTION
+         * and construct the projection. Called from
+         * `MainActivity.mediaProjectionLauncher` immediately after the user
+         * grants the system consent dialog.
+         *
+         * The service must already be running (master toggle on) — that is
+         * guaranteed by `BridgeViewModel.requestScreenCapture()` which gates
+         * the consent flow on the master toggle being on.
+         */
+        fun grantMediaProjection(context: Context, resultCode: Int, data: Intent) {
+            val intent = Intent(context.applicationContext, BridgeForegroundService::class.java)
+                .setAction(ACTION_GRANT_PROJECTION)
+                .putExtra(EXTRA_RESULT_CODE, resultCode)
+                .putExtra(EXTRA_RESULT_DATA, data)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.applicationContext.startForegroundService(intent)
+            } else {
+                context.applicationContext.startService(intent)
+            }
         }
     }
+
+    // True after we've successfully called startForeground with the
+    // mediaProjection type slot (i.e. after consent + grant). Drives the
+    // type bitmask passed to subsequent startForeground calls so we don't
+    // accidentally drop the slot on a re-start.
+    private var hasMediaProjectionType: Boolean = false
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.i(TAG, "onStartCommand action=${intent?.action} flags=$flags startId=$startId")
+        // === PHASE3-bridge-ui-followup: always startForeground first ===
+        // CRITICAL: on Android 15+ (target SDK 35), ANY intent delivered to
+        // a service that declares foregroundServiceType in the manifest —
+        // including intents dispatched via Context.startService() — gets
+        // tracked by the system's foreground-service watchdog. The service
+        // has 5 seconds to call startForeground() or the system throws
+        // ForegroundServiceDidNotStartInTimeException and crashes the app.
+        //
+        // Symptom we hit on 2026-04-13: opening the Bridge tab → BridgeViewModel
+        // collector fires masterToggle (initial value false) → calls
+        // BridgeForegroundService.stop(ctx) → startService(ACTION_STOP) →
+        // service onStartCommand handles ACTION_STOP, calls stopForeground
+        // and stopSelf without ever calling startForeground → 5s later the
+        // system kills the process.
+        //
+        // The fix: ALWAYS call startForeground at the top of onStartCommand,
+        // before any action branching. The brief notification flash for
+        // stop-only paths is acceptable; the alternative (using a bound
+        // service or broadcast receiver for control commands) is a much
+        // bigger refactor for the same outcome.
+        startForegroundNotification()
+        // === END PHASE3-bridge-ui-followup ===
+
         when (intent?.action) {
             ACTION_STOP -> {
                 Log.i(TAG, "ACTION_STOP → stopping foreground service")
+                hasMediaProjectionType = false
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 return START_NOT_STICKY
@@ -127,13 +209,56 @@ class BridgeForegroundService : Service() {
                 runCatching { startActivity(launch) }
                 return START_STICKY
             }
+            ACTION_GRANT_PROJECTION -> {
+                // === PHASE3-bridge-ui-followup: post-consent FGS type upgrade ===
+                // The launcher result has just landed in MainActivity. The
+                // top-of-onStartCommand call already brought us into the
+                // foreground (with SPECIAL_USE only). Now flip the type
+                // flag and call startForeground AGAIN to upgrade to
+                // SPECIAL_USE | MEDIA_PROJECTION — legal NOW because the
+                // consent has been granted — then construct the projection
+                // from inside the foreground state. Two startForeground
+                // calls on the same service is well-supported; the second
+                // just changes the type bitmask.
+                Log.i(TAG, "ACTION_GRANT_PROJECTION → upgrading FGS type and accepting grant")
+                hasMediaProjectionType = true
+                startForegroundNotification()
+                val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
+                val data: Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(EXTRA_RESULT_DATA)
+                }
+                val accepted = MediaProjectionHolder.acceptGrantInsideForegroundService(
+                    this, resultCode, data
+                )
+                if (!accepted) {
+                    // Rolling back the type slot keeps us honest: if the
+                    // user actually denied (or the API failed), we shouldn't
+                    // claim a grant we don't have. Re-run startForeground
+                    // with SPECIAL_USE only so the FGS type matches reality.
+                    Log.w(TAG, "grant not accepted — reverting FGS to SPECIAL_USE only")
+                    hasMediaProjectionType = false
+                    startForegroundNotification()
+                }
+                return START_STICKY
+                // === END PHASE3-bridge-ui-followup ===
+            }
         }
 
-        startForegroundNotification()
+        // Fall-through for ACTION_START / null intent — startForegroundNotification
+        // was already called at the top of this method.
         return START_STICKY
     }
 
     override fun onDestroy() {
+        // Reset state so a fresh service instance starts in the
+        // SPECIAL_USE-only configuration. Also drop any held MediaProjection
+        // — a projection without an active bridge is meaningless and the
+        // next bridge enable should always prompt for fresh consent.
+        hasMediaProjectionType = false
+        runCatching { MediaProjectionHolder.revoke() }
         scope.cancel()
         super.onDestroy()
     }
@@ -143,21 +268,30 @@ class BridgeForegroundService : Service() {
         val notification = buildNotification()
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                // === PHASE3-bridge-ui-followup: Android 14+ MediaProjection FGS ===
-                // OR both type slots:
-                //   - SPECIAL_USE for the persistent "bridge active" indicator
-                //   - MEDIA_PROJECTION so MediaProjectionManager.getMediaProjection()
-                //     can actually return a usable projection. Without this slot
-                //     declared at startForeground time, Android 14+ silently
-                //     auto-revokes the projection within frames of the consent
-                //     dialog closing. Symptom: "I tapped Allow but the grant
-                //     never sticks" — exactly what tripped us up on 2026-04-12.
+                // === PHASE3-bridge-ui-followup: gated MediaProjection type slot ===
+                // CRITICAL: on Android 14+, startForeground(type=mediaProjection)
+                // is only legal AFTER the user has granted the system consent
+                // dialog. Calling it before — even if you intend to "wait
+                // until consent arrives" — makes the eventual projection
+                // get auto-revoked by the system within a frame, with no
+                // app-visible error.
+                //
+                // So we start with SPECIAL_USE only when the bridge first
+                // comes up (master toggle on, no projection yet), and the
+                // ACTION_GRANT_PROJECTION handler upgrades us to
+                // SPECIAL_USE | MEDIA_PROJECTION right after consent and
+                // before getMediaProjection. That's why this method reads
+                // [hasMediaProjectionType] instead of always OR-ing both.
+                //
                 // Both subtypes share this single notification + this single
-                // service. Manifest must list both in `foregroundServiceType`.
-                val combinedType =
+                // service. Manifest lists both in `foregroundServiceType`.
+                val typeMask = if (hasMediaProjectionType) {
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or
                         ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-                startForeground(NOTIFICATION_ID, notification, combinedType)
+                } else {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                }
+                startForeground(NOTIFICATION_ID, notification, typeMask)
                 // === END PHASE3-bridge-ui-followup ===
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 // Q..U: the type arg is required on Q+ too, but

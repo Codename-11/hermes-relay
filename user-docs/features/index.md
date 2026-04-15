@@ -117,11 +117,11 @@ For the full decision guide and install instructions for each, see [Release trac
 
 ## Coming Soon
 
-| Feature | Phase |
-|---------|-------|
+| Feature | Status |
+|---------|--------|
 | Push Notifications | Future — Agent-initiated alerts |
 | Memory Viewer | Future — View/edit agent memories |
-| Cross-device handoff | Phase 3+ — Hand a task from phone to desktop terminal session |
+| Cross-device handoff | Future — Hand a task from phone to desktop terminal session |
 
 <style scoped>
 .track-badge {

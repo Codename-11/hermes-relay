@@ -76,7 +76,6 @@ import com.hermesandroid.relay.network.ConnectionState
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.components.ApiServerInfoSheet
 import com.hermesandroid.relay.ui.components.ConnectionStatusRow
-import com.hermesandroid.relay.ui.components.ConnectionWizard
 import com.hermesandroid.relay.ui.components.InsecureConnectionAckDialog
 import com.hermesandroid.relay.ui.components.RelayInfoSheet
 import com.hermesandroid.relay.ui.components.SessionInfoSheet
@@ -105,6 +104,7 @@ fun ConnectionSettingsScreen(
     connectionViewModel: ConnectionViewModel,
     onBack: () -> Unit,
     onNavigateToPairedDevices: () -> Unit,
+    onNavigateToPair: () -> Unit,
 ) {
     val relayConnectionState by connectionViewModel.relayConnectionState.collectAsState()
     val authState by connectionViewModel.authState.collectAsState()
@@ -133,10 +133,11 @@ fun ConnectionSettingsScreen(
     var relayUrlInput by remember(relayUrl) { mutableStateOf(relayUrl) }
     var isTesting by remember { mutableStateOf(false) }
 
-    // Pairing wizard — modal full-screen flow that scans the QR, lets the
-    // user pick a TTL, and verifies the pair. Replaces the old split between
-    // QrPairingScanner + SessionTtlPickerDialog + PairingWalkthroughDialog.
-    var showConnectionWizard by remember { mutableStateOf(false) }
+    // Pairing wizard now lives at the dedicated Screen.Pair route — this
+    // page just navigates to it. The old `Dialog` wrapper wasn't actually
+    // filling the window (Settings cards were leaking through underneath
+    // the chooser tiles + camera viewport on first-run-from-Settings), so
+    // we route to a Scaffolded full-screen `PairScreen` instead.
 
     var showManualCodeDialog by remember { mutableStateOf(false) }
     var manualCodeInput by remember { mutableStateOf("") }
@@ -246,13 +247,12 @@ fun ConnectionSettingsScreen(
     }
     // === END MANUAL-PAIR-FOLLOWUP ===
 
-    // Connection section expand state — seeded from the current pair/reach
-    // status on first composition, then driven by the user. rememberSaveable
-    // preserves user intent across config changes so tapping "collapse" when
-    // the connection drops doesn't re-open the card.
-    val manualConfigExpandedDefault =
-        !(apiReachable && (authState is AuthState.Paired || !relayEnabled))
-    var manualConfigExpanded by rememberSaveable { mutableStateOf(manualConfigExpandedDefault) }
+    // Connection section expand state. Both manual cards stay collapsed by
+    // default — the primary path is now the chooser-driven Pair wizard
+    // (Screen.Pair) which fully replaces the need to hand-type URLs and
+    // codes for the common case. rememberSaveable preserves user intent
+    // across config changes so a manual expand survives a rotation.
+    var manualConfigExpanded by rememberSaveable { mutableStateOf(false) }
     var bridgePairingExpanded by rememberSaveable { mutableStateOf(false) }
 
     // The insecure ack dialog opens the first time the user toggles insecure
@@ -323,7 +323,7 @@ fun ConnectionSettingsScreen(
                     // (Scan → Confirm → Verify). Same wizard onboarding uses,
                     // so first-run and re-pair stay perfectly aligned.
                     Button(
-                        onClick = { showConnectionWizard = true },
+                        onClick = onNavigateToPair,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(
@@ -451,7 +451,7 @@ fun ConnectionSettingsScreen(
                             OutlinedButton(
                                 onClick = {
                                     connectionViewModel.clearSession()
-                                    showConnectionWizard = true
+                                    onNavigateToPair()
                                 }
                             ) {
                                 Text("Re-pair")
@@ -1085,50 +1085,10 @@ fun ConnectionSettingsScreen(
         }
     }
 
-    // Pairing wizard — full-screen modal scan → confirm → verify flow.
-    // Same composable onboarding uses, so first-run and re-pair stay aligned.
-    if (showConnectionWizard) {
-        androidx.compose.ui.window.Dialog(
-            onDismissRequest = { showConnectionWizard = false },
-            properties = androidx.compose.ui.window.DialogProperties(
-                usePlatformDefaultWidth = false,
-                dismissOnBackPress = true,
-                dismissOnClickOutside = false,
-            ),
-        ) {
-            androidx.compose.material3.Surface(
-                modifier = Modifier.fillMaxSize(),
-                color = MaterialTheme.colorScheme.background,
-            ) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    TopAppBar(
-                        title = { Text("Pair with your server") },
-                        navigationIcon = {
-                            IconButton(onClick = { showConnectionWizard = false }) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                    contentDescription = "Close",
-                                )
-                            }
-                        },
-                    )
-                    ConnectionWizard(
-                        connectionViewModel = connectionViewModel,
-                        onComplete = {
-                            showConnectionWizard = false
-                            Toast.makeText(
-                                context,
-                                "Paired successfully",
-                                Toast.LENGTH_SHORT,
-                            ).show()
-                        },
-                        onCancel = { showConnectionWizard = false },
-                        showSkip = false,
-                    )
-                }
-            }
-        }
-    }
+    // (Pair flow lives at Screen.Pair / PairScreen.kt now — navigated to
+    // via onNavigateToPair() above. Kept out of this composable so the
+    // wizard gets a real Scaffolded window instead of a half-fullscreen
+    // Dialog leaking the cards behind it.)
 
     // Connection info bottom sheets — tap-to-reveal details for each row
     // in Settings → Connection. Mirrors the chat tap-agent-name overlay
@@ -1376,8 +1336,8 @@ fun ConnectionSettingsScreen(
         )
     }
 
-    // (QR scanner + TTL picker live inside ConnectionWizard now — see the
-    // showConnectionWizard block above.)
+    // (QR scanner + TTL picker live inside ConnectionWizard, which is
+    // hosted by Screen.Pair / PairScreen.kt.)
 
     // Insecure ack dialog — first time the user flips the "Allow insecure"
     // toggle on. Only gates the toggle itself; all actual pairing flows

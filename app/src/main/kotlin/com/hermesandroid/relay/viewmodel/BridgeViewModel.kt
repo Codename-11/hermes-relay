@@ -143,6 +143,21 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         refreshPermissionStatus()
         refreshBridgeStatusFromSystem()
 
+        // === PHASE3-bridge-ui-followup: react to MediaProjection grants ===
+        // The MediaProjection grant lands inside BridgeForegroundService
+        // (the only place where Android 14+ permits getMediaProjection),
+        // not in this ViewModel. We observe the holder's StateFlow so the
+        // permission row's green check lights up the moment the FGS stores
+        // the projection — no waiting for the next ON_RESUME, no race
+        // window where the user returns from the consent dialog and sees
+        // the row still red for a frame.
+        viewModelScope.launch {
+            MediaProjectionHolder.projectionFlow.collect {
+                refreshPermissionStatus()
+            }
+        }
+        // === END PHASE3-bridge-ui-followup ===
+
         // === PHASE3-safety-rails: foreground service lifecycle ===
         // Start/stop BridgeForegroundService based on the master toggle.
         // distinctUntilChanged prevents re-firing the startForegroundService
@@ -162,6 +177,10 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                     // explicitly disabled it — no point showing "bridge
                     // active" when the toggle is off.
                     BridgeStatusOverlay.peek()?.setChipVisible(false)
+                    // The projection is meaningless without the bridge —
+                    // drop it on toggle-off so the row goes back to red
+                    // and the next bridge enable prompts for fresh consent.
+                    MediaProjectionHolder.revoke()
                 }
             }
         }

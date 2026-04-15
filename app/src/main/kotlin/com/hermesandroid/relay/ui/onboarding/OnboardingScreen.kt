@@ -5,6 +5,8 @@ import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,16 +17,21 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.PhonelinkSetup
 import androidx.compose.material.icons.outlined.RocketLaunch
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -38,13 +45,18 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.collectAsState
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.FeatureFlags
+import com.hermesandroid.relay.ui.components.MorphingSphere
+import com.hermesandroid.relay.ui.components.SphereState
 import com.hermesandroid.relay.ui.components.ConnectionWizard
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
@@ -71,11 +83,28 @@ private enum class OnboardingPage { Welcome, Chat, Terminal, Bridge, Connect }
  */
 @Composable
 fun OnboardingScreen(
+    // === onboarding-pair-bug-fix (2026-04-13) ===
+    // CRITICAL: the ConnectionViewModel MUST be passed in from the top
+    // level of RelayApp, not fetched here via `viewModel()`. A bare
+    // `viewModel()` call inside a composable that lives under a
+    // `composable(Screen.Onboarding.route) { ... }` block binds to the
+    // NavBackStackEntry's ViewModelStore, not the Activity's. When
+    // onboarding completes and we `popUpTo(Onboarding) { inclusive = true }`
+    // during navigation to Chat, that backstack entry is destroyed and
+    // the scoped VM's `onCleared()` runs → `connectionManager.shutdown()`
+    // → WSS `close(1000)` → the freshly-minted session token is thrown
+    // away. Meanwhile Chat uses the Activity-scoped instance (a DIFFERENT
+    // ConnectionViewModel), which never saw the pair and has no token.
+    // Symptom: "onboarding reports success but only the API URL survived."
+    //
+    // Passing the VM in explicitly forces us to share the Activity-scoped
+    // instance that Chat / Settings / Bridge all use, so the pair state
+    // lands on the right VM and survives the Onboarding→Chat transition.
+    connectionViewModel: ConnectionViewModel,
     onComplete: () -> Unit,
 ) {
     val context = LocalContext.current
     val relayEnabled by FeatureFlags.relayEnabled(context).collectAsState(initial = FeatureFlags.isDevBuild)
-    val connectionViewModel: ConnectionViewModel = viewModel()
 
     // Build page list dynamically based on feature flags
     val pages = remember(relayEnabled) {
@@ -232,9 +261,95 @@ private fun WelcomePage() {
     OnboardingPage(
         icon = Icons.Outlined.RocketLaunch,
         title = "Hermes-Relay",
-        description = "Your Hermes agent, in your pocket."
+        description = "Your Hermes agent, in your pocket.",
+        heroContent = {
+            Box(modifier = Modifier.fillMaxSize()) {
+                MorphingSphere(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    state = SphereState.Idle,
+                    intensity = 0.12f,
+                )
+
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(16.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.80f))
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = "Welcome",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 18.dp)
+                        .size(60.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.88f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Image(
+                        painter = painterResource(R.drawable.ic_launcher_foreground),
+                        contentDescription = "Hermes-Relay logo",
+                        modifier = Modifier.size(42.dp)
+                    )
+                }
+            }
+        }
     ) {
-        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            text = "Read the app guide, browse the repo, or jump to Hermes Agent docs while you finish server setup.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            OutlinedButton(
+                onClick = {
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW, Uri.parse("https://codename-11.github.io/hermes-relay/"))
+                    )
+                },
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Outlined.MenuBook,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("User Guide")
+            }
+
+            OutlinedButton(
+                onClick = {
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Codename-11/hermes-relay"))
+                    )
+                },
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_github),
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("GitHub")
+            }
+        }
+
         Text(
             text = "hermes-agent.nousresearch.com",
             style = MaterialTheme.typography.bodySmall.copy(
@@ -300,7 +415,13 @@ private fun ConnectPage(
 @Composable
 private fun OnboardingScreenPreview() {
     HermesRelayTheme {
-        OnboardingScreen(onComplete = {})
+        // Preview uses whatever ViewModelStoreOwner Compose-Preview mocks;
+        // at preview time there's no NavHost so the scope collision that
+        // the production entry point has to avoid doesn't apply here.
+        OnboardingScreen(
+            connectionViewModel = viewModel(),
+            onComplete = {},
+        )
     }
 }
 
@@ -308,6 +429,9 @@ private fun OnboardingScreenPreview() {
 @Composable
 private fun OnboardingScreenDarkPreview() {
     HermesRelayTheme(themePreference = "dark") {
-        OnboardingScreen(onComplete = {})
+        OnboardingScreen(
+            connectionViewModel = viewModel(),
+            onComplete = {},
+        )
     }
 }

@@ -117,7 +117,7 @@ Auth uses optional Bearer token (`API_SERVER_KEY`). Most local setups run withou
 - Tokens stored in EncryptedSharedPreferences (AES-256-GCM, Android Keystore-backed).
 - Codes use the full `A-Z / 0-9` alphabet (36 chars). The earlier "no ambiguous 0/O/1/I" restriction only mattered when a human had to retype a code from a display; with QR + HTTP the restriction silently rejected valid codes.
 - Old API-only QRs (no `relay` block) still parse cleanly — the `relay` field is nullable and the Android parser runs with `ignoreUnknownKeys = true`.
-- Phase 3 (bridge) will use the symmetric phone-generates, host-approves flow and reuse `/pairing/register` from the opposite direction; phone-side `AuthManager.generatePairingCode()` is retained for that reason.
+- A future symmetric phone-generates, host-approves flow for the bridge channel will reuse `/pairing/register` from the opposite direction; phone-side `AuthManager.generatePairingCode()` is retained for that reason.
 
 ---
 
