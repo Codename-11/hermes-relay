@@ -57,6 +57,23 @@ import kotlinx.serialization.json.put
  */
 internal class RealVoiceBridgeIntentHandler(
     private val multiplexer: ChannelMultiplexer?,
+    // === PHASE3-voice-intents-localdispatch ===
+    // Local in-process dispatcher — calls
+    // BridgeCommandHandler.handleLocalCommand(envelope) which runs the
+    // same dispatch + Tier 5 safety pipeline as the WSS-incoming path,
+    // but without the WSS round-trip. Voice intents originate on the
+    // phone and target the phone's own accessibility service, so going
+    // over the relay would just bounce the bridge.command back as
+    // "unexpected from phone" (which is exactly what happened in the
+    // 2026-04-14 on-device test that motivated this rework).
+    //
+    // Optional with a null default so test harnesses constructing this
+    // class without the full DI graph still compile. In production
+    // RelayApp wires the real dispatcher in; if it's somehow null at
+    // runtime the dispatch() helper falls back to the legacy multiplexer
+    // path with a WARN log so the regression is at least visible.
+    private val localBridgeDispatcher: LocalBridgeDispatcher? = null,
+    // === END PHASE3-voice-intents-localdispatch ===
 ) : VoiceBridgeIntentHandler {
 
     companion object {
@@ -189,7 +206,7 @@ internal class RealVoiceBridgeIntentHandler(
         )
     }
 
-    private fun handleSafe(
+    private suspend fun handleSafe(
         label: String,
         envelope: Envelope,
     ): IntentResult.Handled {
@@ -201,18 +218,52 @@ internal class RealVoiceBridgeIntentHandler(
         )
     }
 
-    private fun dispatch(envelope: Envelope) {
+    /**
+     * Dispatch a bridge envelope. Prefers the in-process
+     * [localBridgeDispatcher] which runs through
+     * `BridgeCommandHandler.handleLocalCommand` and stays on the device.
+     * Falls back to `multiplexer.send` only if the local dispatcher is
+     * null (test harnesses, mis-wiring) — and that fallback will log a
+     * WARN because the WSS path is broken for phone-originated bridge
+     * commands (the relay drops them as "unexpected").
+     *
+     * The `bridge.command` envelope built by the [buildXxxEnvelope]
+     * helpers above is shape-compatible with both paths: same fields,
+     * same `request_id`, same JSON body. The only difference is whether
+     * we hand it to the local in-process handler (correct) or push it
+     * through WSS (broken).
+     */
+    private suspend fun dispatch(envelope: Envelope) {
+        val local = localBridgeDispatcher
+        if (local != null) {
+            try {
+                local(envelope)
+                return
+            } catch (e: Exception) {
+                // Don't crash voice mode if the local dispatcher throws.
+                // BridgeCommandHandler.handleLocalCommand has its own
+                // try/catch around dispatch(), so anything reaching here
+                // is a programming error worth logging loudly.
+                Log.w(TAG, "local dispatch failed: ${e.message}", e)
+                return
+            }
+        }
+        // Fallback path (legacy / test harness): the WSS round-trip.
+        // This path is known broken in production — the relay logs
+        // "ignoring unexpected bridge.command from phone" and drops the
+        // envelope. The fallback exists so unit tests that don't wire a
+        // localBridgeDispatcher still get a graceful no-op instead of an
+        // NPE.
         val mux = multiplexer
         if (mux == null) {
-            Log.w(TAG, "dispatch: multiplexer null, dropping ${envelope.type}")
+            Log.w(TAG, "dispatch: both localBridgeDispatcher AND multiplexer are null, dropping ${envelope.type}")
             return
         }
+        Log.w(TAG, "dispatch: localBridgeDispatcher missing — falling back to multiplexer.send (will be dropped by relay as 'unexpected bridge.command from phone'). Wire localBridgeDispatcher in RelayApp.")
         try {
             mux.send(envelope)
         } catch (e: Exception) {
-            // Don't crash voice mode if the bridge channel isn't open yet.
-            // safety-rails's safety layer will surface a proper user-facing error.
-            Log.w(TAG, "dispatch failed: ${e.message}")
+            Log.w(TAG, "dispatch fallback (multiplexer) failed: ${e.message}")
         }
     }
 

@@ -540,7 +540,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val bridgeSafety: com.hermesandroid.relay.bridge.BridgeSafetyManager get() = bridgeSafetyManager
     // === END PHASE3-safety-rails ===
 
-    private val bridgeCommandHandler = BridgeCommandHandler(
+    // Public so RelayApp can hand the local-dispatch entry point to
+    // VoiceViewModel. The voice intent handler calls handleLocalCommand()
+    // for in-process action dispatch (see BridgeCommandHandler KDoc).
+    val bridgeCommandHandler = BridgeCommandHandler(
         multiplexer = multiplexer,
         scope = viewModelScope,
         screenCapture = screenCapture,

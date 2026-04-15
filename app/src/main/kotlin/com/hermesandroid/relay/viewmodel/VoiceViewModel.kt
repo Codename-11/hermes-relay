@@ -15,6 +15,7 @@ import com.hermesandroid.relay.util.HumanError
 import com.hermesandroid.relay.util.classifyError
 // === PHASE3-voice-intents: voice→bridge intent routing ===
 import com.hermesandroid.relay.voice.IntentResult
+import com.hermesandroid.relay.voice.LocalBridgeDispatcher
 import com.hermesandroid.relay.voice.VoiceBridgeIntentHandler
 import com.hermesandroid.relay.voice.createVoiceBridgeIntentHandler
 // === END PHASE3-voice-intents ===
@@ -179,11 +180,15 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         player: VoicePlayer,
         sfxPlayer: VoiceSfxPlayer,
         // === PHASE3-voice-intents: voice→bridge intent routing ===
-        // Optional so existing call sites keep compiling until they're
-        // updated to pass the WSS multiplexer. On googlePlay the param is
-        // ignored by the no-op factory; on sideload it's the channel used
-        // to emit bridge tool envelopes.
+        // Optional so existing call sites keep compiling. On googlePlay both
+        // are ignored by the no-op factory; on sideload, [localBridgeDispatcher]
+        // is the in-process entry point into BridgeCommandHandler that runs
+        // bridge actions through the same dispatch + Tier 5 safety pipeline as
+        // WSS-incoming commands but without the WSS round-trip. The
+        // [bridgeMultiplexer] is retained for non-bridge envelope use cases
+        // and for backwards-compat with the previous wiring.
         bridgeMultiplexer: ChannelMultiplexer? = null,
+        localBridgeDispatcher: LocalBridgeDispatcher? = null,
         // === END PHASE3-voice-intents ===
     ) {
         this.voiceClient = voiceClient
@@ -198,7 +203,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // classifier-backed handler. VoiceViewModel only ever sees the
         // interface — the concrete impl is picked at compile time by the
         // active product flavor. No runtime flavor check, no reflection.
-        voiceBridgeIntentHandler = createVoiceBridgeIntentHandler(bridgeMultiplexer)
+        voiceBridgeIntentHandler = createVoiceBridgeIntentHandler(
+            multiplexer = bridgeMultiplexer,
+            localBridgeDispatcher = localBridgeDispatcher,
+        )
         // === END PHASE3-voice-intents ===
 
         startTtsConsumer()

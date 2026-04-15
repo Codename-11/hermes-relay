@@ -19,8 +19,12 @@ import com.hermesandroid.relay.data.BuildFlavor
 // === END PHASE3-tier-C ===
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.models.Envelope
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
@@ -175,6 +179,76 @@ class BridgeCommandHandler(
                     }
                 )
             }
+        }
+    }
+
+    /**
+     * In-process entry point for callers that already live on the phone
+     * (e.g. the sideload voice intent handler). Runs the same dispatch +
+     * Tier 5 safety check pipeline as the WSS-incoming [onMessage] path,
+     * but **does not send a `bridge.response` envelope** back over the
+     * multiplexer.
+     *
+     * # Why not multiplexer.send()?
+     *
+     * The `bridge.command` envelope was designed as a server → phone
+     * protocol: the server-side `android_*` Python tools call
+     * `BridgeHandler.handle_command()` which routes a `bridge.command` to
+     * the phone, and the phone replies with a `bridge.response`. The
+     * voice intent handler tried to dispatch in the opposite direction —
+     * phone → relay → phone — and the relay correctly logs `ignoring
+     * unexpected bridge.command from phone` and drops it on the floor.
+     *
+     * Voice intents are phone-local: the classifier, resolver, and
+     * action executor all run in this process. Round-tripping through
+     * WSS adds latency, burns bandwidth, and has no semantic value. This
+     * entry point lets in-process callers reuse the same dispatch
+     * pipeline (including the safety modal!) without the WSS hop.
+     *
+     * # Local dispatch context
+     *
+     * The wrapper installs a [LocalDispatch] coroutine context element
+     * before calling [dispatch]. Inside [respond] we check for the
+     * presence of that element and skip [multiplexer.send] when it's
+     * set — voice doesn't need the response payload, and sending it
+     * would just bounce back through the same WSS protocol mismatch.
+     *
+     * # Thread safety
+     *
+     * The context element is per-coroutine, not per-instance, so a
+     * concurrent WSS-incoming dispatch in flight at the same time will
+     * NOT see the `LocalDispatch` marker and will respond normally over
+     * the multiplexer. The two paths are fully independent.
+     *
+     * Caught by Bailey's on-device test 2026-04-14 — see the v0.4.1
+     * "voice intent local dispatch loop" entry in ROADMAP.md.
+     */
+    suspend fun handleLocalCommand(envelope: Envelope) {
+        if (envelope.type != "bridge.command") {
+            Log.v(TAG, "handleLocalCommand: ignoring non-command envelope type='${envelope.type}'")
+            return
+        }
+        val requestId = envelope.payload["request_id"]?.jsonPrimitive?.content
+            ?: run {
+                Log.w(TAG, "handleLocalCommand: missing request_id — dropping")
+                return
+            }
+        val path = envelope.payload["path"]?.jsonPrimitive?.content.orEmpty()
+        val method = envelope.payload["method"]?.jsonPrimitive?.content.orEmpty()
+        val body = envelope.payload["body"] as? JsonObject
+            ?: envelope.payload["params"] as? JsonObject
+            ?: buildJsonObject { }
+
+        try {
+            withContext(LocalDispatch()) {
+                dispatch(requestId, path, method, body)
+            }
+        } catch (t: Throwable) {
+            // Voice doesn't need the response, but we still log so the
+            // sideload classifier author can debug failed dispatches via
+            // logcat. The voice flow's own try/catch handles the user-
+            // facing error message.
+            Log.w(TAG, "local bridge command '$path' threw: ${t.message}", t)
         }
     }
 
@@ -1140,7 +1214,7 @@ class BridgeCommandHandler(
         return if (out.isEmpty()) null else out
     }
 
-    private fun respondFromResult(requestId: String, result: ActionExecutor.ActionResult) {
+    private suspend fun respondFromResult(requestId: String, result: ActionExecutor.ActionResult) {
         val status = if (result.ok) 200 else 400
         val payload = buildJsonObject {
             if (result.ok) {
@@ -1174,7 +1248,7 @@ class BridgeCommandHandler(
         }
     }
 
-    private fun respond(requestId: String, status: Int, result: JsonObject) {
+    private suspend fun respond(requestId: String, status: Int, result: JsonObject) {
         val envelope = Envelope(
             channel = "bridge",
             type = "bridge.response",
@@ -1184,6 +1258,27 @@ class BridgeCommandHandler(
                 put("result", result)
             }
         )
+        // Local dispatch: skip the multiplexer.send. The in-process caller
+        // (voice intent handler today) doesn't read responses; routing them
+        // over WSS would just bounce back as "unexpected bridge.response
+        // from phone" since the wire protocol is server→phone for commands
+        // and phone→server for responses, with no allowance for a phone-
+        // originated command/response pair. See [handleLocalCommand] KDoc
+        // for the full rationale and discovery story.
+        if (coroutineContext[LocalDispatch] != null) {
+            return
+        }
         multiplexer.send(envelope)
     }
+}
+
+/**
+ * Coroutine context marker installed by [BridgeCommandHandler.handleLocalCommand]
+ * so [BridgeCommandHandler.respond] knows the caller is in-process and the
+ * `bridge.response` envelope should be discarded rather than sent over the
+ * multiplexer. Per-coroutine, so concurrent WSS-incoming dispatches are
+ * unaffected.
+ */
+private class LocalDispatch : AbstractCoroutineContextElement(LocalDispatch) {
+    companion object Key : CoroutineContext.Key<LocalDispatch>
 }
