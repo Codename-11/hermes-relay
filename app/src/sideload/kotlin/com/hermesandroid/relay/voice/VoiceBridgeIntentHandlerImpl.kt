@@ -1,7 +1,10 @@
 package com.hermesandroid.relay.voice
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.hermesandroid.relay.accessibility.HermesAccessibilityService
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.models.Envelope
@@ -111,22 +114,90 @@ internal class RealVoiceBridgeIntentHandler(
             // modal in the loop (BridgeCommandHandler still gates /send_sms
             // through the destructive-verb confirmation).
             is VoiceIntent.SendSms -> {
-                val resolvedNumber = resolveContactPhone(intent.contact)
-                if (resolvedNumber == null) {
-                    Log.i(TAG, "C4 contact resolution failed for '${intent.contact}'")
+                // Pre-flight SMS permission check — if SEND_SMS isn't granted
+                // we'd burn through the 5s confirmation window + safety modal
+                // and then silently fail inside executor.sendSms. Better to
+                // skip dispatch entirely and speak an actionable message. The
+                // LLM tool-calling path hits the same permission check in
+                // ActionExecutor.sendSms (line 1414) — this is just moving the
+                // voice-local check earlier to avoid the dead countdown.
+                val smsPermission = checkSmsPermission()
+                if (smsPermission != null) {
                     IntentResult.Handled(
                         intentLabel = "Send SMS",
-                        spokenConfirmation = "I couldn't find a contact called " +
-                            "${intent.contact}.",
+                        spokenConfirmation = smsPermission,
                         requiresConfirmation = false,
+                        details = mapOf(
+                            "contact" to intent.contact,
+                            "body" to intent.body,
+                            "error" to "permission_missing_sms",
+                        ),
                     )
                 } else {
-                    handleDestructive(
-                        label = "Send SMS",
-                        spokenConfirmation = "About to text ${intent.contact} at " +
-                            "$resolvedNumber: ${intent.body}. Say cancel to stop.",
-                        envelope = buildSmsEnvelope(intent, resolvedNumber),
-                    )
+                    when (val resolution = resolveContactPhone(intent.contact)) {
+                        is ContactResolution.Found -> handleDestructive(
+                            label = "Send SMS",
+                            spokenConfirmation = "About to text ${intent.contact} at " +
+                                "${resolution.number}: ${intent.body}. Say cancel to stop.",
+                            envelope = buildSmsEnvelope(intent, resolution.number),
+                            details = mapOf(
+                                "contact" to intent.contact,
+                                "resolvedNumber" to resolution.number,
+                                "body" to intent.body,
+                            ),
+                        )
+                        is ContactResolution.ServiceMissing -> IntentResult.Handled(
+                            intentLabel = "Send SMS",
+                            spokenConfirmation = "I can't reach the bridge service. " +
+                                "Make sure Hermes accessibility is enabled in Settings.",
+                            requiresConfirmation = false,
+                            details = mapOf(
+                                "contact" to intent.contact,
+                                "error" to "service_missing",
+                            ),
+                        )
+                        is ContactResolution.PermissionMissing -> IntentResult.Handled(
+                            intentLabel = "Send SMS",
+                            spokenConfirmation = "I need Contacts permission to look up " +
+                                "that number. Tap the Bridge tab to grant it.",
+                            requiresConfirmation = false,
+                            details = mapOf(
+                                "contact" to intent.contact,
+                                "error" to "permission_missing_contacts",
+                            ),
+                        )
+                        is ContactResolution.NotFound -> IntentResult.Handled(
+                            intentLabel = "Send SMS",
+                            spokenConfirmation = "I couldn't find a contact called " +
+                                "${intent.contact}.",
+                            requiresConfirmation = false,
+                            details = mapOf(
+                                "contact" to intent.contact,
+                                "error" to "contact_not_found",
+                            ),
+                        )
+                        is ContactResolution.NoPhoneNumber -> IntentResult.Handled(
+                            intentLabel = "Send SMS",
+                            spokenConfirmation = "${intent.contact} doesn't have a phone " +
+                                "number on file.",
+                            requiresConfirmation = false,
+                            details = mapOf(
+                                "contact" to intent.contact,
+                                "error" to "contact_no_phone",
+                            ),
+                        )
+                        is ContactResolution.OtherError -> IntentResult.Handled(
+                            intentLabel = "Send SMS",
+                            spokenConfirmation = "I hit an error looking up ${intent.contact}: " +
+                                resolution.message,
+                            requiresConfirmation = false,
+                            details = mapOf(
+                                "contact" to intent.contact,
+                                "error" to "other_error",
+                                "errorMessage" to resolution.message,
+                            ),
+                        )
+                    }
                 }
             }
             // H5: resolve the human app name → Android package name locally
@@ -137,29 +208,59 @@ internal class RealVoiceBridgeIntentHandler(
             // prefix → contains, all case-insensitive) covers most natural
             // utterances without needing a maintained alias table.
             is VoiceIntent.OpenApp -> {
-                val resolvedPackage = resolveAppPackage(intent.appName)
-                if (resolvedPackage == null) {
-                    Log.i(TAG, "H5 app resolution failed for '${intent.appName}'")
-                    IntentResult.Handled(
+                when (val resolution = resolveAppPackage(intent.appName)) {
+                    is AppResolution.Found -> {
+                        Log.i(
+                            TAG,
+                            "H5 resolved '${intent.appName}' → '${resolution.label}' " +
+                                "(${resolution.packageName}) via ${resolution.matchTier}",
+                        )
+                        handleSafe(
+                            label = "Open App",
+                            envelope = buildOpenAppEnvelope(intent, resolution.packageName),
+                            details = mapOf(
+                                "requestedName" to intent.appName,
+                                "appLabel" to resolution.label,
+                                "packageName" to resolution.packageName,
+                                "matchTier" to resolution.matchTier,
+                            ),
+                        )
+                    }
+                    is AppResolution.ServiceMissing -> IntentResult.Handled(
+                        intentLabel = "Open App",
+                        spokenConfirmation = "I can't reach the bridge service. " +
+                            "Make sure Hermes accessibility is enabled in Settings.",
+                        requiresConfirmation = false,
+                        details = mapOf(
+                            "requestedName" to intent.appName,
+                            "error" to "service_missing",
+                        ),
+                    )
+                    is AppResolution.NotFound -> IntentResult.Handled(
                         intentLabel = "Open App",
                         spokenConfirmation = "I couldn't find an app called " +
                             "${intent.appName}.",
                         requiresConfirmation = false,
+                        details = mapOf(
+                            "requestedName" to intent.appName,
+                            "error" to "app_not_found",
+                        ),
                     )
-                } else {
-                    handleSafe(
-                        label = "Open App",
-                        envelope = buildOpenAppEnvelope(intent, resolvedPackage),
+                    is AppResolution.OtherError -> IntentResult.Handled(
+                        intentLabel = "Open App",
+                        spokenConfirmation = resolution.message,
+                        requiresConfirmation = false,
+                        details = mapOf(
+                            "requestedName" to intent.appName,
+                            "error" to "other_error",
+                            "errorMessage" to resolution.message,
+                        ),
                     )
                 }
             }
             is VoiceIntent.Tap -> handleSafe(
                 label = "Tap",
                 envelope = buildTapEnvelope(intent),
-            )
-            is VoiceIntent.Scroll -> handleSafe(
-                label = "Scroll",
-                envelope = buildScrollEnvelope(intent),
             )
             VoiceIntent.Back -> handleSafe(
                 label = "Navigate back",
@@ -189,6 +290,7 @@ internal class RealVoiceBridgeIntentHandler(
         label: String,
         spokenConfirmation: String,
         envelope: Envelope,
+        details: Map<String, String> = emptyMap(),
     ): IntentResult.Handled {
         pendingJob = ownScope.launch {
             try {
@@ -203,18 +305,21 @@ internal class RealVoiceBridgeIntentHandler(
             intentLabel = label,
             spokenConfirmation = spokenConfirmation,
             requiresConfirmation = true,
+            details = details,
         )
     }
 
     private suspend fun handleSafe(
         label: String,
         envelope: Envelope,
+        details: Map<String, String> = emptyMap(),
     ): IntentResult.Handled {
         dispatch(envelope)
         return IntentResult.Handled(
             intentLabel = label,
             spokenConfirmation = null,
             requiresConfirmation = false,
+            details = details,
         )
     }
 
@@ -290,29 +395,63 @@ internal class RealVoiceBridgeIntentHandler(
     // ---------------------------------------------------------------------
 
     /**
-     * C4 resolver: voice contact name → first phone number on the best
-     * matching contact, via the same `ActionExecutor.searchContacts`
-     * code path that backs the `/search_contacts` bridge route.
+     * Pre-flight SEND_SMS runtime permission check. Returns null if
+     * granted, or a ready-to-speak error message if denied or if the
+     * a11y service isn't connected (no context to query against).
+     *
+     * Why here and not deferred to `ActionExecutor.sendSms`: that inner
+     * check IS what catches real-world failures, but only after the
+     * 5-second confirmation countdown and the safety-modal flow have
+     * already run. Failing that far into the dispatch means the user
+     * sees the preview, hears the countdown, taps Allow on the modal,
+     * and THEN gets silent failure when the SmsManager call returns
+     * "permission denied". Pulling the check forward lets us short-
+     * circuit with an accurate spoken message before any of that fires.
+     */
+    private fun checkSmsPermission(): String? {
+        val service = HermesAccessibilityService.instance
+            ?: return "I can't reach the bridge service. Make sure Hermes " +
+                "accessibility is enabled in Settings."
+        val granted = ContextCompat.checkSelfPermission(
+            service, Manifest.permission.SEND_SMS
+        ) == PackageManager.PERMISSION_GRANTED
+        return if (granted) {
+            null
+        } else {
+            "I need SMS permission to send a text. Tap the Bridge tab to grant it."
+        }
+    }
+
+    /**
+     * C4 resolver: voice contact name → classified resolution result, via
+     * the same `ActionExecutor.searchContacts` code path that backs the
+     * `/search_contacts` bridge route.
+     *
+     * Pre-v0.4.0 this returned `String?` and collapsed every failure mode
+     * (service missing / permission missing / no match / no phone number)
+     * to `null`. The voice handler then hardcoded "I couldn't find a
+     * contact called X" which was honest only in the last case — users
+     * who hadn't granted READ_CONTACTS heard "not found" and went looking
+     * for a typo instead of the real permission gap. Bailey hit this
+     * 2026-04-15. Returning a [ContactResolution] lets the caller speak
+     * an accurate message per category.
+     *
+     * `ActionExecutor.searchContacts` itself pre-checks the READ_CONTACTS
+     * runtime permission and returns a distinctive error string ("Grant
+     * contacts permission...") when it's missing. We substring-match that
+     * string here to classify — not the cleanest contract but pragmatic,
+     * and it avoids a breaking change to the ActionResult shape that the
+     * LLM tool-calling path also depends on.
      *
      * Implementation note: `searchContacts` returns the contact's phones
-     * as a comma-joined string ("`+15551234567, +15559876543`") because
-     * that's the wire shape the C2 tier designed for the agent's prose
-     * output. For the voice flow we only need a single number to dial,
-     * so we split on `,` and take the first non-blank entry. Trimming is
-     * required because the join uses `", "` (comma + space).
-     *
-     * Returns null when:
-     *   - the accessibility service is not connected
-     *   - searchContacts returns ok=false (e.g. contacts permission
-     *     missing — the user gets a spoken "couldn't find" response
-     *     and can grant the permission then retry)
-     *   - the contacts list is empty (no match for the spoken name)
-     *   - the matched contact has no phone numbers stored
+     * as a comma-joined string ("+15551234567, +15559876543"). For voice
+     * we only need a single number to dial, so we split on `,` and take
+     * the first non-blank entry.
      */
-    private suspend fun resolveContactPhone(contactName: String): String? {
+    private suspend fun resolveContactPhone(contactName: String): ContactResolution {
         val service = HermesAccessibilityService.instance ?: run {
             Log.w(TAG, "C4 resolveContactPhone: a11y service not connected")
-            return null
+            return ContactResolution.ServiceMissing
         }
         // ContactsContract queries hit the on-device content provider —
         // wrap in IO dispatcher so the voice coroutine doesn't block on
@@ -321,17 +460,45 @@ internal class RealVoiceBridgeIntentHandler(
             service.actionExecutor.searchContacts(contactName, limit = 5)
         }
         if (!result.ok) {
-            Log.i(TAG, "C4 searchContacts failed: ${result.error}")
-            return null
+            val err = result.error.orEmpty()
+            Log.i(TAG, "C4 searchContacts failed: $err")
+            // ActionExecutor.searchContacts uses specific phrasing for the
+            // permission-denied paths ("Grant contacts permission" for the
+            // upfront check, "Contacts permission revoked" for the mid-query
+            // SecurityException). Either phrase → permission missing.
+            val lower = err.lowercase()
+            return if ("contacts permission" in lower || "permission revoked" in lower) {
+                ContactResolution.PermissionMissing
+            } else {
+                ContactResolution.OtherError(err.ifBlank { "unknown error" })
+            }
         }
         @Suppress("UNCHECKED_CAST")
         val contacts = result.data["contacts"] as? List<Map<String, Any?>>
-            ?: return null
-        if (contacts.isEmpty()) return null
-        val phonesField = contacts.first()["phones"] as? String ?: return null
-        return phonesField.split(",")
+            ?: return ContactResolution.NotFound
+        if (contacts.isEmpty()) return ContactResolution.NotFound
+        val phonesField = contacts.first()["phones"] as? String
+            ?: return ContactResolution.NoPhoneNumber
+        val number = phonesField.split(",")
             .map { it.trim() }
             .firstOrNull { it.isNotBlank() }
+            ?: return ContactResolution.NoPhoneNumber
+        return ContactResolution.Found(number)
+    }
+
+    /** Result of the C4 contact → phone number lookup. */
+    private sealed class ContactResolution {
+        data class Found(val number: String) : ContactResolution()
+        /** a11y service not connected — whole bridge pipeline is offline. */
+        data object ServiceMissing : ContactResolution()
+        /** READ_CONTACTS runtime permission not granted. */
+        data object PermissionMissing : ContactResolution()
+        /** Query succeeded but no contact matched the spoken name. */
+        data object NotFound : ContactResolution()
+        /** Matched a contact but the record has no stored phone number. */
+        data object NoPhoneNumber : ContactResolution()
+        /** Everything else — surface the raw error so the user gets a hint. */
+        data class OtherError(val message: String) : ContactResolution()
     }
 
     /**
@@ -358,10 +525,10 @@ internal class RealVoiceBridgeIntentHandler(
      * same release). Without it Android 11+ silently returns a near-
      * empty candidate list and every match attempt fails.
      */
-    private suspend fun resolveAppPackage(appName: String): String? {
+    private suspend fun resolveAppPackage(appName: String): AppResolution {
         val service = HermesAccessibilityService.instance ?: run {
             Log.w(TAG, "H5 resolveAppPackage: a11y service not connected")
-            return null
+            return AppResolution.ServiceMissing
         }
         val pm = service.packageManager
         // PackageManager queries can be slow on devices with many apps
@@ -381,21 +548,42 @@ internal class RealVoiceBridgeIntentHandler(
             }
         }
         if (candidates.isEmpty()) {
+            // Distinctive failure mode: PackageManager returned nothing
+            // because the <queries> manifest declaration is missing. The
+            // user can't fix this themselves — it's a build bug — so
+            // report as OtherError rather than NotFound so the spoken
+            // confirmation doesn't blame the user's vocabulary.
             Log.w(TAG, "H5 candidate list empty — missing <queries> in manifest?")
-            return null
+            return AppResolution.OtherError("Launcher app list empty. This is a build issue — please report it.")
         }
 
         val needle = appName.trim().lowercase()
         // Tier 1: exact label match.
         candidates.firstOrNull { it.second.lowercase() == needle }
-            ?.let { return it.first }
+            ?.let { return AppResolution.Found(it.first, it.second, "exact") }
         // Tier 2: label starts with the needle.
         candidates.firstOrNull { it.second.lowercase().startsWith(needle) }
-            ?.let { return it.first }
+            ?.let { return AppResolution.Found(it.first, it.second, "prefix") }
         // Tier 3: label contains the needle anywhere.
         candidates.firstOrNull { it.second.lowercase().contains(needle) }
-            ?.let { return it.first }
-        return null
+            ?.let { return AppResolution.Found(it.first, it.second, "contains") }
+        return AppResolution.NotFound
+    }
+
+    /** Result of the H5 launcher-inventory fuzzy match. */
+    private sealed class AppResolution {
+        data class Found(
+            val packageName: String,
+            val label: String,
+            /** Which matcher tier won — `exact` | `prefix` | `contains`. */
+            val matchTier: String,
+        ) : AppResolution()
+        /** a11y service not connected. */
+        data object ServiceMissing : AppResolution()
+        /** PackageManager returned candidates but none matched. */
+        data object NotFound : AppResolution()
+        /** Unexpected condition (e.g. empty candidate list due to manifest bug). */
+        data class OtherError(val message: String) : AppResolution()
     }
 
     // ---------------------------------------------------------------------
@@ -467,20 +655,6 @@ internal class RealVoiceBridgeIntentHandler(
             put("path", "/tap_text")
             put("body", buildJsonObject {
                 put("text", i.target)
-            })
-            put("source", "voice")
-        },
-    )
-
-    private fun buildScrollEnvelope(i: VoiceIntent.Scroll): Envelope = Envelope(
-        channel = "bridge",
-        type = "bridge.command",
-        payload = buildJsonObject {
-            put("request_id", java.util.UUID.randomUUID().toString())
-            put("method", "POST")
-            put("path", "/scroll")
-            put("body", buildJsonObject {
-                put("direction", i.direction.name.lowercase())
             })
             put("source", "voice")
         },

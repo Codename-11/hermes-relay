@@ -82,6 +82,25 @@ sealed class IntentResult {
         val intentLabel: String,
         val spokenConfirmation: String? = null,
         val requiresConfirmation: Boolean = false,
+        /**
+         * Optional structured details about what the handler resolved. Keys
+         * are handler-specific and documented per intent:
+         *
+         *  - `OpenApp` → `appLabel`, `packageName`, `matchTier`
+         *    (`matchTier` ∈ {`"exact"`, `"prefix"`, `"contains"`})
+         *  - `SendSms` → `contact`, `resolvedNumber`, `body`
+         *  - Tap / Scroll / Back / Home → empty for now
+         *
+         * The UI layer (VoiceViewModel chat-trace formatter) renders these
+         * as a human-readable postscript to [intentLabel] so the user can
+         * see exactly which app got launched / which number got used. Empty
+         * map means the UI falls back to the bare [intentLabel].
+         *
+         * Backwards-compat default is empty map so existing callers (the
+         * googlePlay no-op factory, any tests) keep compiling without touching
+         * this field.
+         */
+        val details: Map<String, String> = emptyMap(),
     ) : IntentResult()
 
     /** The text is not a phone-control intent. Fall through to chat. */

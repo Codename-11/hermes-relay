@@ -1324,6 +1324,12 @@ fun ChatScreen(
                 // Agent B's overlay collects this flow and renders classified
                 // voice errors (mic capture, STT/TTS failures, relay drops).
                 errorEvents = voiceViewModel.errorEvents,
+                // Voice-first transcript: pass the last N chat messages so
+                // voice mode can show a compact rolling history including
+                // local-only voice-intent traces (agentName="Voice action").
+                // Bounded to 6 to keep voice mode visually focused on sphere
+                // + waveform + mic — the full scroll lives in the chat tab.
+                transcriptMessages = messages.takeLast(6),
             )
         }
         } // end Box

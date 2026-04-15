@@ -336,7 +336,10 @@ class BridgeCommandHandler(
                 }
             )
 
-        if (!service.isMasterEnabled() && path != "/current_app") {
+        if (!service.isMasterEnabled() &&
+            path != "/current_app" &&
+            path != "/return_to_hermes"
+        ) {
             return respond(
                 requestId, 403,
                 buildJsonObject {
@@ -492,6 +495,57 @@ class BridgeCommandHandler(
                     }
                 )
             }
+
+            // === PHASE3-return-to-hermes ===
+            // Bring the Hermes Relay app back to foreground. Used by the
+            // server-side agent as the final step of any multi-app task
+            // (e.g. after driving Messages to send an SMS) so the user
+            // sees the agent's reply in-context without manually switching
+            // apps. The phone knows its own package name via service — no
+            // parameter needed, works transparently on both sideload and
+            // googlePlay flavors.
+            //
+            // Allowed even when the master toggle is off: returning focus
+            // to our own app isn't a destructive action, and this tool
+            // should still work if the user flips the toggle mid-session
+            // so the agent can at least wrap up cleanly. Blocklist and
+            // destructive-verb checks don't apply — it's a self-foreground
+            // intent, not a phone-control action.
+            "/return_to_hermes" -> {
+                val selfPkg = service.packageName
+                val intent = runCatching {
+                    service.packageManager.getLaunchIntentForPackage(selfPkg)
+                }.getOrNull()
+                if (intent == null) {
+                    respond(
+                        requestId, 500,
+                        buildJsonObject {
+                            put("error", "couldn't resolve launch intent for self ($selfPkg)")
+                        }
+                    )
+                    return
+                }
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                val launchResult = runCatching { service.startActivity(intent) }
+                if (launchResult.isFailure) {
+                    respond(
+                        requestId, 500,
+                        buildJsonObject {
+                            put("error", launchResult.exceptionOrNull()?.message
+                                ?: "startActivity failed for $selfPkg")
+                        }
+                    )
+                    return
+                }
+                respond(
+                    requestId, 200,
+                    buildJsonObject {
+                        put("ok", true)
+                        put("package", selfPkg)
+                    }
+                )
+            }
+            // === END PHASE3-return-to-hermes ===
             // === END PHASE3-baseline-handlers ===
 
             // === PHASE3-event-stream: B1 android_event_stream toggle ===
@@ -1230,10 +1284,56 @@ class BridgeCommandHandler(
                 }
                 if (result.data.isEmpty()) put("ok", true)
             } else {
-                put("error", result.error ?: "unknown error")
+                val err = result.error ?: "unknown error"
+                put("error", err)
+                // M2: structured error code for the LLM tool-calling path.
+                // ActionExecutor returns free-text errors like "Grant contacts
+                // permission in Settings..." which LLMs CAN interpret, but
+                // adding a machine-readable error_code + required_permission
+                // gives the server-side agent a cleaner signal to classify
+                // responses + offer actionable next steps instead of relaying
+                // whatever phrasing the error string happens to use. Free
+                // text stays alongside for LLMs that prefer it.
+                classifyBridgeError(err)?.let { (code, perm) ->
+                    put("error_code", code)
+                    if (perm != null) put("required_permission", perm)
+                }
             }
         }
         respond(requestId, status, payload)
+    }
+
+    /**
+     * Substring-classify an ActionExecutor error string into a structured
+     * (error_code, required_permission?) pair. Returns null when the error
+     * doesn't match any known category — in that case the free-text
+     * `error` field on the response is the only signal.
+     *
+     * The substring patterns are coupled to
+     * [ActionExecutor.searchContacts] / [ActionExecutor.sendSms] /
+     * [ActionExecutor.makeCall] phrasings. If those messages are changed,
+     * update this classifier too or the `error_code` will degrade to
+     * null and the LLM will fall back to reading the free text.
+     */
+    private fun classifyBridgeError(err: String): Pair<String, String?>? {
+        val lower = err.lowercase()
+        return when {
+            // searchContacts upfront check + mid-query SecurityException
+            "contacts permission" in lower || "contacts permission revoked" in lower ->
+                "permission_denied" to "android.permission.READ_CONTACTS"
+            // sendSms upfront check
+            "sms permission" in lower ->
+                "permission_denied" to "android.permission.SEND_SMS"
+            // makeCall SecurityException recovery
+            "permission denied despite grant" in lower ->
+                "permission_denied" to "android.permission.CALL_PHONE"
+            // Service-side failures that aren't permission-shaped
+            "not connected" in lower || "service not connected" in lower ->
+                "service_unavailable" to null
+            "user denied destructive action" in lower ->
+                "user_denied" to null
+            else -> null
+        }
     }
 
     /**

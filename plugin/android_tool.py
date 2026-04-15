@@ -46,12 +46,43 @@ def _auth_headers() -> dict:
     return {}
 
 def _check_requirements() -> bool:
-    """Returns True if the relay is running and a phone is connected."""
+    """Returns True if the relay is running, a phone is connected, and the
+    accessibility service is granted.
+
+    Uses ``/bridge/status`` — NOT ``/ping``. The relay's ``/ping`` is a pure
+    liveness probe returning ``{pong, ts}`` and lacks the
+    ``phone_connected`` / ``bridge.accessibility_granted`` fields this
+    function needs. The older code here pointed at ``/ping`` and checked
+    for those fields anyway, which meant ``_check_requirements`` always
+    returned ``False`` and every tool except ``android_setup`` was
+    silently hidden from the gateway's tool pool. Caught 2026-04-15 by
+    Bailey: Victor reported "no android_* tools available" while the
+    Android app's bridge + accessibility were both healthy, and a direct
+    curl against ``/bridge/status`` returned ``phone_connected: true`` +
+    ``bridge.accessibility_granted: true``.
+
+    Gating on BOTH ``phone_connected`` AND ``accessibility_granted`` is
+    deliberate: if accessibility is revoked (common after an Android
+    Studio reinstall — Android's ``AccessibilityManagerService`` scrubs
+    enabled services on package replacement), the phone-side
+    ``BridgeCommandHandler.dispatch()`` short-circuits with HTTP 503 on
+    every tool. Hiding the tools when a11y is missing keeps the LLM
+    honest about capability instead of letting it confidently dispatch
+    commands that will fail.
+    """
     try:
-        r = requests.get(f"{_bridge_url()}/ping", headers=_auth_headers(), timeout=2)
+        r = requests.get(
+            f"{_bridge_url()}/bridge/status",
+            headers=_auth_headers(),
+            timeout=2,
+        )
         if r.status_code == 200:
             data = r.json()
-            return data.get("phone_connected", False) or data.get("accessibilityService", False)
+            phone_connected = bool(data.get("phone_connected", False))
+            a11y_granted = bool(
+                data.get("bridge", {}).get("accessibility_granted", False)
+            )
+            return phone_connected and a11y_granted
         return False
     except Exception:
         return False
@@ -291,6 +322,73 @@ def android_current_app() -> str:
     """Get the package name and activity of the current foreground app."""
     try:
         data = _get("/current_app")
+        return json.dumps(data)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+# ── Tier C tools: direct contact / SMS / call dispatch ────────────────────────
+#
+# These wrap phone-side routes that were already fully implemented
+# (/search_contacts, /send_sms, /call in BridgeCommandHandler + matching
+# ActionExecutor methods with runtime permission pre-checks) but had never
+# been exposed as LLM-callable tools. Pre-0.4.0 the only way for an
+# agent to send an SMS was to drive the Messages app step-by-step via
+# open_app + read_screen + tap_text + type — fragile across OEMs and slow.
+# Direct SmsManager dispatch is safer and matches what the voice fast-path
+# already does locally.
+#
+# The phone handles all the hard parts: runtime permission pre-check,
+# destructive-verb confirmation modal (user taps Allow/Deny before the
+# action fires), multi-part SMS segmentation, delivery ack. If the flavor
+# is googlePlay (not sideload) the phone returns 403 with a clear message
+# and the agent can degrade to the UI-automation path.
+
+def android_search_contacts(query: str, limit: int = 20) -> str:
+    """Search the phone's contact book by name. Returns matching contacts
+    with their phone numbers. Requires READ_CONTACTS permission on phone."""
+    try:
+        data = _post("/search_contacts", {"query": query, "limit": limit})
+        return json.dumps(data)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def android_send_sms(to: str, body: str) -> str:
+    """Send an SMS directly via the phone's SmsManager (not by driving the
+    Messages app UI). `to` must be a phone number — use android_search_contacts
+    first if you only have a name. The phone shows a confirmation modal to
+    the user before the message fires; this call blocks until they tap
+    Allow or Deny (up to the configured confirmation timeout)."""
+    try:
+        data = _post("/send_sms", {"to": to, "body": body})
+        return json.dumps(data)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def android_call(number: str) -> str:
+    """Dial a phone number. With CALL_PHONE granted (sideload) the call is
+    auto-placed; without it the system dialer opens pre-populated and the
+    user taps Call manually. Phone shows a confirmation modal before either
+    mode — blocks until the user reacts."""
+    try:
+        data = _post("/call", {"number": number})
+        return json.dumps(data)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def android_return_to_hermes() -> str:
+    """Bring the Hermes Relay app back to the foreground on the user's
+    phone. Call this as the FINAL step of any multi-app task (sending a
+    text, opening Maps, taking a screenshot from another app) so the user
+    sees your reply in-context without having to manually switch apps.
+    Do NOT call this mid-task — only when you're ready to hand control
+    back. Allowed even when Bridge master toggle is off, so you can
+    always wrap up cleanly."""
+    try:
+        data = _post("/return_to_hermes", {})
         return json.dumps(data)
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -586,23 +684,83 @@ _SCHEMAS = {
             "required": ["pairing_code"],
         },
     },
+    "android_search_contacts": {
+        "name": "android_search_contacts",
+        "description": "Search the phone's contact book by name. Returns matching contacts with their phone numbers. Use this BEFORE android_send_sms or android_call when the user gives a contact name rather than a phone number. Requires READ_CONTACTS permission on phone.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Name or partial name to search for (e.g. 'Hannah', 'mom', 'dr. smith').",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max matches to return. Default 20.",
+                    "default": 20,
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    "android_send_sms": {
+        "name": "android_send_sms",
+        "description": "Send an SMS directly via the phone's native SmsManager — does NOT drive the Messages app UI. Much more reliable than open_app + tap_text + type. The `to` argument MUST be a phone number (use android_search_contacts first if you only have a name). The phone shows a confirmation modal before sending; this call blocks until the user taps Allow or Deny. Sideload flavor only — returns 403 on Google Play builds.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "to": {
+                    "type": "string",
+                    "description": "Phone number (E.164 or local format, e.g. '+15551234567' or '555-123-4567').",
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Message body text. Multi-part messages (>160 chars) are segmented automatically.",
+                },
+            },
+            "required": ["to", "body"],
+        },
+    },
+    "android_call": {
+        "name": "android_call",
+        "description": "Place a phone call. With CALL_PHONE granted (sideload flavor) the call is auto-dialed; otherwise the system dialer opens pre-populated and the user taps Call manually. Phone shows a confirmation modal before either mode and blocks until the user reacts. Use android_search_contacts first if you only have a name.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "number": {
+                    "type": "string",
+                    "description": "Phone number to dial (E.164 or local format).",
+                },
+            },
+            "required": ["number"],
+        },
+    },
+    "android_return_to_hermes": {
+        "name": "android_return_to_hermes",
+        "description": "Bring the Hermes Relay app on the phone back to the foreground. Call this as the FINAL step of any phone-control task that opened or brought focus to another app (Messages, Maps, Chrome, etc.) so the user sees your reply in-context without manually switching apps. Do NOT call mid-task — only when you're ready to hand control back. Allowed even when the Bridge master toggle is disabled.",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
 }
 
 # ── Tool handlers map ──────────────────────────────────────────────────────────
 
 _HANDLERS = {
-    "android_ping":         lambda args, **kw: android_ping(),
-    "android_read_screen":  lambda args, **kw: android_read_screen(**args),
-    "android_tap":          lambda args, **kw: android_tap(**args),
-    "android_tap_text":     lambda args, **kw: android_tap_text(**args),
-    "android_type":         lambda args, **kw: android_type(**args),
-    "android_swipe":        lambda args, **kw: android_swipe(**args),
-    "android_open_app":     lambda args, **kw: android_open_app(**args),
-    "android_press_key":    lambda args, **kw: android_press_key(**args),
-    "android_screenshot":   lambda args, **kw: android_screenshot(),
-    "android_scroll":       lambda args, **kw: android_scroll(**args),
-    "android_wait":         lambda args, **kw: android_wait(**args),
-    "android_get_apps":     lambda args, **kw: android_get_apps(),
-    "android_current_app":  lambda args, **kw: android_current_app(),
-    "android_setup":        lambda args, **kw: android_setup(**args),
+    "android_ping":             lambda args, **kw: android_ping(),
+    "android_read_screen":      lambda args, **kw: android_read_screen(**args),
+    "android_tap":              lambda args, **kw: android_tap(**args),
+    "android_tap_text":         lambda args, **kw: android_tap_text(**args),
+    "android_type":             lambda args, **kw: android_type(**args),
+    "android_swipe":            lambda args, **kw: android_swipe(**args),
+    "android_open_app":         lambda args, **kw: android_open_app(**args),
+    "android_press_key":        lambda args, **kw: android_press_key(**args),
+    "android_screenshot":       lambda args, **kw: android_screenshot(),
+    "android_scroll":           lambda args, **kw: android_scroll(**args),
+    "android_wait":             lambda args, **kw: android_wait(**args),
+    "android_get_apps":         lambda args, **kw: android_get_apps(),
+    "android_current_app":      lambda args, **kw: android_current_app(),
+    "android_setup":            lambda args, **kw: android_setup(**args),
+    "android_search_contacts":  lambda args, **kw: android_search_contacts(**args),
+    "android_send_sms":         lambda args, **kw: android_send_sms(**args),
+    "android_call":             lambda args, **kw: android_call(**args),
+    "android_return_to_hermes": lambda args, **kw: android_return_to_hermes(),
 }

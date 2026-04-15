@@ -487,15 +487,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     // server-side session) so the gateway-side LLM still won't
                     // see prior voice actions in its session memory; that's a
                     // v0.4.1 follow-up tracked in ROADMAP.md.
-                    val actionDescription = buildString {
-                        append(result.intentLabel)
-                        if (result.spokenConfirmation != null) {
-                            append(": ")
-                            append(result.spokenConfirmation)
-                        } else {
-                            append(" — done")
-                        }
-                    }
+                    val actionDescription = formatVoiceIntentTrace(result)
                     chatVm.recordVoiceIntent(
                         userText = userText,
                         actionDescription = actionDescription,
@@ -530,6 +522,24 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         // === END PHASE3-voice-intents ===
+
+        // === PHASE3-voice-intents-fallback-visibility ===
+        // Classifier returned NotApplicable — we're about to fall through
+        // to chatVm.sendMessage(). The SSE stream takes 500–1500 ms to
+        // open and start emitting deltas, during which the voice UI would
+        // sit in Idle showing nothing new. Users interpret that as "the
+        // utterance was dropped." Flip to Thinking immediately so the
+        // empty-state hint shows "Thinking..." until tokens arrive and
+        // the stream observer takes over. Also pin the transcribed text
+        // so the user can see what we heard while we wait.
+        _uiState.update {
+            it.copy(
+                state = VoiceState.Thinking,
+                transcribedText = userText,
+                responseText = "",
+            )
+        }
+        // === END PHASE3-voice-intents-fallback-visibility ===
 
         // Reset sentence buffering state for the new turn.
         sentenceBuffer = StringBuilder()
@@ -838,6 +848,137 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         ttsConsumerJob?.cancel()
         amplitudeBridgeJob?.cancel()
         currentTurnJob?.cancel()
+    }
+
+    /**
+     * Render a voice-intent trace for the chat scroll. Uses the structured
+     * [IntentResult.Handled.details] map to produce a richer message than the
+     * pre-v0.4.0 formatter, which could only say "Open App — done" and left
+     * the user wondering *which* app actually launched (see the 2026-04-15
+     * "open Chrome → opens Google app" report).
+     *
+     * Output is markdown so the existing chat bubble renderer picks up bold
+     * labels and inline `code` for package names. Format differs per intent:
+     *
+     *  - `Open App` success → **Opened Chrome**\n`com.android.chrome` — exact match
+     *  - `Open App` failure → **Open App** — I couldn't find an app called 'foo'
+     *  - `Send SMS` awaiting confirmation → **Send SMS — awaiting confirmation**
+     *    \nTo: Hannah (+1555...)\nBody: smoke test
+     *  - Safe intents without details → bare label
+     */
+    private fun formatVoiceIntentTrace(result: IntentResult.Handled): String {
+        val d = result.details
+        val errorCode = d["error"]
+        return when (result.intentLabel) {
+            "Open App" -> {
+                val label = d["appLabel"]
+                val pkg = d["packageName"]
+                val tier = d["matchTier"]
+                val requested = d["requestedName"]
+                when {
+                    label != null && pkg != null -> buildString {
+                        append("**Opened ")
+                        append(label)
+                        append("**")
+                        append('\n')
+                        append('`')
+                        append(pkg)
+                        append('`')
+                        if (tier != null) {
+                            append(" — ")
+                            append(tier)
+                            append(" match")
+                        }
+                    }
+                    errorCode == "app_not_found" -> buildString {
+                        append("**Open App**")
+                        append('\n')
+                        append("Couldn't find an app called '")
+                        append(requested ?: "?")
+                        append("'.")
+                    }
+                    errorCode == "service_missing" -> buildString {
+                        append("**Open App — bridge offline**")
+                        append('\n')
+                        append("Enable Hermes accessibility in Settings to open apps by voice.")
+                    }
+                    errorCode == "other_error" -> buildString {
+                        append("**Open App — error**")
+                        append('\n')
+                        append(d["errorMessage"] ?: "unknown error")
+                    }
+                    else -> "**Open App** — done"
+                }
+            }
+            "Send SMS" -> {
+                val contact = d["contact"]
+                val number = d["resolvedNumber"]
+                val body = d["body"]
+                when {
+                    number != null -> buildString {
+                        append("**Send SMS — awaiting confirmation**")
+                        append('\n')
+                        append("To: ")
+                        append(contact ?: "?")
+                        append(" (")
+                        append(number)
+                        append(')')
+                        if (body != null) {
+                            append('\n')
+                            append("Body: ")
+                            append(body)
+                        }
+                    }
+                    errorCode == "permission_missing_sms" -> buildString {
+                        append("**Send SMS — permission needed**")
+                        append('\n')
+                        append("Grant SMS permission in Settings › Apps › Hermes Relay › Permissions.")
+                    }
+                    errorCode == "permission_missing_contacts" -> buildString {
+                        append("**Send SMS — permission needed**")
+                        append('\n')
+                        append("Grant Contacts permission to look up '")
+                        append(contact ?: "?")
+                        append("' in Settings › Apps › Hermes Relay › Permissions.")
+                    }
+                    errorCode == "service_missing" -> buildString {
+                        append("**Send SMS — bridge offline**")
+                        append('\n')
+                        append("Enable Hermes accessibility in Settings first.")
+                    }
+                    errorCode == "contact_not_found" -> buildString {
+                        append("**Send SMS**")
+                        append('\n')
+                        append("Couldn't find a contact called '")
+                        append(contact ?: "?")
+                        append("'.")
+                    }
+                    errorCode == "contact_no_phone" -> buildString {
+                        append("**Send SMS**")
+                        append('\n')
+                        append(contact ?: "Contact")
+                        append(" has no phone number on file.")
+                    }
+                    errorCode == "other_error" -> buildString {
+                        append("**Send SMS — error**")
+                        append('\n')
+                        append(d["errorMessage"] ?: "unknown error")
+                    }
+                    else -> "**Send SMS** — dispatched"
+                }
+            }
+            else -> buildString {
+                append("**")
+                append(result.intentLabel)
+                append("**")
+                if (result.spokenConfirmation != null) {
+                    append(" — ")
+                    append(result.spokenConfirmation)
+                } else {
+                    append(" — done")
+                }
+            }
+        }
     }
 
 }

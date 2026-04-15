@@ -338,7 +338,34 @@ class ChatHandler {
         // just collected against the reloaded IDs are guaranteed to fire.
         dispatchedMediaMarkers.clear()
 
-        _messages.value = if (loaded.size > MAX_MESSAGES) loaded.takeLast(MAX_MESSAGES) else loaded
+        // === PHASE3-voice-intents-chathistory ===
+        // Preserve local-only voice-intent trace messages across a reload.
+        // These messages are injected by [appendLocalVoiceIntentTrace] with
+        // IDs prefixed "voice-intent-" and never reach the server-side
+        // session, so a wholesale `_messages.value = loaded` assignment
+        // would wipe them. Bailey hit this 2026-04-15: voice fall-through
+        // ("proceed" → not a recognized intent → chat.sendMessage) triggered
+        // a history reload on stream complete and the previous voice trace
+        // vanished, making it look like "the chat cleared". Server-side
+        // sync (so these traces reach the LLM's session memory too) is
+        // still a v0.4.1 follow-up, but preserving them client-side is
+        // enough to fix the disappearing-scrollback bug today.
+        val preservedVoiceTraces = _messages.value.filter {
+            it.id.startsWith("voice-intent-")
+        }
+        val merged = if (preservedVoiceTraces.isEmpty()) {
+            loaded
+        } else {
+            // Merge by timestamp so voice traces interleave with the
+            // reloaded server messages in chronological order. The voice
+            // trace IDs carry `System.currentTimeMillis()` in their suffix
+            // (see appendLocalVoiceIntentTrace), so ChatMessage.timestamp
+            // is the source of truth here.
+            (loaded + preservedVoiceTraces).sortedBy { it.timestamp }
+        }
+
+        _messages.value = if (merged.size > MAX_MESSAGES) merged.takeLast(MAX_MESSAGES) else merged
+        // === END PHASE3-voice-intents-chathistory ===
 
         // Now that the reloaded messages are in state, fire callbacks so the
         // ViewModel can insert LOADING/FAILED attachments via mutateMessage.

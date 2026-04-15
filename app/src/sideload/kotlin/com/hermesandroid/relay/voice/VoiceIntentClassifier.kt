@@ -16,12 +16,20 @@ package com.hermesandroid.relay.voice
  *
  * | Intent | Example phrases | Parsed out |
  * |---|---|---|
- * | [VoiceIntent.SendSms] | `text Sam I'll be 10 min late` / `send a message to mom saying on my way` / `text my wife hey` | `contact`, `body` |
+ * | [VoiceIntent.SendSms] | `text Sam I'll be 10 min late` / `send a message to mom saying on my way` / `send Hannah a text saying smoke test` / `message Sam saying hi` | `contact`, `body` |
  * | [VoiceIntent.OpenApp] | `open camera` / `launch maps` / `open the spotify app` / `start gmail` | `appName` |
  * | [VoiceIntent.Tap] | `tap send` / `press the ok button` / `click on continue` | `target` |
- * | [VoiceIntent.Scroll] | `scroll down` / `scroll up` / `scroll to the top` / `scroll to the bottom` | `direction` |
  * | [VoiceIntent.Back] | `go back` / `navigate back` / `back` | — |
  * | [VoiceIntent.Home] | `press home` / `go home` / `home screen` | — |
+ *
+ * ## Scroll — removed from voice fast-path
+ *
+ * Scroll used to be a voice intent but was removed in v0.4.0: nobody
+ * actually says "scroll down" aloud to their phone in practice, and the
+ * regex was maintenance debt for a near-zero-usage intent. The /scroll
+ * bridge HTTP route and [ActionExecutor.scroll] are still fully functional
+ * — server-side agents calling `android_scroll` via the WSS bridge path
+ * still work. Only the voice classifier shortcut was removed.
  *
  * ## Tuning
  *
@@ -40,11 +48,8 @@ internal sealed class VoiceIntent {
     data class SendSms(val contact: String, val body: String) : VoiceIntent()
     data class OpenApp(val appName: String) : VoiceIntent()
     data class Tap(val target: String) : VoiceIntent()
-    data class Scroll(val direction: ScrollDirection) : VoiceIntent()
     data object Back : VoiceIntent()
     data object Home : VoiceIntent()
-
-    enum class ScrollDirection { UP, DOWN, TOP, BOTTOM }
 }
 
 internal object VoiceIntentClassifier {
@@ -57,12 +62,33 @@ internal object VoiceIntentClassifier {
         RegexOption.IGNORE_CASE,
     )
 
-    // text X saying Y  |  text X: Y  |  send a message to X saying Y  |  text X Y
+    // Direct form:
+    //   text X saying Y  |  text X: Y  |  send a message to X saying Y  |  message X saying Y
     // Ordered: the "saying"/":" variants match before the no-separator form
     // so we don't greedily swallow the body into the contact field.
     private val SMS_WITH_SEPARATOR = Regex(
-        "^(?:text|send\\s+(?:a\\s+)?(?:message|text|sms)\\s+to)\\s+" +
+        "^(?:text|message|send\\s+(?:a\\s+)?(?:message|text|sms)\\s+to)\\s+" +
             "(?<contact>[\\w'\\- ]+?)\\s+" +
+            "(?:saying|that|:\\s*|,\\s*)\\s*" +
+            "(?<body>.+)$",
+        RegexOption.IGNORE_CASE,
+    )
+
+    // Indirect-object form:
+    //   send X a text saying Y  |  send X a message that Y  |  shoot X an sms: Y
+    // English has two equally-natural SMS phrasings — direct ("text Sam hello",
+    // "send a text to Sam") and indirect ("send Sam a text"). Pre-0.4.0 the
+    // classifier only covered direct, so utterances like "Can you send Hannah
+    // a text saying hi?" (filler-stripped to "send Hannah a text saying hi")
+    // fell through to the LLM. Bailey hit this 2026-04-15. This pattern
+    // anchors on the second "text/message/sms" keyword AFTER the contact,
+    // which prevents it from false-matching the direct "send a text to X"
+    // form (no second keyword there). Non-greedy contact capture is safe
+    // because the anchor is mandatory.
+    private val SMS_INDIRECT = Regex(
+        "^(?:send|shoot)\\s+" +
+            "(?<contact>[\\w'\\- ]+?)\\s+" +
+            "(?:a\\s+|an\\s+)(?:text|message|sms)\\s+" +
             "(?:saying|that|:\\s*|,\\s*)\\s*" +
             "(?<body>.+)$",
         RegexOption.IGNORE_CASE,
@@ -85,11 +111,6 @@ internal object VoiceIntentClassifier {
     // tap / press / click / click on <target>
     private val TAP = Regex(
         "^(?:tap|press|click(?:\\s+on)?)\\s+(?:the\\s+)?(?<target>[\\w\\- ]+?)(?:\\s+button)?\\s*$",
-        RegexOption.IGNORE_CASE,
-    )
-
-    private val SCROLL = Regex(
-        "^scroll\\s+(?:to\\s+the\\s+)?(?<dir>up|down|top|bottom)\\s*$",
         RegexOption.IGNORE_CASE,
     )
 
@@ -124,6 +145,13 @@ internal object VoiceIntentClassifier {
                 return VoiceIntent.SendSms(contact = contact, body = body)
             }
         }
+        SMS_INDIRECT.matchEntire(text)?.let { m ->
+            val contact = m.groups["contact"]?.value?.trim().orEmpty()
+            val body = m.groups["body"]?.value?.trim().orEmpty()
+            if (contact.isNotEmpty() && body.isNotEmpty()) {
+                return VoiceIntent.SendSms(contact = contact, body = body)
+            }
+        }
         SMS_NO_SEPARATOR.matchEntire(text)?.let { m ->
             val contact = m.groups["contact"]?.value?.trim().orEmpty()
             val body = m.groups["body"]?.value?.trim().orEmpty()
@@ -138,16 +166,6 @@ internal object VoiceIntentClassifier {
         TAP.matchEntire(text)?.let { m ->
             val target = m.groups["target"]?.value?.trim().orEmpty()
             if (target.isNotEmpty()) return VoiceIntent.Tap(target)
-        }
-        SCROLL.matchEntire(text)?.let { m ->
-            val dir = when (m.groups["dir"]?.value?.lowercase()) {
-                "up" -> VoiceIntent.ScrollDirection.UP
-                "down" -> VoiceIntent.ScrollDirection.DOWN
-                "top" -> VoiceIntent.ScrollDirection.TOP
-                "bottom" -> VoiceIntent.ScrollDirection.BOTTOM
-                else -> null
-            }
-            if (dir != null) return VoiceIntent.Scroll(dir)
         }
         if (BACK.matchEntire(text) != null) return VoiceIntent.Back
         if (HOME.matchEntire(text) != null) return VoiceIntent.Home

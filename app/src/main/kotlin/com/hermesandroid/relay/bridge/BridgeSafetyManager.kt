@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.plus
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
@@ -200,13 +201,28 @@ class BridgeSafetyManager(
             return false
         }
 
+        // ComposeView creation + setContent inside BridgeStatusOverlay.showConfirmation
+        // must run on the Main thread. This awaitConfirmation call can originate
+        // from either the WSS-incoming BridgeCommandHandler path (already on Main
+        // via ChannelMultiplexer's dispatcher) OR from the in-process voice-intent
+        // local-dispatch path (Dispatchers.Default, via RealVoiceBridgeIntentHandler's
+        // own scope). Using Dispatchers.Main.immediate makes the first case a no-op
+        // and only schedules on Main for the second — one line handles both callers.
+        //
+        // Before this fix the off-thread call threw from ComposeView.setContent,
+        // the outer runCatching swallowed it, and the log message mislabelled the
+        // cause as "likely overlay permission missing" which sent debugging up a
+        // wrong tree (2026-04-15 on-device test with overlay permission granted
+        // but voice SMS still never showed the modal).
         val shown = runCatching {
-            host.showConfirmation(pending) { resolution ->
-                resolveConfirmation(requestId, resolution)
+            withContext(Dispatchers.Main.immediate) {
+                host.showConfirmation(pending) { resolution ->
+                    resolveConfirmation(requestId, resolution)
+                }
             }
         }
         if (shown.isFailure) {
-            Log.w(TAG, "awaitConfirmation: overlay host refused to show modal (likely overlay permission missing)")
+            Log.w(TAG, "awaitConfirmation: host.showConfirmation threw — denying", shown.exceptionOrNull())
             pendingConfirmations.remove(requestId)
             return false
         }

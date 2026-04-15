@@ -240,10 +240,28 @@ class BridgeStatusOverlay(context: Context) : ConfirmationOverlayHost {
  * [IllegalStateException] at `AndroidComposeView.onAttachedToWindow:2234`
  * on every overlay attach.
  *
- * The required init sequence is: move the lifecycle to CREATED first,
- * call `SavedStateRegistryController.performRestore(null)` (empty
- * bundle = fresh state), THEN advance to RESUMED. Doing it in any other
- * order trips a second assertion in `SavedStateRegistryController`.
+ * ## Init sequence — DO NOT REORDER
+ *
+ * Current androidx.savedstate requires:
+ *
+ *   1. `savedStateController.performRestore(null)` — while the owner is
+ *      still in [Lifecycle.State.INITIALIZED]. Internally this calls
+ *      `performAttach()` which hard-asserts `currentState == INITIALIZED`
+ *      and throws `IllegalStateException: Restarter must be created only
+ *      during owner's initialization stage` if you've already advanced
+ *      past it.
+ *   2. `registry.currentState = CREATED`
+ *   3. `registry.currentState = RESUMED`
+ *
+ * An older androidx.savedstate release required the OPPOSITE order
+ * (CREATED → performRestore → RESUMED) and this file shipped with that
+ * code, matching the KDoc. The 2026-04-15 Compose BOM bump flipped the
+ * contract and the overlay started throwing on every destructive-verb
+ * confirmation attempt. Caught by Bailey's on-device voice→SMS test
+ * that same day — see the `BridgeSafetyMgr` stack trace in the session
+ * log. The chip path didn't trigger it because it was never exercised
+ * in the same build + flavor combo; only the confirmation modal path
+ * hit the assertion.
  */
 private class OverlayLifecycleOwner :
     LifecycleOwner,
@@ -261,9 +279,11 @@ private class OverlayLifecycleOwner :
         get() = savedStateController.savedStateRegistry
 
     fun start() {
-        // Order matters — see KDoc above.
-        registry.currentState = Lifecycle.State.CREATED
+        // Restore saved state FIRST — must run while currentState is still
+        // INITIALIZED or performAttach() throws. See KDoc above for the
+        // assertion story.
         savedStateController.performRestore(null)
+        registry.currentState = Lifecycle.State.CREATED
         registry.currentState = Lifecycle.State.RESUMED
     }
 
