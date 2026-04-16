@@ -77,14 +77,14 @@ The bridge channel gives the agent the ability to read your screen, tap, type, s
 The Tier 5 pipeline runs inside `BridgeSafetyManager` on every inbound command:
 
 - **App blocklist** — ~30 banking / payments / password-manager / 2FA / email / work apps are pre-seeded as defaults. Editable from **Settings → Bridge → Safety**. The blocklist is checked against the currently foregrounded app on every command, and against the *target* package on `/open_app` so an agent can't bypass it by launching a banking app.
-- **Destructive-verb confirmation** — commands that carry text payloads (`/tap_text`, `/type`) run a word-boundary regex against a configurable verb list (`send`, `pay`, `delete`, `transfer`, `confirm`, `submit`, `post`, `publish`, `buy`, `purchase`, `charge`, `withdraw` by default). A match opens a full-screen `WindowManager` overlay modal showing the command, the flagged verb, and the full payload text. The user must tap Allow before the gesture fires. Fails closed on timeout or missing overlay permission.
+- **Destructive-verb confirmation** — commands that carry text payloads (`/tap_text`, `/type`) or target UI elements by node ID (`/tap`, `/long_press`) run a word-boundary regex against a configurable verb list (`send`, `pay`, `delete`, `transfer`, `confirm`, `submit`, `post`, `publish`, `buy`, `purchase`, `charge`, `withdraw` by default). For `/tap` and `/long_press` with a `nodeId`, the phone resolves the tapped node's text via `ScreenReader.findNodeById` and pattern-matches that text. A match opens a full-screen `WindowManager` overlay modal showing the command, the flagged verb, and the full payload text. The user must tap Allow before the gesture fires. Fails closed on timeout or missing overlay permission. **Denial is final** — the phone returns `error_code: user_denied` with an explicit "do not retry via UI automation" instruction; the agent cannot circumvent a denial by driving the same app's UI through a different tool path.
 - **Idle auto-disable timer** — the bridge flips itself off after 5-120 minutes of inactivity (user-configurable). The timer resets on every command, so an active session stays live. Process death clears state so a stale grant can't survive a crash.
 - **Optional persistent status overlay** — a small floating "Hermes active" pill rendered via `SYSTEM_ALERT_WINDOW` while the bridge is armed.
 - **Persistent foreground notification** — `BridgeForegroundService` runs a non-dismissible notification with a one-tap **Disable** action any time the bridge master toggle is on, so there's always an in-sight kill switch.
 
 ### What bypasses the gate
 
-`/ping` and `/current_app` — liveness and introspection only — bypass the master-enable gate so agents and operators can check bridge health without first unlocking actions.
+`/ping`, `/current_app`, and `/return_to_hermes` — liveness, introspection, and self-foreground — bypass the master-enable gate so agents and operators can check bridge health and return focus to Hermes without first unlocking actions. On the **googlePlay** flavor, a separate whitelist gate blocks ALL action routes before the master-enable gate even fires — only read-only routes (`/screen`, `/current_app`, `/get_apps`, `/clipboard` GET, `/return_to_hermes`) pass.
 
 ### Sideload-only permissions
 

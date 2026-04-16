@@ -141,7 +141,7 @@ hermes relay start [OPTIONS]          (or: python -m plugin.relay)
 
 The bridge channel (v0.3+) publishes an HTTP surface on the unified relay for the Hermes `android_*` plugin tools. Every route is proxied over the phone's WSS connection to the in-app `BridgeCommandHandler` and runs through the Tier 5 safety pipeline (blocklist → destructive-verb confirmation → auto-disable reschedule) before any gesture fires. A 30-second per-command timeout and fail-fast-on-phone-disconnect semantics keep callers from wedging.
 
-As of v0.4 the bridge surface is **27 routes** covering gestures, accessibility-tree reads, clipboard, media control, raw intents, an event stream, and a sideload-only phone-utility tier. See the v0.3 release notes and v0.4 changelog for the feature story behind each group.
+As of v0.4 the bridge surface is **31 routes** (30 excluding the legacy `/apps` alias) covering gestures, accessibility-tree reads, clipboard, media control, raw intents, an event stream, a sideload-only phone-utility tier (send_sms, call, search_contacts, location), and a self-foreground route (`/return_to_hermes`). On the **googlePlay** flavor, only read-only routes pass the BridgeCommandHandler whitelist — action routes return 403 `sideload_only`. See the v0.3 release notes and v0.4 changelog for the feature story behind each group.
 
 | Route | Method | Group | Purpose |
 |-------|--------|-------|---------|
