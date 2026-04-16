@@ -7,6 +7,7 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import com.hermesandroid.relay.accessibility.HermesAccessibilityService
 import com.hermesandroid.relay.network.ChannelMultiplexer
+import com.hermesandroid.relay.network.handlers.LocalDispatchResult
 import com.hermesandroid.relay.network.models.Envelope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -77,6 +78,15 @@ internal class RealVoiceBridgeIntentHandler(
     // path with a WARN log so the regression is at least visible.
     private val localBridgeDispatcher: LocalBridgeDispatcher? = null,
     // === END PHASE3-voice-intents-localdispatch ===
+    // === PHASE3-voice-intents-postdispatch ===
+    // Callback invoked AFTER the dispatch completes (success or failure)
+    // so voice mode can emit a follow-up chat bubble showing the real
+    // outcome. Wired by VoiceViewModel to write to ChatViewModel. Null
+    // for test harnesses and any call site that doesn't care about the
+    // post-dispatch trace — we still run dispatch, we just don't emit
+    // the follow-up notification.
+    private val onDispatchResult: VoiceIntentResultCallback? = null,
+    // === END PHASE3-voice-intents-postdispatch ===
 ) : VoiceBridgeIntentHandler {
 
     companion object {
@@ -295,10 +305,22 @@ internal class RealVoiceBridgeIntentHandler(
         pendingJob = ownScope.launch {
             try {
                 delay(CONFIRMATION_DELAY_MS)
-                dispatch(envelope)
-                Log.i(TAG, "$label: dispatched after confirmation window")
+                val result = dispatch(envelope)
+                Log.i(TAG, "$label: dispatched after confirmation window (status=${result.status})")
+                // Emit follow-up chat trace with the real outcome — "SMS
+                // sent" / "user denied" / "permission missing" etc.
+                onDispatchResult?.invoke(label, result)
             } catch (_: kotlinx.coroutines.CancellationException) {
                 Log.i(TAG, "$label: cancelled before dispatch")
+                onDispatchResult?.invoke(
+                    label,
+                    LocalDispatchResult(
+                        status = 499,
+                        errorMessage = "cancelled before dispatch",
+                        errorCode = "cancelled",
+                        resultJson = null,
+                    ),
+                )
             }
         }
         return IntentResult.Handled(
@@ -314,7 +336,8 @@ internal class RealVoiceBridgeIntentHandler(
         envelope: Envelope,
         details: Map<String, String> = emptyMap(),
     ): IntentResult.Handled {
-        dispatch(envelope)
+        val result = dispatch(envelope)
+        onDispatchResult?.invoke(label, result)
         return IntentResult.Handled(
             intentLabel = label,
             spokenConfirmation = null,
@@ -338,19 +361,23 @@ internal class RealVoiceBridgeIntentHandler(
      * we hand it to the local in-process handler (correct) or push it
      * through WSS (broken).
      */
-    private suspend fun dispatch(envelope: Envelope) {
+    private suspend fun dispatch(envelope: Envelope): LocalDispatchResult {
         val local = localBridgeDispatcher
         if (local != null) {
             try {
-                local(envelope)
-                return
+                return local(envelope)
             } catch (e: Exception) {
                 // Don't crash voice mode if the local dispatcher throws.
                 // BridgeCommandHandler.handleLocalCommand has its own
                 // try/catch around dispatch(), so anything reaching here
                 // is a programming error worth logging loudly.
                 Log.w(TAG, "local dispatch failed: ${e.message}", e)
-                return
+                return LocalDispatchResult(
+                    status = 500,
+                    errorMessage = e.message ?: "local dispatcher threw",
+                    errorCode = "dispatch_exception",
+                    resultJson = null,
+                )
             }
         }
         // Fallback path (legacy / test harness): the WSS round-trip.
@@ -358,17 +385,39 @@ internal class RealVoiceBridgeIntentHandler(
         // "ignoring unexpected bridge.command from phone" and drops the
         // envelope. The fallback exists so unit tests that don't wire a
         // localBridgeDispatcher still get a graceful no-op instead of an
-        // NPE.
+        // NPE. Synthetic result so callers still get typed feedback.
         val mux = multiplexer
         if (mux == null) {
             Log.w(TAG, "dispatch: both localBridgeDispatcher AND multiplexer are null, dropping ${envelope.type}")
-            return
+            return LocalDispatchResult(
+                status = 503,
+                errorMessage = "no dispatcher or multiplexer wired",
+                errorCode = "dispatcher_missing",
+                resultJson = null,
+            )
         }
         Log.w(TAG, "dispatch: localBridgeDispatcher missing — falling back to multiplexer.send (will be dropped by relay as 'unexpected bridge.command from phone'). Wire localBridgeDispatcher in RelayApp.")
-        try {
+        return try {
             mux.send(envelope)
+            // The WSS fallback is fire-and-forget: the relay drops the
+            // envelope so there's no real "success" to report, but we
+            // don't have a synthetic failure code for that either. Return
+            // an unknown-success so the follow-up chat trace at least
+            // exists rather than silently dropping.
+            LocalDispatchResult(
+                status = 202,
+                errorMessage = null,
+                errorCode = "wss_fallback_fire_and_forget",
+                resultJson = null,
+            )
         } catch (e: Exception) {
             Log.w(TAG, "dispatch fallback (multiplexer) failed: ${e.message}")
+            LocalDispatchResult(
+                status = 500,
+                errorMessage = e.message ?: "multiplexer.send threw",
+                errorCode = "fallback_exception",
+                resultJson = null,
+            )
         }
     }
 

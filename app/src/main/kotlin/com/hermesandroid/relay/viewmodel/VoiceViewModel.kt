@@ -203,9 +203,18 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // classifier-backed handler. VoiceViewModel only ever sees the
         // interface — the concrete impl is picked at compile time by the
         // active product flavor. No runtime flavor check, no reflection.
+        //
+        // The onDispatchResult callback runs on the RealVoiceBridgeIntentHandler's
+        // own scope (Dispatchers.Default) after each dispatch completes,
+        // so it needs to route back to ChatViewModel safely. We call
+        // chatViewModel.recordVoiceIntentResult which is a plain function
+        // that updates a StateFlow — safe from any dispatcher.
         voiceBridgeIntentHandler = createVoiceBridgeIntentHandler(
             multiplexer = bridgeMultiplexer,
             localBridgeDispatcher = localBridgeDispatcher,
+            onDispatchResult = { label, result ->
+                chatViewModel.recordVoiceIntentResult(label, result)
+            },
         )
         // === END PHASE3-voice-intents ===
 

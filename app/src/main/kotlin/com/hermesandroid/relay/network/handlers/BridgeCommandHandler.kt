@@ -223,15 +223,25 @@ class BridgeCommandHandler(
      * Caught by Bailey's on-device test 2026-04-14 — see the v0.4.1
      * "voice intent local dispatch loop" entry in ROADMAP.md.
      */
-    suspend fun handleLocalCommand(envelope: Envelope) {
+    suspend fun handleLocalCommand(envelope: Envelope): LocalDispatchResult {
         if (envelope.type != "bridge.command") {
             Log.v(TAG, "handleLocalCommand: ignoring non-command envelope type='${envelope.type}'")
-            return
+            return LocalDispatchResult(
+                status = 400,
+                errorMessage = "non-command envelope",
+                errorCode = null,
+                resultJson = null,
+            )
         }
         val requestId = envelope.payload["request_id"]?.jsonPrimitive?.content
             ?: run {
                 Log.w(TAG, "handleLocalCommand: missing request_id — dropping")
-                return
+                return LocalDispatchResult(
+                    status = 400,
+                    errorMessage = "missing request_id",
+                    errorCode = null,
+                    resultJson = null,
+                )
             }
         val path = envelope.payload["path"]?.jsonPrimitive?.content.orEmpty()
         val method = envelope.payload["method"]?.jsonPrimitive?.content.orEmpty()
@@ -239,17 +249,41 @@ class BridgeCommandHandler(
             ?: envelope.payload["params"] as? JsonObject
             ?: buildJsonObject { }
 
+        // Capture slot for respond() to write into while we're inside the
+        // LocalDispatch coroutine context. Voice mode reads this after
+        // dispatch completes so it can emit a follow-up chat bubble
+        // reflecting the real outcome (e.g. "SMS sent" vs "user denied"
+        // vs "permission missing"), matching Bailey's 2026-04-15 feedback
+        // that voice mode needed visible success/failure indication after
+        // the safety modal resolved. Before this, local dispatch was
+        // fire-and-forget — the response payload was built inside respond()
+        // and dropped because of the LocalDispatch marker check.
+        val sink = java.util.concurrent.atomic.AtomicReference<JsonObject?>()
+        val status = java.util.concurrent.atomic.AtomicInteger(0)
         try {
-            withContext(LocalDispatch()) {
+            withContext(LocalDispatch(resultSink = sink, statusSink = status)) {
                 dispatch(requestId, path, method, body)
             }
         } catch (t: Throwable) {
-            // Voice doesn't need the response, but we still log so the
-            // sideload classifier author can debug failed dispatches via
-            // logcat. The voice flow's own try/catch handles the user-
-            // facing error message.
             Log.w(TAG, "local bridge command '$path' threw: ${t.message}", t)
+            return LocalDispatchResult(
+                status = 500,
+                errorMessage = t.message ?: "dispatch threw",
+                errorCode = "dispatch_exception",
+                resultJson = null,
+            )
         }
+
+        val resultJson = sink.get()
+        val capturedStatus = status.get().takeIf { it != 0 } ?: 200
+        val errorMessage = resultJson?.get("error")?.jsonPrimitive?.contentOrNull
+        val errorCode = resultJson?.get("error_code")?.jsonPrimitive?.contentOrNull
+        return LocalDispatchResult(
+            status = capturedStatus,
+            errorMessage = errorMessage,
+            errorCode = errorCode,
+            resultJson = resultJson,
+        )
     }
 
     private suspend fun dispatch(
@@ -340,10 +374,30 @@ class BridgeCommandHandler(
             path != "/current_app" &&
             path != "/return_to_hermes"
         ) {
+            // Crystal-clear error text + structured error_code. Bailey hit
+            // 2026-04-15: when the phone was paired + a11y granted but
+            // master toggle flipped off, the agent read the shorter
+            // "Bridge is disabled" message as "bridge not paired" and
+            // walked the user through re-pairing instead of telling them
+            // to flip the toggle. LLM behavior is unreliable around
+            // ambiguous phrasing — the fix is to be explicit that this
+            // is NOT a pairing problem and name the exact action needed.
             return respond(
                 requestId, 403,
                 buildJsonObject {
-                    put("error", "Bridge is disabled — enable Agent Control in the Bridge tab")
+                    put(
+                        "error",
+                        "Bridge agent control is disabled by the user. " +
+                            "The phone IS paired and connected — this is " +
+                            "NOT a pairing problem. The user must enable " +
+                            "'Agent Control' in the Hermes Bridge tab " +
+                            "master toggle before the bridge accepts commands.",
+                    )
+                    put("error_code", "bridge_disabled")
+                    put(
+                        "required_action",
+                        "User toggles Agent Control ON in the Hermes Bridge tab",
+                    )
                 }
             )
         }
@@ -1332,6 +1386,8 @@ class BridgeCommandHandler(
                 "service_unavailable" to null
             "user denied destructive action" in lower ->
                 "user_denied" to null
+            "bridge agent control is disabled" in lower || "bridge is disabled" in lower ->
+                "bridge_disabled" to null
             else -> null
         }
     }
@@ -1359,13 +1415,19 @@ class BridgeCommandHandler(
             }
         )
         // Local dispatch: skip the multiplexer.send. The in-process caller
-        // (voice intent handler today) doesn't read responses; routing them
-        // over WSS would just bounce back as "unexpected bridge.response
-        // from phone" since the wire protocol is server→phone for commands
-        // and phone→server for responses, with no allowance for a phone-
-        // originated command/response pair. See [handleLocalCommand] KDoc
-        // for the full rationale and discovery story.
-        if (coroutineContext[LocalDispatch] != null) {
+        // (voice intent handler today) routes commands through this path to
+        // reuse the same dispatch + Tier 5 safety pipeline as WSS-incoming
+        // commands, but the wire protocol is server→phone for commands and
+        // phone→server for responses, so emitting a `bridge.response`
+        // envelope in this direction would bounce back as "unexpected
+        // bridge.response from phone" at the relay. Instead we capture the
+        // payload into the sink on the LocalDispatch context element so
+        // handleLocalCommand can return it to its caller. See
+        // [handleLocalCommand] KDoc for the discovery story.
+        val local = coroutineContext[LocalDispatch]
+        if (local != null) {
+            local.resultSink?.set(result)
+            local.statusSink?.set(status)
             return
         }
         multiplexer.send(envelope)
@@ -1373,12 +1435,48 @@ class BridgeCommandHandler(
 }
 
 /**
- * Coroutine context marker installed by [BridgeCommandHandler.handleLocalCommand]
- * so [BridgeCommandHandler.respond] knows the caller is in-process and the
- * `bridge.response` envelope should be discarded rather than sent over the
- * multiplexer. Per-coroutine, so concurrent WSS-incoming dispatches are
- * unaffected.
+ * Captured outcome of a local bridge dispatch. Voice mode reads this to
+ * emit follow-up chat traces showing the real success/failure state of
+ * an action after the safety modal resolves and the underlying
+ * [ActionExecutor] method returns. The fields mirror what the LLM path
+ * would see on a `bridge.response` envelope:
+ *
+ *  - [status] — HTTP-style status: 200 success, 400 client error,
+ *    403 user denial / bridge disabled, 500 executor error
+ *  - [errorMessage] — free-text error from the response payload, or null
+ *    on success. Safe to speak / display verbatim to the user.
+ *  - [errorCode] — structured classification (e.g. `permission_denied`,
+ *    `bridge_disabled`, `user_denied`) when `respondFromResult` or a
+ *    direct respond call includes one. Null for errors we haven't
+ *    classified yet.
+ *  - [resultJson] — the raw result object, for callers that need
+ *    action-specific fields (e.g. the resolved phone number from
+ *    /search_contacts). Optional.
  */
-private class LocalDispatch : AbstractCoroutineContextElement(LocalDispatch) {
+data class LocalDispatchResult(
+    val status: Int,
+    val errorMessage: String?,
+    val errorCode: String?,
+    val resultJson: JsonObject?,
+) {
+    val isSuccess: Boolean get() = status in 200..299
+}
+
+/**
+ * Coroutine context marker installed by [BridgeCommandHandler.handleLocalCommand]
+ * so [BridgeCommandHandler.respond] knows the caller is in-process and
+ * captures the response payload into [resultSink] + [statusSink] instead
+ * of sending a `bridge.response` envelope over the multiplexer (which
+ * would bounce back as "unexpected from phone" at the relay). Per-
+ * coroutine, so concurrent WSS-incoming dispatches are unaffected — they
+ * don't carry this element and respond() takes the multiplexer path.
+ *
+ * Both sinks are optional (null for call sites that don't need the
+ * capture). The initial wiring from handleLocalCommand always sets them.
+ */
+private class LocalDispatch(
+    val resultSink: java.util.concurrent.atomic.AtomicReference<JsonObject?>? = null,
+    val statusSink: java.util.concurrent.atomic.AtomicInteger? = null,
+) : AbstractCoroutineContextElement(LocalDispatch) {
     companion object Key : CoroutineContext.Key<LocalDispatch>
 }

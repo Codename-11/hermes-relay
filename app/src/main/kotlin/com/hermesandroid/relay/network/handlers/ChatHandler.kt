@@ -209,6 +209,33 @@ class ChatHandler {
     }
 
     /**
+     * Append ONLY an assistant-role bubble showing the post-dispatch
+     * outcome of a voice intent action (e.g. "SMS sent", "user denied",
+     * "permission missing"). Called by [ChatViewModel.recordVoiceIntentResult]
+     * after the phone-side executor returns, so the user sees the actual
+     * result of the destructive-verb flow instead of just the pre-dispatch
+     * preview. ID prefix `voice-intent-result-` makes this survive
+     * [loadMessageHistory] reloads the same way the pre-dispatch trace
+     * does, and also lets [CompactTranscriptRow] in voice mode render it
+     * via MarkdownContent.
+     */
+    fun appendLocalVoiceIntentResult(description: String) {
+        val ts = System.currentTimeMillis()
+        val resultMsg = ChatMessage(
+            id = "voice-intent-result-$ts",
+            role = MessageRole.ASSISTANT,
+            content = description,
+            timestamp = ts,
+            agentName = "Voice action",
+        )
+        _messages.update { list ->
+            (list + resultMsg).let {
+                if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it
+            }
+        }
+    }
+
+    /**
      * Add a placeholder assistant message immediately after the user sends,
      * showing streaming dots before the first SSE delta arrives.
      * Gets filled in naturally when onTextDelta finds the matching ID.

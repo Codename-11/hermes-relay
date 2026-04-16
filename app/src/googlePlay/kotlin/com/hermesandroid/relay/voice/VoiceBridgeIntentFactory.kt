@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.voice
 
 import com.hermesandroid.relay.network.ChannelMultiplexer
+import com.hermesandroid.relay.network.handlers.LocalDispatchResult
 import com.hermesandroid.relay.network.models.Envelope
 
 /**
@@ -8,8 +9,15 @@ import com.hermesandroid.relay.network.models.Envelope
  * this — phone-control actions are sideload-only — but the typealias has
  * to exist in the googlePlay source set so the shared `VoiceViewModel`
  * call site compiles regardless of active flavor.
+ *
+ * Return type mirrors the sideload flavor's updated shape so the shared
+ * typealias binding site in VoiceViewModel compiles against either source
+ * set without #if gating.
  */
-typealias LocalBridgeDispatcher = suspend (Envelope) -> Unit
+typealias LocalBridgeDispatcher = suspend (Envelope) -> LocalDispatchResult
+
+/** @see com.hermesandroid.relay.voice.VoiceIntentResultCallback in the sideload flavor. */
+typealias VoiceIntentResultCallback = (intentLabel: String, result: LocalDispatchResult) -> Unit
 
 /**
  * === PHASE3-voice-intents (googlePlay flavor): factory ===
@@ -22,14 +30,15 @@ typealias LocalBridgeDispatcher = suspend (Envelope) -> Unit
  * exact signature + package so `VoiceViewModel` has a single static call
  * site and no reflection.
  *
- * Both [multiplexer] and [localBridgeDispatcher] are accepted for signature
- * parity with the sideload flavor and silently ignored — the Play APK
- * deliberately never references any bridge or accessibility class so the
- * conservative Play feature description stays honest.
+ * All parameters accepted for signature parity with sideload and silently
+ * ignored — the Play APK deliberately never references any bridge or
+ * accessibility class so the conservative Play feature description stays
+ * honest.
  */
 fun createVoiceBridgeIntentHandler(
     multiplexer: ChannelMultiplexer?,
     localBridgeDispatcher: LocalBridgeDispatcher? = null,
+    onDispatchResult: VoiceIntentResultCallback? = null,
 ): VoiceBridgeIntentHandler = NoopVoiceBridgeIntentHandler()
 
 // === END PHASE3-voice-intents (googlePlay) ===

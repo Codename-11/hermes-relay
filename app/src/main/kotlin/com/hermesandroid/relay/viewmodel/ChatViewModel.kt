@@ -16,6 +16,7 @@ import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.network.HermesApiClient
 import com.hermesandroid.relay.network.RelayHttpClient
 import com.hermesandroid.relay.network.handlers.ChatHandler
+import com.hermesandroid.relay.network.handlers.LocalDispatchResult
 import com.hermesandroid.relay.network.models.SkillInfo
 import com.hermesandroid.relay.network.models.UsageInfo
 import com.hermesandroid.relay.util.AppContextSettings
@@ -390,6 +391,76 @@ class ChatViewModel : ViewModel() {
     fun recordVoiceIntent(userText: String, actionDescription: String) {
         val handler = chatHandler ?: return
         handler.appendLocalVoiceIntentTrace(userText, actionDescription)
+    }
+
+    /**
+     * Append a second trace bubble showing the REAL outcome of a voice
+     * intent dispatch after the safety modal resolves and the phone-side
+     * executor returns. Called by [VoiceViewModel] via the
+     * `onDispatchResult` callback wired into the sideload voice handler's
+     * factory. Pre-0.4.0 there was no post-dispatch feedback at all — the
+     * handler was fire-and-forget and the user never knew whether an SMS
+     * actually sent until they opened the Messages app. See
+     * [LocalDispatchResult] for the shape of the captured outcome.
+     *
+     * Renders as markdown per category so the "AGENT" bubble in voice
+     * mode (or the full markdown bubble in chat) reads naturally:
+     *
+     *  - success                  → **Send SMS — sent**
+     *  - 403 user_denied          → **Send SMS — cancelled by you**
+     *  - 403 bridge_disabled      → **Send SMS — agent control is off**\n...
+     *  - 403 permission_denied    → **Send SMS — permission needed**\n...
+     *  - 5xx / dispatch_exception → **Send SMS — failed**\n...
+     */
+    fun recordVoiceIntentResult(intentLabel: String, result: LocalDispatchResult) {
+        val handler = chatHandler ?: return
+        val description = formatVoiceIntentResult(intentLabel, result)
+        handler.appendLocalVoiceIntentResult(description)
+    }
+
+    private fun formatVoiceIntentResult(
+        label: String,
+        result: LocalDispatchResult,
+    ): String = when {
+        result.isSuccess -> when (label) {
+            "Send SMS"      -> "**$label — sent** ✓"
+            "Open App"      -> "**$label — opened** ✓"
+            "Tap"           -> "**$label — done** ✓"
+            "Navigate back" -> "**$label — done** ✓"
+            "Home"          -> "**$label — done** ✓"
+            else            -> "**$label — complete** ✓"
+        }
+        result.errorCode == "user_denied" -> buildString {
+            append("**$label — cancelled by you**")
+        }
+        result.errorCode == "bridge_disabled" -> buildString {
+            append("**$label — agent control is off**")
+            append('\n')
+            append("Enable Agent Control in the Hermes Bridge tab to retry.")
+        }
+        result.errorCode == "permission_denied" -> buildString {
+            append("**$label — permission needed**")
+            append('\n')
+            append(result.errorMessage ?: "The phone is missing a required runtime permission.")
+        }
+        result.errorCode == "service_unavailable" -> buildString {
+            append("**$label — bridge offline**")
+            append('\n')
+            append("The accessibility service isn't connected. Enable Hermes accessibility in Settings.")
+        }
+        result.errorCode == "cancelled" -> buildString {
+            append("**$label — cancelled before dispatch**")
+        }
+        result.errorMessage != null -> buildString {
+            append("**$label — failed**")
+            append('\n')
+            append(result.errorMessage)
+        }
+        else -> buildString {
+            append("**$label — failed**")
+            append('\n')
+            append("Status ${result.status}.")
+        }
     }
 
     fun clearQueue() {
