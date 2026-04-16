@@ -2,7 +2,10 @@ package com.hermesandroid.relay.ui.screens
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import com.hermesandroid.relay.data.BuildFlavor
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -102,6 +105,10 @@ fun BridgeScreen(
 
     val context = LocalContext.current
 
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { viewModel.onScreenResumed() }
+
     // === PHASE3-safety-rails: safety summary card ===
     // Pulls live safety settings + countdown off the process-wide
     // BridgeSafetyManager singleton. No ViewModel wiring required — the
@@ -176,7 +183,17 @@ fun BridgeScreen(
                 enabled = masterToggle,
                 status = bridgeStatus,
                 accessibilityGranted = permissionStatus.accessibilityServiceEnabled,
-                onToggle = { viewModel.setMasterEnabled(it) },
+                onToggle = { enabled ->
+                    viewModel.setMasterEnabled(enabled)
+                    if (enabled &&
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                        !permissionStatus.notificationsPermitted
+                    ) {
+                        notificationPermissionLauncher.launch(
+                            android.Manifest.permission.POST_NOTIFICATIONS
+                        )
+                    }
+                },
                 // googlePlay: the toggle is "Bridge Mode" (read-only screen
                 // reading). Sideload: "Agent Control" (full phone control).
                 // The label shapes user expectation + is what reviewers read.
@@ -205,6 +222,13 @@ fun BridgeScreen(
                 onRequestScreenCapture = { viewModel.requestScreenCapture() },
                 onTestNotificationListener = { viewModel.testNotificationListener() },
                 // === END PHASE3-bridge-ui-followup ===
+                onRequestNotifications = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    {
+                        notificationPermissionLauncher.launch(
+                            android.Manifest.permission.POST_NOTIFICATIONS
+                        )
+                    }
+                } else null,
             )
 
             BridgeActivityLog(

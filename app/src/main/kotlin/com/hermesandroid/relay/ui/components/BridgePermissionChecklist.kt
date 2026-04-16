@@ -3,6 +3,7 @@ package com.hermesandroid.relay.ui.components
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
 import com.hermesandroid.relay.data.BuildFlavor
 import androidx.compose.foundation.clickable
@@ -68,6 +69,7 @@ fun BridgePermissionChecklist(
     onRequestScreenCapture: (() -> Unit)? = null,
     onTestNotificationListener: (() -> Unit)? = null,
     // === END PHASE3-bridge-ui-followup ===
+    onRequestNotifications: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
 
@@ -140,6 +142,18 @@ fun BridgePermissionChecklist(
                     granted = status.overlayPermitted,
                     onClick = { openOverlaySettings(context) },
                     onTest = onTestOverlay,
+                )
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                PermissionRow(
+                    icon = Icons.Filled.Notifications,
+                    title = "Notifications",
+                    subtitle = if (status.notificationsPermitted)
+                        "Bridge service notification can display"
+                    else
+                        "Required for the bridge foreground service indicator",
+                    granted = status.notificationsPermitted,
+                    onClick = onRequestNotifications,
                 )
             }
             PermissionRow(
@@ -283,6 +297,7 @@ private fun BridgePermissionChecklistPreviewAllGranted() {
                 screenCapturePermitted = true,
                 overlayPermitted = true,
                 notificationListenerPermitted = true,
+                notificationsPermitted = true,
             ),
             modifier = Modifier.padding(16.dp)
         )
