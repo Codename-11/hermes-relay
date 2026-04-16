@@ -33,6 +33,21 @@ typealias LocalBridgeDispatcher = suspend (Envelope) -> LocalDispatchResult
 typealias VoiceIntentResultCallback = (intentLabel: String, result: LocalDispatchResult) -> Unit
 
 /**
+ * Callback fired by [RealVoiceBridgeIntentHandler] the moment a destructive
+ * voice intent enters its v1 confirmation countdown. VoiceViewModel uses
+ * this to populate [com.hermesandroid.relay.viewmodel.DestructiveCountdownState]
+ * so the overlay can render a progress indicator synchronized with the
+ * real delay.
+ *
+ *  - [intentLabel] matches the label on the originating
+ *    [IntentResult.Handled] (e.g. "Send SMS")
+ *  - [durationMs] is the total countdown window in milliseconds — today
+ *    always `CONFIRMATION_DELAY_MS` (5 000) but we pass it explicitly so
+ *    tuning that constant later doesn't drift the progress bar.
+ */
+typealias VoiceIntentCountdownCallback = (intentLabel: String, durationMs: Long) -> Unit
+
+/**
  * === PHASE3-voice-intents (sideload flavor): factory ===
  *
  * Flavor-specific factory function that [com.hermesandroid.relay.viewmodel.VoiceViewModel]
@@ -56,10 +71,12 @@ fun createVoiceBridgeIntentHandler(
     multiplexer: ChannelMultiplexer?,
     localBridgeDispatcher: LocalBridgeDispatcher? = null,
     onDispatchResult: VoiceIntentResultCallback? = null,
+    onCountdownStart: VoiceIntentCountdownCallback? = null,
 ): VoiceBridgeIntentHandler = RealVoiceBridgeIntentHandler(
     multiplexer = multiplexer,
     localBridgeDispatcher = localBridgeDispatcher,
     onDispatchResult = onDispatchResult,
+    onCountdownStart = onCountdownStart,
 )
 
 // === END PHASE3-voice-intents (sideload factory) ===

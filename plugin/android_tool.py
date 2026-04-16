@@ -46,29 +46,55 @@ def _auth_headers() -> dict:
     return {}
 
 def _check_requirements() -> bool:
-    """Returns True if the relay is running, a phone is connected, and the
-    accessibility service is granted.
+    """Returns True if and only if all three bridge gates pass:
+
+    1. ``phone_connected`` — a paired phone has an active WSS session to the
+       relay's bridge channel.
+    2. ``bridge.accessibility_granted`` — Android's AccessibilityService is
+       currently enabled for Hermes Relay on the phone.
+    3. ``bridge.master_enabled`` — the user has the "Agent Control" master
+       toggle ON in the Hermes Bridge tab of the app.
+
+    All three gates must be True. If any one is False the 13 phone-action
+    tools are hidden from the gateway's tool pool entirely, so the LLM
+    sees no phone tools and will honestly say "I don't have phone control
+    right now" instead of dispatching a command that will return 403/503
+    and forcing it to interpret a failure.
 
     Uses ``/bridge/status`` — NOT ``/ping``. The relay's ``/ping`` is a pure
     liveness probe returning ``{pong, ts}`` and lacks the
-    ``phone_connected`` / ``bridge.accessibility_granted`` fields this
-    function needs. The older code here pointed at ``/ping`` and checked
-    for those fields anyway, which meant ``_check_requirements`` always
-    returned ``False`` and every tool except ``android_setup`` was
-    silently hidden from the gateway's tool pool. Caught 2026-04-15 by
-    Bailey: Victor reported "no android_* tools available" while the
-    Android app's bridge + accessibility were both healthy, and a direct
-    curl against ``/bridge/status`` returned ``phone_connected: true`` +
-    ``bridge.accessibility_granted: true``.
+    ``phone_connected`` / ``bridge.accessibility_granted`` /
+    ``bridge.master_enabled`` fields this function needs. The older code
+    here pointed at ``/ping`` and checked for those fields anyway, which
+    meant ``_check_requirements`` always returned ``False`` and every
+    tool except ``android_setup`` was silently hidden from the gateway's
+    tool pool. Caught 2026-04-15 by Bailey: Victor reported "no android_*
+    tools available" while the Android app's bridge + accessibility were
+    both healthy, and a direct curl against ``/bridge/status`` returned
+    ``phone_connected: true`` + ``bridge.accessibility_granted: true``.
 
-    Gating on BOTH ``phone_connected`` AND ``accessibility_granted`` is
-    deliberate: if accessibility is revoked (common after an Android
-    Studio reinstall — Android's ``AccessibilityManagerService`` scrubs
-    enabled services on package replacement), the phone-side
-    ``BridgeCommandHandler.dispatch()`` short-circuits with HTTP 503 on
-    every tool. Hiding the tools when a11y is missing keeps the LLM
-    honest about capability instead of letting it confidently dispatch
-    commands that will fail.
+    Gating rationale per field:
+
+    * ``phone_connected`` — no phone, no tools. Obvious.
+    * ``accessibility_granted`` — if a11y is revoked (common after an
+      Android Studio reinstall — Android's ``AccessibilityManagerService``
+      scrubs enabled services on package replacement), the phone-side
+      ``BridgeCommandHandler.dispatch()`` short-circuits with HTTP 503 on
+      every tool. Hiding the tools when a11y is missing keeps the LLM
+      honest about capability.
+    * ``master_enabled`` — the user-visible kill switch. When Bailey flips
+      "Agent Control" off in the Bridge tab the intent is "stop the agent
+      from controlling my phone" — we honor that by making the tools
+      disappear from the schema.
+
+    **Trade-off accepted:** tools can disappear mid-session if the user
+    flips the master toggle off during an active chat. That is the desired
+    behavior — a clean "no tools" signal to the LLM beats an
+    error-interpretation race where the model tries a command, gets a
+    403, and has to reason about whether that's a transient failure or a
+    policy block. ``android_setup`` remains ungated (``check_fn = lambda:
+    True``) because it is the bootstrap tool and must always be callable
+    — it's what the user walks through to turn the other three gates on.
     """
     try:
         r = requests.get(
@@ -79,10 +105,10 @@ def _check_requirements() -> bool:
         if r.status_code == 200:
             data = r.json()
             phone_connected = bool(data.get("phone_connected", False))
-            a11y_granted = bool(
-                data.get("bridge", {}).get("accessibility_granted", False)
-            )
-            return phone_connected and a11y_granted
+            bridge = data.get("bridge", {}) or {}
+            a11y_granted = bool(bridge.get("accessibility_granted", False))
+            master_enabled = bool(bridge.get("master_enabled", False))
+            return phone_connected and a11y_granted and master_enabled
         return False
     except Exception:
         return False
@@ -607,7 +633,17 @@ _SCHEMAS = {
     },
     "android_open_app": {
         "name": "android_open_app",
-        "description": "Launch an Android app by its package name. Use android_get_apps to find package names.",
+        "description": (
+            "Launch an Android app by its package name. Use android_get_apps "
+            "to find package names. "
+            "IMPORTANT: When your task is complete in the opened app, call "
+            "android_return_to_hermes as your FINAL step so the user sees "
+            "your reply in-context without manually switching back from the "
+            "other app. Also: before driving Messages / Phone / Contacts via "
+            "UI automation (tap + read_screen + type), first consider "
+            "android_send_sms / android_call / android_search_contacts — "
+            "those dispatch directly and are faster + safer."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -705,7 +741,21 @@ _SCHEMAS = {
     },
     "android_send_sms": {
         "name": "android_send_sms",
-        "description": "Send an SMS directly via the phone's native SmsManager — does NOT drive the Messages app UI. Much more reliable than open_app + tap_text + type. The `to` argument MUST be a phone number (use android_search_contacts first if you only have a name). The phone shows a confirmation modal before sending; this call blocks until the user taps Allow or Deny. Sideload flavor only — returns 403 on Google Play builds.",
+        "description": (
+            "Send an SMS directly via the phone's native SmsManager — does "
+            "NOT drive the Messages app UI. ALWAYS prefer this over "
+            "android_open_app('com.google.android.apps.messaging') + "
+            "android_tap + android_type: the direct path is faster, safer, "
+            "doesn't leave drafts behind, and works uniformly across OEM "
+            "variants. The `to` argument MUST be a phone number — if the "
+            "user gave a contact name, call android_search_contacts first, "
+            "extract the number, then call this. The phone shows a "
+            "confirmation modal before sending; this call blocks until the "
+            "user taps Allow or Deny. Sideload flavor only — returns 403 "
+            "on Google Play builds. After sending, you do NOT need to call "
+            "android_return_to_hermes (this tool never leaves the current "
+            "foreground app)."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -723,7 +773,19 @@ _SCHEMAS = {
     },
     "android_call": {
         "name": "android_call",
-        "description": "Place a phone call. With CALL_PHONE granted (sideload flavor) the call is auto-dialed; otherwise the system dialer opens pre-populated and the user taps Call manually. Phone shows a confirmation modal before either mode and blocks until the user reacts. Use android_search_contacts first if you only have a name.",
+        "description": (
+            "Place a phone call. ALWAYS prefer this over driving the Phone "
+            "app via android_open_app + android_tap — this dispatches "
+            "directly through the system dialer API. With CALL_PHONE "
+            "granted (sideload flavor) the call is auto-dialed; otherwise "
+            "the system dialer opens pre-populated and the user taps Call "
+            "manually. Phone shows a confirmation modal before either mode "
+            "and blocks until the user reacts. Use android_search_contacts "
+            "first if you only have a name. Because this tool brings the "
+            "Phone app to foreground in dialer-opened mode, call "
+            "android_return_to_hermes as a wrap-up step once the call is "
+            "placed so the user can see your reply."
+        ),
         "parameters": {
             "type": "object",
             "properties": {

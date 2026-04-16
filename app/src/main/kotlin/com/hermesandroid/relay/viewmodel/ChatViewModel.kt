@@ -17,6 +17,7 @@ import com.hermesandroid.relay.network.HermesApiClient
 import com.hermesandroid.relay.network.RelayHttpClient
 import com.hermesandroid.relay.network.handlers.ChatHandler
 import com.hermesandroid.relay.network.handlers.LocalDispatchResult
+import com.hermesandroid.relay.network.handlers.formatPhoneActionResult
 import com.hermesandroid.relay.network.models.SkillInfo
 import com.hermesandroid.relay.network.models.UsageInfo
 import com.hermesandroid.relay.util.AppContextSettings
@@ -414,53 +415,13 @@ class ChatViewModel : ViewModel() {
      */
     fun recordVoiceIntentResult(intentLabel: String, result: LocalDispatchResult) {
         val handler = chatHandler ?: return
-        val description = formatVoiceIntentResult(intentLabel, result)
+        // Delegate to the package-level formatter in ChatHandler.kt so
+        // voice-mode and chat-mode android_* completions render the same
+        // markdown for the same outcome. `agentName` defaults to
+        // "Voice action" here (voice origin); chat parity uses
+        // "Phone action" via the ChatHandler-side caller.
+        val description = formatPhoneActionResult(intentLabel, result)
         handler.appendLocalVoiceIntentResult(description)
-    }
-
-    private fun formatVoiceIntentResult(
-        label: String,
-        result: LocalDispatchResult,
-    ): String = when {
-        result.isSuccess -> when (label) {
-            "Send SMS"      -> "**$label — sent** ✓"
-            "Open App"      -> "**$label — opened** ✓"
-            "Tap"           -> "**$label — done** ✓"
-            "Navigate back" -> "**$label — done** ✓"
-            "Home"          -> "**$label — done** ✓"
-            else            -> "**$label — complete** ✓"
-        }
-        result.errorCode == "user_denied" -> buildString {
-            append("**$label — cancelled by you**")
-        }
-        result.errorCode == "bridge_disabled" -> buildString {
-            append("**$label — agent control is off**")
-            append('\n')
-            append("Enable Agent Control in the Hermes Bridge tab to retry.")
-        }
-        result.errorCode == "permission_denied" -> buildString {
-            append("**$label — permission needed**")
-            append('\n')
-            append(result.errorMessage ?: "The phone is missing a required runtime permission.")
-        }
-        result.errorCode == "service_unavailable" -> buildString {
-            append("**$label — bridge offline**")
-            append('\n')
-            append("The accessibility service isn't connected. Enable Hermes accessibility in Settings.")
-        }
-        result.errorCode == "cancelled" -> buildString {
-            append("**$label — cancelled before dispatch**")
-        }
-        result.errorMessage != null -> buildString {
-            append("**$label — failed**")
-            append('\n')
-            append(result.errorMessage)
-        }
-        else -> buildString {
-            append("**$label — failed**")
-            append('\n')
-            append("Status ${result.status}.")
-        }
     }
 
     fun clearQueue() {

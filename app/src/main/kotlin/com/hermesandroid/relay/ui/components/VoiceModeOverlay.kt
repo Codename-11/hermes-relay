@@ -2,7 +2,9 @@ package com.hermesandroid.relay.ui.components
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -39,6 +41,7 @@ import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -70,6 +73,7 @@ import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.util.HumanError
+import com.hermesandroid.relay.viewmodel.DestructiveCountdownState
 import com.hermesandroid.relay.viewmodel.InteractionMode
 import com.hermesandroid.relay.viewmodel.VoiceState
 import com.hermesandroid.relay.viewmodel.VoiceUiState
@@ -255,7 +259,23 @@ fun VoiceModeOverlay(
                     .padding(horizontal = 32.dp, vertical = 8.dp),
             )
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
+
+            // Destructive-intent countdown indicator. Fades in while a
+            // SendSms (or future destructive intent) is waiting on the v1
+            // 5 s confirmation window and fades out the moment dispatch
+            // completes or the user cancels. Kept deliberately subtle —
+            // voice mode is voice-first; this is a secondary hint, not
+            // the primary safety gate (that's still the spoken preview
+            // + the cancel vocabulary).
+            DestructiveCountdownRow(
+                countdown = uiState.destructiveCountdown,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 32.dp),
+            )
+
+            Spacer(Modifier.height(4.dp))
 
             // "You said" block — sits directly above the agent response so
             // the eye flows from the waveform straight down through the
@@ -616,6 +636,80 @@ private fun CompactTranscriptRow(message: ChatMessage) {
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 4,
                 overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/**
+ * Renders the 5-second destructive-intent confirmation countdown as a
+ * thin horizontal progress bar with a short label. The bar fills from
+ * 0 → 1 over [DestructiveCountdownState.durationMs] using a local
+ * [Animatable] keyed on the countdown's `startedAtMs` so a fresh
+ * countdown always restarts cleanly. When [countdown] is null, the row
+ * fades out entirely.
+ *
+ * Visual treatment is intentionally muted (tertiary color, caption-sized
+ * label) — voice mode is voice-first and the real safety rails live in
+ * the spoken preview and the cancel vocabulary. This is just "something
+ * is about to happen" scaffolding for sighted users.
+ */
+@Composable
+private fun DestructiveCountdownRow(
+    countdown: DestructiveCountdownState?,
+    modifier: Modifier = Modifier,
+) {
+    // Hold the most-recent non-null countdown so the row can keep rendering
+    // its fade-out transition after the VM clears the state. Without this
+    // the label would snap to "" at the same frame the fade begins.
+    var lastShown by remember { mutableStateOf<DestructiveCountdownState?>(null) }
+    LaunchedEffect(countdown) {
+        if (countdown != null) lastShown = countdown
+    }
+    val progress = remember { Animatable(0f) }
+    LaunchedEffect(countdown?.startedAtMs) {
+        if (countdown != null) {
+            progress.snapTo(0f)
+            progress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(
+                    durationMillis = countdown.durationMs.toInt().coerceAtLeast(100),
+                    easing = LinearEasing,
+                ),
+            )
+        } else {
+            progress.snapTo(0f)
+        }
+    }
+
+    AnimatedVisibility(
+        visible = countdown != null,
+        enter = fadeIn(tween(150)),
+        exit = fadeOut(tween(200)),
+        modifier = modifier,
+    ) {
+        val label = (countdown ?: lastShown)?.intentLabel ?: ""
+        val durationSec = ((countdown ?: lastShown)?.durationMs ?: 0L) / 1000
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.Start,
+        ) {
+            Text(
+                text = if (label.isNotBlank()) {
+                    "$label in ${durationSec}s — say cancel to stop"
+                } else {
+                    "Confirming…"
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.tertiary,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(4.dp))
+            LinearProgressIndicator(
+                progress = { progress.value.coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.tertiary,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant,
             )
         }
     }

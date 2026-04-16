@@ -87,6 +87,14 @@ internal class RealVoiceBridgeIntentHandler(
     // the follow-up notification.
     private val onDispatchResult: VoiceIntentResultCallback? = null,
     // === END PHASE3-voice-intents-postdispatch ===
+    // === PHASE3-voice-countdown ===
+    // Callback invoked at the MOMENT a destructive intent enters its v1
+    // countdown window. VoiceViewModel uses this to stamp a
+    // DestructiveCountdownState into VoiceUiState so the overlay can
+    // draw a progress bar synchronized with the real delay. Null for
+    // test harnesses and the Play flavor (no destructive intents).
+    private val onCountdownStart: VoiceIntentCountdownCallback? = null,
+    // === END PHASE3-voice-countdown ===
 ) : VoiceBridgeIntentHandler {
 
     companion object {
@@ -94,7 +102,30 @@ internal class RealVoiceBridgeIntentHandler(
         /** v1 confirmation delay. Keep small so the UX is "you can cancel
          *  if you panic" not "let's have a conversation". */
         private const val CONFIRMATION_DELAY_MS = 5_000L
+
+        /**
+         * Loose shape regex for "looks like a phone number". Accepts an
+         * optional leading `+`, followed by 7–20 characters consisting of
+         * digits, spaces, dashes, and parentheses. Good enough to detect
+         * the common spoken-out-loud forms ("+1 555 123 4567",
+         * "(555) 123-4567", "555 1234") without false-positiving on
+         * contact names. Deliberately not a strict E.164 validator —
+         * that's the /send_sms route's job.
+         */
+        private val PHONE_NUMBER_REGEX = Regex("^\\+?[\\d\\s\\-()]{7,20}$")
     }
+
+    /** True if [text] looks like a typed / spoken phone number literal. */
+    private fun looksLikePhoneNumber(text: String): Boolean =
+        PHONE_NUMBER_REGEX.matches(text.trim())
+
+    /**
+     * Strip spaces, dashes, and parentheses from a phone-number literal so
+     * the /send_sms bridge route's shape regex (E.164-ish) accepts it.
+     * Preserves the leading `+` if present.
+     */
+    private fun normalizePhoneNumber(text: String): String =
+        text.trim().filter { it.isDigit() || it == '+' }
 
     /** Own lifecycle so [cancelPending] can cut in-flight countdowns without
      *  touching the caller's scope. Replaced on each new tryHandle. */
@@ -143,19 +174,63 @@ internal class RealVoiceBridgeIntentHandler(
                             "error" to "permission_missing_sms",
                         ),
                     )
+                } else if (looksLikePhoneNumber(intent.contact)) {
+                    // Phone-number literal bypass: "text +1 555 123 4567
+                    // saying hi" shouldn't try to look up a contact named
+                    // "+1 555 123 4567". Normalize whitespace + separators
+                    // so the /send_sms route's shape-regex accepts the
+                    // number, then dispatch straight to the destructive
+                    // countdown path. The chat trace still renders cleanly
+                    // because `contact` and `resolvedNumber` are both set
+                    // in the details map.
+                    val normalized = normalizePhoneNumber(intent.contact)
+                    handleDestructive(
+                        label = "Send SMS",
+                        spokenConfirmation = "About to text ${intent.contact}: " +
+                            "${intent.body}. Say cancel to stop.",
+                        envelope = buildSmsEnvelope(intent, normalized),
+                        details = mapOf(
+                            "contact" to intent.contact,
+                            "resolvedNumber" to normalized,
+                            "body" to intent.body,
+                        ),
+                    )
                 } else {
                     when (val resolution = resolveContactPhone(intent.contact)) {
-                        is ContactResolution.Found -> handleDestructive(
-                            label = "Send SMS",
-                            spokenConfirmation = "About to text ${intent.contact} at " +
-                                "${resolution.number}: ${intent.body}. Say cancel to stop.",
-                            envelope = buildSmsEnvelope(intent, resolution.number),
-                            details = mapOf(
-                                "contact" to intent.contact,
-                                "resolvedNumber" to resolution.number,
-                                "body" to intent.body,
-                            ),
-                        )
+                        is ContactResolution.Found -> {
+                            // Multi-match disambiguation hint: when the
+                            // search hit more than one contact AND the
+                            // name we picked isn't a case-insensitive
+                            // exact match for the query, prepend a short
+                            // "Found N contacts…" sentence so the user
+                            // knows we had to choose. Single matches and
+                            // exact-name matches speak the original
+                            // preview as-is. Full multi-turn picker is
+                            // Wave 3 (deferred).
+                            val exactMatch = resolution.matchedName
+                                .equals(intent.contact, ignoreCase = true)
+                            val ambiguous = resolution.totalMatches > 1 && !exactMatch
+                            val disambiguationPrefix = if (ambiguous) {
+                                "Found ${resolution.totalMatches} contacts matching " +
+                                    "${intent.contact}. Using ${resolution.matchedName}. "
+                            } else {
+                                ""
+                            }
+                            handleDestructive(
+                                label = "Send SMS",
+                                spokenConfirmation = disambiguationPrefix +
+                                    "About to text ${resolution.matchedName} at " +
+                                    "${resolution.number}: ${intent.body}. Say cancel to stop.",
+                                envelope = buildSmsEnvelope(intent, resolution.number),
+                                details = mapOf(
+                                    "contact" to intent.contact,
+                                    "matchedName" to resolution.matchedName,
+                                    "totalMatches" to resolution.totalMatches.toString(),
+                                    "resolvedNumber" to resolution.number,
+                                    "body" to intent.body,
+                                ),
+                            )
+                        }
                         is ContactResolution.ServiceMissing -> IntentResult.Handled(
                             intentLabel = "Send SMS",
                             spokenConfirmation = "I can't reach the bridge service. " +
@@ -292,6 +367,8 @@ internal class RealVoiceBridgeIntentHandler(
         }
     }
 
+    override fun hasPendingDestructive(): Boolean = pendingJob?.isActive == true
+
     // ---------------------------------------------------------------------
     // Dispatch helpers
     // ---------------------------------------------------------------------
@@ -302,6 +379,11 @@ internal class RealVoiceBridgeIntentHandler(
         envelope: Envelope,
         details: Map<String, String> = emptyMap(),
     ): IntentResult.Handled {
+        // Notify the UI BEFORE launching the countdown coroutine so the
+        // progress animation starts in lockstep with the real delay. If
+        // we invoked this after launch(), there's a small window where
+        // the delay timer is running but the overlay shows nothing.
+        onCountdownStart?.invoke(label, CONFIRMATION_DELAY_MS)
         pendingJob = ownScope.launch {
             try {
                 delay(CONFIRMATION_DELAY_MS)
@@ -526,18 +608,46 @@ internal class RealVoiceBridgeIntentHandler(
         val contacts = result.data["contacts"] as? List<Map<String, Any?>>
             ?: return ContactResolution.NotFound
         if (contacts.isEmpty()) return ContactResolution.NotFound
-        val phonesField = contacts.first()["phones"] as? String
+        val firstContact = contacts.first()
+        val phonesField = firstContact["phones"] as? String
             ?: return ContactResolution.NoPhoneNumber
         val number = phonesField.split(",")
             .map { it.trim() }
             .firstOrNull { it.isNotBlank() }
             ?: return ContactResolution.NoPhoneNumber
-        return ContactResolution.Found(number)
+        // Capture the display name (ActionExecutor.searchContacts returns
+        // it under the "name" key, alongside "phones"). Fall back to the
+        // raw query if somehow absent so downstream formatting never has
+        // to handle null.
+        val matchedName = (firstContact["name"] as? String)?.trim().orEmpty()
+            .ifEmpty { contactName }
+        return ContactResolution.Found(
+            number = number,
+            matchedName = matchedName,
+            totalMatches = contacts.size,
+        )
     }
 
     /** Result of the C4 contact → phone number lookup. */
     private sealed class ContactResolution {
-        data class Found(val number: String) : ContactResolution()
+        /**
+         * Successfully resolved to a phone number.
+         *
+         * @property number The first non-blank phone number from the
+         *   matched contact's record.
+         * @property matchedName The display name of the contact we ended
+         *   up using. May differ from the spoken query in case or spelling
+         *   — "john" spoken → "John Smith" in the address book.
+         * @property totalMatches The number of contacts whose search hit
+         *   the query string. When `totalMatches > 1` the UI should show a
+         *   disambiguation hint so the user knows we had to choose. Full
+         *   multi-turn picker is Wave 3.
+         */
+        data class Found(
+            val number: String,
+            val matchedName: String,
+            val totalMatches: Int,
+        ) : ContactResolution()
         /** a11y service not connected — whole bridge pipeline is offline. */
         data object ServiceMissing : ContactResolution()
         /** READ_CONTACTS runtime permission not granted. */

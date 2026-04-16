@@ -567,6 +567,23 @@ class BridgeCommandHandler(
             // intent, not a phone-control action.
             "/return_to_hermes" -> {
                 val selfPkg = service.packageName
+                // Short-circuit: if Hermes is already the foreground app
+                // (e.g. agent called this wrap-up tool during a voice mode
+                // session where the user is already looking at us), don't
+                // bother re-firing the launch intent. Benign but wasteful,
+                // and gives the LLM a clear "nothing to do" signal.
+                val currentPkg = service.currentApp
+                if (currentPkg == selfPkg) {
+                    respond(
+                        requestId, 200,
+                        buildJsonObject {
+                            put("ok", true)
+                            put("package", selfPkg)
+                            put("note", "already foreground")
+                        }
+                    )
+                    return
+                }
                 val intent = runCatching {
                     service.packageManager.getLaunchIntentForPackage(selfPkg)
                 }.getOrNull()

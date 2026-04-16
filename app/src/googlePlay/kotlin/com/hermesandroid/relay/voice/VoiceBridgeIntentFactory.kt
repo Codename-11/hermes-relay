@@ -19,6 +19,9 @@ typealias LocalBridgeDispatcher = suspend (Envelope) -> LocalDispatchResult
 /** @see com.hermesandroid.relay.voice.VoiceIntentResultCallback in the sideload flavor. */
 typealias VoiceIntentResultCallback = (intentLabel: String, result: LocalDispatchResult) -> Unit
 
+/** @see com.hermesandroid.relay.voice.VoiceIntentCountdownCallback in the sideload flavor. */
+typealias VoiceIntentCountdownCallback = (intentLabel: String, durationMs: Long) -> Unit
+
 /**
  * === PHASE3-voice-intents (googlePlay flavor): factory ===
  *
@@ -39,6 +42,7 @@ fun createVoiceBridgeIntentHandler(
     multiplexer: ChannelMultiplexer?,
     localBridgeDispatcher: LocalBridgeDispatcher? = null,
     onDispatchResult: VoiceIntentResultCallback? = null,
+    onCountdownStart: VoiceIntentCountdownCallback? = null,
 ): VoiceBridgeIntentHandler = NoopVoiceBridgeIntentHandler()
 
 // === END PHASE3-voice-intents (googlePlay) ===

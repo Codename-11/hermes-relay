@@ -24,6 +24,8 @@ internal class NoopVoiceBridgeIntentHandler : VoiceBridgeIntentHandler {
     override fun cancelPending() {
         // no-op — nothing to cancel on Play.
     }
+
+    override fun hasPendingDestructive(): Boolean = false
 }
 
 // === END PHASE3-voice-intents (googlePlay) ===

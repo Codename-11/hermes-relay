@@ -252,6 +252,43 @@ class BridgeForegroundService : Service() {
         return START_STICKY
     }
 
+    /**
+     * Foreground services legitimately survive task removal — the service
+     * instance stays alive even after the user swipes the app from recents,
+     * which is the behavior we want for the bridge itself (agent-driven
+     * phone control via WSS should keep working when the user "closes" the
+     * app). BUT the MediaProjection that powers screen capture should NOT
+     * outlive task removal: the system-level screen-cast indicator icon in
+     * Android's status bar stays visible for the duration of the projection,
+     * and a user who swiped the app away would understandably read that
+     * icon as "the app I just closed is still recording my screen." That's
+     * the exact class of trust failure we can't afford for an
+     * accessibility-controlling app.
+     *
+     * Fix: on task removal, revoke only the projection (the bridge stays
+     * alive) and downgrade the FGS type back to SPECIAL_USE-only so
+     * startForeground reflects reality and the MEDIA_PROJECTION system
+     * indicator disappears. Next time the user reopens the app and
+     * re-enables screenshots, a fresh consent dialog appears — which is
+     * the correct UX for a privacy-sensitive capability.
+     *
+     * Caught 2026-04-15 by Bailey: the screen-cast icon persisted in the
+     * status bar even after force-stopping the app from recents.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        Log.i(
+            TAG,
+            "onTaskRemoved: user swiped app — revoking MediaProjection, " +
+                "keeping bridge alive for agent control",
+        )
+        runCatching { MediaProjectionHolder.revoke() }
+        if (hasMediaProjectionType) {
+            hasMediaProjectionType = false
+            runCatching { startForegroundNotification() }
+        }
+    }
+
     override fun onDestroy() {
         // Reset state so a fresh service instance starts in the
         // SPECIAL_USE-only configuration. Also drop any held MediaProjection

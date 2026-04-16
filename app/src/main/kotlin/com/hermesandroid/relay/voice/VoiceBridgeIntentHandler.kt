@@ -56,6 +56,17 @@ interface VoiceBridgeIntentHandler {
      * is pending.
      */
     fun cancelPending()
+
+    /**
+     * True while a destructive voice action is waiting on the v1 countdown
+     * window. Used by [com.hermesandroid.relay.viewmodel.VoiceViewModel] to
+     * intercept "cancel" utterances spoken DURING the countdown and route
+     * them straight to [cancelPending] instead of sending them to the
+     * classifier / chat pipeline as a fresh turn.
+     *
+     * Play flavor: always false — the no-op handler never queues anything.
+     */
+    fun hasPendingDestructive(): Boolean
 }
 
 /**
