@@ -38,7 +38,6 @@ exclude = ["plugin.tests*", "plugin.skills*", "app*", "docs*", "user-docs*", "sc
 
 [tool.setuptools.package-data]
 plugin = ["skill.md", "plugin.yaml"]
-"plugin.skills" = ["android/*.md"]
 
 # Note: `hermes_relay_bootstrap.pth` at the repo root is NOT installed by
 # `pip install -e` automatically — setuptools' data-files doesn't ship to

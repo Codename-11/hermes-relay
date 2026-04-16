@@ -15,9 +15,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.animation.doOnEnd
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
-import com.hermesandroid.relay.accessibility.MediaProjectionHolder
 import com.hermesandroid.relay.accessibility.ScreenCaptureRequester
+import com.hermesandroid.relay.bridge.BridgeForegroundService
 import com.hermesandroid.relay.ui.RelayApp
+import com.hermesandroid.relay.util.ComposeArrWorkaround
 import com.hermesandroid.relay.util.NavRouteRequest
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 
@@ -31,9 +32,15 @@ class MainActivity : ComponentActivity() {
     // declared as a property (registerForActivityResult is safe to call
     // from a property initializer on ComponentActivity).
     //
-    // The result is forwarded to MediaProjectionHolder.onGranted, which
-    // wraps the Intent in a MediaProjection instance and stores it for
-    // ScreenCapture.kt to consume on the next /screenshot bridge command.
+    // We do NOT call MediaProjectionHolder directly from here. On Android
+    // 14+, getMediaProjection() must run from inside a foreground service
+    // that has already called startForeground(type=mediaProjection), and
+    // that startForeground call must happen AFTER consent. So we hand the
+    // result off to BridgeForegroundService, which:
+    //   1. Upgrades its FGS type to SPECIAL_USE | MEDIA_PROJECTION
+    //   2. Calls MediaProjectionHolder.acceptGrantInsideForegroundService
+    //   3. Stores the projection in the holder's StateFlow
+    // BridgeViewModel observes that flow and refreshes the UI immediately.
     //
     // ScreenCaptureRequester is a process-singleton rendezvous so the
     // BridgeViewModel (which has no Activity reference) can ask us to
@@ -41,10 +48,13 @@ class MainActivity : ComponentActivity() {
     private val mediaProjectionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        val granted = MediaProjectionHolder.onGranted(
-            this, result.resultCode, result.data
-        )
-        Log.i(TAG, "MediaProjection consent result: granted=$granted")
+        val data = result.data
+        if (result.resultCode == RESULT_OK && data != null) {
+            Log.i(TAG, "MediaProjection consent granted — handing off to FGS")
+            BridgeForegroundService.grantMediaProjection(this, result.resultCode, data)
+        } else {
+            Log.i(TAG, "MediaProjection consent rejected (resultCode=${result.resultCode})")
+        }
     }
     // === END PHASE3-bridge-ui-followup ===
 
@@ -98,6 +108,9 @@ class MainActivity : ComponentActivity() {
         // === END PHASE3-safety-rails-followup ===
         setContent {
             RelayApp()
+        }
+        window.decorView.post {
+            ComposeArrWorkaround.disableForViewTree(window.decorView)
         }
     }
 

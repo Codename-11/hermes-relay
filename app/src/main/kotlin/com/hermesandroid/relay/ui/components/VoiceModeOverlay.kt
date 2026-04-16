@@ -2,7 +2,9 @@ package com.hermesandroid.relay.ui.components
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -39,6 +41,7 @@ import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -63,10 +66,14 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.data.ChatMessage
+import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.util.HumanError
+import com.hermesandroid.relay.viewmodel.DestructiveCountdownState
 import com.hermesandroid.relay.viewmodel.InteractionMode
 import com.hermesandroid.relay.viewmodel.VoiceState
 import com.hermesandroid.relay.viewmodel.VoiceUiState
@@ -91,6 +98,22 @@ fun VoiceModeOverlay(
     // Nullable so existing call sites compile; when wired, voice errors
     // surface as global snackbars in addition to the inline banner below.
     errorEvents: SharedFlow<HumanError>? = null,
+    // === PHASE3-voice-mode-transcript ===
+    // Compact rolling transcript of the last N chat messages — the
+    // caller (ChatScreen) passes `chatViewModel.messages.takeLast(6)`.
+    // Voice mode is voice-first but wasn't giving the user any visibility
+    // into conversation history during a session, so this adds a compact
+    // strip below the sphere that observes the same ChatHandler message
+    // flow the chat tab uses. Includes local-only voice-intent traces
+    // (agentName = "Voice action", id prefix "voice-intent-") rendered
+    // via MarkdownContent so the bold + inline code in traces like
+    // "**Opened Chrome** `com.android.chrome`" shows correctly.
+    //
+    // Default empty-list so existing call sites compile; the empty state
+    // hint ("Tap the mic to speak") still renders when the transcript
+    // is empty.
+    transcriptMessages: List<ChatMessage> = emptyList(),
+    // === END PHASE3-voice-mode-transcript ===
 ) {
     val surface = MaterialTheme.colorScheme.surface
     val haptic = LocalHapticFeedback.current
@@ -165,23 +188,27 @@ fun VoiceModeOverlay(
             }
         }
 
-        // Center column: pinned "you said" chip → sphere → waveform → scrolling response.
+        // Center column: pinned "you said" chip → sphere → waveform → scrolling transcript.
         //
-        // Layout uses fixed-weight slots (sphere 0.55, response 1f) instead of
-        // SpaceBetween so the sphere/waveform don't drift around as the response
-        // grows. The response area owns its own scroll state with auto-scroll-to-tail
-        // and a top/bottom fade mask for overflow indication.
-        val textScrollState = rememberScrollState()
+        // Layout uses fixed-weight slots (sphere 1.5, transcript 1f) instead
+        // of SpaceBetween so the sphere/waveform don't drift as the transcript
+        // grows. The transcript area owns its own scroll state with auto-
+        // scroll-to-tail and a top/bottom fade mask for overflow indication.
+        //
+        // Transcript content sources:
+        //   - transcriptMessages: last N chat messages (includes voice-intent
+        //     traces rendered via MarkdownContent)
+        //   - uiState.responseText: the in-flight streaming response for the
+        //     current turn (a bubble that hasn't yet been finalized into a
+        //     ChatMessage by the time the user sees it mid-stream)
+        val transcriptScrollState = rememberScrollState()
 
-        // Auto-scroll to the tail every time the response length changes.
-        // Without this, streaming tokens accumulate below the viewport and
-        // the user has to drag down by hand — that's the "feels behind"
-        // sensation we were chasing. animateScrollTo gives a smooth follow
-        // rather than a snap on every token.
-        LaunchedEffect(uiState.responseText.length) {
-            if (uiState.responseText.isNotEmpty()) {
-                textScrollState.animateScrollTo(textScrollState.maxValue)
-            }
+        // Auto-scroll to the tail whenever: (a) a new message arrives in the
+        // transcript, (b) the streaming responseText grows. Both conditions
+        // fire the same smooth animateScrollTo so the user's eye never has
+        // to chase token churn.
+        LaunchedEffect(transcriptMessages.size, uiState.responseText.length) {
+            transcriptScrollState.animateScrollTo(transcriptScrollState.maxValue)
         }
 
         // Vertical fade brush for the scroll area: top + bottom edges fade
@@ -232,7 +259,23 @@ fun VoiceModeOverlay(
                     .padding(horizontal = 32.dp, vertical = 8.dp),
             )
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
+
+            // Destructive-intent countdown indicator. Fades in while a
+            // SendSms (or future destructive intent) is waiting on the v1
+            // 5 s confirmation window and fades out the moment dispatch
+            // completes or the user cancels. Kept deliberately subtle —
+            // voice mode is voice-first; this is a secondary hint, not
+            // the primary safety gate (that's still the spoken preview
+            // + the cancel vocabulary).
+            DestructiveCountdownRow(
+                countdown = uiState.destructiveCountdown,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 32.dp),
+            )
+
+            Spacer(Modifier.height(4.dp))
 
             // "You said" block — sits directly above the agent response so
             // the eye flows from the waveform straight down through the
@@ -268,16 +311,19 @@ fun VoiceModeOverlay(
                 }
             }
 
-            // Response area. Plain Text — no AnimatedContent — so streaming
-            // tokens accrete in place instead of fade-flickering on every
-            // delta. The empty-state hint keeps a small AnimatedContent
-            // because that's a real discrete swap (Idle → Listening → ...).
+            // Transcript area. Shows the last N chat messages in a compact
+            // rolling list, plus the in-flight streaming responseText for
+            // the current turn. Empty-state hint renders when BOTH the
+            // transcript AND the live response are empty (first launch,
+            // fresh voice session).
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f, fill = true),
             ) {
-                if (uiState.responseText.isNotBlank()) {
+                val hasTranscript = transcriptMessages.isNotEmpty()
+                val hasLiveResponse = uiState.responseText.isNotBlank()
+                if (hasTranscript || hasLiveResponse) {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -286,18 +332,22 @@ fun VoiceModeOverlay(
                                 drawContent()
                                 drawRect(brush = fadeBrush, blendMode = BlendMode.DstIn)
                             }
-                            .verticalScroll(textScrollState)
+                            .verticalScroll(transcriptScrollState)
                             .padding(vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Text(
-                            text = uiState.responseText,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            // Long paragraph responses read poorly when centered.
-                            // Empty-state hint stays Center via the else branch.
-                            textAlign = TextAlign.Start,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+                        transcriptMessages.forEach { msg ->
+                            CompactTranscriptRow(msg)
+                        }
+                        // Live streaming response for the current turn —
+                        // rendered as a trailing row so it sits below the
+                        // committed history. Once the turn completes and
+                        // the message is appended to chat history,
+                        // responseText clears and this row collapses back
+                        // into the transcript list naturally.
+                        if (hasLiveResponse) {
+                            StreamingResponseRow(uiState.responseText)
+                        }
                     }
                 } else {
                     Box(
@@ -513,4 +563,185 @@ private fun InteractionMode.label(): String = when (this) {
     InteractionMode.TapToTalk -> "Tap to talk"
     InteractionMode.HoldToTalk -> "Hold to talk"
     InteractionMode.Continuous -> "Continuous"
+}
+
+/**
+ * Compact transcript row for voice mode. Rendering rules:
+ *
+ *   - `id.startsWith("voice-intent-")` → voice-action trace, rendered via
+ *     [MarkdownContent] unbounded (these are the rich bridge-intent bubbles
+ *     like "**Opened Chrome** `com.android.chrome` — exact match", which
+ *     need the bold + inline code styling to read well).
+ *   - `role == USER` → small italic caption "YOU" + body in bodySmall,
+ *     two-line truncation.
+ *   - `role == ASSISTANT` → caption "AGENT" + body in bodyMedium,
+ *     four-line truncation.
+ *   - `role == SYSTEM` → skipped entirely (voice mode is a conversation
+ *     surface, not a system-message debug view).
+ *
+ * The caller is responsible for bounding the list length (voice mode
+ * uses `takeLast(6)`).
+ */
+@Composable
+private fun CompactTranscriptRow(message: ChatMessage) {
+    if (message.role == MessageRole.SYSTEM) return
+
+    // A voice-intent trace is a PAIR of messages added by
+    // ChatHandler.appendLocalVoiceIntentTrace — one USER with the raw
+    // utterance ("voice-intent-user-$ts") and one ASSISTANT with the
+    // action description ("voice-intent-action-$ts"). Only the assistant
+    // half should carry the "ACTION" caption + MarkdownContent rendering;
+    // the user half should stay labeled "YOU" so the transcript reads as
+    // a normal user→assistant exchange. Pre-fix we keyed off the id
+    // prefix alone and mislabeled the user half as ACTION (Bailey
+    // 2026-04-15 screenshot: duplicate ACTION row with the raw utterance).
+    val isVoiceActionBubble = message.role == MessageRole.ASSISTANT &&
+        message.id.startsWith("voice-intent-")
+    val caption = when {
+        isVoiceActionBubble -> "ACTION"
+        message.role == MessageRole.USER -> "YOU"
+        else -> "AGENT"
+    }
+    val captionColor = when {
+        isVoiceActionBubble -> MaterialTheme.colorScheme.tertiary
+        message.role == MessageRole.USER -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.secondary
+    }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.Start,
+    ) {
+        Text(
+            text = caption,
+            style = MaterialTheme.typography.labelSmall,
+            color = captionColor,
+        )
+        Spacer(Modifier.height(2.dp))
+        when {
+            isVoiceActionBubble -> MarkdownContent(
+                content = message.content,
+                textColor = MaterialTheme.colorScheme.onSurface,
+            )
+            message.role == MessageRole.USER -> Text(
+                text = message.content,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            else -> Text(
+                text = message.content,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/**
+ * Renders the 5-second destructive-intent confirmation countdown as a
+ * thin horizontal progress bar with a short label. The bar fills from
+ * 0 → 1 over [DestructiveCountdownState.durationMs] using a local
+ * [Animatable] keyed on the countdown's `startedAtMs` so a fresh
+ * countdown always restarts cleanly. When [countdown] is null, the row
+ * fades out entirely.
+ *
+ * Visual treatment is intentionally muted (tertiary color, caption-sized
+ * label) — voice mode is voice-first and the real safety rails live in
+ * the spoken preview and the cancel vocabulary. This is just "something
+ * is about to happen" scaffolding for sighted users.
+ */
+@Composable
+private fun DestructiveCountdownRow(
+    countdown: DestructiveCountdownState?,
+    modifier: Modifier = Modifier,
+) {
+    // Hold the most-recent non-null countdown so the row can keep rendering
+    // its fade-out transition after the VM clears the state. Without this
+    // the label would snap to "" at the same frame the fade begins.
+    var lastShown by remember { mutableStateOf<DestructiveCountdownState?>(null) }
+    LaunchedEffect(countdown) {
+        if (countdown != null) lastShown = countdown
+    }
+    val progress = remember { Animatable(0f) }
+    LaunchedEffect(countdown?.startedAtMs) {
+        if (countdown != null) {
+            progress.snapTo(0f)
+            progress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(
+                    durationMillis = countdown.durationMs.toInt().coerceAtLeast(100),
+                    easing = LinearEasing,
+                ),
+            )
+        } else {
+            progress.snapTo(0f)
+        }
+    }
+
+    AnimatedVisibility(
+        visible = countdown != null,
+        enter = fadeIn(tween(150)),
+        exit = fadeOut(tween(200)),
+        modifier = modifier,
+    ) {
+        val label = (countdown ?: lastShown)?.intentLabel ?: ""
+        val durationSec = ((countdown ?: lastShown)?.durationMs ?: 0L) / 1000
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.Start,
+        ) {
+            Text(
+                text = if (label.isNotBlank()) {
+                    "$label in ${durationSec}s — say cancel to stop"
+                } else {
+                    "Confirming…"
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.tertiary,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(4.dp))
+            LinearProgressIndicator(
+                progress = { progress.value.coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.tertiary,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * Row for the in-flight streaming response — `uiState.responseText` that
+ * hasn't yet been committed to chat history. Separate composable so it
+ * can render slightly differently from committed [CompactTranscriptRow]
+ * (larger type, onSurface instead of onSurfaceVariant) matching the
+ * pre-transcript single-line "current response" visual weight, and so
+ * streaming tokens accrete in place without the AnimatedContent flicker
+ * we had before transcript mode.
+ */
+@Composable
+private fun StreamingResponseRow(responseText: String) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.Start,
+    ) {
+        Text(
+            text = "AGENT",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.secondary,
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = responseText,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Start,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
 }

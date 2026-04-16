@@ -1,10 +1,10 @@
 # Hermes-Relay — Android App
 
-## Specification v1.1
+## Specification v1.3
 
-**Status:** v0.1.0 — Phase 0 + Phase 1 complete  
+**Status:** v0.3.0 shipped to Play Store internal testing + sideload track. Phase 0, Phase 1, Phase 2 (terminal preview), Phase 3 (bridge channel), Phase 4 (security hardening per ADR 15), and Phase 5 (polish + CI/CD) are partially-or-fully shipped. Phase V (voice mode) shipped 2026-04-12. v0.4 bridge feature expansion in progress on `feature/bridge-feature-expansion` — see `docs/plans/2026-04-13-bridge-feature-expansion.md`.  
 **Repo:** [Codename-11/hermes-relay](https://github.com/Codename-11/hermes-relay)  
-**Updated:** 2026-04-07
+**Updated:** 2026-04-13
 
 ---
 
@@ -100,14 +100,23 @@ Connection lifecycle, auth, keepalive.
 
 | Type | Direction | Payload |
 |------|-----------|---------|
-| `auth` | App → Server | `{ pairing_code, device_name, device_id }` |
-| `auth.ok` | Server → App | `{ session_token, server_version, profiles[] }` |
+| `auth` (pairing mode) | App → Server | `{ pairing_code, ttl_seconds?, grants?, device_name, device_id }` — `ttl_seconds` / `grants` come from the phone's TTL picker dialog; host metadata wins over phone metadata when both are present |
+| `auth` (session mode) | App → Server | `{ session_token, device_name, device_id }` — ttl/grants are not re-sent; server keeps the grant table keyed on the original pair |
+| `auth.ok` | Server → App | `{ session_token, server_version, profiles[], expires_at, grants, transport_hint }` — see below |
 | `auth.fail` | Server → App | `{ reason }` |
 | `ping` | Both | `{ ts }` |
 | `pong` | Both | `{ ts }` |
 
+**`auth.ok` extended fields** (added in ADR 15 — see `docs/decisions.md`):
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `expires_at` | epoch seconds or `null` | Session lifetime. `null` means never-expire (user explicitly picked "Never" in the TTL picker). Server-side `math.inf` serializes as `null`. |
+| `grants` | `{ channel: epoch \| null }` | Per-channel expiries. Keys today: `chat`, `terminal`, `bridge`. Each grant is clamped to the session lifetime — a grant cannot outlive its session. `null` means the grant shares the session's never-expire. |
+| `transport_hint` | `"wss"` / `"ws"` / `"unknown"` | What the server believes the phone is actually connected over. Drives the transport security badge and the TTL picker's default option on re-pair. |
+
 #### Channel: `chat`
-**Note:** Chat now connects directly to the Hermes API Server via HTTP/SSE (see Section 6.2). The relay server is not involved in chat. The SSE event types from the Hermes API are:
+**Note:** Chat connects directly to the Hermes API Server via HTTP/SSE (see Section 6.2) — it does not traverse the relay. Voice, bridge, terminal, notifications, and inbound media DO go through the relay. The chat SSE event types are:
 
 | Event | Direction | Payload |
 |-------|-----------|---------|
@@ -273,8 +282,8 @@ Implementation references:
 - **WebSocket:** OkHttp 4.x (already in upstream, supports `wss://`)
 - **Terminal:** WebView + xterm.js (v1), consider native Compose terminal later
 - **Serialization:** kotlinx.serialization (replace Gson — faster, type-safe)
-- **Storage:** EncryptedSharedPreferences (tokens), DataStore (preferences)
-- **DI:** Hilt or manual (lean for MVP)
+- **Storage:** Android Keystore (StrongBox-preferred via `KeystoreTokenStore`) + `EncryptedSharedPreferences` legacy fallback via `LegacyEncryptedPrefsTokenStore`; DataStore (preferences + TOFU cert pins)
+- **DI:** Manual dependency injection (no Hilt). Constructor-wired ViewModels, process-singletons where needed. Decided lean because the graph is small and dependencies are explicit.
 - **Biometric:** AndroidX Biometric
 - **Min SDK:** 26 (Android 8.0)
 - **Target SDK:** 35
@@ -284,7 +293,7 @@ Implementation references:
 - **Framework:** aiohttp (matches existing relay)
 - **Terminal:** `asyncio` + `pty` module for PTY, `libtmux` for session management
 - **Chat proxy:** HTTP client to Hermes WebAPI (localhost:8642 or direct `run_agent`)
-- **Port:** 8767 (WSS) — separate from existing bridge relay (8766)
+- **Port:** 8767 (WSS). The legacy standalone bridge relay on 8766 was retired in Phase 3 Wave 1 (2026-04-12) — the bridge channel is now multiplexed alongside chat, terminal, voice, and media on the unified relay.
 - **TLS:** Let's Encrypt via certbot, or reverse proxy through Caddy/nginx
 
 ### CI/CD (GitHub Actions)
@@ -330,15 +339,21 @@ Bottom navigation bar with 4 tabs:
 - Supports: full ANSI color, scrollback, text selection, copy/paste
 
 ### Bridge Tab
-- **Connection status** — connected/disconnected, latency, battery
-- **Permission checklist** — accessibility service, overlay, etc.
-- **Activity log** — recent commands executed by the agent on the phone
-- **Quick actions** — screenshot, screen read (manual triggers for testing)
+Shipped in v0.3.0. Four-card control surface rendered by `BridgeScreen.kt` + `BridgeViewModel`:
+
+- **Master toggle card** (`BridgeMasterToggle`) — headline "Allow Agent Control" switch. Gated on accessibility permission being granted. Inline device / battery / screen / current-app rows. Info icon opens a Play-review explanation dialog.
+- **Status card** (`BridgeStatusCard`) — reuses `ConnectionStatusBadge` for the pulsing connected/disconnected dot. Seeded from `PowerManager.isInteractive` + `BatteryManager.BATTERY_PROPERTY_CAPACITY` via `BridgeViewModel`.
+- **Permission checklist** (`BridgePermissionChecklist`) — four rows: Accessibility / Screen Capture / Overlay / Notification Listener. Tap-to-open Android Settings via `ACTION_ACCESSIBILITY_SETTINGS`, `ACTION_MANAGE_OVERLAY_PERMISSION`, `enabled_notification_listeners`. Re-probes on `Lifecycle.Event.ON_RESUME` so returning from Android Settings flips rows from red to green without navigation churn.
+- **Activity log** (`BridgeActivityLog`) — scrollable `LazyColumn` capped at 320dp + `MAX_LOG_ENTRIES=100`. Tap-to-expand rows showing timestamp, status (Pending / Success / Failed / Blocked), result text, and optional screenshot token. DataStore-backed via `BridgePreferences`.
+- **Safety summary card** (`BridgeSafetySummaryCard`) — replaces the earlier inert placeholder. Displays blocklist count / destructive-verb count / countdown timer (`in MM:SS` during an active idle window, else `N min idle`). Tap-through to `BridgeSafetySettingsScreen` for editing the blocklist / destructive verbs / auto-disable timer / status overlay / confirmation timeout.
+
+The bridge UI drives — and is driven by — Tier 5 safety-rails (`BridgeSafetyManager`, `BridgeForegroundService`, `BridgeStatusOverlay`, `AutoDisableWorker`). See `docs/decisions.md` and `CLAUDE.md`'s file table for the full wiring.
 
 ### Settings Tab
-- **API Server** — URL, API key, health check indicator
-- **Relay Server** — URL, pairing code, connection status
-- **Chat** — Show reasoning toggle, smooth auto-scroll toggle (live-follow streaming, default on), show token usage toggle, app context prompt toggle, tool call display (Off/Compact/Detailed), Stats for Nerds (analytics charts)
+- **Connection** — unified "Pair with your server" card (primary action: Scan QR) with a single status summary covering API server, relay, and the active paired session. Collapsible "Manual configuration" card exposes API URL / API key / Relay URL / insecure-transport toggle + "Save & Test" (calls `RelayHttpClient.probeHealth`). Collapsible "Manual pairing code (fallback)" card for camera-less / SSH-only setups. Transport security badge (🔒 secure / 🔓 insecure-with-reason / 🔓 insecure-unknown) rendered inline. Paired Devices screen linked from here for the full device list + per-channel grant revoke.
+- **Chat** — Show reasoning toggle, smooth auto-scroll toggle (live-follow streaming, default on), show token usage toggle, app context prompt toggle, tool call display (Off/Compact/Detailed), streaming endpoint selector (`auto` / `sessions` / `runs`), Stats for Nerds (analytics charts)
+- **Voice** — interaction mode (tap / hold / continuous), silence threshold slider, Auto-TTS toggle, provider info read from `/voice/config`, language picker, Test Voice button
+- **Notification companion** — opt-in status, "Open Android Settings" action, test notification dump
 - **Appearance** — theme (auto/light/dark), dynamic colors toggle
 - **Data** — Backup, restore, reset with confirmation dialogs
 - **About** — logo on dark background, dynamic version from BuildConfig, Source + Docs link buttons, credits. What's New dialog.
@@ -503,7 +518,91 @@ Uses `asyncio.create_subprocess_exec` with PTY for non-blocking I/O. tmux gives 
 
 Wraps the existing relay protocol. When the agent calls `android_*` tools, the tool handler routes through the relay server's bridge channel to the phone.
 
-**Change from upstream:** The bridge channel is now part of the multiplexed WSS connection instead of a separate `ws://` relay on port 8766. The plugin's `android_relay.py` gets updated to route through the relay server.
+**Change from upstream:** The bridge channel is part of the multiplexed WSS connection instead of a separate `ws://` relay on port 8766. The legacy standalone `plugin/tools/android_relay.py` was retired in Phase 3 Wave 1 (2026-04-12) and its functionality migrated to two files in the unified relay: `plugin/tools/android_tool.py` (Hermes tools pointing at `http://localhost:8767` — baseline 14 plus v0.4 expansion) and `plugin/relay/channels/bridge.py` (the `BridgeHandler.handle_command(...)` dispatcher that mints request IDs, sends `bridge.command` envelopes over the shared WSS pipe, and awaits matching `bridge.response` envelopes with a 30s timeout). HTTP routes are registered on `plugin/relay/server.py` between `# === PHASE3-bridge-server ===` markers and delegate through the same handler. Wire protocol is frozen — envelopes match the legacy relay byte-for-byte.
+
+#### 6.4.1 `android_*` tool surface
+
+Tools register against the Hermes plugin API in `plugin/tools/android_tool.py` (plus `plugin/tools/android_notifications.py`, `plugin/tools/android_navigate.py`). The Python-side tool issues an HTTP request to the relay on loopback; the relay forwards it to the phone over WSS; the phone executes it via the accessibility service and returns a structured response. Flavor gating: tools marked **sideload-only** are gated on `BuildFlavor.current == SIDELOAD` via `FeatureFlags.BuildFlavor` and/or require manifest permissions only declared in `app/src/sideload/AndroidManifest.xml`.
+
+**Baseline (pre-v0.4 — shipped in Phase 3 Wave 1):**
+
+| Tool | HTTP route | Purpose | Flavor |
+|------|-----------|---------|--------|
+| `android_ping` | `GET /ping` | Liveness check — does not require master enable | both |
+| `android_screen` | `GET /screen` | Serialize the accessibility tree → `ScreenContent` | both |
+| `android_screenshot` | `GET /screenshot` | `MediaProjection` PNG → `MEDIA:hermes-relay://<token>` | both |
+| `android_current_app` | `GET /current_app` | Foregrounded package name | both |
+| `android_get_apps` (`/apps` legacy) | `GET /get_apps` | Installed launcher apps | both |
+| `android_tap` | `POST /tap` | Tap at `(x, y)` or on resolved `node_id` | both |
+| `android_tap_text` | `POST /tap_text` | Find text via accessibility tree, tap it (see A9 cascade below) | both |
+| `android_type` | `POST /type` | `ACTION_SET_TEXT` on focused input field | both |
+| `android_swipe` | `POST /swipe` | Gesture swipe with direction + distance | both |
+| `android_scroll` | `POST /scroll` | Scroll a specific container (resolves `node_id`) | both |
+| `android_open_app` | `POST /open_app` | Launch an app by package name | both |
+| `android_press_key` | `POST /press_key` | Curated global-action vocab (home/back/recents/notifications/quick_settings) — no raw `KeyEvent` injection | both |
+| `android_wait` | `POST /wait` | Clamped idle — max 15s | both |
+| `android_setup` | `POST /setup` | Permission bootstrap helper | both |
+| `android_navigate` | (dispatches `/screenshot` + `/tap_text`/`/tap`/`/type`/`/swipe`/`/press_key`) | Tier 4 vision-driven close-the-loop navigation | both |
+| `android_notifications_recent` | `GET /notifications/recent` | Poll the notif-listener ring buffer (loopback-only for Python tool callers) | both |
+
+**v0.4 additions — Tier A (both flavors):**
+
+| Tool | HTTP route | Purpose |
+|------|-----------|---------|
+| `android_long_press(x, y, node_id, duration=500)` | `POST /long_press` | Long-press gesture at coords or on resolved node. Gesture path wrapped in `WakeLockManager.wakeForAction` (see §6.4.2). |
+| `android_drag(start_x, start_y, end_x, end_y, duration)` | `POST /drag` | Single-stroke drag via `GestureDescription`. Wrapped in wake-lock. |
+| `android_find_nodes(text?, class_name?, clickable?, limit)` | `POST /find_nodes` | Filtered accessibility-node search across **all** windows (see P1 in §6.4.2). Returns a list of `{node_id, text, bounds, class, clickable}` records. |
+| `android_describe_node(node_id)` | `POST /describe_node` | Full property bag for a single node resolved by stable `node_id`. Round-trips the same ID scheme emitted by `android_screen` / `android_find_nodes`. A4 also completes the `node_id` resolution path in the existing `/tap` and `/scroll` routes — the IDs were previously emitted but not accepted as input. |
+| `android_screen_hash()` | `GET /screen_hash` | Returns `{hash, node_count}`. SHA-256 over a canonical per-node fingerprint (`className + text + bounds + viewId`) across the full accessibility tree. See `ScreenHasher` in §6.4.2. |
+| `android_diff_screen(previous_hash)` | `POST /diff_screen` | Returns `{changed, hash, node_count}` in a single call. Used as a cheap "did anything change?" check to skip full screen re-reads inside agent loops. |
+| `android_clipboard_read()` | `GET /clipboard` | Read primary clip via `ClipboardManager.primaryClip`. |
+| `android_clipboard_write(text)` | `POST /clipboard` | Set primary clip. |
+| `android_media(action)` | `POST /media` | System-wide media control via `AudioManager.dispatchMediaKeyEvent` + `ACTION_MEDIA_BUTTON` broadcast. Actions: `play` / `pause` / `toggle` / `next` / `previous`. |
+| `android_macro(steps, name, pace_ms)` | (Python-side only) | Pure-Python batched workflow dispatcher. Iterates `steps` (each `{tool, args}`), stops on first failure, returns the full trace. No new HTTP route — dispatches to the existing tool handlers in-process. |
+
+**v0.4 additions — Tier B (both flavors):**
+
+| Tool | HTTP route | Purpose |
+|------|-----------|---------|
+| `android_events(limit, since)` | `GET /events` | Poll the real-time `AccessibilityEvent` ring buffer. **Off by default** — a session must enable forwarding via `android_event_stream(enabled=true)` before events are recorded. Privacy-sensitive; keep off unless an agent flow needs it. |
+| `android_event_stream(enabled)` | `POST /events/stream` | Opt in / out of event capture for the current session. |
+| `android_send_intent(action, data, package, component, extras, category)` | `POST /send_intent` | Raw `Intent` escape hatch — `startActivity`. Safety-gated on the target package blocklist via `BridgeSafetyManager.checkPackageAllowed`. |
+| `android_broadcast(action, data, package, extras)` | `POST /broadcast` | Raw `sendBroadcast`. Same blocklist gate as `/send_intent`. |
+
+**v0.4 additions — Tier C (sideload-only):**
+
+Tier C tools add runtime permissions that trigger Google Play policy review and are intentionally scoped to the sideload flavor only. The permissions are declared in `app/src/sideload/AndroidManifest.xml`; the googlePlay manifest does not declare them and the tools no-op via the `BuildFlavor.current == SIDELOAD` guard.
+
+| Tool | HTTP route | Purpose | Permission |
+|------|-----------|---------|------------|
+| `android_location()` | `GET /location` | Last-known GPS fix via `LocationManager.getLastKnownLocation` | `ACCESS_FINE_LOCATION` |
+| `android_search_contacts(query, limit)` | `POST /search_contacts` | `ContactsContract` name → phone number lookup, cap on result count | `READ_CONTACTS` |
+| `android_call(number)` | `POST /call` | Auto-dial via `ACTION_CALL` on sideload; googlePlay stub falls back to `ACTION_DIAL` (user must confirm in the dialer). **Every call is gated on the destructive-verb confirmation modal**; see §6.4.2 safety notes. | `CALL_PHONE` |
+| `android_send_sms(to, body)` | `POST /send_sms` | Direct `SmsManager.sendTextMessage` (or `sendMultipartTextMessage` for long bodies) with a `PendingIntent` result callback. **Every send is gated on the destructive-verb confirmation modal.** | `SEND_SMS` |
+
+**Safety integration.** All HTTP routes except `/ping` and `/current_app` are gated in `BridgeCommandHandler` on the Bridge master toggle (`bridge_master_enabled` DataStore flag) and the Tier 5 three-stage safety check:
+1. **Blocklist gate** — `BridgeSafetyManager.checkPackageAllowed(currentApp)` returns 403 `{"error": "blocked package <name>"}` when the foreground package is in the blocklist (~30 banking/payments/password-manager/2FA defaults seeded via `DEFAULT_BLOCKLIST`).
+2. **Destructive-verb confirmation** — `/tap_text` and `/type` commands whose text matches the user's destructive-verb regex list (`send` / `pay` / `delete` / `transfer` / `confirm` / `submit` / ...) suspend on a `CompletableDeferred<Boolean>` under a `withTimeout`, waiting for the user to Allow / Deny via the `BridgeStatusOverlay` modal. **Tier C `android_call` and `android_send_sms` always go through this gate regardless of body content** — a phone call or SMS is definitionally destructive. Denied or timed-out commands return 403 `{"error": "user denied destructive action", "reason": "confirmation_denied_or_timeout"}`.
+3. **Auto-disable reschedule** — every successful command resets the idle countdown on `BridgeSafetyManager.rescheduleAutoDisable`, which flips master off after the configured idle window (default 30 min, clamped 5..120).
+
+The newly added Tier A/B tools all flow through the same `BridgeCommandHandler` dispatch and are covered by the existing gates without additional wiring. Tier A tools that only *read* (e.g. `android_screen_hash`, `android_clipboard_read`, `android_describe_node`) skip the destructive-verb check but still hit the blocklist and master-enable gates. `android_send_intent` and `android_broadcast` hit the blocklist gate keyed on the target `package` (not just the foreground app) so an agent can't bypass the blocklist by firing an Intent at a blocked target from an allowed foreground.
+
+#### 6.4.2 Architectural patterns adopted in v0.4
+
+The v0.4 wave includes three reliability patterns applied to existing code and one new primitive. They're listed here because they cut across every tool added above and anchor the tool surface to a more predictable baseline.
+
+**WakeLockManager — wake-scope wrapping for gesture dispatch.** New `object WakeLockManager` at `app/src/main/kotlin/com/hermesandroid/relay/power/WakeLockManager.kt` exposes `suspend fun <T> wakeForAction(block: suspend () -> T): T`. Uses `PowerManager.PARTIAL_WAKE_LOCK`, ref-counted so nested calls don't release each other prematurely, with a hard 10-second timeout as a battery safety rail. `ActionExecutor` wraps every gesture-dispatching function (`tap`, `tapText`, `typeText`, `swipe`, `scroll`, `longPress`, `drag`) in `wakeForAction { ... }`. Read-only accessibility calls (`readScreen`, `findNodes`, `describeNode`, `screenHash`, `diffScreen`, `currentApp`, `clipboardRead/Write`, `mediaControl`) are not wrapped — they don't need the screen on. Closes the "gesture fires into the void when the screen is off" failure mode that silently broke `android_tap` / `android_swipe` whenever Bailey's phone hit idle between commands. Requires `android.permission.WAKE_LOCK` in the main manifest.
+
+**Multi-window ScreenReader (P1).** `ScreenReader.readCurrentScreen` now iterates `service.windows.mapNotNull { it.root }` instead of the single `rootInActiveWindow`. Returns a merged tree where each `AccessibilityNodeInfo` is walked per-window and recycled in the per-iteration `try/finally`. Catches system overlays, popup menus, notification shade, and split-screen secondary windows — the previous single-root path silently ignored them. **Node-ID scheme update:** stable IDs are now prefixed `w<windowIndex>:<sequentialIndex>` (e.g. `w0:42`, `w1:7`) so IDs are disambiguated across windows. A single-window fallback kicks in when `service.windows` is empty, which happens on the googlePlay flavor without `flagRetrieveInteractiveWindows` (the conservative a11y config that survives Play Store policy review). Node IDs are end-to-end resolvable after A4 wired parsing into `/tap` and `/scroll` — `android_find_nodes` and `android_describe_node` emit them, and `android_tap` / `android_scroll` accept them as input, so an agent can search → describe → act without re-reading the tree.
+
+**A9 three-tier `tapText` cascade.** `ActionExecutor.tapText` replaces the single-shot `findNodeBoundsByText → performAction(ACTION_CLICK)` path with a 3-tier fallback:
+1. Find node by text across all windows. If `node.isClickable` → `performAction(ACTION_CLICK)`.
+2. Otherwise walk up the parent chain (capped at 8 levels) looking for a clickable ancestor. If found → `performAction(ACTION_CLICK)` on it.
+3. Otherwise capture the node's `getBoundsInScreen()` center and fall back to a coordinate `tap(cx, cy)`.
+
+The `ActionResult.data` field indicates which tier succeeded (`"direct"` / `"parent"` / `"coords"`) so the activity log and agent trace show how the click was resolved. Fixes a whole class of failures in real-world apps (Uber, Spotify, Instagram, Tinder) that wrap clickable content in non-clickable text or image views. Parent-chain traversal is bounded to avoid leaks — every `AccessibilityNodeInfo` returned by `.parent` is explicitly recycled before the loop reassigns.
+
+**ScreenHasher — content fingerprint for change detection.** New primitive backing A5 `android_screen_hash` / `android_diff_screen`. Walks the full (multi-window) accessibility tree and computes SHA-256 over a canonical joined fingerprint of per-node triples (`className + text + bounds + viewId`). Returns `{hash, node_count}`. The hash is deliberately **not** stable across animation frames or live-updating text — documented limitation. Rationale: `android_navigate` previously re-read the full tree on every loop iteration to decide whether the last action did anything; a hash comparison is ~100× cheaper in both compute and token cost, and an agent polling for "has the page loaded yet?" can do so without dragging a full `ScreenContent` JSON back across the WSS each time. Phone-side: new `ScreenHasher.kt` alongside `ScreenReader.kt`. Exposed via a `computeHash()` extension on the serialized node model so the server can also hash a prior `ScreenContent` snapshot for free.
 
 ---
 
@@ -534,44 +633,56 @@ Wraps the existing relay protocol. When the agent calls `android_*` tools, the t
 - [ ] App: Auto-reconnect with exponential backoff
 
 ### Phase 2 — Terminal Channel
-**Priority: P1**
+**Status: preview shipped in v0.2.0 (2026-04-12). Biometric gate is the one open item.**
 
-- [ ] Server: PTY/tmux integration
-- [ ] Server: Terminal channel handler (attach, input, output, resize)
-- [ ] App: WebView + xterm.js terminal emulator
-- [ ] App: Soft keyboard toolbar (Ctrl, Tab, Esc, arrows)
-- [ ] App: tmux session picker
-- [ ] App: Biometric gate before terminal access
-- [ ] App: Terminal resize on orientation change
+- [x] Server: PTY/tmux integration (`plugin/relay/channels/terminal.py`)
+- [x] Server: Terminal channel handler (attach, input, output, resize)
+- [x] App: WebView + xterm.js terminal emulator (`TerminalWebView.kt`)
+- [x] App: Soft keyboard toolbar — Ctrl / Tab / Esc / arrows (`ExtraKeysToolbar.kt`)
+- [x] App: tmux session picker with tabs (`TerminalTabBar.kt`, `TerminalSessionInfoSheet.kt`), scrollback search (`TerminalSearchBar.kt`)
+- [ ] App: Biometric gate before terminal access (planned — see Phase 4)
+- [x] App: Terminal resize on orientation change
 
 ### Phase 3 — Bridge Channel
-**Priority: P1**
+**Status: shipped in v0.3.0 (2026-04-13). v0.4 bridge feature expansion is in progress on `feature/bridge-feature-expansion` — adds long-press / drag / macro / clipboard / intent-send / location / contacts / call / SMS and multi-window screen reading.**
 
-- [ ] Migrate upstream bridge protocol into multiplexed WSS
-- [ ] Update `android_relay.py` to route through relay server
-- [ ] App: Bridge status UI
-- [ ] App: Permission management (accessibility, overlay)
-- [ ] App: Activity log (recent agent commands)
-- [ ] AccessibilityService integration (carry forward from upstream)
+- [x] Migrate upstream bridge protocol into multiplexed WSS — Phase 3 Wave 1, 2026-04-12 (routes registered in `plugin/relay/server.py` delegating to `plugin/relay/channels/bridge.py`)
+- [x] Update `plugin/tools/android_tool.py` to route through the unified relay on port 8767 (was the standalone `android_relay.py` on 8766)
+- [x] App: Bridge status UI — see §5 Bridge Tab
+- [x] App: Permission management (`BridgePermissionChecklist` — accessibility, screen capture, overlay, notification listener)
+- [x] App: Activity log (`BridgeActivityLog` + `BridgePreferences`, capped at 100 entries)
+- [x] App: Accessibility service (`HermesAccessibilityService` + `ScreenReader` + `ActionExecutor` + `BridgeCommandHandler`)
+- [x] App: Tier 5 safety rails — `BridgeSafetyManager` (blocklist + destructive-verb confirmation + auto-disable timer), `BridgeForegroundService` (persistent "Hermes has device control" notification), `BridgeStatusOverlay` (confirmation modal + optional floating chip)
+- [x] App: Flavor split — googlePlay (conservative a11y config) and sideload (full capabilities)
+- [x] Plugin: notification-listener companion channel (`android_notifications_recent`) + `android_navigate` vision loop
+- [x] **v0.4 bridge feature expansion** — 10 Tier A tools (long_press, drag, find_nodes, describe_node, screen_hash + diff_screen, clipboard r/w, media, macro) + 2 Tier B tools (events/event_stream, send_intent + broadcast) + 4 Tier C sideload-only tools (location, search_contacts, call, send_sms); architectural patterns — `WakeLockManager` wake-scope wrapping, multi-window `ScreenReader`, A9 three-tier `tapText` cascade, `ScreenHasher` content fingerprinting. See §6.4.1 for the tool surface table and §6.4.2 for the patterns.
 
 ### Phase 4 — Security Hardening
-**Priority: P1**
+**Status: ADR 15 landed in v0.2.0 (2026-04-11/12). Biometric gate is the one remaining item.**
 
-- [ ] TLS certificate setup (Let's Encrypt or self-signed with pinning)
-- [ ] EncryptedSharedPreferences for token storage
-- [ ] Biometric authentication (AndroidX Biometric)
-- [ ] Token expiry and rotation
-- [ ] Rate limiting on auth endpoint
+- [x] TLS support + TOFU certificate pinning (`CertPinStore` — SHA-256 SPKI fingerprints per `host:port`, wiped explicitly on re-pair via `applyServerIssuedCodeAndReset`; plain `ws://` short-circuits pinning)
+- [x] Android Keystore session token storage (`SessionTokenStore` — `KeystoreTokenStore` with StrongBox-preferred via `setRequestStrongBoxBacked`, `LegacyEncryptedPrefsTokenStore` TEE-backed fallback, one-shot lossless migration on first launch)
+- [x] User-chosen session TTL at pair time (`SessionTtlPickerDialog` — 1d / 7d / 30d / 90d / 1y / Never)
+- [x] Per-channel grants on one session token (`Session.grants` — chat / terminal / bridge, clamped to session lifetime)
+- [x] Paired Devices screen (`PairedDevicesScreen` + `GET /sessions` + `DELETE /sessions/{prefix}` + `PATCH /sessions/{prefix}` for extend)
+- [x] Transport security badge (`TransportSecurityBadge` — three states: secure / insecure-with-reason / insecure-unknown)
+- [x] First-time insecure-mode ack dialog with reason picker (`InsecureConnectionAckDialog`)
+- [x] Tailscale detection (`TailscaleDetector` — informational only)
+- [x] HMAC-SHA256 QR signing (`plugin/relay/qr_sign.py` with host-local secret at `~/.hermes/hermes-relay-qr-secret`; phone parses + stores `sig` but does not verify yet — secret distribution is a follow-up)
+- [x] Rate limiting on auth endpoint (`RateLimiter` — 5 attempts / 60s → 5-min block; `/pairing/register` clears all blocks on success so legitimate re-pair after relay restart works immediately)
+- [x] Session expiry + rotation (`expires_at` in `auth.ok`, server-side `SessionManager` enforcement)
+- [ ] Biometric gate for terminal access (AndroidX Biometric — not wired yet)
 
 ### Phase 5 — Polish & CI/CD
-**Priority: P2**
+**Status: largely shipped. v0.1.0 shipped to the Play Store under Axiom-Labs, LLC. Notification-channel-for-agent-messages is the one open item.**
 
-- [ ] GitHub Actions: lint, build, test matrix
-- [ ] GitHub Actions: release workflow (tag → signed APK → GitHub Release)
-- [ ] Material You dynamic theming
-- [ ] Proper error states and empty states
-- [ ] Notification channel for agent messages
-- [ ] App icon and branding
+- [x] GitHub Actions: lint + build + test on every push (`.github/workflows/ci.yml`)
+- [x] GitHub Actions: release workflow — tag-triggered signed APK + AAB upload to GitHub Release (`.github/workflows/release.yml`)
+- [x] Material You dynamic theming (Material 3 + dynamic color, user toggle in Appearance settings)
+- [x] Proper error states and empty states (`RelayErrorClassifier` → `HumanError` → global `LocalSnackbarHost`; MorphingSphere-backed empty chat state)
+- [x] App icon and branding (`ic_launcher*`, animated splash via `splash_icon_animated.xml`, MorphingSphere)
+- [x] Two build flavors: `googlePlay` (Play Store track, conservative Accessibility use case) and `sideload` (`.sideload` applicationId suffix, full feature set)
+- [ ] Notification channel for agent messages (not wired; Phase 6 territory)
 
 ### Phase V — Voice Mode
 **Status: shipped 2026-04-12**
@@ -597,45 +708,55 @@ See `docs/decisions.md` → **Voice Mode — Architecture** for the four key dec
 ### Phase 6 — Future
 **Priority: P3 — not for MVP**
 
-- [ ] Notification listener (agent reads phone notifications)
-- [ ] Clipboard bridge
-- [ ] File transfer (phone ↔ server)
-- [ ] Multi-device support
-- [ ] On-device model fallback
+- [x] Notification listener — shipped v0.3.0 via `HermesNotificationCompanion` (opt-in `NotificationListenerService`), exposed to the agent via `android_notifications_recent(limit=20)` over a bounded relay-side deque in `plugin/relay/channels/notifications.py`.
+- [x] Clipboard bridge — shipped on the v0.4 bridge-expansion branch (`feature/A6-clipboard`): `android_clipboard_read` / `android_clipboard_write`.
+- [ ] Reverse file transfer (phone → server direct upload; inbound agent → phone already shipped in v0.2.0)
+- [ ] Multi-device session routing (per-device tool-call routing with an explicit "add another device" flow)
+- [ ] On-device model fallback (Gemma / Qwen via MediaPipe or llama.cpp, for offline + hybrid routing)
+- [ ] iOS client (evaluate Shortcuts + accessibility + App Intents feasibility first)
 
 ---
 
-## 8. MVP Scope (Tonight)
+## 8. Current Scope
 
-Focus: **Phase 0 + start of Phase 1**
+As of v0.3.0, Phases 0–5 plus Phase V (voice) have shipped in some form. The current release cadence focuses on **v0.4 bridge feature expansion** — see `docs/plans/2026-04-13-bridge-feature-expansion.md`.
 
-Deliverables:
-1. Compose project with bottom nav scaffold
-2. WSS connection manager with channel multiplexing
-3. Basic pairing/auth flow
-4. Chat tab: send message → get streaming response
-5. Server: relay with chat channel routing
-6. GitHub Actions: build APK
+**Still non-goals for the current cadence:**
+- Biometric session lock (fingerprint/face gate on terminal and/or chat resume). Tracked under Phase 4.
+- Push notifications for agent messages (requires FCM + a notification channel on the relay side). Tracked under Phase 5.
+- iOS client. Not on the roadmap.
+- Reverse file transfer (phone → server direct upload). Inbound media (agent → phone) shipped in v0.2.0; outbound is attachments via the chat stream only.
+- On-device model fallback (Phase 6).
 
-Non-goals for tonight:
-- Terminal (Phase 2)
-- Bridge (Phase 3)
-- Biometrics (Phase 4)
-- Release workflow (Phase 5)
+See `Appendix A — Original Phase 0 Scope` at the end of this document for the historical "what we needed to build the first night" list, preserved for reference.
 
 ---
 
 ## 9. Key Dependencies
 
+Current versions as of v0.3.0. Source of truth is `gradle/libs.versions.toml` — this table is a human-readable snapshot, not authoritative.
+
 | Dependency | Version | Purpose |
 |------------|---------|---------|
-| Jetpack Compose BOM | 2024.12+ | UI framework |
-| Material 3 | 1.3+ | Design system |
-| OkHttp | 4.12+ | WebSocket + HTTP |
-| kotlinx.serialization | 1.7+ | JSON handling |
+| Android Gradle Plugin | 8.13.2 | Build toolchain |
+| Kotlin | 2.3.20 | Language + Compose compiler plugin |
+| Jetpack Compose BOM | 2026.03.01 | UI framework |
+| Material 3 (via BOM) | — | Design system |
+| Navigation Compose | 2.9.7 | Type-safe navigation |
+| Lifecycle | 2.10.0 | ViewModel + state |
+| OkHttp | 5.3.2 | WebSocket + SSE + HTTP |
+| kotlinx.serialization | 1.11.0 | JSON handling |
+| kotlinx.coroutines | 1.10.2 | Structured concurrency |
+| DataStore Preferences | 1.1.1 | Key-value settings |
+| Security Crypto | 1.1.0 | `EncryptedSharedPreferences` legacy token fallback |
+| markdown-renderer (mikepenz) | 0.30.0 | Chat message rendering |
+| Haze | 1.7.2 | Glassmorphism blur |
+| ML Kit Barcode Scanning | 17.3.0 | QR pairing scan |
+| CameraX | 1.6.0 | QR camera preview |
 | xterm.js | 5.x | Terminal emulator (WebView) |
 | aiohttp | 3.9+ | Server relay |
-| libtmux | 0.37+ | tmux management |
+| libtmux | 0.37+ | tmux session management |
+| gradle-play-publisher | 4.0.0 | Automated Play Console upload (optional) |
 
 ---
 
@@ -657,4 +778,30 @@ Non-goals for tonight:
 
 - **ARC** — CI/CD patterns, project structure conventions
 - **Hermes Agent** — Gateway, WebAPI, plugin system, SSE streaming
+
+---
+
+## Appendix A — Original Phase 0 Scope
+
+Preserved verbatim from the original scoping session. This is a historical snapshot, not a current MVP definition. See §8 for the current scope.
+
+> **MVP Scope (Tonight)**
+>
+> Focus: **Phase 0 + start of Phase 1**
+>
+> Deliverables:
+> 1. Compose project with bottom nav scaffold
+> 2. WSS connection manager with channel multiplexing
+> 3. Basic pairing/auth flow
+> 4. Chat tab: send message → get streaming response
+> 5. Server: relay with chat channel routing
+> 6. GitHub Actions: build APK
+>
+> Non-goals for tonight:
+> - Terminal (Phase 2)
+> - Bridge (Phase 3)
+> - Biometrics (Phase 4)
+> - Release workflow (Phase 5)
+
+All six deliverables shipped in v0.1.0. Four of the five "non-goals for tonight" have since shipped in v0.2.0 / v0.3.0; biometrics is the one remaining open item.
 - **ClawPort** — Web dashboard (parallel effort, different interface surface)

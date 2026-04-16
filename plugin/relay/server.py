@@ -1032,6 +1032,15 @@ async def _bridge_dispatch(
                 body = raw
         except (json.JSONDecodeError, ValueError, aiohttp.ContentTypeError):
             body = {}
+    else:
+        # H1/M5 fix: phone-side BridgeCommandHandler reads its arguments from
+        # the envelope body, with a `params` fallback that's dead code because
+        # an empty {} JsonObject is not null. For GET requests we therefore
+        # merge query-string params into the body so handlers like /events
+        # (limit/since) and /screen (include_bounds) actually see them.
+        # Values from request.query are strings; phone-side parsers must use
+        # .content.toIntOrNull() etc. rather than .intOrNull.
+        body = dict(request.query)
 
     try:
         response = await server.bridge.handle_command(
@@ -1058,10 +1067,10 @@ async def _bridge_dispatch(
 # close over the path string here. One adapter per endpoint keeps the
 # route registration self-documenting at the call site.
 #
-# Endpoint inventory mirrors ``plugin/tools/android_tool.py``'s 14 tools:
+# Endpoint inventory mirrors ``plugin/tools/android_tool.py``'s 15 tools:
 #   GET  /ping, /screen, /screenshot, /get_apps, /current_app
 #   POST /tap, /tap_text, /type, /swipe, /open_app, /press_key,
-#        /scroll, /wait, /setup
+#        /scroll, /describe_node, /wait, /setup
 #
 # NOTE: the legacy relay used ``/apps`` for list apps but the Android app
 # expects ``/get_apps`` and the tool at line ~230 of android_tool.py calls
@@ -1102,12 +1111,27 @@ async def handle_bridge_tap_text(request: web.Request) -> web.Response:
     return await _bridge_dispatch(request, "/tap_text")
 
 
+async def handle_bridge_long_press(request: web.Request) -> web.Response:
+    # A1 long_press — new in v0.4 bridge feature expansion. Same forward-
+    # through-to-phone pattern as /tap and /tap_text; the phone-side
+    # BridgeCommandHandler validates args and clamps duration.
+    return await _bridge_dispatch(request, "/long_press")
+
+
 async def handle_bridge_type(request: web.Request) -> web.Response:
     return await _bridge_dispatch(request, "/type")
 
 
 async def handle_bridge_swipe(request: web.Request) -> web.Response:
     return await _bridge_dispatch(request, "/swipe")
+
+
+async def handle_bridge_drag(request: web.Request) -> web.Response:
+    # Phase 3 / v0.4 bridge expansion A2: point-to-point drag with
+    # explicit duration control. Routed to the phone via the same bridge
+    # channel as /swipe — the phone's ActionExecutor.drag wraps a
+    # single-stroke GestureDescription in a wake-lock scope.
+    return await _bridge_dispatch(request, "/drag")
 
 
 async def handle_bridge_open_app(request: web.Request) -> web.Response:
@@ -1122,6 +1146,13 @@ async def handle_bridge_scroll(request: web.Request) -> web.Response:
     return await _bridge_dispatch(request, "/scroll")
 
 
+async def handle_bridge_describe_node(request: web.Request) -> web.Response:
+    # A4: forwards POST /describe_node with a `{nodeId}` body through the
+    # bridge channel. The phone resolves the ID via ScreenReader.findNodeById
+    # and returns the full property bag.
+    return await _bridge_dispatch(request, "/describe_node")
+
+
 async def handle_bridge_wait(request: web.Request) -> web.Response:
     return await _bridge_dispatch(request, "/wait")
 
@@ -1133,6 +1164,88 @@ async def handle_bridge_setup(request: web.Request) -> web.Response:
     # phones that still implement it. If the phone doesn't implement it,
     # the bridge.response will come back with a non-200 status.
     return await _bridge_dispatch(request, "/setup")
+
+
+# A6: clipboard bridge. One path, two methods — GET reads, POST writes.
+# The phone's BridgeCommandHandler dispatches on the `method` field inside
+# the bridge.command envelope, so we forward the method unchanged via the
+# existing _bridge_dispatch helper (which already carries request.method
+# through to BridgeHandler.handle_command → envelope payload).
+async def handle_bridge_clipboard(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/clipboard")
+
+
+# A7: media playback control — play/pause/toggle/next/previous via
+# system-wide ACTION_MEDIA_BUTTON broadcast on the phone side. The
+# body is forwarded verbatim; the phone validates the action string.
+async def handle_bridge_media(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/media")
+
+
+# A3: filtered accessibility-tree search — the phone's BridgeCommandHandler
+# delegates to ScreenReader.searchNodes which walks all windows and
+# filters by text/class_name/clickable, returning up to `limit` matches.
+# Body shape (all optional except limit defaulting): {text, class_name,
+# clickable, limit}.
+async def handle_bridge_find_nodes(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/find_nodes")
+
+
+# A5 — cheap change detection. /screen_hash is a GET so the tool side
+# can call it from a simple `_get(...)`; /diff_screen takes the prior
+# hash in a JSON body and is therefore POST.
+async def handle_bridge_screen_hash(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/screen_hash")
+
+
+async def handle_bridge_diff_screen(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/diff_screen")
+
+
+# B4 — raw Intent escape hatch. `/send_intent` launches an Activity via
+# `Context.startActivity` on the phone; `/broadcast` fires a broadcast
+# via `Context.sendBroadcast`. Both accept an optional `package` field
+# for blocklist gating on the phone side.
+async def handle_bridge_send_intent(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/send_intent")
+
+
+async def handle_bridge_broadcast(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/broadcast")
+
+
+# B1 event-stream: poll recent AccessibilityEvents + toggle capture.
+# Same trust model as the other bridge HTTP routes (host-gated via
+# loopback), delegated straight through to the phone's EventStore via
+# the bridge channel.
+async def handle_bridge_events_recent(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/events")
+
+
+async def handle_bridge_events_stream(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/events/stream")
+
+
+# ── Tier C routes (C1-C4) — sideload-only on the phone side ──────────────────
+#
+# The Android client gates these paths on `BuildFlavor.isSideload` and
+# returns 403 with `"sideload-only"` on googlePlay builds. The relay still
+# exposes the routes on both flavors because it's flavor-blind — the gate
+# lives on the phone.
+async def handle_bridge_location(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/location")
+
+
+async def handle_bridge_search_contacts(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/search_contacts")
+
+
+async def handle_bridge_call(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/call")
+
+
+async def handle_bridge_send_sms(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/send_sms")
 
 
 # === END PHASE3-bridge-server ===
@@ -1725,13 +1838,37 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_get("/current_app", handle_bridge_current_app)
     app.router.add_post("/tap", handle_bridge_tap)
     app.router.add_post("/tap_text", handle_bridge_tap_text)
+    app.router.add_post("/long_press", handle_bridge_long_press)
     app.router.add_post("/type", handle_bridge_type)
     app.router.add_post("/swipe", handle_bridge_swipe)
+    app.router.add_post("/drag", handle_bridge_drag)
     app.router.add_post("/open_app", handle_bridge_open_app)
     app.router.add_post("/press_key", handle_bridge_press_key)
     app.router.add_post("/scroll", handle_bridge_scroll)
+    app.router.add_post("/describe_node", handle_bridge_describe_node)  # A4
     app.router.add_post("/wait", handle_bridge_wait)
     app.router.add_post("/setup", handle_bridge_setup)
+    # A6: clipboard bridge — one path, two methods
+    app.router.add_get("/clipboard", handle_bridge_clipboard)
+    app.router.add_post("/clipboard", handle_bridge_clipboard)
+    # A7: media playback control
+    app.router.add_post("/media", handle_bridge_media)
+    # A3: filtered accessibility-tree search
+    app.router.add_post("/find_nodes", handle_bridge_find_nodes)
+    # A5: screen-hash change detection
+    app.router.add_get("/screen_hash", handle_bridge_screen_hash)
+    app.router.add_post("/diff_screen", handle_bridge_diff_screen)
+    # B4: raw Intent escape hatch
+    app.router.add_post("/send_intent", handle_bridge_send_intent)
+    app.router.add_post("/broadcast", handle_bridge_broadcast)
+    # B1: event-stream — poll + toggle AccessibilityEvent capture
+    app.router.add_get("/events", handle_bridge_events_recent)
+    app.router.add_post("/events/stream", handle_bridge_events_stream)
+    # Tier C (C1-C4): sideload-gated on the phone side
+    app.router.add_get("/location", handle_bridge_location)
+    app.router.add_post("/search_contacts", handle_bridge_search_contacts)
+    app.router.add_post("/call", handle_bridge_call)
+    app.router.add_post("/send_sms", handle_bridge_send_sms)
     # === END PHASE3-bridge-server ===
 
     # === PHASE3-status: loopback-gated structured phone status ===

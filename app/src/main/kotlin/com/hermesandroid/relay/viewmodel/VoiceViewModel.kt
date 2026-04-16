@@ -11,10 +11,12 @@ import com.hermesandroid.relay.audio.VoiceSfxPlayer
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.RelayVoiceClient
+import com.hermesandroid.relay.network.handlers.LocalDispatchResult
 import com.hermesandroid.relay.util.HumanError
 import com.hermesandroid.relay.util.classifyError
 // === PHASE3-voice-intents: voice→bridge intent routing ===
 import com.hermesandroid.relay.voice.IntentResult
+import com.hermesandroid.relay.voice.LocalBridgeDispatcher
 import com.hermesandroid.relay.voice.VoiceBridgeIntentHandler
 import com.hermesandroid.relay.voice.createVoiceBridgeIntentHandler
 // === END PHASE3-voice-intents ===
@@ -63,6 +65,30 @@ data class VoiceUiState(
     val error: String? = null,
     /** Currently-selected interaction mode. */
     val interactionMode: InteractionMode = InteractionMode.TapToTalk,
+    /**
+     * Non-null while a destructive voice intent (e.g. Send SMS) is inside the
+     * v1 5-second confirmation countdown. Set by [VoiceViewModel] from the
+     * sideload handler's `onCountdownStart` callback and cleared when the
+     * dispatch completes or the user cancels. Drives the countdown progress
+     * indicator in [com.hermesandroid.relay.ui.components.VoiceModeOverlay].
+     */
+    val destructiveCountdown: DestructiveCountdownState? = null,
+)
+
+/**
+ * Snapshot of a destructive voice intent waiting on the v1 confirmation
+ * countdown. The overlay reads [startedAtMs] + [durationMs] to drive a
+ * local progress animation; voice mode shows the human-readable
+ * [intentLabel] above the progress bar so the user knows what's about to
+ * fire.
+ */
+data class DestructiveCountdownState(
+    /** Short label of the intent, e.g. "Send SMS". */
+    val intentLabel: String,
+    /** `System.currentTimeMillis()` at the moment the countdown began. */
+    val startedAtMs: Long,
+    /** Total countdown window in milliseconds (usually 5000). */
+    val durationMs: Long,
 )
 
 /**
@@ -96,6 +122,32 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     companion object {
         private const val TAG = "VoiceViewModel"
         private const val TTS_CACHE_CAP = 6 // keep the last N mp3s on disk
+
+        /**
+         * Explicit allow-list of cancel utterances. Intentionally NOT
+         * fuzzy — ambiguous words like "yes"/"ok" must NOT terminate a
+         * pending SMS by accident. Matching: lowercase, trim, trim
+         * trailing `.!?`, then exact OR startsWith against this set.
+         *
+         * Grow the list cautiously. False negatives (user has to double-
+         * tap Cancel on the overlay) are better than false positives
+         * (a queued text disappears because the user muttered "no wait,
+         * that's right").
+         */
+        private val CANCEL_PHRASES = setOf(
+            "cancel",
+            "stop",
+            "never mind",
+            "nevermind",
+            "don't",
+            "dont",
+            "abort",
+            "no",
+            "no don't",
+            "no dont",
+            "forget it",
+            "wait",
+        )
     }
 
     // --- Dependencies (injected via initialize) --------------------------
@@ -179,11 +231,15 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         player: VoicePlayer,
         sfxPlayer: VoiceSfxPlayer,
         // === PHASE3-voice-intents: voice→bridge intent routing ===
-        // Optional so existing call sites keep compiling until they're
-        // updated to pass the WSS multiplexer. On googlePlay the param is
-        // ignored by the no-op factory; on sideload it's the channel used
-        // to emit bridge tool envelopes.
+        // Optional so existing call sites keep compiling. On googlePlay both
+        // are ignored by the no-op factory; on sideload, [localBridgeDispatcher]
+        // is the in-process entry point into BridgeCommandHandler that runs
+        // bridge actions through the same dispatch + Tier 5 safety pipeline as
+        // WSS-incoming commands but without the WSS round-trip. The
+        // [bridgeMultiplexer] is retained for non-bridge envelope use cases
+        // and for backwards-compat with the previous wiring.
         bridgeMultiplexer: ChannelMultiplexer? = null,
+        localBridgeDispatcher: LocalBridgeDispatcher? = null,
         // === END PHASE3-voice-intents ===
     ) {
         this.voiceClient = voiceClient
@@ -198,7 +254,38 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // classifier-backed handler. VoiceViewModel only ever sees the
         // interface — the concrete impl is picked at compile time by the
         // active product flavor. No runtime flavor check, no reflection.
-        voiceBridgeIntentHandler = createVoiceBridgeIntentHandler(bridgeMultiplexer)
+        //
+        // The onDispatchResult callback runs on the RealVoiceBridgeIntentHandler's
+        // own scope (Dispatchers.Default) after each dispatch completes,
+        // so it needs to route back to ChatViewModel safely. We call
+        // chatViewModel.recordVoiceIntentResult which is a plain function
+        // that updates a StateFlow — safe from any dispatcher.
+        voiceBridgeIntentHandler = createVoiceBridgeIntentHandler(
+            multiplexer = bridgeMultiplexer,
+            localBridgeDispatcher = localBridgeDispatcher,
+            onDispatchResult = { label, result ->
+                // Chat trace (markdown bubble) — pre-existing.
+                chatViewModel.recordVoiceIntentResult(label, result)
+                // Spoken follow-up so the user hears the outcome without
+                // looking at the screen. Wave-2 voice mode was visually
+                // honest but audibly silent after dispatch — Bailey hit
+                // this 2026-04-15.
+                speakDispatchResult(label, result)
+                // Countdown (if any) is over — clear the on-screen progress.
+                _uiState.update { it.copy(destructiveCountdown = null) }
+            },
+            onCountdownStart = { label, durationMs ->
+                _uiState.update {
+                    it.copy(
+                        destructiveCountdown = DestructiveCountdownState(
+                            intentLabel = label,
+                            startedAtMs = System.currentTimeMillis(),
+                            durationMs = durationMs,
+                        ),
+                    )
+                }
+            },
+        )
         // === END PHASE3-voice-intents ===
 
         startTtsConsumer()
@@ -237,6 +324,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         lastObservedMessageId = null
         lastObservedContentLength = 0
 
+        // Also abort any destructive countdown — leaving voice mode with a
+        // queued SMS would execute the action after the overlay closed,
+        // which is exactly the surprise we're trying to prevent.
+        voiceBridgeIntentHandler?.cancelPending()
         _uiState.update {
             it.copy(
                 voiceMode = false,
@@ -245,6 +336,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 transcribedText = null,
                 responseText = "",
                 error = null,
+                destructiveCountdown = null,
             )
         }
     }
@@ -353,6 +445,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun cancelPendingBridgeIntent() {
         voiceBridgeIntentHandler?.cancelPending()
+        // Clear the countdown indicator regardless of state — if the user
+        // tapped Cancel while the countdown was still inside Thinking (the
+        // classifier just returned Handled and the preview hasn't finished
+        // speaking yet) we still need to pull the progress bar down.
+        _uiState.update { it.copy(destructiveCountdown = null) }
         if (_uiState.value.state == VoiceState.Speaking) {
             _uiState.update { it.copy(state = VoiceState.Idle, responseText = "Cancelled.") }
         }
@@ -463,11 +560,60 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // time constant exists we should still short-circuit here for
         // clarity, but today the factory already does the right thing.
         val bridgeHandler = voiceBridgeIntentHandler
+
+        // === PHASE3-voice-cancel-midcountdown ===
+        // Voice-in-voice cancel: if a destructive action is currently
+        // waiting on its 5 s confirmation window and the user just said
+        // one of the cancel phrases, intercept BEFORE the classifier.
+        // Without this, "cancel" falls through to the SMS classifier
+        // (no match), then chat (LLM fall-through) and the queued SMS
+        // fires anyway. We intentionally use an explicit allow-list
+        // instead of fuzzy matching — "yes"/"ok" during the countdown
+        // should NOT cancel, they should fall through to normal routing.
+        if (bridgeHandler != null && bridgeHandler.hasPendingDestructive() &&
+            isCancelUtterance(userText)
+        ) {
+            Log.i(TAG, "cancel-mid-countdown: intercepted '$userText'")
+            bridgeHandler.cancelPending()
+            // Speak a short "Cancelled." and return to idle. Reuse the
+            // same sentence-buffer path as speakDispatchResult so the
+            // existing TTS queue picks it up in order.
+            sentenceBuffer = StringBuilder("Cancelled.")
+            _uiState.update {
+                it.copy(
+                    state = VoiceState.Speaking,
+                    responseText = "Cancelled.",
+                    destructiveCountdown = null,
+                )
+            }
+            flushRemainingBuffer()
+            return
+        }
+        // === END PHASE3-voice-cancel-midcountdown ===
+
         if (bridgeHandler != null) {
             try {
                 val result = bridgeHandler.tryHandle(userText)
                 if (result is IntentResult.Handled) {
                     Log.i(TAG, "voice intent handled by bridge: ${result.intentLabel}")
+
+                    // === PHASE3-voice-intents-chathistory ===
+                    // Append a local-only trace to chat history so the user
+                    // sees a record of what they said and what was done. Pre-
+                    // v0.4.0 the voice intent path returned silently here and
+                    // the chat scroll had zero record of voice utterances —
+                    // making follow-up questions feel like the chat had
+                    // "reset". The trace is local-only (does NOT reach the
+                    // server-side session) so the gateway-side LLM still won't
+                    // see prior voice actions in its session memory; that's a
+                    // v0.4.1 follow-up tracked in ROADMAP.md.
+                    val actionDescription = formatVoiceIntentTrace(result)
+                    chatVm.recordVoiceIntent(
+                        userText = userText,
+                        actionDescription = actionDescription,
+                    )
+                    // === END PHASE3-voice-intents-chathistory ===
+
                     // Speak the confirmation if one was provided, otherwise
                     // just flip state so the UI shows the recognized intent
                     // and the turn ends without spinning up chat SSE.
@@ -496,6 +642,24 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         // === END PHASE3-voice-intents ===
+
+        // === PHASE3-voice-intents-fallback-visibility ===
+        // Classifier returned NotApplicable — we're about to fall through
+        // to chatVm.sendMessage(). The SSE stream takes 500–1500 ms to
+        // open and start emitting deltas, during which the voice UI would
+        // sit in Idle showing nothing new. Users interpret that as "the
+        // utterance was dropped." Flip to Thinking immediately so the
+        // empty-state hint shows "Thinking..." until tokens arrive and
+        // the stream observer takes over. Also pin the transcribed text
+        // so the user can see what we heard while we wait.
+        _uiState.update {
+            it.copy(
+                state = VoiceState.Thinking,
+                transcribedText = userText,
+                responseText = "",
+            )
+        }
+        // === END PHASE3-voice-intents-fallback-visibility ===
 
         // Reset sentence buffering state for the new turn.
         sentenceBuffer = StringBuilder()
@@ -804,6 +968,250 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         ttsConsumerJob?.cancel()
         amplitudeBridgeJob?.cancel()
         currentTurnJob?.cancel()
+    }
+
+    /**
+     * Speak a short follow-up line summarizing the real outcome of a voice
+     * intent dispatch. Fires from the `onDispatchResult` callback after the
+     * 5 s countdown + safety modal resolve, so the user hears "Text sent."
+     * or "Cancelled." without needing to look at the screen. Categories
+     * mirror [com.hermesandroid.relay.viewmodel.ChatViewModel.formatVoiceIntentResult]
+     * so the spoken and visual traces agree.
+     *
+     * Spoken strings are kept **short** on purpose — TTS feels slow when it
+     * reads full sentences, and voice mode is already a low-latency surface.
+     * The message funnels through the existing sentence-buffer → [ttsQueue]
+     * pipeline so it plays back-to-back with any in-flight synthesized
+     * audio instead of racing the player.
+     */
+    private fun speakDispatchResult(label: String, result: LocalDispatchResult) {
+        val spoken = buildDispatchResultSpoken(label, result)
+        if (spoken.isBlank()) return
+        // Use the same sentence-buffer / flush path the classifier uses for
+        // the pre-dispatch preview. This keeps the queue ordered and reuses
+        // the visible responseText Speaking state update.
+        sentenceBuffer = StringBuilder(spoken)
+        _uiState.update {
+            it.copy(state = VoiceState.Speaking, responseText = spoken)
+        }
+        flushRemainingBuffer()
+    }
+
+    /**
+     * Map a [LocalDispatchResult] into a short spoken sentence. Public-ish
+     * (internal) so unit tests in the test source set can assert the
+     * category mapping without having to spin up a full VoiceViewModel.
+     *
+     * Any markdown syntax is stripped — TTS should not read `**` aloud.
+     */
+    internal fun buildDispatchResultSpoken(
+        label: String,
+        result: LocalDispatchResult,
+    ): String {
+        val base = when {
+            result.isSuccess -> when (label) {
+                "Send SMS" -> "Text sent."
+                "Open App" -> "App opened."
+                "Tap" -> "Tapped."
+                "Navigate back" -> "Done."
+                "Home" -> "Done."
+                else -> "Done."
+            }
+            result.errorCode == "user_denied" -> "Cancelled."
+            result.errorCode == "bridge_disabled" ->
+                "Agent control is off. Enable it in the Bridge tab to retry."
+            result.errorCode == "permission_denied" -> {
+                val hint = firstClause(result.errorMessage)
+                if (hint.isNullOrBlank()) "Permission needed."
+                else "Permission needed. $hint"
+            }
+            result.errorCode == "service_unavailable" -> "Bridge is offline."
+            result.errorCode == "cancelled" -> "Cancelled before dispatch."
+            else -> {
+                val hint = firstClause(result.errorMessage)
+                if (hint.isNullOrBlank()) "Action failed."
+                else "Action failed. $hint"
+            }
+        }
+        return stripMarkdown(base)
+    }
+
+    /**
+     * Return the first clause of [raw] (up to the first `.`, `!`, `?`, or
+     * newline) so spoken errors stay terse. Returns null for null input or
+     * a blank result.
+     */
+    private fun firstClause(raw: String?): String? {
+        if (raw == null) return null
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return null
+        val idx = trimmed.indexOfAny(charArrayOf('.', '!', '?', '\n'))
+        val clause = if (idx < 0) trimmed else trimmed.substring(0, idx)
+        return clause.trim().ifBlank { null }
+    }
+
+    /**
+     * Test whether [rawText] is an explicit cancel utterance — one of the
+     * vocabulary entries in [CANCEL_PHRASES], matched case-insensitively
+     * after trimming trailing punctuation. Exact match OR a startsWith
+     * against any phrase wins ("cancel please" still cancels; "cancel
+     * your plans for dinner" also cancels — that's fine, the user said
+     * cancel). Ambiguous words like "yes"/"ok" do not appear in the list
+     * on purpose so those fall through to normal routing.
+     *
+     * Exposed as `internal` so unit tests can assert the vocabulary
+     * without going through the full VoiceViewModel dispatch path.
+     */
+    internal fun isCancelUtterance(rawText: String): Boolean {
+        val normalized = rawText.lowercase().trim().trimEnd('.', '!', '?')
+        if (normalized.isEmpty()) return false
+        if (normalized in CANCEL_PHRASES) return true
+        return CANCEL_PHRASES.any { phrase ->
+            normalized == phrase || normalized.startsWith("$phrase ")
+        }
+    }
+
+    /**
+     * Strip the subset of markdown we actually emit in voice traces —
+     * bold (`**text**`), inline code (`` `text` ``), and stray backticks.
+     * TTS engines read `**` and `` ` `` literally, which derails the
+     * spoken follow-up.
+     */
+    private fun stripMarkdown(text: String): String =
+        text.replace("**", "")
+            .replace("`", "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+    /**
+     * Render a voice-intent trace for the chat scroll. Uses the structured
+     * [IntentResult.Handled.details] map to produce a richer message than the
+     * pre-v0.4.0 formatter, which could only say "Open App — done" and left
+     * the user wondering *which* app actually launched (see the 2026-04-15
+     * "open Chrome → opens Google app" report).
+     *
+     * Output is markdown so the existing chat bubble renderer picks up bold
+     * labels and inline `code` for package names. Format differs per intent:
+     *
+     *  - `Open App` success → **Opened Chrome**\n`com.android.chrome` — exact match
+     *  - `Open App` failure → **Open App** — I couldn't find an app called 'foo'
+     *  - `Send SMS` awaiting confirmation → **Send SMS — awaiting confirmation**
+     *    \nTo: Hannah (+1555...)\nBody: smoke test
+     *  - Safe intents without details → bare label
+     */
+    private fun formatVoiceIntentTrace(result: IntentResult.Handled): String {
+        val d = result.details
+        val errorCode = d["error"]
+        return when (result.intentLabel) {
+            "Open App" -> {
+                val label = d["appLabel"]
+                val pkg = d["packageName"]
+                val tier = d["matchTier"]
+                val requested = d["requestedName"]
+                when {
+                    label != null && pkg != null -> buildString {
+                        append("**Opened ")
+                        append(label)
+                        append("**")
+                        append('\n')
+                        append('`')
+                        append(pkg)
+                        append('`')
+                        if (tier != null) {
+                            append(" — ")
+                            append(tier)
+                            append(" match")
+                        }
+                    }
+                    errorCode == "app_not_found" -> buildString {
+                        append("**Open App**")
+                        append('\n')
+                        append("Couldn't find an app called '")
+                        append(requested ?: "?")
+                        append("'.")
+                    }
+                    errorCode == "service_missing" -> buildString {
+                        append("**Open App — bridge offline**")
+                        append('\n')
+                        append("Enable Hermes accessibility in Settings to open apps by voice.")
+                    }
+                    errorCode == "other_error" -> buildString {
+                        append("**Open App — error**")
+                        append('\n')
+                        append(d["errorMessage"] ?: "unknown error")
+                    }
+                    else -> "**Open App** — done"
+                }
+            }
+            "Send SMS" -> {
+                val contact = d["contact"]
+                val number = d["resolvedNumber"]
+                val body = d["body"]
+                when {
+                    number != null -> buildString {
+                        append("**Send SMS — awaiting confirmation**")
+                        append('\n')
+                        append("To: ")
+                        append(contact ?: "?")
+                        append(" (")
+                        append(number)
+                        append(')')
+                        if (body != null) {
+                            append('\n')
+                            append("Body: ")
+                            append(body)
+                        }
+                    }
+                    errorCode == "permission_missing_sms" -> buildString {
+                        append("**Send SMS — permission needed**")
+                        append('\n')
+                        append("Grant SMS permission in Settings › Apps › Hermes Relay › Permissions.")
+                    }
+                    errorCode == "permission_missing_contacts" -> buildString {
+                        append("**Send SMS — permission needed**")
+                        append('\n')
+                        append("Grant Contacts permission to look up '")
+                        append(contact ?: "?")
+                        append("' in Settings › Apps › Hermes Relay › Permissions.")
+                    }
+                    errorCode == "service_missing" -> buildString {
+                        append("**Send SMS — bridge offline**")
+                        append('\n')
+                        append("Enable Hermes accessibility in Settings first.")
+                    }
+                    errorCode == "contact_not_found" -> buildString {
+                        append("**Send SMS**")
+                        append('\n')
+                        append("Couldn't find a contact called '")
+                        append(contact ?: "?")
+                        append("'.")
+                    }
+                    errorCode == "contact_no_phone" -> buildString {
+                        append("**Send SMS**")
+                        append('\n')
+                        append(contact ?: "Contact")
+                        append(" has no phone number on file.")
+                    }
+                    errorCode == "other_error" -> buildString {
+                        append("**Send SMS — error**")
+                        append('\n')
+                        append(d["errorMessage"] ?: "unknown error")
+                    }
+                    else -> "**Send SMS** — dispatched"
+                }
+            }
+            else -> buildString {
+                append("**")
+                append(result.intentLabel)
+                append("**")
+                if (result.spokenConfirmation != null) {
+                    append(" — ")
+                    append(result.spokenConfirmation)
+                } else {
+                    append(" — done")
+                }
+            }
+        }
     }
 
 }

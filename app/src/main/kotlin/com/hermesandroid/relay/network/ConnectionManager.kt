@@ -204,10 +204,12 @@ class ConnectionManager(
             .url(url)
             .build()
 
+        Log.i(TAG, "doConnect: opening WSS to $url")
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 reconnectAttempt = 0
                 _connectionState.value = ConnectionState.Connected
+                Log.i(TAG, "onOpen: WSS handshake complete ($url)")
 
                 // TOFU: record the peer cert fingerprint if we don't have one
                 // yet. OkHttp populates response.handshake when the connection
@@ -239,17 +241,19 @@ class ConnectionManager(
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                Log.i(TAG, "onClosing: code=$code reason=$reason")
                 webSocket.close(code, reason)
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                Log.i(TAG, "onClosed: code=$code reason=$reason")
                 _connectionState.value = ConnectionState.Disconnected
                 scheduleReconnect()
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                Log.w(TAG, "onFailure: ${t.javaClass.simpleName}: ${t.message} (responseCode=${response?.code})")
                 _connectionState.value = ConnectionState.Disconnected
-                t.printStackTrace()
                 scheduleReconnect()
             }
         })

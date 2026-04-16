@@ -6,16 +6,113 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-14
+
+### Added — Bridge feature expansion (the big one)
+
+v0.4 roughly triples the bridge surface. The agent can now do everything
+v0.3 could do, plus long-press, drag, full clipboard access, system-wide
+media control, raw Android Intents, an accessibility-event stream, app
+launching, app listing, multi-window screen reads, filtered node search,
+screen-hash change detection, stable per-node IDs, three-tier
+`tap_text` fallback, a batched macro dispatcher, wake-lock-guarded
+gesture dispatch, and a per-app skill playbook for common flows. The
+sideload track additionally ships direct SMS, contact lookup, one-tap
+dialing, and location awareness.
+
+**Read surface**
+
+- **`/long_press`** (A1) — long-press gesture by coordinate or node ID,
+  covering context menus, text selection, and widget rearranging
+- **`/drag`** (A2) — drag gesture from point A → point B over a
+  configurable duration
+- **`/find_nodes`** (A3) — filtered accessibility-tree search (text,
+  clickable flag, class name, resource ID) instead of returning the
+  whole tree
+- **`/describe_node`** (A4) — full property bag for a stable node ID,
+  plus `nodeId` wiring for `/tap` and `/scroll` so the agent can hand
+  IDs forward without re-resolving coordinates
+- **`/screen_hash`** + **`/diff_screen`** (A5) — cheap SHA-256 screen
+  fingerprint and diff tools for "wait until this screen changes"
+  loops without re-downloading the full accessibility tree
+- **`/events`** + **`/events/stream`** (B1) — accessibility-event
+  stream. In-memory `EventStore` buffers recent `AccessibilityEvent`
+  objects so the agent can poll for UI events or wait for a specific
+  trigger instead of hammering `/screen`. Toggle capture on/off via
+  `/events/stream`.
+- **Multi-window `ScreenReader`** (P1) — `/screen` now walks every
+  accessibility window (system UI, popups, notification shade) instead
+  of only the active app's window
+
+**Act surface**
+
+- **`/clipboard`** (A6) — bidirectional system clipboard read/write
+- **`/media`** (A7) — system-wide playback control (play, pause, next,
+  previous, volume) via `MediaSessionManager`
+- **`/send_intent`** + **`/broadcast`** (B4) — raw Android Intent /
+  broadcast escape hatch for apps that expose deep-link actions
+- **Three-tier `tap_text` cascade** (A9) — exact match → clickable
+  ancestor walk → substring fallback, fixes apps that wrap labels in
+  non-clickable parents
+- **`android_macro`** (A10) — batched workflow dispatcher runs a
+  sequence of bridge commands as one call with configurable pacing,
+  no round-trip per step
+- **`WakeLockManager`** (A8) — `PARTIAL_WAKE_LOCK` scope wrapper around
+  gesture dispatch so commands still land on dim or idle screens.
+  Scoped try/finally semantics, never a stale hold.
+
+**Tier C — sideload-only phone utilities**
+
+- **`/location`** (C1) — GPS last-known-location read for "where am
+  I?" and location-scoped commands
+- **`/search_contacts`** (C2) — contact lookup by name → phone number
+  for voice intents like "text Mom"
+- **`/call`** (C3) — direct call via `ACTION_CALL`, with an
+  `ACTION_DIAL` fallback where the flavor can't hold `CALL_PHONE`
+- **`/send_sms`** (C4) — direct SMS send via `SmsManager` with
+  send-result confirmation (no dialer bounce)
+
+**Docs + skills**
+
+- **`skills/android/SKILL.md`** (A11) — per-app playbook with reusable
+  flows for common apps, agent-discoverable via the Hermes skills
+  system
+- **`docs/spec.md` + `docs/decisions.md`** — v0.4 bridge surface
+  documented, Phase 3 status marked shipped, 15-item spec rot pass
+
+### Fixed
+
+- **Missing Kotlin handlers for `/open_app`, `/get_apps`, `/apps`,
+  and `/setup`** — latent v0.3.0 regression. The Python relay side had
+  the routes and the plugin tools were calling them, but the in-app
+  `BridgeCommandHandler` had never wired the corresponding `when (path)
+  ->` branches. Commands silent-dropped until this release.
+- **Android 11+ package visibility for `/get_apps`** — added a
+  `<queries>` element to the main manifest so
+  `PackageManager.queryIntentActivities(ACTION_MAIN + CATEGORY_LAUNCHER)`
+  returns the full launchable app list. Without this, the tool returned
+  an empty list on modern Android targets.
+
+### Docs
+
+- **`user-docs` expansion** — added the full 27-route bridge HTTP
+  inventory to `reference/relay-server.md`, rewrote
+  `architecture/security.md` around the five-stage safety gate + Tier 5
+  rails, added ADR-9 through ADR-13 (bridge safety gate, wake-scope,
+  event stream, MediaProjection FGS type, build flavors), and retired
+  all remaining "Bridge :8766" references now that the bridge is
+  unified on `:8767`.
+
 ## [0.3.0] - 2026-04-13
 
 ### Added
 
-**Phase 3 — Bridge channel (the big one)** — the agent can now read the
-phone's screen, tap, type, swipe, and take screenshots. Gated behind a
+**Bridge channel (the big one)** — the agent can now read the phone's
+screen, tap, type, swipe, and take screenshots. Gated behind a
 deliberate in-app master toggle, per-channel session grants, Android
-Accessibility Service permission, MediaProjection consent, and Tier 5
-safety rails (blocklist, destructive-verb confirmation modal, idle
-auto-disable timer, optional persistent status overlay).
+Accessibility Service permission, MediaProjection consent, and the
+safety rails system (blocklist, destructive-verb confirmation modal,
+idle auto-disable timer, optional persistent status overlay).
 
 - **`HermesAccessibilityService`** — Android `AccessibilityService`
   subclass that reads the active window's UI tree, dispatches taps /
@@ -24,7 +121,7 @@ auto-disable timer, optional persistent status overlay).
 - **`ScreenCapture.kt`** — `MediaProjection` → `VirtualDisplay` →
   `ImageReader` → PNG bytes, uploaded to the relay via `/media/upload`
 - **`BridgeCommandHandler`** — routes inbound `bridge.command` envelopes
-  to the executor, with the three-stage Tier 5 safety check
+  to the executor, with the three-stage safety check
   (blocklist → destructive-verb confirmation → auto-disable reschedule)
 - **`BridgeSafetyManager`** — process-wide safety enforcement singleton
   with DataStore-backed blocklist (30 default banking/payments/2FA
@@ -41,7 +138,7 @@ auto-disable timer, optional persistent status overlay).
 - **Bridge Safety settings screen** — blocklist editor (searchable
   package picker), destructive verb editor, auto-disable timer slider,
   status overlay toggle, confirmation timeout slider
-- **14 `android_*` plugin tools** routed through the new unified bridge
+- **18 `android_*` plugin tools** routed through the new unified bridge (14 baseline + send_sms, call, search_contacts, return_to_hermes added in v0.4.0)
   channel (migrated from the legacy standalone `android_relay.py`)
 - **`android_navigate`** — vision-driven close-the-loop navigation tool
   (sideload track only)
@@ -60,7 +157,7 @@ auto-disable timer, optional persistent status overlay).
   info, Test Voice)
 - New relay endpoints — `POST /voice/transcribe`, `POST /voice/synthesize`,
   `GET /voice/config`
-- **Voice-to-bridge intent routing** (sideload track only, Tier 3) —
+- **Voice-to-bridge intent routing** (sideload track only) —
   spoken commands like "text Mom saying on my way" route to the bridge
   channel instead of the chat channel, with destructive-verb
   confirmation flow
@@ -108,7 +205,7 @@ badges showed stale Connected/Disconnected for 30s after foregrounding.
 
 **Two build flavors** — `googlePlay` (Play Store track, conservative
 Accessibility use case) and `sideload` (`.sideload` applicationId
-suffix, full Phase 3 tiers including voice-to-bridge and
+suffix, full feature set including voice-to-bridge intents and
 `android_navigate`). `sideload` shows as "Hermes Dev" in the launcher
 for side-by-side disambiguation.
 
@@ -210,7 +307,7 @@ picker.
   - Voice messages appear as normal chat messages in session history
 - **Reactive layered-sine waveform** — three overlapping waves with amplitude-driven phase velocity (`withFrameNanos` ticker), pill-shaped edge merge (geometric `sin(πt)` taper + `BlendMode.DstIn` gradient mask), color-keyed to voice state
 - **Enter/exit voice chimes** — synthesized 200ms PCM sweeps via AudioTrack (440→660 Hz enter, mirror exit)
-- **Terminal (Phase 2)** — tmux-backed persistent shells with tabs, scrollback search, and session info sheet
+- **Terminal (preview)** — tmux-backed persistent shells with tabs, scrollback search, and session info sheet
 - **Session TTL picker** — choose 1d / 7d / 30d / 90d / 1y / Never at pair time
 - **Per-channel grants** — control terminal/bridge access per paired device
 - **Android Keystore token storage** — StrongBox-preferred hardware-backed encrypted storage with TEE fallback

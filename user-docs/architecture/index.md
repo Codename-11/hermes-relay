@@ -10,7 +10,10 @@ The app maintains two independent connection paths — direct HTTP/SSE for chat,
 |------|----------|--------|---------|
 | Chat | HTTP/SSE | API Server `:8642` | Streaming conversations via Sessions API |
 | Terminal | WSS | Relay Server `:8767` | Remote shell via tmux (Phase 2) |
-| Bridge | WSS | Bridge Relay `:8766` | Device control via AccessibilityService (Phase 3) |
+| Bridge | WSS | Relay Server `:8767` | Device control via AccessibilityService + MediaProjection (Phase 3) |
+| Notifications | WSS | Relay Server `:8767` | `NotificationListenerService` forwards posted notifications over a bounded channel |
+
+The bridge channel was consolidated onto the unified relay port `:8767` in v0.3 — the legacy standalone `android_relay.py` service on port 8766 is retired.
 
 ## Key Components
 
@@ -69,10 +72,10 @@ Pairing codes use the full `A-Z / 0-9` alphabet (36 chars). The pair command (`/
 
 ## Direct API vs Relay
 
-| Aspect | Direct API (Chat) | Relay (Bridge/Terminal) |
+| Aspect | Direct API (Chat) | Relay (Bridge/Terminal/Notifications) |
 |--------|-------------------|------------------------|
 | Protocol | HTTP/SSE | WSS |
 | Connection | Per-request | Persistent |
 | Auth | Bearer token (optional) | Pairing code + session token |
-| Server | Hermes API `:8642` | Relay `:8767` / Bridge `:8766` |
+| Server | Hermes API `:8642` | Unified Relay `:8767` |
 | State | Stateless | Channel-multiplexed |

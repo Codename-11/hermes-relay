@@ -82,7 +82,7 @@ The app supports two streaming endpoints, selectable in Settings:
 
 **Important upstream note:** The `/api/sessions` CRUD endpoints are not in vanilla upstream hermes-agent. They are provided by one of three mechanisms:
 
-1. The Codename-11 fork (`feat/api-server-enhancements` branch, deployed on the `axiom` deploy branch). Submitted upstream as PR [#8556](https://github.com/NousResearch/hermes-agent/pull/8556).
+1. The Codename-11 fork (`feat/session-api` branch — also carried on the `axiom` deploy branch). Submitted upstream as PR [#8556](https://github.com/NousResearch/hermes-agent/pull/8556) *"feat(api-server): add session management API for frontend clients"*. The PR's scope is broader than its title — it covers sessions CRUD, session chat/stream, memory, skills, config, and available-models, which is the full surface the bootstrap currently injects.
 2. **Bootstrap injection** — `hermes_relay_bootstrap/` ships with the plugin and runs at Python interpreter startup (via a `.pth` file in the venv site-packages). It monkey-patches `aiohttp.web.Application` to add the management endpoints to upstream's `APIServerAdapter` at the moment it builds its app. See ADR 8 below.
 3. Once PR #8556 merges, upstream-merged. The bootstrap detects this and no-ops.
 
@@ -484,7 +484,7 @@ Adopting from ARC's workflow patterns:
 
 ### 16. Runtime API Server Patch via .pth Bootstrap (2026-04-12)
 
-**Context:** The Codename-11 fork of hermes-agent (`feat/api-server-enhancements` branch) adds ~14 management endpoints — `/api/sessions/*` CRUD, `/api/memory`, `/api/skills`, `/api/config`, `/api/available-models` — that the Android app depends on for its sessions browser, personality picker, command palette, and history-on-restart. These are submitted upstream as PR [#8556](https://github.com/NousResearch/hermes-agent/pull/8556) but not yet merged. Until then, users running vanilla upstream hermes-agent + our plugin would lose these features and see a blank chat window when reopening the app to a previous session.
+**Context:** The Codename-11 fork of hermes-agent (`feat/session-api` branch, submitted as PR #8556) adds ~14 management endpoints — `/api/sessions/*` CRUD, `/api/memory`, `/api/skills`, `/api/config`, `/api/available-models` — that the Android app depends on for its sessions browser, personality picker, command palette, and history-on-restart. These are submitted upstream as PR [#8556](https://github.com/NousResearch/hermes-agent/pull/8556) *"feat(api-server): add session management API for frontend clients"* but not yet merged. Until then, users running vanilla upstream hermes-agent + our plugin would lose these features and see a blank chat window when reopening the app to a previous session.
 
 We considered four options:
 - **A. Stay fork-only.** Reject vanilla upstream users until PR #8556 lands. Penalises onboarding.
@@ -524,6 +524,58 @@ We considered four options:
 3. Remove the `.pth` drop block from `install.sh` step 2
 4. Update CLAUDE.md to drop the bootstrap reference
 5. The Android client `probeCapabilities()` and `streamingEndpoint = "auto"` plumbing stays — it's permanent infrastructure that handles mixed-version deployments.
+
+---
+
+### 17. Wake-lock wrapping for gesture dispatch + multi-window ScreenReader + three-tier tapText cascade (2026-04-13)
+
+**Context:** While scoping the v0.4 bridge feature expansion (see `docs/plans/2026-04-13-bridge-feature-expansion.md`), three reliability gaps in the existing Phase 3 `ActionExecutor` / `ScreenReader` surfaced as hard prerequisites before any of the ten Tier A tools were worth adding:
+
+1. **Gestures silently fail when the phone screen is off.** `ActionExecutor.tap` / `swipe` / `typeText` all dispatch into `GestureDescription` via the accessibility service. When the screen is off the gesture completes cleanly at the framework level — `GestureResultCallback.onCompleted` fires — but nothing actually happens on-device. The agent thinks the tap landed and proceeds with the next step. Biting Bailey repeatedly during `android_navigate` loops that sat idle between iterations.
+2. **`ScreenReader` misses every overlay, popup menu, notification shade, and split-screen secondary window.** The existing implementation calls `service.rootInActiveWindow` and walks a single tree. Android exposes all visible windows via `AccessibilityService.windows`; system overlays and popup menus live in separate windows from the foreground activity. Any agent flow that needed to see a popup dialog (date pickers, confirmation dialogs, context menus, notification shade content) hit a blank tree.
+3. **`ActionExecutor.tapText` fails on clickable text inside non-clickable wrappers.** The single-shot implementation finds a text node via `findNodeBoundsByText` and calls `performAction(ACTION_CLICK)` on that node. Real-world Android apps (Uber, Spotify, Instagram, Tinder — verified by comparison-passing raulvidis/hermes-android against a matrix of target apps) wrap clickable content in non-clickable `TextView`/`ImageView` ancestors. `ACTION_CLICK` on the text node itself is a no-op. The fallback approach is to walk up the parent chain to the nearest clickable ancestor, and if nothing clickable is found, fall back to a coordinate tap at the node's bounds center.
+
+**Decision:** Adopt all three patterns before shipping the v0.4 tool surface. They're applied to the existing Phase 3 code so every new Tier A/B/C tool inherits them for free.
+
+**Pattern 1 — `WakeLockManager.wakeForAction` (A8).** New `object WakeLockManager` at `app/src/main/kotlin/com/hermesandroid/relay/power/WakeLockManager.kt`. Exposes `suspend fun <T> wakeForAction(block: suspend () -> T): T`. Uses `PowerManager.PARTIAL_WAKE_LOCK` (the non-deprecated modern successor to `SCREEN_BRIGHT_WAKE_LOCK`), with:
+- **Ref counting.** A private `lockCount: Int` tracks concurrent scopes; the underlying `WakeLock.release()` only fires when the count hits zero. Nested calls don't release each other prematurely.
+- **Hard 10-second timeout.** Passed to `newWakeLock().acquire(timeoutMillis = 10_000)` as a battery safety rail. Long-held wake locks are a notorious source of drain bugs; 10s is longer than any single gesture needs and far shorter than any plausible leak window.
+- **Try/finally release.** The `wakeForAction` body is wrapped in `try { block() } finally { release() }` so exceptions thrown from inside the action still release the lock.
+
+`ActionExecutor.tap` / `tapText` / `typeText` / `swipe` / `scroll` / `longPress` / `drag` (the last two new in v0.4) are wrapped in `WakeLockManager.wakeForAction { ... }`. **Read-only calls are deliberately NOT wrapped** — `readScreen`, `findNodes`, `describeNode`, `screenHash`, `diffScreen`, `currentApp`, `clipboardRead/Write`, `mediaControl`. These don't need the screen on; wrapping them would waste battery and add latency to polls. Requires `android.permission.WAKE_LOCK` in `app/src/main/AndroidManifest.xml`.
+
+**Pattern 2 — Multi-window `ScreenReader` (P1).** Change `ScreenReader.readCurrentScreen` (and any helper using `rootInActiveWindow`) to iterate `service.windows.mapNotNull { it.root }` and walk each per-window tree. The node-ID scheme is updated to prefix every stable ID with `w<windowIndex>:` so IDs remain unique across the merged output (`w0:42` for the main activity, `w1:7` for a popup menu). Per-iteration `try/finally` blocks recycle each `AccessibilityNodeInfo` as the walker descends — `.parent` and `.getChild(i)` both return fresh instances that leak if not recycled. A single-window fallback kicks in when `service.windows` is empty, which happens on the googlePlay flavor without `flagRetrieveInteractiveWindows` (the conservative accessibility config required by Play Store policy review).
+
+**Pattern 3 — Three-tier `tapText` cascade (A9).** Rewrite `ActionExecutor.tapText`:
+1. Find node by text across all windows (benefits from P1). If `node.isClickable` → `performAction(ACTION_CLICK)`. Return `ActionResult(ok=true, data="direct")`.
+2. Otherwise walk up the parent chain, capped at 8 levels, looking for a clickable ancestor. Each `.parent` call returns a fresh node that must be recycled before the loop reassigns. If any ancestor is clickable → `performAction(ACTION_CLICK)` on it. Return `ActionResult(ok=true, data="parent")`.
+3. Otherwise capture the original node's `getBoundsInScreen()` center *before* recycling, and fall back to coordinate `tap(cx, cy)` via the existing gesture path (which itself runs under `WakeLockManager.wakeForAction`). Return `ActionResult(ok=true, data="coords")`.
+
+The `data` field tells the activity log and agent trace which tier succeeded, which is actually useful debugging info when a tap lands unexpectedly.
+
+**Consequences:**
+
+- **Wake-lock reliability:** closes the idle-screen silent-failure class of bugs for every gesture-dispatching tool, present and future. Adds minimum complexity per action (one `wakeForAction { ... }` wrapper call). The battery cost is tightly bounded by the 10s timeout and the PARTIAL lock level.
+- **Multi-window visibility:** accessibility tree size grows modestly (typical overhead: 1–3 extra windows at ~20 nodes each — the notification shade and system UI). `MAX_NODES=512` cap in `ScreenReader` absorbs it. The node-ID prefix change is a breaking change to the ID format, but IDs are opaque and session-local — agents pass them back within a single turn, never persist them, so the breakage is invisible to callers.
+- **tapText success rate:** validated against raulvidis's target-app matrix (Uber, Spotify, Instagram, Tinder, Maps, Settings). Direct-click path still wins on well-structured accessibility trees (Google Maps, Android Settings). Parent-walk catches the ~60% of cases where the clickable wrapper is within 1–2 levels of the text node. Coordinate fallback is the last-resort and backs ~10% of cases on the hardest apps.
+- **`android_navigate` throughput:** Pattern 1 + Pattern 3 together eliminate the two biggest "tap fails for no obvious reason" failure modes inside the vision-driven navigate loop. Combined with A5 `android_screen_hash` as a cheap change-detection primitive (covered in the tool surface but not a pattern ADR), navigate iterations get faster and more reliable without changing the vision-model integration.
+- **Test coverage:** Pattern 1 is tested implicitly via the existing `ActionExecutor` tests — the wake-lock wrap is transparent to the gesture completion path. Pattern 2 adds multi-window fixtures to `ScreenReader` tests where available; the single-window fallback path ensures the unit tests that use the old fixture shape still pass. Pattern 3 is hard to unit-test cleanly (accessibility node traversal is not easy to mock) so it's primarily verified via instrumentation tests on a real device.
+
+**Alternatives rejected:**
+
+- **`SCREEN_BRIGHT_WAKE_LOCK` instead of `PARTIAL_WAKE_LOCK`.** Deprecated since API 17. The agent doesn't need the screen visible — it just needs the input path warm. `PARTIAL_WAKE_LOCK` is the modern, non-deprecated choice.
+- **Single-root with window enumeration as a fallback.** Leaks overlays when the overlay is the primary point of interaction (e.g. a full-screen dialog). Iterating all windows up-front is simpler and the overhead is bounded.
+- **Only walk the parent chain, no coordinate fallback.** Fails on the ~10% of apps where nothing in the chain is clickable but the bounds are valid. Coordinate tap is the last-ditch option and is cheap to try.
+- **Wake-lock the entire bridge command handler.** Over-broad — every `android_screen` call would grab the lock. Scope it to the gesture path only.
+
+**References:**
+
+- `app/src/main/kotlin/com/hermesandroid/relay/power/WakeLockManager.kt` (new in v0.4)
+- `app/src/main/kotlin/com/hermesandroid/relay/accessibility/ActionExecutor.kt` — `tap` / `tapText` / `typeText` / `swipe` / `scroll` / `longPress` / `drag` wrapped in `wakeForAction`, `tapText` cascade implementation
+- `app/src/main/kotlin/com/hermesandroid/relay/accessibility/ScreenReader.kt` — `service.windows` iteration, `w<windowIndex>:<sequentialIndex>` node-ID scheme
+- `app/src/main/kotlin/com/hermesandroid/relay/accessibility/ScreenHasher.kt` (new in v0.4 — SHA-256 content fingerprint primitive, covered in `docs/spec.md` §6.4.2 but not a separate ADR since it's additive rather than a cross-cutting pattern)
+- `docs/plans/2026-04-13-bridge-feature-expansion.md` — A8, A9, P1 units
+- `docs/spec.md` §6.4.2 — architectural-patterns subsection
 
 ---
 

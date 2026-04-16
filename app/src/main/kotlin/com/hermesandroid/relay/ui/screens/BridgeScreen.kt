@@ -3,6 +3,7 @@ package com.hermesandroid.relay.ui.screens
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import com.hermesandroid.relay.data.BuildFlavor
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -150,8 +151,13 @@ fun BridgeScreen(
             // modal can't render and BridgeSafetyManager.awaitConfirmation
             // fails closed (denies the action) — silently from the user's
             // perspective. Show a prominent banner so the failure isn't
-            // mysterious.
-            if (masterToggle && !permissionStatus.overlayPermitted) {
+            // mysterious. Sideload only — googlePlay has no destructive-verb
+            // modal (action routes are blocked) so the overlay permission isn't
+            // needed and the nag would confuse users + reviewers.
+            if (BuildFlavor.isSideload &&
+                masterToggle &&
+                !permissionStatus.overlayPermitted
+            ) {
                 OverlayPermissionNagCard(
                     onTap = {
                         runCatching {
@@ -170,7 +176,14 @@ fun BridgeScreen(
                 enabled = masterToggle,
                 status = bridgeStatus,
                 accessibilityGranted = permissionStatus.accessibilityServiceEnabled,
-                onToggle = { viewModel.setMasterEnabled(it) }
+                onToggle = { viewModel.setMasterEnabled(it) },
+                // googlePlay: the toggle is "Bridge Mode" (read-only screen
+                // reading). Sideload: "Agent Control" (full phone control).
+                // The label shapes user expectation + is what reviewers read.
+                label = if (BuildFlavor.isSideload)
+                    "Allow Agent Control"
+                else
+                    "Enable Bridge Mode",
             )
 
             BridgeStatusCard(
@@ -200,11 +213,17 @@ fun BridgeScreen(
             )
 
             // === PHASE3-safety-rails: safety summary card ===
-            BridgeSafetySummaryCard(
-                settings = safetySettings,
-                autoDisableAtMs = autoDisableAtMs,
-                onManage = onNavigateToBridgeSafety,
-            )
+            // Sideload only — googlePlay has no action routes so safety
+            // settings (destructive verbs, blocklist, auto-disable) are
+            // irrelevant. Showing them would confuse users and imply
+            // capabilities the Play APK doesn't have.
+            if (BuildFlavor.isSideload) {
+                BridgeSafetySummaryCard(
+                    settings = safetySettings,
+                    autoDisableAtMs = autoDisableAtMs,
+                    onManage = onNavigateToBridgeSafety,
+                )
+            }
             // === END PHASE3-safety-rails ===
 
             Spacer(modifier = Modifier.height(16.dp))

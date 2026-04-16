@@ -1,0 +1,40 @@
+#!/bin/bash
+# @subframe-version 0.15.1-beta
+# @subframe-managed
+#
+# SubFrame pre-commit hook
+# Auto-updates STRUCTURE.json when JS files in src/ are committed.
+#
+
+# Check if any JS files in src/ are staged
+STAGED_JS=$(git diff --cached --name-only --diff-filter=ACMRD | grep -E '^src/.*\.(js|ts|tsx|jsx)$' || true)
+
+# Also check for deleted source files
+DELETED_JS=$(git diff --cached --name-only --diff-filter=D | grep -E '^src/.*\.(js|ts|tsx|jsx)$' || true)
+
+if [ -z "$STAGED_JS" ] && [ -z "$DELETED_JS" ]; then
+  exit 0
+fi
+
+# Only update if .subframe/STRUCTURE.json exists (SubFrame project)
+if [ ! -f ".subframe/STRUCTURE.json" ]; then
+  exit 0
+fi
+
+# Only update if the updater script exists
+UPDATER=".githooks/update-structure.js"
+if [ ! -f "$UPDATER" ]; then
+  exit 0
+fi
+
+echo "[SubFrame] Source files changed, updating .subframe/STRUCTURE.json..."
+
+# Run the updater with staged/deleted file lists as env vars
+STAGED_FILES="$STAGED_JS" DELETED_FILES="$DELETED_JS" node "$UPDATER"
+
+# Stage the updated .subframe/STRUCTURE.json
+git add .subframe/STRUCTURE.json
+
+echo "[SubFrame] .subframe/STRUCTURE.json updated and staged."
+
+exit 0

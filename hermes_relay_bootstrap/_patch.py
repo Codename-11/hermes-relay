@@ -154,9 +154,10 @@ def _apply_patch(web_module) -> None:
 def _maybe_register_routes(app, adapter) -> None:
     """Feature-detect on route paths and register if absent.
 
-    The fork (`feat/api-server-enhancements`) and the upstream-merged version
-    (post-PR-#8556) both register the same paths. If any of our injected
-    paths are already on the router, we no-op so we don't double-register.
+    The fork's PR #8556 head branch (`feat/session-api`) and the
+    upstream-merged version (post-PR-#8556) both register the same paths. If
+    any of our injected paths are already on the router, we no-op so we don't
+    double-register.
     """
     existing_paths: set[str] = set()
     try:

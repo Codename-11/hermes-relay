@@ -1,5 +1,113 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-15 — Voice → bridge → agent pipeline end-to-end fixes
+
+**Motivation.** Bailey's on-device voice SMS testing surfaced a stack of bugs that individually looked small but together blocked the voice → bridge → agent pipeline from working end-to-end. Over a single long session we diagnosed and fixed six distinct layers: voice classifier gaps, a safety-modal lifecycle bug, chat history clobbering, a plugin check_fn pointed at the wrong relay endpoint, missing LLM tool wrappers for the direct-dispatch phone actions, and two Android OEM-interaction issues (MediaProjection notification persistence + activity recreation on warm reopen). Landed across four commits on `feature/bridge-feature-expansion`.
+
+**Summary of changes** (in narrative order, not commit order):
+
+- **Voice intent classifier narrowed + phrasing-tolerant.** Removed the `Scroll` voice intent (nobody says "scroll down" aloud; `/scroll` route stays for server-side `android_scroll` tool calls). Added `SMS_INDIRECT` regex to catch natural indirect-object phrasing ("send Hannah a text saying smoke test") plus `message` as a direct verb. Added a phone-number literal bypass so "text +1 555 1234 saying hi" skips contact lookup.
+- **Honest error classification replaces "couldn't find contact" catch-all.** `resolveContactPhone` now returns a `ContactResolution` sealed type distinguishing `Found` / `ServiceMissing` / `PermissionMissing` / `NotFound` / `NoPhoneNumber` / `OtherError`, with voice mode speaking a specific actionable message per category ("I need Contacts permission to look up that number" vs "I couldn't find a contact called Hannah"). `resolveAppPackage` got the same treatment via `AppResolution`. Pre-flight SEND_SMS check short-circuits before the 5s countdown if permission is missing. Multi-contact matches surface total-count + matched-name in the spoken confirmation so the user knows one of several got picked.
+- **Safety-modal threading + savedstate lifecycle fixes.** `BridgeSafetyManager.awaitConfirmation` now wraps `host.showConfirmation` in `withContext(Dispatchers.Main.immediate)` — the ComposeView creation + setContent must run on Main, but was being called from `Dispatchers.Default` via the voice local-dispatch path, threw, and got swallowed as "likely overlay permission missing" (which misled on-device triage for a full test cycle). `OverlayLifecycleOwner.start()` init order flipped: `performRestore(null)` must run while lifecycle state is still INITIALIZED, not after advancing to CREATED — current androidx.savedstate asserts `performAttach` requires INITIALIZED. The old order worked against an earlier androidx.savedstate version and broke silently when the Compose BOM bumped.
+- **Voice mode UX: post-dispatch feedback, TTS, visual countdown, fall-through visibility.** `handleLocalCommand` went from fire-and-forget to capturing the response via an `AtomicReference` sink on the `LocalDispatch` coroutine context element, returning `LocalDispatchResult(status, errorMessage, errorCode, resultJson)`. Voice mode emits a follow-up chat bubble ("**Send SMS — sent ✓**" / "**Send SMS — cancelled by you**" / permission/service errors) AND speaks the outcome via the existing TTS queue. Voice-in-voice cancel detects "cancel / stop / never mind" during the 5-second countdown and routes it straight to `cancelPending()` instead of classifying it as a new turn. Visual countdown: `DestructiveCountdownState` on `VoiceUiState` + `onCountdownStart` callback + `LinearProgressIndicator` in `VoiceModeOverlay` synced to the real delay. Classifier fall-through immediately flips `VoiceState.Thinking` so the UI shows progress during SSE connect latency instead of appearing to drop the utterance.
+- **Voice mode transcript with chat parity.** `VoiceModeOverlay` now observes `ChatViewModel.messages` and renders the last 6 via `CompactTranscriptRow` + `StreamingResponseRow`. Voice-action traces render via `MarkdownContent`. User messages keep the "YOU" caption (fixed a caption mislabel where voice-intent user messages were showing as "ACTION" due to an id-prefix check that didn't filter by role). `ChatHandler.loadMessageHistory` preserves any `voice-intent-*` messages across server reloads so "Opened Chrome" bubbles don't vanish when session_end reload fires after voice fall-through to LLM.
+- **Chat parity: structured result bubbles for android_* tool calls on the runs API.** `ChatHandler` now intercepts `tool.completed` SSE events from `/v1/runs` for action tools (send_sms, call, search_contacts, open_app, return_to_hermes, screenshot, press_key, setup — read-only tools skipped because they'd add noise on top of the existing `ToolProgressCard`) and emits the same structured markdown bubble the voice fast-path does. `agentName = "Phone action"` distinguishes chat-originated from voice-originated ("Voice action"). `MessageBubble.kt` picked up a subtle visual marker for both action-type bubbles so they read as distinct from LLM replies when interleaved.
+- **Plugin `_check_requirements` pointed at the right endpoint with a three-gate rule.** Was hitting `/ping` which returns `{pong, ts}` and looking for `phone_connected` / `accessibilityService` fields that don't exist there — result: the gate always returned False and hid all 13 non-setup tools from every gateway platform. Victor's "no android_* tools available" reports were this. Now hits `/bridge/status` and requires all three: `phone_connected AND bridge.accessibility_granted AND bridge.master_enabled`. Tools vanish from the LLM's schema entirely when the master toggle is off (or accessibility is revoked post-Studio-reinstall), giving the model a clean "no tools" signal instead of an error-interpretation race. Trade-off accepted: tools disappear mid-session if the user flips the toggle — desired behavior per "stop the agent from controlling my phone" intent.
+- **4 new direct-dispatch plugin tools.** `android_search_contacts`, `android_send_sms`, `android_call`, `android_return_to_hermes` all wrap phone routes (`/search_contacts`, `/send_sms`, `/call`, new `/return_to_hermes`) that were already fully implemented (safety modal, direct `SmsManager` / `CALL_PHONE` dispatch) but had never been exposed to the agent, forcing it to drive Messages / Phone / Contacts UI step-by-step via `tap` + `read_screen`. Tool count 14 → 18. The `/return_to_hermes` route short-circuits when `service.currentApp == service.packageName` (i.e. Hermes is already foreground) so agent wrap-up calls are benign no-ops in voice mode. Master-toggle check exempts `/return_to_hermes` so the agent can always wrap up cleanly.
+- **Honest error_code in bridge.response JSON.** `respondFromResult` substring-classifies ActionExecutor errors and emits `error_code` + `required_permission` fields alongside the existing free-text `error`, for `permission_denied` / `service_unavailable` / `user_denied` / `bridge_disabled`. LLM gets both human-readable text AND a machine-readable classification. Clearer 403 English on the `bridge_disabled` path explicitly says "this is NOT a pairing problem" + names the exact toggle — earlier Victor was walking users through re-pairing when the master toggle was off.
+- **Plugin tool descriptions carry the "prefer direct dispatch + return_to_hermes when done" guidance** instead of Victor's personality. Initial implementation edited `~/.hermes/config.yaml` on the server, which only works for Bailey's one install — reverted. Guidance now lives in `android_send_sms` / `android_call` / `android_open_app` descriptions where it travels with the plugin to any hermes-agent install. Portable across deploys.
+- **MediaProjection notification persists bug fixed.** `BridgeForegroundService.onTaskRemoved` now revokes the MediaProjection + downgrades the FGS type back to SPECIAL_USE-only when the user swipes the app from recents. The bridge itself keeps running (agent phone control via WSS still works), but the system-level screen-cast icon goes away — which is what the user expects when they "close" the app. Before this fix the icon persisted indefinitely because foreground services legitimately survive task removal and the projection stayed bound.
+- **Activity recreation on warm reopen fixed.** `MainActivity` in the manifest gained `launchMode="singleTask"` + `configChanges="uiMode|fontScale|locale|density|orientation|screenSize|screenLayout|keyboardHidden"`. Before this the activity was being recreated on config changes and on certain resume paths, triggering `installSplashScreen()` again and showing the splash on warm reopen. The residual case — Samsung OneUI aggressively killing backgrounded apps even with a foreground service — needs user-side battery whitelisting (Settings → Device Care → App battery management → Hermes Relay → Unrestricted) and can't be fixed in code.
+
+**Commits landed on `feature/bridge-feature-expansion`:**
+
+- `5c763eb` — honest errors, modal lifecycle, missing LLM tools (11 files, +974/-158)
+- `536a131` — post-dispatch feedback + clearer bridge-disabled error (7 files, +325/-37)
+- (pending, this session) — agent-team work: voice UX polish (TTS, cancel, countdown, phone-number bypass, multi-contact), chat structured feedback parity, plugin three-gate rule, `/return_to_hermes` short-circuit, tool description guidance, MediaProjection cleanup, activity recreation hardening
+
+**Server state.** `hermes-gateway` restarted cleanly twice this session. `_check_requirements()` now returns True/False deterministically based on live `/bridge/status` (verified via Python import). Victor personality reverted to clean default — no plugin-specific coupling. All 18 tools register with no missing/orphan handlers.
+
+**Known residual items for follow-up** (not blocking, documented for future-us):
+
+1. Full multi-turn voice disambiguation for multi-contact matches — current fix just hints "found N, using first". Wave 3 multi-turn state machine deferred.
+2. Samsung OneUI process-death UX — add an in-app nudge to whitelist battery optimization if running on Samsung + not currently whitelisted. Polish.
+3. Tool-description guidance relies on LLM cooperation (non-deterministic) — monitor whether Victor actually picks up `android_send_sms` over UI automation in future tests. If not, we may need to reinforce via plugin.yaml or a new upstream plugin-metadata field.
+4. `loadMessageHistory` race with voice-intent-result bubbles self-heals via timestamp sort but has a brief visual flicker window.
+5. `android_return_to_hermes` no-op in voice mode is benign but wastes a tool call — agent should detect voice mode and skip. Minor.
+
+**Next session.** Waiting on Bailey's retest with the bundled agent-team work. Once that passes, bump version (voice intent loop + chat parity is v0.4.0-worthy) and start the release cut.
+
+---
+
+## 2026-04-15 — Gateway slash-command dispatch: architectural finding + three-PR strategy
+
+**Motivation.** Bailey typed `/model` into the Android app's chat on the feature/bridge-feature-expansion branch to switch the model for the session. The message reached the LLM as plain text and got a hallucinated reply: *"Switching model — `/model` is a client-side command, I don't execute it. Just send it as its own message (not wrapped in chat) and Hermes will swap the model for the session."* The reply is confidently wrong on two counts — the command is not "client-side", and nothing about the Android client's wire format would prevent Hermes from intercepting it. The LLM was filling a gap it didn't know existed.
+
+**Root cause (confirmed via upstream code archaeology by a subagent oriented in a fresh clone of `Codename-11/hermes-agent` on `feat/session-api`):**
+
+- Gateway slash commands (`/model`, `/new`, `/retry`, the 29 in `hermes_cli/commands.py::GATEWAY_KNOWN_COMMANDS`) are intercepted by **in-process platform adapters** — Discord, Telegram, Slack, Matrix, Signal, BlueBubbles, etc. All of them wrap inbound messages into `MessageEvent`s with `MessageType.COMMAND` and route them through `BasePlatformAdapter.handle_message()` → `GatewayRouter._handle_message()`. That router method contains a ~300-line `if canonical == "new"/"help"/"model"/...` dispatch chain at `gateway/run.py:2645–2929`, and the command handlers (`_handle_model_command` at 4226, `_handle_status_command` at 4065, `_handle_help_command` at 4151, and ~25 others) are instance methods on `GatewayRouter` that mutate router-owned state: `self._session_model_overrides`, `self._agent_cache`, `self._agent_cache_lock`, plus per-adapter interactive pickers via `self.adapters[platform].send_model_picker(...)`.
+- **`APIServerAdapter` (`gateway/platforms/api_server.py`) does not connect to the router.** Its `__init__` (at `api_server.py:331`) takes only a `PlatformConfig` — no `GatewayRouter` reference. `_handle_chat_completions` and `_handle_runs` call `self._run_agent(...)` directly, which calls `self._create_agent(...)` to build a **fresh agent per request** with no persistent session state. Upstream confirms this is intentional: `run.py:3148` comments that api_server is an "excluded platform" from the router notification path.
+- **Therefore `/model` cannot be made to work on `/v1/runs` with a local preprocessor.** A fresh agent per request means there is no persistent session to switch the model *on*. Same story for `/new`, `/retry`, `/undo`, `/compress`, `/title`, `/resume`, `/branch`, `/rollback`, `/approve`, `/deny`, `/background`, `/stop`, `/yolo`, `/fast`, `/reasoning`, `/personality` — they all mutate router-owned state that api_server doesn't maintain. What *can* run statelessly: `/help` and `/commands` via `gateway_help_lines()` at `hermes_cli/commands.py:340`, and possibly `/profile`, `/provider`, `/usage`, `/insights`, `/status` depending on their implementation.
+
+**Strategy — a three-PR arc, each independently reviewable, each with a matching bootstrap-middleware sibling shipping earlier:**
+
+1. **PR #8556 (already submitted, `feat/session-api` → `NousResearch/hermes-agent:main`).** *"feat(api-server): add session management API for frontend clients."* Scope is broader than the title: sessions CRUD + search + fork + messages, `/api/sessions/{id}/chat` + `/api/sessions/{id}/chat/stream`, memory CRUD, skills, config, available-models. Verified 2026-04-15 via `gh pr diff 8556`. This is the missing session primitives — once merged, api_server has a durable place where stateful state can live.
+
+2. **Stage 1 PR — slash-command preprocessor on the stateless endpoints.** Sibling follow-up to #8556, same file (`gateway/platforms/api_server.py`), stacks on `feat/session-api` during review so the diff shows both together. Detects known gateway commands on `/v1/runs` + `/v1/chat/completions`, dispatches the small stateless subset (`/help`, `/commands`) via existing helpers, returns a deterministic synthetic-SSE "use a channel with session state" notice for the stateful majority. Respects upstream's intentional api_server design and does not touch `GatewayRouter`. Being prepared today in `C:/Users/Bailey/Desktop/Open-Projects/hermes-agent-pr-prep/` on branch `feat/api-server-gateway-commands` via a background subagent; Option B scope (stateless dispatch + polite decline) confirmed after the subagent stopped on the architectural finding instead of writing Option C code that would have fought upstream's design. The subagent is preparing the full diff + PR body for human review before any `gh pr create` runs. Matching bootstrap-middleware sibling (`hermes_relay_bootstrap/_command_middleware.py`) is filed as a v0.4.1 roadmap item so the hallucination fix ships to vanilla-upstream installs without waiting for the upstream PR.
+
+3. **Stage 2 PR — stateful slash-command dispatch on `/api/sessions/{id}/chat/stream`.** Blocked on #8556 merging. Once session primitives ship upstream, a smaller separate PR adds a preprocessor **scoped to the session chat stream endpoint only**, using the URL's `session_id` as the persistence handle. Stateful commands become session-scoped dict writes (`session.model_override = new_model`) without refactoring `GatewayRouter` or plumbing api_server into the router. Clean partition: `/v1/*` stays stateless, statefulness lives on `/api/sessions/*`.
+
+**Why not a single giant "Option C" PR** that refactors `GatewayRouter` to expose `dispatch_slash_command()` + wires `APIServerAdapter` to the router + adds per-session state to api_server: (a) it would withdraw #8556 to restart bigger, which burns reviewer goodwill and signals indecision to Nous, (b) it would touch 10+ files across subsystems normally owned separately, reviewing far worse than three small PRs, (c) it would fight the documented "api_server is excluded from router" design intent rather than extending it, (d) #8556 is already doing most of the work (session primitives); a parallel session substrate would duplicate it, (e) review slots on respected org PRs are hard-won; don't give one back.
+
+**Docs updated this session:**
+
+- `CLAUDE.md` — fork branch reference corrected to `feat/session-api` + scope clarification on #8556.
+- `docs/decisions.md` — same fix in the upstream-notes section (line 85).
+- `docs/upstream-contributions.md` — new §5 documenting the Stage 1 + Stage 2 upstream PR plan and the bootstrap-middleware workaround.
+- `ROADMAP.md` — v0.4.1 bootstrap-middleware entry rewritten to reflect the Option B ceiling (cannot make `/model` actually switch models on `/v1/runs` — that's Stage 2, blocked on #8556) and the architectural reasoning.
+- `TODO.md` — three new entries covering Stage 1 upstream PR, Stage 1 bootstrap middleware, and Stage 2 (blocked on #8556).
+- `hermes_relay_bootstrap/_handlers.py`, `hermes_relay_bootstrap/_patch.py` — docstring branch-name corrections (`feat/api-server-enhancements` → `feat/session-api`).
+
+**Not touched this session:**
+
+- No Kotlin changes. The Android client at `HermesApiClient.kt:655-715` already parses `message.delta` / `response.output_text.delta` / `reasoning.available` / `tool.started` / `tool.completed` / `run.completed` / `[DONE]`, so when Stage 1 or the bootstrap middleware lands with a synthetic SSE stream matching those shapes, the client needs no changes.
+- No changes to `gateway/platforms/api_server.py` or any file in `hermes-agent-pr-prep/`. The subagent has orientation-only state on `feat/api-server-gateway-commands`; implementation begins on its next wake.
+- The `feature/bridge-feature-expansion` branch is untouched by this session and continues with its voice-bridge work. The slash-command work is a separate branch arc and will not land on the bridge feature branch.
+
+## 2026-04-13 — Play Console migration to Axiom-Labs, LLC (applicationId → `com.axiomlabs.hermesrelay`)
+
+Moved the Play Store listing from Bailey's personal Play Console account (where v0.1.x–v0.3.0 shipped under Internal testing) to the **Axiom-Labs, LLC** D-U-N-S-verified organization account. This unblocks straight-to-production rollout — personal accounts created after late 2023 are subject to Google's 14-day closed-testing rule (≥12 opted-in testers for 14 continuous days before production promotion); D-U-N-S-verified org accounts are exempt. See [Google's policy](https://support.google.com/googleplay/android-developer/answer/14151465).
+
+**applicationId change.** `com.hermesandroid.relay` → `com.axiomlabs.hermesrelay` (googlePlay flavor) and `com.axiomlabs.hermesrelay.sideload` (sideload flavor, unchanged suffix pattern). Play Store package names are permanently reserved once used, so the old ID can never be reclaimed — the previous Internal-testing listing is retired and existing installs won't auto-upgrade to the new listing. Blast radius is one tester (Bailey), so manual reinstall is fine.
+
+**Kotlin namespace stays at `com.hermesandroid.relay`.** AGP decouples `namespace` (build-time R-class / BuildConfig / on-disk source layout) from `applicationId` (runtime install identity), so we don't need to mass-rename the 130+ Kotlin files, their package declarations, proguard rules, or test FQCNs. The source tree stays stable; only the Play/Android install identity moves. `scripts/dev.bat` and `scripts/dev.sh` already use the split FQCN form `adb am start -n com.axiomlabs.hermesrelay/com.hermesandroid.relay.MainActivity` to bridge the two namespaces at launch time.
+
+**Keystore identity is unchanged.** Same `CN=Bailey Dixon, Codename-11` upload cert, same SHA256 fingerprint, same `HERMES_KEYSTORE_*` GitHub Secrets, same CI signing flow. Play App Signing mints a new server-side app signing key per listing, but that's invisible to us since App Signing is enabled. No CI or keystore changes required.
+
+**Files touched in this migration:**
+
+- `app/build.gradle.kts` — `applicationId = "com.axiomlabs.hermesrelay"` + multi-paragraph comment block explaining the namespace/applicationId decoupling and the migration rationale
+- `RELEASE.md` — new "Google Play Console developer account" section documenting the Axiom-Labs account, the D-U-N-S exemption from the 14-day rule, and a "Historical note (2026-04-13 migration)" block for future maintainers
+- `ROADMAP.md` — "Current — Axiom-Labs migration" section added at the top
+- `README.md` — Play Store badge URL → `?id=com.axiomlabs.hermesrelay`; copyright line → "Axiom-Labs"
+- `CLAUDE.md` — "applicationId" bullet updated to call out both flavors under `com.axiomlabs.*`
+- `scripts/dev.bat`, `scripts/dev.sh` — `am start` commands updated to the new applicationId
+- `scripts/bridge-smoke.sh` — sideload package test payload → `com.axiomlabs.hermesrelay.sideload`
+- `user-docs/guide/getting-started.md`, `user-docs/guide/release-tracks.md` — Play Store URLs + both applicationIds
+
+**Play Console listing creation (for future reference):**
+
+| Field | Value |
+|---|---|
+| App name | Hermes-Relay |
+| Package name | `com.axiomlabs.hermesrelay` |
+| Default language | English (US) |
+| App/game | App |
+| Free/paid | Free |
+| Developer account | Axiom-Labs, LLC |
+
+Nothing to rebuild or re-sign beyond the normal v0.3.1+ release flow.
+
 ## 2026-04-12 — Manual pairing fallback — `hermes-pair --register-code <code>`
 
 Wired the host-side half of the in-app fallback pairing flow. The phone has been generating a local 6-char code in `Settings → Connection → Manual pairing code (fallback)` and `AuthManager.authenticate()` already sent that code as `pairing_code` when no server-issued code was present, but there was no convenient way for an operator to pre-register an arbitrary code with the relay without going through the QR flow. Now there is.

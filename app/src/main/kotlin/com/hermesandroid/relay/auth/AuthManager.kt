@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.auth
 
 import android.content.Context
+import android.util.Log
 import com.hermesandroid.relay.data.PairingPreferences
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.models.Envelope
@@ -60,6 +61,7 @@ class AuthManager(
 ) : ChannelMultiplexer.ChannelHandler {
 
     companion object {
+        private const val TAG = "AuthManager"
         private const val KEY_SESSION_TOKEN = "session_token"
         private const val KEY_DEVICE_ID = "device_id"
         private const val KEY_API_KEY = "api_server_key"
@@ -227,6 +229,13 @@ class AuthManager(
             if (existingToken != null) {
                 _authState.value = AuthState.Paired(existingToken)
                 _currentPairedSession.value = loadStoredMetadata(existingToken)
+                Log.i(
+                    TAG,
+                    "init: hydrated existing session_token=${existingToken.take(8)}… " +
+                        "→ authState=Paired (stale-at-startup unless this is a real continuous session)"
+                )
+            } else {
+                Log.i(TAG, "init: no stored session_token → authState stays Unpaired")
             }
             _apiKeyPresent.value = !s.getString(KEY_API_KEY).isNullOrBlank()
         }
@@ -354,6 +363,10 @@ class AuthManager(
             val deviceId = getDeviceId()
             val payload = when (currentState) {
                 is AuthState.Paired -> {
+                    Log.i(
+                        TAG,
+                        "authenticate: sending session_token (state=Paired, token=${currentState.token.take(8)}…)"
+                    )
                     buildJsonObject {
                         put("session_token", currentState.token)
                         put("device_id", deviceId)
@@ -363,6 +376,12 @@ class AuthManager(
                 else -> {
                     _authState.value = AuthState.Pairing
                     val codeToSend = serverIssuedCode ?: _pairingCode.value
+                    val serverSource = if (serverIssuedCode != null) "QR" else "local-fallback"
+                    Log.i(
+                        TAG,
+                        "authenticate: sending pairing_code=$codeToSend source=$serverSource " +
+                            "ttl=$pendingTtlSeconds grants=${pendingGrants?.keys}"
+                    )
                     buildJsonObject {
                         put("pairing_code", codeToSend)
                         put("device_id", deviceId)
@@ -416,11 +435,20 @@ class AuthManager(
      */
     fun applyServerIssuedCodeAndReset(code: String, relayUrl: String? = null) {
         val normalized = code.trim().uppercase()
-        if (normalized.isEmpty()) return
+        if (normalized.isEmpty()) {
+            Log.w(TAG, "applyServerIssuedCodeAndReset: empty code, returning early — authState NOT reset")
+            return
+        }
+        val prevState = _authState.value
         serverIssuedCode = normalized
         _pairingCode.value = normalized
         _authState.value = AuthState.Unpaired
         _currentPairedSession.value = null
+        Log.i(
+            TAG,
+            "applyServerIssuedCodeAndReset: code=$normalized relayUrl=$relayUrl " +
+                "prevState=${prevState::class.simpleName} → Unpaired"
+        )
         scope.launch {
             val s = store()
             s.remove(KEY_SESSION_TOKEN)
@@ -432,6 +460,7 @@ class AuthManager(
     }
 
     override fun onMessage(envelope: Envelope) {
+        Log.i(TAG, "onMessage channel=${envelope.channel} type=${envelope.type}")
         when (envelope.type) {
             "auth.ok" -> handleAuthOk(envelope)
             "auth.fail" -> handleAuthFail(envelope)
@@ -483,10 +512,19 @@ class AuthManager(
                 val payload = envelope.payload
                 val token = payload["session_token"]?.jsonPrimitive?.contentOrNull
 
+                if (token == null) {
+                    Log.w(
+                        TAG,
+                        "handleAuthOk: payload missing session_token — authState NOT transitioned to Paired. " +
+                            "Payload keys: ${payload.keys}"
+                    )
+                }
+
                 if (token != null) {
                     val s = store()
                     s.putString(KEY_SESSION_TOKEN, token)
                     _authState.value = AuthState.Paired(token)
+                    Log.i(TAG, "handleAuthOk: Paired(token=${token.take(8)}…)")
                     // Server-issued code is one-shot — drop it once the
                     // upgrade to a long-lived session token has landed.
                     serverIssuedCode = null
@@ -546,10 +584,48 @@ class AuthManager(
 
     private fun handleAuthFail(envelope: Envelope) {
         try {
-            val reason = envelope.payload["reason"]?.jsonPrimitive?.contentOrNull ?: "Unknown error"
-            _authState.value = AuthState.Failed(reason)
+            val rawReason = envelope.payload["reason"]?.jsonPrimitive?.contentOrNull
+                ?: "Unknown error"
+            val humanized = humanizeAuthFailReason(rawReason)
+            Log.w(TAG, "handleAuthFail: raw=$rawReason humanized=$humanized")
+            _authState.value = AuthState.Failed(humanized)
         } catch (e: Exception) {
+            Log.w(TAG, "handleAuthFail: exception parsing payload", e)
             _authState.value = AuthState.Failed("Authentication failed")
+        }
+    }
+
+    /**
+     * Map common relay `auth.fail` reasons to user-friendly short strings.
+     * The wizard VerifyStep surfaces the returned text directly, so this is
+     * what the user reads when a pair fails.
+     *
+     * Pass-through for anything we don't recognize so server-side debug
+     * output isn't clobbered.
+     */
+    private fun humanizeAuthFailReason(raw: String): String {
+        val lower = raw.lowercase()
+        return when {
+            // "pairing code not recognized", "invalid pairing code",
+            // "unknown pairing code", etc. — the code is no longer on the
+            // relay, which almost always means the QR was already used.
+            "pairing" in lower && ("not recogniz" in lower ||
+                "invalid" in lower ||
+                "unknown" in lower ||
+                "consumed" in lower ||
+                "already used" in lower) ->
+                "That pairing code was already used. Generate a fresh QR " +
+                    "from `hermes-pair` and scan again."
+            "rate" in lower && "limit" in lower ->
+                "Too many pair attempts — the relay temporarily blocked your " +
+                    "IP. Wait ~5 minutes and try again."
+            "expired" in lower ->
+                "The pairing code expired. Generate a fresh QR and scan again."
+            "session" in lower && "expired" in lower ->
+                "Your session expired. Re-pair to get a new one."
+            "session_token" in lower || "token" in lower ->
+                "The server rejected your saved session. Re-pair to get a new one."
+            else -> raw
         }
     }
 

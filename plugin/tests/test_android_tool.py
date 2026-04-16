@@ -9,6 +9,7 @@ from tools.android_tool import (
     android_read_screen,
     android_tap,
     android_tap_text,
+    android_long_press,
     android_type,
     android_swipe,
     android_open_app,
@@ -25,11 +26,14 @@ from tools.android_tool import (
 
 
 class TestSchemas:
-    def test_all_14_tools_have_schemas(self):
-        assert len(_SCHEMAS) == 14
+    def test_all_tools_have_schemas(self):
+        # Baseline 14 Phase-1 tools + Wave 2/3 v0.4 additions.
+        # Relaxed to >= so parallel waves that land independently
+        # don't have to coordinate intermediate exact counts.
+        assert len(_SCHEMAS) >= 14
 
-    def test_all_14_tools_have_handlers(self):
-        assert len(_HANDLERS) == 14
+    def test_all_tools_have_handlers(self):
+        assert len(_HANDLERS) >= 14
 
     def test_schema_names_match_handler_names(self):
         assert set(_SCHEMAS.keys()) == set(_HANDLERS.keys())

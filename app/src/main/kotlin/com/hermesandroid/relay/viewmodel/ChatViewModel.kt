@@ -16,6 +16,8 @@ import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.network.HermesApiClient
 import com.hermesandroid.relay.network.RelayHttpClient
 import com.hermesandroid.relay.network.handlers.ChatHandler
+import com.hermesandroid.relay.network.handlers.LocalDispatchResult
+import com.hermesandroid.relay.network.handlers.formatPhoneActionResult
 import com.hermesandroid.relay.network.models.SkillInfo
 import com.hermesandroid.relay.network.models.UsageInfo
 import com.hermesandroid.relay.util.AppContextSettings
@@ -376,6 +378,50 @@ class ChatViewModel : ViewModel() {
         }
 
         sendMessageInternal(client, handler, text)
+    }
+
+    /**
+     * Append a local-only voice-intent trace to chat history. Used by
+     * VoiceViewModel so phone-control utterances ("open Chrome", "text
+     * Sam") leave a visible record in the chat scroll instead of vanishing
+     * into a side channel. Local-only — does not hit the server, does not
+     * call the LLM, does not stream. See [ChatHandler.appendLocalVoiceIntentTrace]
+     * for the full design + why this isn't enough on its own to give the
+     * LLM context for follow-up turns (server session sync is v0.4.1).
+     */
+    fun recordVoiceIntent(userText: String, actionDescription: String) {
+        val handler = chatHandler ?: return
+        handler.appendLocalVoiceIntentTrace(userText, actionDescription)
+    }
+
+    /**
+     * Append a second trace bubble showing the REAL outcome of a voice
+     * intent dispatch after the safety modal resolves and the phone-side
+     * executor returns. Called by [VoiceViewModel] via the
+     * `onDispatchResult` callback wired into the sideload voice handler's
+     * factory. Pre-0.4.0 there was no post-dispatch feedback at all — the
+     * handler was fire-and-forget and the user never knew whether an SMS
+     * actually sent until they opened the Messages app. See
+     * [LocalDispatchResult] for the shape of the captured outcome.
+     *
+     * Renders as markdown per category so the "AGENT" bubble in voice
+     * mode (or the full markdown bubble in chat) reads naturally:
+     *
+     *  - success                  → **Send SMS — sent**
+     *  - 403 user_denied          → **Send SMS — cancelled by you**
+     *  - 403 bridge_disabled      → **Send SMS — agent control is off**\n...
+     *  - 403 permission_denied    → **Send SMS — permission needed**\n...
+     *  - 5xx / dispatch_exception → **Send SMS — failed**\n...
+     */
+    fun recordVoiceIntentResult(intentLabel: String, result: LocalDispatchResult) {
+        val handler = chatHandler ?: return
+        // Delegate to the package-level formatter in ChatHandler.kt so
+        // voice-mode and chat-mode android_* completions render the same
+        // markdown for the same outcome. `agentName` defaults to
+        // "Voice action" here (voice origin); chat parity uses
+        // "Phone action" via the ChatHandler-side caller.
+        val description = formatPhoneActionResult(intentLabel, result)
+        handler.appendLocalVoiceIntentResult(description)
     }
 
     fun clearQueue() {

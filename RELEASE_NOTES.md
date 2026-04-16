@@ -1,9 +1,9 @@
 # Hermes-Relay v0.3.0
 
 **Release Date:** April 13, 2026
-**Since v0.2.0:** 56 commits · 8 Phase 3 feature merges · 2 new build flavors · 1 new agent-control channel
+**Since v0.2.0:** 56 commits · 8 major feature merges · 2 new build flavors · 1 new agent-control channel
 
-> **Phase 3 — Bridge.** The agent can now read your screen, tap, type, swipe, and take screenshots on your phone — gated behind a five-stage safety-rails system, a master toggle, the Android Accessibility Service, MediaProjection consent, and per-channel session grants. Plus full voice-mode polish, a notification companion, and two new agent-introspection tools so the agent stops flying blind.
+> **Bridge channel.** The agent can now read your screen, tap, type, swipe, and take screenshots on your phone — gated behind a five-stage safety rails system, a master toggle, the Android Accessibility Service, MediaProjection consent, and per-channel session grants. Plus full voice-mode polish, a notification companion, and two new agent-introspection tools so the agent stops flying blind.
 
 ---
 
@@ -13,24 +13,24 @@ v0.3.0 ships in **two build flavors**. APK filenames are version-tagged, so ever
 
 | Flavor | File | Who it's for |
 |---|---|---|
-| **sideload** (recommended) | `hermes-relay-0.3.0-sideload-release.apk` | Full Phase 3 stack — bridge channel, voice-to-bridge intents (Tier 3), vision-driven `android_navigate` (Tier 4). Installs alongside the Play Store build with a `.sideload` applicationId. |
-| **Google Play** | `hermes-relay-0.3.0-googlePlay-release.aab` | Uploaded to Play Console for Internal testing. Conservative Tier 1+2+5 feature set (chat, voice, safety rails) to match Play Store's Accessibility policy. |
+| **sideload** (recommended) | `hermes-relay-0.3.0-sideload-release.apk` | Full feature set — bridge channel, voice-to-bridge intents, vision-driven `android_navigate`. Installs alongside the Play Store build with a `.sideload` applicationId. |
+| **Google Play** | `hermes-relay-0.3.0-googlePlay-release.aab` | Uploaded to Play Console for Internal testing. Conservative feature set (chat, voice, safety rails — no agent device control) to match Play Store's Accessibility policy. |
 | googlePlay APK | `hermes-relay-0.3.0-googlePlay-release.apk` | Parity + diff tooling — not the primary download. |
 | sideload AAB | `hermes-relay-0.3.0-sideload-release.aab` | Parity + diff tooling — not the primary download. |
 
 **Verify integrity** with `SHA256SUMS.txt` from the same release before installing. See the [Sideload guide](https://codename-11.github.io/hermes-relay/guide/getting-started.html#sideload-apk) for the step-by-step install walkthrough.
 
-> **Why two flavors?** The `googlePlay` build stays inside Play Store's Accessibility Service policy review. The `sideload` build unlocks the full Phase 3 stack and installs with a `.sideload` applicationId suffix so both can coexist on the same device — the sideload launcher is labelled **"Hermes Dev"** for disambiguation.
+> **Why two flavors?** The `googlePlay` build stays inside Play Store's Accessibility Service policy review. The `sideload` build unlocks the full agent-control feature set and installs with a `.sideload` applicationId suffix so both can coexist on the same device — the sideload launcher is labelled **"Hermes Dev"** for disambiguation. For a capability-by-capability breakdown, see the [Release tracks comparison](https://codename-11.github.io/hermes-relay/guide/release-tracks.html).
 
 ---
 
 ## ✨ Highlights
 
-- **Phase 3 Bridge Channel** — The agent can read the phone's screen, tap, type, swipe, and take screenshots via a new `HermesAccessibilityService` + `MediaProjection` pipeline. Five independent safety gates must all be green before a single command executes: session grant → master toggle → Accessibility permission → MediaProjection consent → Tier 5 safety rails.
+- **Bridge Channel** — The agent can read the phone's screen, tap, type, swipe, and take screenshots via a new `HermesAccessibilityService` + `MediaProjection` pipeline. Five independent safety gates must all be green before a single command executes: session grant → master toggle → Accessibility permission → MediaProjection consent → safety rails.
 
 - **Voice Mode polish** — Full-screen voice UI with an ASCII morphing sphere (Listening = blue/purple, Speaking = green/teal), reactive layered-sine waveform visualizer, pill-edge merge, tap/hold/continuous interaction modes, and sentence-boundary streaming through a TTS queue. Backed by three new relay endpoints — `POST /voice/transcribe`, `POST /voice/synthesize`, `GET /voice/config` — with 6 TTS and 5 STT providers available via `~/.hermes/config.yaml`.
 
-- **Voice-to-bridge intents** *(sideload only)* — Spoken commands like *"text Mom saying on my way"* route to the bridge channel with destructive-verb confirmation instead of falling through to chat. Regex-based intent classifier covers send-sms / open-app / tap / scroll / back / home.
+- **Voice-to-bridge intents** *(sideload only)* — Spoken commands like *"text Mom saying on my way"* route to the bridge channel with destructive-verb confirmation instead of falling through to chat. Regex-based intent classifier covers send-sms / open-app / tap / back / home (scroll removed in v0.4.0 — server-side android_scroll tool handles it instead).
 
 - **Notification Companion** — `HermesNotificationCompanion` (`NotificationListenerService`) forwards posted notifications to the relay over a new `notifications` channel so the agent can summarize them or act on them. Opt-in via the standard Android notification-access grant.
 
@@ -46,7 +46,7 @@ v0.3.0 ships in **two build flavors**. APK filenames are version-tagged, so ever
 
 ---
 
-## 📱 Phase 3 Bridge Channel
+## 📱 Bridge Channel
 
 The headline feature. Everything in this section is gated behind the five-stage safety system documented above.
 
@@ -57,7 +57,7 @@ The headline feature. Everything in this section is gated behind the five-stage 
 - **Activity log** — tap-to-expand entries with timestamps, status, result text, and optional screenshot tokens (capped at 100 entries)
 - **Safety summary card** — live countdown to auto-disable, blocklist/verb counts at a glance
 
-### Tier 5 Safety Rails
+### Safety Rails
 - **App blocklist** — 30 default banking / payments / password-manager / 2FA apps pre-seeded; searchable `PackageManager.queryIntentActivities(CATEGORY_LAUNCHER)` picker for custom entries
 - **Destructive-verb confirmation modal** — word-boundary regex match against `/tap_text` + `/type` payloads. Default verbs: `send`, `pay`, `delete`, `transfer`, `confirm`, `submit`, `post`, `publish`, `buy`, `purchase`, `charge`, `withdraw`. Modal rendered via a `WindowManager` overlay so it's visible even when Hermes isn't in the foreground.
 - **Idle auto-disable** — 5-120 min slider. Any command resets the timer; process death clears state so a stale grant can't survive a crash.
@@ -71,7 +71,7 @@ The headline feature. Everything in this section is gated behind the five-stage 
 - `BridgeForegroundService` — persistent "Hermes has device control" notification with **Disable** + **Settings** action buttons; declared as `foregroundServiceType=specialUse|mediaProjection` per Android 14+ requirements
 
 ### Relay Bridge Server
-- 14 HTTP routes registered on `plugin/relay/server.py` — `/ping`, `/screen`, `/screenshot`, `/get_apps`, `/current_app`, `/tap`, `/tap_text`, `/type`, `/swipe`, `/open_app`, `/press_key`, `/scroll`, `/wait`, `/setup`
+- 18 HTTP routes registered on `plugin/relay/server.py` — `/ping`, `/screen`, `/screenshot`, `/get_apps`, `/current_app`, `/tap`, `/tap_text`, `/type`, `/swipe`, `/open_app`, `/press_key`, `/scroll`, `/wait`, `/setup`, `/send_sms`, `/call`, `/search_contacts`, `/return_to_hermes` (last 4 added in v0.4.0)
 - Wire protocol migrated from the legacy standalone `plugin/tools/android_relay.py` (port 8766) into the unified relay on port 8767. Envelope fields match the legacy relay byte-for-byte.
 - 30s per-command timeout, fail-fast on phone disconnect so HTTP callers don't wedge
 
@@ -150,7 +150,7 @@ The headline feature. Everything in this section is gated behind the five-stage 
 ## 📚 Documentation & Skills
 
 - **Installer README + DEVLOG update** — canonical update cycle documented top-to-bottom
-- **`docs/spec.md` + `docs/decisions.md`** — Phase 3 pipeline, safety rails architecture, two-flavor rationale
+- **`docs/spec.md` + `docs/decisions.md`** — bridge pipeline, safety rails architecture, two-flavor rationale
 - **`/hermes-relay-self-setup` skill** — single-source agent-readable install recipe (dual-mode: pre-install via raw URL, post-install via slash command)
 - **`/hermes-relay-pair` skill** — canonical category layout (`devops`), matches `metadata.hermes.category` frontmatter
 - **`user-docs` flavor comparison** — "Which build should I pick?" decision guide on the Release Tracks page
@@ -160,7 +160,7 @@ The headline feature. Everything in this section is gated behind the five-stage 
 
 ## 👥 Contributors
 
-Primary development by **@Codename-11** (Bailey Dixon). Agent-team branches (Phase 3 α–θ) were implemented by Claude Code working on isolated feature branches with `--no-ff` merges — each branch name encodes which agent shipped it.
+Primary development by **@Codename-11** (Bailey Dixon). Implementation assisted by Claude Code on isolated feature branches with `--no-ff` merges to preserve the per-component history.
 
 Dependency bumps via Dependabot: markdown-renderer, gradle-wrapper, haze, camera, kotlinx-coroutines-test.
 

@@ -14,5 +14,5 @@
 -->
 <resources>
     <string name="a11y_service_label">Hermes-Bridge</string>
-    <string name="a11y_description_googleplay">Hermes assists you by reading notifications, summarizing messages, and replying with your confirmation. The service is dormant until you explicitly enable Bridge mode in the app.</string>
+    <string name="a11y_description_googleplay">Hermes assists you by reading on-screen content and summarizing notifications. The service is read-only — it does not perform taps, type text, or control other apps. It is dormant until you explicitly enable Bridge mode in the app.</string>
 </resources>

@@ -56,8 +56,10 @@ object ScreenCaptureRequester {
      * Activity is alive (caller should fall back to "open the app first").
      *
      * The actual grant arrives asynchronously via the launcher's result
-     * callback — see `MainActivity.mediaProjectionLauncher` →
-     * [MediaProjectionHolder.onGranted].
+     * callback — see `MainActivity.mediaProjectionLauncher`, which hands
+     * the result to `BridgeForegroundService.grantMediaProjection` so the
+     * grant lands inside a foreground service that's already running with
+     * `startForeground(type=mediaProjection)` (Android 14+ requirement).
      */
     fun request(): Boolean {
         val action = launchAction ?: return false

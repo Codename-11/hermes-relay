@@ -46,12 +46,65 @@ def _auth_headers() -> dict:
     return {}
 
 def _check_requirements() -> bool:
-    """Returns True if the relay is running and a phone is connected."""
+    """Returns True iff the phone is currently paired to the relay's bridge
+    channel (``phone_connected`` on ``/bridge/status``). Intentionally the
+    ONLY gate — accessibility and master-toggle state are NOT checked here.
+
+    Design history — we iterated on this twice:
+
+    *Version 1* (broken) hit ``/ping`` and looked for fields that endpoint
+    doesn't return. Every check returned False, every tool except
+    ``android_setup`` was hidden from every gateway platform. Caught
+    2026-04-15 by Bailey when Victor reported "no android_* tools available"
+    despite the app being healthy.
+
+    *Version 2* (working but wrong UX) fixed the endpoint and added a
+    three-gate rule: ``phone_connected AND accessibility_granted AND
+    master_enabled``. Idea was that hiding tools when the master toggle is
+    off gives the LLM a "clean no-tools signal" instead of letting it try
+    and get a 403. Caught 2026-04-15 **same day** in follow-up testing
+    when Bailey flipped the master toggle off and Victor hallucinated a
+    reason for the missing tools: *"Phone bridge isn't connected right
+    now — pair the Hermes-Relay app so I can reach the phone."* The
+    phone WAS connected. Victor filled the absence-of-tools with a
+    guessed explanation (pairing) and asked the user to do the wrong
+    thing. LLMs don't know *why* tools are absent; they invent a cause.
+
+    *Version 3 (this)* — gate only on ``phone_connected``. Let the
+    downstream layers return clear structured errors with machine-readable
+    ``error_code`` fields:
+
+    * No a11y service → phone-side responds with HTTP 503 +
+      ``error_code: service_unavailable`` + a clear "enable it in Android
+      Settings" message.
+    * Master toggle off → phone-side responds with HTTP 403 +
+      ``error_code: bridge_disabled`` + the "this is NOT a pairing
+      problem" text.
+
+    Both paths carry enough structured context that the LLM can relay
+    accurate instructions to the user. The gate stays on
+    ``phone_connected`` because that's the one case where the tools
+    literally cannot function — no WSS session, no way to dispatch
+    anything — and in THAT case the LLM should see only ``android_setup``
+    and correctly deduce "we need to pair". Every other failure mode
+    surfaces as a first-class error through the call path we already
+    built.
+
+    Takeaway for future plugin check_fn design: use check_fn to express
+    *"this tool is fundamentally unreachable right now"*, not *"this
+    tool is currently disabled by policy"*. Disabled-by-policy belongs
+    in error responses, not schema omission, because LLMs reason about
+    presence/absence by inventing narratives.
+    """
     try:
-        r = requests.get(f"{_bridge_url()}/ping", headers=_auth_headers(), timeout=2)
+        r = requests.get(
+            f"{_bridge_url()}/bridge/status",
+            headers=_auth_headers(),
+            timeout=2,
+        )
         if r.status_code == 200:
             data = r.json()
-            return data.get("phone_connected", False) or data.get("accessibilityService", False)
+            return bool(data.get("phone_connected", False))
         return False
     except Exception:
         return False
@@ -296,6 +349,73 @@ def android_current_app() -> str:
         return json.dumps({"error": str(e)})
 
 
+# ── Tier C tools: direct contact / SMS / call dispatch ────────────────────────
+#
+# These wrap phone-side routes that were already fully implemented
+# (/search_contacts, /send_sms, /call in BridgeCommandHandler + matching
+# ActionExecutor methods with runtime permission pre-checks) but had never
+# been exposed as LLM-callable tools. Pre-0.4.0 the only way for an
+# agent to send an SMS was to drive the Messages app step-by-step via
+# open_app + read_screen + tap_text + type — fragile across OEMs and slow.
+# Direct SmsManager dispatch is safer and matches what the voice fast-path
+# already does locally.
+#
+# The phone handles all the hard parts: runtime permission pre-check,
+# destructive-verb confirmation modal (user taps Allow/Deny before the
+# action fires), multi-part SMS segmentation, delivery ack. If the flavor
+# is googlePlay (not sideload) the phone returns 403 with a clear message
+# and the agent can degrade to the UI-automation path.
+
+def android_search_contacts(query: str, limit: int = 20) -> str:
+    """Search the phone's contact book by name. Returns matching contacts
+    with their phone numbers. Requires READ_CONTACTS permission on phone."""
+    try:
+        data = _post("/search_contacts", {"query": query, "limit": limit})
+        return json.dumps(data)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def android_send_sms(to: str, body: str) -> str:
+    """Send an SMS directly via the phone's SmsManager (not by driving the
+    Messages app UI). `to` must be a phone number — use android_search_contacts
+    first if you only have a name. The phone shows a confirmation modal to
+    the user before the message fires; this call blocks until they tap
+    Allow or Deny (up to the configured confirmation timeout)."""
+    try:
+        data = _post("/send_sms", {"to": to, "body": body})
+        return json.dumps(data)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def android_call(number: str) -> str:
+    """Dial a phone number. With CALL_PHONE granted (sideload) the call is
+    auto-placed; without it the system dialer opens pre-populated and the
+    user taps Call manually. Phone shows a confirmation modal before either
+    mode — blocks until the user reacts."""
+    try:
+        data = _post("/call", {"number": number})
+        return json.dumps(data)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def android_return_to_hermes() -> str:
+    """Bring the Hermes Relay app back to the foreground on the user's
+    phone. Call this as the FINAL step of any multi-app task (sending a
+    text, opening Maps, taking a screenshot from another app) so the user
+    sees your reply in-context without having to manually switch apps.
+    Do NOT call this mid-task — only when you're ready to hand control
+    back. Allowed even when Bridge master toggle is off, so you can
+    always wrap up cleanly."""
+    try:
+        data = _post("/return_to_hermes", {})
+        return json.dumps(data)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
 def _get_public_ip() -> str:
     """Detect this server's public IP address."""
     for service in ["https://api.ipify.org", "https://ifconfig.me/ip", "https://icanhazip.com"]:
@@ -460,7 +580,20 @@ _SCHEMAS = {
     },
     "android_tap": {
         "name": "android_tap",
-        "description": "Tap a UI element by node_id (preferred) or by screen coordinates (x, y). Always prefer node_id over coordinates — it's more reliable. Get node_ids from android_read_screen.",
+        "description": (
+            "Tap a UI element by node_id (preferred) or by screen "
+            "coordinates (x, y). Always prefer node_id over coordinates "
+            "— it's more reliable. Get node_ids from android_read_screen.\n\n"
+            "DENIAL-RETRY GUARD: if android_send_sms or android_call just "
+            "returned error_code=user_denied, do NOT use this tool to "
+            "replicate the denied action by tapping the same kind of "
+            "button in a UI (Send / Call / Delete / Pay / Confirm). The "
+            "user's denial applies to the INTENT, not to one tool call. "
+            "Retrying via UI automation after a direct denial is a trust "
+            "violation. Use this tool freely for non-destructive UI "
+            "inspection and navigation; just don't use it to sneak past "
+            "a user refusal."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -473,7 +606,21 @@ _SCHEMAS = {
     },
     "android_tap_text": {
         "name": "android_tap_text",
-        "description": "Tap the first visible UI element matching the given text. Useful when you see text on screen and want to tap it without needing node IDs.",
+        "description": (
+            "Tap the first visible UI element matching the given text. "
+            "Useful when you see text on screen and want to tap it "
+            "without needing node IDs.\n\n"
+            "DENIAL-RETRY GUARD: same rule as android_tap. If "
+            "android_send_sms or android_call just returned "
+            "error_code=user_denied, do NOT use this tool to tap a "
+            "'Send', 'Call', 'Confirm', 'Pay', or 'Delete' button in a "
+            "UI to replicate the denied action. Note: this tool is "
+            "additionally gated by the phone's destructive-verb safety "
+            "modal, so even if you try to bypass the denial this way, "
+            "the user will see ANOTHER confirmation modal for the UI "
+            "tap. Both paths land on the user, so there is no stealth "
+            "route. Don't waste their patience."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -485,7 +632,15 @@ _SCHEMAS = {
     },
     "android_type": {
         "name": "android_type",
-        "description": "Type text into the currently focused input field. Tap the field first using android_tap or android_tap_text.",
+        "description": (
+            "Type text into the currently focused input field. Tap the "
+            "field first using android_tap or android_tap_text.\n\n"
+            "DENIAL-RETRY GUARD: if android_send_sms just returned "
+            "error_code=user_denied, do NOT use this tool to type the "
+            "same message body into the Messages app's compose field as "
+            "an alternate route. The denial applies to the intent of "
+            "sending that message, not just to the one tool call."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -509,7 +664,27 @@ _SCHEMAS = {
     },
     "android_open_app": {
         "name": "android_open_app",
-        "description": "Launch an Android app by its package name. Use android_get_apps to find package names.",
+        "description": (
+            "Launch an Android app by its package name. Use android_get_apps "
+            "to find package names.\n\n"
+            "IMPORTANT: When your task is complete in the opened app, call "
+            "android_return_to_hermes as your FINAL step so the user sees "
+            "your reply in-context without manually switching back from the "
+            "other app. Also: before driving Messages / Phone / Contacts via "
+            "UI automation (tap + read_screen + type), first consider "
+            "android_send_sms / android_call / android_search_contacts — "
+            "those dispatch directly and are faster + safer.\n\n"
+            "DENIAL-RETRY GUARD: if android_send_sms or android_call just "
+            "returned error_code=user_denied, do NOT open the Messages "
+            "app, Phone dialer, or any other messaging/calling app as a "
+            "fallback path to replicate the denied action. The user's "
+            "denial applies to the intent, not just the direct tool "
+            "call. Opening the destination app to drive the same "
+            "action via UI automation (android_tap + android_type + "
+            "android_tap_text) is the exact bypass pattern to avoid. "
+            "If the user later asks you to try again with new "
+            "parameters, that's a fresh intent and you can re-attempt."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -586,23 +761,212 @@ _SCHEMAS = {
             "required": ["pairing_code"],
         },
     },
+    "android_search_contacts": {
+        "name": "android_search_contacts",
+        "description": (
+            "Search the phone's contact book by name. Returns matching "
+            "contacts with their structured phone list.\n\n"
+            "CALL THIS DIRECTLY when the user gives you a name — do NOT "
+            "ask 'who is X?' or 'is X in your contacts?' before calling. "
+            "That's what the tool is FOR. The user gave you contacts "
+            "access specifically so you could resolve names autonomously. "
+            "Bouncing lookup questions back is the anti-pattern this tool "
+            "exists to avoid.\n\n"
+            "RESPONSE SHAPE (as of 0.4.0): each contact's `phones` field "
+            "is a LIST of `{number, type, label}` objects, NOT a string. "
+            "Example:\n"
+            "  {\"count\": 1, \"contacts\": [{\n"
+            "    \"id\": 9269,\n"
+            "    \"name\": \"Hannah Dixon\",\n"
+            "    \"phones\": [\n"
+            "      {\"number\": \"+17728994696\", \"type\": \"custom\", \"label\": \"Watch\"},\n"
+            "      {\"number\": \"+19413099119\", \"type\": \"mobile\", \"label\": \"Mobile\"}\n"
+            "    ]\n"
+            "  }]}\n\n"
+            "`type` is one of: mobile, home, work, main, other, custom, "
+            "fax_home, fax_work, pager, car, callback, assistant, mms. "
+            "`label` is the human-readable label from the Contacts app — "
+            "for `custom` type this carries the user's label (commonly "
+            "'Watch' on Samsung Galaxy ecosystems where the watch "
+            "registers as a separate messaging endpoint).\n\n"
+            "DISAMBIGUATION RULES:\n"
+            "- If `count == 0`, tell the user you couldn't find the name "
+            "and ask for clarification.\n"
+            "- If `count == 1` and the contact has ONE phone, proceed "
+            "directly to android_send_sms / android_call.\n"
+            "- If `count == 1` and the contact has MULTIPLE phones, "
+            "PREFER `mobile > main > home > work > other` and AVOID "
+            "`custom` entries (those are often Galaxy Watch / Pager "
+            "endpoints you don't want to text). Briefly mention which "
+            "number you picked in your reply ('texting Hannah's mobile') "
+            "so the user can correct on the on-device modal if wrong.\n"
+            "- If `count > 1` (multiple distinct contacts match the "
+            "name), DO NOT guess. List the matches with their primary "
+            "phone and ask which one. This is legitimate ambiguity "
+            "resolution, not redundant confirmation — the user needs to "
+            "pick.\n\n"
+            "Requires READ_CONTACTS permission on phone."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Name or partial name to search for (e.g. 'Hannah', 'mom', 'dr. smith').",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max matches to return. Default 20.",
+                    "default": 20,
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    "android_send_sms": {
+        "name": "android_send_sms",
+        "description": (
+            "Send an SMS directly via the phone's native SmsManager — does "
+            "NOT drive the Messages app UI. ALWAYS prefer this over "
+            "android_open_app('com.google.android.apps.messaging') + "
+            "android_tap + android_type: the direct path is faster, safer, "
+            "doesn't leave drafts behind, and works uniformly across OEM "
+            "variants.\n\n"
+            "TRUST MODEL — read this carefully: the user gave you phone "
+            "control by explicitly pairing the Hermes Relay app, enabling "
+            "the accessibility service, AND flipping the Agent Control "
+            "master toggle ON. They also confirmed each destructive action "
+            "on the phone itself via a system-level Allow/Deny modal that "
+            "this call blocks on. That on-device modal is the user's FINAL "
+            "checkpoint and is sufficient confirmation on its own. "
+            "Therefore:\n"
+            "- DO NOT ask the user for chat-side confirmation before "
+            "calling this tool ('are you sure?', 'confirm the wording?', "
+            "'is this the right person?'). The phone modal already asks "
+            "them.\n"
+            "- DO NOT ask the user to identify a contact by name. Call "
+            "android_search_contacts FIRST to resolve names autonomously.\n"
+            "- If search_contacts returns one contact with multiple phones, "
+            "prefer `mobile > main > home > work > other` from the "
+            "structured phones list and AVOID `custom` entries (those "
+            "are often Galaxy Watch endpoints). Mention which number you "
+            "picked in your reply ('texting Hannah's mobile at +1555...').\n"
+            "- If search_contacts returns multiple distinct contacts, "
+            "ask the user which one — that's legitimate ambiguity, not "
+            "redundant confirmation.\n\n"
+            "DENIAL IS FINAL: if this tool returns an error with "
+            "`error_code: user_denied`, the user has explicitly REFUSED "
+            "this SMS via the on-device modal. DO NOT retry the same "
+            "action via alternate paths:\n"
+            "- DO NOT call android_open_app('com.google.android.apps.messaging') "
+            "to drive the Messages app UI.\n"
+            "- DO NOT call android_tap / android_tap_text / android_type "
+            "on any messaging app to replicate the denied send.\n"
+            "- DO NOT try android_send_sms again with the same parameters.\n"
+            "The user's denial applies to the INTENT of sending this "
+            "message, not just to this one tool call. Report the denial "
+            "to the user and STOP. If the user later asks you to try "
+            "again (new instruction in chat), that's a fresh intent and "
+            "you can re-attempt with updated parameters.\n\n"
+            "If the tool returns `error_code: sideload_only`, your "
+            "current Hermes Relay build is googlePlay which does not "
+            "ship the SEND_SMS permission. In that case ASK the user if "
+            "they want you to fall back to driving the Messages app UI "
+            "via android_open_app + android_tap + android_type. Do NOT "
+            "silently fall back — the UI automation path is slower and "
+            "more fragile; the user should explicitly consent.\n\n"
+            "The `to` argument MUST be a phone number — if the user gave "
+            "a contact name, call android_search_contacts first, extract "
+            "the number, then call this. Sideload flavor only — returns "
+            "403 with `error_code: sideload_only` on Google Play builds. "
+            "After sending, you do NOT need to call android_return_to_hermes "
+            "(this tool never leaves the current foreground app)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "to": {
+                    "type": "string",
+                    "description": "Phone number (E.164 or local format, e.g. '+15551234567' or '555-123-4567').",
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Message body text. Multi-part messages (>160 chars) are segmented automatically.",
+                },
+            },
+            "required": ["to", "body"],
+        },
+    },
+    "android_call": {
+        "name": "android_call",
+        "description": (
+            "Place a phone call. ALWAYS prefer this over driving the Phone "
+            "app via android_open_app + android_tap — this dispatches "
+            "directly through the system dialer API. With CALL_PHONE "
+            "granted (sideload flavor) the call is auto-dialed; otherwise "
+            "the system dialer opens pre-populated and the user taps Call "
+            "manually.\n\n"
+            "TRUST MODEL: the user gave you phone control explicitly via "
+            "the Bridge tab master toggle. The phone shows a system-level "
+            "confirmation modal before any call fires and blocks until the "
+            "user taps Allow or Deny. That on-device modal is the user's "
+            "final checkpoint. Do NOT add chat-side verbal confirmation "
+            "on top ('are you sure you want to call X?') — that's "
+            "redundant double-confirmation. Do NOT ask the user to "
+            "identify a contact by name; call android_search_contacts "
+            "first and resolve the name yourself. If the contact has "
+            "multiple phones, use `phones[0]` — the list is pre-sorted "
+            "server-side by preference (mobile > main > home > work).\n\n"
+            "DENIAL IS FINAL: if this tool returns error_code=user_denied, "
+            "the user refused the call via the on-device modal. DO NOT "
+            "retry via alternate paths — no android_open_app('com.dialer') "
+            "+ android_tap on the Call button, no android_tap_text('Call'), "
+            "no second android_call with the same number. The user's "
+            "denial applies to the intent, not one tool call. Report the "
+            "refusal and stop. A fresh instruction from the user counts "
+            "as a new intent and you can re-attempt.\n\n"
+            "Because this tool brings the Phone app to foreground in "
+            "dialer-opened mode, call android_return_to_hermes as a "
+            "wrap-up step once the call is placed so the user can see "
+            "your reply."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "number": {
+                    "type": "string",
+                    "description": "Phone number to dial (E.164 or local format).",
+                },
+            },
+            "required": ["number"],
+        },
+    },
+    "android_return_to_hermes": {
+        "name": "android_return_to_hermes",
+        "description": "Bring the Hermes Relay app on the phone back to the foreground. Call this as the FINAL step of any phone-control task that opened or brought focus to another app (Messages, Maps, Chrome, etc.) so the user sees your reply in-context without manually switching apps. Do NOT call mid-task — only when you're ready to hand control back. Allowed even when the Bridge master toggle is disabled.",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
 }
 
 # ── Tool handlers map ──────────────────────────────────────────────────────────
 
 _HANDLERS = {
-    "android_ping":         lambda args, **kw: android_ping(),
-    "android_read_screen":  lambda args, **kw: android_read_screen(**args),
-    "android_tap":          lambda args, **kw: android_tap(**args),
-    "android_tap_text":     lambda args, **kw: android_tap_text(**args),
-    "android_type":         lambda args, **kw: android_type(**args),
-    "android_swipe":        lambda args, **kw: android_swipe(**args),
-    "android_open_app":     lambda args, **kw: android_open_app(**args),
-    "android_press_key":    lambda args, **kw: android_press_key(**args),
-    "android_screenshot":   lambda args, **kw: android_screenshot(),
-    "android_scroll":       lambda args, **kw: android_scroll(**args),
-    "android_wait":         lambda args, **kw: android_wait(**args),
-    "android_get_apps":     lambda args, **kw: android_get_apps(),
-    "android_current_app":  lambda args, **kw: android_current_app(),
-    "android_setup":        lambda args, **kw: android_setup(**args),
+    "android_ping":             lambda args, **kw: android_ping(),
+    "android_read_screen":      lambda args, **kw: android_read_screen(**args),
+    "android_tap":              lambda args, **kw: android_tap(**args),
+    "android_tap_text":         lambda args, **kw: android_tap_text(**args),
+    "android_type":             lambda args, **kw: android_type(**args),
+    "android_swipe":            lambda args, **kw: android_swipe(**args),
+    "android_open_app":         lambda args, **kw: android_open_app(**args),
+    "android_press_key":        lambda args, **kw: android_press_key(**args),
+    "android_screenshot":       lambda args, **kw: android_screenshot(),
+    "android_scroll":           lambda args, **kw: android_scroll(**args),
+    "android_wait":             lambda args, **kw: android_wait(**args),
+    "android_get_apps":         lambda args, **kw: android_get_apps(),
+    "android_current_app":      lambda args, **kw: android_current_app(),
+    "android_setup":            lambda args, **kw: android_setup(**args),
+    "android_search_contacts":  lambda args, **kw: android_search_contacts(**args),
+    "android_send_sms":         lambda args, **kw: android_send_sms(**args),
+    "android_call":             lambda args, **kw: android_call(**args),
+    "android_return_to_hermes": lambda args, **kw: android_return_to_hermes(),
 }

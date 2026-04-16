@@ -11,10 +11,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Manages chat message state, session list, and streaming events.
@@ -156,6 +161,254 @@ class ChatHandler {
     }
 
     /**
+     * Append a local-only voice-intent trace to the chat scroll. Used by
+     * the sideload voice intent flow (`RealVoiceBridgeIntentHandler`) so
+     * phone-control utterances like "open Chrome" or "text Sam" leave a
+     * visible record in chat history rather than vanishing into a side-
+     * channel the user can't see.
+     *
+     * Adds two messages back-to-back:
+     *  - a user message with the raw transcribed text
+     *  - an assistant message with the action description
+     *
+     * Both are local-only — they're injected straight into [_messages]
+     * without touching the server-side session, so the gateway-side LLM
+     * does NOT see them in its session memory. That means follow-up
+     * questions like "did the SMS send?" still go to the LLM with only
+     * the bare follow-up as context.
+     *
+     * Server-side session sync (so the LLM can reason about voice actions
+     * from prior turns) is a v0.4.1 follow-up — it needs either a new
+     * "log message without LLM round-trip" gateway endpoint or a fait-
+     * accompli prompt prefix scheme. See ROADMAP.md.
+     *
+     * @param userText The raw transcribed voice utterance.
+     * @param actionDescription Human-readable description of what the
+     *   bridge layer did (or is about to do). Shown verbatim in the
+     *   assistant message bubble.
+     */
+    fun appendLocalVoiceIntentTrace(userText: String, actionDescription: String) {
+        val ts = System.currentTimeMillis()
+        val userMsg = ChatMessage(
+            id = "voice-intent-user-$ts",
+            role = MessageRole.USER,
+            content = userText,
+            timestamp = ts,
+        )
+        val assistantMsg = ChatMessage(
+            id = "voice-intent-action-$ts",
+            role = MessageRole.ASSISTANT,
+            content = actionDescription,
+            timestamp = ts + 1,
+            // Mark the personality so the bubble doesn't render under the
+            // current personality's avatar (which would imply the LLM said
+            // it). The chat UI's existing agentName plumbing handles the
+            // alternate label automatically.
+            agentName = "Voice action",
+        )
+        _messages.update { list ->
+            (list + userMsg + assistantMsg).let {
+                if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it
+            }
+        }
+    }
+
+    /**
+     * Append ONLY an assistant-role bubble showing the post-dispatch
+     * outcome of a voice intent action (e.g. "SMS sent", "user denied",
+     * "permission missing"). Called by [ChatViewModel.recordVoiceIntentResult]
+     * after the phone-side executor returns, so the user sees the actual
+     * result of the destructive-verb flow instead of just the pre-dispatch
+     * preview. ID prefix `voice-intent-result-` makes this survive
+     * [loadMessageHistory] reloads the same way the pre-dispatch trace
+     * does, and also lets [CompactTranscriptRow] in voice mode render it
+     * via MarkdownContent.
+     *
+     * [agentName] defaults to "Voice action" for the voice-mode origin
+     * (classifier → sideload handler path) but chat mode tool-call
+     * parity passes "Phone action" so the label reflects that the bubble
+     * is a structured trace of an LLM-initiated android_* tool call
+     * rather than a user utterance classified and dispatched locally.
+     */
+    fun appendLocalVoiceIntentResult(
+        description: String,
+        agentName: String = "Voice action",
+    ) {
+        val ts = System.currentTimeMillis()
+        val resultMsg = ChatMessage(
+            id = "voice-intent-result-$ts",
+            role = MessageRole.ASSISTANT,
+            content = description,
+            timestamp = ts,
+            agentName = agentName,
+        )
+        _messages.update { list ->
+            (list + resultMsg).let {
+                if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it
+            }
+        }
+    }
+
+    /**
+     * Reusable lenient JSON parser for tool-result previews. [Json { ... }]
+     * is cheap to construct but we share one instance so per-tool-completion
+     * parsing doesn't churn allocations.
+     */
+    private val phoneActionResultJson = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+    }
+
+    /**
+     * Inspect a just-completed android_* tool call and, if it's an ACTION
+     * tool (not a read-only probe or UI micro-action), synthesize a
+     * [LocalDispatchResult]-shaped outcome from [resultPreview] and emit a
+     * structured follow-up bubble via [appendLocalVoiceIntentResult]. This
+     * gives chat-mode tool calls the same post-dispatch feedback the voice
+     * flow got in 0.4.1, so the user always sees a visible success/failure
+     * trace even when the LLM's narration is lossy or quiet.
+     *
+     * [isFailure] true means we're being called from [onToolCallFailed] —
+     * in that case [resultPreview] is the error string, not a JSON blob,
+     * and we skip the parse.
+     */
+    private fun maybeEmitPhoneActionBubble(
+        toolName: String,
+        resultPreview: String?,
+        isFailure: Boolean,
+    ) {
+        val label = labelForAndroidTool(toolName) ?: return
+
+        val synthetic = if (isFailure) {
+            LocalDispatchResult(
+                status = 500,
+                errorMessage = resultPreview?.ifBlank { null },
+                errorCode = null,
+                resultJson = null,
+            )
+        } else {
+            parseAndroidToolResult(resultPreview)
+        }
+
+        val description = formatPhoneActionResult(label, synthetic)
+        appendLocalVoiceIntentResult(description, agentName = "Phone action")
+    }
+
+    /**
+     * Map an `android_*` tool name to a short human-readable action label,
+     * or null if the tool is read-only / UI-micro and should NOT emit a
+     * result bubble.
+     *
+     * Philosophy: only meaningful action-completion states earn a bubble.
+     * Read probes (`android_read_screen`, `android_get_apps`) and UI
+     * micro-actions (`android_tap`, `android_swipe`) already render as a
+     * [com.hermesandroid.relay.data.ToolCall] card on the assistant
+     * message, so emitting a second bubble for each would just spam the
+     * scrollback.
+     */
+    private fun labelForAndroidTool(toolName: String): String? {
+        if (!toolName.startsWith("android_")) return null
+        return when (toolName) {
+            "android_send_sms"        -> "Send SMS"
+            "android_call"            -> "Call"
+            "android_search_contacts" -> "Search Contacts"
+            "android_open_app"        -> "Open App"
+            "android_return_to_hermes" -> "Return to Hermes"
+            "android_screenshot"      -> "Screenshot"
+            "android_press_key"       -> "Key Press"
+            "android_setup"           -> "Bridge Setup"
+            // Read-only / UI micro-actions — intentionally skipped.
+            // The ToolProgressCard on the assistant bubble already
+            // surfaces these inline; an extra result bubble would be
+            // noise, not signal.
+            "android_read_screen",
+            "android_find_nodes",
+            "android_tap",
+            "android_tap_text",
+            "android_long_press",
+            "android_type",
+            "android_swipe",
+            "android_scroll",
+            "android_drag",
+            "android_wait",
+            "android_get_apps",
+            "android_current_app",
+            "android_describe_node",
+            "android_ping",
+            "android_clipboard_read",
+            "android_clipboard_write",
+            "android_media",
+            "android_screen_hash",
+            "android_diff_screen",
+            "android_events",
+            "android_event_stream",
+            "android_location",
+            "android_macro",
+            "android_send_intent",
+            "android_broadcast" -> null
+            // Unknown android_* tools still get a generic label so new
+            // additions don't vanish silently — the catchall in
+            // [formatPhoneActionResult] handles them.
+            else -> toolName
+                .removePrefix("android_")
+                .replace('_', ' ')
+                .replaceFirstChar { it.uppercase() }
+        }
+    }
+
+    /**
+     * Parse an `android_*` tool result JSON preview into a
+     * [LocalDispatchResult]-shaped struct so [formatPhoneActionResult]
+     * can reuse the voice-mode formatter verbatim. Plugin handlers in
+     * `plugin/tools/android_tool.py` return `json.dumps(data)` with
+     * `ok: bool` / `error: str` fields, so we just look those up.
+     *
+     * Fails open: if the preview is missing, blank, truncated, or
+     * otherwise unparseable we return a success result with no error
+     * message. A streaming tool completion should never crash chat just
+     * because the result preview was malformed.
+     */
+    private fun parseAndroidToolResult(resultPreview: String?): LocalDispatchResult {
+        val raw = resultPreview?.trim().orEmpty()
+        if (raw.isEmpty() || !raw.startsWith("{")) {
+            return LocalDispatchResult(
+                status = 200,
+                errorMessage = null,
+                errorCode = null,
+                resultJson = null,
+            )
+        }
+        return try {
+            val obj = phoneActionResultJson.parseToJsonElement(raw).jsonObject
+            val ok = obj["ok"]?.jsonPrimitive?.booleanOrNull
+            val errorMsg = obj["error"]?.jsonPrimitive?.contentOrNull
+                ?: obj["message"]?.jsonPrimitive?.contentOrNull
+            val errorCode = obj["error_code"]?.jsonPrimitive?.contentOrNull
+                ?: obj["code"]?.jsonPrimitive?.contentOrNull
+            val status = when {
+                ok == true -> 200
+                ok == false -> 400
+                errorMsg != null -> 400
+                else -> 200
+            }
+            LocalDispatchResult(
+                status = status,
+                errorMessage = errorMsg,
+                errorCode = errorCode,
+                resultJson = obj,
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "parseAndroidToolResult: unparseable preview (${e.message})")
+            LocalDispatchResult(
+                status = 200,
+                errorMessage = null,
+                errorCode = null,
+                resultJson = null,
+            )
+        }
+    }
+
+    /**
      * Add a placeholder assistant message immediately after the user sends,
      * showing streaming dots before the first SSE delta arrives.
      * Gets filled in naturally when onTextDelta finds the matching ID.
@@ -285,7 +538,34 @@ class ChatHandler {
         // just collected against the reloaded IDs are guaranteed to fire.
         dispatchedMediaMarkers.clear()
 
-        _messages.value = if (loaded.size > MAX_MESSAGES) loaded.takeLast(MAX_MESSAGES) else loaded
+        // === PHASE3-voice-intents-chathistory ===
+        // Preserve local-only voice-intent trace messages across a reload.
+        // These messages are injected by [appendLocalVoiceIntentTrace] with
+        // IDs prefixed "voice-intent-" and never reach the server-side
+        // session, so a wholesale `_messages.value = loaded` assignment
+        // would wipe them. Bailey hit this 2026-04-15: voice fall-through
+        // ("proceed" → not a recognized intent → chat.sendMessage) triggered
+        // a history reload on stream complete and the previous voice trace
+        // vanished, making it look like "the chat cleared". Server-side
+        // sync (so these traces reach the LLM's session memory too) is
+        // still a v0.4.1 follow-up, but preserving them client-side is
+        // enough to fix the disappearing-scrollback bug today.
+        val preservedVoiceTraces = _messages.value.filter {
+            it.id.startsWith("voice-intent-")
+        }
+        val merged = if (preservedVoiceTraces.isEmpty()) {
+            loaded
+        } else {
+            // Merge by timestamp so voice traces interleave with the
+            // reloaded server messages in chronological order. The voice
+            // trace IDs carry `System.currentTimeMillis()` in their suffix
+            // (see appendLocalVoiceIntentTrace), so ChatMessage.timestamp
+            // is the source of truth here.
+            (loaded + preservedVoiceTraces).sortedBy { it.timestamp }
+        }
+
+        _messages.value = if (merged.size > MAX_MESSAGES) merged.takeLast(MAX_MESSAGES) else merged
+        // === END PHASE3-voice-intents-chathistory ===
 
         // Now that the reloaded messages are in state, fire callbacks so the
         // ViewModel can insert LOADING/FAILED attachments via mutateMessage.
@@ -1001,6 +1281,14 @@ class ChatHandler {
     }
 
     fun onToolCallComplete(messageId: String, toolCallId: String, resultPreview: String? = null) {
+        // Snapshot the matching tool call's name BEFORE mutating — we need it
+        // to decide whether to emit a phone-action result bubble below.
+        val toolName = _messages.value
+            .firstOrNull { it.id == messageId && it.role == MessageRole.ASSISTANT }
+            ?.toolCalls
+            ?.firstOrNull { it.id == toolCallId }
+            ?.name
+
         _messages.update { messages ->
             messages.map { msg ->
                 if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
@@ -1022,9 +1310,28 @@ class ChatHandler {
                 }
             }
         }
+
+        // Chat parity: emit a structured follow-up bubble for android_*
+        // action tools the LLM called, mirroring the voice-mode post-
+        // dispatch feedback path. Only fires for ACTION tools — read-only
+        // and UI micro-actions are skipped (see [labelForAndroidTool]) so
+        // chat parity doesn't spam the scrollback with `android_read_screen`
+        // or `android_tap` bubbles that the existing ToolProgressCard
+        // already surfaces inline on the assistant message.
+        if (toolName != null) {
+            maybeEmitPhoneActionBubble(toolName, resultPreview, isFailure = false)
+        }
     }
 
     fun onToolCallFailed(messageId: String, toolCallId: String, error: String?) {
+        // Snapshot tool name before the update so the phone-action bubble
+        // can label the failure correctly.
+        val toolName = _messages.value
+            .firstOrNull { it.id == messageId && it.role == MessageRole.ASSISTANT }
+            ?.toolCalls
+            ?.firstOrNull { it.id == toolCallId }
+            ?.name
+
         _messages.update { messages ->
             messages.map { msg ->
                 if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
@@ -1045,6 +1352,14 @@ class ChatHandler {
                     msg
                 }
             }
+        }
+
+        if (toolName != null) {
+            maybeEmitPhoneActionBubble(
+                toolName = toolName,
+                resultPreview = error,
+                isFailure = true,
+            )
         }
     }
 
@@ -1176,5 +1491,62 @@ class ChatHandler {
 
     fun setLastSentMessage(text: String) {
         _lastSentMessage.value = text
+    }
+}
+
+/**
+ * Markdown-formatted description of a [LocalDispatchResult] for rendering
+ * in a chat bubble. Shared between the voice post-dispatch feedback path
+ * ([com.hermesandroid.relay.viewmodel.ChatViewModel.recordVoiceIntentResult])
+ * and the chat-mode android_* tool-completion path ([ChatHandler.onToolCallComplete])
+ * so both origins render identical-looking bubbles for identical outcomes.
+ *
+ * The label parameter is the short human-readable action name
+ * ("Send SMS", "Open App", "Call", etc). Error-code branches mirror the
+ * `error_code` strings [com.hermesandroid.relay.network.handlers.BridgeCommandHandler]
+ * emits on destructive-verb rejections.
+ */
+internal fun formatPhoneActionResult(
+    label: String,
+    result: LocalDispatchResult,
+): String = when {
+    result.isSuccess -> when (label) {
+        "Send SMS"      -> "**$label — sent** ✓"
+        "Open App"      -> "**$label — opened** ✓"
+        "Tap"           -> "**$label — done** ✓"
+        "Navigate back" -> "**$label — done** ✓"
+        "Home"          -> "**$label — done** ✓"
+        else            -> "**$label — complete** ✓"
+    }
+    result.errorCode == "user_denied" -> buildString {
+        append("**$label — cancelled by you**")
+    }
+    result.errorCode == "bridge_disabled" -> buildString {
+        append("**$label — agent control is off**")
+        append('\n')
+        append("Enable Agent Control in the Hermes Bridge tab to retry.")
+    }
+    result.errorCode == "permission_denied" -> buildString {
+        append("**$label — permission needed**")
+        append('\n')
+        append(result.errorMessage ?: "The phone is missing a required runtime permission.")
+    }
+    result.errorCode == "service_unavailable" -> buildString {
+        append("**$label — bridge offline**")
+        append('\n')
+        append("The accessibility service isn't connected. Enable Hermes accessibility in Settings.")
+    }
+    result.errorCode == "cancelled" -> buildString {
+        append("**$label — cancelled before dispatch**")
+    }
+    result.errorMessage != null -> buildString {
+        append("**$label — failed**")
+        append('\n')
+        append(result.errorMessage)
+    }
+    else -> buildString {
+        append("**$label — failed**")
+        append('\n')
+        append("Status ${result.status}.")
     }
 }

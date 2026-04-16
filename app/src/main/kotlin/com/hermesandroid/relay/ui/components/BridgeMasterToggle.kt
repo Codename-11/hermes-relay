@@ -57,8 +57,21 @@ fun BridgeMasterToggle(
     accessibilityGranted: Boolean,
     onToggle: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    label: String = "Agent Control",
 ) {
     var showExplain by remember { mutableStateOf(false) }
+
+    // Subtitle text reflects the flavor context. Sideload: "agent can
+    // interact / control". googlePlay (label != "Agent Control"):
+    // "connected / disconnected" since the Play flavor is read-only.
+    val isSideloadLabel = label == "Agent Control"
+    val subtitle = if (isSideloadLabel) {
+        if (enabled) "Active — agent can interact with this device"
+        else "Off — agent cannot control this device"
+    } else {
+        if (enabled) "Active — screen reading for chat context"
+        else "Off — bridge is not reading screen content"
+    }
 
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -77,14 +90,13 @@ fun BridgeMasterToggle(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Agent Control",
+                        text = label,
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = if (enabled) "Active — agent can interact with this device"
-                        else "Off — agent cannot control this device",
+                        text = subtitle,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

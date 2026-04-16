@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import com.hermesandroid.relay.data.BuildFlavor
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -98,34 +99,49 @@ fun BridgePermissionChecklist(
             PermissionRow(
                 icon = Icons.Filled.Accessibility,
                 title = "Accessibility Service",
-                subtitle = "Read screen content, dispatch taps/types",
+                subtitle = if (BuildFlavor.isSideload)
+                    "Read screen content, dispatch taps/types"
+                else
+                    "Read screen content for chat context",
                 granted = status.accessibilityServiceEnabled,
                 onClick = { openAccessibilitySettings(context) },
                 onTest = onTestAccessibility,
             )
-            PermissionRow(
-                icon = Icons.Filled.ScreenShare,
-                title = "Screen Capture",
-                subtitle = if (status.screenCapturePermitted)
-                    "Granted for this session — agent can take screenshots"
-                else
-                    "Tap to grant — agent needs this for /screenshot",
-                granted = status.screenCapturePermitted,
-                // MediaProjection has no Android Settings page; tapping the
-                // row launches the system consent dialog directly via
-                // ScreenCaptureRequester. Falls back to inert (no chevron)
-                // if the parent didn't provide a launcher (e.g., previews).
-                onClick = onRequestScreenCapture,
-                onTest = onTestScreenCapture,
-            )
-            PermissionRow(
-                icon = Icons.Filled.PictureInPicture,
-                title = "Display over other apps",
-                subtitle = "Status overlay while bridge is active",
-                granted = status.overlayPermitted,
-                onClick = { openOverlaySettings(context) },
-                onTest = onTestOverlay,
-            )
+            // Screen Capture — sideload only. googlePlay doesn't declare
+            // FOREGROUND_SERVICE_MEDIA_PROJECTION or the /screenshot route,
+            // and showing a consent toggle for a capability the APK can't
+            // use would confuse both users and Play reviewers.
+            if (BuildFlavor.isSideload) {
+                PermissionRow(
+                    icon = Icons.Filled.ScreenShare,
+                    title = "Screen Capture",
+                    subtitle = if (status.screenCapturePermitted)
+                        "Granted for this session — agent can take screenshots"
+                    else
+                        "Tap to grant — agent needs this for /screenshot",
+                    granted = status.screenCapturePermitted,
+                    // MediaProjection has no Android Settings page; tapping the
+                    // row launches the system consent dialog directly via
+                    // ScreenCaptureRequester. Falls back to inert (no chevron)
+                    // if the parent didn't provide a launcher (e.g., previews).
+                    onClick = onRequestScreenCapture,
+                    onTest = onTestScreenCapture,
+                )
+            }
+            // Display over other apps — sideload only. googlePlay has no
+            // destructive-verb safety modal (action routes are blocked) and
+            // no status overlay chip, so the SYSTEM_ALERT_WINDOW permission
+            // isn't needed and showing the row would confuse users + reviewers.
+            if (BuildFlavor.isSideload) {
+                PermissionRow(
+                    icon = Icons.Filled.PictureInPicture,
+                    title = "Display over other apps",
+                    subtitle = "Status overlay while bridge is active",
+                    granted = status.overlayPermitted,
+                    onClick = { openOverlaySettings(context) },
+                    onTest = onTestOverlay,
+                )
+            }
             PermissionRow(
                 icon = Icons.Filled.Notifications,
                 title = "Notification Listener",

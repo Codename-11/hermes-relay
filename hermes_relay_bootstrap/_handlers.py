@@ -1,4 +1,5 @@
-"""Ported handlers from `feat/api-server-enhancements` (Codename-11/hermes-agent).
+"""Ported handlers from the `feat/session-api` branch on Codename-11/hermes-agent
+(submitted upstream as PR #8556).
 
 This file mirrors the management endpoints from the fork branch, adapted to
 take the `APIServerAdapter` instance as an explicit parameter rather than

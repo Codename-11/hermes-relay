@@ -124,7 +124,7 @@ hermes relay start [OPTIONS]          (or: python -m plugin.relay)
 | `/health` | GET | `{status, version, clients, sessions}` JSON |
 | `/pairing` | POST | Generate a new relay-side pairing code |
 | `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code so it can be embedded in a QR payload. Optional body fields `ttl_seconds` / `grants` / `transport_hint` attach pairing metadata that applies to the session when the phone consumes the code — operator policy wins over phone-sent values. Also **clears all rate-limit blocks on success** so legitimate re-pair after a relay restart works immediately. Used by `/hermes-relay-pair` / `hermes-pair` on the same host. Rejects non-loopback peers with HTTP 403. |
-| `/pairing/approve` | POST | **Loopback only, Phase 3 stub.** Same wire shape as `/pairing/register`. Reserved for the phone-generates-code / host-approves direction that lands with the bridge channel. |
+| `/pairing/approve` | POST | **Loopback only, reserved for future use.** Same wire shape as `/pairing/register`. Placeholder for a future phone-generates-code / host-approves flow that would complement the existing QR pairing direction. |
 | `/sessions` | GET | Bearer-auth'd (same token the WSS channel uses). Returns all active paired devices with metadata — device name, token prefix (first 8 chars, full token never exposed), created/last-seen timestamps, session expiry, per-channel grants, transport hint, and `is_current` for the device matching the bearer. `math.inf` expiries serialize as `null` (never expire). |
 | `/sessions/{token_prefix}` | DELETE | Bearer-auth'd. Revoke a paired device by token-prefix (≥ 4 chars). 200 on exact match, 404 on zero, 409 on ambiguous matches. Self-revoke is allowed and flagged via `revoked_self: true`. |
 | `/sessions/{token_prefix}` | PATCH | Bearer-auth'd. Update a paired device's session TTL and/or per-channel grants in place. Body `{ttl_seconds?, grants?}`. TTL restarts the clock from now; grants re-clamp automatically. Powers the Paired Devices "Extend" button. |
@@ -134,6 +134,50 @@ hermes relay start [OPTIONS]          (or: python -m plugin.relay)
 | `/voice/transcribe` | POST | Bearer-auth'd. `multipart/form-data` with an audio file → `{"text": "...", "provider": "openai", "success": true}`. Relay calls `tools.transcription_tools.transcribe_audio` from the hermes-agent venv. Provider is read from `stt:` in `~/.hermes/config.yaml` — the phone doesn't pass a provider name. See [Voice Mode](/features/voice) for the full story. |
 | `/voice/synthesize` | POST | Bearer-auth'd. JSON body `{"text": "..."}` (max 5000 chars) → `audio/mpeg` file. Relay calls `tools.tts_tool.text_to_speech_tool` which writes to `~/voice-memos/tts_<ts>.mp3` and serves it via `web.FileResponse`. Provider is read from `tts:` in `~/.hermes/config.yaml`. Streaming is client-side — the phone detects sentence boundaries in the chat SSE stream and POSTs one sentence at a time so playback starts within a sentence of the agent replying. |
 | `/voice/config` | GET | Bearer-auth'd. Returns `{"tts": {...}, "stt": {...}, "requirements": {...}}` describing what TTS/STT providers the relay's hermes-agent venv has configured. Used by the app's Voice Settings screen to show provider info and power the Test Voice button. |
+| `/notifications/recent` | GET | Loopback callers skip bearer auth; remote callers need it. Returns the most recent entries from the bounded in-memory `NotificationsChannel` deque (default cap 100, wiped on relay restart). Backs the `android_notifications_recent(limit=20)` plugin tool. |
+| `/bridge/status` | GET | **Loopback only.** Structured `{"device": {...}, "bridge": {...}, "safety": {...}}` phone-status view used by `android_phone_status()`, the `hermes-status` shell shim, and the `/hermes-relay-status` skill. |
+
+## Bridge HTTP Routes
+
+The bridge channel (v0.3+) publishes an HTTP surface on the unified relay for the Hermes `android_*` plugin tools. Every route is proxied over the phone's WSS connection to the in-app `BridgeCommandHandler` and runs through the Tier 5 safety pipeline (blocklist → destructive-verb confirmation → auto-disable reschedule) before any gesture fires. A 30-second per-command timeout and fail-fast-on-phone-disconnect semantics keep callers from wedging.
+
+As of v0.4 the bridge surface is **31 routes** (30 excluding the legacy `/apps` alias) covering gestures, accessibility-tree reads, clipboard, media control, raw intents, an event stream, a sideload-only phone-utility tier (send_sms, call, search_contacts, location), and a self-foreground route (`/return_to_hermes`). On the **googlePlay** flavor, only read-only routes pass the BridgeCommandHandler whitelist — action routes return 403 `sideload_only`. See the v0.3 release notes and v0.4 changelog for the feature story behind each group.
+
+| Route | Method | Group | Purpose |
+|-------|--------|-------|---------|
+| `/ping` | GET | core | Liveness — bypasses the master-enable gate |
+| `/setup` | POST | core | One-shot welcome ping the agent can send before issuing real commands |
+| `/current_app` | GET | core | Foregrounded package name (bypasses master-enable gate) |
+| `/screen` | GET | read | Full accessibility tree → `ScreenContent(rootBounds, nodes[], truncated)`. Walks every accessibility window (system UI, popups, notification shade), not just the active app. |
+| `/screen_hash` | GET | read | SHA-256 fingerprint of the current screen for cheap change detection |
+| `/diff_screen` | POST | read | Compare current screen against a previous hash without re-downloading the full tree |
+| `/find_nodes` | POST | read | Filtered accessibility-tree search (clickable, text match, resource-id, class, etc.) |
+| `/describe_node` | POST | read | Full property bag for a stable node ID previously returned by `/screen` / `/find_nodes` |
+| `/screenshot` | GET | read | PNG bytes via `MediaProjection` → `VirtualDisplay` → `ImageReader`, uploaded to the relay's media registry and returned as an opaque token |
+| `/get_apps` | GET | read | Launchable app list from `PackageManager.queryIntentActivities(ACTION_MAIN + CATEGORY_LAUNCHER)`. Requires a matching `<queries>` element in the manifest on Android 11+. |
+| `/apps` | GET | read | Legacy alias for `/get_apps` (pre-v0.4 tool name) |
+| `/tap` | POST | act | Coordinate or `nodeId`-based tap. Runs the destructive-verb gate when a text hint is attached. |
+| `/tap_text` | POST | act | Three-tier tapText cascade — exact match → clickable-ancestor walk → substring fallback. Destructive-verb gated. |
+| `/long_press` | POST | act | Long-press gesture (context menus, drag initiation, widget rearranging) — by coordinate or node ID |
+| `/drag` | POST | act | Drag gesture — point A → point B over a duration |
+| `/type` | POST | act | Set text on the focused input via `ACTION_SET_TEXT`. Destructive-verb gated. |
+| `/swipe` | POST | act | Directional swipe gesture |
+| `/scroll` | POST | act | Scroll a container by direction or node ID |
+| `/press_key` | POST | act | Global action vocab — `back`, `home`, `recents`, `notifications`, etc. No raw KeyEvent injection. |
+| `/wait` | POST | act | Sleep in the command stream (capped at 15 s) |
+| `/open_app` | POST | act | Launch a package by ID; safety-rails blocklist runs against the *target* package, not just the current foregrounded app |
+| `/clipboard` | GET/POST | act | Read or write the system clipboard |
+| `/media` | POST | act | System-wide playback control — play / pause / next / previous / volume |
+| `/send_intent` | POST | act | Raw Android Intent escape hatch (startActivity) |
+| `/broadcast` | POST | act | Raw Android broadcast escape hatch (sendBroadcast) |
+| `/events` | GET | events | Poll the recent AccessibilityEvent buffer (structured UI events — window state changes, view clicks, scrolls, content changes) |
+| `/events/stream` | POST | events | Toggle accessibility-event capture on / off on the phone side |
+| `/location` | GET | sideload-only | GPS last-known-location read |
+| `/search_contacts` | POST | sideload-only | Contact lookup by name → phone number |
+| `/call` | POST | sideload-only | Place a call via `ACTION_CALL`, with an `ACTION_DIAL` fallback on Google Play |
+| `/send_sms` | POST | sideload-only | Direct SMS send via `SmsManager` with send-result confirmation |
+
+**Gating.** Every route except `/ping` and `/current_app` is refused with 403 when the in-app master toggle is off. The sideload-only routes are compiled out of the Google Play build. Blocklisted target packages return 403 `{"error": "blocked package <name>"}`; denied destructive-verb confirmations return 403 `{"error": "user denied destructive action", "reason": "confirmation_denied_or_timeout"}`.
 
 ## Pairing Model
 

@@ -103,23 +103,23 @@ Talk to your Hermes agent from anywhere. Direct API streaming, session history, 
 | Channel | What | Status |
 |---------|------|--------|
 | **Chat** | Stream conversations to Hermes via HTTP/SSE | Available |
+| **Voice** | Real-time voice conversation via relay TTS/STT | Available |
+| **Bridge** | Agent reads the screen and performs UI actions (tap, long-press, drag, type, clipboard, media, macros, events) | Available |
 | **Terminal** | Secure remote shell via tmux | Phase 2 |
-| **Bridge** | Agent controls the phone — taps, types, screenshots | Phase 3 |
 
 ## Features
 
-- **Streaming chat** — Direct SSE to the Hermes API Server with real-time markdown rendering
-- **Voice mode** — Real-time voice conversation via the relay; sphere listens with you, performs the agent's reply as it speaks. Uses your server's configured TTS/STT providers (Edge TTS, ElevenLabs, OpenAI, MiniMax, Mistral, NeuTTS / faster-whisper, Groq, OpenAI Whisper)
-- **Smooth auto-scroll** — Live-follow streaming responses with a "scrolled up to read" pause/resume gesture
-- **Session management** — Create, switch, rename, delete chat sessions
-- **Tool visualization** — See agent tool calls as they execute (compact or detailed cards)
-- **Personalities** — Switch between agent personalities with a picker
-- **Slash commands** — 29+ gateway commands, searchable command palette
-- **File attachments** — Send images, documents, any file type
-- **Message queuing** — Send messages while the agent is still streaming
-- **Analytics** — Stats for Nerds with TTFT, token usage, stream health
-- **Security** — Encrypted local storage (AES-256-GCM), HTTPS enforced
-- **QR pairing** — Scan a QR code to auto-configure your server connection
+- **Streaming chat** — Direct SSE to the Hermes API Server with real-time markdown rendering, session history, tool-call visualization, personality picker, searchable command palette (29+ gateway commands), file attachments, and send-while-streaming message queuing
+- **Voice mode** — Real-time voice conversation via the relay; the sphere listens with you and performs the agent's reply as it speaks. Uses your server's configured TTS/STT providers (Edge TTS, ElevenLabs, OpenAI, MiniMax, Mistral, NeuTTS / faster-whisper, Groq, OpenAI Whisper)
+- **Phone control (bridge)** — The agent can read what's on screen and act on it — tap, long-press, drag, swipe, scroll, type, and press system keys — plus take screenshots, read/write the clipboard, and control system-wide media playback. Gesture reliability is hardened for dim/idle screens, and a smarter tap-fallback cascade handles apps where labels sit inside non-clickable wrappers
+- **Screen understanding** — Filtered accessibility-tree search, per-node property lookups with stable IDs, cheap screen-hash change detection, and multi-window reads (system overlays, popups, notification shade) so the agent can reason about UI without guessing
+- **Workflow automation** — Batched macro execution for multi-step flows, real-time accessibility event streaming for "wait until something happens" waits, and a raw-Intent escape hatch for apps that expose deep-link actions
+- **Notification companion** — Opt-in notification access so the agent can triage, summarize, and route incoming notifications
+- **Bridge safety rails** — Per-app blocklist (banking, payments, 2FA default-blocked), destructive-verb confirmation modal (send, pay, delete, transfer…), idle auto-disable timer, optional persistent-status overlay, full activity log
+- **Security & pairing** — QR-code pairing, Android Keystore session storage (StrongBox-preferred), TOFU cert pinning, per-channel time-bound grants, user-chosen session TTL
+- **Analytics** — Stats for Nerds with TTFT, token usage, stream health, and peak-time charts
+
+> Sideload builds add direct SMS, contact search, one-tap dialing, and location awareness — handy for fully hands-free voice intents like "text Sam I'll be 10 minutes late". See [Release tracks](https://codename-11.github.io/hermes-relay/guide/release-tracks) for the full sideload capability matrix.
 
 ## Getting Started
 
@@ -177,7 +177,7 @@ scripts/dev.bat relay      # Start relay server (dev, no TLS)
 hermes-relay/
 ├── app/                       # Android app (Kotlin + Jetpack Compose)
 ├── relay_server/              # WSS relay server (Python + aiohttp)
-├── plugin/                    # Hermes agent plugin (14 android_* tools + pair module)
+├── plugin/                    # Hermes agent plugin (18 android_* tools + pair module)
 ├── skills/                    # Hermes agent skills
 │   └── devops/
 │       └── hermes-relay-pair/ # /hermes-relay-pair slash-command skill

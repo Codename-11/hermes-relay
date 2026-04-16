@@ -4,8 +4,8 @@ Hermes-Relay ships in **two flavors** built from the same codebase. Most users w
 
 ## TL;DR
 
-- **Google Play** — easy install, automatic updates, every chat and voice feature, plus the agent can *read* your phone (notifications, calendar, what's on screen). Cannot tap, type, or swipe on your behalf.
-- **Sideload** — manual install from GitHub Releases, all of the above plus the agent can *control* your phone — voice-routed bridge intents ("text Sam I'll be late"), vision-driven navigation, the works.
+- **Google Play** — easy install, automatic updates, every chat and voice feature, plus the agent can *read* your phone (notifications, what's on screen). The bridge is **read-only** — it cannot tap, type, swipe, send SMS, make calls, or control other apps on your behalf. The toggle is labeled "Bridge Mode."
+- **Sideload** — manual install from GitHub Releases, all of the above plus the agent can *control* your phone — voice-routed bridge intents ("text Sam I'll be late", "open Chrome"), direct SMS/call dispatch, vision-driven navigation, the works. 18 `android_*` tools available. The toggle is labeled "Agent Control."
 - They coexist on a device — you can install both side-by-side and try them both.
 
 ## Why two tracks?
@@ -55,14 +55,17 @@ Download the file ending in `-sideload-release.apk` from the latest GitHub Relea
 
 In both cases, the server-side plugin is updated independently with `git pull && bash install.sh` on whatever machine runs your Hermes agent — see the [installation guide](/guide/getting-started#install-the-server-plugin) for that flow.
 
-## Safety rails — always on, in both tracks
+## Safety rails
 
-Whichever track you pick, Hermes-Relay's bridge channel runs the same set of guardrails:
+The safety rail system is designed for the sideload track where the agent can control the phone. On the Google Play track, action routes are blocked at the code level (not "disabled by a flag" — the routes return 403 and the safety settings UI is hidden entirely), so the safety rails don't fire because there's nothing to gate.
+
+On the **sideload** track, the full safety rail stack runs:
 
 - **Per-app blocklist** — banking apps, password managers, and your work email are blocked from any bridge action by default. You can add or remove entries from Settings.
-- **Confirmation on destructive verbs** — words like *send*, *pay*, *delete*, *transfer*, *post*, *publish*, and *buy* always trigger a confirmation prompt before the agent acts.
-- **Auto-disable** — bridge mode turns itself off after a configurable idle period and re-enabling it requires biometric.
-- **Activity log** — every command the agent runs is logged with a timestamp, the result, and a screenshot thumbnail.
+- **Confirmation on destructive verbs** — words like *send*, *pay*, *delete*, *transfer*, *post*, *publish*, and *buy* trigger a system-overlay confirmation prompt before the agent acts. This fires on `/tap_text`, `/type`, AND on `/tap` + `/long_press` when the tapped button's text contains a destructive verb (so tapping a "Send" button by node ID is also gated).
+- **Auto-disable** — bridge mode turns itself off after a configurable idle period.
+- **Activity log** — every command the agent runs is logged with a timestamp and the result.
 - **Persistent notification** — when bridge is on, you always have a system-tray notification with a one-tap kill switch.
+- **Denial is final** — if you tap Deny on the confirmation prompt, the agent receives a structured `error_code: user_denied` response with an explicit "do not retry via UI automation" instruction. The agent cannot work around a denial by driving the Messages app UI instead.
 
-These exist regardless of which track you chose — they're the floor, not a sideload feature.
+On the **Google Play** track, none of the above fires because the bridge is read-only. The Bridge tab shows only "Bridge Mode" (screen reading), accessibility + notification listener permissions, and the activity log.

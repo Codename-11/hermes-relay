@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.ui.components
 
 import android.Manifest
+import android.content.ClipData
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -9,34 +10,44 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.PhonelinkLock
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -45,36 +56,53 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.ClipEntry
 import com.hermesandroid.relay.auth.AuthState
+import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 
 /**
  * Shared three-step pairing wizard used by both onboarding (first run) and
- * Settings → Connection (re-pair / change server). Replaces the old split
- * between [com.hermesandroid.relay.ui.onboarding.OnboardingScreen]'s
- * `ConnectPage` (which discarded relay credentials) and the dialog-based
- * `PairingWalkthroughDialog` so there is one canonical pair flow that always
- * applies the full QR payload — relay code, TTL, grants, cert pin, the lot.
+ * Settings → Connection (re-pair / change server). One canonical pair flow
+ * exposing every supported pairing method, so first-run and re-pair stay in
+ * lockstep.
  *
  * Steps:
  *
- *  1. **Scan** — camera + QR scanner. Single primary action; falls through
- *     to manual entry if the user can't scan.
- *  2. **Confirm** — show what was scanned, transport security badge, TTL
- *     picker (radio list), and an inline insecure note when the relay is
- *     plain `ws://`. Tap Pair to apply.
+ *  1. **Method** — pick how to pair. Three tiles:
+ *     - **Scan QR**: opens camera + scanner. On success → Confirm.
+ *     - **Enter code**: server already minted a code via `hermes-pair
+ *       --register-code` or `/hermes-relay-pair`. → ManualEntry.
+ *     - **Show code** (relay-gated): phone displays a generated 6-char
+ *       code + the host command to run. → ShowCode.
+ *  2. **Path-specific middle step**:
+ *     - QR path → **Confirm**: shows what was scanned, transport security
+ *       badge, TTL picker, insecure note when the relay is plain `ws://`.
+ *       Tap Pair to apply the full payload (URLs, code, grants, cert pin).
+ *     - Enter code path → **ManualEntry**: API URL + Relay URL + code
+ *       fields. Tap Pair to persist the URLs and connect with the typed
+ *       code as the server-issued code.
+ *     - Show code path → **ShowCode**: API URL + Relay URL fields, the
+ *       phone-generated code (with copy + regen), the
+ *       `hermes-pair --register-code <code>` command (with copy), and a
+ *       Connect button to fire the pair once the operator has registered
+ *       the code on the host.
  *  3. **Verify** — runs the pair, observes [AuthState], surfaces errors
  *     with a Retry affordance. On success, calls [onComplete].
  *
@@ -104,13 +132,25 @@ fun ConnectionWizard(
 
     val isTailscaleDetected by connectionViewModel.isTailscaleDetected.collectAsState()
     val authState by connectionViewModel.authState.collectAsState()
+    val relayEnabled by FeatureFlags.relayEnabled(context)
+        .collectAsState(initial = FeatureFlags.isDevBuild)
+    val pairingCode by connectionViewModel.pairingCode.collectAsState()
+    val currentApiUrl by connectionViewModel.apiServerUrl.collectAsState()
+    val currentRelayUrl by connectionViewModel.relayUrl.collectAsState()
 
-    var step by remember { mutableStateOf(WizardStep.Scan) }
+    var step by remember { mutableStateOf(WizardStep.Method) }
+    var chosenMethod by remember { mutableStateOf(PairMethod.Scan) }
     var pendingPayload by remember { mutableStateOf<HermesPairingPayload?>(null) }
     var ttlSeconds by remember { mutableStateOf(PairingPreferencesDefault) }
     var showQrScanner by remember { mutableStateOf(false) }
     var verifyError by remember { mutableStateOf<String?>(null) }
     var verifyAttempt by remember { mutableStateOf(0) }
+
+    // Manual-path field state. Pre-fill from whatever the VM already knows
+    // so re-pair from Settings keeps the previously-configured URLs.
+    var manualApiUrl by remember(currentApiUrl) { mutableStateOf(currentApiUrl) }
+    var manualRelayUrl by remember(currentRelayUrl) { mutableStateOf(currentRelayUrl) }
+    var manualCode by remember { mutableStateOf("") }
 
     // Camera permission gate. We don't keep the launcher result around — the
     // showQrScanner flag is the persistent state.
@@ -131,25 +171,77 @@ fun ConnectionWizard(
     // Watch the auth state once verify starts. Resolves Paired → onComplete,
     // Failed → surface error + let user retry, timeout → same. Cancelled
     // automatically when verifyAttempt changes (re-tries are a fresh attempt).
+    //
+    // CRITICAL: snapshot the current authState at the start of the attempt
+    // and require a TRANSITION away from it before accepting Paired/Failed.
+    // Without this, a stale `AuthState.Paired(token)` left in the keystore
+    // from a previous install (or pair) races the new pair attempt and the
+    // first {} predicate matches the stale value immediately — onComplete()
+    // fires before the new WSS handshake has even started, the wizard
+    // navigates to chat, and the user lands "in app" with only the API
+    // configured. Snapshot+transition closes the race even when the
+    // synchronous authState reset in applyPairingPayload didn't run (e.g.
+    // QRs without a relay block, or relay blocks with empty code).
     LaunchedEffect(verifyAttempt) {
         if (verifyAttempt == 0) return@LaunchedEffect
         verifyError = null
+        val snapshot = connectionViewModel.authState.value
+        android.util.Log.i(
+            "ConnectionWizard",
+            "verify[$verifyAttempt] snapshot=${snapshot::class.simpleName} — waiting for transition to Paired|Failed"
+        )
         try {
             val terminal = withTimeout(15_000) {
-                connectionViewModel.authState.first {
-                    it is AuthState.Paired || it is AuthState.Failed
+                connectionViewModel.authState.first { current ->
+                    val match = current != snapshot &&
+                        (current is AuthState.Paired || current is AuthState.Failed)
+                    android.util.Log.d(
+                        "ConnectionWizard",
+                        "verify[$verifyAttempt] emission=${current::class.simpleName} " +
+                            "differs=${current != snapshot} match=$match"
+                    )
+                    match
                 }
             }
             when (terminal) {
-                is AuthState.Paired -> onComplete()
-                is AuthState.Failed -> verifyError =
-                    "Server rejected the pairing: ${terminal.reason}"
+                is AuthState.Paired -> {
+                    android.util.Log.i(
+                        "ConnectionWizard",
+                        "verify[$verifyAttempt] terminal=Paired → onComplete()"
+                    )
+                    onComplete()
+                }
+                is AuthState.Failed -> {
+                    android.util.Log.w(
+                        "ConnectionWizard",
+                        "verify[$verifyAttempt] terminal=Failed reason=${terminal.reason}"
+                    )
+                    verifyError = terminal.reason
+                }
                 else -> verifyError = "Pairing did not complete"
             }
         } catch (_: TimeoutCancellationException) {
+            android.util.Log.w(
+                "ConnectionWizard",
+                "verify[$verifyAttempt] TIMEOUT after 15s (current=${connectionViewModel.authState.value::class.simpleName})"
+            )
             verifyError = "Timed out waiting for the relay. " +
                 "Check that the relay is running and the URL is correct."
         }
+    }
+
+    // Shared launcher for the manual paths — persists URLs, applies the
+    // server-issued code, drops any stale session, and reconnects. Used by
+    // both ManualEntry (typed code) and ShowCode (phone-generated code).
+    val launchManualPair: (String) -> Unit = { code ->
+        connectionViewModel.updateApiServerUrl(manualApiUrl.trim())
+        connectionViewModel.updateRelayUrl(manualRelayUrl.trim())
+        connectionViewModel.authManager
+            .applyServerIssuedCodeAndReset(code.trim().uppercase())
+        connectionViewModel.disconnectRelay()
+        connectionViewModel.connectRelay(manualRelayUrl.trim())
+        step = WizardStep.Verify
+        verifyAttempt += 1
     }
 
     Column(
@@ -159,7 +251,7 @@ fun ConnectionWizard(
             .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        WizardStepIndicator(currentStep = step.ordinal, totalSteps = WizardStep.entries.size)
+        WizardStepIndicator(currentStep = step.indicatorIndex, method = chosenMethod)
 
         AnimatedContent(
             targetState = step,
@@ -167,9 +259,20 @@ fun ConnectionWizard(
             label = "wizard-step",
         ) { current ->
             when (current) {
-                WizardStep.Scan -> ScanStep(
-                    onLaunchScanner = {
+                WizardStep.Method -> MethodStep(
+                    relayEnabled = relayEnabled,
+                    onPickScan = {
+                        chosenMethod = PairMethod.Scan
                         cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                    },
+                    onPickEnterCode = {
+                        chosenMethod = PairMethod.EnterCode
+                        manualCode = ""
+                        step = WizardStep.ManualEntry
+                    },
+                    onPickShowCode = {
+                        chosenMethod = PairMethod.ShowCode
+                        step = WizardStep.ShowCode
                     },
                     onSkip = if (showSkip) onCancel else null,
                 )
@@ -179,8 +282,8 @@ fun ConnectionWizard(
                     if (payload == null) {
                         // Defensive — shouldn't happen because we only enter
                         // Confirm after a successful scan, but if it does,
-                        // bounce back to Scan instead of crashing.
-                        LaunchedEffect(Unit) { step = WizardStep.Scan }
+                        // bounce back to the chooser instead of crashing.
+                        LaunchedEffect(Unit) { step = WizardStep.Method }
                     } else {
                         ConfirmStep(
                             payload = payload,
@@ -189,7 +292,7 @@ fun ConnectionWizard(
                             isTailscaleDetected = isTailscaleDetected,
                             onBack = {
                                 pendingPayload = null
-                                step = WizardStep.Scan
+                                step = WizardStep.Method
                             },
                             onConfirm = {
                                 connectionViewModel.applyPairingPayload(payload, ttlSeconds)
@@ -200,20 +303,49 @@ fun ConnectionWizard(
                     }
                 }
 
+                WizardStep.ManualEntry -> ManualEntryStep(
+                    apiUrl = manualApiUrl,
+                    onApiUrlChange = { manualApiUrl = it },
+                    relayUrl = manualRelayUrl,
+                    onRelayUrlChange = { manualRelayUrl = it },
+                    code = manualCode,
+                    onCodeChange = { manualCode = it.uppercase() },
+                    onBack = { step = WizardStep.Method },
+                    onSubmit = { launchManualPair(manualCode) },
+                )
+
+                WizardStep.ShowCode -> ShowCodeStep(
+                    apiUrl = manualApiUrl,
+                    onApiUrlChange = { manualApiUrl = it },
+                    relayUrl = manualRelayUrl,
+                    onRelayUrlChange = { manualRelayUrl = it },
+                    pairingCode = pairingCode,
+                    onRegenerate = { connectionViewModel.regeneratePairingCode() },
+                    onBack = { step = WizardStep.Method },
+                    onConnect = { launchManualPair(pairingCode) },
+                )
+
                 WizardStep.Verify -> VerifyStep(
                     authState = authState,
                     error = verifyError,
                     onRetry = {
                         verifyError = null
-                        pendingPayload?.let {
-                            connectionViewModel.applyPairingPayload(it, ttlSeconds)
-                            verifyAttempt += 1
+                        when (chosenMethod) {
+                            PairMethod.Scan -> pendingPayload?.let {
+                                connectionViewModel.applyPairingPayload(it, ttlSeconds)
+                                verifyAttempt += 1
+                            }
+                            PairMethod.EnterCode -> launchManualPair(manualCode)
+                            PairMethod.ShowCode -> launchManualPair(pairingCode)
                         }
                     },
                     onBack = {
-                        // User wants to re-scan or pick a new TTL.
                         verifyError = null
-                        step = WizardStep.Confirm
+                        step = when (chosenMethod) {
+                            PairMethod.Scan -> WizardStep.Confirm
+                            PairMethod.EnterCode -> WizardStep.ManualEntry
+                            PairMethod.ShowCode -> WizardStep.ShowCode
+                        }
                     },
                     onCancel = onCancel,
                 )
@@ -241,10 +373,27 @@ fun ConnectionWizard(
 private val PairingPreferencesDefault: Long =
     com.hermesandroid.relay.data.PairingPreferences.DEFAULT_TTL_SECONDS
 
-private enum class WizardStep { Scan, Confirm, Verify }
+private enum class WizardStep {
+    Method,
+    Confirm,
+    ManualEntry,
+    ShowCode,
+    Verify;
+
+    /** Slot index in the 3-dot indicator regardless of which path is active. */
+    val indicatorIndex: Int
+        get() = when (this) {
+            Method -> 0
+            Confirm, ManualEntry, ShowCode -> 1
+            Verify -> 2
+        }
+}
+
+private enum class PairMethod { Scan, EnterCode, ShowCode }
 
 @Composable
-private fun WizardStepIndicator(currentStep: Int, totalSteps: Int) {
+private fun WizardStepIndicator(currentStep: Int, method: PairMethod) {
+    val totalSteps = 3
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -301,8 +450,12 @@ private fun WizardStepIndicator(currentStep: Int, totalSteps: Int) {
     Spacer(Modifier.height(4.dp))
     Text(
         text = when (currentStep) {
-            0 -> "Step 1 of 3 — Scan pairing QR"
-            1 -> "Step 2 of 3 — Confirm pairing"
+            0 -> "Step 1 of 3 — Choose how to pair"
+            1 -> when (method) {
+                PairMethod.Scan -> "Step 2 of 3 — Confirm pairing"
+                PairMethod.EnterCode -> "Step 2 of 3 — Enter pairing code"
+                PairMethod.ShowCode -> "Step 2 of 3 — Show code on host"
+            }
             else -> "Step 3 of 3 — Verify"
         },
         style = MaterialTheme.typography.labelMedium,
@@ -311,8 +464,11 @@ private fun WizardStepIndicator(currentStep: Int, totalSteps: Int) {
 }
 
 @Composable
-private fun ScanStep(
-    onLaunchScanner: () -> Unit,
+private fun MethodStep(
+    relayEnabled: Boolean,
+    onPickScan: () -> Unit,
+    onPickEnterCode: () -> Unit,
+    onPickShowCode: () -> Unit,
     onSkip: (() -> Unit)?,
 ) {
     Column(
@@ -324,23 +480,34 @@ private fun ScanStep(
             style = MaterialTheme.typography.headlineSmall,
         )
         Text(
-            text = "Run /hermes-relay-pair in any Hermes chat, or hermes-pair on your server, " +
-                "to generate a pairing QR. One scan configures chat, the relay, and your session.",
+            text = "Run /hermes-relay-pair in any Hermes chat, or hermes-pair on your " +
+                "server, to start pairing. Pick the method that fits your setup.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        Button(
-            onClick = onLaunchScanner,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Icon(
-                imageVector = Icons.Filled.QrCodeScanner,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
+        MethodTile(
+            icon = Icons.Filled.QrCodeScanner,
+            title = "Scan QR code",
+            subtitle = "Recommended — one scan configures chat, the relay, and your session",
+            onClick = onPickScan,
+            isPrimary = true,
+        )
+
+        MethodTile(
+            icon = Icons.Filled.Keyboard,
+            title = "Enter a code",
+            subtitle = "The host already printed a 6-character code — type it in",
+            onClick = onPickEnterCode,
+        )
+
+        if (relayEnabled) {
+            MethodTile(
+                icon = Icons.Filled.PhonelinkLock,
+                title = "Show a code on this phone",
+                subtitle = "No camera or QR? Display a code here and register it on the host",
+                onClick = onPickShowCode,
             )
-            Spacer(Modifier.width(8.dp))
-            Text("Scan QR Code")
         }
 
         if (onSkip != null) {
@@ -349,6 +516,342 @@ private fun ScanStep(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("Skip for now — set up later in Settings")
+            }
+        }
+    }
+}
+
+@Composable
+private fun MethodTile(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+    isPrimary: Boolean = false,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isPrimary) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant
+            },
+        ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = if (isPrimary) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier.size(28.dp),
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (isPrimary) {
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (isPrimary) {
+                        MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+            Icon(
+                imageVector = Icons.Filled.ChevronRight,
+                contentDescription = null,
+                tint = if (isPrimary) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ManualEntryStep(
+    apiUrl: String,
+    onApiUrlChange: (String) -> Unit,
+    relayUrl: String,
+    onRelayUrlChange: (String) -> Unit,
+    code: String,
+    onCodeChange: (String) -> Unit,
+    onBack: () -> Unit,
+    onSubmit: () -> Unit,
+) {
+    val trimmedCode = code.trim().uppercase()
+    val codeValid = trimmedCode.length in 4..12 && trimmedCode.all { it.isLetterOrDigit() }
+    val canSubmit = codeValid && relayUrl.isNotBlank() && apiUrl.isNotBlank()
+
+    Column(
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            text = "Enter pairing code",
+            style = MaterialTheme.typography.headlineSmall,
+        )
+        Text(
+            text = "Type the code printed by hermes-pair or /hermes-relay-pair, plus your " +
+                "API server and relay URLs. We'll persist them and pair in one shot.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        OutlinedTextField(
+            value = apiUrl,
+            onValueChange = onApiUrlChange,
+            label = { Text("API server URL") },
+            placeholder = { Text("http://your-server:8642") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        OutlinedTextField(
+            value = relayUrl,
+            onValueChange = onRelayUrlChange,
+            label = { Text("Relay URL") },
+            placeholder = { Text("wss://your-server:8767") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        OutlinedTextField(
+            value = code,
+            onValueChange = onCodeChange,
+            label = { Text("Pairing code") },
+            placeholder = { Text("e.g. ABC123") },
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodyLarge.copy(
+                fontFamily = FontFamily.Monospace,
+            ),
+            keyboardOptions = KeyboardOptions(
+                imeAction = ImeAction.Go,
+                autoCorrectEnabled = false,
+            ),
+            keyboardActions = KeyboardActions(
+                onGo = { if (canSubmit) onSubmit() },
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            OutlinedButton(
+                onClick = onBack,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Back")
+            }
+            Button(
+                onClick = onSubmit,
+                enabled = canSubmit,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Pair")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShowCodeStep(
+    apiUrl: String,
+    onApiUrlChange: (String) -> Unit,
+    relayUrl: String,
+    onRelayUrlChange: (String) -> Unit,
+    pairingCode: String,
+    onRegenerate: () -> Unit,
+    onBack: () -> Unit,
+    onConnect: () -> Unit,
+) {
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
+    val canConnect = pairingCode.isNotBlank() &&
+        relayUrl.isNotBlank() &&
+        apiUrl.isNotBlank()
+
+    Column(
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            text = "Show code on host",
+            style = MaterialTheme.typography.headlineSmall,
+        )
+        Text(
+            text = "Use this when you can't scan the pairing QR. Set your URLs, then " +
+                "register the code below on the host running Hermes-Relay.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        OutlinedTextField(
+            value = apiUrl,
+            onValueChange = onApiUrlChange,
+            label = { Text("API server URL") },
+            placeholder = { Text("http://your-server:8642") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        OutlinedTextField(
+            value = relayUrl,
+            onValueChange = onRelayUrlChange,
+            label = { Text("Relay URL") },
+            placeholder = { Text("wss://your-server:8767") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        HorizontalDivider()
+
+        // Step 1 — show the code
+        Text(
+            text = "1. Copy this code",
+            style = MaterialTheme.typography.titleSmall,
+        )
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+            ) {
+                Text(
+                    text = pairingCode.ifBlank { "------" },
+                    style = MaterialTheme.typography.headlineMedium.copy(
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = MaterialTheme.typography.headlineMedium.fontSize * 0.15,
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = {
+                    if (pairingCode.isNotBlank()) {
+                        scope.launch {
+                            clipboard.setClipEntry(
+                                ClipEntry(
+                                    ClipData.newPlainText("Pairing code", pairingCode)
+                                )
+                            )
+                        }
+                    }
+                }) {
+                    Icon(
+                        imageVector = Icons.Filled.ContentCopy,
+                        contentDescription = "Copy pairing code",
+                    )
+                }
+                IconButton(onClick = onRegenerate) {
+                    Icon(
+                        imageVector = Icons.Filled.Refresh,
+                        contentDescription = "Generate new code",
+                    )
+                }
+            }
+        }
+
+        // Step 2 — register on host
+        Text(
+            text = "2. On the host running Hermes-Relay, run:",
+            style = MaterialTheme.typography.titleSmall,
+        )
+        Surface(
+            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(6.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            ) {
+                Text(
+                    text = "hermes-pair --register-code ${pairingCode.ifBlank { "<code>" }}",
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = FontFamily.Monospace,
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(
+                    onClick = {
+                        if (pairingCode.isNotBlank()) {
+                            val cmd = "hermes-pair --register-code $pairingCode"
+                            scope.launch {
+                                clipboard.setClipEntry(
+                                    ClipEntry(
+                                        ClipData.newPlainText("hermes-pair command", cmd)
+                                    )
+                                )
+                            }
+                        }
+                    },
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.ContentCopy,
+                        contentDescription = "Copy command",
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+        }
+
+        // Step 3 — connect
+        Text(
+            text = "3. Then come back and tap Connect",
+            style = MaterialTheme.typography.titleSmall,
+        )
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            OutlinedButton(
+                onClick = onBack,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Back")
+            }
+            Button(
+                onClick = onConnect,
+                enabled = canConnect,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Connect")
             }
         }
     }

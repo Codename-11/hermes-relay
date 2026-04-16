@@ -6,17 +6,22 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
@@ -64,10 +69,32 @@ fun MessageBubble(
     val isUser = message.role == MessageRole.USER
     val isSystem = message.role == MessageRole.SYSTEM
 
-    val backgroundColor = when (message.role) {
-        MessageRole.USER -> MaterialTheme.colorScheme.primary
-        MessageRole.ASSISTANT -> MaterialTheme.colorScheme.surfaceVariant
-        MessageRole.SYSTEM -> MaterialTheme.colorScheme.tertiaryContainer
+    // Phone/voice-origin action bubble marker.
+    //
+    // Voice mode (sideload classifier → RealVoiceBridgeIntentHandler) emits
+    // these with `agentName = "Voice action"` and an id prefixed
+    // `voice-intent-action-*` / `voice-intent-result-*`. Chat mode parity
+    // (ChatHandler.onToolCallComplete for android_* tools) emits them with
+    // `agentName = "Phone action"`. We match on either so a single render
+    // branch applies the accent to both origins.
+    //
+    // Chosen marker: subtle thin vertical accent bar on the leading edge of
+    // the bubble in colorScheme.tertiary, so an action bubble is
+    // immediately distinguishable from a regular LLM reply when they
+    // interleave in the scrollback. Subtle on purpose — the content still
+    // carries the signal, the bar just flags "this was a phone control
+    // action, not LLM narration".
+    val isActionBubble = !isUser && !isSystem && (
+        message.agentName == "Voice action" ||
+            message.agentName == "Phone action" ||
+            message.id.startsWith("voice-intent-")
+    )
+
+    val backgroundColor = when {
+        message.role == MessageRole.USER -> MaterialTheme.colorScheme.primary
+        message.role == MessageRole.SYSTEM -> MaterialTheme.colorScheme.tertiaryContainer
+        isActionBubble -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.45f)
+        else -> MaterialTheme.colorScheme.surfaceVariant
     }
 
     val textColor = when (message.role) {
@@ -118,12 +145,31 @@ fun MessageBubble(
             )
         }
 
-        // Message bubble
+        // Message bubble.
+        //
+        // Action bubbles (voice/phone origin) wrap the existing Surface in
+        // a Row with a thin leading tertiary-colored accent bar. The bar
+        // is rendered as a separate Box so it hugs the bubble's left edge
+        // regardless of content height (tall bubbles with multi-line
+        // markdown stretch the bar via fillMaxHeight + IntrinsicSize).
+        Row(
+            modifier = Modifier.widthIn(max = maxBubbleWidth),
+            verticalAlignment = Alignment.Top,
+        ) {
+            if (isActionBubble) {
+                Box(
+                    modifier = Modifier
+                        .padding(top = 8.dp, bottom = 8.dp, end = 6.dp)
+                        .width(3.dp)
+                        .height(if (message.content.isBlank()) 14.dp else 24.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.85f))
+                )
+            }
         Surface(
             shape = bubbleShape,
             color = backgroundColor,
             modifier = Modifier
-                .widthIn(max = maxBubbleWidth)
                 .then(
                     if (!isUser && !isSystem && isDarkTheme) {
                         Modifier.leftEdgeGlow(
@@ -204,6 +250,7 @@ fun MessageBubble(
                 }
             }
         }
+        } // end Row (bubble + optional leading accent bar)
     }
 }
 

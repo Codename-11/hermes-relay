@@ -6,6 +6,11 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- === A8 wake-lock: keep CPU awake while dispatching bridge gestures === -->
+    <!-- Normal-protection permission (no runtime prompt). Held only inside
+         WakeLockManager.wakeForAction { ... }, with a 10s hard timeout and
+         ref-counted release. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- === PHASE3-accessibility: AccessibilityService + bridge permissions === -->
     <!-- BIND_ACCESSIBILITY_SERVICE is intentionally NOT declared as a
@@ -19,7 +24,12 @@
          screenshots. POST_NOTIFICATIONS is required on API 33+ for that
          same foreground-service notification. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <!-- FOREGROUND_SERVICE_MEDIA_PROJECTION moved to sideload manifest.
+         googlePlay doesn't need screen recording: /screenshot route is
+         gated sideload-only in BridgeCommandHandler. Declaring the
+         permission on the Play track would flag review since our
+         accessibility use-case ("read-only screen reading") doesn't
+         justify screen capture. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- === END PHASE3-accessibility === -->
 
@@ -40,6 +50,30 @@
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
+    <!-- === PHASE3-baseline-handlers: package visibility for /get_apps + /open_app === -->
+    <!-- On Android 11+ (API 30+), apps can only see other packages that
+         are implicitly visible (own UID, system apps, etc.) unless they
+         declare a <queries> filter or hold QUERY_ALL_PACKAGES. The
+         BridgeCommandHandler /get_apps route uses
+         queryIntentActivities(ACTION_MAIN + CATEGORY_LAUNCHER) to enumerate
+         launchable apps, and BridgeSafetySettingsScreen uses the same call
+         to populate the blocklist UI — both need this declaration to see
+         the full launcher set. Without it queryIntentActivities silently
+         returns a near-empty list (typical symptom: blocklist UI shows
+         only Hermes-Relay itself + a handful of system apps).
+
+         Declaring an <intent> filter with ACTION_MAIN + CATEGORY_LAUNCHER
+         is the Play-policy-safe approach — it does NOT require the
+         restricted QUERY_ALL_PACKAGES permission, which Play would
+         otherwise demand a policy declaration for. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+    <!-- === END PHASE3-baseline-handlers === -->
+
     <application
         android:name=".HermesRelayApp"
         android:allowBackup="true"
@@ -53,6 +87,8 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="uiMode|fontScale|locale|density|orientation|screenSize|screenLayout|keyboardHidden"
             android:theme="@style/Theme.HermesRelay.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -142,7 +178,7 @@
             android:foregroundServiceType="specialUse|mediaProjection">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Persistent indicator that the Hermes agent has device control, per the Tier 5 safety-rails design." />
+                android:value="Maintains a persistent WebSocket connection to the user's Hermes server for real-time chat relay and notification mirroring. The service is dormant until the user explicitly enables Bridge mode in the app." />
         </service>
         <!-- === END PHASE3-safety-rails === -->
 

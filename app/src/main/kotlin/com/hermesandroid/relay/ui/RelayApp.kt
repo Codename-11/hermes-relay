@@ -123,6 +123,11 @@ sealed class Screen(
     // Non-bottom-nav destinations — reached by explicit navigation, not the
     // NavigationBar. Paired Devices is opened from Settings → Connection.
     data object PairedDevices : Screen("paired_devices", "Paired Devices", Icons.Filled.Settings)
+    // Full-screen pair wizard route. Replaces the old in-Settings Dialog
+    // launch so the chooser + Confirm + Verify steps + the camera viewport
+    // get a real fullscreen surface (the Dialog wasn't actually filling the
+    // window — Settings cards were leaking through behind it).
+    data object Pair : Screen("pair", "Pair", Icons.Filled.Settings)
     data object VoiceSettings : Screen("voice_settings", "Voice", Icons.Filled.Settings)
     // === PHASE3-notif-listener-followup ===
     data object NotificationCompanionSettings :
@@ -225,6 +230,26 @@ fun RelayApp() {
             recorder = recorder,
             player = player,
             sfxPlayer = voiceSfxPlayer,
+            // === PHASE3-voice-intents-localdispatch ===
+            // Wire the local in-process dispatcher so voice intents go
+            // through `BridgeCommandHandler.handleLocalCommand` (same
+            // dispatch + Tier 5 safety pipeline as WSS-incoming commands)
+            // instead of round-tripping through the relay. The relay
+            // correctly rejects phone-originated bridge.command envelopes
+            // as "unexpected from phone" — the wire protocol is server→
+            // phone for commands, and voice intents are phone-local.
+            //
+            // The multiplexer is still passed for non-bridge envelope use
+            // cases and as a debug fallback (with a WARN log) if the
+            // local dispatcher is somehow null at runtime.
+            //
+            // Discovered + fixed 2026-04-14 — see ROADMAP.md v0.4.1
+            // "voice intent local dispatch loop" entry and the multiplexer
+            // wiring fix in commit a568366 that unblocked the dispatch
+            // path enough to surface this protocol mismatch.
+            bridgeMultiplexer = connectionViewModel.multiplexer,
+            localBridgeDispatcher = connectionViewModel.bridgeCommandHandler::handleLocalCommand,
+            // === END PHASE3-voice-intents-localdispatch ===
         )
     }
 
@@ -437,7 +462,18 @@ fun RelayApp() {
                     // so the callback collapses to "mark complete + navigate
                     // to chat". The legacy 4-arg signature was discarding the
                     // relay block entirely.
+                    //
+                    // CRITICAL: pass the Activity-scoped connectionViewModel
+                    // explicitly instead of letting OnboardingScreen fetch
+                    // its own via `viewModel()`. A bare `viewModel()` call
+                    // inside a `composable(...)` block binds to the
+                    // NavBackStackEntry's store, so the onboarding VM gets
+                    // destroyed by `popUpTo(Onboarding) { inclusive = true }`
+                    // on navigation to Chat — taking the freshly-minted
+                    // session token with it. See the full writeup on the
+                    // OnboardingScreen function definition.
                     OnboardingScreen(
+                        connectionViewModel = connectionViewModel,
                         onComplete = {
                             connectionViewModel.completeOnboarding()
                             navController.navigate(Screen.Chat.route) {
@@ -566,7 +602,17 @@ fun RelayApp() {
                         onBack = { navController.popBackStack() },
                         onNavigateToPairedDevices = {
                             navController.navigate(Screen.PairedDevices.route)
+                        },
+                        onNavigateToPair = {
+                            navController.navigate(Screen.Pair.route)
                         }
+                    )
+                }
+                composable(Screen.Pair.route) {
+                    com.hermesandroid.relay.ui.screens.PairScreen(
+                        connectionViewModel = connectionViewModel,
+                        onComplete = { navController.popBackStack() },
+                        onCancel = { navController.popBackStack() }
                     )
                 }
                 composable(Screen.ChatSettings.route) {

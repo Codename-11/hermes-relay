@@ -19,8 +19,13 @@ import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
+import androidx.savedstate.SavedStateRegistry
+import androidx.savedstate.SavedStateRegistryController
+import androidx.savedstate.SavedStateRegistryOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.hermesandroid.relay.ui.components.BridgeStatusOverlayChip
 import com.hermesandroid.relay.ui.components.DestructiveVerbConfirmDialog
+import com.hermesandroid.relay.util.ComposeArrWorkaround
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -125,6 +130,7 @@ class BridgeStatusOverlay(context: Context) : ConfirmationOverlayHost {
                 Log.w(TAG, "addView(chip) failed", it)
                 return
             }
+        compose.post { ComposeArrWorkaround.disableForViewTree(compose) }
         chipView = compose
     }
 
@@ -181,6 +187,7 @@ class BridgeStatusOverlay(context: Context) : ConfirmationOverlayHost {
             onResult(false)
             return
         }
+        compose.post { ComposeArrWorkaround.disableForViewTree(compose) }
         activeConfirmations[request.id] = compose
     }
 
@@ -204,21 +211,62 @@ class BridgeStatusOverlay(context: Context) : ConfirmationOverlayHost {
         val owner = OverlayLifecycleOwner().also { it.start() }
         view.setViewTreeLifecycleOwner(owner)
         view.setViewTreeViewModelStoreOwner(owner)
+        // REQUIRED even when the overlay content uses only plain `remember`:
+        // `AndroidComposeView.onAttachedToWindow` hard-fails with
+        // `IllegalStateException: Composed into the View which doesn't
+        // propagateViewTreeSavedStateRegistryOwner` if this tree owner is
+        // missing, regardless of whether the composable actually reads
+        // saved state. Confirmed empirically on Samsung S24 / Android 14
+        // / Compose BOM 2024.12 when enabling the persistent status chip
+        // from the Bridge Safety screen (Phase 3 safety-rails).
+        view.setViewTreeSavedStateRegistryOwner(owner)
     }
 }
 
 /**
  * Minimal always-RESUMED lifecycle owner for ComposeViews we attach to
- * a WindowManager. Compose's `Recomposer` refuses to run inside a view
- * that has no `ViewTreeLifecycleOwner`; we also need a ViewModelStore
- * so `viewModel()` calls inside the overlay can resolve.
+ * a `WindowManager`. Compose's `Recomposer` refuses to run inside a view
+ * that has no `ViewTreeLifecycleOwner`; `viewModel()` calls inside the
+ * overlay need a `ViewModelStore`; and — as of recent Compose versions —
+ * `AndroidComposeView.onAttachedToWindow` hard-requires a
+ * `ViewTreeSavedStateRegistryOwner` even for composables that never read
+ * saved state. So this class implements all three.
  *
- * We deliberately skip `SavedStateRegistryOwner` — [DestructiveVerbConfirmDialog]
- * uses plain `remember`, not `rememberSaveable`, and the chip is stateless.
- * Adding SavedState here would tie the class to the androidx.savedstate
- * artifact version which isn't currently pinned in the version catalog.
+ * Earlier versions of this file deliberately skipped
+ * `SavedStateRegistryOwner` on the assumption that "no `rememberSaveable`
+ * → no saved state needed". That assumption was wrong: the onAttach gate
+ * in `AndroidComposeView` doesn't inspect the composable body, it just
+ * checks for the tree owner and throws. The crash was
+ * [IllegalStateException] at `AndroidComposeView.onAttachedToWindow:2234`
+ * on every overlay attach.
+ *
+ * ## Init sequence — DO NOT REORDER
+ *
+ * Current androidx.savedstate requires:
+ *
+ *   1. `savedStateController.performRestore(null)` — while the owner is
+ *      still in [Lifecycle.State.INITIALIZED]. Internally this calls
+ *      `performAttach()` which hard-asserts `currentState == INITIALIZED`
+ *      and throws `IllegalStateException: Restarter must be created only
+ *      during owner's initialization stage` if you've already advanced
+ *      past it.
+ *   2. `registry.currentState = CREATED`
+ *   3. `registry.currentState = RESUMED`
+ *
+ * An older androidx.savedstate release required the OPPOSITE order
+ * (CREATED → performRestore → RESUMED) and this file shipped with that
+ * code, matching the KDoc. The 2026-04-15 Compose BOM bump flipped the
+ * contract and the overlay started throwing on every destructive-verb
+ * confirmation attempt. Caught by Bailey's on-device voice→SMS test
+ * that same day — see the `BridgeSafetyMgr` stack trace in the session
+ * log. The chip path didn't trigger it because it was never exercised
+ * in the same build + flavor combo; only the confirmation modal path
+ * hit the assertion.
  */
-private class OverlayLifecycleOwner : LifecycleOwner, ViewModelStoreOwner {
+private class OverlayLifecycleOwner :
+    LifecycleOwner,
+    ViewModelStoreOwner,
+    SavedStateRegistryOwner {
 
     private val registry = LifecycleRegistry(this)
     override val lifecycle: Lifecycle get() = registry
@@ -226,7 +274,16 @@ private class OverlayLifecycleOwner : LifecycleOwner, ViewModelStoreOwner {
     private val store = ViewModelStore()
     override val viewModelStore: ViewModelStore get() = store
 
+    private val savedStateController = SavedStateRegistryController.create(this)
+    override val savedStateRegistry: SavedStateRegistry
+        get() = savedStateController.savedStateRegistry
+
     fun start() {
+        // Restore saved state FIRST — must run while currentState is still
+        // INITIALIZED or performAttach() throws. See KDoc above for the
+        // assertion story.
+        savedStateController.performRestore(null)
+        registry.currentState = Lifecycle.State.CREATED
         registry.currentState = Lifecycle.State.RESUMED
     }
 

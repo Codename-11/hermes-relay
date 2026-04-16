@@ -56,6 +56,17 @@ interface VoiceBridgeIntentHandler {
      * is pending.
      */
     fun cancelPending()
+
+    /**
+     * True while a destructive voice action is waiting on the v1 countdown
+     * window. Used by [com.hermesandroid.relay.viewmodel.VoiceViewModel] to
+     * intercept "cancel" utterances spoken DURING the countdown and route
+     * them straight to [cancelPending] instead of sending them to the
+     * classifier / chat pipeline as a fresh turn.
+     *
+     * Play flavor: always false — the no-op handler never queues anything.
+     */
+    fun hasPendingDestructive(): Boolean
 }
 
 /**
@@ -82,6 +93,25 @@ sealed class IntentResult {
         val intentLabel: String,
         val spokenConfirmation: String? = null,
         val requiresConfirmation: Boolean = false,
+        /**
+         * Optional structured details about what the handler resolved. Keys
+         * are handler-specific and documented per intent:
+         *
+         *  - `OpenApp` → `appLabel`, `packageName`, `matchTier`
+         *    (`matchTier` ∈ {`"exact"`, `"prefix"`, `"contains"`})
+         *  - `SendSms` → `contact`, `resolvedNumber`, `body`
+         *  - Tap / Scroll / Back / Home → empty for now
+         *
+         * The UI layer (VoiceViewModel chat-trace formatter) renders these
+         * as a human-readable postscript to [intentLabel] so the user can
+         * see exactly which app got launched / which number got used. Empty
+         * map means the UI falls back to the bare [intentLabel].
+         *
+         * Backwards-compat default is empty map so existing callers (the
+         * googlePlay no-op factory, any tests) keep compiling without touching
+         * this field.
+         */
+        val details: Map<String, String> = emptyMap(),
     ) : IntentResult()
 
     /** The text is not a phone-control intent. Fall through to chat. */
