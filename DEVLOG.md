@@ -1,5 +1,38 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-15 — Bootstrap command middleware (slash-command hallucination fix)
+
+**Motivation.** When a user types `/help` or `/model` into the Android app's chat, the message reaches the LLM verbatim on vanilla upstream hermes-agent installs because `APIServerAdapter` doesn't connect to the `GatewayRouter`. The LLM hallucinates a plausible-sounding wrong reply. The upstream fix lives in `gateway/platforms/api_server_slash.py` (Stage 1 PR), but vanilla installs won't get it until that PR merges. This session implements the bootstrap-middleware sibling that ships the fix now.
+
+**What was built:**
+
+- **`hermes_relay_bootstrap/_command_middleware.py`** (~420 LOC) — aiohttp middleware that:
+  - Intercepts `POST /v1/chat/completions` and `POST /v1/runs` (zero-cost skip for all other paths)
+  - Runs auth check (`adapter._check_auth`) before any command logic
+  - Extracts the user message from each endpoint's body format
+  - Resolves against `hermes_cli.commands.resolve_command()` from the central command registry
+  - Stateless commands (`/help`, `/commands`, `/profile`, `/provider`) are dispatched locally using the same helpers as upstream
+  - Stateful commands (`/model`, `/new`, `/retry`, etc.) return a deterministic decline notice
+  - Unknown and CLI-only commands fall through to the LLM
+  - For `/v1/chat/completions`: returns synthetic SSE stream (role + content + finish + `[DONE]`) or JSON `chat.completion`
+  - For `/v1/runs`: injects `message.delta` + `run.completed` + sentinel into `adapter._run_streams` queue, returns `{"run_id": ..., "status": "started"}` with 202, so the events endpoint drains the queue normally
+  - Feature-detects: if `gateway.platforms.api_server_slash` exists (upstream PR landed), middleware is skipped
+  - Fail-open: any exception falls through to the original handler
+
+- **`hermes_relay_bootstrap/_patch.py`** — added `_maybe_install_command_middleware()` call in the `__setitem__` hook alongside the existing route injection, using the same timing window where `app._middlewares` is still mutable.
+
+- **`hermes_relay_bootstrap/__init__.py`** — updated docstring to document both injection layers (routes + middleware).
+
+- **`plugin/tests/test_command_middleware.py`** (31 tests) — unit tests for message extraction, command resolution, response builders, feature detection, plus full aiohttp integration tests via `TestClient`/`TestServer` covering both endpoints, streaming, auth rejection, and fall-through behavior.
+
+**Test results:** 31 new tests pass. Full existing suite (450 tests) still passes with no regressions.
+
+**Android client impact:** None. The synthetic responses match the exact shapes the client already parses (`chat.completion.chunk` for completions SSE, `message.delta`/`run.completed` for runs events).
+
+**Next:** Merge to main via PR, then deploy to server (`git pull && systemctl --user restart hermes-gateway`). Phone re-pair after restart.
+
+---
+
 ## 2026-04-15 — Voice → bridge → agent pipeline end-to-end fixes
 
 **Motivation.** Bailey's on-device voice SMS testing surfaced a stack of bugs that individually looked small but together blocked the voice → bridge → agent pipeline from working end-to-end. Over a single long session we diagnosed and fixed six distinct layers: voice classifier gaps, a safety-modal lifecycle bug, chat history clobbering, a plugin check_fn pointed at the wrong relay endpoint, missing LLM tool wrappers for the direct-dispatch phone actions, and two Android OEM-interaction issues (MediaProjection notification persistence + activity recreation on warm reopen). Landed across four commits on `feature/bridge-feature-expansion`.
