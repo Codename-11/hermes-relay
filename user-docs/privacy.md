@@ -1,5 +1,5 @@
 ---
-layout: page
+layout: doc
 title: Privacy Policy
 description: Privacy policy for the Hermes-Relay Android app
 ---
