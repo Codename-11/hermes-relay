@@ -138,7 +138,7 @@ idle auto-disable timer, optional persistent status overlay).
 - **Bridge Safety settings screen** — blocklist editor (searchable
   package picker), destructive verb editor, auto-disable timer slider,
   status overlay toggle, confirmation timeout slider
-- **14 `android_*` plugin tools** routed through the new unified bridge
+- **18 `android_*` plugin tools** routed through the new unified bridge (14 baseline + send_sms, call, search_contacts, return_to_hermes added in v0.4.0)
   channel (migrated from the legacy standalone `android_relay.py`)
 - **`android_navigate`** — vision-driven close-the-loop navigation tool
   (sideload track only)

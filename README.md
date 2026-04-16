@@ -177,7 +177,7 @@ scripts/dev.bat relay      # Start relay server (dev, no TLS)
 hermes-relay/
 ├── app/                       # Android app (Kotlin + Jetpack Compose)
 ├── relay_server/              # WSS relay server (Python + aiohttp)
-├── plugin/                    # Hermes agent plugin (14 android_* tools + pair module)
+├── plugin/                    # Hermes agent plugin (18 android_* tools + pair module)
 ├── skills/                    # Hermes agent skills
 │   └── devops/
 │       └── hermes-relay-pair/ # /hermes-relay-pair slash-command skill

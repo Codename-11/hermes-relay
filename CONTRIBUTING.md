@@ -84,7 +84,7 @@ cp -r plugin ~/.hermes/plugins/hermes-relay
 ln -s "$PWD/plugin" ~/.hermes/plugins/hermes-relay
 ```
 
-After the plugin is in place, restart hermes and verify pairing with `hermes-pair` (shell shim) or `/hermes-relay-pair` in any Hermes chat surface. The 14 `android_*` tools register regardless of hermes-agent version.
+After the plugin is in place, restart hermes and verify pairing with `hermes-pair` (shell shim) or `/hermes-relay-pair` in any Hermes chat surface. The 18 `android_*` tools register regardless of hermes-agent version.
 
 > **Note:** A top-level `hermes pair` CLI sub-command is not currently exposed — hermes-agent v0.8.0's top-level argparser doesn't yet forward to third-party plugins' `register_cli_command()` dict. Use the slash command or the dashed shim instead.
 

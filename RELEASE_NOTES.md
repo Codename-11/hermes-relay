@@ -30,7 +30,7 @@ v0.3.0 ships in **two build flavors**. APK filenames are version-tagged, so ever
 
 - **Voice Mode polish** — Full-screen voice UI with an ASCII morphing sphere (Listening = blue/purple, Speaking = green/teal), reactive layered-sine waveform visualizer, pill-edge merge, tap/hold/continuous interaction modes, and sentence-boundary streaming through a TTS queue. Backed by three new relay endpoints — `POST /voice/transcribe`, `POST /voice/synthesize`, `GET /voice/config` — with 6 TTS and 5 STT providers available via `~/.hermes/config.yaml`.
 
-- **Voice-to-bridge intents** *(sideload only)* — Spoken commands like *"text Mom saying on my way"* route to the bridge channel with destructive-verb confirmation instead of falling through to chat. Regex-based intent classifier covers send-sms / open-app / tap / scroll / back / home.
+- **Voice-to-bridge intents** *(sideload only)* — Spoken commands like *"text Mom saying on my way"* route to the bridge channel with destructive-verb confirmation instead of falling through to chat. Regex-based intent classifier covers send-sms / open-app / tap / back / home (scroll removed in v0.4.0 — server-side android_scroll tool handles it instead).
 
 - **Notification Companion** — `HermesNotificationCompanion` (`NotificationListenerService`) forwards posted notifications to the relay over a new `notifications` channel so the agent can summarize them or act on them. Opt-in via the standard Android notification-access grant.
 
@@ -71,7 +71,7 @@ The headline feature. Everything in this section is gated behind the five-stage 
 - `BridgeForegroundService` — persistent "Hermes has device control" notification with **Disable** + **Settings** action buttons; declared as `foregroundServiceType=specialUse|mediaProjection` per Android 14+ requirements
 
 ### Relay Bridge Server
-- 14 HTTP routes registered on `plugin/relay/server.py` — `/ping`, `/screen`, `/screenshot`, `/get_apps`, `/current_app`, `/tap`, `/tap_text`, `/type`, `/swipe`, `/open_app`, `/press_key`, `/scroll`, `/wait`, `/setup`
+- 18 HTTP routes registered on `plugin/relay/server.py` — `/ping`, `/screen`, `/screenshot`, `/get_apps`, `/current_app`, `/tap`, `/tap_text`, `/type`, `/swipe`, `/open_app`, `/press_key`, `/scroll`, `/wait`, `/setup`, `/send_sms`, `/call`, `/search_contacts`, `/return_to_hermes` (last 4 added in v0.4.0)
 - Wire protocol migrated from the legacy standalone `plugin/tools/android_relay.py` (port 8766) into the unified relay on port 8767. Envelope fields match the legacy relay byte-for-byte.
 - 30s per-command timeout, fail-fast on phone disconnect so HTTP callers don't wedge
 

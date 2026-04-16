@@ -46,7 +46,7 @@ Restart hermes-agent after install.
 
 ::: tip What you get
 - **Full Hermes-Relay Android app features** — sessions browser, conversation history on app restart, personality picker, command palette, memory management. Just install the plugin and it works.
-- **14 `android_*` device control tools** (tap, type, read screen, screenshot, open apps, etc.) — registered by the plugin
+- **18 `android_*` device control tools** (tap, type, read screen, screenshot, open apps, send SMS, call, search contacts, etc.) — registered by the plugin
 - **`/hermes-relay-pair` slash command** — backed by the `devops/hermes-relay-pair` skill and usable from any Hermes chat surface
 - **`hermes-pair` shell shim** — for scripts and power-user flows
 - **Voice mode endpoints** on the WSS relay (transcribe, synthesize, voice config) wired into the Android app's voice mode UI
