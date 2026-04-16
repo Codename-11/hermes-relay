@@ -46,55 +46,55 @@ def _auth_headers() -> dict:
     return {}
 
 def _check_requirements() -> bool:
-    """Returns True if and only if all three bridge gates pass:
+    """Returns True iff the phone is currently paired to the relay's bridge
+    channel (``phone_connected`` on ``/bridge/status``). Intentionally the
+    ONLY gate — accessibility and master-toggle state are NOT checked here.
 
-    1. ``phone_connected`` — a paired phone has an active WSS session to the
-       relay's bridge channel.
-    2. ``bridge.accessibility_granted`` — Android's AccessibilityService is
-       currently enabled for Hermes Relay on the phone.
-    3. ``bridge.master_enabled`` — the user has the "Agent Control" master
-       toggle ON in the Hermes Bridge tab of the app.
+    Design history — we iterated on this twice:
 
-    All three gates must be True. If any one is False the 13 phone-action
-    tools are hidden from the gateway's tool pool entirely, so the LLM
-    sees no phone tools and will honestly say "I don't have phone control
-    right now" instead of dispatching a command that will return 403/503
-    and forcing it to interpret a failure.
+    *Version 1* (broken) hit ``/ping`` and looked for fields that endpoint
+    doesn't return. Every check returned False, every tool except
+    ``android_setup`` was hidden from every gateway platform. Caught
+    2026-04-15 by Bailey when Victor reported "no android_* tools available"
+    despite the app being healthy.
 
-    Uses ``/bridge/status`` — NOT ``/ping``. The relay's ``/ping`` is a pure
-    liveness probe returning ``{pong, ts}`` and lacks the
-    ``phone_connected`` / ``bridge.accessibility_granted`` /
-    ``bridge.master_enabled`` fields this function needs. The older code
-    here pointed at ``/ping`` and checked for those fields anyway, which
-    meant ``_check_requirements`` always returned ``False`` and every
-    tool except ``android_setup`` was silently hidden from the gateway's
-    tool pool. Caught 2026-04-15 by Bailey: Victor reported "no android_*
-    tools available" while the Android app's bridge + accessibility were
-    both healthy, and a direct curl against ``/bridge/status`` returned
-    ``phone_connected: true`` + ``bridge.accessibility_granted: true``.
+    *Version 2* (working but wrong UX) fixed the endpoint and added a
+    three-gate rule: ``phone_connected AND accessibility_granted AND
+    master_enabled``. Idea was that hiding tools when the master toggle is
+    off gives the LLM a "clean no-tools signal" instead of letting it try
+    and get a 403. Caught 2026-04-15 **same day** in follow-up testing
+    when Bailey flipped the master toggle off and Victor hallucinated a
+    reason for the missing tools: *"Phone bridge isn't connected right
+    now — pair the Hermes-Relay app so I can reach the phone."* The
+    phone WAS connected. Victor filled the absence-of-tools with a
+    guessed explanation (pairing) and asked the user to do the wrong
+    thing. LLMs don't know *why* tools are absent; they invent a cause.
 
-    Gating rationale per field:
+    *Version 3 (this)* — gate only on ``phone_connected``. Let the
+    downstream layers return clear structured errors with machine-readable
+    ``error_code`` fields:
 
-    * ``phone_connected`` — no phone, no tools. Obvious.
-    * ``accessibility_granted`` — if a11y is revoked (common after an
-      Android Studio reinstall — Android's ``AccessibilityManagerService``
-      scrubs enabled services on package replacement), the phone-side
-      ``BridgeCommandHandler.dispatch()`` short-circuits with HTTP 503 on
-      every tool. Hiding the tools when a11y is missing keeps the LLM
-      honest about capability.
-    * ``master_enabled`` — the user-visible kill switch. When Bailey flips
-      "Agent Control" off in the Bridge tab the intent is "stop the agent
-      from controlling my phone" — we honor that by making the tools
-      disappear from the schema.
+    * No a11y service → phone-side responds with HTTP 503 +
+      ``error_code: service_unavailable`` + a clear "enable it in Android
+      Settings" message.
+    * Master toggle off → phone-side responds with HTTP 403 +
+      ``error_code: bridge_disabled`` + the "this is NOT a pairing
+      problem" text.
 
-    **Trade-off accepted:** tools can disappear mid-session if the user
-    flips the master toggle off during an active chat. That is the desired
-    behavior — a clean "no tools" signal to the LLM beats an
-    error-interpretation race where the model tries a command, gets a
-    403, and has to reason about whether that's a transient failure or a
-    policy block. ``android_setup`` remains ungated (``check_fn = lambda:
-    True``) because it is the bootstrap tool and must always be callable
-    — it's what the user walks through to turn the other three gates on.
+    Both paths carry enough structured context that the LLM can relay
+    accurate instructions to the user. The gate stays on
+    ``phone_connected`` because that's the one case where the tools
+    literally cannot function — no WSS session, no way to dispatch
+    anything — and in THAT case the LLM should see only ``android_setup``
+    and correctly deduce "we need to pair". Every other failure mode
+    surfaces as a first-class error through the call path we already
+    built.
+
+    Takeaway for future plugin check_fn design: use check_fn to express
+    *"this tool is fundamentally unreachable right now"*, not *"this
+    tool is currently disabled by policy"*. Disabled-by-policy belongs
+    in error responses, not schema omission, because LLMs reason about
+    presence/absence by inventing narratives.
     """
     try:
         r = requests.get(
@@ -104,11 +104,7 @@ def _check_requirements() -> bool:
         )
         if r.status_code == 200:
             data = r.json()
-            phone_connected = bool(data.get("phone_connected", False))
-            bridge = data.get("bridge", {}) or {}
-            a11y_granted = bool(bridge.get("accessibility_granted", False))
-            master_enabled = bool(bridge.get("master_enabled", False))
-            return phone_connected and a11y_granted and master_enabled
+            return bool(data.get("phone_connected", False))
         return False
     except Exception:
         return False

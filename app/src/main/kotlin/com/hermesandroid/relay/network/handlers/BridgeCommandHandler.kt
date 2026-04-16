@@ -366,7 +366,21 @@ class BridgeCommandHandler(
             ?: return respond(
                 requestId, 503,
                 buildJsonObject {
-                    put("error", "Hermes AccessibilityService not connected — enable it in Android Settings")
+                    put(
+                        "error",
+                        "Hermes accessibility service is not enabled. " +
+                            "The phone IS paired and connected — this is " +
+                            "NOT a pairing problem. The user must enable " +
+                            "the Hermes Relay accessibility service in " +
+                            "Android Settings > Accessibility > " +
+                            "Installed services before the bridge can " +
+                            "dispatch phone-control commands.",
+                    )
+                    put("error_code", "service_unavailable")
+                    put(
+                        "required_action",
+                        "User enables Hermes Relay in Android Accessibility Settings",
+                    )
                 }
             )
 
