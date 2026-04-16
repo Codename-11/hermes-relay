@@ -24,7 +24,12 @@
          screenshots. POST_NOTIFICATIONS is required on API 33+ for that
          same foreground-service notification. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <!-- FOREGROUND_SERVICE_MEDIA_PROJECTION moved to sideload manifest.
+         googlePlay doesn't need screen recording: /screenshot route is
+         gated sideload-only in BridgeCommandHandler. Declaring the
+         permission on the Play track would flag review since our
+         accessibility use-case ("read-only screen reading") doesn't
+         justify screen capture. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- === END PHASE3-accessibility === -->
 
@@ -173,7 +178,7 @@
             android:foregroundServiceType="specialUse|mediaProjection">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Persistent indicator that the Hermes agent has device control, per the Tier 5 safety-rails design." />
+                android:value="Maintains a persistent WebSocket connection to the user's Hermes server for real-time chat relay and notification mirroring. The service is dormant until the user explicitly enables Bridge mode in the app." />
         </service>
         <!-- === END PHASE3-safety-rails === -->
 

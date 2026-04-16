@@ -462,6 +462,57 @@ class BridgeCommandHandler(
         safetyManager?.rescheduleAutoDisable()
         // === END PHASE3-safety-rails ===
 
+        // === Google Play flavor route gate ===
+        // The googlePlay build's AccessibilityService config declares a
+        // narrow use case ("read notifications, summarize messages") with
+        // NO gesture dispatch (canPerformGestures is absent) and NO
+        // flagRetrieveInteractiveWindows. Only READ-ONLY routes that
+        // match this declared scope are whitelisted; everything else
+        // returns a 403 so reviewers tracing the code see a capability
+        // surface that matches the manifest declaration.
+        //
+        // The whitelist is FAIL-CLOSED: any new route we add to the when
+        // block below defaults to sideload-only on the Play flavor unless
+        // explicitly added here. This prevents future routes from
+        // accidentally widening the Play APK's capability surface.
+        //
+        // Early-return routes (/ping, /events, /setup) are above this
+        // point so they work on both flavors — they're harmless liveness
+        // probes and don't need the a11y service. /return_to_hermes is
+        // whitelisted because it only foregrounds our OWN app (not a
+        // phone-control action). /clipboard is whitelisted for GET
+        // (read-only); POST (write) is gated inside the /clipboard case.
+        if (!BuildFlavor.isSideload) {
+            val playAllowed = setOf(
+                "/current_app",
+                "/screen",
+                "/get_apps",
+                "/apps",
+                "/clipboard",
+                "/return_to_hermes",
+            )
+            if (path !in playAllowed) {
+                respond(
+                    requestId, 403,
+                    buildJsonObject {
+                        put(
+                            "error",
+                            "This bridge route ($path) is only available on the " +
+                                "sideload flavor of Hermes Relay. The Google Play " +
+                                "build supports read-only bridge operations (screen " +
+                                "reading, app status, clipboard read) but not " +
+                                "phone-control actions (tap, type, swipe, SMS, call). " +
+                                "Install the sideload APK for full phone control.",
+                        )
+                        put("error_code", "sideload_only")
+                        put("flavor", "googlePlay")
+                    }
+                )
+                return
+            }
+        }
+        // === END Google Play flavor route gate ===
+
         val executor = service.actionExecutor
 
         when (path) {
@@ -916,6 +967,22 @@ class BridgeCommandHandler(
                 when (method.uppercase()) {
                     "GET" -> respondFromResult(requestId, executor.clipboardRead())
                     "POST" -> {
+                        // Clipboard write is a phone-control action →
+                        // sideload-only on Play. The Play route gate above
+                        // whitelists /clipboard so GET (read) works, but
+                        // POST needs its own guard because both methods
+                        // share a path.
+                        if (!BuildFlavor.isSideload) {
+                            respond(
+                                requestId, 403,
+                                buildJsonObject {
+                                    put("error", "Clipboard write is sideload-only.")
+                                    put("error_code", "sideload_only")
+                                    put("flavor", "googlePlay")
+                                }
+                            )
+                            return
+                        }
                         val text = body["text"]?.jsonPrimitive?.content
                         if (text == null) {
                             respond(

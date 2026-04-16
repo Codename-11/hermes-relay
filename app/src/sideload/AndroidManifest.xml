@@ -44,6 +44,11 @@
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.SEND_SMS" />
 
+    <!-- Screen recording — sideload only. googlePlay doesn't declare
+         /screenshot or the MEDIA_PROJECTION FGS type. See the main
+         manifest's comment on why the permission was moved here. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+
     <application />
 
 </manifest>
