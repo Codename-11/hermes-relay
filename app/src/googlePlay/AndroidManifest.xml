@@ -17,29 +17,12 @@
     in `app/src/sideload/AndroidManifest.xml` unless the change is intentionally
     track-specific.
 -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!--
-        Override the BridgeForegroundService's foregroundServiceType to
-        remove mediaProjection on the Google Play track. The main manifest
-        declares specialUse|mediaProjection but googlePlay doesn't need
-        screen recording: /screenshot is gated sideload-only in
-        BridgeCommandHandler's Play route whitelist, and the
-        FOREGROUND_SERVICE_MEDIA_PROJECTION permission was moved to the
-        sideload manifest.
-
-        tools:replace replaces the main manifest's foregroundServiceType
-        attribute at merge time so the googlePlay APK declares only
-        specialUse. Without this, the merged manifest would carry the
-        mediaProjection type from main and Play review would flag it
-        against our conservative accessibility use-case.
-    -->
-    <application>
-        <service
-            android:name=".bridge.BridgeForegroundService"
-            android:foregroundServiceType="specialUse"
-            tools:replace="android:foregroundServiceType" />
-    </application>
+    <!-- googlePlay inherits main manifest's specialUse-only FGS type
+         directly — no override needed. The sideload manifest ADDS
+         mediaProjection via tools:replace; googlePlay gets the safe
+         default. -->
+    <application />
 
 </manifest>

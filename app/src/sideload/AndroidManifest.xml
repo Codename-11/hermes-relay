@@ -18,7 +18,8 @@
     in `app/src/googlePlay/AndroidManifest.xml` unless the change is intentionally
     track-specific.
 -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!--
         Tier C (C1-C4) sideload-only permissions.
@@ -49,6 +50,19 @@
          manifest's comment on why the permission was moved here. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
-    <application />
+    <!--
+        Override the BridgeForegroundService's foregroundServiceType to
+        ADD mediaProjection on the sideload track. The main manifest
+        declares specialUse only (so googlePlay lint passes without the
+        MEDIA_PROJECTION permission); sideload upgrades to both types
+        since it ships FOREGROUND_SERVICE_MEDIA_PROJECTION and the
+        /screenshot route.
+    -->
+    <application>
+        <service
+            android:name=".bridge.BridgeForegroundService"
+            android:foregroundServiceType="specialUse|mediaProjection"
+            tools:replace="android:foregroundServiceType" />
+    </application>
 
 </manifest>

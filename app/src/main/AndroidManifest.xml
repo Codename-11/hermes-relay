@@ -175,7 +175,7 @@
         <service
             android:name=".bridge.BridgeForegroundService"
             android:exported="false"
-            android:foregroundServiceType="specialUse|mediaProjection">
+            android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Maintains a persistent WebSocket connection to the user's Hermes server for real-time chat relay and notification mirroring. The service is dormant until the user explicitly enables Bridge mode in the app." />
