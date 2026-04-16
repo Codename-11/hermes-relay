@@ -33,7 +33,7 @@ Phone (WSS)      → Relay Server (:8767)          [bridge, terminal — future]
 
 Chat connects directly to the Hermes API Server using the Sessions API with SSE streaming. The relay server handles bridge and terminal channels only.
 
-## Current Status — v0.1.0
+## Current Status — v0.4.0
 
 | Feature | Status |
 |---------|--------|

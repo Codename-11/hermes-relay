@@ -192,7 +192,7 @@ If you'd rather not use Google Play, you can install the signed APK directly fro
 
 ### 1. Download the APK
 
-Head to [github.com/Codename-11/hermes-relay/releases/latest](https://github.com/Codename-11/hermes-relay/releases/latest) and grab the file ending in **`-sideload-release.apk`** from the assets list — for example, `hermes-relay-0.3.0-sideload-release.apk`. Every release is version-tagged, so the exact prefix changes each version but the `-sideload-release.apk` suffix stays constant.
+Head to [github.com/Codename-11/hermes-relay/releases/latest](https://github.com/Codename-11/hermes-relay/releases/latest) and grab the file ending in **`-sideload-release.apk`** from the assets list — for example, `hermes-relay-0.4.0-sideload-release.apk`. Every release is version-tagged, so the exact prefix changes each version but the `-sideload-release.apk` suffix stays constant.
 
 ::: tip Why "sideload" and not "googlePlay"?
 Each release ships both a `-sideload-release.apk` (full feature set — bridge channel, voice-to-bridge intents, vision-driven navigation) and a `-googlePlay-release.apk` (conservative Play Store build). Most sideloaders want the `-sideload-` flavor. The two builds install with different application IDs, so you can have both side-by-side.

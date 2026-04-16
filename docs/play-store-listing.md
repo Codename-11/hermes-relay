@@ -1,4 +1,4 @@
-# Play Store Listing — Hermes-Relay v0.1.0
+# Play Store Listing — Hermes-Relay v0.4.0
 
 > Temporary reference for Google Play Console submission. Delete after listing is live.
 
@@ -71,18 +71,16 @@ Hermes-Relay is MIT licensed. Source code, documentation, and issue tracking ava
 
 This app is a community project and is not affiliated with or endorsed by NousResearch.
 
-## Release Notes (v0.1.0)
+## Release Notes (v0.4.0)
 
-First release — native Android client for the Hermes agent platform.
+Bridge feature expansion — device control, voice intents, and safety rails.
 
-• Direct API chat with SSE streaming
-• Session management with full message history
-• Markdown rendering with syntax-highlighted code
-• Personality picker and command palette
-• QR code pairing for quick setup
-• File attachments and message queuing
-• Material You theming (light/dark/auto)
-• In-app analytics (Stats for Nerds)
+• Bridge channel with long-press, drag, clipboard, intent-send, and more
+• Voice-to-bridge intent routing (sideload flavor)
+• Tiered permission system with JIT error surfacing
+• Notification companion — agent reads your notifications (opt-in)
+• BridgeSafetyManager blocklist + destructive-verb confirmation
+• Two build flavors: sideload (full features) and Google Play (conservative)
 
 ## Category
 

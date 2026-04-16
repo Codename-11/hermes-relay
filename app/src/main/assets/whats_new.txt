@@ -1,32 +1,32 @@
-v0.1.0 — First Release
+v0.4.0 — Bridge Feature Expansion
 
-Chat
-• Direct API chat via SSE streaming
-• Markdown rendering — code blocks, bold, italic, links
-• Session management — create, switch, rename, delete
-• Message history with auto-titles
-• Reasoning display (collapsible thinking blocks)
-• Personality picker with dynamic server personalities
-• Command palette — 29+ commands + server skills
-• Token & cost tracking per message
-• File attachments — images, documents, any file type
-• Message queuing — send while agent is streaming
+Bridge Channel
+• Long-press and drag gestures via ActionExecutor
+• Clipboard read/write over bridge protocol
+• Intent send (open URLs, share, launch activities)
+• Location, contacts, call, and SMS bridge commands
+• Multi-window screen reading in ScreenReader
+• Macro recording and playback support
+• Expanded BridgeCommandHandler path inventory
 
-Animation
-• ASCII morphing sphere on empty chat screen
-• Ambient mode — fullscreen sphere (toggle in header)
-• Subtle sphere behind messages at 15% opacity
-• Animation controls in Settings > Appearance
+Voice
+• Voice-to-bridge intent routing (sideload)
+• VoiceBridgeIntentHandler with per-flavor factory
+• VoiceIntentClassifier regex phone-control detection
+• Local chat trace for voice actions
 
-App
-• Material You theming (light/dark/auto)
-• QR code pairing for quick setup
-• Stats for Nerds — response times, health metrics
-• Offline detection with reconnect
-• Developer Options — tap version 7x to unlock experimental features
-• Configurable limits — attachment size, message length
+Safety
+• Tiered permission system per bridge command category
+• JIT error surfacing for missing permissions
+• BridgeSafetyManager blocklist + destructive-verb confirmation
+• Auto-disable timer for bridge sessions
 
-Security
-• API keys in EncryptedSharedPreferences
-• Network security config for localhost
-• Feature gating for unfinished features
+Notifications
+• HermesNotificationCompanion — opt-in NotificationListenerService
+• Notification forwarding to agent via ChannelMultiplexer
+• Bounded relay-side deque (100 entries)
+
+Prior releases
+• v0.3.0 — Bridge channel, voice mode, notification companion, two build flavors
+• v0.2.0 — Voice foundation, terminal preview, TOFU cert pinning
+• v0.1.0 — Chat, sessions, QR pairing, encrypted storage

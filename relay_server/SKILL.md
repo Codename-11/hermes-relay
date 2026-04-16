@@ -98,7 +98,7 @@ The relay authenticates phones via a 6-character pairing code, then issues a 30-
 
 ```bash
 curl http://localhost:8767/health
-# {"status": "ok", "version": "0.1.0", "channels": ["chat", "terminal", "bridge"]}
+# {"status": "ok", "version": "0.4.0", "channels": ["chat", "terminal", "bridge"]}
 ```
 
 ## Troubleshooting
