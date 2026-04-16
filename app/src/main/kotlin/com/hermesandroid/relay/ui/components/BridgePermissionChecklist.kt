@@ -128,14 +128,20 @@ fun BridgePermissionChecklist(
                     onTest = onTestScreenCapture,
                 )
             }
-            PermissionRow(
-                icon = Icons.Filled.PictureInPicture,
-                title = "Display over other apps",
-                subtitle = "Status overlay while bridge is active",
-                granted = status.overlayPermitted,
-                onClick = { openOverlaySettings(context) },
-                onTest = onTestOverlay,
-            )
+            // Display over other apps — sideload only. googlePlay has no
+            // destructive-verb safety modal (action routes are blocked) and
+            // no status overlay chip, so the SYSTEM_ALERT_WINDOW permission
+            // isn't needed and showing the row would confuse users + reviewers.
+            if (BuildFlavor.isSideload) {
+                PermissionRow(
+                    icon = Icons.Filled.PictureInPicture,
+                    title = "Display over other apps",
+                    subtitle = "Status overlay while bridge is active",
+                    granted = status.overlayPermitted,
+                    onClick = { openOverlaySettings(context) },
+                    onTest = onTestOverlay,
+                )
+            }
             PermissionRow(
                 icon = Icons.Filled.Notifications,
                 title = "Notification Listener",
