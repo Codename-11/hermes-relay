@@ -82,7 +82,7 @@ The app supports two streaming endpoints, selectable in Settings:
 
 **Important upstream note:** The `/api/sessions` CRUD endpoints are not in vanilla upstream hermes-agent. They are provided by one of three mechanisms:
 
-1. The Codename-11 fork (`feat/api-server-enhancements` branch, deployed on the `axiom` deploy branch). Submitted upstream as PR [#8556](https://github.com/NousResearch/hermes-agent/pull/8556).
+1. The Codename-11 fork (`feat/session-api` branch — also carried on the `axiom` deploy branch). Submitted upstream as PR [#8556](https://github.com/NousResearch/hermes-agent/pull/8556) *"feat(api-server): add session management API for frontend clients"*. The PR's scope is broader than its title — it covers sessions CRUD, session chat/stream, memory, skills, config, and available-models, which is the full surface the bootstrap currently injects.
 2. **Bootstrap injection** — `hermes_relay_bootstrap/` ships with the plugin and runs at Python interpreter startup (via a `.pth` file in the venv site-packages). It monkey-patches `aiohttp.web.Application` to add the management endpoints to upstream's `APIServerAdapter` at the moment it builds its app. See ADR 8 below.
 3. Once PR #8556 merges, upstream-merged. The bootstrap detects this and no-ops.
 
@@ -484,7 +484,7 @@ Adopting from ARC's workflow patterns:
 
 ### 16. Runtime API Server Patch via .pth Bootstrap (2026-04-12)
 
-**Context:** The Codename-11 fork of hermes-agent (`feat/api-server-enhancements` branch) adds ~14 management endpoints — `/api/sessions/*` CRUD, `/api/memory`, `/api/skills`, `/api/config`, `/api/available-models` — that the Android app depends on for its sessions browser, personality picker, command palette, and history-on-restart. These are submitted upstream as PR [#8556](https://github.com/NousResearch/hermes-agent/pull/8556) but not yet merged. Until then, users running vanilla upstream hermes-agent + our plugin would lose these features and see a blank chat window when reopening the app to a previous session.
+**Context:** The Codename-11 fork of hermes-agent (`feat/session-api` branch, submitted as PR #8556) adds ~14 management endpoints — `/api/sessions/*` CRUD, `/api/memory`, `/api/skills`, `/api/config`, `/api/available-models` — that the Android app depends on for its sessions browser, personality picker, command palette, and history-on-restart. These are submitted upstream as PR [#8556](https://github.com/NousResearch/hermes-agent/pull/8556) *"feat(api-server): add session management API for frontend clients"* but not yet merged. Until then, users running vanilla upstream hermes-agent + our plugin would lose these features and see a blank chat window when reopening the app to a previous session.
 
 We considered four options:
 - **A. Stay fork-only.** Reject vanilla upstream users until PR #8556 lands. Penalises onboarding.

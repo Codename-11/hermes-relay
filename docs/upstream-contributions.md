@@ -89,7 +89,32 @@ except Exception as _exc:
 
 **Workaround (current):** our `install.sh` registers the repo's `skills/` directory via `skills.external_dirs` in `~/.hermes/config.yaml` instead of symlinking. Works but forces every third-party skill author to touch the user's config.yaml instead of dropping a symlink.
 
-## 5. Terminal HTTP API (for non-relay setups)
+## 5. Gateway Slash-Command Preprocessor on API Server Chat Endpoints
+
+**Current state:** Built-in gateway slash commands (`/model`, `/new`, `/retry`, `/help`, the ~29 commands defined in `hermes_cli/commands.py::GATEWAY_KNOWN_COMMANDS`) are intercepted by in-process platform adapters — Discord, Telegram, Slack, Matrix, Signal, BlueBubbles, etc. — all of which route inbound `MessageEvent`s through `GatewayRouter._handle_message` at `gateway/run.py:2645–2929`. That router owns a ~300-line dispatch chain and the persistent state each command handler mutates (`_session_model_overrides`, `_agent_cache`, the `adapters[platform].send_model_picker(...)` helpers on other adapters, etc.).
+
+`APIServerAdapter` (the `gateway/platforms/api_server.py` adapter serving `/v1/runs` and `/v1/chat/completions`) **intentionally bypasses the router** — see the `run.py:3148` comment flagging api_server as an "excluded platform" from the router notification path. It constructs a fresh agent per request with no persistent session state. The practical effect: a frontend typing `/model` gets the command text forwarded verbatim to the LLM, which hallucinates a plausible but wrong reply ("`/model` is a client-side command, I won't execute it") because the model has no way to know the gateway was supposed to handle it.
+
+**Proposed — a two-stage arc, each stage a small, independently reviewable PR:**
+
+**Stage 1 — stateless preprocessor (sibling follow-up to PR #8556).** A lightweight preprocessor in `api_server.py`'s `/v1/runs` + `/v1/chat/completions` handlers that detects a leading `/` in the user text, matches the first token against `GATEWAY_KNOWN_COMMANDS`, and splits on command type:
+
+- **Stateless commands** (`/help`, `/commands`, and any others that can execute without touching router-owned state) are dispatched via existing helpers (`gateway_help_lines()` at `hermes_cli/commands.py:340`) and returned as a synthetic SSE stream matching the handlers' existing event shape.
+- **Stateful commands** (`/model`, `/new`, `/retry`, `/undo`, `/compress`, `/title`, `/resume`, `/branch`, `/rollback`, `/yolo`, `/reasoning`, `/personality`, and most of the registry) return a deterministic, helpful SSE notice along the lines of *"The `/model` command requires a persistent session and isn't available on the stateless `/v1/runs` endpoint. Use `/api/sessions/{id}/chat/stream` (from PR #8556) or a channel with session state (Discord, CLI, Telegram)."*
+- **Unknown** and **cli-only** commands fall through to the LLM path unchanged.
+- **Preprocessor exceptions** fall through to the LLM path unchanged — a preprocessor bug must never take down a normal chat request.
+
+This respects upstream's intentional design (api_server stays stateless, no router coupling) while fixing the hallucination symptom and unlocking the commands that *can* run statelessly.
+
+**Stage 2 — stateful dispatch on `/api/sessions/{id}/chat/stream` (after PR #8556 lands).** Once session management primitives ship, a separate PR adds a preprocessor **scoped to the session chat stream endpoint only**, using the URL's `session_id` as the persistence handle. Stateful commands become session-scoped dict writes (`session.model_override = new_model`) without refactoring `GatewayRouter` or plumbing api_server into the router. This matches upstream's partition cleanly: `/v1/*` remains stateless and OpenAI-compatible; statefulness lives on `/api/sessions/*`.
+
+**Why not one big PR:** a full GatewayRouter refactor plus api_server plumbing was considered and rejected. It would touch 10+ files across subsystems normally owned separately, fight the documented "api_server is excluded from router notification" design decision, and review as a much larger change than the value added. The two-stage arc ships faster, reviews cleaner, and matches the upstream partition better.
+
+**Impact:** frontends that speak the API server (hermes-relay, hermes-workspace, ClawPort, and any OpenAI-compatible client that points at the Hermes base URL) get the same built-in command surface as Discord/Telegram/CLI, in two predictable stages.
+
+**Workaround (current / near-term):** `hermes_relay_bootstrap/_command_middleware.py` (planned for v0.4.1) mirrors Stage 1 as an aiohttp middleware injected at bootstrap time, so vanilla upstream installs that ship with the relay get the hallucination fix and the stateless commands without waiting for an upstream release. The bootstrap middleware fork-detects the same way the existing route injection does — it no-ops once Stage 1 lands upstream.
+
+## 6. Terminal HTTP API (for non-relay setups)
 
 **Current state:** hermes-agent's `terminal_tool.py` supports 6 backends (local, Docker, SSH, Modal, Daytona, Singularity) but is only callable internally by the agent during conversations. There is no HTTP API for interactive terminal sessions.
 
