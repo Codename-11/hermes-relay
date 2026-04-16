@@ -279,6 +279,13 @@ three carrying the new version string.
   in `app/build.gradle.kts`) and link to the sideload guide.
   The v0.3.0 body is a good template.
 - `CHANGELOG.md` — cumulative history; append a new section.
+- `app/src/main/assets/whats_new.txt` — in-app "What's New" content
+  shown in the settings/about screen. Update with the version number
+  and a brief feature summary. Gets stale silently if forgotten
+  (v0.4.0 shipped with 0.1.0 content until caught post-release).
+- `docs/play-store-listing.md` — Play Store listing copy. Update
+  the version reference and the "Release Notes" section that gets
+  pasted into the Play Console "What's new" field.
 
 ### 3. Build and verify locally
 
@@ -309,7 +316,8 @@ The release-prep commit is one of the few allowed direct-to-main pushes
 
 ```bash
 git add gradle/libs.versions.toml pyproject.toml plugin/relay/__init__.py \
-        RELEASE_NOTES.md CHANGELOG.md
+        RELEASE_NOTES.md CHANGELOG.md \
+        app/src/main/assets/whats_new.txt docs/play-store-listing.md
 git commit -m "release: v0.3.0"
 git push origin main
 
