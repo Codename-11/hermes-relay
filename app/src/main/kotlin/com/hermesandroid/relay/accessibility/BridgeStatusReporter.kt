@@ -226,6 +226,23 @@ class BridgeStatusReporter(
                     put("battery_percent", batteryFinal)
                     put("screen_on", screenOn)
                     put("current_app", currentApp ?: "unknown")
+                    // Flavor context so the LLM knows upfront which build
+                    // is connected and can avoid attempting sideload-only
+                    // tools on a googlePlay phone. Without this the agent
+                    // is flavor-blind until it tries android_send_sms and
+                    // gets a 403 sideload_only — by which point it's
+                    // already wasted a tool call and has to recover.
+                    put("flavor", com.hermesandroid.relay.data.BuildFlavor.current)
+                    put("application_id", com.hermesandroid.relay.data.BuildFlavor.run {
+                        // BuildConfig.APPLICATION_ID is the resolved
+                        // applicationId from the active flavor variant.
+                        try {
+                            @Suppress("KotlinConstantConditions")
+                            com.hermesandroid.relay.BuildConfig.APPLICATION_ID
+                        } catch (_: Throwable) {
+                            "unknown"
+                        }
+                    })
                 })
                 put("bridge", buildJsonObject {
                     put("master_enabled", masterEnabled)
