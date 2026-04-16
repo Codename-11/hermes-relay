@@ -216,16 +216,36 @@ internal class RealVoiceBridgeIntentHandler(
                             } else {
                                 ""
                             }
+                            // Multi-phone hint: when the selected contact
+                            // has more than one phone on record we say
+                            // "their Mobile" / "their Work" so the user
+                            // hears which number got picked. Matters for
+                            // the Galaxy Watch vs mobile case Bailey hit
+                            // 2026-04-15 where the Watch entry came first
+                            // in insertion order and got auto-selected
+                            // silently — the user couldn't tell from the
+                            // spoken preview which number the SMS was
+                            // actually going to.
+                            val phoneQualifier = if (resolution.totalPhones > 1) {
+                                val label = resolution.phoneLabel.takeIf { it.isNotBlank() }
+                                    ?: resolution.phoneType.replaceFirstChar { it.uppercase() }
+                                " $label"
+                            } else {
+                                ""
+                            }
                             handleDestructive(
                                 label = "Send SMS",
                                 spokenConfirmation = disambiguationPrefix +
-                                    "About to text ${resolution.matchedName} at " +
+                                    "About to text ${resolution.matchedName}$phoneQualifier at " +
                                     "${resolution.number}: ${intent.body}. Say cancel to stop.",
                                 envelope = buildSmsEnvelope(intent, resolution.number),
                                 details = mapOf(
                                     "contact" to intent.contact,
                                     "matchedName" to resolution.matchedName,
                                     "totalMatches" to resolution.totalMatches.toString(),
+                                    "totalPhones" to resolution.totalPhones.toString(),
+                                    "phoneType" to resolution.phoneType,
+                                    "phoneLabel" to resolution.phoneLabel,
                                     "resolvedNumber" to resolution.number,
                                     "body" to intent.body,
                                 ),
@@ -609,12 +629,21 @@ internal class RealVoiceBridgeIntentHandler(
             ?: return ContactResolution.NotFound
         if (contacts.isEmpty()) return ContactResolution.NotFound
         val firstContact = contacts.first()
-        val phonesField = firstContact["phones"] as? String
+
+        // ActionExecutor.searchContacts returns `phones` as a structured
+        // List<Map<String,Any?>> with {number, type, label} entries per
+        // 0.4.0. Pre-0.4.0 it was a comma-joined String — Bailey hit a
+        // case where Hannah Dixon had a Galaxy Watch and a mobile and
+        // we auto-picked the Watch. The new shape lets us prefer mobile
+        // > main > home > work > other > custom/watch.
+        @Suppress("UNCHECKED_CAST")
+        val phonesList = firstContact["phones"] as? List<Map<String, Any?>>
             ?: return ContactResolution.NoPhoneNumber
-        val number = phonesField.split(",")
-            .map { it.trim() }
-            .firstOrNull { it.isNotBlank() }
+        if (phonesList.isEmpty()) return ContactResolution.NoPhoneNumber
+
+        val selected = pickPreferredPhone(phonesList)
             ?: return ContactResolution.NoPhoneNumber
+
         // Capture the display name (ActionExecutor.searchContacts returns
         // it under the "name" key, alongside "phones"). Fall back to the
         // raw query if somehow absent so downstream formatting never has
@@ -622,11 +651,50 @@ internal class RealVoiceBridgeIntentHandler(
         val matchedName = (firstContact["name"] as? String)?.trim().orEmpty()
             .ifEmpty { contactName }
         return ContactResolution.Found(
-            number = number,
+            number = selected.number,
             matchedName = matchedName,
             totalMatches = contacts.size,
+            phoneType = selected.type,
+            phoneLabel = selected.label,
+            totalPhones = phonesList.size,
         )
     }
+
+    /**
+     * Pick the best phone from a structured contact phones list.
+     *
+     * Post-0.4.0 ActionExecutor.searchContacts already sorts phones by
+     * preference server-side (mobile > main > home > work > other >
+     * custom/watch), so this function just returns the first entry
+     * with a non-blank number. The centralized server-side ranker
+     * benefits BOTH the voice fast-path (via this function) and the
+     * LLM tool-calling path (which reads the pre-sorted list directly
+     * from the search_contacts tool response) without duplicating the
+     * ranking logic in two places.
+     *
+     * Returns null if no phone in the list has a non-blank `number`
+     * field, which can happen on contacts partially edited in the
+     * Contacts app.
+     */
+    private fun pickPreferredPhone(
+        phones: List<Map<String, Any?>>,
+    ): PickedPhone? {
+        if (phones.isEmpty()) return null
+        for (entry in phones) {
+            val number = (entry["number"] as? String)?.trim()
+            if (number.isNullOrBlank()) continue
+            val type = (entry["type"] as? String)?.lowercase() ?: "other"
+            val label = (entry["label"] as? String).orEmpty()
+            return PickedPhone(number = number, type = type, label = label)
+        }
+        return null
+    }
+
+    private data class PickedPhone(
+        val number: String,
+        val type: String,
+        val label: String,
+    )
 
     /** Result of the C4 contact → phone number lookup. */
     private sealed class ContactResolution {
@@ -647,6 +715,28 @@ internal class RealVoiceBridgeIntentHandler(
             val number: String,
             val matchedName: String,
             val totalMatches: Int,
+            /**
+             * Canonical type key of the selected phone — `mobile` /
+             * `home` / `work` / `main` / `other` / `custom` / etc.
+             * Used by the voice trace formatter to say "texting Hannah's
+             * mobile" instead of just "texting Hannah" so the user can
+             * verify we picked the right number at a glance when the
+             * contact has multiple entries (e.g. Galaxy Watch + mobile).
+             */
+            val phoneType: String = "unknown",
+            /**
+             * Human-readable label as stored in the Contacts app. For
+             * standard types matches the framework-localized string
+             * ("Mobile", "Work"). For `TYPE_CUSTOM` this carries the
+             * user's custom string (often "Watch" on Samsung).
+             */
+            val phoneLabel: String = "",
+            /**
+             * Total number of phones on the matched contact record.
+             * When > 1 we picked one via [pickPreferredPhone] — the UI
+             * should mention this so the user can correct if wrong.
+             */
+            val totalPhones: Int = 1,
         ) : ContactResolution()
         /** a11y service not connected — whole bridge pipeline is offline. */
         data object ServiceMissing : ContactResolution()

@@ -164,7 +164,20 @@ class BridgeSafetyManager(
 
     suspend fun requiresConfirmation(method: String, text: String?): Boolean {
         if (text.isNullOrBlank()) return false
-        if (method != "/tap_text" && method != "/type") return false
+        // Pre-0.4.0 only /tap_text and /type were gated — node-id taps
+        // slipped past because the gate never looked up the tapped
+        // node's text. Bailey 2026-04-15 hit this: after denying an
+        // SMS, the agent fell back to android_open_app + android_tap
+        // (by nodeId) on the Messages app's "Send" button, bypassing
+        // the verb modal. BridgeCommandHandler.extractDestructiveVerbText
+        // now resolves the node's text for /tap + /long_press too, and
+        // this method gates on any of the four paths as long as the
+        // caller supplies a text argument.
+        if (method != "/tap_text" &&
+            method != "/type" &&
+            method != "/tap" &&
+            method != "/long_press"
+        ) return false
         val verbs = currentSettings().destructiveVerbs
         if (verbs.isEmpty()) return false
         return containsDestructiveVerb(text, verbs)

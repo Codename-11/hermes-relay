@@ -431,19 +431,28 @@ class BridgeCommandHandler(
             )
         }
 
-        // Destructive-verb gate — only /tap_text and /type can carry
-        // user-visible text that fires a real-world action. Other paths
-        // skip the check.
-        val bodyText = body["text"]?.jsonPrimitive?.content
+        // Destructive-verb gate — /tap_text and /type carry text in their
+        // body directly, /tap + /long_press carry a node_id we resolve via
+        // ScreenReader to the tapped node's text (or contentDescription).
+        // Pre-0.4.0 this was body["text"] only, which let node-id taps
+        // slip past the gate entirely — Bailey hit this 2026-04-15 when
+        // an agent fell back to android_open_app + android_tap(nodeId)
+        // after a /send_sms denial and successfully tapped the Messages
+        // app's "Send" button without firing the modal. Coordinate-only
+        // taps (no nodeId) still slip through because we don't hit-test;
+        // that's a P0.5 follow-up. The common LLM pattern is tap by
+        // nodeId (from android_read_screen), which now gets gated.
+        val bodyText = extractDestructiveVerbText(path, body, service)
         if (safetyManager != null && safetyManager.requiresConfirmation(path, bodyText)) {
             val allowed = safetyManager.awaitConfirmation(path, bodyText)
             if (!allowed) {
                 return respond(
                     requestId, 403,
-                    buildJsonObject {
-                        put("error", "user denied destructive action")
-                        put("reason", "confirmation_denied_or_timeout")
-                    }
+                    userDeniedResponse(
+                        "The user denied a destructive '$path' action via the " +
+                            "on-device confirmation modal. (Text inspected: " +
+                            "\"${bodyText ?: "?"}\")",
+                    )
                 )
             }
         }
@@ -956,7 +965,9 @@ class BridgeCommandHandler(
                     respond(
                         requestId, 403,
                         buildJsonObject {
-                            put("error", "android_location is sideload-only")
+                            put("error", "android_location is only available on the sideload flavor of Hermes Relay. This build is googlePlay.")
+                            put("error_code", "sideload_only")
+                            put("flavor", "googlePlay")
                         }
                     )
                     return
@@ -969,7 +980,9 @@ class BridgeCommandHandler(
                     respond(
                         requestId, 403,
                         buildJsonObject {
-                            put("error", "android_search_contacts is sideload-only")
+                            put("error", "android_search_contacts is only available on the sideload flavor of Hermes Relay. This build is googlePlay.")
+                            put("error_code", "sideload_only")
+                            put("flavor", "googlePlay")
                         }
                     )
                     return
@@ -991,7 +1004,9 @@ class BridgeCommandHandler(
                     respond(
                         requestId, 403,
                         buildJsonObject {
-                            put("error", "android_call auto-dial is sideload-only")
+                            put("error", "android_call auto-dial is only available on the sideload flavor of Hermes Relay. This build is googlePlay.")
+                            put("error_code", "sideload_only")
+                            put("flavor", "googlePlay")
                         }
                     )
                     return
@@ -1028,10 +1043,10 @@ class BridgeCommandHandler(
                 if (!allowed) {
                     respond(
                         requestId, 403,
-                        buildJsonObject {
-                            put("error", "user denied destructive action")
-                            put("reason", "confirmation_denied_or_timeout")
-                        }
+                        userDeniedResponse(
+                            "The user denied the call to $number via the on-device " +
+                                "confirmation modal.",
+                        )
                     )
                     return
                 }
@@ -1043,7 +1058,9 @@ class BridgeCommandHandler(
                     respond(
                         requestId, 403,
                         buildJsonObject {
-                            put("error", "android_send_sms is sideload-only")
+                            put("error", "android_send_sms is only available on the sideload flavor of Hermes Relay. This build is googlePlay.")
+                            put("error_code", "sideload_only")
+                            put("flavor", "googlePlay")
                         }
                     )
                     return
@@ -1079,10 +1096,10 @@ class BridgeCommandHandler(
                 if (!allowed) {
                     respond(
                         requestId, 403,
-                        buildJsonObject {
-                            put("error", "user denied destructive action")
-                            put("reason", "confirmation_denied_or_timeout")
-                        }
+                        userDeniedResponse(
+                            "The user denied the SMS to $to via the on-device " +
+                                "confirmation modal.",
+                        )
                     )
                     return
                 }
@@ -1357,15 +1374,20 @@ class BridgeCommandHandler(
         val status = if (result.ok) 200 else 400
         val payload = buildJsonObject {
             if (result.ok) {
+                // Recursively convert Any? values into JsonElement so that
+                // nested Lists and Maps serialize as real JSON arrays/
+                // objects instead of Kotlin's default toString() which
+                // produces unparseable strings like "[{id=9, name=X}]".
+                // Pre-0.4.0 fell through to the `else -> v.toString()`
+                // branch for every nested value, so e.g. the
+                // /search_contacts response's `contacts` field landed on
+                // the LLM as a string-repr that it had to guess its way
+                // through. Caught 2026-04-15 when the new structured
+                // phones list on searchContacts made the toString path
+                // even worse.
                 for ((k, v) in result.data) {
-                    when (v) {
-                        null -> { /* skip null values — they carry no wire info */ }
-                        is Int -> put(k, v)
-                        is Long -> put(k, v)
-                        is Boolean -> put(k, v)
-                        is String -> put(k, v)
-                        else -> put(k, v.toString())
-                    }
+                    if (v == null) continue
+                    put(k, anyToJsonElement(v))
                 }
                 if (result.data.isEmpty()) put("ok", true)
             } else {
@@ -1386,6 +1408,148 @@ class BridgeCommandHandler(
             }
         }
         respond(requestId, status, payload)
+    }
+
+    /**
+     * Resolve the "text the user would read as the action label" for a
+     * bridge command. Feeds [BridgeSafetyManager.requiresConfirmation]
+     * so the destructive-verb gate can inspect button labels on /tap +
+     * /long_press calls, not just on /tap_text + /type.
+     *
+     * Resolution per path:
+     *  - `/tap_text`, `/type` — returns `body["text"]` directly. Matches
+     *    pre-0.4.0 behavior.
+     *  - `/tap`, `/long_press` with a `nodeId`/`node_id` in body — walks
+     *    the live window tree via [ScreenReader.findNodeById] and returns
+     *    the node's `text`, falling back to `contentDescription`. If the
+     *    text contains a destructive verb (e.g. "Send", "Delete"), the
+     *    gate fires. Recycles the window roots we snapshot.
+     *  - `/tap`, `/long_press` with only `(x,y)` coordinates — returns
+     *    null (no gate). Coordinate hit-testing is a P0.5 follow-up;
+     *    the common LLM pattern is tap-by-nodeId after read_screen.
+     *  - Any other path — returns null.
+     *
+     * Fail-open semantics: if we can't snapshot the window tree or find
+     * the node for any reason, returns null (gate passes). This matches
+     * pre-0.4.0 behavior for /tap — we're strictly adding coverage, not
+     * converting tap to fail-closed. Fail-closed for unresolvable taps
+     * would break every drag-drawer / canvas tap in the app.
+     */
+    private fun extractDestructiveVerbText(
+        path: String,
+        body: JsonObject,
+        service: com.hermesandroid.relay.accessibility.HermesAccessibilityService,
+    ): String? {
+        if (path == "/tap_text" || path == "/type") {
+            return body["text"]?.jsonPrimitive?.contentOrNull
+        }
+        if (path != "/tap" && path != "/long_press") return null
+
+        val nodeId = body["nodeId"]?.jsonPrimitive?.contentOrNull
+            ?: body["node_id"]?.jsonPrimitive?.contentOrNull
+            ?: return null
+        if (nodeId.isBlank()) return null
+
+        val roots = try {
+            service.snapshotAllWindows()
+        } catch (_: Throwable) {
+            return null
+        }
+        if (roots.isEmpty()) return null
+
+        var extractedText: String? = null
+        val node = try {
+            service.reader.findNodeById(roots, nodeId)
+        } catch (_: Throwable) {
+            null
+        }
+        if (node != null) {
+            val text = node.text?.toString()?.takeIf { it.isNotBlank() }
+            val cd = node.contentDescription?.toString()?.takeIf { it.isNotBlank() }
+            extractedText = text ?: cd
+            @Suppress("DEPRECATION")
+            try { node.recycle() } catch (_: Throwable) { }
+        }
+        recycleWindowRoots(roots)
+        return extractedText
+    }
+
+    /**
+     * Build the canonical "user denied" 403 response payload. Returned
+     * by every destructive-verb confirmation path (`/tap_text` verb
+     * gate, `/call`, `/send_sms`). The structured shape lets the LLM
+     * recognize a user denial cleanly:
+     *
+     *  - `error` — free-text description carrying the context of what
+     *    was denied (SMS recipient, call number, etc.)
+     *  - `error_code = "user_denied"` — machine-readable classification
+     *  - `reason = "confirmation_denied_or_timeout"` — preserved for
+     *    backwards compat with older LLM prompts that read this field
+     *  - `final = true` — semantic flag telling the LLM that this is a
+     *    terminal refusal, not a transient failure
+     *  - `instruction` — an explicit no-fallback directive so the model
+     *    doesn't reach for UI automation (android_open_app +
+     *    android_tap_text + android_type) to replicate the same action
+     *    through a different tool. Caught 2026-04-15 when Bailey tapped
+     *    Deny on an SMS modal and Victor immediately called
+     *    android_open_app to drive the Messages app — denial via one
+     *    path is denial for the intent, not just that one tool call.
+     */
+    private fun userDeniedResponse(contextText: String) = buildJsonObject {
+        put(
+            "error",
+            "$contextText This is a FINAL denial. Do NOT retry the same " +
+                "action via alternate tools (android_open_app + android_tap " +
+                "+ android_type + android_tap_text to drive a messaging / " +
+                "dialer / email UI). The user's denial applies to the " +
+                "entire intent, not just this one tool call. Report the " +
+                "denial to the user and stop. If the user later asks you " +
+                "to try again, that counts as a fresh intent and you can " +
+                "re-attempt.",
+        )
+        put("error_code", "user_denied")
+        put("reason", "confirmation_denied_or_timeout")
+        put("final", true)
+        put(
+            "instruction",
+            "Do not retry via UI automation. Denial is terminal for this intent.",
+        )
+    }
+
+    /**
+     * Recursively convert an arbitrary `Any?` value into a [JsonElement]
+     * so nested Lists and Maps in [ActionExecutor.ActionResult.data]
+     * serialize cleanly into the bridge.response payload. Handles
+     * primitives, Maps (as JsonObject — only String keys), Lists and
+     * Arrays (as JsonArray), and falls back to `.toString()` inside a
+     * JsonPrimitive for anything else.
+     *
+     * Non-String map keys are silently dropped — the wire protocol is
+     * JSON, which only supports String keys. In practice ActionExecutor
+     * always uses String keys so this branch shouldn't fire.
+     */
+    private fun anyToJsonElement(value: Any?): kotlinx.serialization.json.JsonElement = when (value) {
+        null -> kotlinx.serialization.json.JsonNull
+        is kotlinx.serialization.json.JsonElement -> value
+        is Boolean -> kotlinx.serialization.json.JsonPrimitive(value)
+        is Int -> kotlinx.serialization.json.JsonPrimitive(value)
+        is Long -> kotlinx.serialization.json.JsonPrimitive(value)
+        is Float -> kotlinx.serialization.json.JsonPrimitive(value)
+        is Double -> kotlinx.serialization.json.JsonPrimitive(value)
+        is Number -> kotlinx.serialization.json.JsonPrimitive(value)
+        is String -> kotlinx.serialization.json.JsonPrimitive(value)
+        is Map<*, *> -> buildJsonObject {
+            for ((k, v) in value) {
+                if (k is String) put(k, anyToJsonElement(v))
+            }
+        }
+        is List<*> -> buildJsonArray {
+            for (item in value) add(anyToJsonElement(item))
+        }
+        is Array<*> -> buildJsonArray {
+            for (item in value) add(anyToJsonElement(item))
+        }
+        else -> kotlinx.serialization.json.JsonPrimitive(value.toString())
     }
 
     /**
@@ -1415,10 +1579,12 @@ class BridgeCommandHandler(
             // Service-side failures that aren't permission-shaped
             "not connected" in lower || "service not connected" in lower ->
                 "service_unavailable" to null
-            "user denied destructive action" in lower ->
+            "user denied" in lower || "this is a final denial" in lower ->
                 "user_denied" to null
             "bridge agent control is disabled" in lower || "bridge is disabled" in lower ->
                 "bridge_disabled" to null
+            "sideload-only" in lower || "sideload only" in lower ->
+                "sideload_only" to null
             else -> null
         }
     }

@@ -580,7 +580,20 @@ _SCHEMAS = {
     },
     "android_tap": {
         "name": "android_tap",
-        "description": "Tap a UI element by node_id (preferred) or by screen coordinates (x, y). Always prefer node_id over coordinates — it's more reliable. Get node_ids from android_read_screen.",
+        "description": (
+            "Tap a UI element by node_id (preferred) or by screen "
+            "coordinates (x, y). Always prefer node_id over coordinates "
+            "— it's more reliable. Get node_ids from android_read_screen.\n\n"
+            "DENIAL-RETRY GUARD: if android_send_sms or android_call just "
+            "returned error_code=user_denied, do NOT use this tool to "
+            "replicate the denied action by tapping the same kind of "
+            "button in a UI (Send / Call / Delete / Pay / Confirm). The "
+            "user's denial applies to the INTENT, not to one tool call. "
+            "Retrying via UI automation after a direct denial is a trust "
+            "violation. Use this tool freely for non-destructive UI "
+            "inspection and navigation; just don't use it to sneak past "
+            "a user refusal."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -593,7 +606,21 @@ _SCHEMAS = {
     },
     "android_tap_text": {
         "name": "android_tap_text",
-        "description": "Tap the first visible UI element matching the given text. Useful when you see text on screen and want to tap it without needing node IDs.",
+        "description": (
+            "Tap the first visible UI element matching the given text. "
+            "Useful when you see text on screen and want to tap it "
+            "without needing node IDs.\n\n"
+            "DENIAL-RETRY GUARD: same rule as android_tap. If "
+            "android_send_sms or android_call just returned "
+            "error_code=user_denied, do NOT use this tool to tap a "
+            "'Send', 'Call', 'Confirm', 'Pay', or 'Delete' button in a "
+            "UI to replicate the denied action. Note: this tool is "
+            "additionally gated by the phone's destructive-verb safety "
+            "modal, so even if you try to bypass the denial this way, "
+            "the user will see ANOTHER confirmation modal for the UI "
+            "tap. Both paths land on the user, so there is no stealth "
+            "route. Don't waste their patience."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -605,7 +632,15 @@ _SCHEMAS = {
     },
     "android_type": {
         "name": "android_type",
-        "description": "Type text into the currently focused input field. Tap the field first using android_tap or android_tap_text.",
+        "description": (
+            "Type text into the currently focused input field. Tap the "
+            "field first using android_tap or android_tap_text.\n\n"
+            "DENIAL-RETRY GUARD: if android_send_sms just returned "
+            "error_code=user_denied, do NOT use this tool to type the "
+            "same message body into the Messages app's compose field as "
+            "an alternate route. The denial applies to the intent of "
+            "sending that message, not just to the one tool call."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -631,14 +666,24 @@ _SCHEMAS = {
         "name": "android_open_app",
         "description": (
             "Launch an Android app by its package name. Use android_get_apps "
-            "to find package names. "
+            "to find package names.\n\n"
             "IMPORTANT: When your task is complete in the opened app, call "
             "android_return_to_hermes as your FINAL step so the user sees "
             "your reply in-context without manually switching back from the "
             "other app. Also: before driving Messages / Phone / Contacts via "
             "UI automation (tap + read_screen + type), first consider "
             "android_send_sms / android_call / android_search_contacts — "
-            "those dispatch directly and are faster + safer."
+            "those dispatch directly and are faster + safer.\n\n"
+            "DENIAL-RETRY GUARD: if android_send_sms or android_call just "
+            "returned error_code=user_denied, do NOT open the Messages "
+            "app, Phone dialer, or any other messaging/calling app as a "
+            "fallback path to replicate the denied action. The user's "
+            "denial applies to the intent, not just the direct tool "
+            "call. Opening the destination app to drive the same "
+            "action via UI automation (android_tap + android_type + "
+            "android_tap_text) is the exact bypass pattern to avoid. "
+            "If the user later asks you to try again with new "
+            "parameters, that's a fresh intent and you can re-attempt."
         ),
         "parameters": {
             "type": "object",
@@ -720,18 +765,47 @@ _SCHEMAS = {
         "name": "android_search_contacts",
         "description": (
             "Search the phone's contact book by name. Returns matching "
-            "contacts with their phone numbers. "
+            "contacts with their structured phone list.\n\n"
             "CALL THIS DIRECTLY when the user gives you a name — do NOT "
-            "ask the user 'who is X?' or 'is X a contact on your phone?' "
-            "before calling this tool. That's what the tool is FOR. The "
-            "user gave you access to their contacts specifically so you "
-            "could resolve names autonomously. Bouncing lookup questions "
-            "back to the user is the exact anti-pattern this tool exists "
-            "to avoid. If the search returns zero matches, THEN ask for "
-            "clarification. If it returns one match, use it. If multiple, "
-            "pick the top result and mention it in your reply so the user "
-            "can correct if needed (the on-device SMS modal is the final "
-            "checkpoint anyway). Requires READ_CONTACTS permission on phone."
+            "ask 'who is X?' or 'is X in your contacts?' before calling. "
+            "That's what the tool is FOR. The user gave you contacts "
+            "access specifically so you could resolve names autonomously. "
+            "Bouncing lookup questions back is the anti-pattern this tool "
+            "exists to avoid.\n\n"
+            "RESPONSE SHAPE (as of 0.4.0): each contact's `phones` field "
+            "is a LIST of `{number, type, label}` objects, NOT a string. "
+            "Example:\n"
+            "  {\"count\": 1, \"contacts\": [{\n"
+            "    \"id\": 9269,\n"
+            "    \"name\": \"Hannah Dixon\",\n"
+            "    \"phones\": [\n"
+            "      {\"number\": \"+17728994696\", \"type\": \"custom\", \"label\": \"Watch\"},\n"
+            "      {\"number\": \"+19413099119\", \"type\": \"mobile\", \"label\": \"Mobile\"}\n"
+            "    ]\n"
+            "  }]}\n\n"
+            "`type` is one of: mobile, home, work, main, other, custom, "
+            "fax_home, fax_work, pager, car, callback, assistant, mms. "
+            "`label` is the human-readable label from the Contacts app — "
+            "for `custom` type this carries the user's label (commonly "
+            "'Watch' on Samsung Galaxy ecosystems where the watch "
+            "registers as a separate messaging endpoint).\n\n"
+            "DISAMBIGUATION RULES:\n"
+            "- If `count == 0`, tell the user you couldn't find the name "
+            "and ask for clarification.\n"
+            "- If `count == 1` and the contact has ONE phone, proceed "
+            "directly to android_send_sms / android_call.\n"
+            "- If `count == 1` and the contact has MULTIPLE phones, "
+            "PREFER `mobile > main > home > work > other` and AVOID "
+            "`custom` entries (those are often Galaxy Watch / Pager "
+            "endpoints you don't want to text). Briefly mention which "
+            "number you picked in your reply ('texting Hannah's mobile') "
+            "so the user can correct on the on-device modal if wrong.\n"
+            "- If `count > 1` (multiple distinct contacts match the "
+            "name), DO NOT guess. List the matches with their primary "
+            "phone and ask which one. This is legitimate ambiguity "
+            "resolution, not redundant confirmation — the user needs to "
+            "pick.\n\n"
+            "Requires READ_CONTACTS permission on phone."
         ),
         "parameters": {
             "type": "object",
@@ -769,24 +843,44 @@ _SCHEMAS = {
             "- DO NOT ask the user for chat-side confirmation before "
             "calling this tool ('are you sure?', 'confirm the wording?', "
             "'is this the right person?'). The phone modal already asks "
-            "them. Chat-side double-confirmation is REDUNDANT and "
-            "FRUSTRATING — the user already told you what to send.\n"
+            "them.\n"
             "- DO NOT ask the user to identify a contact by name. Call "
-            "android_search_contacts FIRST to resolve names to numbers "
-            "autonomously. That's what that tool is for.\n"
-            "- If search_contacts returns multiple matches, pick the top "
-            "one and mention it briefly in your reply ('texting Hannah "
-            "Dixon at +1555...'); the on-device modal will let the user "
-            "cancel if wrong.\n"
-            "- If you genuinely don't have enough info to construct the "
-            "message (no recipient, no body), THEN ask — but only for "
-            "the specific missing field.\n\n"
+            "android_search_contacts FIRST to resolve names autonomously.\n"
+            "- If search_contacts returns one contact with multiple phones, "
+            "prefer `mobile > main > home > work > other` from the "
+            "structured phones list and AVOID `custom` entries (those "
+            "are often Galaxy Watch endpoints). Mention which number you "
+            "picked in your reply ('texting Hannah's mobile at +1555...').\n"
+            "- If search_contacts returns multiple distinct contacts, "
+            "ask the user which one — that's legitimate ambiguity, not "
+            "redundant confirmation.\n\n"
+            "DENIAL IS FINAL: if this tool returns an error with "
+            "`error_code: user_denied`, the user has explicitly REFUSED "
+            "this SMS via the on-device modal. DO NOT retry the same "
+            "action via alternate paths:\n"
+            "- DO NOT call android_open_app('com.google.android.apps.messaging') "
+            "to drive the Messages app UI.\n"
+            "- DO NOT call android_tap / android_tap_text / android_type "
+            "on any messaging app to replicate the denied send.\n"
+            "- DO NOT try android_send_sms again with the same parameters.\n"
+            "The user's denial applies to the INTENT of sending this "
+            "message, not just to this one tool call. Report the denial "
+            "to the user and STOP. If the user later asks you to try "
+            "again (new instruction in chat), that's a fresh intent and "
+            "you can re-attempt with updated parameters.\n\n"
+            "If the tool returns `error_code: sideload_only`, your "
+            "current Hermes Relay build is googlePlay which does not "
+            "ship the SEND_SMS permission. In that case ASK the user if "
+            "they want you to fall back to driving the Messages app UI "
+            "via android_open_app + android_tap + android_type. Do NOT "
+            "silently fall back — the UI automation path is slower and "
+            "more fragile; the user should explicitly consent.\n\n"
             "The `to` argument MUST be a phone number — if the user gave "
             "a contact name, call android_search_contacts first, extract "
             "the number, then call this. Sideload flavor only — returns "
-            "403 on Google Play builds. After sending, you do NOT need to "
-            "call android_return_to_hermes (this tool never leaves the "
-            "current foreground app)."
+            "403 with `error_code: sideload_only` on Google Play builds. "
+            "After sending, you do NOT need to call android_return_to_hermes "
+            "(this tool never leaves the current foreground app)."
         ),
         "parameters": {
             "type": "object",
@@ -820,7 +914,17 @@ _SCHEMAS = {
             "on top ('are you sure you want to call X?') — that's "
             "redundant double-confirmation. Do NOT ask the user to "
             "identify a contact by name; call android_search_contacts "
-            "first and resolve the name yourself.\n\n"
+            "first and resolve the name yourself. If the contact has "
+            "multiple phones, use `phones[0]` — the list is pre-sorted "
+            "server-side by preference (mobile > main > home > work).\n\n"
+            "DENIAL IS FINAL: if this tool returns error_code=user_denied, "
+            "the user refused the call via the on-device modal. DO NOT "
+            "retry via alternate paths — no android_open_app('com.dialer') "
+            "+ android_tap on the Call button, no android_tap_text('Call'), "
+            "no second android_call with the same number. The user's "
+            "denial applies to the intent, not one tool call. Report the "
+            "refusal and stop. A fresh instruction from the user counts "
+            "as a new intent and you can re-attempt.\n\n"
             "Because this tool brings the Phone app to foreground in "
             "dialer-opened mode, call android_return_to_hermes as a "
             "wrap-up step once the call is placed so the user can see "

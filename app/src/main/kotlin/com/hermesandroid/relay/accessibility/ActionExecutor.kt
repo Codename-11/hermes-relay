@@ -1259,11 +1259,30 @@ class ActionExecutor(private val service: HermesAccessibilityService) {
                 val id = if (idIdx >= 0) cursor.getLong(idIdx) else continue
                 val name = if (nameIdx >= 0) cursor.getString(nameIdx) else null
                 val phones = fetchPhonesForContact(ctx, id)
+                // Structured phones list with {number, type, label}
+                // entries. Pre-0.4.0 this joined with ", " which lost
+                // type info and let the voice auto-resolver pick a
+                // Galaxy Watch number when the contact had both a watch
+                // and a mobile. The LLM path (android_search_contacts
+                // tool) also sees the structured list so it can
+                // disambiguate when asking the user which number to use.
+                //
+                // Sort server-side so BOTH the voice fast-path and the
+                // LLM tool-calling path see phones in preference order
+                // without needing their own ranker. The LLM path
+                // especially benefits — the tool description can just
+                // say "phones[0] is the preferred number" and the model
+                // can call android_send_sms(phones[0].number) without
+                // extra reasoning. Caught 2026-04-15 during audit as a
+                // gap where voice had pickPreferredPhone but chat/LLM
+                // didn't, re-exposing the Watch-first bug on the chat
+                // path.
+                val sortedPhones = sortPhonesByPreference(phones)
                 results.add(
                     mapOf(
                         "id" to id,
                         "name" to (name ?: "(unknown)"),
-                        "phones" to phones.joinToString(", "),
+                        "phones" to sortedPhones,
                     )
                 )
             }
@@ -1283,13 +1302,50 @@ class ActionExecutor(private val service: HermesAccessibilityService) {
         )
     }
 
-    private fun fetchPhonesForContact(ctx: Context, contactId: Long): List<String> {
-        val phones = mutableListOf<String>()
+    /**
+     * Fetch all phone numbers for a contact along with their type and
+     * human-readable label. Returns an ordered list of maps with keys
+     * `number`, `type`, and `label`:
+     *
+     *  - `number` — the raw phone number string as stored in the contact
+     *  - `type` — canonical lowercase type key: `mobile` / `home` / `work`
+     *    / `main` / `other` / `custom` / `fax_home` / `fax_work` / `pager`
+     *    / `car` / `radio` / `callback` / `assistant` / etc. Derived from
+     *    [ContactsContract.CommonDataKinds.Phone.TYPE]. Used by voice
+     *    mode's resolver to prefer mobile over watch/custom entries.
+     *  - `label` — the user-visible label shown in the Contacts app
+     *    (e.g. "Mobile", "Work", custom strings like "Watch"). Derived
+     *    via [ContactsContract.CommonDataKinds.Phone.getTypeLabel]
+     *    using app resources. For `TYPE_CUSTOM` this returns the user's
+     *    custom string from the `LABEL` column, which is how we recover
+     *    Galaxy Watch entries (often labeled "Watch" by Samsung Health).
+     *
+     * Ordering: numbers are returned in the order the content provider
+     * emits them, which on most OEMs is by `Phone._ID` insertion order.
+     * We do NOT sort here — callers that care about preference (voice
+     * mode's auto-resolver) apply their own type-priority ordering. The
+     * LLM path receives the raw list so it can disambiguate intelligently.
+     *
+     * Pre-0.4.0 this returned `List<String>` of bare numbers with type
+     * info dropped on the floor. Bailey 2026-04-15: Hannah Dixon had two
+     * phone entries (a Galaxy Watch and a mobile) and the auto-picker
+     * couldn't tell them apart, so it fired the SMS at the Watch number
+     * and Bailey had to deny on-device.
+     */
+    private fun fetchPhonesForContact(
+        ctx: Context,
+        contactId: Long,
+    ): List<Map<String, Any?>> {
+        val phones = mutableListOf<Map<String, Any?>>()
         val resolver = ctx.contentResolver
         var phoneCursor = try {
             resolver.query(
                 ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-                arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+                arrayOf(
+                    ContactsContract.CommonDataKinds.Phone.NUMBER,
+                    ContactsContract.CommonDataKinds.Phone.TYPE,
+                    ContactsContract.CommonDataKinds.Phone.LABEL,
+                ),
                 "${ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ?",
                 arrayOf(contactId.toString()),
                 null
@@ -1303,9 +1359,26 @@ class ActionExecutor(private val service: HermesAccessibilityService) {
                 val numIdx = phoneCursor.getColumnIndex(
                     ContactsContract.CommonDataKinds.Phone.NUMBER
                 )
+                val typeIdx = phoneCursor.getColumnIndex(
+                    ContactsContract.CommonDataKinds.Phone.TYPE
+                )
+                val labelIdx = phoneCursor.getColumnIndex(
+                    ContactsContract.CommonDataKinds.Phone.LABEL
+                )
                 while (phoneCursor.moveToNext()) {
                     val num = if (numIdx >= 0) phoneCursor.getString(numIdx) else null
-                    if (!num.isNullOrBlank()) phones.add(num)
+                    if (num.isNullOrBlank()) continue
+                    val typeInt = if (typeIdx >= 0) phoneCursor.getInt(typeIdx) else -1
+                    val customLabel = if (labelIdx >= 0) phoneCursor.getString(labelIdx) else null
+                    val typeKey = phoneTypeKey(typeInt)
+                    val displayLabel = phoneTypeDisplayLabel(ctx, typeInt, customLabel)
+                    phones.add(
+                        mapOf(
+                            "number" to num,
+                            "type" to typeKey,
+                            "label" to displayLabel,
+                        )
+                    )
                 }
             }
         } finally {
@@ -1313,6 +1386,110 @@ class ActionExecutor(private val service: HermesAccessibilityService) {
             phoneCursor = null
         }
         return phones
+    }
+
+    /**
+     * Sort a contact's phones in preference order so position 0 is the
+     * "best" phone to call or text. Preference:
+     *
+     *   1. mobile (rank 0)
+     *   2. main   (rank 1)
+     *   3. home   (rank 2)
+     *   4. work   (rank 3)
+     *   5. other  (rank 4)
+     *   6. everything else / custom (rank 99)
+     *
+     * **Label heuristic**: a phone whose `label` contains "watch",
+     * "pager", "smartwatch", or "fax" is forced to rank 99 regardless
+     * of its canonical type. This catches Samsung Galaxy Watch entries
+     * that register as `TYPE_MOBILE` with a "Watch" custom label — the
+     * type-only ranker would prefer them. Bailey 2026-04-15: Hannah
+     * Dixon's contact had a Galaxy Watch at one of the phone slots,
+     * and the voice auto-picker chose it over the mobile because the
+     * insertion order favored the watch.
+     *
+     * Stable sort: within a tier, original insertion order from the
+     * content provider is preserved, so two "mobile" numbers land in
+     * the same order they were added in the Contacts app.
+     */
+    private fun sortPhonesByPreference(
+        phones: List<Map<String, Any?>>,
+    ): List<Map<String, Any?>> {
+        if (phones.size <= 1) return phones
+        val typeRank = mapOf(
+            "mobile" to 0,
+            "main" to 1,
+            "home" to 2,
+            "work" to 3,
+            "other" to 4,
+        )
+        val watchKeywords = listOf("watch", "pager", "smartwatch", "smart watch", "fax")
+        return phones.withIndex()
+            .sortedBy { (originalIndex, entry) ->
+                val type = (entry["type"] as? String)?.lowercase() ?: "other"
+                val label = (entry["label"] as? String)?.lowercase().orEmpty()
+                val looksLikeWatch = watchKeywords.any { it in label }
+                val rank = when {
+                    looksLikeWatch -> 99
+                    else -> typeRank[type] ?: 99
+                }
+                // Pack rank + original index so rank is primary sort
+                // key and insertion order is the stable tiebreaker.
+                // 1000 > any realistic phone count; safe offset.
+                rank * 1000 + originalIndex
+            }
+            .map { it.value }
+    }
+
+    /**
+     * Map [ContactsContract.CommonDataKinds.Phone.TYPE] integer codes to
+     * short lowercase keys the LLM + voice auto-resolver can reason about.
+     * Not exhaustive — covers the types that matter for messaging and call
+     * routing. Anything else collapses to `other`. Custom types with a
+     * user-provided label land on `custom` and the [label] field carries
+     * the human-readable string.
+     */
+    private fun phoneTypeKey(type: Int): String = when (type) {
+        ContactsContract.CommonDataKinds.Phone.TYPE_MOBILE -> "mobile"
+        ContactsContract.CommonDataKinds.Phone.TYPE_HOME -> "home"
+        ContactsContract.CommonDataKinds.Phone.TYPE_WORK -> "work"
+        ContactsContract.CommonDataKinds.Phone.TYPE_MAIN -> "main"
+        ContactsContract.CommonDataKinds.Phone.TYPE_OTHER -> "other"
+        ContactsContract.CommonDataKinds.Phone.TYPE_CUSTOM -> "custom"
+        ContactsContract.CommonDataKinds.Phone.TYPE_FAX_HOME -> "fax_home"
+        ContactsContract.CommonDataKinds.Phone.TYPE_FAX_WORK -> "fax_work"
+        ContactsContract.CommonDataKinds.Phone.TYPE_PAGER -> "pager"
+        ContactsContract.CommonDataKinds.Phone.TYPE_CAR -> "car"
+        ContactsContract.CommonDataKinds.Phone.TYPE_CALLBACK -> "callback"
+        ContactsContract.CommonDataKinds.Phone.TYPE_ASSISTANT -> "assistant"
+        ContactsContract.CommonDataKinds.Phone.TYPE_MMS -> "mms"
+        else -> "other"
+    }
+
+    /**
+     * Human-readable label for a phone type, matching what shows up in
+     * the stock Contacts app. For `TYPE_CUSTOM` this is the user-provided
+     * string (common on Samsung for "Watch" entries); for the other types
+     * it's the localized framework label fetched via
+     * [ContactsContract.CommonDataKinds.Phone.getTypeLabel].
+     */
+    private fun phoneTypeDisplayLabel(
+        ctx: Context,
+        type: Int,
+        customLabel: String?,
+    ): String {
+        if (type == ContactsContract.CommonDataKinds.Phone.TYPE_CUSTOM) {
+            return customLabel?.takeIf { it.isNotBlank() } ?: "Custom"
+        }
+        return try {
+            ContactsContract.CommonDataKinds.Phone.getTypeLabel(
+                ctx.resources,
+                type,
+                customLabel,
+            ).toString()
+        } catch (_: Throwable) {
+            phoneTypeKey(type).replaceFirstChar { it.uppercase() }
+        }
     }
 
     /**
