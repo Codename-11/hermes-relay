@@ -3,9 +3,12 @@ package com.hermesandroid.relay.viewmodel
 import android.app.Application
 import android.content.ComponentName
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.BatteryManager
+import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.hermesandroid.relay.data.BridgeActivityEntry
@@ -391,12 +394,20 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         // Notification listener permission — notif-listener owns the listener code but the
         // status check is a plain Settings.Secure lookup, no code dependency.
         val notifListenerGranted = isNotificationListenerEnabled(ctx)
+        val notificationsGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(
+                ctx, android.Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
 
         _permissionStatus.value = BridgePermissionStatus(
             accessibilityServiceEnabled = a11yEnabled,
             screenCapturePermitted = screenCaptureGranted,
             overlayPermitted = overlayGranted,
             notificationListenerPermitted = notifListenerGranted,
+            notificationsPermitted = notificationsGranted,
         )
     }
 
@@ -462,12 +473,13 @@ data class BridgeStatus(
     val accessibilityEnabled: Boolean,
 )
 
-/** Which of the four bridge-related permissions are currently held. */
+/** Which of the five bridge-related permissions are currently held. */
 data class BridgePermissionStatus(
     val accessibilityServiceEnabled: Boolean = false,
     val screenCapturePermitted: Boolean = false,
     val overlayPermitted: Boolean = false,
     val notificationListenerPermitted: Boolean = false,
+    val notificationsPermitted: Boolean = false,
 ) {
     /** True when every permission required for Tier 1 + 2 is granted. */
     val allRequiredGranted: Boolean
