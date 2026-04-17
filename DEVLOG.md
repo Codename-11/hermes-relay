@@ -1,5 +1,56 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-16 — v0.4.1: Tiered permission checklist + JIT permission-denied surfacing
+
+**Motivation.** Two v0.4.x fast-follows from ROADMAP.md, scoped to ship together because they share the same UX axis ("the user understands which permission is missing and what to do about it"). Until now the Bridge tab's checklist was a flat 4-row layout that lumped optional and required perms together, and `android_search_contacts` / `android_send_sms` / `android_call` / `android_location` failures bubbled up as opaque error strings — the LLM had to pattern-match the phrasing to figure out it was a permission issue. Both surfaces now make the missing-permission state legible to humans AND to the agent.
+
+**What landed.**
+
+- **Tiered checklist UI** (`BridgePermissionChecklist.kt` rewrite). Four explicit sections — Core bridge (required), Notification companion (optional), Voice & camera (optional), Sideload features (optional, sideload-only). Each row uses a `rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission)` for runtime dangerous perms and the existing intent helpers for special perms (Accessibility, Notification Listener, Overlay, Screen Capture). Optional rows render a "Optional" Material 3 pill so users don't perceive them as urgent. Section headers use a primary-coloured label + caption + thin divider. Hides sideload-only sections on googlePlay via the existing `BuildFlavor.isSideload` gate.
+- **`BridgePermissionStatus` extended** with `microphonePermitted`, `cameraPermitted`, `contactsPermitted`, `smsPermitted`, `phonePermitted`, `locationPermitted`. `refreshPermissionStatus()` probes each via `ContextCompat.checkSelfPermission`. Re-runs on every `Lifecycle.Event.ON_RESUME` (existing pattern).
+- **Manifest verification.** All required `<uses-permission>` declarations were already in place: `RECORD_AUDIO` + `CAMERA` in `app/src/main/AndroidManifest.xml`, `READ_CONTACTS` + `SEND_SMS` + `CALL_PHONE` + `ACCESS_FINE_LOCATION` (+ `ACCESS_COARSE_LOCATION`) in `app/src/sideload/AndroidManifest.xml`. No manifest changes needed for this PR.
+- **`ResolveResult` typed-union shipped** in `plugin/tools/resolve_result.py` — `Found(value)` / `NotFound(detail)` / `PermissionDenied(permission, reason)` dataclasses with a `from_bridge_response(response, *, found_value=None)` constructor that classifies a bridge response as one of the three variants. Reads both canonical (`code` / `permission`, v0.4.1) and legacy (`error_code` / `required_permission`, pre-v0.4.1) wire-key spellings so the rollout is forwards/backwards compatible across mixed-version installs.
+- **Bridge response envelope extended** in `BridgeCommandHandler.kt::respondFromResult` to emit the canonical `code` + `permission` aliases ALONGSIDE the existing `error_code` + `required_permission` fields. `LocalDispatchResult` parsing also accepts either spelling. The phone now produces `{"ok": false, "error": "...", "code": "permission_denied", "permission": "android.permission.READ_CONTACTS", "error_code": "permission_denied", "required_permission": "android.permission.READ_CONTACTS"}`.
+- **Tier C agent-tool wrappers upgrade permission errors to JIT structured responses.** `android_location` / `android_search_contacts` / `android_send_sms` / `android_call` in `plugin/tools/android_tool.py` now run their bridge response through `_maybe_jit_permission_response` after the HTTP round-trip. On `code: permission_denied` the wrapper returns `{"ok": false, "error": "User has not granted Contacts permission (android.permission.READ_CONTACTS). They can enable it in Settings > Apps > Hermes Relay > Permissions. Tool: android_search_contacts.", "code": "permission_denied", "permission": "..."}` — deterministic LLM-readable copy with the exact Settings deep-link path embedded.
+- **Voice-mode JIT chip** in `VoiceModeOverlay.kt`. New `PermissionDeniedChip` composable surfaces above the mic button when the most recent voice intent dispatch returned `errorCode == "permission_denied"`. Tap deep-links to `Settings.ACTION_APPLICATION_DETAILS_SETTINGS` for `BuildConfig.APPLICATION_ID` (so both flavors land on their own package's permission page). `VoiceUiState.permissionDeniedCallout: PermissionDeniedCallout?` carries the chip state. `buildPermissionDeniedCallout(label, result)` reads the structured `permission` field off `result.resultJson` and builds a copy line ("I need Contacts to Search contacts here. Tap to open Settings."). Cleared on chip tap and on the next mic-tap (fresh turn).
+- **Voice TTS on permission_denied** was already in place from the 2026-04-15 voice fixes session — `speakDispatchResult` already says "Permission needed. {hint}" in this branch. The chip is purely additive.
+- **17 new Python tests** in `plugin/tests/test_resolve_result.py`. Covers the ResolveResult classifier, both canonical/legacy/mixed wire-key spellings, success passthrough, non-permission error passthrough, and JIT upgrades for all four Tier C wrappers. All 17 pass; existing 39 Tier-C tests still pass with no regressions.
+
+**Branch.** `feature/tiered-permissions` (forked from main, with `feature/bridge-notifications-permission` merged in first per the spec — that branch's POST_NOTIFICATIONS row sits inside the new Core-bridge tier without modification). Pushed to origin, PR-ready.
+
+**Files touched (summary).**
+
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/components/BridgePermissionChecklist.kt` (rewrite — tiered layout)
+- `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/BridgeViewModel.kt` (status fields + probes)
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/screens/BridgeScreen.kt` (6 new permission launchers, wired into checklist)
+- `app/src/main/kotlin/com/hermesandroid/relay/network/handlers/BridgeCommandHandler.kt` (canonical alias emission, dual-key parse)
+- `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/VoiceViewModel.kt` (PermissionDeniedCallout state, buildPermissionDeniedCallout, clearPermissionDeniedCallout)
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/components/VoiceModeOverlay.kt` (PermissionDeniedChip composable + signature param)
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/screens/ChatScreen.kt` (chip-tap callback wiring deep-link to Settings)
+- `plugin/tools/resolve_result.py` (NEW — typed-union dataclass hierarchy + classifier)
+- `plugin/tools/android_tool.py` (`_maybe_jit_permission_response` helper + 4 wrappers updated)
+- `plugin/tests/test_resolve_result.py` (NEW — 17 unit tests)
+- `ROADMAP.md`, `CHANGELOG.md`, `DEVLOG.md` (this entry)
+
+**Notable decisions.**
+
+1. **Did not introduce a server-side resolver layer.** The prompt suggested Python resolvers like `resolveContactPhone`, but the actual contact resolution lives in Kotlin (`ActionExecutor.searchContacts`). Implementing the spec verbatim — Python `ResolveResult` types — still gave value as the agent-tool wrapper's classifier of bridge responses, which is the layer that needed the structured permission-denied surfacing for the LLM. The Kotlin `ContactResolution` sealed-class equivalent already exists from 2026-04-15.
+2. **Both wire-key spellings emitted by the phone (canonical + legacy).** Forwards/backwards compatibility across the v0.4.x APK rollout window. Drop the legacy aliases after v0.5.0 once the 0.4.0 APKs are estimated to be off the field.
+3. **JIT chip uses errorContainer colour, not a notification-style banner.** Voice mode is a focused single-purpose modality; banner-treatment would compete with the destructive-countdown row. Chip is explicit and tappable but doesn't block the voice flow.
+4. **Optional rows use a neutral status tint when not granted.** Original layout used error-red for any not-granted row, which made optional perms feel urgent — the v0.4.1 layout treats neutral-grey + optional-pill as the "this is fine if you skip it" affordance.
+5. **Sideload-only rows hidden entirely on googlePlay** rather than rendered as disabled. Showing a permission row for a manifest entry that doesn't exist would confuse users and potentially flag review on the Play track.
+
+**Verification.**
+
+- `python -m unittest plugin.tests.test_resolve_result` — 17 tests pass.
+- `python -m unittest plugin.tests.test_android_call plugin.tests.test_android_send_sms plugin.tests.test_android_search_contacts plugin.tests.test_android_location` — 39 existing tests still pass.
+- `python -m py_compile plugin/tools/resolve_result.py plugin/tools/android_tool.py` — clean.
+- Kotlin code reviewed for type correctness and import resolution; no `gradle build` per project convention (Bailey builds from Studio).
+
+**Next session.** Bailey's on-device retest of the tiered checklist + JIT chip flow on Samsung S24 / Android 14 sideload APK. After that, version bump to v0.4.1 + cut release.
+
+---
+
 ## 2026-04-15 — Voice → bridge → agent pipeline end-to-end fixes
 
 **Motivation.** Bailey's on-device voice SMS testing surfaced a stack of bugs that individually looked small but together blocked the voice → bridge → agent pipeline from working end-to-end. Over a single long session we diagnosed and fixed six distinct layers: voice classifier gaps, a safety-modal lifecycle bug, chat history clobbering, a plugin check_fn pointed at the wrong relay endpoint, missing LLM tool wrappers for the direct-dispatch phone actions, and two Android OEM-interaction issues (MediaProjection notification persistence + activity recreation on warm reopen). Landed across four commits on `feature/bridge-feature-expansion`.
