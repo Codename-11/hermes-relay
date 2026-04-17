@@ -25,6 +25,7 @@ import com.hermesandroid.relay.voice.createVoiceBridgeIntentHandler
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -155,6 +156,18 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         private const val TTS_CACHE_CAP = 6 // keep the last N mp3s on disk
 
         /**
+         * Idle interval after which the chunker will force-flush whatever
+         * remains in [sentenceBuffer]. Covers the case where the SSE stream
+         * pauses mid-response without emitting a terminator — without a
+         * timer flush, the pending text would never reach TTS.
+         *
+         * Value picked to be long enough to outlast normal inter-token
+         * pauses in a healthy SSE stream (~50–200 ms) but short enough that
+         * the user doesn't perceive a stall.
+         */
+        private const val TIMER_FLUSH_MS = 800L
+
+        /**
          * Explicit allow-list of cancel utterances. Intentionally NOT
          * fuzzy — ambiguous words like "yes"/"ok" must NOT terminate a
          * pending SMS by accident. Matching: lowercase, trim, trim
@@ -239,6 +252,30 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var ttsConsumerJob: Job? = null
     private var amplitudeBridgeJob: Job? = null
     private var currentTurnJob: Job? = null
+
+    /**
+     * Debounced idle-flush job — re-armed on every incoming delta.
+     * If no delta arrives within [TIMER_FLUSH_MS] the job force-flushes
+     * whatever is in [sentenceBuffer] to the TTS queue so pending text
+     * doesn't sit forever on a stalled stream. Cancelled on turn reset,
+     * voice-mode exit, and stream-complete.
+     */
+    private var idleFlushJob: Job? = null
+
+    /**
+     * Set true by [startStreamObserver] when the current assistant message's
+     * `isStreaming` flag flips to false. Read by [extractNextSentence] (via
+     * [drainSentences]) so the chunker can emit a trailing short sentence
+     * instead of starving the queue on a final "Okay.". Reset to false at
+     * the start of every turn and on voice-mode exit.
+     *
+     * `@Volatile` because the stream observer runs on [viewModelScope]
+     * (Main dispatcher) and the TTS consumer runs on [viewModelScope]
+     * (also Main), but drainSentences may be invoked off the observer
+     * callback path in the future — cheap insurance.
+     */
+    @Volatile
+    private var streamComplete: Boolean = false
 
     /** Attack/release envelope follower state for the mic amplitude path. */
     private var listenEnvelope: Float = 0f
@@ -403,10 +440,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         currentTurnJob = null
         streamObserverJob?.cancel()
         streamObserverJob = null
+        idleFlushJob?.cancel()
+        idleFlushJob = null
         sentenceBuffer = StringBuilder()
         pendingRawDelta = StringBuilder()
         lastObservedMessageId = null
         lastObservedContentLength = 0
+        streamComplete = false
 
         // Also abort any destructive countdown — leaving voice mode with a
         // queued SMS would execute the action after the overlay closed,
@@ -500,11 +540,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         streamObserverJob = null
         currentTurnJob?.cancel()
         currentTurnJob = null
+        idleFlushJob?.cancel()
+        idleFlushJob = null
         // Reset per-turn buffering + tracking so the next turn starts clean.
         sentenceBuffer = StringBuilder()
         pendingRawDelta = StringBuilder()
         lastObservedMessageId = null
         lastObservedContentLength = 0
+        streamComplete = false
         speakEnvelope = 0f
         // Deliberately do NOT clear responseText here. "Stop" should freeze
         // the visible response so the user can read whatever was already
@@ -768,6 +811,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         pendingRawDelta = StringBuilder()
         lastObservedMessageId = null
         lastObservedContentLength = 0
+        streamComplete = false
+        idleFlushJob?.cancel()
+        idleFlushJob = null
 
         // Capture the id of the assistant message that currently sits at
         // the end of history. StateFlow.collect replays the current value
@@ -831,7 +877,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 if (!lastAssistant.isStreaming && lastObservedContentLength > 0) {
-                    // Stream ended — flush any trailing buffer and move to Speaking.
+                    // Stream ended — mark complete so the chunker stops
+                    // holding short trailing sentences, cancel the idle
+                    // timer (we know exactly when the stream is done), and
+                    // flush any trailing buffer.
+                    streamComplete = true
+                    idleFlushJob?.cancel()
+                    idleFlushJob = null
                     flushRemainingBuffer()
                     // Speaking state will naturally end when TTS queue drains.
                     // We can't easily wait here without blocking the collector;
@@ -853,6 +905,40 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         appendSanitizedDelta(delta)
         _uiState.update { it.copy(state = VoiceState.Speaking, responseText = fullContent) }
         drainSentences()
+        rearmIdleFlush()
+    }
+
+    /**
+     * Cancel and re-arm the debounced [TIMER_FLUSH_MS] idle-flush job.
+     *
+     * Called from [onStreamDelta] on every incoming SSE delta. If the
+     * stream stalls and no delta arrives within [TIMER_FLUSH_MS], the job
+     * force-flushes whatever is in [sentenceBuffer] as if the stream had
+     * completed — short sentences included. The stream-complete handler
+     * in [startStreamObserver] cancels this job explicitly when it knows
+     * the stream is done, so the timer only fires on a true stall.
+     *
+     * Structured under [viewModelScope] so `exitVoiceMode`, `stopVoice`
+     * (via `onCleared`), and `interruptSpeaking` tear it down naturally
+     * alongside the rest of the per-turn state.
+     */
+    private fun rearmIdleFlush() {
+        idleFlushJob?.cancel()
+        idleFlushJob = viewModelScope.launch {
+            delay(TIMER_FLUSH_MS)
+            // Flush whatever is in the buffer — treat as stream-complete
+            // for this drain pass so short trailing fragments don't stay
+            // stuck. Do NOT permanently set the class-level streamComplete
+            // flag — the SSE stream may still be live and more deltas
+            // could arrive, in which case we want the next chunker pass
+            // to go back to conservative coalescing.
+            if (pendingRawDelta.isNotEmpty()) {
+                val cleaned = sanitizeForTts(pendingRawDelta.toString())
+                pendingRawDelta = StringBuilder()
+                if (cleaned.isNotEmpty()) sentenceBuffer.append(cleaned)
+            }
+            drainSentencesForceFlush()
+        }
     }
 
     /**
@@ -894,7 +980,27 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun drainSentences() {
         while (true) {
-            val sentence = extractNextSentence(sentenceBuffer) ?: return
+            val sentence = extractNextSentence(sentenceBuffer, streamComplete) ?: return
+            if (sentence.isBlank()) continue
+            val sent = ttsQueue.trySend(sentence)
+            if (sent.isFailure) {
+                Log.w(TAG, "TTS queue refused sentence: ${sent.exceptionOrNull()?.message}")
+                return
+            }
+        }
+    }
+
+    /**
+     * One-shot drain that temporarily treats the stream as complete so
+     * short trailing fragments emit instead of lingering in the buffer.
+     * Used by the idle-flush timer path — see [rearmIdleFlush]. The
+     * class-level [streamComplete] flag is NOT mutated here because the
+     * real SSE stream may still be live (the timer is a safety net, not
+     * an authoritative signal).
+     */
+    private fun drainSentencesForceFlush() {
+        while (true) {
+            val sentence = extractNextSentence(sentenceBuffer, streamComplete = true) ?: return
             if (sentence.isBlank()) continue
             val sent = ttsQueue.trySend(sentence)
             if (sent.isFailure) {
@@ -915,6 +1021,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 sentenceBuffer.append(cleaned)
             }
         }
+        // Run the chunker once with stream-complete semantics so any
+        // coalesced short sentences that were held back during streaming
+        // now get emitted — then sweep any final remainder into the queue
+        // as a single trailing chunk. The sweep covers the case where
+        // drainSentencesForceFlush consumed everything up to the last
+        // terminator but left a trailing terminator-less tail.
+        drainSentencesForceFlush()
         val trailing = sentenceBuffer.toString().trim()
         sentenceBuffer = StringBuilder()
         if (trailing.isNotEmpty()) {
@@ -1121,6 +1234,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         ttsConsumerJob?.cancel()
         amplitudeBridgeJob?.cancel()
         currentTurnJob?.cancel()
+        idleFlushJob?.cancel()
     }
 
     /**
@@ -1422,48 +1536,180 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 // -------------------------------------------------------------------------
 
 /**
- * Minimum characters before we accept a sentence as complete. Prevents
- * tiny fragments like "Mr." or "Hi!" from triggering premature playback.
+ * Minimum chunk length (in chars) before we hand text to TTS. Was 6 in the
+ * pre-V3 chunker, which produced a call-per-short-sentence pattern like
+ * "Sure." / "Let me check." / "Here's the result." — each one a separate
+ * ElevenLabs round-trip with its own prosody interpretation, which is the
+ * root cause of the "muffled switch" symptom in the voice-quality-pass
+ * diagnosis.
+ *
+ * Raised to 40 so adjacent short sentences coalesce into a single synth
+ * call. Don't push this much higher — latency-to-first-voice grows roughly
+ * linearly with the threshold.
  */
-private const val MIN_SENTENCE_LEN = 6
+private const val MIN_COALESCE_LEN = 40
+
+/**
+ * Absolute escape hatch for run-on text that never emits a terminator.
+ * If the buffer exceeds this without a `.?!\n` boundary the chunker falls
+ * back to a secondary-break split at the latest `,`, `;`, or em-dash
+ * inside the first [MAX_BUFFER_LEN] chars. Without this, a 1000-char
+ * paragraph of comma-separated content would block playback for several
+ * seconds waiting for a sentence boundary that never comes.
+ */
+private const val MAX_BUFFER_LEN = 400
 
 private val SENTENCE_TERMINATORS = charArrayOf('.', '!', '?', '\n')
 
 /**
- * Pop the next complete sentence off [buffer] (mutating it) and return it.
- * Returns null when no complete sentence is present.
+ * Characters we accept as a secondary break for the MAX_BUFFER_LEN escape
+ * hatch. `—` (em-dash U+2014) and `–` (en-dash U+2013) both count — agents
+ * emit either. The ` - ` ASCII-hyphen-with-spaces case is deliberately
+ * excluded; it matches hyphenated prose too aggressively ("well-formed").
+ */
+private val SECONDARY_BREAKS = charArrayOf(',', ';', '\u2014', '\u2013')
+
+/**
+ * Pop the next TTS-ready chunk off [buffer] (mutating it) and return it.
+ * Returns null when nothing should be emitted yet.
  *
- * A sentence is "complete" when:
- *   - it contains at least [MIN_SENTENCE_LEN] chars, AND
- *   - the last char is a terminator, AND
- *   - the next char (if present) is whitespace OR the buffer ends.
+ * Implementation choice (V3 of the voice-quality-pass, 2026-04-16):
+ * **extended hand-rolled regex**, not ICU4J `BreakIterator`. Tried the
+ * latter as a spike — it handles abbreviations via its locale-specific
+ * rule set (fine on English prose) but behaves unpredictably on partial
+ * buffers that may end mid-URL / mid-code-fence-remnant after V2's
+ * sanitizer runs, and it can't be parameterized with our
+ * `streamComplete` / `MIN_COALESCE_LEN` coalescing semantics without
+ * re-inventing the loop on top of it anyway. The hand-rolled loop below
+ * is deterministic, keeps the V2-vintage whitespace-lookahead
+ * abbreviation rule intact (`e.g.`, `U.S.` don't split), and lets us
+ * reason about the secondary-break escape hatch directly.
  *
- * The whitespace-lookahead rule avoids splitting on abbreviations like
- * "e.g." or "U.S." where the period is followed by a letter.
+ * Coalescing rules:
+ *   - Find the next terminator `.?!\n` whose lookahead char is whitespace
+ *     or end-of-buffer (preserves the abbreviation rule from the original
+ *     chunker).
+ *   - If the run from [0, idx+1] is >= [MIN_COALESCE_LEN] → emit it.
+ *   - Else: remember the boundary, keep scanning. The next terminator
+ *     extends the candidate chunk; we emit as soon as the length crosses
+ *     the threshold.
+ *   - If we exhaust the buffer without crossing the threshold AND
+ *     [streamComplete] is true → emit whatever is there (don't starve
+ *     the queue on a final "Okay.").
+ *   - If exhausted AND [streamComplete] is false → return null and wait
+ *     for more deltas.
+ *   - If buffer.length > [MAX_BUFFER_LEN] without any terminator at all
+ *     → flush at the **last** secondary break (`,` `;` `—` `–`) inside
+ *     the first [MAX_BUFFER_LEN] chars. We pick the last, not the first,
+ *     so we ship as much text as possible per chunk instead of dribbling
+ *     out tiny fragments right at the threshold.
  *
  * Exposed as `internal` for unit testing from the test source set.
  */
-internal fun extractNextSentence(buffer: StringBuilder): String? {
+internal fun extractNextSentence(
+    buffer: StringBuilder,
+    streamComplete: Boolean = false,
+): String? {
+    if (buffer.isEmpty()) return null
+
+    // Pass 1: scan for a terminator-bounded chunk that satisfies
+    // MIN_COALESCE_LEN (with abbreviation lookahead).
     var idx = 0
+    var lastCoalescableEnd = -1 // exclusive end of the last valid boundary we've seen
     while (idx < buffer.length) {
         val ch = buffer[idx]
         if (ch in SENTENCE_TERMINATORS) {
             val nextChar = if (idx + 1 < buffer.length) buffer[idx + 1] else null
             val isBoundary = ch == '\n' || nextChar == null || nextChar.isWhitespace()
-            if (isBoundary && idx + 1 >= MIN_SENTENCE_LEN) {
-                val endExclusive = idx + 1
-                val sentence = buffer.substring(0, endExclusive).trim()
-                var consume = endExclusive
-                while (consume < buffer.length && buffer[consume].isWhitespace()) {
-                    consume++
+            if (isBoundary) {
+                lastCoalescableEnd = idx + 1
+                if (lastCoalescableEnd >= MIN_COALESCE_LEN) {
+                    return consumeChunk(buffer, lastCoalescableEnd)
                 }
-                buffer.delete(0, consume)
-                return sentence
+                // Otherwise keep scanning — maybe the next sentence extends
+                // us past the coalesce threshold.
             }
         }
         idx++
     }
+
+    // Pass 2: no chunk reached the threshold.
+    // 2a. MAX_BUFFER_LEN escape hatch — flush at the last secondary break
+    //     inside the first MAX_BUFFER_LEN chars so we don't block playback
+    //     on a never-terminating run-on.
+    if (buffer.length > MAX_BUFFER_LEN) {
+        val breakIdx = findLastSecondaryBreak(buffer, MAX_BUFFER_LEN)
+        if (breakIdx >= 0) {
+            // Consume inclusive of the break char, just like terminators.
+            return consumeChunk(buffer, breakIdx + 1)
+        }
+        // No secondary break at all inside the window — hard flush at
+        // MAX_BUFFER_LEN so the queue doesn't stall.
+        return consumeChunk(buffer, MAX_BUFFER_LEN)
+    }
+
+    // 2b. Stream is complete — emit whatever we have, short or not, so
+    //     the final "Okay." doesn't starve in the buffer.
+    if (streamComplete) {
+        // Prefer cutting at the last terminator-bounded boundary if we
+        // saw one (keeps trailing whitespace tidy). Otherwise emit the
+        // whole buffer.
+        val end = if (lastCoalescableEnd > 0) {
+            // If there's more non-whitespace text after the last boundary
+            // we still want to emit everything in a final flush — the
+            // whole buffer is the right answer.
+            val tailStart = lastCoalescableEnd
+            var hasTail = false
+            var j = tailStart
+            while (j < buffer.length) {
+                if (!buffer[j].isWhitespace()) { hasTail = true; break }
+                j++
+            }
+            if (hasTail) buffer.length else lastCoalescableEnd
+        } else {
+            buffer.length
+        }
+        return consumeChunk(buffer, end)
+    }
+
     return null
+}
+
+/**
+ * Pop [endExclusive] chars off the front of [buffer] as a trimmed chunk.
+ * Swallows trailing whitespace after the consumed region so the next
+ * chunk starts clean. Returns the trimmed chunk.
+ */
+private fun consumeChunk(buffer: StringBuilder, endExclusive: Int): String {
+    val chunk = buffer.substring(0, endExclusive).trim()
+    var consume = endExclusive
+    while (consume < buffer.length && buffer[consume].isWhitespace()) {
+        consume++
+    }
+    buffer.delete(0, consume)
+    return chunk
+}
+
+/**
+ * Find the index of the **last** secondary break inside the first
+ * [windowLen] chars of [buffer], or -1 if none. Used by the
+ * MAX_BUFFER_LEN escape hatch to flush as much text as possible per
+ * chunk rather than dribbling out at the first comma.
+ *
+ * Internal so [extractNextSentence]'s Max-Buffer-Len path can be
+ * unit-tested directly via the test source set if needed.
+ */
+internal fun findLastSecondaryBreak(buffer: CharSequence, windowLen: Int): Int {
+    val end = minOf(buffer.length, windowLen)
+    for (i in end - 1 downTo 0) {
+        if (buffer[i] in SECONDARY_BREAKS) {
+            // Require the next char to be whitespace OR end-of-window.
+            // Prevents splitting inside "3,000" (comma with no space after).
+            val nextIsWs = i + 1 >= buffer.length || buffer[i + 1].isWhitespace()
+            if (nextIsWs) return i
+        }
+    }
+    return -1
 }
 
 // -------------------------------------------------------------------------
