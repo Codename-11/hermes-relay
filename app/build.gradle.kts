@@ -219,6 +219,9 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.okhttp.sse)
 
+    // Media3 ExoPlayer — gapless TTS queue playback (replaces MediaPlayer in VoicePlayer)
+    implementation(libs.media3.exoplayer)
+
     // Markdown rendering
     implementation(libs.markdown.renderer.m3)
     implementation(libs.markdown.renderer.code)

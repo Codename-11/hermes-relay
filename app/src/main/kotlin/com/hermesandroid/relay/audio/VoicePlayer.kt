@@ -1,19 +1,30 @@
 package com.hermesandroid.relay.audio
 
-import android.media.MediaPlayer
+import android.content.Context
 import android.media.audiofx.Visualizer
 import android.util.Log
-import kotlinx.coroutines.suspendCancellableCoroutine
+import androidx.core.net.toUri
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import java.io.File
-import kotlin.coroutines.resume
 import kotlin.math.sqrt
 
 /**
- * Plays a TTS audio file emitted by the relay's `/voice/synthesize` endpoint
+ * Plays TTS audio files emitted by the relay's `/voice/synthesize` endpoint
  * and exposes a live [amplitude] flow for the MorphingSphere / UI meter.
+ *
+ * Backed by a single Media3 [ExoPlayer] that lives for the lifetime of this
+ * [VoicePlayer] instance. [play] appends a new [MediaItem] to the player's
+ * queue so adjacent TTS sentences play back-to-back without the per-file
+ * codec re-init seam that the old `MediaPlayer` implementation produced.
+ * This is the foundation of the Wave 1 gapless-playback work in the voice
+ * quality pass plan — V5 in `docs/plans/2026-04-16-voice-quality-pass.md`.
  *
  * Amplitude is computed from [Visualizer] PCM waveform RMS — one waveform
  * snapshot is captured every ~40 ms (the visualizer's default capture rate)
@@ -21,10 +32,15 @@ import kotlin.math.sqrt
  * construction (missing MODIFY_AUDIO_SETTINGS or OEM quirks) we log and
  * continue with amplitude pinned at 0 rather than crashing the voice session.
  *
- * One player instance owns at most one active playback. Calling [play] again
- * while something is playing stops the previous file first.
+ * The Visualizer is attached exactly once against the ExoPlayer's
+ * [ExoPlayer.getAudioSessionId]. There is a known gotcha where re-attaching
+ * the Visualizer on every track transition invalidates the session id — the
+ * single-attach lifecycle here sidesteps it entirely.
+ *
+ * @param context used for [ExoPlayer.Builder]. Application context is fine;
+ *   the player holds no view references.
  */
-class VoicePlayer {
+class VoicePlayer(context: Context) {
 
     companion object {
         private const val TAG = "VoicePlayer"
@@ -34,99 +50,146 @@ class VoicePlayer {
     private val _amplitude = MutableStateFlow(0f)
     val amplitude: StateFlow<Float> = _amplitude.asStateFlow()
 
-    private var mediaPlayer: MediaPlayer? = null
+    // Tracked via Player.Listener.onIsPlayingChanged so awaitCompletion can
+    // suspend on the combined (isPlaying, mediaItemCount) signal without
+    // polling the player from arbitrary threads.
+    private val _isPlaying = MutableStateFlow(false)
+
+    // Mirrors ExoPlayer.getMediaItemCount() via the Player.Listener events
+    // that can mutate it (onMediaItemTransition for drain, explicit add/clear
+    // calls for growth). Kept as a StateFlow so awaitCompletion can reactively
+    // wait for queue-drained + idle without polling.
+    private val _queueCount = MutableStateFlow(0)
+
     private var visualizer: Visualizer? = null
-    private var completionListener: (() -> Unit)? = null
+    private var visualizerAttached = false
+
+    private val exoPlayer: ExoPlayer = ExoPlayer.Builder(context.applicationContext)
+        .setHandleAudioBecomingNoisy(true)
+        .build()
+        .also { player ->
+            player.addListener(object : Player.Listener {
+                override fun onIsPlayingChanged(isPlaying: Boolean) {
+                    _isPlaying.value = isPlaying
+                    if (!isPlaying) _amplitude.value = 0f
+                    // Lazily attach the Visualizer the first time playback
+                    // actually begins — the audio session id is stable from
+                    // player construction on Media3 1.x but some OEM pipelines
+                    // don't allocate the track until playback starts.
+                    if (isPlaying && !visualizerAttached) {
+                        attachVisualizer(player.audioSessionId)
+                    }
+                }
+
+                override fun onMediaItemTransition(
+                    mediaItem: MediaItem?,
+                    reason: Int,
+                ) {
+                    // Refresh on every transition — covers auto-advance drain
+                    // at end-of-queue and explicit seekToNext paths.
+                    _queueCount.value = player.mediaItemCount
+                }
+
+                override fun onPlaybackStateChanged(state: Int) {
+                    if (state == Player.STATE_ENDED || state == Player.STATE_IDLE) {
+                        // ENDED fires when the full queue has been consumed;
+                        // sync queueCount so awaitCompletion can release.
+                        _queueCount.value = player.mediaItemCount
+                    }
+                }
+            })
+        }
 
     /**
-     * Start playback of [audioFile]. Returns immediately; completion is
-     * delivered via [awaitCompletion]. If another file is already playing,
-     * [stop]s it first.
+     * Append [audioFile] to the ExoPlayer queue. If the player is idle, also
+     * [ExoPlayer.prepare] and [ExoPlayer.play]. Non-blocking — completion is
+     * delivered via [awaitCompletion], which now observes the entire queue
+     * rather than a single file.
      */
     fun play(audioFile: File) {
-        if (mediaPlayer != null) {
-            Log.w(TAG, "play called while another file is playing — stopping first")
-            stop()
+        val wasIdle = exoPlayer.mediaItemCount == 0 &&
+            exoPlayer.playbackState != Player.STATE_READY &&
+            exoPlayer.playbackState != Player.STATE_BUFFERING
+        exoPlayer.addMediaItem(MediaItem.fromUri(audioFile.toUri()))
+        _queueCount.value = exoPlayer.mediaItemCount
+        if (wasIdle) {
+            exoPlayer.prepare()
+            exoPlayer.play()
+        } else if (!exoPlayer.isPlaying && exoPlayer.playWhenReady.not()) {
+            // Queue had drained but player wasn't torn down — restart.
+            exoPlayer.play()
         }
-
-        val player = MediaPlayer()
-        try {
-            player.setDataSource(audioFile.absolutePath)
-            player.prepare()
-            player.setOnCompletionListener {
-                _amplitude.value = 0f
-                completionListener?.invoke()
-            }
-            player.setOnErrorListener { _, what, extra ->
-                Log.e(TAG, "MediaPlayer error: what=$what extra=$extra")
-                _amplitude.value = 0f
-                completionListener?.invoke()
-                true
-            }
-            player.start()
-        } catch (e: Exception) {
-            Log.e(TAG, "MediaPlayer setup failed: ${e.message}")
-            try { player.release() } catch (_: Exception) { /* ignore */ }
-            throw e
-        }
-
-        mediaPlayer = player
-        attachVisualizer(player)
     }
 
     /**
-     * Suspend until the current playback completes or errors. Cancellable —
-     * if the caller cancels, playback is left running (use [stop] for a
-     * hard teardown).
+     * Suspend until the ExoPlayer queue is drained AND playback has stopped.
+     *
+     * **Semantic change from the old MediaPlayer implementation.** Previously
+     * this returned when the *current file* completed. Now it returns when
+     * the entire queue has been consumed — i.e. `mediaItemCount == 0 &&
+     * !isPlaying`. This matches the gapless-playback model where adjacent
+     * sentences play back-to-back from the same ExoPlayer, and it's exactly
+     * what the V4 prefetch pipelining rewrite needs (synth worker can enqueue
+     * N+1 while play worker is still awaiting queue-drain on N).
+     *
+     * If a caller appends new items to the queue while this is suspended,
+     * the wait extends through the new items as well.
+     *
+     * Cancellable. If the caller cancels, playback is left running — use
+     * [stop] for a hard teardown.
      */
-    suspend fun awaitCompletion(): Unit = suspendCancellableCoroutine { cont ->
-        if (mediaPlayer == null) {
-            cont.resume(Unit)
-            return@suspendCancellableCoroutine
-        }
-        completionListener = {
-            completionListener = null
-            if (cont.isActive) cont.resume(Unit)
-        }
-        cont.invokeOnCancellation {
-            completionListener = null
-        }
+    suspend fun awaitCompletion() {
+        // Fast-path: already idle.
+        if (_queueCount.value == 0 && !_isPlaying.value) return
+        combine(_queueCount, _isPlaying) { count, playing -> count == 0 && !playing }
+            .first { drained -> drained }
     }
 
     /**
-     * Hard teardown: stop playback, release visualizer + player, reset
-     * amplitude. Safe to call repeatedly.
+     * Hard teardown of the current playback session. Clears the queue,
+     * stops ExoPlayer, releases the Visualizer, and resets amplitude.
+     * The ExoPlayer itself is kept alive for reuse — the next [play] call
+     * will re-prepare it. Safe to call repeatedly.
      */
     fun stop() {
-        completionListener = null
+        exoPlayer.clearMediaItems()
+        exoPlayer.stop()
+        _queueCount.value = 0
+        _isPlaying.value = false
 
         visualizer?.let { v ->
             try { v.enabled = false } catch (_: Exception) { /* ignore */ }
             try { v.release() } catch (_: Exception) { /* ignore */ }
         }
         visualizer = null
-
-        mediaPlayer?.let { p ->
-            try {
-                if (p.isPlaying) p.stop()
-            } catch (_: Exception) { /* ignore */ }
-            try { p.reset() } catch (_: Exception) { /* ignore */ }
-            try { p.release() } catch (_: Exception) { /* ignore */ }
-        }
-        mediaPlayer = null
+        visualizerAttached = false
 
         _amplitude.value = 0f
     }
 
     /**
-     * True if there's an active [MediaPlayer]. Doesn't check `isPlaying` —
-     * that would race with the completion listener.
+     * True if the ExoPlayer has any queued media items (playing or paused
+     * mid-queue). Matches the old semantic of "there's audio in flight".
      */
-    fun isPlaying(): Boolean = mediaPlayer != null
+    fun isPlaying(): Boolean = _queueCount.value > 0
 
-    private fun attachVisualizer(player: MediaPlayer) {
+    /**
+     * Fully release the underlying ExoPlayer. Call when the owning scope is
+     * being destroyed; the VoicePlayer instance is unusable after this.
+     */
+    fun release() {
+        stop()
+        exoPlayer.release()
+    }
+
+    private fun attachVisualizer(audioSessionId: Int) {
+        if (audioSessionId == 0) {
+            // ExoPlayer returns 0 before the audio track is allocated; retry
+            // on the next playback-start event.
+            return
+        }
         try {
-            val viz = Visualizer(player.audioSessionId)
+            val viz = Visualizer(audioSessionId)
             viz.captureSize = VISUALIZER_SIZE_BYTES.coerceIn(
                 Visualizer.getCaptureSizeRange()[0],
                 Visualizer.getCaptureSizeRange()[1],
@@ -154,13 +217,16 @@ class VoicePlayer {
             )
             viz.enabled = true
             visualizer = viz
+            visualizerAttached = true
         } catch (e: Exception) {
             // Some devices refuse Visualizer (MODIFY_AUDIO_SETTINGS denied,
             // OEM restrictions). Fall back to flat-zero amplitude rather
-            // than killing the voice session.
+            // than killing the voice session. Mark as "attached" so we don't
+            // keep retrying on every isPlaying transition.
             Log.w(TAG, "Visualizer unavailable — amplitude stuck at 0: ${e.message}")
             _amplitude.value = 0f
             visualizer = null
+            visualizerAttached = true
         }
     }
 

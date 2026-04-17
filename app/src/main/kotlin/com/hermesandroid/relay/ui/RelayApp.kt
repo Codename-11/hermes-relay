@@ -231,7 +231,7 @@ fun RelayApp() {
     val voiceSfxPlayer = remember { VoiceSfxPlayer(mediaContext) }
     LaunchedEffect(Unit) {
         val recorder = VoiceRecorder(mediaContext, voiceViewModel.viewModelScope)
-        val player = VoicePlayer()
+        val player = VoicePlayer(mediaContext)
         voiceViewModel.initialize(
             voiceClient = voiceClient,
             chatViewModel = chatViewModel,

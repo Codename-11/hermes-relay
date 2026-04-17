@@ -20,6 +20,7 @@ haze = "1.7.2"
 mlkit-barcode = "17.3.0"
 camera = "1.6.0"
 play-publisher = "4.0.0"
+media3 = "1.9.3"
 
 [libraries]
 # Compose BOM
@@ -68,6 +69,9 @@ camera-core = { group = "androidx.camera", name = "camera-core", version.ref = "
 camera-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "camera" }
 camera-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "camera" }
 camera-view = { group = "androidx.camera", name = "camera-view", version.ref = "camera" }
+
+# Media3 (ExoPlayer) — gapless TTS playback in VoicePlayer
+media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "media3" }
 
 # Serialization
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinx-serialization" }

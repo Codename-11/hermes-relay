@@ -59,6 +59,17 @@ object FeatureFlags {
             prefs[KEY_RELAY_ENABLED] = enabled
         }
     }
+
+    /**
+     * Safety hook for the V5 ExoPlayer rollout.
+     *
+     * Default `true` — VoicePlayer uses Media3 ExoPlayer for gapless TTS
+     * queue playback. No MediaPlayer fallback is wired this session; if a
+     * regression surfaces in the field we'll rewire one and honor this flag
+     * at the construction site. Flipping this to `false` today has no
+     * effect — it's a placeholder hook, not yet load-bearing.
+     */
+    const val useExoPlayerVoice: Boolean = true
 }
 
 /**
