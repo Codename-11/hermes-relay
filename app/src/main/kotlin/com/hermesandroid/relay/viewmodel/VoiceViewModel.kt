@@ -225,6 +225,16 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var lastObservedContentLength: Int = 0
     private var sentenceBuffer: StringBuilder = StringBuilder()
 
+    /**
+     * Raw (unsanitized) deltas held back while a markdown code fence is
+     * open across multiple stream chunks. See [appendSanitizedDelta] for
+     * the full rationale. Accumulates until the next closing ``` arrives
+     * (making the fence-count even) or until the stream ends and we're
+     * forced to flush whatever is there. Empty in the common case where
+     * a delta contains no fences.
+     */
+    private var pendingRawDelta: StringBuilder = StringBuilder()
+
     private var streamObserverJob: Job? = null
     private var ttsConsumerJob: Job? = null
     private var amplitudeBridgeJob: Job? = null
@@ -394,6 +404,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         streamObserverJob?.cancel()
         streamObserverJob = null
         sentenceBuffer = StringBuilder()
+        pendingRawDelta = StringBuilder()
         lastObservedMessageId = null
         lastObservedContentLength = 0
 
@@ -491,6 +502,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         currentTurnJob = null
         // Reset per-turn buffering + tracking so the next turn starts clean.
         sentenceBuffer = StringBuilder()
+        pendingRawDelta = StringBuilder()
         lastObservedMessageId = null
         lastObservedContentLength = 0
         speakEnvelope = 0f
@@ -753,6 +765,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
         // Reset sentence buffering state for the new turn.
         sentenceBuffer = StringBuilder()
+        pendingRawDelta = StringBuilder()
         lastObservedMessageId = null
         lastObservedContentLength = 0
 
@@ -830,13 +843,53 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Handle a single SSE delta chunk: append to the sentence buffer, flush
-     * any completed sentences, update the visible responseText.
+     * Handle a single SSE delta chunk: sanitize then append to the sentence
+     * buffer, flush any completed sentences, update the visible
+     * responseText. The visible [responseText] is left as the raw full
+     * content — the sanitizer is strictly for the downstream TTS chunker
+     * (the chat surface has its own renderer and wants the markdown).
      */
     private fun onStreamDelta(delta: String, fullContent: String) {
-        sentenceBuffer.append(delta)
+        appendSanitizedDelta(delta)
         _uiState.update { it.copy(state = VoiceState.Speaking, responseText = fullContent) }
         drainSentences()
+    }
+
+    /**
+     * Feed a raw SSE delta through [sanitizeForTts] before it reaches
+     * [sentenceBuffer]. Handles the streaming code-fence edge case.
+     *
+     * A markdown code fence (``` ``` ```) can span multiple deltas — the
+     * opening fence in delta N, contents in delta N+1, closing fence in
+     * delta N+2. If we sanitize each delta independently we strip the
+     * opening fence but leave the unfenced contents visible to TTS,
+     * effectively defeating the point of the code-fence rule. Worse, the
+     * trailing closing fence shows up as an orphan backtick.
+     *
+     * Mitigation: hold raw deltas in [pendingRawDelta] while the running
+     * count of ``` is odd (unclosed fence). As soon as the count becomes
+     * even (fence closed — or no fences in the text at all) run the full
+     * sanitizer on the pending region and append the sanitized result to
+     * [sentenceBuffer]. Then clear the pending buffer.
+     *
+     * The single-delta, no-fence common case collapses to: append delta,
+     * count is 0 (even), sanitize, flush, clear.
+     */
+    private fun appendSanitizedDelta(delta: String) {
+        pendingRawDelta.append(delta)
+        val fenceCount = countOccurrences(pendingRawDelta, "```")
+        if (fenceCount % 2 != 0) {
+            // Odd = an unclosed fence is in flight. Hold everything — the
+            // code-fence regex can't match yet and sanitizing now would
+            // orphan a backtick or strip a half-open fence marker. Re-try
+            // on the next delta.
+            return
+        }
+        val cleaned = sanitizeForTts(pendingRawDelta.toString())
+        pendingRawDelta = StringBuilder()
+        if (cleaned.isNotEmpty()) {
+            sentenceBuffer.append(cleaned)
+        }
     }
 
     private fun drainSentences() {
@@ -852,6 +905,16 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun flushRemainingBuffer() {
+        // If a code fence was still open when the stream ended, force a
+        // sanitize on the pending region now — better to strip partial
+        // markdown than to silently drop the tail of the assistant turn.
+        if (pendingRawDelta.isNotEmpty()) {
+            val cleaned = sanitizeForTts(pendingRawDelta.toString())
+            pendingRawDelta = StringBuilder()
+            if (cleaned.isNotEmpty()) {
+                sentenceBuffer.append(cleaned)
+            }
+        }
         val trailing = sentenceBuffer.toString().trim()
         sentenceBuffer = StringBuilder()
         if (trailing.isNotEmpty()) {
@@ -1182,7 +1245,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 else "Action failed. $hint"
             }
         }
-        return stripMarkdown(base)
+        return sanitizeForTts(base)
     }
 
     /**
@@ -1219,18 +1282,6 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             normalized == phrase || normalized.startsWith("$phrase ")
         }
     }
-
-    /**
-     * Strip the subset of markdown we actually emit in voice traces —
-     * bold (`**text**`), inline code (`` `text` ``), and stray backticks.
-     * TTS engines read `**` and `` ` `` literally, which derails the
-     * spoken follow-up.
-     */
-    private fun stripMarkdown(text: String): String =
-        text.replace("**", "")
-            .replace("`", "")
-            .replace(Regex("\\s+"), " ")
-            .trim()
 
     /**
      * Render a voice-intent trace for the chat scroll. Uses the structured
@@ -1413,4 +1464,149 @@ internal fun extractNextSentence(buffer: StringBuilder): String? {
         idx++
     }
     return null
+}
+
+// -------------------------------------------------------------------------
+// TTS text sanitization
+//
+// Mirrors the regex set in `plugin/relay/tts_sanitizer.py` (V1 of the
+// voice-quality-pass plan, 2026-04-16). The client-side copy runs on
+// every incoming SSE delta BEFORE it reaches the sentence buffer so the
+// chunker in [extractNextSentence] never sees markdown punctuation or
+// emoji that would end up inside a TTS chunk anyway.
+//
+// Parity matters: if the two regex sets drift, the phone will strip a
+// different set of tokens than the relay and debugging "why did voice
+// read that aloud" becomes a two-sided investigation. If you change a
+// pattern here, change it in the Python module — and vice versa.
+// -------------------------------------------------------------------------
+
+// Code fences first — their inner contents must not be interpreted by the
+// bold / italic / inline-code rules below. DOTALL so `.` crosses newlines.
+private val TTS_CODE_BLOCK = Regex("```[\\s\\S]*?```")
+private val TTS_MD_LINK = Regex("\\[([^\\]]+)\\]\\([^)]+\\)")
+private val TTS_MD_URL = Regex("https?://\\S+")
+private val TTS_MD_BOLD = Regex("\\*\\*(.+?)\\*\\*")
+private val TTS_MD_ITALIC = Regex("\\*(.+?)\\*")
+private val TTS_MD_INLINE_CODE = Regex("`(.+?)`")
+private val TTS_MD_HEADER = Regex("^#+\\s*", RegexOption.MULTILINE)
+private val TTS_MD_LIST_ITEM = Regex("^\\s*[-*]\\s+", RegexOption.MULTILINE)
+private val TTS_MD_HR = Regex("---+")
+private val TTS_MD_EXCESS_NL = Regex("\\n{3,}")
+
+/**
+ * Conservative tool-annotation emoji alternation (mirrors
+ * `_TOOL_ANNOTATION_EMOJI` in the Python module). Matches ChatHandler.kt's
+ * annotation vocabulary. Kept deliberately small — broad Unicode-category
+ * sweeps eat flag emoji and mixed-script punctuation and cause more
+ * regressions than they prevent.
+ *
+ * NOTE: this is written as an alternation group rather than a Python-style
+ * character class. java.util.regex operates on UTF-16 code units, so a
+ * character class `[🔧💻]` would match an individual surrogate half
+ * rather than a full code-point — stripping only `\uD83D` and leaving an
+ * orphan `\uDD27` behind. Alternation keeps each emoji atomic.
+ */
+private const val TTS_TOOL_ANNOTATION_EMOJI_ALT =
+    "\uD83D\uDD27" +          // 🔧 wrench
+    "|\u2705" +               // ✅ white heavy check mark
+    "|\u274C" +               // ❌ cross mark
+    "|\uD83D\uDCBB" +         // 💻 laptop
+    "|\uD83D\uDCF1" +         // 📱 mobile phone
+    "|\uD83C\uDFA4" +         // 🎤 microphone
+    "|\uD83D\uDD0A" +         // 🔊 speaker high volume
+    "|\u26A0"                 // ⚠  warning sign (with or without U+FE0F)
+
+/**
+ * Backtick-wrapped token beginning with one of the tool-annotation
+ * emojis. Strip the entire match, not just the backticks — otherwise the
+ * inline-code rule would leave the label visible ("computer emoji
+ * terminal" after the backticks go).
+ */
+private val TTS_TOOL_ANNOTATION = Regex(
+    "`(?:$TTS_TOOL_ANNOTATION_EMOJI_ALT)\uFE0F?[^`]*`",
+)
+
+/**
+ * Standalone (non-backticked) instances of the same conservative set.
+ * Optional U+FE0F (variation selector) trails the warning sign in most
+ * emoji keyboard outputs.
+ */
+private val TTS_STANDALONE_EMOJI = Regex(
+    "(?:$TTS_TOOL_ANNOTATION_EMOJI_ALT)\uFE0F?",
+)
+
+/**
+ * Strip markdown, tool annotations, URLs, and emoji from text destined
+ * for the TTS backend. Pure function; safe to call from any thread.
+ *
+ * Order matters:
+ *   1. Code fences — their contents must not be processed by later rules.
+ *   2. Tool annotations — must run before inline-code, otherwise the
+ *      inline-code rule would strip only the backticks and leave the
+ *      emoji+label for TTS to read aloud.
+ *   3. The standard markdown set (links, URLs, bold, italic, inline code,
+ *      headers, list markers, horizontal rules).
+ *   4. Standalone emoji from the conservative set.
+ *   5. Whitespace normalization — collapse runs of 3+ newlines and trim.
+ *
+ * Returns an empty string for null-equivalent input (empty or
+ * whitespace-only). Otherwise the cleaned text is returned trimmed.
+ *
+ * Exposed `internal` so the test source set can exercise it without
+ * instantiating a full [VoiceViewModel] (which would require an
+ * [android.app.Application] and wired dependencies).
+ */
+internal fun sanitizeForTts(text: String): String {
+    if (text.isEmpty() || text.isBlank()) return ""
+
+    var out = text
+    // 1) Code fences before anything else.
+    out = TTS_CODE_BLOCK.replace(out, " ")
+    // 2) Tool annotations BEFORE inline code.
+    out = TTS_TOOL_ANNOTATION.replace(out, "")
+    // 3) Upstream markdown set.
+    out = TTS_MD_LINK.replace(out, "$1")
+    out = TTS_MD_URL.replace(out, "")
+    out = TTS_MD_BOLD.replace(out, "$1")
+    out = TTS_MD_ITALIC.replace(out, "$1")
+    out = TTS_MD_INLINE_CODE.replace(out, "$1")
+    out = TTS_MD_HEADER.replace(out, "")
+    out = TTS_MD_LIST_ITEM.replace(out, "")
+    out = TTS_MD_HR.replace(out, "")
+    // 4) Standalone emoji — conservative set only.
+    out = TTS_STANDALONE_EMOJI.replace(out, "")
+    // 5) Whitespace normalization.
+    out = TTS_MD_EXCESS_NL.replace(out, "\n\n")
+    return out.trim()
+}
+
+/**
+ * Count non-overlapping occurrences of [needle] in [haystack]. Used to
+ * detect whether a streaming delta has an unclosed ``` fence (odd count
+ * means odd number of fence markers → a fence is currently open).
+ *
+ * Internal so the test source set can verify the streaming-delta
+ * deferral path without having to hand-roll a string scanner.
+ */
+internal fun countOccurrences(haystack: CharSequence, needle: String): Int {
+    if (needle.isEmpty()) return 0
+    var count = 0
+    var idx = 0
+    while (idx <= haystack.length - needle.length) {
+        var match = true
+        for (j in needle.indices) {
+            if (haystack[idx + j] != needle[j]) {
+                match = false
+                break
+            }
+        }
+        if (match) {
+            count++
+            idx += needle.length
+        } else {
+            idx++
+        }
+    }
+    return count
 }
