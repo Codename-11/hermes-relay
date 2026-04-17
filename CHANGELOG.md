@@ -183,6 +183,83 @@ sees the toggle, never installs the wake lock, and never invokes
 - **Zero server changes.** Frontend-only, no hermes-agent edits needed.
 - **Files.** `data/ChatMessage.kt` (new `voiceIntent: VoiceIntentTrace?` field), `voice/VoiceIntentSyncBuilder.kt` (pure-function builder + helpers), `network/HermesApiClient.kt` (optional `voiceIntentMessages` parameter on both stream methods), `viewmodel/ChatViewModel.kt` (build + sync + flag flip in `startStream`), `viewmodel/VoiceViewModel.kt` (extended dispatch callback wires the structured trace into the chat-trace bubble), `voice/VoiceBridgeIntentHandler.kt` (new `androidToolName` + `androidToolArgsJson` on `IntentResult.Handled`), sideload `VoiceBridgeIntentHandlerImpl.kt` populates them per intent, sideload + googlePlay `VoiceBridgeIntentFactory.kt` typealias updates. Tests in `test/voice/VoiceIntentSyncBuilderTest.kt` (12 cases — empty input, single success, failure with error_code, idempotency, chronological order, prefix gate, blank-args gate, call-id pairing, helpers) and `test/network/handlers/ChatHandlerTest.kt` (4 new cases for trace storage + `markVoiceIntentsSynced`).
 
+### Changed — Voice output quality pass
+
+Addresses four symptom classes that surfaced in on-device voice testing
+after v0.4.0: voice output switching between crisp and muffled, volume
+drifting between sentences, audible pauses between chunks, and occasional
+jumbled-letter spell-outs when the agent emitted markdown, URLs, or
+tool-annotation tokens. Root-caused across five compounding layers and
+fixed end-to-end in a single agent-team session on
+`feature/voice-quality-pass`.
+
+- **Text sanitization, both ends.** A new `plugin/relay/tts_sanitizer`
+  module strips markdown (code fences, links, URLs, bold/italic, inline
+  code, headers, list markers, horizontal rules), Hermes tool-annotation
+  tokens (`` `💻 terminal` ``, `` `🔧 android_foo` ``, etc.), and a
+  conservative standalone-emoji set before `/voice/synthesize` hands
+  text to the upstream `text_to_speech_tool`. The same regex set is
+  mirrored client-side in `VoiceViewModel.sanitizeForTts` and applied
+  per delta before the sentenceBuffer sees the text, with multi-delta
+  code-fence deferral so unclosed fences don't leak orphaned backticks
+  to the chunker. Kills the "jumbled letters" symptom — ElevenLabs no
+  longer reads URLs character-by-character or speaks backtick+emoji
+  wrappers aloud.
+- **Coalescing chunker.** The old `MIN_SENTENCE_LEN=6` chunker emitted
+  every tiny acknowledgement (`"Sure."`, `"Okay."`) as its own TTS
+  call, guaranteeing audible inter-chunk variance. New
+  `MIN_COALESCE_LEN=40` + `MAX_BUFFER_LEN=400` secondary-break escape
+  merges short runs into one synthesize call, splits run-on sentences
+  at the last comma/semicolon/em-dash inside the 400-char window, and
+  preserves the `e.g.`/`U.S.` abbreviation lookahead. An 800 ms
+  silent-delta timer force-flushes buffered text so trailing fragments
+  on an abrupt stream-end don't strand in the buffer.
+- **Prefetch pipelining.** `VoiceViewModel.startTtsConsumer` was
+  previously a strictly serial `synthesize → play → awaitCompletion`
+  loop — every sentence boundary cost one full network round-trip. Now
+  split into two `supervisorScope`-rooted coroutines joined by a
+  bounded `Channel<File>(capacity=2)`: the synth worker runs up to one
+  sentence ahead of the play worker, so N+1's audio is already on disk
+  when N's playback finishes. Synth failures on N+1 no longer stall
+  N's playback. Cancellation paths (`stopVoice`,
+  `interruptSpeaking`, `exitVoiceMode`) cancel the scope and delete any
+  unplayed `voice_tts_<ts>.mp3` cache files; a `finally`-scoped
+  cleanup catches any late-arriving synth results that beat the cancel
+  signal.
+- **Gapless ExoPlayer playback.** `VoicePlayer` swapped from
+  recreating a `MediaPlayer` per file to a single persistent Media3
+  ExoPlayer + `addMediaItem` queue. Appending is non-blocking;
+  `awaitCompletion()` now returns when the queue is drained AND the
+  player is idle (documented semantic change). Kills the codec-reset
+  pop between sentences and composes naturally with the prefetcher —
+  the play worker appends without blocking the synth worker. Visualizer
+  attaches once against the ExoPlayer audio session (deferred to the
+  first `onIsPlayingChanged(true)` since some OEMs initialize the
+  session id lazily) and degrades gracefully if attach fails. Ships
+  behind a `FeatureFlags.useExoPlayerVoice` hook as a safety net; no
+  `MediaPlayer` fallback is currently wired.
+- **ElevenLabs model flipped to `eleven_flash_v2_5`.** Operator change
+  applied to `~/.hermes/config.yaml` on hermes-host ahead of the code
+  work. `eleven_multilingual_v2` is expressive but re-interprets
+  prosody per call — wrong model for a chunked pipeline.
+  `eleven_flash_v2_5` is the streaming-optimized model (~75 ms
+  per-request latency, lower per-call variance, designed exactly for
+  sentence-scale pipelines) and is net-cheaper per character. Voice id
+  unchanged. This single flip accounts for the bulk of the perceived
+  "clear↔muffled switching" reduction; the code units below reduce
+  what remained.
+
+Deferred: upstream PR exposing `VoiceSettings` (stability /
+similarity_boost / use_speaker_boost) in
+`hermes-agent/tools/tts_tool.py::_generate_elevenlabs`. Useful once
+merged — default `stability` is a hair too low for consistent chunked
+output — but not blocking; the flash model already solves most of what
+the settings would.
+
+Tests: 33 new relay sanitizer tests, 4 new client test files covering
+sanitization parity, chunking semantics, prefetch pipelining timing +
+cancellation cleanup, and ExoPlayer queue behavior.
+
 ## [0.4.0] - 2026-04-14
 
 ### Added — Bridge feature expansion (the big one)
