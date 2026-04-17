@@ -6,6 +6,72 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added — v0.4.1 unattended access mode (sideload-only)
+
+Opt-in "Unattended Access" toggle on the Bridge tab that lets the
+agent wake the screen and dismiss the keyguard while the user is
+away from the phone. Sideload-only — the googlePlay flavor never
+sees the toggle, never installs the wake lock, and never invokes
+`requestDismissKeyguard`.
+
+- **`UnattendedAccessManager`** — sideload-only singleton holding
+  the screen-bright wake lock and orchestrating the `KeyguardManager.
+  requestDismissKeyguard` call. `acquireForAction()` is invoked from
+  the bridge command dispatcher pre-gate for any non-read-only route
+  and returns one of `Success` / `SuccessNoKeyguardChange` /
+  `KeyguardBlocked` / `Disabled`. The wake lock uses
+  `SCREEN_BRIGHT_WAKE_LOCK | ACQUIRE_CAUSES_WAKEUP | ON_AFTER_RELEASE`
+  with a 30 s hard timeout per acquire.
+- **One-time scary opt-in dialog** — fires the first time the user
+  flips the unattended toggle ON. Explains the security model
+  ("agent can drive your phone while you're away"), the credential-
+  lock limitation ("Android won't let us dismiss PIN / pattern /
+  biometric locks"), and the three disable paths (toggle off, auto-
+  disable timer expiry, relay disconnect). Latched via
+  `BridgeSafetySettings.unattendedWarningSeen` so it never re-appears
+  after dismissal.
+- **Persistent keyguard-detected chip** — when unattended is ON
+  and the device has `KeyguardManager.isDeviceSecure == true`, an
+  error-tinted Card on the Bridge tab warns the user that the
+  screen will wake but stop at the lock screen.
+- **Amber "Unattended ON" status-overlay chip** — when unattended
+  is on, the existing `BridgeStatusOverlayChip` switches from the
+  red-dot "Hermes active" variant to an amber-dot "Unattended ON"
+  variant so the user (or anyone glancing at the device) can tell
+  at a glance that the agent is permitted to wake the screen.
+  Forced visible whenever unattended is on, even if the user has
+  the regular status-overlay preference disabled.
+- **`keyguard_blocked` structured error** — when the wake fires
+  but the keyguard refuses to dismiss, the bridge dispatch short-
+  circuits with HTTP 423 and `error_code = "keyguard_blocked"`
+  before invoking the action. The LLM's tool wrapper sees the
+  classification and can tell the user to change their lock screen
+  to None / Swipe rather than blindly retrying. `ActionExecutor`
+  also classifies dispatch failures against the live keyguard
+  state via the new `classifyGestureFailure()` helper, so the
+  same `error_code` surfaces if a gesture fails on a locked
+  device with unattended OFF.
+- **Manifest:** `DISABLE_KEYGUARD` declared in
+  `app/src/sideload/AndroidManifest.xml`. WAKE_LOCK was already
+  declared in the main manifest for the bridge gesture wake-lock
+  scope and is reused.
+- **Lifecycle wiring:** `MainActivity.onResume` registers the host
+  activity for `requestDismissKeyguard`, `onPause` clears it.
+  Master-toggle-off and relay-disconnect both call
+  `UnattendedAccessManager.release()` so the screen-bright lock
+  drops immediately and the screen returns to its natural timeout.
+
+**Decisions documented during implementation, not re-litigated:**
+
+- No WiFi-disconnect failsafe — rejected because Tailscale / VPN
+  invalidates the "leaving WiFi = leaving LAN" assumption. Rely
+  on existing relay-disconnect detection plus auto-disable timer.
+- Default auto-disable timer stays as-is (30 minutes). No special
+  unattended-mode default.
+- Credential lock cannot be dismissed by third-party apps — surfaced
+  via the one-time warning dialog, the persistent chip, and the
+  `keyguard_blocked` error code rather than worked around.
+
 ## [0.4.0] - 2026-04-14
 
 ### Added — Bridge feature expansion (the big one)

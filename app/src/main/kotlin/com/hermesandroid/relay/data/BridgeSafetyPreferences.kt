@@ -52,6 +52,15 @@ data class BridgeSafetySettings(
     val autoDisableMinutes: Int = DEFAULT_AUTO_DISABLE_MINUTES,
     val statusOverlayEnabled: Boolean = DEFAULT_STATUS_OVERLAY_ENABLED,
     val confirmationTimeoutSeconds: Int = DEFAULT_CONFIRMATION_TIMEOUT_SECONDS,
+    // === v0.4.1 unattended-access ===
+    /** Sideload-only opt-in: agent may wake the screen on bridge commands
+     *  while the user is away. Hard-bounded by [autoDisableMinutes]. */
+    val unattendedAccessEnabled: Boolean = DEFAULT_UNATTENDED_ACCESS_ENABLED,
+    /** True after the user has dismissed the one-time scary opt-in dialog
+     *  for unattended access. Used so we only show it on FIRST enable, not
+     *  every toggle. */
+    val unattendedWarningSeen: Boolean = DEFAULT_UNATTENDED_WARNING_SEEN,
+    // === END v0.4.1 unattended-access ===
 )
 
 /** Seeded blocklist — conservative high-stakes packages shipped out of the box. */
@@ -120,6 +129,24 @@ const val DEFAULT_CONFIRMATION_TIMEOUT_SECONDS: Int = 30
 const val MIN_CONFIRMATION_TIMEOUT_SECONDS: Int = 10
 const val MAX_CONFIRMATION_TIMEOUT_SECONDS: Int = 60
 
+// === v0.4.1 unattended-access defaults ===
+//
+// Default OFF for both flags. The decision matrix:
+//
+//   - `unattendedAccessEnabled` is the load-bearing user opt-in. Defaulting
+//     to false matches the principle of least power for a sideload-only
+//     capability — the user must affirmatively grant before the screen-
+//     wake wake-lock fires.
+//
+//   - `unattendedWarningSeen` defaults to false so the first time the user
+//     flips the toggle on, they get the scary explainer dialog (security
+//     model + credential-lock limitation). Once acknowledged the flag is
+//     set true and the dialog never appears again for that install — re-
+//     enabling after a manual disable is silent.
+const val DEFAULT_UNATTENDED_ACCESS_ENABLED: Boolean = false
+const val DEFAULT_UNATTENDED_WARNING_SEEN: Boolean = false
+// === END v0.4.1 unattended-access defaults ===
+
 class BridgeSafetyPreferencesRepository(private val context: Context) {
 
     companion object {
@@ -129,6 +156,13 @@ class BridgeSafetyPreferencesRepository(private val context: Context) {
         private val KEY_STATUS_OVERLAY = booleanPreferencesKey("bridge_status_overlay_enabled")
         private val KEY_CONFIRMATION_TIMEOUT =
             intPreferencesKey("bridge_confirmation_timeout_seconds")
+
+        // === v0.4.1 unattended-access keys ===
+        private val KEY_UNATTENDED_ACCESS_ENABLED =
+            booleanPreferencesKey("bridge_unattended_access_enabled")
+        private val KEY_UNATTENDED_WARNING_SEEN =
+            booleanPreferencesKey("bridge_unattended_warning_seen")
+        // === END v0.4.1 unattended-access keys ===
 
         /** Sentinel key we set the first time settings get written. Used to
          *  tell "user cleared the blocklist" from "user has never touched it". */
@@ -155,6 +189,10 @@ class BridgeSafetyPreferencesRepository(private val context: Context) {
             confirmationTimeoutSeconds = (prefs[KEY_CONFIRMATION_TIMEOUT]
                 ?: DEFAULT_CONFIRMATION_TIMEOUT_SECONDS)
                 .coerceIn(MIN_CONFIRMATION_TIMEOUT_SECONDS, MAX_CONFIRMATION_TIMEOUT_SECONDS),
+            unattendedAccessEnabled = prefs[KEY_UNATTENDED_ACCESS_ENABLED]
+                ?: DEFAULT_UNATTENDED_ACCESS_ENABLED,
+            unattendedWarningSeen = prefs[KEY_UNATTENDED_WARNING_SEEN]
+                ?: DEFAULT_UNATTENDED_WARNING_SEEN,
         )
     }
 
@@ -235,6 +273,39 @@ class BridgeSafetyPreferencesRepository(private val context: Context) {
             prefs[KEY_SAFETY_INITIALIZED] = true
         }
     }
+
+    // === v0.4.1 unattended-access setters ===
+
+    /**
+     * Persist the unattended-access opt-in state. Called from [BridgeViewModel]
+     * after the user flips the toggle (and dismissed the scary warning on
+     * first enable). Does NOT touch [KEY_UNATTENDED_WARNING_SEEN] — that
+     * latch is owned by [setUnattendedWarningSeen] so a Disable→Re-enable
+     * cycle doesn't re-show the dialog.
+     */
+    suspend fun setUnattendedAccessEnabled(enabled: Boolean) {
+        context.relayDataStore.edit { prefs ->
+            prefs[KEY_UNATTENDED_ACCESS_ENABLED] = enabled
+            prefs[KEY_SAFETY_INITIALIZED] = true
+        }
+    }
+
+    /**
+     * Latch that records whether the user has dismissed the one-time
+     * scary opt-in dialog for unattended access. Set true the first time
+     * the user taps "I understand" (or whatever the confirm button reads).
+     * Never gets cleared in normal operation — the user's understanding
+     * persists across enable/disable cycles. Cleared only via [reset]
+     * (ie. user wipes app data).
+     */
+    suspend fun setUnattendedWarningSeen(seen: Boolean) {
+        context.relayDataStore.edit { prefs ->
+            prefs[KEY_UNATTENDED_WARNING_SEEN] = seen
+            prefs[KEY_SAFETY_INITIALIZED] = true
+        }
+    }
+
+    // === END v0.4.1 unattended-access setters ===
 
     private fun decodeSet(raw: String): Set<String> =
         runCatching { json.decodeFromString<List<String>>(raw).toSet() }

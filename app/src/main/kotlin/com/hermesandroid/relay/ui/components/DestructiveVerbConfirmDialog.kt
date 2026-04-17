@@ -184,7 +184,14 @@ private fun verbPhrase(method: String, verb: String): String {
  * package.
  */
 @Composable
-fun BridgeStatusOverlayChip() {
+fun BridgeStatusOverlayChip(unattended: Boolean = false) {
+    // v0.4.1: when unattended access is on, the chip uses an amber dot
+    // and "Unattended ON" label so the user / a passerby can tell at a
+    // glance that the agent is permitted to wake the screen and drive
+    // the device. Default red dot + "Hermes active" preserves the v0.4
+    // appearance for the regular bridge-active path.
+    val dotColor = if (unattended) Color(0xFFFFA000) else Color(0xFFE53935)
+    val label = if (unattended) "Unattended ON" else "Hermes active"
     Box(
         modifier = Modifier
             .background(
@@ -201,10 +208,10 @@ fun BridgeStatusOverlayChip() {
                 modifier = Modifier
                     .height(8.dp)
                     .widthIn(min = 8.dp, max = 8.dp)
-                    .background(Color(0xFFE53935), RoundedCornerShape(50))
+                    .background(dotColor, RoundedCornerShape(50))
             )
             Text(
-                text = "Hermes active",
+                text = label,
                 style = MaterialTheme.typography.labelSmall,
                 color = Color.White,
                 fontWeight = FontWeight.Medium,

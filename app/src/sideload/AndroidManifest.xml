@@ -50,6 +50,23 @@
          manifest's comment on why the permission was moved here. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
+    <!-- v0.4.1 unattended-access mode: DISABLE_KEYGUARD lets the app
+         call KeyguardManager.requestDismissKeyguard for None / Swipe
+         locks. The system rejects the call against credential locks
+         (PIN / pattern / biometric) regardless of this permission, so
+         the limitation we surface in the UI is structural rather than
+         permission-shaped — but holding the permission lets the silent-
+         dismiss path work for users who set their lock screen to None
+         or Swipe specifically to use unattended access.
+
+         WAKE_LOCK is already declared in the main manifest (the bridge
+         WakeLockManager uses PARTIAL_WAKE_LOCK for gesture dispatch on
+         both flavors), so unattended access reuses that declaration
+         and adds SCREEN_BRIGHT to the lock-flag bitmask at acquire
+         time. No additional permission needed for the screen-bright
+         flag — WAKE_LOCK covers both. -->
+    <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
+
     <!--
         Override the BridgeForegroundService's foregroundServiceType to
         ADD mediaProjection on the sideload track. The main manifest

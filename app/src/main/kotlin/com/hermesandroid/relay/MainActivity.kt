@@ -17,6 +17,7 @@ import androidx.core.animation.doOnEnd
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.hermesandroid.relay.accessibility.ScreenCaptureRequester
 import com.hermesandroid.relay.bridge.BridgeForegroundService
+import com.hermesandroid.relay.bridge.UnattendedAccessManager
 import com.hermesandroid.relay.ui.RelayApp
 import com.hermesandroid.relay.util.ComposeArrWorkaround
 import com.hermesandroid.relay.util.NavRouteRequest
@@ -130,6 +131,25 @@ class MainActivity : ComponentActivity() {
         val route = intent?.getStringExtra(EXTRA_NAV_ROUTE) ?: return
         if (route.isBlank()) return
         NavRouteRequest.tryRequest(route)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // v0.4.1 — register this activity as the host for
+        // KeyguardManager.requestDismissKeyguard. Cleared in onPause so
+        // we don't leak the Activity past its lifecycle. The unattended-
+        // access manager only attempts dismiss when an activity is
+        // registered AND the user has opted in.
+        UnattendedAccessManager.setHostActivity(this)
+        // Re-probe the credential-lock state on resume so the Bridge
+        // tab badge updates immediately if the user just changed their
+        // lock screen in system Settings between app sessions.
+        UnattendedAccessManager.refreshKeyguardState()
+    }
+
+    override fun onPause() {
+        UnattendedAccessManager.setHostActivity(null)
+        super.onPause()
     }
 
     override fun onDestroy() {
