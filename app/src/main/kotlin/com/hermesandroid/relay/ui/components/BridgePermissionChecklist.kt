@@ -17,16 +17,23 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Accessibility
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Contacts
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PictureInPicture
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.ScreenShare
+import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -41,15 +48,33 @@ import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.viewmodel.BridgePermissionStatus
 
 /**
- * Permission checklist card — one row per required Android permission.
- * Tapping a non-granted row fires an Intent to the corresponding Android
- * Settings screen so the user can grant the permission without leaving
- * their muscle-memory path.
+ * Tiered permission checklist (v0.4.1).
  *
- * Phase 3 Wave 1 — bridge-ui (`bridge-screen-ui`). Uses vector Material icons to
- * stay inside the already-shipped icon set (no dependency on
- * compose-icons-extended, which has bitten us before — see
- * `fix(settings): revert ChevronRight…`).
+ * Replaces the original four-row flat layout with four explicit sections so
+ * users (and Play Store reviewers) can see at a glance which permissions are
+ * required, which are optional, and which are sideload-only.
+ *
+ * | Section                | Flavor          | All rows required? |
+ * |------------------------|-----------------|--------------------|
+ * | Core bridge            | both            | yes                |
+ * | Notification companion | both            | optional           |
+ * | Voice & camera         | both            | optional (used on-demand) |
+ * | Sideload features      | sideload only   | optional           |
+ *
+ * Each row dispatches its tap depending on permission type:
+ *  - Special perms (Accessibility, Notification Listener, Overlay) deep-link
+ *    to the matching `Settings.ACTION_*` intent. Same pattern as v0.4.
+ *  - Screen Capture launches the system MediaProjection consent dialog via
+ *    [com.hermesandroid.relay.accessibility.ScreenCaptureRequester] (no
+ *    Settings page exists for it).
+ *  - Runtime dangerous perms (Notifications, Mic, Camera, Contacts, SMS,
+ *    Phone, Location) request via parent-supplied lambdas that wrap
+ *    `rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission)`.
+ *    Status re-probes on `Lifecycle.Event.ON_RESUME` (see
+ *    [com.hermesandroid.relay.viewmodel.BridgeViewModel.refreshPermissionStatus]).
+ *
+ * Optional rows render an "Optional" badge so users don't feel pressured to
+ * grant the full set. Sideload-only rows are wholly omitted on googlePlay.
  */
 @Composable
 fun BridgePermissionChecklist(
@@ -61,15 +86,20 @@ fun BridgePermissionChecklist(
     onTestOverlay: (() -> Unit)? = null,
     // === END PHASE3-safety-rails-followup ===
     // === PHASE3-bridge-ui-followup: extended interactions ===
-    // Tapping the Screen Capture row launches the system MediaProjection
-    // consent dialog (no Settings page exists for this permission, so
-    // the row's onClick was previously null). Notification Listener gets
-    // its own Test button on the Bridge tab for parity with the others —
-    // the dedicated test on NotificationCompanionSettingsScreen still ships.
     onRequestScreenCapture: (() -> Unit)? = null,
     onTestNotificationListener: (() -> Unit)? = null,
     // === END PHASE3-bridge-ui-followup ===
     onRequestNotifications: (() -> Unit)? = null,
+    // === v0.4.1 tiered runtime permission requesters ===
+    // Each lambda calls `rememberLauncherForActivityResult` from BridgeScreen.
+    // Null disables the row's tap action (used by previews).
+    onRequestMicrophone: (() -> Unit)? = null,
+    onRequestCamera: (() -> Unit)? = null,
+    onRequestContacts: (() -> Unit)? = null,
+    onRequestSms: (() -> Unit)? = null,
+    onRequestPhone: (() -> Unit)? = null,
+    onRequestLocation: (() -> Unit)? = null,
+    // === END v0.4.1 ===
 ) {
     val context = LocalContext.current
 
@@ -91,13 +121,18 @@ fun BridgePermissionChecklist(
                 color = MaterialTheme.colorScheme.primary,
             )
             Text(
-                text = "Tap a row to open Android Settings · Tap Test to verify the permission works.",
+                text = "Tap a row to grant or open Android Settings · Tap Test to verify.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
 
+            // ── Core bridge (required, both flavors) ──────────────────────
+            TierHeader(
+                label = "Core bridge",
+                subtitle = "Required for the agent to read and act on screen content.",
+            )
             PermissionRow(
                 icon = Icons.Filled.Accessibility,
                 title = "Accessibility Service",
@@ -122,10 +157,6 @@ fun BridgePermissionChecklist(
                     else
                         "Tap to grant — agent needs this for /screenshot",
                     granted = status.screenCapturePermitted,
-                    // MediaProjection has no Android Settings page; tapping the
-                    // row launches the system consent dialog directly via
-                    // ScreenCaptureRequester. Falls back to inert (no chevron)
-                    // if the parent didn't provide a launcher (e.g., previews).
                     onClick = onRequestScreenCapture,
                     onTest = onTestScreenCapture,
                 )
@@ -156,17 +187,144 @@ fun BridgePermissionChecklist(
                     onClick = onRequestNotifications,
                 )
             }
+
+            // ── Notification companion (optional, both flavors) ─────────────
+            TierSpacer()
+            TierHeader(
+                label = "Notification companion",
+                subtitle = "Optional. Lets the agent see incoming notifications for summaries and replies.",
+            )
             PermissionRow(
                 icon = Icons.Filled.Notifications,
                 title = "Notification Listener",
                 subtitle = "Read notifications for agent summaries",
                 granted = status.notificationListenerPermitted,
                 onClick = { openNotificationListenerSettings(context) },
-                // Parity Test button on the Bridge tab. The full functional
-                // round-trip test still lives on NotificationCompanionSettingsScreen.
                 onTest = onTestNotificationListener,
+                optional = true,
             )
+
+            // ── Voice & camera (optional, both flavors) ────────────────────
+            TierSpacer()
+            TierHeader(
+                label = "Voice & camera",
+                subtitle = "Required when you use voice mode or attach camera media.",
+            )
+            PermissionRow(
+                icon = Icons.Filled.Mic,
+                title = "Microphone",
+                subtitle = "Required for voice mode (record + transcribe).",
+                granted = status.microphonePermitted,
+                onClick = onRequestMicrophone,
+                optional = true,
+            )
+            PermissionRow(
+                icon = Icons.Filled.CameraAlt,
+                title = "Camera",
+                subtitle = "Required to attach photos taken in-app.",
+                granted = status.cameraPermitted,
+                onClick = onRequestCamera,
+                optional = true,
+            )
+
+            // ── Sideload features (sideload-only, all optional) ───────────
+            if (BuildFlavor.isSideload) {
+                TierSpacer()
+                TierHeader(
+                    label = "Sideload features",
+                    subtitle = "Optional. Powers contact lookup, SMS, dialer, and location tools.",
+                )
+                PermissionRow(
+                    icon = Icons.Filled.Contacts,
+                    title = "Contacts",
+                    subtitle = "Resolve names to phone numbers (android_search_contacts).",
+                    granted = status.contactsPermitted,
+                    onClick = onRequestContacts,
+                    optional = true,
+                )
+                PermissionRow(
+                    icon = Icons.Filled.Sms,
+                    title = "SMS",
+                    subtitle = "Send text messages directly (android_send_sms).",
+                    granted = status.smsPermitted,
+                    onClick = onRequestSms,
+                    optional = true,
+                )
+                PermissionRow(
+                    icon = Icons.Filled.Call,
+                    title = "Phone",
+                    subtitle = "Place calls directly without opening the dialer (android_call).",
+                    granted = status.phonePermitted,
+                    onClick = onRequestPhone,
+                    optional = true,
+                )
+                PermissionRow(
+                    icon = Icons.Filled.LocationOn,
+                    title = "Location",
+                    subtitle = "Last-known GPS fix for context-aware queries (android_location).",
+                    granted = status.locationPermitted,
+                    onClick = onRequestLocation,
+                    optional = true,
+                )
+            }
         }
+    }
+}
+
+/**
+ * Section header for each tier of the checklist. Light visual separator
+ * pattern: a primary-coloured label + a one-line caption underneath.
+ */
+@Composable
+private fun TierHeader(label: String, subtitle: String) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp, bottom = 2.dp),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Text(
+            text = subtitle,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * Vertical spacer + thin divider between tiers. Cheaper than nesting each
+ * tier in its own Card — keeps the "one card per checklist" affordance.
+ */
+@Composable
+private fun TierSpacer() {
+    HorizontalDivider(
+        modifier = Modifier.padding(vertical = 6.dp),
+        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f),
+    )
+}
+
+/**
+ * Material 3 "Optional" pill — small Surface with rounded-pill corners and
+ * the secondary-container colour. Sits inline with the row title so the
+ * affordance reads at a glance without breaking the row's vertical rhythm.
+ */
+@Composable
+private fun OptionalBadge() {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+    ) {
+        Text(
+            text = "Optional",
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+        )
     }
 }
 
@@ -178,6 +336,7 @@ private fun PermissionRow(
     granted: Boolean,
     onClick: (() -> Unit)?,
     onTest: (() -> Unit)? = null,
+    optional: Boolean = false,
 ) {
     val rowModifier = if (onClick != null) {
         Modifier
@@ -201,22 +360,24 @@ private fun PermissionRow(
             modifier = Modifier.size(22.dp),
         )
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyMedium,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (optional) {
+                    OptionalBadge()
+                }
+            }
             Text(
                 text = subtitle,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        // === PHASE3-safety-rails-followup: in-app Test button ===
-        // Compact text button next to the status icon. Tapping it runs a
-        // diagnostic check on the permission and surfaces the result via
-        // BridgeScreen → LocalSnackbarHost. Only renders when the parent
-        // provides an onTest lambda; null hides the button on rows where
-        // a meaningful diagnostic isn't available at this layer.
         if (onTest != null) {
             TextButton(
                 onClick = onTest,
@@ -231,13 +392,19 @@ private fun PermissionRow(
                 )
             }
         }
-        // === END PHASE3-safety-rails-followup ===
         // Status icon: green check when granted, red empty circle otherwise.
+        // Optional rows that are *not* granted use a neutral tint instead of
+        // error red so users don't perceive them as urgent action items.
+        val (statusTint, statusDescription) = when {
+            granted -> Color(0xFF4CAF50) to "Granted"
+            optional -> MaterialTheme.colorScheme.onSurfaceVariant to "Not granted (optional)"
+            else -> MaterialTheme.colorScheme.error to "Not granted"
+        }
         Icon(
             imageVector = if (granted) Icons.Filled.CheckCircle
             else Icons.Filled.RadioButtonUnchecked,
-            contentDescription = if (granted) "Granted" else "Not granted",
-            tint = if (granted) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error,
+            contentDescription = statusDescription,
+            tint = statusTint,
             modifier = Modifier.size(22.dp),
         )
         if (onClick != null) {
@@ -298,6 +465,12 @@ private fun BridgePermissionChecklistPreviewAllGranted() {
                 overlayPermitted = true,
                 notificationListenerPermitted = true,
                 notificationsPermitted = true,
+                microphonePermitted = true,
+                cameraPermitted = true,
+                contactsPermitted = true,
+                smsPermitted = true,
+                phonePermitted = true,
+                locationPermitted = true,
             ),
             modifier = Modifier.padding(16.dp)
         )
