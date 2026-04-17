@@ -164,7 +164,11 @@ class ActionExecutor(private val service: HermesAccessibilityService) {
         if (dispatched) {
             ActionResult.ok(mapOf("x" to x, "y" to y, "duration_ms" to durationMs))
         } else {
-            ActionResult.failure("gesture dispatch failed or was cancelled")
+            // v0.4.1: classify keyguard-blocked failures so the LLM sees
+            // a structured error_code instead of a generic message.
+            ActionResult.failure(
+                classifyGestureFailure("gesture dispatch failed or was cancelled")
+            )
         }
     }
 
@@ -419,7 +423,7 @@ class ActionExecutor(private val service: HermesAccessibilityService) {
                 )
             )
         } else {
-            ActionResult.failure("swipe gesture dispatch failed")
+            ActionResult.failure(classifyGestureFailure("swipe gesture dispatch failed"))
         }
     }
 
@@ -475,7 +479,7 @@ class ActionExecutor(private val service: HermesAccessibilityService) {
                 )
             )
         } else {
-            ActionResult.failure("drag gesture dispatch failed")
+            ActionResult.failure(classifyGestureFailure("drag gesture dispatch failed"))
         }
     }
 
@@ -621,7 +625,9 @@ class ActionExecutor(private val service: HermesAccessibilityService) {
                 )
             )
         } else {
-            ActionResult.failure("long_press gesture dispatch failed or was cancelled")
+            ActionResult.failure(
+                classifyGestureFailure("long_press gesture dispatch failed or was cancelled")
+            )
         }
     }
 
@@ -1085,6 +1091,44 @@ class ActionExecutor(private val service: HermesAccessibilityService) {
                 cont.resume(false)
             }
         }
+
+    /**
+     * v0.4.1 — surface a keyguard-aware error string when a gesture
+     * dispatch failure coincides with a locked device. Called from
+     * tap / swipe / long_press / drag failure paths so the LLM sees a
+     * structured `keyguard_blocked` error_code (via
+     * BridgeCommandHandler.classifyBridgeError) instead of the
+     * generic "gesture dispatch failed" message.
+     *
+     * Heuristic only: a failed gesture on an unlocked device returns
+     * the generic message; on a locked device we attribute the failure
+     * to the keyguard. The unattended-access pre-gate in
+     * BridgeCommandHandler.dispatch already short-circuits with a
+     * dedicated `keyguard_blocked` response when the user has opted
+     * in, so this path mostly fires when unattended is OFF and the
+     * agent calls a gesture against a sleeping device.
+     */
+    fun classifyGestureFailure(genericMessage: String): String {
+        val km = try {
+            service.getSystemService(Context.KEYGUARD_SERVICE) as? android.app.KeyguardManager
+        } catch (_: Throwable) {
+            null
+        }
+        val locked = try {
+            km?.isKeyguardLocked == true
+        } catch (_: Throwable) {
+            false
+        }
+        return if (locked) {
+            "$genericMessage — the device keyguard appears to be active, " +
+                "which may have blocked the gesture. If unattended-access " +
+                "mode is enabled and the user has a credential lock " +
+                "(PIN / pattern / biometric), Android does not allow " +
+                "third-party apps to dismiss the lock."
+        } else {
+            genericMessage
+        }
+    }
 
     // ─── Tier C: location / contacts / call / SMS ─────────────────────────
     //

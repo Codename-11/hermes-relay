@@ -9,6 +9,9 @@ import com.hermesandroid.relay.accessibility.ScreenReader
 // === PHASE3-safety-rails: safety enforcement ===
 import com.hermesandroid.relay.bridge.BridgeSafetyManager
 // === END PHASE3-safety-rails ===
+// === v0.4.1 unattended-access wake/dismiss ===
+import com.hermesandroid.relay.bridge.UnattendedAccessManager
+// === END v0.4.1 unattended-access ===
 // === PHASE3-event-stream: B1 EventStore polling + toggle ===
 import com.hermesandroid.relay.event.EventStore
 import kotlinx.serialization.json.JsonArray
@@ -134,6 +137,43 @@ class BridgeCommandHandler(
 
     companion object {
         private const val TAG = "BridgeCommandHandler"
+
+        /**
+         * v0.4.1: bridge routes that don't dispatch a gesture or modify
+         * UI state. Used by the unattended-access wake gate to skip the
+         * SCREEN_BRIGHT lock for tree-read / status / events / clipboard-
+         * read calls — there's no point waking the screen to dump the
+         * accessibility tree, and a screenshot uses MediaProjection
+         * which doesn't need the screen lit.
+         *
+         * Action routes (tap, type, swipe, scroll, drag, long_press,
+         * press_key, send_intent, broadcast, send_sms, call, open_app,
+         * media, clipboard write, navigate, macro) acquire the wake.
+         *
+         * Coupled to the route surface in the dispatch `when` block
+         * below. If a new read-only route is added, add it here too or
+         * the unattended-access feature will needlessly wake the screen
+         * for it.
+         */
+        private val READ_ONLY_PATHS: Set<String> = setOf(
+            "/ping",
+            "/current_app",
+            "/screen",
+            "/screen_hash",
+            "/diff_screen",
+            "/find_nodes",
+            "/describe_node",
+            "/events",
+            "/events/stream",
+            "/get_apps",
+            "/apps",
+            "/setup",
+            "/return_to_hermes",
+            "/screenshot",
+            "/location",
+            "/search_contacts",
+            "/wait",
+        )
     }
 
     private val json = Json {
@@ -466,6 +506,54 @@ class BridgeCommandHandler(
         // command. Safe to call even when no timer is currently armed.
         safetyManager?.rescheduleAutoDisable()
         // === END PHASE3-safety-rails ===
+
+        // === v0.4.1 unattended-access wake + keyguard dismiss ===
+        // When the user has opted in via the sideload-only "unattended
+        // access" toggle, acquire a SCREEN_BRIGHT wake lock + best-effort
+        // keyguard dismiss BEFORE dispatching the action. The acquire is
+        // a fast no-op when the user hasn't opted in (returns Disabled).
+        //
+        // Read-only routes that don't dispatch gestures (/screen, /ping,
+        // /current_app, /events, /events/stream, /apps, /get_apps,
+        // /clipboard GET) skip the wake — there's no point lighting up
+        // the screen to read tree state. Action routes get the wake.
+        //
+        // KeyguardBlocked outcome surfaces a structured `keyguard_blocked`
+        // error_code so the LLM can tell the user to disable their lock
+        // screen (or set it to None / Swipe) rather than blindly
+        // retrying taps that will hit the lock screen UI.
+        val isReadOnlyRoute = path in READ_ONLY_PATHS
+        if (!isReadOnlyRoute) {
+            val outcome = runCatching { UnattendedAccessManager.acquireForAction() }
+                .getOrDefault(UnattendedAccessManager.WakeOutcome.Disabled)
+            if (outcome == UnattendedAccessManager.WakeOutcome.KeyguardBlocked) {
+                respond(
+                    requestId, 423,
+                    buildJsonObject {
+                        put(
+                            "error",
+                            "Cannot dispatch '$path': the device's keyguard is " +
+                                "blocking access. The screen woke, but the user " +
+                                "has a credential lock (PIN, pattern, or biometric) " +
+                                "set, which Android does not let third-party apps " +
+                                "dismiss. To allow unattended access while the user " +
+                                "is away, the user must change their lock screen to " +
+                                "'None' or 'Swipe' in Settings > Security. This " +
+                                "action will not be retried automatically — report " +
+                                "the limitation to the user.",
+                        )
+                        put("error_code", "keyguard_blocked")
+                        put(
+                            "required_action",
+                            "User changes lock screen type to None or Swipe in Settings > Security",
+                        )
+                        put("final", true)
+                    }
+                )
+                return
+            }
+        }
+        // === END v0.4.1 unattended-access ===
 
         // === Google Play flavor route gate ===
         // The googlePlay build's AccessibilityService config declares a
@@ -1668,6 +1756,13 @@ class BridgeCommandHandler(
                 "bridge_disabled" to null
             "sideload-only" in lower || "sideload only" in lower ->
                 "sideload_only" to null
+            // v0.4.1 unattended-access: ActionExecutor itself doesn't emit
+            // this string — the keyguard pre-gate above short-circuits with
+            // a structured response — but we wire the classifier so any
+            // future ActionExecutor path that returns a "keyguard"-shaped
+            // error still gets correctly tagged.
+            "keyguard" in lower ->
+                "keyguard_blocked" to null
             else -> null
         }
     }

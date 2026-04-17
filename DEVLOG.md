@@ -84,6 +84,152 @@
 
 ---
 
+## 2026-04-16 — v0.4.1 unattended access mode (sideload-only)
+
+**Motivation.** First v0.4.1 fast-follow off the ROADMAP. Bailey wants to
+walk away from the phone and let the agent finish whatever task is in
+flight without the screen having to stay manually awake. Without
+unattended access, every bridge action that lands on a sleeping screen
+silently no-ops because `dispatchGesture` runs against the dimmed UI.
+
+**Scope landed on `feature/unattended-access`:**
+
+- **`UnattendedAccessManager`** (new file under `bridge/`) — process
+  singleton holding the SCREEN_BRIGHT wake lock + orchestrating
+  `KeyguardManager.requestDismissKeyguard`. Hosts a `WakeOutcome` enum
+  (Success / SuccessNoKeyguardChange / KeyguardBlocked / Disabled) and
+  two StateFlows (`enabled`, `credentialLockDetected`). Initialized
+  once from `HermesRelayApp.onCreate`. The host Activity is registered
+  in `MainActivity.onResume` and cleared in `onPause` so we don't leak
+  it past the lifecycle.
+- **DataStore additions to `BridgeSafetyPreferences`** —
+  `unattendedAccessEnabled` (the user opt-in) and
+  `unattendedWarningSeen` (latch for the one-time scary dialog). Both
+  default false. Setters keep `KEY_SAFETY_INITIALIZED` in sync so
+  user-clear-blocklist semantics are preserved.
+- **`BridgeViewModel` exposure** — `unattendedEnabled`,
+  `unattendedWarningSeen`, `credentialLockDetected` StateFlows;
+  `setUnattendedAccessEnabled(boolean)` + `markUnattendedWarningSeen()`.
+  An init-time collector mirrors the persisted setting into
+  `UnattendedAccessManager.setEnabled()` so the dispatch fast-path can
+  read state synchronously without DataStore. `onScreenResumed` now
+  also re-probes the keyguard state.
+- **`UnattendedAccessRow` component** — Compose card with the toggle,
+  a one-time scary `AlertDialog` (security model + credential-lock
+  limitation + how to disable), and a persistent `Card` chip when the
+  device has a credential lock detected. Only rendered inside
+  `BridgeScreen` when `BuildFlavor.isSideload` is true.
+- **Bridge dispatch pre-gate** — `BridgeCommandHandler.dispatch` calls
+  `UnattendedAccessManager.acquireForAction()` after the safety-rails
+  pass and before the action `when` block, for any path NOT in the new
+  `READ_ONLY_PATHS` set. KeyguardBlocked outcome short-circuits with
+  HTTP 423 + `error_code = "keyguard_blocked"` + a `final = true`
+  flag so the LLM doesn't blindly retry against the lock screen.
+- **`classifyGestureFailure()`** — small helper on `ActionExecutor`
+  that wraps gesture-dispatch failure messages with a keyguard-aware
+  hint when the live keyguard state is locked. Tap / swipe / drag /
+  long_press failure paths use it. `BridgeCommandHandler.classifyBridgeError`
+  now routes "keyguard"-bearing strings to the `keyguard_blocked`
+  error_code so both pre-gate and gesture-failure paths converge on
+  the same structured response.
+- **`BridgeStatusOverlayChip` variant** — added an `unattended: Boolean`
+  parameter so the chip can render in an amber-dot "Unattended ON"
+  variant. `BridgeStatusOverlay.setChipVisible` gained an `unattended`
+  argument and a tear-down-and-rebuild path when the flag flips
+  between attached state. `BridgeViewModel`'s overlay-toggle collector
+  now combines master / overlayPref / unattendedEnabled and forces
+  the chip on whenever unattended is active even if the user disabled
+  the regular overlay preference.
+- **Lifecycle hardening** — Master-toggle-off and relay-disconnect
+  both call `UnattendedAccessManager.release()`. The persisted
+  `unattendedAccessEnabled` value is preserved across master toggle
+  cycles (the user's "I want unattended when bridge is on" preference
+  shouldn't be wiped by every disconnect).
+- **Manifest** — `DISABLE_KEYGUARD` declared in
+  `app/src/sideload/AndroidManifest.xml`. WAKE_LOCK already lives in
+  the main manifest for the existing PARTIAL_WAKE_LOCK gesture scope
+  and covers SCREEN_BRIGHT acquires too — no new top-level permission.
+
+**Tests landed.** `app/src/test/kotlin/com/hermesandroid/relay/bridge/
+UnattendedAccessManagerTest.kt` covers state transitions (enabled ↔
+disabled, credential lock detection from `isDeviceSecure`,
+`acquireForAction` outcomes for the four reachable cases without a
+real PowerManager: Disabled / SuccessNoKeyguardChange / Success /
+KeyguardBlocked) using MockK to stub `Context.getSystemService` and
+reflection to reset the singleton between tests. Also added
+`BridgeSafetySettingsTest.kt` to lock in the false-by-default contract
+on the two new preference fields.
+
+**Decisions documented (NOT re-litigated this session):**
+
+- No WiFi-disconnect failsafe. Tailscale / VPN invalidate the
+  "leaving WiFi = leaving LAN" assumption; relay-disconnect detection
+  + auto-disable timer cover the gap.
+- Default auto-disable timer stays at 30 minutes. No unattended-mode
+  override.
+- Credential lock limitation is structural — Android does not let
+  third-party apps dismiss PIN / pattern / biometric. Surface it via
+  the warning dialog + persistent chip + `keyguard_blocked` rather
+  than try to work around it.
+
+**Wake-lock flag note.** `SCREEN_BRIGHT_WAKE_LOCK` has been
+deprecated since API 17 in favor of `Window.FLAG_KEEP_SCREEN_ON` /
+`Activity.setTurnScreenOn(true)`. We accept the deprecation warning
+under explicit `@Suppress` annotations because the Activity-bound
+alternatives don't apply to a background bridge that doesn't own
+its own window — the bridge runs from a foreground service, gestures
+are dispatched via AccessibilityService, and the only "UI surface"
+we own off-Activity is the WindowManager overlay chip which can't
+drive screen wake-up. Same story for `requestDismissKeyguard` —
+it's API 26+ (our minSdk is 26 so always available) and reachable
+only when an Activity is registered, hence the
+`MainActivity.setHostActivity` plumbing.
+
+**Files touched:**
+
+- new: `app/src/main/kotlin/com/hermesandroid/relay/bridge/UnattendedAccessManager.kt`
+- new: `app/src/main/kotlin/com/hermesandroid/relay/ui/components/UnattendedAccessRow.kt`
+- new: `app/src/test/kotlin/com/hermesandroid/relay/bridge/UnattendedAccessManagerTest.kt`
+- new: `app/src/test/kotlin/com/hermesandroid/relay/data/BridgeSafetySettingsTest.kt`
+- mod: `app/src/main/kotlin/com/hermesandroid/relay/HermesRelayApp.kt`
+- mod: `app/src/main/kotlin/com/hermesandroid/relay/MainActivity.kt`
+- mod: `app/src/main/kotlin/com/hermesandroid/relay/data/BridgeSafetyPreferences.kt`
+- mod: `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/BridgeViewModel.kt`
+- mod: `app/src/main/kotlin/com/hermesandroid/relay/ui/screens/BridgeScreen.kt`
+- mod: `app/src/main/kotlin/com/hermesandroid/relay/bridge/BridgeStatusOverlay.kt`
+- mod: `app/src/main/kotlin/com/hermesandroid/relay/ui/components/DestructiveVerbConfirmDialog.kt` (chip variant)
+- mod: `app/src/main/kotlin/com/hermesandroid/relay/network/handlers/BridgeCommandHandler.kt`
+- mod: `app/src/main/kotlin/com/hermesandroid/relay/accessibility/ActionExecutor.kt`
+- mod: `app/src/sideload/AndroidManifest.xml`
+- mod: `ROADMAP.md` (marked v0.4.1 unattended access shipped)
+- mod: `CHANGELOG.md` (added unreleased section)
+
+**Next.** Bailey builds + installs from Android Studio + flips the
+toggle on a Samsung S24 with a PIN lock. Expected behaviours:
+(a) scary dialog appears on first toggle-on, (b) keyguard-detected
+chip stays visible while unattended is ON, (c) bridge actions return
+`keyguard_blocked` when fired against a locked screen, (d) toggling
+master off drops the wake lock immediately. After verification, cut
+v0.4.1 release tag.
+
+**Known residuals / follow-ups:**
+
+1. The `WakeOutcome.Success` path doesn't actually wait on the
+   `requestDismissKeyguard` callback — we predict success based on
+   `isDeviceSecure == false`. Predict-don't-wait is fine for
+   None / Swipe locks (which always succeed) but a Wave 2
+   refinement could plumb the callback for richer telemetry.
+2. The host-activity registration is single-Activity by design.
+   If a future MainActivity refactor introduces a second Activity
+   surface, the `setHostActivity(null)` call in onPause would
+   clobber the wrong reference. Document this constraint where it
+   matters.
+3. `READ_ONLY_PATHS` is hand-maintained — adding a new bridge route
+   requires updating both the dispatch `when` and the read-only
+   set. A linter rule or test-time enforcement would catch drift.
+
+---
+
 ## 2026-04-15 — Voice → bridge → agent pipeline end-to-end fixes
 
 **Motivation.** Bailey's on-device voice SMS testing surfaced a stack of bugs that individually looked small but together blocked the voice → bridge → agent pipeline from working end-to-end. Over a single long session we diagnosed and fixed six distinct layers: voice classifier gaps, a safety-modal lifecycle bug, chat history clobbering, a plugin check_fn pointed at the wrong relay endpoint, missing LLM tool wrappers for the direct-dispatch phone actions, and two Android OEM-interaction issues (MediaProjection notification persistence + activity recreation on warm reopen). Landed across four commits on `feature/bridge-feature-expansion`.

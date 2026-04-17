@@ -57,6 +57,9 @@ import com.hermesandroid.relay.ui.components.BridgeActivityLog
 import com.hermesandroid.relay.ui.components.BridgeMasterToggle
 import com.hermesandroid.relay.ui.components.BridgePermissionChecklist
 import com.hermesandroid.relay.ui.components.BridgeStatusCard
+// === v0.4.1 unattended-access ===
+import com.hermesandroid.relay.ui.components.UnattendedAccessRow
+// === END v0.4.1 unattended-access ===
 import com.hermesandroid.relay.viewmodel.BridgeViewModel
 
 /**
@@ -93,6 +96,11 @@ fun BridgeScreen(
     val permissionStatus by viewModel.permissionStatus.collectAsState()
     val bridgeStatus by viewModel.bridgeStatus.collectAsState()
     val activityLog by viewModel.activityLog.collectAsState()
+    // === v0.4.1 unattended-access ===
+    val unattendedEnabled by viewModel.unattendedEnabled.collectAsState()
+    val unattendedWarningSeen by viewModel.unattendedWarningSeen.collectAsState()
+    val credentialLockDetected by viewModel.credentialLockDetected.collectAsState()
+    // === END v0.4.1 unattended-access ===
 
     // === PHASE3-safety-rails-followup: surface permission Test results via snackbar ===
     val snackbarHost = LocalSnackbarHost.current
@@ -239,6 +247,22 @@ fun BridgeScreen(
                 // that instead of the a11y-granted flag.
                 isConnected = permissionStatus.accessibilityServiceEnabled && masterToggle,
             )
+
+            // === v0.4.1 unattended-access toggle ===
+            // Sideload only — googlePlay's accessibility config has no
+            // gesture dispatch, so a wake-the-screen-and-act-on-it toggle
+            // wouldn't do anything meaningful. The Play APK never sees
+            // this row and never installs the wake lock.
+            if (BuildFlavor.isSideload) {
+                UnattendedAccessRow(
+                    enabled = unattendedEnabled,
+                    warningSeen = unattendedWarningSeen,
+                    credentialLockDetected = credentialLockDetected,
+                    onToggle = { viewModel.setUnattendedAccessEnabled(it) },
+                    onWarningSeen = { viewModel.markUnattendedWarningSeen() },
+                )
+            }
+            // === END v0.4.1 unattended-access ===
 
             BridgePermissionChecklist(
                 status = permissionStatus,

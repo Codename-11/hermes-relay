@@ -17,6 +17,8 @@ import com.hermesandroid.relay.data.BridgePreferencesRepository
 import com.hermesandroid.relay.bridge.BridgeForegroundService
 import com.hermesandroid.relay.bridge.BridgeSafetyManager
 import com.hermesandroid.relay.bridge.BridgeStatusOverlay
+import com.hermesandroid.relay.bridge.UnattendedAccessManager
+import com.hermesandroid.relay.data.BridgeSafetyPreferencesRepository
 // === END PHASE3-safety-rails ===
 // === PHASE3-safety-rails-followup: in-app permission Test handlers ===
 import com.hermesandroid.relay.accessibility.HermesAccessibilityService
@@ -98,6 +100,14 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
     private val prefsRepo = BridgePreferencesRepository(application)
 
+    // v0.4.1 — direct DataStore access for the unattended-access opt-in.
+    // The BridgeSafetyManager singleton already exposes the same settings
+    // via `safety.settings`, but the manager is installed lazily by
+    // ConnectionViewModel and may be null on first composition. We keep
+    // a direct repository reference here so the unattended toggle works
+    // immediately on first launch even before the safety manager exists.
+    private val safetyPrefsRepo = BridgeSafetyPreferencesRepository(application)
+
     // ── Master toggle ────────────────────────────────────────────────────
     val masterToggle: StateFlow<Boolean> = prefsRepo.settings
         .map { it.masterEnabled }
@@ -142,9 +152,66 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     val testEvents: SharedFlow<String> = _testEvents.asSharedFlow()
     // === END PHASE3-safety-rails-followup ===
 
+    // === v0.4.1 unattended-access state ===
+    /**
+     * User opt-in: agent may wake the screen on bridge commands while
+     * the user is away. Drives both the toggle row in BridgeScreen and
+     * the [UnattendedAccessManager] singleton (mirrored on every change
+     * via the collector below).
+     */
+    val unattendedEnabled: StateFlow<Boolean> = safetyPrefsRepo.settings
+        .map { it.unattendedAccessEnabled }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = false,
+        )
+
+    /**
+     * Latch indicating whether the user has dismissed the one-time
+     * scary opt-in dialog. BridgeScreen reads this to decide whether
+     * to show the dialog on the next enable attempt.
+     */
+    val unattendedWarningSeen: StateFlow<Boolean> = safetyPrefsRepo.settings
+        .map { it.unattendedWarningSeen }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = false,
+        )
+
+    /**
+     * Live snapshot of whether the device has a credential lock (PIN /
+     * pattern / biometric) configured. Drives the persistent "keyguard
+     * detected" chip on BridgeScreen when unattended is on.
+     */
+    val credentialLockDetected: StateFlow<Boolean> =
+        UnattendedAccessManager.credentialLockDetected
+    // === END v0.4.1 unattended-access state ===
+
     init {
         refreshPermissionStatus()
         refreshBridgeStatusFromSystem()
+        // === v0.4.1 mirror unattended toggle into the singleton ===
+        // BridgeSafetySettings.unattendedAccessEnabled lives in DataStore
+        // and is the source of truth, but the wake-lock acquire path
+        // (UnattendedAccessManager.acquireForAction) has no DataStore
+        // access. Mirror the live value into the manager's StateFlow so
+        // the acquire fast-path can read .value synchronously.
+        viewModelScope.launch {
+            unattendedEnabled.collect { enabled ->
+                UnattendedAccessManager.setEnabled(enabled)
+                if (!enabled) {
+                    // Drop any held screen-bright lock immediately on
+                    // disable so the screen returns to its natural
+                    // timeout. Without this the lock would self-release
+                    // 30s later but the user would see the screen stay
+                    // lit past their toggle action — confusing UX.
+                    UnattendedAccessManager.release()
+                }
+            }
+        }
+        // === END v0.4.1 mirror ===
 
         // === PHASE3-bridge-ui-followup: react to MediaProjection grants ===
         // The MediaProjection grant lands inside BridgeForegroundService
@@ -184,6 +251,14 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                     // drop it on toggle-off so the row goes back to red
                     // and the next bridge enable prompts for fresh consent.
                     MediaProjectionHolder.revoke()
+                    // v0.4.1: drop the unattended-access wake lock immediately
+                    // when the master toggle drops. The unattended toggle
+                    // itself may still be persisted ON in DataStore — that's
+                    // intentional, the user's "I want unattended when bridge
+                    // is on" preference shouldn't be cleared by every bridge
+                    // toggle cycle — but the wake lock is meaningless
+                    // without an active bridge.
+                    UnattendedAccessManager.release()
                 }
             }
         }
@@ -191,15 +266,28 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         // Toggle the optional status overlay in response to both the
         // user's preference and the master toggle (chip only shows when
         // bridge is active AND user opted in).
+        //
+        // v0.4.1: when unattended-access is also on, the chip renders
+        // its amber "Unattended ON" variant. We additionally force the
+        // chip ON whenever unattended is enabled and the master toggle
+        // is on — even if the user disabled the regular status overlay
+        // — because the unattended state is load-bearing safety
+        // information that the user needs to know about at a glance
+        // when they walk back to the phone.
         viewModelScope.launch {
             val safety = BridgeSafetyManager.peek() ?: return@launch
             combine(
                 masterToggle,
                 safety.settings.map { it.statusOverlayEnabled }.distinctUntilChanged(),
-            ) { master, overlayOn -> master && overlayOn }
+                safety.settings.map { it.unattendedAccessEnabled }.distinctUntilChanged(),
+            ) { master, overlayOn, unattendedOn ->
+                Triple(master, overlayOn, unattendedOn)
+            }
                 .distinctUntilChanged()
-                .collect { shouldShow ->
-                    BridgeStatusOverlay.peek()?.setChipVisible(shouldShow)
+                .collect { (master, overlayOn, unattendedOn) ->
+                    val shouldShow = master && (overlayOn || unattendedOn)
+                    BridgeStatusOverlay.peek()
+                        ?.setChipVisible(shouldShow, unattended = unattendedOn)
                 }
         }
         // === END PHASE3-safety-rails ===
@@ -213,7 +301,41 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     fun onScreenResumed() {
         refreshPermissionStatus()
         refreshBridgeStatusFromSystem()
+        // v0.4.1 — re-probe credential-lock state too. The user may have
+        // changed their lock screen setting in Android Settings between
+        // visits, and the keyguard-detected chip should reflect reality.
+        UnattendedAccessManager.refreshKeyguardState()
     }
+
+    // === v0.4.1 unattended-access toggle handlers ===
+
+    /**
+     * Persist the unattended-access opt-in state. Caller (BridgeScreen)
+     * is responsible for showing the scary one-time warning dialog
+     * BEFORE the first true write — see [markUnattendedWarningSeen].
+     *
+     * The mirroring collector in [init] propagates the new value into
+     * [UnattendedAccessManager], which gates the wake-lock acquire path.
+     */
+    fun setUnattendedAccessEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            safetyPrefsRepo.setUnattendedAccessEnabled(enabled)
+        }
+    }
+
+    /**
+     * Latch the "user has seen the warning" sentinel so the scary
+     * dialog never appears again after the first dismissal. Called
+     * from BridgeScreen the first time the user enables unattended
+     * access, right after they tap "I understand" on the dialog.
+     */
+    fun markUnattendedWarningSeen() {
+        viewModelScope.launch {
+            safetyPrefsRepo.setUnattendedWarningSeen(true)
+        }
+    }
+
+    // === END v0.4.1 unattended-access toggle handlers ===
 
     fun setMasterEnabled(enabled: Boolean) {
         viewModelScope.launch {
