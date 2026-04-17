@@ -22,6 +22,7 @@ import com.hermesandroid.relay.voice.LocalBridgeDispatcher
 import com.hermesandroid.relay.voice.VoiceBridgeIntentHandler
 import com.hermesandroid.relay.voice.createVoiceBridgeIntentHandler
 // === END PHASE3-voice-intents ===
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
@@ -34,8 +35,10 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 import kotlinx.serialization.json.contentOrNull
 import java.io.File
+import java.util.Collections
 
 /**
  * Where we are in the voice conversation cycle. Used to drive the UI
@@ -294,6 +297,26 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     /** MP3 files produced by synthesize — trimmed to [TTS_CACHE_CAP]. */
     private val ttsFileHistory = ArrayDeque<File>()
 
+    /**
+     * V4 prefetch-pipeline tracker (voice-quality-pass 2026-04-16).
+     *
+     * Files that have been written to disk by the synth worker but not yet
+     * handed to [VoicePlayer.play]. On a cancellation path
+     * ([stopVoice]/[exitVoiceMode]/[interruptSpeaking]) these files have
+     * never reached ExoPlayer's own queue — `player.stop()` can't clean
+     * them up, so the synth worker is the only component that knows they
+     * exist. We delete them explicitly on teardown to avoid leaking
+     * `voice_tts_<ts>.mp3` entries in `cacheDir`.
+     *
+     * Synchronized via a [Collections.synchronizedSet] wrapper rather than
+     * a [Mutex] because the only operations are O(1) add/remove/iterate-
+     * snapshot from the pipeline coroutines (all on viewModelScope's Main
+     * dispatcher today, but the synchronized wrapper is cheap insurance
+     * against a future dispatcher switch).
+     */
+    private val pendingTtsFiles: MutableSet<File> =
+        Collections.synchronizedSet(mutableSetOf())
+
     // ---------------------------------------------------------------------
     // Initialization
     // ---------------------------------------------------------------------
@@ -442,6 +465,17 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         streamObserverJob = null
         idleFlushJob?.cancel()
         idleFlushJob = null
+        // Drain any queued sentences so the consumer doesn't re-play the
+        // interrupted turn when it's restarted below.
+        while (true) {
+            val r = ttsQueue.tryReceive()
+            if (r.isFailure || r.isClosed) break
+        }
+        // V4 pipeline teardown (see interruptSpeaking for rationale).
+        ttsConsumerJob?.cancel()
+        ttsConsumerJob = null
+        deletePendingSynthFiles()
+        startTtsConsumer()
         sentenceBuffer = StringBuilder()
         pendingRawDelta = StringBuilder()
         lastObservedMessageId = null
@@ -542,6 +576,18 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         currentTurnJob = null
         idleFlushJob?.cancel()
         idleFlushJob = null
+        // V4 pipeline teardown: cancel the supervisor scope that owns the
+        // synth + play workers so any in-flight synthesize() call is
+        // cancelled mid-flight and the play worker exits its for-in loop.
+        // Delete any written-but-unplayed cache files, then restart the
+        // consumer so the next turn has a live pipeline ready. Reordering
+        // note: cancel BEFORE delete so the synth worker can't race us by
+        // adding a new file to pendingTtsFiles between our snapshot and
+        // the restart.
+        ttsConsumerJob?.cancel()
+        ttsConsumerJob = null
+        deletePendingSynthFiles()
+        startTtsConsumer()
         // Reset per-turn buffering + tracking so the next turn starts clean.
         sentenceBuffer = StringBuilder()
         pendingRawDelta = StringBuilder()
@@ -1036,68 +1082,136 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ---------------------------------------------------------------------
-    // TTS consumer — one sentence at a time, play then wait
+    // TTS consumer — two-coroutine pipeline: synth runs ahead of playback
     // ---------------------------------------------------------------------
+    //
+    // V4 (voice-quality-pass 2026-04-16) rewrites what used to be a strictly
+    // serial synth→play→await loop into two parallel workers joined by a
+    // bounded [Channel] so sentence N+1's network round-trip overlaps
+    // sentence N's audio playback.
+    //
+    // ┌──────────────┐  String  ┌────────────┐  File (cap=2)  ┌────────────┐
+    // │ streamObserver │──────────▶│ synth worker │────────────────▶│ play worker│
+    // └──────────────┘  ttsQueue └────────────┘   audioQueue   └────────────┘
+    //
+    // Why the capacity-2 Channel<File> (Option B) instead of eagerly
+    // appending every synthesized file to the ExoPlayer queue (Option A):
+    // VoicePlayer (V5) doesn't expose its internal queue depth as a public
+    // API and V4's guardrails forbid modifying VoicePlayer.kt, so we can't
+    // read ExoPlayer.mediaItemCount from the synth side to gate
+    // "maxMediaItemsAhead = 2." Option B makes the backpressure explicit
+    // at the Channel level — [audioQueue.send] suspends the synth worker
+    // once two files are queued, so disk usage and ElevenLabs spend both
+    // stay bounded regardless of how fast the SSE stream delivers
+    // sentences. The play worker calls [VoicePlayer.awaitCompletion] per
+    // file (V5's "queue drained + not playing" semantic) so ExoPlayer's
+    // own queue never grows past 1 — a single queuing layer, cleanly owned.
+    //
+    // Supervision: both workers are children of a [supervisorScope] so a
+    // failure in one (e.g. a single synth error) does not tear down the
+    // other. Cancelling [ttsConsumerJob] cleanly cancels both workers; the
+    // interrupt paths exploit this to reset the pipeline between turns.
 
     private fun startTtsConsumer() {
         ttsConsumerJob?.cancel()
+        // Fresh capacity-2 audio channel per pipeline lifecycle (Kotlin
+        // [Channel] instances can't be "re-opened" after close). Capacity
+        // 2 lets the synth worker stay one sentence ahead of playback —
+        // enough to hide the ~200 ms synth round-trip behind the current
+        // sentence's audio without unbounded disk growth on long agent
+        // responses.
+        val queue = Channel<File>(capacity = 2)
         ttsConsumerJob = viewModelScope.launch {
-            while (true) {
-                // Non-blocking peek: is a sentence already waiting?
-                val immediate = ttsQueue.tryReceive()
-                val sentence: String
-
-                if (immediate.isSuccess) {
-                    sentence = immediate.getOrNull() ?: continue
-                } else if (immediate.isClosed) {
-                    break
-                } else {
-                    // Queue is momentarily empty. If the SSE stream observer
-                    // is also done, this is the true end of the turn — safe
-                    // to leave Speaking. The old code called maybeAutoResume
-                    // after EVERY sentence, which prematurely killed the
-                    // waveform between sentences of a multi-sentence response
-                    // because the SSE stream finishes long before TTS finishes
-                    // playing all the queued audio.
-                    maybeAutoResume()
-
-                    // Block until the next sentence arrives (or channel closes).
-                    // If maybeAutoResume just went to Idle, we park here until
-                    // the next voice turn pushes a new sentence.
-                    sentence = ttsQueue.receiveCatching().getOrNull() ?: break
+            try {
+                supervisorScope {
+                    launch { runSynthWorker(queue) }
+                    launch { runPlayWorker(queue) }
                 }
+            } finally {
+                // Race defence: if the consumer was cancelled while the
+                // synth worker had a `synthesize()` call in flight, that
+                // call could complete AFTER cancel was signalled and the
+                // file would be written to disk + added to pendingTtsFiles
+                // before the cancellation exception propagated to the send
+                // site. [interruptSpeaking] snapshots pendingTtsFiles
+                // immediately after cancelling this job — there's a window
+                // where the late-arriving file would miss the snapshot.
+                // Running the cleanup inside this finally-block (which
+                // runs after both workers have finished unwinding) closes
+                // the race: the synth worker's own cancellation path has
+                // completed by the time this executes, so any late-added
+                // file is definitely in pendingTtsFiles by now.
+                deletePendingSynthFiles()
+            }
+        }
+    }
 
-                // About to synthesize + play — ensure state is Speaking so
-                // the amplitude bridge forwards player output to the UI.
-                // Between sentences within the same turn the queue usually
-                // yields immediately (no maybeAutoResume call), but if the
-                // channel was briefly empty before the observer pushed the
-                // next sentence, state may have transiently flipped to Idle.
+    /**
+     * Synth worker: consume sentences from [ttsQueue], produce audio
+     * files into [queue]. Delegates to the testable [runTtsSynthWorker]
+     * top-level function with this ViewModel's dependencies bound.
+     */
+    private suspend fun runSynthWorker(queue: Channel<File>) {
+        runTtsSynthWorker(
+            sentences = ttsQueue,
+            output = queue,
+            synthesize = { sentence ->
+                val client = voiceClient
+                if (client == null) {
+                    Result.failure(IllegalStateException("voiceClient not initialized"))
+                } else {
+                    client.synthesize(sentence)
+                }
+            },
+            pendingFiles = pendingTtsFiles,
+            onSynthError = { err -> surfaceError(err, context = "synthesize") },
+        )
+    }
+
+    /**
+     * Play worker: consume files from [queue], hand each to [VoicePlayer]
+     * and await its drain. Delegates to the testable [runTtsPlayWorker]
+     * top-level function with this ViewModel's dependencies bound.
+     */
+    private suspend fun runPlayWorker(queue: Channel<File>) {
+        runTtsPlayWorker(
+            input = queue,
+            play = { file -> player?.play(file) },
+            awaitCompletion = { player?.awaitCompletion() },
+            onFileReady = { file ->
+                // About to play — ensure Speaking so the amplitude bridge
+                // forwards the player output to the UI.
                 if (_uiState.value.voiceMode && _uiState.value.state != VoiceState.Speaking) {
                     _uiState.update { it.copy(state = VoiceState.Speaking) }
                 }
-
-                val client = voiceClient ?: continue
-                val p = player ?: continue
-
-                val synthesizeResult = client.synthesize(sentence)
-                if (synthesizeResult.isFailure) {
-                    val err = synthesizeResult.exceptionOrNull()
-                    Log.w(TAG, "synthesize failed for sentence: ${err?.message}")
-                    surfaceError(err, context = "synthesize")
-                    continue
-                }
-                val file = synthesizeResult.getOrNull() ?: continue
-
                 trackTtsFile(file)
+            },
+            pendingFiles = pendingTtsFiles,
+            onQueueDrained = { maybeAutoResume() },
+        )
+    }
 
-                try {
-                    p.play(file)
-                    p.awaitCompletion()
-                } catch (e: Exception) {
-                    Log.w(TAG, "playback failed: ${e.message}")
-                }
-            }
+    /**
+     * Delete files that were synthesized by the synth worker but never
+     * handed to [VoicePlayer.play]. Called from [interruptSpeaking],
+     * [exitVoiceMode], and [onCleared] after the consumer scope is
+     * cancelled. Safe to call when the set is empty (no-op).
+     *
+     * ExoPlayer's queue is cleaned up separately by [VoicePlayer.stop];
+     * this function only owns the window between "file written to disk"
+     * and "file handed to VoicePlayer.play()."
+     */
+    private fun deletePendingSynthFiles() {
+        // Snapshot under the set's intrinsic lock so a racing add() from
+        // a mid-cancel synth worker doesn't throw ConcurrentModification.
+        // Collections.synchronizedSet requires external locking for iter.
+        val snapshot: List<File> = synchronized(pendingTtsFiles) {
+            val copy = pendingTtsFiles.toList()
+            pendingTtsFiles.clear()
+            copy
+        }
+        for (f in snapshot) {
+            try { f.delete() } catch (_: Exception) { /* ignore */ }
         }
     }
 
@@ -1235,6 +1349,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         amplitudeBridgeJob?.cancel()
         currentTurnJob?.cancel()
         idleFlushJob?.cancel()
+        // V4: clean up any synthesized-but-unplayed cache files before
+        // the VM is collected. The consumer job was just cancelled, so
+        // the synth worker will never resume draining pendingTtsFiles.
+        deletePendingSynthFiles()
     }
 
     /**
@@ -1855,4 +1973,108 @@ internal fun countOccurrences(haystack: CharSequence, needle: String): Int {
         }
     }
     return count
+}
+
+// ─── V4 TTS prefetch pipeline — testable worker extractions ─────────────
+//
+// The synth + play coroutines live as top-level `internal` suspend funcs
+// so `VoiceViewModelPipelineTest` can drive them against fakes in a
+// `runTest`/`TestCoroutineScheduler` harness. The VM's private
+// `runSynthWorker` / `runPlayWorker` members are thin binders that inject
+// the real dependencies (`voiceClient`, `player`, UI-state updates) into
+// these generic functions.
+
+/**
+ * Testable synth-worker body. Pulls sentences from [sentences], calls
+ * [synthesize], and sends any successful [File] onto [output]. Files are
+ * recorded in [pendingFiles] BEFORE the `send` so a cancellation while
+ * suspended on backpressure can still reach the file and delete it.
+ * Failures from [synthesize] are reported via [onSynthError] and
+ * skipped — the pipeline must not stall on a single flaky call.
+ *
+ * Closes [output] on normal termination OR cancellation so the downstream
+ * play worker's loop can exit cleanly.
+ */
+internal suspend fun runTtsSynthWorker(
+    sentences: kotlinx.coroutines.channels.ReceiveChannel<String>,
+    output: Channel<File>,
+    synthesize: suspend (String) -> Result<File>,
+    pendingFiles: MutableSet<File>,
+    onSynthError: (Throwable?) -> Unit,
+) {
+    try {
+        for (sentence in sentences) {
+            val result = try {
+                synthesize(sentence)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (e: Exception) {
+                Result.failure<File>(e)
+            }
+            if (result.isFailure) {
+                onSynthError(result.exceptionOrNull())
+                continue
+            }
+            val file = result.getOrNull() ?: continue
+            pendingFiles.add(file)
+            try {
+                output.send(file)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (_: Exception) {
+                pendingFiles.remove(file)
+                try { file.delete() } catch (_: Exception) { /* ignore */ }
+                break
+            }
+        }
+    } finally {
+        output.close()
+    }
+}
+
+/**
+ * Testable play-worker body. Drains [input], invoking [play] + awaiting
+ * [awaitCompletion] per file in order. Between files, a non-blocking
+ * `tryReceive` peek detects the "queue momentarily empty" instant at
+ * which [onQueueDrained] fires — preserving the pre-V4 `maybeAutoResume`
+ * checkpoint semantics.
+ *
+ * Removes each file from [pendingFiles] only AFTER [play] returns
+ * successfully. Before that point the file's on-disk lifetime is owned
+ * by the play worker alone, and a cancellation between `input.receive`
+ * and `play(file)` would leak the file if we'd removed it too early.
+ */
+internal suspend fun runTtsPlayWorker(
+    input: Channel<File>,
+    play: suspend (File) -> Unit,
+    awaitCompletion: suspend () -> Unit,
+    onFileReady: (File) -> Unit,
+    pendingFiles: MutableSet<File>,
+    onQueueDrained: () -> Unit,
+) {
+    while (true) {
+        val immediate = input.tryReceive()
+        val file: File = when {
+            immediate.isSuccess -> immediate.getOrNull() ?: continue
+            immediate.isClosed -> break
+            else -> {
+                onQueueDrained()
+                val received = input.receiveCatching()
+                if (received.isClosed) break
+                received.getOrNull() ?: continue
+            }
+        }
+
+        onFileReady(file)
+        try {
+            play(file)
+            pendingFiles.remove(file)
+            awaitCompletion()
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Exception) {
+            // play() threw — file never entered the player's queue. Leave
+            // it in pendingFiles so the cancellation cleanup path deletes it.
+        }
+    }
 }
