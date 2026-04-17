@@ -9,11 +9,13 @@ import com.hermesandroid.relay.audio.VoicePlayer
 import com.hermesandroid.relay.audio.VoiceRecorder
 import com.hermesandroid.relay.audio.VoiceSfxPlayer
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.RelayVoiceClient
 import com.hermesandroid.relay.network.handlers.LocalDispatchResult
 import com.hermesandroid.relay.util.HumanError
 import com.hermesandroid.relay.util.classifyError
+import com.hermesandroid.relay.voice.VoiceIntentSyncBuilder
 // === PHASE3-voice-intents: voice→bridge intent routing ===
 import com.hermesandroid.relay.voice.IntentResult
 import com.hermesandroid.relay.voice.LocalBridgeDispatcher
@@ -292,9 +294,40 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         voiceBridgeIntentHandler = createVoiceBridgeIntentHandler(
             multiplexer = bridgeMultiplexer,
             localBridgeDispatcher = localBridgeDispatcher,
-            onDispatchResult = { label, result ->
-                // Chat trace (markdown bubble) — pre-existing.
-                chatViewModel.recordVoiceIntentResult(label, result)
+            onDispatchResult = { label, result, androidToolName, androidToolArgsJson ->
+                // === v0.4.1 voice-intent → server session sync ===
+                // Build a structured trace so VoiceIntentSyncBuilder can
+                // synthesize an OpenAI tool_call/response pair on the
+                // next chat send. We attach the trace to the post-
+                // dispatch result bubble (NOT the pre-dispatch trace
+                // bubble) because this is the moment we have the
+                // authoritative dispatch outcome — pre-dispatch was
+                // either pending (destructive intents in countdown) or
+                // not-yet-known when its bubble was created. Skipped
+                // when androidToolName is null (intent wasn't classifiable
+                // as a concrete `android_*` tool — e.g. local UI flows
+                // that exited via a structured "permission missing" or
+                // "not found" branch without dispatching anything).
+                val voiceTrace = if (androidToolName != null) {
+                    val resultJson = if (result.isSuccess) {
+                        VoiceIntentSyncBuilder.successResultJson(result.resultJson)
+                    } else {
+                        VoiceIntentSyncBuilder.failureResultJson(
+                            errorMessage = result.errorMessage,
+                            errorCode = result.errorCode,
+                        )
+                    }
+                    VoiceIntentTrace(
+                        toolName = androidToolName,
+                        argumentsJson = androidToolArgsJson,
+                        success = result.isSuccess,
+                        resultJson = resultJson,
+                    )
+                } else null
+                // === END v0.4.1 sync ===
+                // Chat trace (markdown bubble) — pre-existing. Trace
+                // attaches the structured payload above when present.
+                chatViewModel.recordVoiceIntentResult(label, result, voiceTrace)
                 // Spoken follow-up so the user hears the outcome without
                 // looking at the screen. Wave-2 voice mode was visually
                 // honest but audibly silent after dispatch — Bailey hit
@@ -645,15 +678,25 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     Log.i(TAG, "voice intent handled by bridge: ${result.intentLabel}")
 
                     // === PHASE3-voice-intents-chathistory ===
-                    // Append a local-only trace to chat history so the user
-                    // sees a record of what they said and what was done. Pre-
-                    // v0.4.0 the voice intent path returned silently here and
-                    // the chat scroll had zero record of voice utterances —
-                    // making follow-up questions feel like the chat had
-                    // "reset". The trace is local-only (does NOT reach the
-                    // server-side session) so the gateway-side LLM still won't
-                    // see prior voice actions in its session memory; that's a
-                    // v0.4.1 follow-up tracked in ROADMAP.md.
+                    // Append a local-only PRE-DISPATCH trace bubble to chat
+                    // history so the user sees a record of what they said
+                    // and what's about to happen. Pre-v0.4.0 the voice
+                    // intent path returned silently here and the chat
+                    // scroll had zero record of voice utterances — making
+                    // follow-up questions feel like the chat had "reset".
+                    //
+                    // v0.4.1 — server session sync: this pre-dispatch
+                    // bubble intentionally does NOT carry the structured
+                    // VoiceIntentTrace. The structured trace lives on the
+                    // POST-dispatch result bubble emitted from
+                    // `onDispatchResult` (see initialize() above) because
+                    // that's the moment we have the authoritative
+                    // dispatch outcome — pre-dispatch was either pending
+                    // (destructive intents during the 5s countdown) or
+                    // not-yet-known. VoiceIntentSyncBuilder reads the
+                    // post-dispatch trace on the next chat send and
+                    // synthesizes the OpenAI tool_call/response pair the
+                    // server-side LLM ingests.
                     val actionDescription = formatVoiceIntentTrace(result)
                     chatVm.recordVoiceIntent(
                         userText = userText,

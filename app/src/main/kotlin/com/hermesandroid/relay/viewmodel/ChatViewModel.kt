@@ -20,6 +20,8 @@ import com.hermesandroid.relay.network.handlers.LocalDispatchResult
 import com.hermesandroid.relay.network.handlers.formatPhoneActionResult
 import com.hermesandroid.relay.network.models.SkillInfo
 import com.hermesandroid.relay.network.models.UsageInfo
+import com.hermesandroid.relay.data.VoiceIntentTrace
+import com.hermesandroid.relay.voice.VoiceIntentSyncBuilder
 import com.hermesandroid.relay.util.AppContextSettings
 import com.hermesandroid.relay.util.HumanError
 import com.hermesandroid.relay.util.MediaCacheWriter
@@ -389,9 +391,13 @@ class ChatViewModel : ViewModel() {
      * for the full design + why this isn't enough on its own to give the
      * LLM context for follow-up turns (server session sync is v0.4.1).
      */
-    fun recordVoiceIntent(userText: String, actionDescription: String) {
+    fun recordVoiceIntent(
+        userText: String,
+        actionDescription: String,
+        voiceIntent: VoiceIntentTrace? = null,
+    ) {
         val handler = chatHandler ?: return
-        handler.appendLocalVoiceIntentTrace(userText, actionDescription)
+        handler.appendLocalVoiceIntentTrace(userText, actionDescription, voiceIntent)
     }
 
     /**
@@ -413,7 +419,11 @@ class ChatViewModel : ViewModel() {
      *  - 403 permission_denied    → **Send SMS — permission needed**\n...
      *  - 5xx / dispatch_exception → **Send SMS — failed**\n...
      */
-    fun recordVoiceIntentResult(intentLabel: String, result: LocalDispatchResult) {
+    fun recordVoiceIntentResult(
+        intentLabel: String,
+        result: LocalDispatchResult,
+        voiceIntent: VoiceIntentTrace? = null,
+    ) {
         val handler = chatHandler ?: return
         // Delegate to the package-level formatter in ChatHandler.kt so
         // voice-mode and chat-mode android_* completions render the same
@@ -421,7 +431,10 @@ class ChatViewModel : ViewModel() {
         // "Voice action" here (voice origin); chat parity uses
         // "Phone action" via the ChatHandler-side caller.
         val description = formatPhoneActionResult(intentLabel, result)
-        handler.appendLocalVoiceIntentResult(description)
+        handler.appendLocalVoiceIntentResult(
+            description = description,
+            voiceIntent = voiceIntent,
+        )
     }
 
     fun clearQueue() {
@@ -621,11 +634,25 @@ class ChatViewModel : ViewModel() {
             _queuedMessages.value = emptyList()
         }
 
+        // === v0.4.1 voice-intent → server session sync ===
+        // Synthesize OpenAI-format `assistant` (with tool_calls) + `tool`
+        // pairs from any unsynced phone-local voice intents in chat history.
+        // The server-side session absorbs them so the LLM sees prior voice
+        // actions in its memory the next time the user follows up via text.
+        // [hasUnsynced] short-circuits the empty-array allocation on the
+        // common-case turn where no voice intents fired.
+        val historySnapshot = handler.messages.value
+        val voiceIntentMessages = if (VoiceIntentSyncBuilder.hasUnsynced(historySnapshot)) {
+            VoiceIntentSyncBuilder.buildSyntheticMessages(historySnapshot)
+        } else null
+        // === END v0.4.1 voice-intent sync ===
+
         activeStream = if (streamingEndpoint == "runs") {
             client.sendRunStream(
                 message = message,
                 systemMessage = systemMsg,
                 attachments = attachments,
+                voiceIntentMessages = voiceIntentMessages,
                 onSessionId = { sid ->
                     handler.setSessionId(sid)
                     onSessionChanged?.invoke(sid)
@@ -647,6 +674,7 @@ class ChatViewModel : ViewModel() {
                 message = message,
                 systemMessage = systemMsg,
                 attachments = attachments,
+                voiceIntentMessages = voiceIntentMessages,
                 onSessionId = { /* already set */ },
                 onMessageStarted = onMessageStartedCb,
                 onTextDelta = onTextDeltaCb,
@@ -659,6 +687,18 @@ class ChatViewModel : ViewModel() {
                 onUsage = onUsageCb,
                 onError = onErrorCb
             )
+        }
+
+        // Flip syncedToServer=true on every voice-intent trace now that the
+        // API client owns the request. Idempotent — markVoiceIntentsSynced
+        // skips traces that were already true. Done after the API client
+        // owns the request so a thrown exception during request building
+        // would not falsely mark traces as synced (no API call would have
+        // been made). Both API-client paths above either succeed or throw
+        // synchronously; the SSE callbacks fire asynchronously and never
+        // block this point.
+        if (voiceIntentMessages != null) {
+            handler.markVoiceIntentsSynced()
         }
     }
 

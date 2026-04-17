@@ -17,7 +17,12 @@ import com.hermesandroid.relay.network.models.Envelope
 typealias LocalBridgeDispatcher = suspend (Envelope) -> LocalDispatchResult
 
 /** @see com.hermesandroid.relay.voice.VoiceIntentResultCallback in the sideload flavor. */
-typealias VoiceIntentResultCallback = (intentLabel: String, result: LocalDispatchResult) -> Unit
+typealias VoiceIntentResultCallback = (
+    intentLabel: String,
+    result: LocalDispatchResult,
+    androidToolName: String?,
+    androidToolArgsJson: String,
+) -> Unit
 
 /** @see com.hermesandroid.relay.voice.VoiceIntentCountdownCallback in the sideload flavor. */
 typealias VoiceIntentCountdownCallback = (intentLabel: String, durationMs: Long) -> Unit

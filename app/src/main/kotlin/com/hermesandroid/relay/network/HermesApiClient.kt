@@ -19,6 +19,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -359,6 +360,26 @@ class HermesApiClient(
         message: String,
         systemMessage: String? = null,
         attachments: List<com.hermesandroid.relay.data.Attachment>? = null,
+        /**
+         * Pre-built OpenAI-format synthetic messages to splice into the
+         * payload alongside the live `message`. Produced by
+         * [com.hermesandroid.relay.voice.VoiceIntentSyncBuilder.buildSyntheticMessages]
+         * for the v0.4.1 voice-intent → server session sync feature.
+         *
+         * When non-empty, the request body grows a top-level `messages`
+         * array containing the synthetic `assistant` (with `tool_calls`)
+         * + `tool` (with `tool_call_id`) pairs. The server-side session
+         * absorbs them into its conversation history so the LLM sees
+         * prior phone-local voice actions in its session memory.
+         *
+         * Null / empty on every send that has no unsynced voice intents
+         * to communicate, which is the common case after the first sync.
+         * The Hermes API server treats unrecognised body fields
+         * permissively (matches OpenAI Chat Completions semantics), so
+         * this stays a safe additive change against any conformant
+         * upstream.
+         */
+        voiceIntentMessages: JsonArray? = null,
         onSessionId: (String) -> Unit,
         onMessageStarted: (String) -> Unit,
         onTextDelta: (String) -> Unit,
@@ -385,6 +406,13 @@ class HermesApiClient(
                         }
                     }
                 }
+            }
+            if (voiceIntentMessages != null && voiceIntentMessages.isNotEmpty()) {
+                // Nest the synthesized OpenAI-format pairs under `messages`.
+                // Stays additive — the upstream sessions handler reads
+                // `message` for the live turn and treats `messages` as
+                // history context to seed the LLM with.
+                put("messages", voiceIntentMessages)
             }
         }
         val requestBody = json.encodeToString(JsonObject.serializer(), requestPayload)
@@ -589,6 +617,8 @@ class HermesApiClient(
         model: String? = null,
         systemMessage: String? = null,
         attachments: List<com.hermesandroid.relay.data.Attachment>? = null,
+        /** See [sendChatStream]'s `voiceIntentMessages` doc — same semantics. */
+        voiceIntentMessages: JsonArray? = null,
         onSessionId: (String) -> Unit,
         onMessageStarted: (String) -> Unit,
         onTextDelta: (String) -> Unit,
@@ -617,6 +647,13 @@ class HermesApiClient(
                         }
                     }
                 }
+            }
+            if (voiceIntentMessages != null && voiceIntentMessages.isNotEmpty()) {
+                // /v1/runs is OpenAI Responses-shaped — accepts an
+                // additional `messages` field for context-priming the
+                // run. Mirror the chat-stream branch so both endpoints
+                // ingest the synthetic voice-intent history identically.
+                put("messages", voiceIntentMessages)
             }
         }
         val requestBody = json.encodeToString(JsonObject.serializer(), requestPayload)
