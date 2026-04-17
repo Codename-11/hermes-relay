@@ -5,6 +5,7 @@ import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.ToolCall
+import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.network.models.MessageItem
 import com.hermesandroid.relay.network.models.SessionItem
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -171,23 +172,30 @@ class ChatHandler {
      *  - a user message with the raw transcribed text
      *  - an assistant message with the action description
      *
-     * Both are local-only — they're injected straight into [_messages]
-     * without touching the server-side session, so the gateway-side LLM
-     * does NOT see them in its session memory. That means follow-up
-     * questions like "did the SMS send?" still go to the LLM with only
-     * the bare follow-up as context.
-     *
-     * Server-side session sync (so the LLM can reason about voice actions
-     * from prior turns) is a v0.4.1 follow-up — it needs either a new
-     * "log message without LLM round-trip" gateway endpoint or a fait-
-     * accompli prompt prefix scheme. See ROADMAP.md.
+     * The two bubbles are injected straight into [_messages] for
+     * visual continuity. Server-side session sync — so the gateway LLM
+     * sees prior voice actions in its memory when the user follows up
+     * via text or voice — is handled by a separate path (v0.4.1):
+     * the post-dispatch result bubble (emitted from
+     * [com.hermesandroid.relay.viewmodel.VoiceViewModel]'s
+     * `onDispatchResult` callback into [appendLocalVoiceIntentResult])
+     * carries a structured [com.hermesandroid.relay.data.VoiceIntentTrace],
+     * which [com.hermesandroid.relay.voice.VoiceIntentSyncBuilder]
+     * reads on the next chat send to synthesize an OpenAI
+     * `assistant` (with `tool_calls`) + `tool` message pair that
+     * rides under the request body's `messages` field. This pre-
+     * dispatch bubble carries no trace — it's purely a UI marker.
      *
      * @param userText The raw transcribed voice utterance.
      * @param actionDescription Human-readable description of what the
      *   bridge layer did (or is about to do). Shown verbatim in the
      *   assistant message bubble.
      */
-    fun appendLocalVoiceIntentTrace(userText: String, actionDescription: String) {
+    fun appendLocalVoiceIntentTrace(
+        userText: String,
+        actionDescription: String,
+        voiceIntent: VoiceIntentTrace? = null,
+    ) {
         val ts = System.currentTimeMillis()
         val userMsg = ChatMessage(
             id = "voice-intent-user-$ts",
@@ -205,6 +213,12 @@ class ChatHandler {
             // it). The chat UI's existing agentName plumbing handles the
             // alternate label automatically.
             agentName = "Voice action",
+            // Structured trace — read by VoiceIntentSyncBuilder on the next
+            // chat send to materialize OpenAI-format tool_call + tool
+            // messages so the server-side LLM sees the action in its
+            // session memory. Null for the pre-dispatch user bubble (the
+            // raw transcribed utterance carries no structure on its own).
+            voiceIntent = voiceIntent,
         )
         _messages.update { list ->
             (list + userMsg + assistantMsg).let {
@@ -233,6 +247,7 @@ class ChatHandler {
     fun appendLocalVoiceIntentResult(
         description: String,
         agentName: String = "Voice action",
+        voiceIntent: VoiceIntentTrace? = null,
     ) {
         val ts = System.currentTimeMillis()
         val resultMsg = ChatMessage(
@@ -241,11 +256,50 @@ class ChatHandler {
             content = description,
             timestamp = ts,
             agentName = agentName,
+            // When the dispatch result lands AFTER the pre-dispatch trace
+            // (destructive intents wait on the 5-second countdown), the
+            // post-dispatch bubble carries the authoritative success /
+            // failure data — this is the bubble VoiceIntentSyncBuilder
+            // should read for the synthetic tool-response, not the
+            // pre-dispatch placeholder. The VoiceViewModel post-dispatch
+            // path passes a fully-populated VoiceIntentTrace here; safe
+            // intents (where the dispatch already happened before the
+            // pre-dispatch trace was appended) leave this null and rely
+            // on the pre-dispatch trace's voiceIntent field.
+            voiceIntent = voiceIntent,
         )
         _messages.update { list ->
             (list + resultMsg).let {
                 if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it
             }
+        }
+    }
+
+    /**
+     * Flip [VoiceIntentTrace.syncedToServer] to true on every voice-intent
+     * message currently in the message list, so they're not re-emitted in
+     * the next chat payload's synthetic-messages array. Called from
+     * [com.hermesandroid.relay.viewmodel.ChatViewModel.startStream]
+     * immediately after the API client takes ownership of the request — at
+     * that point the server-side session has the synthetic context, and
+     * future sends should not duplicate it.
+     *
+     * Only mutates messages where the embedded
+     * [com.hermesandroid.relay.data.VoiceIntentTrace.syncedToServer] is
+     * currently false, so this is safe to call repeatedly without
+     * triggering redundant StateFlow emissions.
+     */
+    fun markVoiceIntentsSynced() {
+        _messages.update { messages ->
+            var changed = false
+            val mapped = messages.map { msg ->
+                val trace = msg.voiceIntent
+                if (trace != null && !trace.syncedToServer) {
+                    changed = true
+                    msg.copy(voiceIntent = trace.copy(syncedToServer = true))
+                } else msg
+            }
+            if (changed) mapped else messages
         }
     }
 

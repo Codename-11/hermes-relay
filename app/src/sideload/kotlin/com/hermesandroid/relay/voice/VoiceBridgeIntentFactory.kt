@@ -29,8 +29,22 @@ typealias LocalBridgeDispatcher = suspend (Envelope) -> LocalDispatchResult
  *    [IntentResult.Handled] (e.g. "Send SMS", "Open App")
  *  - [result] is the captured [LocalDispatchResult] from the phone-side
  *    dispatch; check [LocalDispatchResult.isSuccess] to branch
+ *  - [androidToolName] is the Hermes plugin tool name (e.g.
+ *    `android_open_app`) the dispatch maps to. Forwarded so VoiceViewModel
+ *    can stitch a structured [com.hermesandroid.relay.data.VoiceIntentTrace]
+ *    onto the chat trace bubble for v0.4.1 server session sync. Null only
+ *    when the intent doesn't map to a concrete `android_*` tool — the
+ *    callback STILL fires, the trace just isn't sync-eligible.
+ *  - [androidToolArgsJson] is the JSON-encoded args object the synthesized
+ *    server-side tool call should advertise. Always a JSON object string
+ *    (compact); defaults to "{}" when no args are meaningful.
  */
-typealias VoiceIntentResultCallback = (intentLabel: String, result: LocalDispatchResult) -> Unit
+typealias VoiceIntentResultCallback = (
+    intentLabel: String,
+    result: LocalDispatchResult,
+    androidToolName: String?,
+    androidToolArgsJson: String,
+) -> Unit
 
 /**
  * Callback fired by [RealVoiceBridgeIntentHandler] the moment a destructive

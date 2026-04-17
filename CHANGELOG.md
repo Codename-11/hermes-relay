@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added — Voice intent → server session sync (v0.4.1 fast-follow)
+
+- **Voice actions now reach the server-side LLM's session memory.** Previously, phone-local voice intents (`open Chrome`, `text Sam saying hi`, etc.) ran in-process via `BridgeCommandHandler.handleLocalCommand` and appended local-only trace bubbles to the chat scroll. The Hermes API server's session never learned about them, so a follow-up text question like "did that work?" hit the LLM with no context and returned hallucinated answers (per Bailey's 2026-04-14 on-device repro).
+- **Implementation.** Each phone-local voice intent now records a structured `VoiceIntentTrace` (tool name, JSON args, success, JSON result envelope) on the post-dispatch chat-trace bubble it produces. `VoiceIntentSyncBuilder` walks the chat history before each `POST /v1/runs` / `POST /api/sessions/{id}/chat/stream` call and synthesizes OpenAI-format `assistant` (with `tool_calls`) + `tool` (with `tool_call_id`) message pairs from any unsynced traces. The synthesized array rides under the existing payload's new `messages` field — additive, ignored by older servers, picked up by anything OpenAI Chat Completions–shaped. Idempotency: traces flip to `syncedToServer=true` the moment the API client takes ownership of the request, so subsequent turns don't re-emit them.
+- **Zero server changes.** Frontend-only, no hermes-agent edits needed.
+- **Files.** `data/ChatMessage.kt` (new `voiceIntent: VoiceIntentTrace?` field), `voice/VoiceIntentSyncBuilder.kt` (pure-function builder + helpers), `network/HermesApiClient.kt` (optional `voiceIntentMessages` parameter on both stream methods), `viewmodel/ChatViewModel.kt` (build + sync + flag flip in `startStream`), `viewmodel/VoiceViewModel.kt` (extended dispatch callback wires the structured trace into the chat-trace bubble), `voice/VoiceBridgeIntentHandler.kt` (new `androidToolName` + `androidToolArgsJson` on `IntentResult.Handled`), sideload `VoiceBridgeIntentHandlerImpl.kt` populates them per intent, sideload + googlePlay `VoiceBridgeIntentFactory.kt` typealias updates. Tests in `test/voice/VoiceIntentSyncBuilderTest.kt` (12 cases — empty input, single success, failure with error_code, idempotency, chronological order, prefix gate, blank-args gate, call-id pairing, helpers) and `test/network/handlers/ChatHandlerTest.kt` (4 new cases for trace storage + `markVoiceIntentsSynced`).
+
 ## [0.4.0] - 2026-04-14
 
 ### Added — Bridge feature expansion (the big one)

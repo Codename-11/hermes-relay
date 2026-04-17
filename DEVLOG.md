@@ -1,5 +1,58 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-16 — Voice intent → server session sync (v0.4.1)
+
+**Motivation.** Bailey's 2026-04-14 on-device repro: speak "open Chrome", phone opens Chrome (good), then type "did that work?" → LLM responds "I have no prior context for what you're asking about." Voice intents dispatch in-process via `BridgeCommandHandler.handleLocalCommand` (correct — voice actions are phone-local) and append a local-only trace bubble to chat (good UX), but the server-side Hermes session never absorbs the action so the gateway-side LLM has zero memory of it. Followups felt like the chat had "reset."
+
+**Approach.** Synthesize OpenAI-format `assistant` (with `tool_calls`) + `tool` (with `tool_call_id`) message pairs from unsynced voice-intent traces and pass them under a new optional `messages` field on the existing `/v1/runs` and `/api/sessions/{id}/chat/stream` payloads. LLMs are trained on this exact shape — they read it as natural conversation history, not a side-channel system-prompt note. Lower retry risk than a bracketed system-message prefix. Frontend-only — zero server changes.
+
+**Implementation summary.**
+
+- **`data/ChatMessage.kt`** — added `voiceIntent: VoiceIntentTrace?` field (default null). The new `VoiceIntentTrace` class captures `toolName` (must start `android_*`), `argumentsJson` (OpenAI tool-call args, JSON-encoded string), `success`, `resultJson` (full result envelope including `ok`/`error`/`error_code`), and `syncedToServer` flag. Default null so every existing `ChatMessage(...)` call site keeps compiling without touching this field.
+- **`voice/VoiceIntentSyncBuilder.kt`** (new file, ~170 LOC) — pure-function builder that walks chat history, filters to unsynced voice-intent traces, mints `call_voiceintent_<uuid>` IDs, and emits a JsonArray of synthetic `assistant` + `tool` message pairs in chronological order. `hasUnsynced()` short-circuits the empty-array allocation on the common-case turn. `successResultJson()` / `failureResultJson()` helpers normalize the tool-response payload shape so call sites don't hand-roll JSON. No Android dependencies — JVM-pure for cheap unit testing.
+- **`network/HermesApiClient.kt`** — `sendChatStream` and `sendRunStream` both gained an optional `voiceIntentMessages: JsonArray? = null` parameter. When non-empty, splices it under a top-level `messages` field on the request body. Additive, OpenAI-compat — older servers ignore unrecognised body fields.
+- **`viewmodel/ChatViewModel.kt`** — `startStream` snapshots history, calls `VoiceIntentSyncBuilder.buildSyntheticMessages`, threads the result into both API client paths, then calls `handler.markVoiceIntentsSynced()` after the API client takes ownership. Idempotent — already-synced traces are skipped. `recordVoiceIntent`/`recordVoiceIntentResult` signatures now accept an optional `voiceIntent: VoiceIntentTrace?` so VoiceViewModel can attach the structured payload.
+- **`network/handlers/ChatHandler.kt`** — `appendLocalVoiceIntentTrace` and `appendLocalVoiceIntentResult` now accept an optional `voiceIntent` parameter; new `markVoiceIntentsSynced()` method flips `syncedToServer=true` on every trace currently in state.
+- **`voice/VoiceBridgeIntentHandler.kt`** — `IntentResult.Handled` gained `androidToolName: String?` (defaults to null) and `androidToolArgsJson: String` (defaults to "{}"). Sideload classifier populates both per intent so `VoiceIntentSyncBuilder` can synthesize a structured tool_call.
+- **Sideload `VoiceBridgeIntentHandlerImpl.kt`** — every `tryHandle` branch now passes `androidToolName` + `androidToolArgsJson` to `handleSafe`/`handleDestructive`. The dispatch callbacks (`onDispatchResult`) carry these forward to VoiceViewModel. Maps `SendSms` → `android_send_sms`, `OpenApp` → `android_open_app`, `Tap` → `android_tap_text`, `Back`/`Home` → `android_press_key`. Args mirror what the gateway-side LLM tool wrappers in `plugin/tools/android_tool.py` would emit for the same actions, so the synthetic tool_call looks identical to the real one.
+- **`VoiceIntentResultCallback` typealias** — extended in BOTH `googlePlay/` and `sideload/` flavor source sets to `(intentLabel, result, androidToolName, androidToolArgsJson) -> Unit`. Play APK never invokes the callback (no destructive intents in the no-op handler) but typealias parity keeps `VoiceViewModel` compilable against either flavor with no `#if` gating.
+- **`viewmodel/VoiceViewModel.kt`** — extended dispatch callback wiring builds a `VoiceIntentTrace` from the post-dispatch outcome (using `LocalDispatchResult.isSuccess` + `resultJson` + `errorMessage` + `errorCode`) and threads it into `chatViewModel.recordVoiceIntentResult(label, result, voiceTrace)`. Trace attaches to the post-dispatch RESULT bubble (not the pre-dispatch action bubble) because that's the moment the dispatch outcome is authoritative — pre-dispatch was either pending (destructive countdown) or not-yet-known.
+
+**Tests.** `app/src/test/kotlin/com/hermesandroid/relay/voice/VoiceIntentSyncBuilderTest.kt` (12 cases):
+- empty history → empty output
+- no voice-intent messages in history → empty output
+- single success trace → exactly one assistant+tool pair, correct shape
+- failure trace → tool message content carries `ok:false` + `error` + `error_code`
+- already-synced traces are skipped
+- multiple traces preserve chronological order
+- non-`android_*` tool name is filtered (defence-in-depth)
+- blank args is filtered (defence-in-depth)
+- assistant `tool_calls[].id` and tool `tool_call_id` reference the same minted ID
+- `hasUnsynced` happy paths (empty / unsynced / all-synced)
+- `successResultJson` / `failureResultJson` helpers behave correctly
+
+`ChatHandlerTest.kt` gained 4 new cases for trace storage + `markVoiceIntentsSynced` flag flip + idempotency on already-synced traces + safety on plain non-trace messages.
+
+**Files touched** (10):
+- `app/src/main/kotlin/com/hermesandroid/relay/data/ChatMessage.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/voice/VoiceIntentSyncBuilder.kt` (new)
+- `app/src/main/kotlin/com/hermesandroid/relay/network/HermesApiClient.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/network/handlers/ChatHandler.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/ChatViewModel.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/VoiceViewModel.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/voice/VoiceBridgeIntentHandler.kt`
+- `app/src/sideload/kotlin/com/hermesandroid/relay/voice/VoiceBridgeIntentFactory.kt`
+- `app/src/sideload/kotlin/com/hermesandroid/relay/voice/VoiceBridgeIntentHandlerImpl.kt`
+- `app/src/googlePlay/kotlin/com/hermesandroid/relay/voice/VoiceBridgeIntentFactory.kt`
+- `app/src/test/kotlin/com/hermesandroid/relay/voice/VoiceIntentSyncBuilderTest.kt` (new)
+- `app/src/test/kotlin/com/hermesandroid/relay/network/handlers/ChatHandlerTest.kt`
+
+**Branch.** `feature/voice-session-sync`. Not merged. Pushed for review.
+
+**What's next.** On-device verification: send a voice intent ("open Chrome"), then type "did that work?" — the LLM should describe the action with grounded context instead of hallucinating. If the upstream gateway logs the synthetic `messages` array as additional context (visible in `journalctl --user -u hermes-gateway -f`), the wire integration is clean. If the gateway 400s on the new field name (e.g. wants `additional_messages` or `history`), we may need to peek at `gateway/platforms/api_server.py` upstream to confirm the exact field name. The CHANGELOG note about "additive — OpenAI-compat" reflects best-current-knowledge but isn't yet wire-verified.
+
+**Blockers.** None. Ships as a self-contained refactor.
+
 ## 2026-04-15 — Voice → bridge → agent pipeline end-to-end fixes
 
 **Motivation.** Bailey's on-device voice SMS testing surfaced a stack of bugs that individually looked small but together blocked the voice → bridge → agent pipeline from working end-to-end. Over a single long session we diagnosed and fixed six distinct layers: voice classifier gaps, a safety-modal lifecycle bug, chat history clobbering, a plugin check_fn pointed at the wrong relay endpoint, missing LLM tool wrappers for the direct-dispatch phone actions, and two Android OEM-interaction issues (MediaProjection notification persistence + activity recreation on warm reopen). Landed across four commits on `feature/bridge-feature-expansion`.

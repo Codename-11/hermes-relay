@@ -4,6 +4,7 @@ import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.ToolCall
+import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.network.models.MessageItem
 import com.hermesandroid.relay.network.models.SessionItem
 import kotlinx.serialization.json.JsonPrimitive
@@ -598,6 +599,84 @@ class ChatHandlerTest {
         // Should have 100 messages, none still streaming
         assertEquals(100, handler.messages.value.size)
         assertFalse(handler.isStreaming.value)
+    }
+
+    // --- Voice intent → server session sync (v0.4.1) ---
+
+    @Test
+    fun appendLocalVoiceIntentTrace_storesStructuredVoiceIntent() {
+        val trace = VoiceIntentTrace(
+            toolName = "android_open_app",
+            argumentsJson = """{"app_name":"Chrome"}""",
+            success = true,
+            resultJson = """{"ok":true}""",
+        )
+        handler.appendLocalVoiceIntentTrace(
+            userText = "open chrome",
+            actionDescription = "**Opened Chrome**",
+            voiceIntent = trace,
+        )
+        val messages = handler.messages.value
+        // user bubble + assistant bubble
+        assertEquals(2, messages.size)
+        // The user bubble carries no trace (it's the raw utterance)
+        assertNull(messages[0].voiceIntent)
+        // The assistant action bubble owns the structured trace
+        assertEquals(trace, messages[1].voiceIntent)
+        assertFalse(messages[1].voiceIntent!!.syncedToServer)
+    }
+
+    @Test
+    fun appendLocalVoiceIntentResult_storesStructuredVoiceIntent() {
+        val trace = VoiceIntentTrace(
+            toolName = "android_send_sms",
+            argumentsJson = """{"to":"+15551234567","body":"hi"}""",
+            success = true,
+            resultJson = """{"ok":true}""",
+        )
+        handler.appendLocalVoiceIntentResult(
+            description = "**Send SMS — sent** ✓",
+            voiceIntent = trace,
+        )
+        val messages = handler.messages.value
+        assertEquals(1, messages.size)
+        assertEquals(trace, messages[0].voiceIntent)
+    }
+
+    @Test
+    fun markVoiceIntentsSynced_flipsAllTracesToTrue() {
+        handler.appendLocalVoiceIntentTrace(
+            userText = "open chrome",
+            actionDescription = "**Opened**",
+            voiceIntent = VoiceIntentTrace("android_open_app", "{}", true, "{}"),
+        )
+        handler.appendLocalVoiceIntentResult(
+            description = "**Send SMS — sent**",
+            voiceIntent = VoiceIntentTrace("android_send_sms", "{}", true, "{}"),
+        )
+
+        // Pre-condition: both traces unsynced
+        assertEquals(2, handler.messages.value.count { it.voiceIntent?.syncedToServer == false })
+
+        handler.markVoiceIntentsSynced()
+
+        // Post-condition: every trace marked synced; non-trace messages untouched
+        val msgs = handler.messages.value
+        assertTrue(msgs.all { it.voiceIntent == null || it.voiceIntent!!.syncedToServer })
+        // Already-synced traces are not double-flipped (same state)
+        handler.markVoiceIntentsSynced()
+        assertTrue(handler.messages.value.all {
+            it.voiceIntent == null || it.voiceIntent!!.syncedToServer
+        })
+    }
+
+    @Test
+    fun markVoiceIntentsSynced_skipsMessagesWithoutTraces() {
+        handler.addUserMessage(createUserMessage("plain", "hello"))
+        handler.markVoiceIntentsSynced()
+        // No crash, plain message preserved unchanged
+        assertEquals(1, handler.messages.value.size)
+        assertNull(handler.messages.value[0].voiceIntent)
     }
 
     // --- Helper ---
