@@ -2,7 +2,10 @@ package com.hermesandroid.relay.ui.screens
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import com.hermesandroid.relay.data.BuildFlavor
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -102,6 +105,39 @@ fun BridgeScreen(
 
     val context = LocalContext.current
 
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { viewModel.onScreenResumed() }
+
+    // === v0.4.1 tiered checklist runtime-permission launchers =================
+    // One launcher per dangerous permission. The result callback re-runs the
+    // permission probe so the row's check flips immediately on grant.
+    // Microphone + Camera are declared on both flavors; the sideload-only
+    // permissions (contacts/sms/phone/location) only have any effect when the
+    // sideload manifest's <uses-permission> is in the merged manifest, but
+    // wiring the launcher unconditionally is harmless on googlePlay because
+    // the row that triggers it is hidden by the BuildFlavor.isSideload gate
+    // in BridgePermissionChecklist.
+    val microphonePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { viewModel.onScreenResumed() }
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { viewModel.onScreenResumed() }
+    val contactsPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { viewModel.onScreenResumed() }
+    val smsPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { viewModel.onScreenResumed() }
+    val phonePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { viewModel.onScreenResumed() }
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { viewModel.onScreenResumed() }
+    // === END v0.4.1 ============================================================
+
     // === PHASE3-safety-rails: safety summary card ===
     // Pulls live safety settings + countdown off the process-wide
     // BridgeSafetyManager singleton. No ViewModel wiring required — the
@@ -176,7 +212,17 @@ fun BridgeScreen(
                 enabled = masterToggle,
                 status = bridgeStatus,
                 accessibilityGranted = permissionStatus.accessibilityServiceEnabled,
-                onToggle = { viewModel.setMasterEnabled(it) },
+                onToggle = { enabled ->
+                    viewModel.setMasterEnabled(enabled)
+                    if (enabled &&
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                        !permissionStatus.notificationsPermitted
+                    ) {
+                        notificationPermissionLauncher.launch(
+                            android.Manifest.permission.POST_NOTIFICATIONS
+                        )
+                    }
+                },
                 // googlePlay: the toggle is "Bridge Mode" (read-only screen
                 // reading). Sideload: "Agent Control" (full phone control).
                 // The label shapes user expectation + is what reviewers read.
@@ -205,6 +251,33 @@ fun BridgeScreen(
                 onRequestScreenCapture = { viewModel.requestScreenCapture() },
                 onTestNotificationListener = { viewModel.testNotificationListener() },
                 // === END PHASE3-bridge-ui-followup ===
+                onRequestNotifications = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    {
+                        notificationPermissionLauncher.launch(
+                            android.Manifest.permission.POST_NOTIFICATIONS
+                        )
+                    }
+                } else null,
+                // === v0.4.1 tiered checklist runtime-permission requesters ====
+                onRequestMicrophone = {
+                    microphonePermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                },
+                onRequestCamera = {
+                    cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
+                },
+                onRequestContacts = {
+                    contactsPermissionLauncher.launch(android.Manifest.permission.READ_CONTACTS)
+                },
+                onRequestSms = {
+                    smsPermissionLauncher.launch(android.Manifest.permission.SEND_SMS)
+                },
+                onRequestPhone = {
+                    phonePermissionLauncher.launch(android.Manifest.permission.CALL_PHONE)
+                },
+                onRequestLocation = {
+                    locationPermissionLauncher.launch(android.Manifest.permission.ACCESS_FINE_LOCATION)
+                },
+                // === END v0.4.1 ====
             )
 
             BridgeActivityLog(

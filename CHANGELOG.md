@@ -6,6 +6,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added — v0.4.1 Bridge fast-follows (in progress)
+
+- **Tiered permission checklist** on the Bridge tab — the previously-flat
+  4-row layout is now four explicit sections (Core bridge, Notification
+  companion, Voice & camera, Sideload features). Each runtime dangerous
+  permission gets its own row with a `RequestPermission` launcher that
+  re-probes status on grant. Optional rows render an "Optional" Material 3
+  pill so users don't perceive them as urgent. Sideload-only rows
+  (Contacts, SMS, Phone, Location) are hidden on the googlePlay flavor
+  via the existing `BuildFlavor.isSideload` gate.
+- **JIT permission-denied surfacing** for the Tier C agent-tool wrappers
+  (`android_search_contacts`, `android_send_sms`, `android_call`,
+  `android_location`). When the phone reports a missing runtime permission,
+  the wrapper upgrades the bridge response to a structured envelope
+  carrying `code: "permission_denied"` + `permission:
+  "android.permission.READ_CONTACTS"` + a deterministic LLM-readable
+  explanation that names the exact Settings deep-link path. The LLM no
+  longer has to guess from a free-text error string why the tool failed.
+- **Voice-mode JIT chip** — when a voice intent dispatch returns
+  `permission_denied`, a tappable errorContainer-coloured chip surfaces
+  above the mic button with copy like "I need Contacts to Send SMS here.
+  Tap to open Settings." Tapping deep-links to
+  `Settings.ACTION_APPLICATION_DETAILS_SETTINGS` for the running
+  package's permission page. Cleared on tap or on the next mic tap.
+- **`ResolveResult` typed-union** in `plugin/tools/resolve_result.py` —
+  `Found(value)` / `NotFound(detail)` / `PermissionDenied(permission,
+  reason)` dataclass hierarchy with a `from_bridge_response` classifier.
+  Reads both the canonical wire keys (`code` / `permission`, v0.4.1) and
+  the legacy aliases (`error_code` / `required_permission`, pre-v0.4.1)
+  for forwards/backwards compatibility across the v0.4.x APK rollout.
+- **17 new Python unit tests** in `plugin/tests/test_resolve_result.py`.
+
+### Changed — v0.4.1 Bridge fast-follows (in progress)
+
+- **`BridgeCommandHandler.respondFromResult`** now emits the canonical
+  `code` + `permission` wire keys alongside the legacy `error_code` +
+  `required_permission` on permission-failure bridge responses. Existing
+  consumers that read the legacy keys keep working unchanged.
+- **`BridgePermissionStatus`** extended with `microphonePermitted`,
+  `cameraPermitted`, `contactsPermitted`, `smsPermitted`,
+  `phonePermitted`, `locationPermitted`. `refreshPermissionStatus()`
+  probes each on every `Lifecycle.Event.ON_RESUME`.
+
 ## [0.4.0] - 2026-04-14
 
 ### Added — Bridge feature expansion (the big one)

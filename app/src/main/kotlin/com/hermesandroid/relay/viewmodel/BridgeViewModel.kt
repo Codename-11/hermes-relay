@@ -3,9 +3,12 @@ package com.hermesandroid.relay.viewmodel
 import android.app.Application
 import android.content.ComponentName
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.BatteryManager
+import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.hermesandroid.relay.data.BridgeActivityEntry
@@ -391,12 +394,53 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         // Notification listener permission — notif-listener owns the listener code but the
         // status check is a plain Settings.Secure lookup, no code dependency.
         val notifListenerGranted = isNotificationListenerEnabled(ctx)
+        val notificationsGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(
+                ctx, android.Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+        // === v0.4.1 tiered checklist ============================================
+        // Standard runtime dangerous permissions. The checks are cheap and the
+        // values feed BridgePermissionChecklist's tiered rendering. Camera +
+        // microphone are declared in the main manifest (both flavors). Contacts/
+        // SMS/phone/location are sideload-only — on googlePlay the manifest does
+        // not declare them, so checkSelfPermission returns DENIED by design and
+        // the rows render as "Not granted" but the rows themselves are hidden
+        // by the BuildFlavor.isSideload gate in BridgePermissionChecklist.
+        val microphoneGranted = ContextCompat.checkSelfPermission(
+            ctx, android.Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+        val cameraGranted = ContextCompat.checkSelfPermission(
+            ctx, android.Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+        val contactsGranted = ContextCompat.checkSelfPermission(
+            ctx, android.Manifest.permission.READ_CONTACTS
+        ) == PackageManager.PERMISSION_GRANTED
+        val smsGranted = ContextCompat.checkSelfPermission(
+            ctx, android.Manifest.permission.SEND_SMS
+        ) == PackageManager.PERMISSION_GRANTED
+        val phoneGranted = ContextCompat.checkSelfPermission(
+            ctx, android.Manifest.permission.CALL_PHONE
+        ) == PackageManager.PERMISSION_GRANTED
+        val locationGranted = ContextCompat.checkSelfPermission(
+            ctx, android.Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        // === END v0.4.1 tiered checklist =========================================
 
         _permissionStatus.value = BridgePermissionStatus(
             accessibilityServiceEnabled = a11yEnabled,
             screenCapturePermitted = screenCaptureGranted,
             overlayPermitted = overlayGranted,
             notificationListenerPermitted = notifListenerGranted,
+            notificationsPermitted = notificationsGranted,
+            microphonePermitted = microphoneGranted,
+            cameraPermitted = cameraGranted,
+            contactsPermitted = contactsGranted,
+            smsPermitted = smsGranted,
+            phonePermitted = phoneGranted,
+            locationPermitted = locationGranted,
         )
     }
 
@@ -462,12 +506,38 @@ data class BridgeStatus(
     val accessibilityEnabled: Boolean,
 )
 
-/** Which of the four bridge-related permissions are currently held. */
+/**
+ * Snapshot of every bridge-relevant permission's current state.
+ *
+ * v0.4.1 expanded this from the original five core-bridge entries to include
+ * runtime dangerous permissions (microphone, camera, contacts, SMS, phone,
+ * location) so the tiered [com.hermesandroid.relay.ui.components.BridgePermissionChecklist]
+ * can render an explicit grant affordance for each one. The sideload-only
+ * permissions (contacts/sms/phone/location) on a googlePlay build will always
+ * report `false` because the underlying manifest declarations live in the
+ * sideload flavor overlay — those rows are hidden in the checklist via the
+ * `BuildFlavor.isSideload` gate, so the false value never surfaces.
+ */
 data class BridgePermissionStatus(
     val accessibilityServiceEnabled: Boolean = false,
     val screenCapturePermitted: Boolean = false,
     val overlayPermitted: Boolean = false,
     val notificationListenerPermitted: Boolean = false,
+    val notificationsPermitted: Boolean = false,
+    // === v0.4.1 tiered checklist ============================================
+    /** Voice mode + voice intents (`RECORD_AUDIO`). Required when the user enters voice mode. */
+    val microphonePermitted: Boolean = false,
+    /** Camera attachment + future on-device vision tools (`CAMERA`). */
+    val cameraPermitted: Boolean = false,
+    /** `android_search_contacts` resolver (`READ_CONTACTS`, sideload-only). */
+    val contactsPermitted: Boolean = false,
+    /** `android_send_sms` direct dispatch (`SEND_SMS`, sideload-only). */
+    val smsPermitted: Boolean = false,
+    /** `android_call` auto-dial (`CALL_PHONE`, sideload-only). */
+    val phonePermitted: Boolean = false,
+    /** `android_location` last-known fix (`ACCESS_FINE_LOCATION`, sideload-only). */
+    val locationPermitted: Boolean = false,
+    // === END v0.4.1 tiered checklist =========================================
 ) {
     /** True when every permission required for Tier 1 + 2 is granted. */
     val allRequiredGranted: Boolean

@@ -40,7 +40,27 @@ import json
 import os
 import time
 import requests
-from typing import Optional
+from typing import Any, Mapping, Optional
+
+# === v0.4.1 JIT permission-denied surfacing ================================
+# Local import — keep package-relative so the tool layer can be invoked from
+# both `plugin.tools.android_tool` (hermes-agent registry) and direct script
+# execution (`python -m plugin.tools.android_tool` for ad-hoc CLI testing).
+try:
+    from .resolve_result import (
+        Found,
+        NotFound,
+        PermissionDenied,
+        from_bridge_response,
+    )
+except ImportError:  # pragma: no cover - direct-script fallback
+    from plugin.tools.resolve_result import (  # type: ignore[no-redef]
+        Found,
+        NotFound,
+        PermissionDenied,
+        from_bridge_response,
+    )
+# === END v0.4.1 ============================================================
 
 # ── Config ────────────────────────────────────────────────────────────────────
 #
@@ -693,6 +713,77 @@ def android_event_stream(enabled: bool = True) -> str:
         return json.dumps({"status": "error", "message": str(e)})
 
 
+# === v0.4.1 JIT permission-denied surfacing ================================
+#
+# Bridge tool wrappers below funnel their HTTP responses through this helper
+# so that a structured ``permission_denied`` error from the phone gets
+# upgraded into actionable LLM-facing copy instead of being passed through
+# as the raw bridge error string. The LLM then has a clear path to tell the
+# user what to do ("open Settings > Apps > Hermes Relay > Permissions") and
+# stop hallucinating about why a contact lookup or SMS dispatch failed.
+#
+# Returns a dict in one of three shapes:
+#   - permission_denied:  {"ok": False, "error": "...", "code": "permission_denied",
+#                          "permission": "android.permission.READ_CONTACTS"}
+#   - other error:        original response, unchanged
+#   - success:            original response, unchanged
+#
+# The phone-side ``BridgeCommandHandler`` already emits ``code`` /
+# ``permission`` (canonical, v0.4.1) AND ``error_code`` /
+# ``required_permission`` (legacy, pre-v0.4.1) on permission failures so the
+# parser is forwards/backwards compatible during the v0.4.x APK rollout.
+
+# Human-friendly settings-deep-link text per Android permission. Used to
+# build the ``error`` body of the JIT permission-denied response so the LLM
+# can read it and tell the user exactly which Settings screen to open.
+_PERMISSION_FRIENDLY_NAMES: dict[str, str] = {
+    "android.permission.READ_CONTACTS": "Contacts",
+    "android.permission.SEND_SMS": "SMS",
+    "android.permission.CALL_PHONE": "Phone (place calls)",
+    "android.permission.ACCESS_FINE_LOCATION": "Location",
+    "android.permission.ACCESS_COARSE_LOCATION": "Location",
+    "android.permission.RECORD_AUDIO": "Microphone",
+    "android.permission.CAMERA": "Camera",
+    "android.permission.POST_NOTIFICATIONS": "Notifications",
+}
+
+
+def _maybe_jit_permission_response(
+    response: Mapping[str, Any] | dict[str, Any],
+    *,
+    tool_name: str,
+) -> Optional[dict[str, Any]]:
+    """
+    If ``response`` is a permission-denied bridge envelope, return a
+    structured JIT error dict suitable for json.dumps + return-to-LLM.
+    Otherwise return None so the caller can pass through the original
+    response unchanged.
+
+    Idempotent: returning the dict here doesn't mutate the input. The
+    canonical wire keys (``code`` / ``permission``) are always present in
+    the output even if the phone only sent the legacy aliases.
+    """
+    parsed = from_bridge_response(response)
+    if not isinstance(parsed, PermissionDenied):
+        return None
+    permission = parsed.permission
+    friendly = _PERMISSION_FRIENDLY_NAMES.get(permission, permission)
+    # Build a deterministic, LLM-readable explanation. Keep it short and
+    # imperative — the LLM will paraphrase it for the user, so we want the
+    # actionable detail (Settings deep-link path + permission name) up front.
+    explanation = (
+        f"User has not granted {friendly} permission "
+        f"({permission}). They can enable it in Settings > Apps > "
+        f"Hermes Relay > Permissions. Tool: {tool_name}."
+    )
+    return {
+        "ok": False,
+        "error": explanation,
+        "code": "permission_denied",
+        "permission": permission,
+    }
+
+
 # ── Tier C tools (C1-C4) ───────────────────────────────────────────────────────
 #
 # All four tools below are SIDELOAD FLAVOR ONLY. The Android tool dispatch
@@ -714,12 +805,19 @@ def android_location() -> str:
     timestamp / staleness_ms. If the last-known fix is older than 5 minutes
     a ``warning`` field is included and the agent should ask the user to
     open a maps app briefly to refresh the fix.
+
+    **v0.4.1 JIT permission-denied surfacing:** if the phone reports a
+    missing ``ACCESS_FINE_LOCATION`` grant, the response is upgraded to a
+    structured ``code: permission_denied`` envelope so the LLM can tell
+    the user exactly which Settings screen to open instead of relaying
+    an opaque error string.
     """
     try:
         data = _get("/location")
-        return json.dumps(data)
     except Exception as e:
         return json.dumps({"error": str(e)})
+    jit = _maybe_jit_permission_response(data, tool_name="android_location")
+    return json.dumps(jit if jit is not None else data)
 
 
 def android_search_contacts(query: str, limit: int = 20) -> str:
@@ -733,12 +831,15 @@ def android_search_contacts(query: str, limit: int = 20) -> str:
     entry has ``id``, ``name``, and a comma-separated ``phones`` string.
     Useful for "text Sam saying X" flows where the agent needs to resolve
     a name to a number before calling ``android_send_sms`` or ``android_call``.
+
+    **v0.4.1 JIT permission-denied surfacing:** see :func:`android_location`.
     """
     try:
         data = _post("/search_contacts", {"query": query, "limit": limit})
-        return json.dumps(data)
     except Exception as e:
         return json.dumps({"error": str(e)})
+    jit = _maybe_jit_permission_response(data, tool_name="android_search_contacts")
+    return json.dumps(jit if jit is not None else data)
 
 
 def android_call(number: str) -> str:
@@ -752,12 +853,15 @@ def android_call(number: str) -> str:
     The phone's safety-rails *always* show a destructive-verb confirmation
     modal before the call is placed, regardless of flavor. The agent
     should make the user's intent explicit before invoking this tool.
+
+    **v0.4.1 JIT permission-denied surfacing:** see :func:`android_location`.
     """
     try:
         data = _post("/call", {"number": number})
-        return json.dumps(data)
     except Exception as e:
         return json.dumps({"error": str(e)})
+    jit = _maybe_jit_permission_response(data, tool_name="android_call")
+    return json.dumps(jit if jit is not None else data)
 
 
 def android_send_sms(to: str, body: str) -> str:
@@ -777,12 +881,15 @@ def android_send_sms(to: str, body: str) -> str:
     The phone's safety-rails *always* show a destructive-verb confirmation
     modal before the SMS is sent. A 15 s send timeout ensures we don't hang
     if the radio is off or the carrier never acks.
+
+    **v0.4.1 JIT permission-denied surfacing:** see :func:`android_location`.
     """
     try:
         data = _post("/send_sms", {"to": to, "body": body})
-        return json.dumps(data)
     except Exception as e:
         return json.dumps({"error": str(e)})
+    jit = _maybe_jit_permission_response(data, tool_name="android_send_sms")
+    return json.dumps(jit if jit is not None else data)
 
 
 def _get_public_ip() -> str:

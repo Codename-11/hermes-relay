@@ -277,7 +277,12 @@ class BridgeCommandHandler(
         val resultJson = sink.get()
         val capturedStatus = status.get().takeIf { it != 0 } ?: 200
         val errorMessage = resultJson?.get("error")?.jsonPrimitive?.contentOrNull
+        // v0.4.1 — accept both the canonical `code` and the legacy `error_code`
+        // when reading the structured classification back out of the captured
+        // payload. respondFromResult emits both, but consumers that only know
+        // about the canonical alias must still see the value.
         val errorCode = resultJson?.get("error_code")?.jsonPrimitive?.contentOrNull
+            ?: resultJson?.get("code")?.jsonPrimitive?.contentOrNull
         return LocalDispatchResult(
             status = capturedStatus,
             errorMessage = errorMessage,
@@ -1468,9 +1473,20 @@ class BridgeCommandHandler(
                 // responses + offer actionable next steps instead of relaying
                 // whatever phrasing the error string happens to use. Free
                 // text stays alongside for LLMs that prefer it.
+                //
+                // v0.4.1 — emit BOTH the legacy `error_code`/`required_permission`
+                // pair AND the canonical `code`/`permission` aliases. The Python
+                // agent-tool wrappers (plugin/tools/android_tool.py) and the
+                // Python ResolveResult parser (plugin/tools/resolve_result.py)
+                // accept either spelling so the rollout is forwards/backwards
+                // compatible across mixed-version installs.
                 classifyBridgeError(err)?.let { (code, perm) ->
                     put("error_code", code)
-                    if (perm != null) put("required_permission", perm)
+                    put("code", code)
+                    if (perm != null) {
+                        put("required_permission", perm)
+                        put("permission", perm)
+                    }
                 }
             }
         }
