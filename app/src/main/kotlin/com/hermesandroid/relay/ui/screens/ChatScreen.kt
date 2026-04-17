@@ -1330,6 +1330,27 @@ fun ChatScreen(
                 // Bounded to 6 to keep voice mode visually focused on sphere
                 // + waveform + mic — the full scroll lives in the chat tab.
                 transcriptMessages = messages.takeLast(6),
+                // === v0.4.1 JIT permission-denied chip ===
+                // Tap deep-links to Settings → Apps → Hermes Relay →
+                // Permissions for the running package. Use BuildConfig
+                // .APPLICATION_ID rather than a hard-coded string so both
+                // the googlePlay and sideload flavors land on their own
+                // package's permission page.
+                onPermissionDeniedChipTap = { _ ->
+                    runCatching {
+                        val intent = android.content.Intent(
+                            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            android.net.Uri.parse(
+                                "package:${com.hermesandroid.relay.BuildConfig.APPLICATION_ID}"
+                            ),
+                        ).apply {
+                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(intent)
+                    }
+                    voiceViewModel.clearPermissionDeniedCallout()
+                },
+                // === END v0.4.1 ===
             )
         }
         } // end Box
