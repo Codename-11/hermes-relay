@@ -664,12 +664,13 @@ def maybe_install_middleware(app: Any, adapter: Any) -> bool:
         )
         return False
 
-    # Insert the middleware.  aiohttp stores middlewares as a tuple on
-    # app._middlewares (frozen at __init__).  We mutate it directly since
-    # the app hasn't been frozen by AppRunner.setup() yet.
+    # Insert the middleware.  aiohttp stores middlewares as a FrozenList on
+    # app._middlewares; it's still mutable here because AppRunner.setup()
+    # (which calls .freeze()) hasn't run yet.  Append in place so the
+    # container type is preserved for the later freeze() call — replacing
+    # it with a tuple causes `'tuple' object has no attribute 'freeze'`.
     try:
-        existing = getattr(app, "_middlewares", ())
-        app._middlewares = (*existing, middleware)
+        app._middlewares.append(middleware)
     except Exception as exc:
         logger.warning(
             "hermes_relay_bootstrap: failed to install command middleware "
