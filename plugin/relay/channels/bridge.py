@@ -41,6 +41,8 @@ import json
 import logging
 import time
 import uuid
+from collections import deque
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from aiohttp import web
@@ -50,9 +52,54 @@ logger = logging.getLogger(__name__)
 
 RESPONSE_TIMEOUT = 30.0  # seconds — matches legacy android_relay._RESPONSE_TIMEOUT
 
+# Keys whose values must never appear in the ring buffer. Matched
+# case-insensitively against the full key name.
+_REDACT_KEYS = frozenset({"password", "token", "secret", "otp", "bearer"})
+
+# Cap for the recent-commands ring buffer. Sized so a single phone doing
+# sustained bridge activity can't grow the relay's heap without bound.
+RECENT_COMMANDS_MAX = 100
+
 
 class BridgeError(Exception):
     """Raised when a bridge command cannot be dispatched or times out."""
+
+
+def _redact_params(value: Any) -> Any:
+    """Return a copy of ``value`` with any values under sensitive keys
+    replaced with ``"[redacted]"``. Recurses into nested dicts and lists.
+    """
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            if isinstance(k, str) and k.lower() in _REDACT_KEYS:
+                out[k] = "[redacted]"
+            else:
+                out[k] = _redact_params(v)
+        return out
+    if isinstance(value, list):
+        return [_redact_params(v) for v in value]
+    return value
+
+
+@dataclass
+class BridgeCommandRecord:
+    """Audit entry for a single bridge command, stored in the ring buffer.
+
+    All fields are JSON-serializable so ``get_recent()`` can return dicts
+    suitable for the dashboard activity feed.
+    """
+
+    request_id: str
+    method: str
+    path: str
+    params: dict[str, Any] = field(default_factory=dict)
+    sent_at: float = 0.0  # epoch milliseconds
+    response_status: int | None = None
+    result_summary: str | None = None
+    error: str | None = None
+    # One of: pending, executed, blocked, confirmed, timeout, error
+    decision: str = "pending"
 
 
 def _envelope(msg_type: str, payload: dict[str, Any], msg_id: str | None = None) -> str:
@@ -102,6 +149,13 @@ class BridgeHandler:
         self.latest_status: dict[str, Any] | None = None
         self.last_seen_at: float | None = None
         # === END PHASE3-status ===
+
+        # Bounded ring buffer of recent commands, feeding the dashboard
+        # Bridge Activity tab. Append on dispatch (pending), mutate in
+        # place on response/timeout. Eviction is automatic via maxlen.
+        self.recent_commands: deque[BridgeCommandRecord] = deque(
+            maxlen=RECENT_COMMANDS_MAX
+        )
 
     # ── Envelope dispatch ────────────────────────────────────────────────
 
@@ -177,11 +231,25 @@ class BridgeHandler:
             json.dumps(body) if body else "{}",
         )
 
+        # Record the command in the ring buffer BEFORE dispatch so it's
+        # visible to the dashboard even if the phone never responds.
+        record = BridgeCommandRecord(
+            request_id=request_id,
+            method=method,
+            path=path,
+            params=_redact_params(params or {}),
+            sent_at=time.time() * 1000.0,
+            decision="pending",
+        )
+        self.recent_commands.append(record)
+
         try:
             await ws.send_str(_envelope("bridge.command", command_payload, request_id))
         except Exception as exc:
             async with self._lock:
                 self.pending.pop(request_id, None)
+            record.decision = "error"
+            record.error = f"Failed to send command to phone: {exc}"
             logger.error("bridge: failed to send command: %s", exc)
             raise BridgeError(f"Failed to send command to phone: {exc}") from exc
 
@@ -190,6 +258,8 @@ class BridgeHandler:
         except asyncio.TimeoutError:
             async with self._lock:
                 self.pending.pop(request_id, None)
+            record.decision = "timeout"
+            record.error = f"Phone did not respond within {RESPONSE_TIMEOUT:.0f}s"
             logger.warning(
                 "bridge: phone did not respond within %.0fs for %s %s",
                 RESPONSE_TIMEOUT,
@@ -217,6 +287,12 @@ class BridgeHandler:
         async with self._lock:
             future = self.pending.pop(request_id, None)
 
+        # Mutate the matching activity record, if any. Independent of the
+        # pending-future lookup so a late response after a timeout still
+        # updates the audit trail (though typically handle_command will
+        # have already flipped decision="timeout").
+        self._update_record_from_response(request_id, payload)
+
         if future is None:
             # Timed out or cancelled — drop silently.
             logger.debug("bridge: no pending future for request_id=%s", request_id)
@@ -224,6 +300,68 @@ class BridgeHandler:
 
         if not future.done():
             future.set_result(payload)
+
+    def _update_record_from_response(
+        self, request_id: str, payload: dict[str, Any]
+    ) -> None:
+        """Mutate the ring-buffer entry for ``request_id`` with the
+        outcome derived from ``payload``.
+        """
+        record: BridgeCommandRecord | None = None
+        for entry in self.recent_commands:
+            if entry.request_id == request_id:
+                record = entry
+                break
+        if record is None:
+            return
+
+        status = payload.get("status")
+        if isinstance(status, int):
+            record.response_status = status
+
+        result = payload.get("result")
+        error_msg = payload.get("error")
+
+        # Surface a short summary for the feed. Prefer an explicit
+        # ``error`` on non-2xx responses, else stringify the result.
+        if isinstance(error_msg, str) and error_msg:
+            record.error = error_msg
+        if result is not None and record.result_summary is None:
+            try:
+                summary = json.dumps(result, default=str)
+            except (TypeError, ValueError):
+                summary = str(result)
+            if len(summary) > 500:
+                summary = summary[:497] + "..."
+            record.result_summary = summary
+
+        # Decision derivation:
+        #   * blocked:   payload or result says so (safety rail denial)
+        #   * confirmed: response is a confirmation ack
+        #   * error:     status >= 400
+        #   * executed:  everything else with a status set
+        blocked = False
+        confirmed = False
+        if isinstance(result, dict):
+            if result.get("blocked") is True:
+                blocked = True
+            if result.get("confirmation_required") is True or result.get(
+                "confirmed"
+            ) is True:
+                confirmed = True
+        if payload.get("blocked") is True:
+            blocked = True
+        if isinstance(error_msg, str) and "safety" in error_msg.lower():
+            blocked = True
+
+        if blocked:
+            record.decision = "blocked"
+        elif confirmed:
+            record.decision = "confirmed"
+        elif isinstance(status, int) and status >= 400:
+            record.decision = "error"
+        elif isinstance(status, int):
+            record.decision = "executed"
 
     async def handle_status(
         self,
@@ -243,6 +381,25 @@ class BridgeHandler:
         self.last_seen_at = time.time()
         # === END PHASE3-status ===
         logger.debug("bridge: status update %s", self.phone_status)
+
+    # ── Activity feed ───────────────────────────────────────────────────
+
+    def get_recent(self, limit: int = RECENT_COMMANDS_MAX) -> list[dict[str, Any]]:
+        """Return the most recent command records, newest-first.
+
+        Each entry is a fresh dict so callers can't accidentally mutate
+        internal state. ``limit`` is clamped to the buffer size.
+        """
+        if limit <= 0:
+            return []
+        out: list[dict[str, Any]] = []
+        # reversed() on a deque is O(n) and yields newest-first since we
+        # append on dispatch.
+        for record in reversed(self.recent_commands):
+            out.append(asdict(record))
+            if len(out) >= limit:
+                break
+        return out
 
     # ── Lifecycle ───────────────────────────────────────────────────────
 
