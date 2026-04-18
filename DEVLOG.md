@@ -1,5 +1,30 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-18 — v0.5.1 release prep: lint iterations + VoicePlayerTest deferred
+
+**PR #31** (`feature/voice-quality-pass` → `main`, v0.5.1 candidate) — CI iteration, no app-behavior changes beyond the preceding v0.5.1 feature commits.
+
+**Lint round.** PR CI first failed on three latent Android lint errors, which I fixed one-at-a-time because Android lint prints only the first failure before aborting:
+1. `UnsafeOptInUsageError` at `VoicePlayer.kt:88` — Media3 `ExoPlayer.audioSessionId` is `@UnstableApi`. Fix: class-level `@OptIn(UnstableApi::class)`. First attempt used Kotlin's `@OptIn` (implicit import) which Android lint's `UnsafeOptInUsageError` rule does not recognize; had to explicitly `import androidx.annotation.OptIn` to get the AndroidX variant. This distinction is non-obvious from the error text.
+2. Second lint pass then surfaced `FlowOperatorInvokedInComposition` at `RelayApp.kt:421` and `:424` — pre-existing on `main`, masked behind the first-failure abort. Fix: wrap `.map { }` chains in `remember(repo) { repo.settings.map { ... } }` so the Flow is stable across recompositions.
+3. Bailey called out that I should have run `./gradlew lint` locally before pushing instead of burning CI iterations. Codified the rule in CLAUDE.md step 4 of "Typical Dev Loop" + a cross-session feedback memory. Both changes land in PR #31.
+
+**Test round — VoicePlayerTest deferred.** The voice-quality-pass branch added `VoicePlayerTest.kt` with `mockkConstructor(ExoPlayer.Builder::class)` + `mockk<ExoPlayer>()`. Both trip MockK's Objenesis instantiator into loading Media3's `ExoPlayer` class, whose static init chain references `android.os.Looper` — unavailable in JVM unit tests. CI hung for 7+ minutes before we cancelled.
+
+Tried three fixes:
+
+1. **Factory seam on `VoicePlayer`** — added `exoPlayerFactory: (Context) -> ExoPlayer = ::defaultExoPlayer` constructor param so tests inject a mock directly instead of instrumenting `Builder`. Production behavior identical; listener attach moved from `.also { player -> }` to `init { }` so it binds to the stored `exoPlayer` field. This is kept — clean code win regardless of test outcome.
+
+2. **Robolectric 4.14.1 dependency + `@RunWith(RobolectricTestRunner::class)` + `@Config(sdk = [34])`** — gives the test JVM shadow Android framework classes. Standalone `./gradlew test --tests VoicePlayerTest` passed in 2m53s, but the full unit test suite hung indefinitely. Reverted — see below.
+
+3. **`forkEvery = 1`** on the unit test task to isolate Robolectric's classloader per test class — hypothesis was that Robolectric's shadow framework was bleeding into sibling test JVMs and deadlocking them on coroutine/async code. Full suite hung anyway. Reverted.
+
+**Decision.** `@Ignore` VoicePlayerTest for v0.5.1 with strong tracking — kdoc TODO + this DEVLOG entry + `deferred_items.md` + a GitHub issue linking to commit `456f91e` which is the last state where Robolectric was wired. Follow-up PR will likely move VoicePlayer tests into a separate source set (`src/robolectricTest/kotlin/`) with its own Gradle `Test` task so it doesn't contaminate the main suite's JVM. Kept the `VoicePlayer` factory seam refactor (pure win). Reverted Robolectric dep + `testOptions` config to keep main lean for v0.5.1; the follow-up PR adds them back with the source-set split.
+
+**Principle.** Bailey flagged during this session: "If we ignore or defer any tests to bypass, document in TODO so we don't forget." Honored via four tracking surfaces (code, DEVLOG, memory, GitHub issue). The alternative — blocking v0.5.1 on test-infra iteration — isn't a better outcome because the app works on device and the tests for it were written on a bad premise (trying to unit-test Media3 without Android framework on the classpath).
+
+**Next session.** Open the follow-up PR to finish the Robolectric wiring: separate source set, dedicated Gradle task, CI step calling the new task. Then un-`@Ignore` VoicePlayerTest.
+
 ## 2026-04-18 — Silence auto-stop + bootstrap middleware fix
 
 **Context.** Bailey asked about STT / silence detection while reviewing the voice stack post-barge-in. Turned out the uplink mic path has no endpointing at all — `VoiceRecorder` uses `MediaRecorder` with `AudioSource.MIC` (no AEC/NS, no VAD), and `stopListening()` has exactly one caller: `ChatScreen.kt:1319` on mic release. The `VoicePreferences.silenceThresholdMs` preference was wired to a Settings slider and persisted to DataStore but **never consumed** by any code. Cosmetic setting. Worst case was Continuous mode: after TTS finishes, it re-arms the mic and waits forever for a manual stop — ambient noise gets included, user walks away, recording goes on indefinitely.
