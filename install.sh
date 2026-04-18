@@ -243,7 +243,7 @@ banner() {
     printf "\n"
     printf "  ${C_BOLD}${C_CYAN}╭─────────────────────────────────────────╮${C_RESET}\n"
     printf "  ${C_BOLD}${C_CYAN}│${C_RESET}  ${C_BOLD}Hermes-Relay Installer${C_RESET}                 ${C_BOLD}${C_CYAN}│${C_RESET}\n"
-    printf "  ${C_BOLD}${C_CYAN}│${C_RESET}  ${C_DIM}Phase 3 — Bridge channel + status tool${C_RESET}  ${C_BOLD}${C_CYAN}│${C_RESET}\n"
+    printf "  ${C_BOLD}${C_CYAN}│${C_RESET}  ${C_DIM}Plugin + relay + bootstrap + skill${C_RESET}      ${C_BOLD}${C_CYAN}│${C_RESET}\n"
     printf "  ${C_BOLD}${C_CYAN}╰─────────────────────────────────────────╯${C_RESET}\n"
     printf "\n"
     printf "    ${C_DIM}%-12s${C_RESET} %s\n" "Repo:"     "$REPO_URL ${C_DIM}($BRANCH)${C_RESET}"
