@@ -3,6 +3,7 @@ package com.hermesandroid.relay.audio
 import android.content.Context
 import android.media.audiofx.Visualizer
 import android.util.Log
+import androidx.annotation.OptIn
 import androidx.core.net.toUri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
