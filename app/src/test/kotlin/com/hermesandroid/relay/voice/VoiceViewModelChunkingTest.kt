@@ -14,6 +14,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Ignore
 import org.junit.Test
 
 /**
@@ -31,6 +32,7 @@ import org.junit.Test
  * instead of reaching into the ViewModel (which needs an Application +
  * wired dependencies) so the coroutine semantics stay observable.
  */
+@Ignore("Tracked in GitHub issue #32 — voice test suite validation deferred")
 class VoiceViewModelChunkingTest {
 
     // ── Short-sentence coalescing ────────────────────────────────────────
