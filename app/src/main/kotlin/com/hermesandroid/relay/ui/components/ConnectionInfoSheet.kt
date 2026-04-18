@@ -60,8 +60,10 @@ import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.network.ChatMode
 import com.hermesandroid.relay.network.ConnectionState
+import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.launch
 
 // ---------------------------------------------------------------------------
@@ -613,6 +615,16 @@ fun AgentInfoSheet(
 
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
+    val snackbar = LocalSnackbarHost.current
+
+    // Transient confirmation when the user picks a different profile or
+    // personality from inside the sheet. Kept short — these fire on the
+    // tap, so a 1-line toast is enough; the UI state update on the next
+    // chat turn is the real confirmation. Suspend snackbar dispatch goes
+    // through the local coroutine scope so it doesn't block the radio tap.
+    fun toast(message: String) {
+        scope.launch { snackbar.showSnackbar(message) }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -650,7 +662,12 @@ fun AgentInfoSheet(
                         secondary = "Server-configured model",
                         selected = selectedProfile == null,
                         enabled = !isStreaming,
-                        onSelect = { connectionViewModel.selectProfile(null) },
+                        onSelect = {
+                            if (selectedProfile != null) {
+                                connectionViewModel.selectProfile(null)
+                                toast("Using default model")
+                            }
+                        },
                     )
 
                     agentProfiles.forEach { profile ->
@@ -660,7 +677,18 @@ fun AgentInfoSheet(
                             tertiary = profile.description.takeIf { it.isNotBlank() },
                             selected = selectedProfile?.name == profile.name,
                             enabled = !isStreaming,
-                            onSelect = { connectionViewModel.selectProfile(profile) },
+                            onSelect = {
+                                if (selectedProfile?.name != profile.name) {
+                                    connectionViewModel.selectProfile(profile)
+                                    val display = profile.name.replaceFirstChar { it.uppercase() }
+                                    val suffix = if (profile.systemMessage?.isNotBlank() == true) {
+                                        " — model + SOUL applied"
+                                    } else {
+                                        " — model applied"
+                                    }
+                                    toast("Switched to $display$suffix")
+                                }
+                            },
                         )
                     }
 
@@ -703,7 +731,14 @@ fun AgentInfoSheet(
                     secondary = null,
                     selected = selectedPersonality == "default",
                     enabled = !isStreaming,
-                    onSelect = { chatViewModel.selectPersonality("default") },
+                    onSelect = {
+                        if (selectedPersonality != "default") {
+                            chatViewModel.selectPersonality("default")
+                            if (!profileOverridesPersonality) {
+                                toast("Using default personality")
+                            }
+                        }
+                    },
                 )
 
                 personalityNames
@@ -714,7 +749,15 @@ fun AgentInfoSheet(
                             secondary = null,
                             selected = selectedPersonality == name,
                             enabled = !isStreaming,
-                            onSelect = { chatViewModel.selectPersonality(name) },
+                            onSelect = {
+                                if (selectedPersonality != name) {
+                                    chatViewModel.selectPersonality(name)
+                                    if (!profileOverridesPersonality) {
+                                        val display = name.replaceFirstChar { it.uppercase() }
+                                        toast("Personality: $display")
+                                    }
+                                }
+                            },
                         )
                     }
             }
