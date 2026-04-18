@@ -178,11 +178,12 @@ fun SessionInfoSheet(
     val relayUrl by connectionViewModel.relayUrl.collectAsState()
     val relayConnectionState by connectionViewModel.relayConnectionState.collectAsState()
     val pairingCode by connectionViewModel.pairingCode.collectAsState()
-    // Note: this is the list of server-issued *session labels* pulled from
-    // the `auth.ok` payload (e.g. `["chat", "terminal"]`) — not the list of
-    // multi-connection entries. The field was renamed on AuthManager to
-    // avoid that exact confusion; the local is kept as `sessionLabels`.
-    val sessionLabels by connectionViewModel.authManager.sessionLabels.collectAsState()
+    // Pass 2 (2026-04-18): the old `sessionLabels: List<String>` field was
+    // replaced by a structured `agentProfiles: List<Profile>` on the VM
+    // (sourced from `auth.ok`'s `profiles` entry, whose items are objects
+    // with {name, model, description}). Render the profile names here so
+    // the user can confirm which agents the server advertised.
+    val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val pairedSession by connectionViewModel.currentPairedSession.collectAsState()
 
     ModalBottomSheet(
@@ -265,8 +266,12 @@ fun SessionInfoSheet(
             )
 
             InfoRow(
-                label = "Session labels",
-                value = if (sessionLabels.isEmpty()) "(none)" else sessionLabels.joinToString(", ")
+                label = "Agent profiles",
+                value = if (agentProfiles.isEmpty()) {
+                    "(none)"
+                } else {
+                    agentProfiles.joinToString(", ") { it.name }
+                }
             )
 
             // Security overhaul (2026-04-11) — show expiry + grants + storage.

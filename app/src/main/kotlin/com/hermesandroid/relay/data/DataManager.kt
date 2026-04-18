@@ -83,11 +83,14 @@ class DataManager(
      * Export app settings to a JSON string.
      * Does NOT include session tokens or device IDs (security).
      *
-     * The `sessionLabels` parameter is the legacy session-labels list
-     * sourced from [com.hermesandroid.relay.auth.AuthManager.sessionLabels]
-     * and is kept only for call-site signature stability — it is not
-     * written to the backup. The backup's [AppBackup.connections] comes
-     * from the injected [connectionStore] snapshot.
+     * The `sessionLabels` parameter is a legacy dead parameter — it was
+     * previously sourced from `AuthManager.sessionLabels`, a field removed
+     * in Pass 2 of the multi-connection rollout (2026-04-18) when it was
+     * replaced by the structured `agentProfiles: StateFlow<List<Profile>>`.
+     * Kept only for call-site signature stability; not written to the
+     * backup. The backup's [AppBackup.connections] comes from the
+     * injected [connectionStore] snapshot. Callers should pass
+     * `emptyList()`. Will be removed in a later pass.
      */
     suspend fun exportSettings(
         serverUrl: String?,

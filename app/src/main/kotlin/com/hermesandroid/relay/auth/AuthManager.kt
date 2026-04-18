@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.PairingPreferences
+import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.models.Envelope
 import kotlinx.coroutines.CoroutineScope
@@ -16,6 +17,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -89,6 +91,38 @@ class AuthManager(
          * a real connection id through.
          */
         const val CONNECTION_ID_LEGACY: String = "legacy"
+
+        /**
+         * Parse the `profiles` array from an `auth.ok` payload into a list of
+         * [Profile] entries. Extracted out of [handleAuthOk] so it's
+         * exercisable from a pure JVM unit test without constructing an
+         * Android [Context] / [kotlinx.coroutines.CoroutineScope].
+         *
+         * Defensive rules, in order:
+         *  - Non-[JsonObject] entries (stray strings, numbers) are dropped.
+         *  - An entry missing `name` is dropped — the picker has no label
+         *    to render for it.
+         *  - `model` defaults to `"unknown"` so a profile without a model
+         *    still renders as a selectable chip (server misconfiguration,
+         *    but we don't want to silently drop the only profile).
+         *  - `description` defaults to `""`.
+         */
+        fun parseAgentProfiles(array: JsonArray): List<Profile> {
+            return array.mapNotNull { entry ->
+                val obj = entry as? JsonObject ?: return@mapNotNull null
+                val name = obj["name"]?.jsonPrimitive?.contentOrNull
+                    ?: return@mapNotNull null
+                val model = obj["model"]?.jsonPrimitive?.contentOrNull
+                    ?: "unknown"
+                val description = obj["description"]?.jsonPrimitive?.contentOrNull
+                    ?: ""
+                Profile(
+                    name = name,
+                    model = model,
+                    description = description,
+                )
+            }
+        }
     }
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -245,18 +279,23 @@ class AuthManager(
     private var pendingGrants: Map<String, Long>? = null
 
     /**
-     * Server-issued session labels from the `auth.ok` payload's `profiles`
-     * field. This field predates the multi-connection work — it carries short
-     * human labels the RELAY tags sessions with, NOT the multi-server
-     * connections modeled by [com.hermesandroid.relay.data.Connection].
+     * Server-advertised agent profiles from the `auth.ok` payload's
+     * `profiles` field. Each entry corresponds to a named agent config in
+     * the server's `~/.hermes/config.yaml` (see Hermes's `_load_profiles`).
      *
-     * Renamed 2026-04-18 as part of the multi-connection rollout so the name
-     * no longer clashes with the [com.hermesandroid.relay.data.Connection]
-     * concept. Pass 2 will replace this with a proper parsed `agentProfiles`
-     * StateFlow backed by Hermes's agent-profile config.
+     * This replaces the old `_sessionLabels` field (2026-04-18, Pass 2).
+     * The previous code parsed each entry as a raw [String] via
+     * `it.jsonPrimitive.content`, which blew up silently on the real
+     * object-shaped payload the server actually sends — so the list was
+     * always empty in practice. [parseAgentProfiles] is the structured
+     * replacement.
+     *
+     * Exposed via [com.hermesandroid.relay.viewmodel.ConnectionViewModel.agentProfiles]
+     * to the profile picker UI. Empty when unpaired or when the server
+     * returned no `profiles` entry.
      */
-    private val _sessionLabels = MutableStateFlow<List<String>>(emptyList())
-    val sessionLabels: StateFlow<List<String>> = _sessionLabels.asStateFlow()
+    private val _agentProfiles = MutableStateFlow<List<Profile>>(emptyList())
+    val agentProfiles: StateFlow<List<Profile>> = _agentProfiles.asStateFlow()
 
     /**
      * Whether an API key is currently stored. Updated reactively by
@@ -622,10 +661,13 @@ class AuthManager(
 
                 val profilesArray = payload["profiles"]?.jsonArray
                 if (profilesArray != null) {
-                    _sessionLabels.value = profilesArray.map { it.jsonPrimitive.content }
+                    _agentProfiles.value = parseAgentProfiles(profilesArray)
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                // Replaces a silent `e.printStackTrace()` — that stack-trace-only
+                // handler is exactly why the broken `_sessionLabels` parser
+                // (stringifying object entries) sat undetected for so long.
+                Log.w(TAG, "auth.ok parse failed: ${e.message}", e)
             }
         }
     }

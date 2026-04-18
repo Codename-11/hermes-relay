@@ -19,6 +19,7 @@ import com.hermesandroid.relay.data.PairingPreferences
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.ConnectionStore
 import com.hermesandroid.relay.data.ConnectionValidation
+import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.relayDataStore
 import com.hermesandroid.relay.util.TailscaleDetector
 import com.hermesandroid.relay.network.ChannelMultiplexer
@@ -330,6 +331,41 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val currentPairedSession: StateFlow<PairedSession?> = _authManagerFlow
         .flatMapLatest { it.currentPairedSession }
         .stateIn(viewModelScope, SharingStarted.Eagerly, authManager.currentPairedSession.value)
+
+    // --- Agent profiles (Pass 2) -------------------------------------------
+    //
+    // Server-advertised named agent configs, flattened to a StateFlow the
+    // profile picker reads. Must flatMapLatest over [_authManagerFlow] for
+    // the same reason as [authState] / [pairingCode] — after a connection
+    // switch the underlying [AuthManager] instance is replaced and the
+    // public flow needs to repoint at the new manager's backing state.
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val agentProfiles: StateFlow<List<Profile>> = _authManagerFlow
+        .flatMapLatest { it.agentProfiles }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, authManager.agentProfiles.value)
+
+    /**
+     * User's current profile pick for the chat send pipeline. `null` means
+     * "no explicit pick — let the server fall back to its configured
+     * default profile." Reset to `null` on every connection switch (see
+     * [init]) because profiles are advertised per-server and a selection
+     * made against connection A has no defined meaning on connection B.
+     *
+     * Worker C (ChatViewModel + ChatScreen) is the sole mutator via
+     * [selectProfile] and the sole reader — this class just owns the
+     * StateFlow and the reset lifecycle.
+     */
+    private val _selectedProfile = MutableStateFlow<Profile?>(null)
+    val selectedProfile: StateFlow<Profile?> = _selectedProfile.asStateFlow()
+
+    /**
+     * Set (or clear, with `null`) the active profile pick. See
+     * [selectedProfile] for scope + reset semantics. Pure write — no
+     * network traffic, no persistence.
+     */
+    fun selectProfile(profile: Profile?) {
+        _selectedProfile.value = profile
+    }
 
     // --- Paired devices list (GET /sessions) -------------------------------
     //
@@ -1174,6 +1210,18 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 _cachedMediaCapMb = settings.cachedMediaCapMb
             }
         }
+
+        // Reset the profile pick on every connection switch. Profiles are
+        // advertised per-server in `auth.ok`, so carrying a selection
+        // across a switch would dangle — connection B might not have (or
+        // might have a different) profile by that name, and the chat send
+        // pipeline would quietly ask the new server for a profile it
+        // doesn't recognize.
+        viewModelScope.launch {
+            connectionSwitchEvents.collect {
+                _selectedProfile.value = null
+            }
+        }
     }
 
     // --- Revalidation ----------------------------------------------------
@@ -1683,7 +1731,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 serverUrl = _relayUrl.value,
                 theme = theme.value,
                 onboardingCompleted = _onboardingCompleted.value,
-                sessionLabels = authManager.sessionLabels.value,
+                // Pass 2: AuthManager.sessionLabels is gone — replaced by
+                // `agentProfiles: StateFlow<List<Profile>>`. The DataManager
+                // param is marked @Suppress("UNUSED_PARAMETER") and isn't
+                // written to the backup anyway, so an empty list keeps the
+                // signature stable until the param is removed in a later pass.
+                sessionLabels = emptyList(),
                 apiServerUrl = _apiServerUrl.value,
                 relayUrl = _relayUrl.value
             )
