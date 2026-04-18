@@ -417,12 +417,18 @@ fun RelayApp() {
         val bridgeAppCtx = androidx.compose.ui.platform.LocalContext.current.applicationContext
         val bridgePrefsRepo = remember(bridgeAppCtx) { BridgePreferencesRepository(bridgeAppCtx) }
         val safetyPrefsRepo = remember(bridgeAppCtx) { BridgeSafetyPreferencesRepository(bridgeAppCtx) }
-        val masterEnabled by bridgePrefsRepo.settings
-            .map { it.masterEnabled }
-            .collectAsState(initial = false)
-        val unattendedEnabled by safetyPrefsRepo.settings
-            .map { it.unattendedAccessEnabled }
-            .collectAsState(initial = false)
+        // Stabilize the mapped flows in `remember` — invoking `.map` directly
+        // inside composition trips the `FlowOperatorInvokedInComposition` lint
+        // rule because a fresh Flow instance would be created on every
+        // recomposition, defeating collectAsState's state-preservation.
+        val masterEnabledFlow = remember(bridgePrefsRepo) {
+            bridgePrefsRepo.settings.map { it.masterEnabled }
+        }
+        val unattendedEnabledFlow = remember(safetyPrefsRepo) {
+            safetyPrefsRepo.settings.map { it.unattendedAccessEnabled }
+        }
+        val masterEnabled by masterEnabledFlow.collectAsState(initial = false)
+        val unattendedEnabled by unattendedEnabledFlow.collectAsState(initial = false)
         // Sideload-only: googlePlay has no wake lock and the unattended
         // flag never gets written there — gating here is defence in depth
         // and makes the check cheap via R8 in release builds.
