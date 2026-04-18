@@ -253,6 +253,36 @@ class ChatViewModel : ViewModel() {
         fetchPersonalities()
     }
 
+    /**
+     * Multi-profile: subscribe to
+     * [com.hermesandroid.relay.viewmodel.ConnectionViewModel.profileSwitchEvents]
+     * so a profile switch wipes per-profile chat state (in-flight stream,
+     * message list, session id, queued sends) before the rebuilt API
+     * client starts serving the new profile.
+     *
+     * Idempotent — called once at RelayApp composition time. The collect
+     * runs on [viewModelScope] so it's torn down with the VM.
+     */
+    fun observeProfileSwitches(events: SharedFlow<String>) {
+        viewModelScope.launch {
+            events.collect { newProfileId ->
+                intentionallyCancelled = true
+                activeStream?.cancel()
+                activeStream = null
+                _queuedMessages.value = emptyList()
+                _pendingAttachments.value = emptyList()
+                chatHandler?.let { handler ->
+                    handler.clearMessages()
+                    handler.setSessionId(null)
+                }
+                // Forward the null session id to the persisted
+                // last-session-id slot so the old profile's session
+                // doesn't bleed into the new profile on next launch.
+                onSessionChanged?.invoke(null)
+            }
+        }
+    }
+
     private fun fetchPersonalities() {
         val client = apiClient ?: return
         viewModelScope.launch {

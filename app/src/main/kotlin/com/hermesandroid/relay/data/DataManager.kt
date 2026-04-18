@@ -23,7 +23,17 @@ import java.io.File
  * Backup format is a JSON file containing settings and connection info.
  * Tokens are NOT included in backups for security.
  */
-class DataManager(private val context: Context) {
+class DataManager(
+    private val context: Context,
+    /**
+     * Multi-profile: the [ProfileStore] singleton whose snapshot gets
+     * written into [AppBackup.profiles] on export. Nullable for
+     * legacy/compat call sites that construct a [DataManager] without
+     * profile support; a null store just means "export an empty profiles
+     * list" (equivalent to v2 behavior).
+     */
+    private val profileStore: ProfileStore? = null,
+) {
 
     companion object {
         private const val TAG = "DataManager"
@@ -70,11 +80,11 @@ class DataManager(private val context: Context) {
      * Export app settings to a JSON string.
      * Does NOT include session tokens or device IDs (security).
      *
-     * TODO(worker-b): thread a [ProfileStore] through and populate
-     * [AppBackup.profiles] from its current snapshot. Left empty today so
-     * this change doesn't ripple into the DI/construction site in
-     * [com.hermesandroid.relay.viewmodel.ConnectionViewModel], which Worker B
-     * owns.
+     * The `profiles` parameter is the legacy session-labels list sourced from
+     * [com.hermesandroid.relay.auth.AuthManager.sessionLabels] and is kept
+     * only for call-site signature stability — it is not written to the
+     * backup. The backup's [AppBackup.profiles] comes from the injected
+     * [profileStore] snapshot (the new multi-profile connection definitions).
      */
     suspend fun exportSettings(
         serverUrl: String?,
@@ -84,6 +94,14 @@ class DataManager(private val context: Context) {
         apiServerUrl: String? = null,
         relayUrl: String? = null
     ): String {
+        val profileSnapshot = profileStore?.profiles?.value
+        if (profileStore == null) {
+            Log.w(
+                TAG,
+                "exportSettings: no ProfileStore wired — writing empty profiles list " +
+                    "(caller constructed DataManager without the multi-profile ctor arg)",
+            )
+        }
         val backup = AppBackup(
             version = 3,
             serverUrl = serverUrl, // legacy compat
@@ -91,7 +109,7 @@ class DataManager(private val context: Context) {
             relayUrl = relayUrl,
             theme = theme,
             onboardingCompleted = onboardingCompleted,
-            profiles = emptyList(),
+            profiles = profileSnapshot ?: emptyList(),
             exportedAt = System.currentTimeMillis()
         )
         return json.encodeToString(backup)

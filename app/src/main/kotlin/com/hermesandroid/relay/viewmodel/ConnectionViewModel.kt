@@ -16,6 +16,8 @@ import com.hermesandroid.relay.auth.PairedSession
 import com.hermesandroid.relay.data.DataManager
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.PairingPreferences
+import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.ProfileStore
 import com.hermesandroid.relay.data.relayDataStore
 import com.hermesandroid.relay.util.TailscaleDetector
 import com.hermesandroid.relay.network.ChannelMultiplexer
@@ -39,9 +41,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -98,24 +102,67 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // Relay (bridge/terminal)
     val multiplexer = ChannelMultiplexer()
     val chatHandler = ChatHandler()
+
+    // Multi-profile: the ProfileStore is the source of truth for the list
+    // of Hermes connection profiles and which one is active. Constructed
+    // before AuthManager so the init-time migrateLegacyProfileIfNeeded()
+    // call can see the existing URL preferences and seed profile 0.
+    val profileStore: ProfileStore = ProfileStore(application)
+
+    /**
+     * Multi-profile: id of the currently-active [Profile], or null if no
+     * profile has been seeded yet (cold boot before migrateLegacyProfileIfNeeded
+     * runs). Exposed through [profileStore] directly for cheap access.
+     */
+    val profiles: StateFlow<List<Profile>> = profileStore.profiles
+    val activeProfile: StateFlow<Profile?> = profileStore.activeProfile
+    val activeProfileId: StateFlow<String?> = profileStore.activeProfileId
+
     // AuthManager owns the CertPinStore; ConnectionManager takes a snapshot
     // of the store's current pins on every connect so re-pair wipes land.
     // AuthManager must be constructed before ConnectionManager so the pin
     // store is available for the certificate pinner.
-    val authManager = AuthManager(application, multiplexer, viewModelScope)
+    //
+    // Multi-profile: AuthManager is now a `var` — switchProfile() rebuilds
+    // it bound to the newly-active profile id. Every call site that touches
+    // this field goes through `this.authManager` so the reconnect gate, the
+    // multiplexer sendCallback, and the media-projection screen-capture
+    // token provider all read the current instance after a swap.
+    //
+    // Initial value uses the active profile id if ProfileStore has already
+    // hydrated by the time this field initializer runs — which it normally
+    // hasn't, since hydration is async. We fall back to the legacy sentinel
+    // so the very first boot before migration mid-flight still binds to the
+    // legacy token store. The init block below then observes the first
+    // profile emission and rebuilds against the migrated id.
+    var authManager: AuthManager = AuthManager(
+        context = application,
+        multiplexer = multiplexer,
+        scope = viewModelScope,
+        profileId = AuthManager.PROFILE_ID_LEGACY,
+    )
+        private set
+
     // Pass hasPairContext as the reconnect gate — the auto-reconnect loop
     // inside ConnectionManager bypasses ConnectionViewModel.connectRelay's
     // primary gate, so we plumb the same AuthManager check directly into
     // the internal scheduler. Without this, clearSession leaves a live
     // reconnect loop that fires stale auth envelopes and rate-limits us.
+    //
+    // Multi-profile: the gate reads `this.authManager.hasPairContext` on
+    // every invocation so a profile switch's freshly-built AuthManager is
+    // honored without having to plumb a new gate through ConnectionManager.
+    // CertPinStore is process-wide (not per-profile) so holding a reference
+    // to the legacy AuthManager's pin store is still correct after a swap.
     private val connectionManager = ConnectionManager(
         multiplexer,
         authManager.certPinStore,
         reconnectGate = { authManager.hasPairContext }
     )
 
-    // Data management
-    val dataManager = DataManager(application)
+    // Data management — ProfileStore flows through so exportSettings() can
+    // include the current multi-profile snapshot in the backup blob.
+    val dataManager = DataManager(application, profileStore)
 
     // --- Inbound media pipeline ------------------------------------------------
     //
@@ -580,6 +627,78 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     )
     // === END PHASE3-accessibility (plus safety-rails wiring above) ===
 
+    // --- Profile switch orchestration --------------------------------------
+    //
+    // Multi-profile v0.5.0: the coordinator owns the heavy swap sequence
+    // (cancel stream → stop voice → disconnect WSS → rebuild AuthManager +
+    // api client → reconnect WSS if paired). Extracted so the swap is
+    // unit-testable without having to mock AndroidViewModel / DataStore.
+    private val profileSwitchCoordinator = ProfileSwitchCoordinator(
+        profileStore = profileStore,
+        connectionManager = connectionManager,
+        scope = viewModelScope,
+        authManagerFactory = { pid ->
+            AuthManager(
+                context = application,
+                multiplexer = multiplexer,
+                scope = viewModelScope,
+                profileId = pid,
+            )
+        },
+        installAuthManager = { am -> authManager = am },
+        setApiServerUrl = { url -> _apiServerUrl.value = url },
+        setRelayUrl = { url -> _relayUrl.value = url },
+        persistUrls = { apiUrl, relayUrl ->
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_API_SERVER_URL] = apiUrl
+                prefs[KEY_RELAY_URL] = relayUrl
+            }
+        },
+        rebuildApiClient = { rebuildApiClient() },
+    )
+
+    /**
+     * Multi-profile: emits the id of the newly-active profile right after
+     * the connection teardown half of the switch completes but before the
+     * rebuilt API/relay clients start serving requests. [ChatViewModel]
+     * subscribes to clear its per-profile local state (messages, session
+     * id, queued sends).
+     */
+    val profileSwitchEvents: SharedFlow<String> = profileSwitchCoordinator.profileSwitchEvents
+
+    /**
+     * Multi-profile: start the full profile swap sequence. See
+     * [ProfileSwitchCoordinator] for the ordered steps and why the order
+     * matters. No-ops when [profileId] equals the current
+     * [activeProfileId]. Fires and forgets — UI watches [activeProfile]
+     * for the completed state.
+     */
+    fun switchProfile(profileId: String) {
+        profileSwitchCoordinator.switchProfile(profileId)
+    }
+
+    /**
+     * Multi-profile: RelayApp calls this at composition time with a
+     * callback that tears down [ChatViewModel]'s in-flight stream. The
+     * coordinator invokes it first in the switch sequence so the stream
+     * doesn't keep scribbling into `_messages` after the handler's API
+     * client reference gets rebuilt under it.
+     */
+    fun registerStreamCancelCallback(callback: () -> Unit) {
+        profileSwitchCoordinator.registerStreamCancelCallback(callback)
+    }
+
+    /**
+     * Multi-profile: RelayApp calls this at composition time with a
+     * callback that stops any active voice turn. Kept as a registration
+     * hook (rather than a direct VoiceViewModel field) so
+     * [ConnectionViewModel] doesn't take on a hard voice dependency —
+     * voice is an optional feature wired per build flavor.
+     */
+    fun registerVoiceStopCallback(callback: () -> Unit) {
+        profileSwitchCoordinator.registerVoiceStopCallback(callback)
+    }
+
     init {
         // Wire multiplexer to connection manager (for relay/bridge/terminal)
         multiplexer.setSendCallback { envelope ->
@@ -693,6 +812,38 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         com.hermesandroid.relay.notifications.HermesNotificationCompanion
             .multiplexer = multiplexer
         // === END PHASE3-notif-listener-followup ===
+
+        // Multi-profile: on cold boot, if no profiles are persisted yet,
+        // seed profile 0 from whatever URLs/session id the pre-multi-profile
+        // install left in DataStore. Idempotent — a no-op once profile 0
+        // (or any user-created profile) is already in the list.
+        //
+        // Runs on its own coroutine so it doesn't block the DataStore
+        // collect loop below. A race where the collect-loop writes a new
+        // URL value mid-migration is benign — migrateLegacyProfileIfNeeded
+        // is guarded by ProfileStore.writeMutex and early-returns once any
+        // profile exists, so a second call observing the freshly-seeded
+        // profile just exits.
+        viewModelScope.launch {
+            try {
+                val prefs = application.relayDataStore.data.first()
+                val legacyApiUrl = prefs[KEY_API_SERVER_URL] ?: _apiServerUrl.value
+                val legacyRelayUrl = prefs[KEY_RELAY_URL]
+                    ?: prefs[KEY_SERVER_URL]
+                    ?: _relayUrl.value
+                val legacySessionId = prefs[KEY_LAST_SESSION_ID]
+                profileStore.migrateLegacyProfileIfNeeded(
+                    legacyApiServerUrl = legacyApiUrl,
+                    legacyRelayUrl = legacyRelayUrl,
+                    legacyLastSessionId = legacySessionId,
+                )
+            } catch (e: Exception) {
+                android.util.Log.w(
+                    "ConnectionViewModel",
+                    "migrateLegacyProfileIfNeeded failed: ${e.message}",
+                )
+            }
+        }
 
         // Load saved state — split into fast (UI-blocking) and slow (network) paths
         viewModelScope.launch {
@@ -1298,7 +1449,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 serverUrl = _relayUrl.value,
                 theme = theme.value,
                 onboardingCompleted = _onboardingCompleted.value,
-                profiles = authManager.profiles.value,
+                profiles = authManager.sessionLabels.value,
                 apiServerUrl = _apiServerUrl.value,
                 relayUrl = _relayUrl.value
             )
