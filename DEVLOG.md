@@ -1,5 +1,29 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-18 — Dashboard pairing: `/pairing/mint` schema rework + grants render fix
+
+**Context.** Bailey hit a silent pairing failure scanning QRs minted by the dashboard's "Pair new device" flow. Logcat showed the app attempting pairing with `serverUrl=http://172.16.24.250:8767` (relay's port, not API's) and an empty `relay` block (`relayUrl=` and `code=` both blank), causing `applyServerIssuedCodeAndReset` to bail with "empty code, returning early — authState NOT reset" and the WSS never handshook.
+
+**Root cause.** `handle_pairing_mint` in `plugin/relay/server.py` was written as if the QR was relay-only: it defaulted top-level `host/port/tls` to `server.config.host/port` (which is the RELAY's bind — `0.0.0.0:8767`), put the freshly-minted pairing code in top-level `key`, and emitted only session metadata inside the `relay` block (`ttl_seconds`, `grants`, `transport_hint` — no `url`, no `code`). But the wire format documented at `docs/spec.md` §3.3.1 and implemented by `QrPairingScanner.kt` expects top-level = **API** server (port 8642 default) with `relay.{url,code}` nested. The CLI path (`pair.py` → `build_payload` at line 762) was correct; the endpoint was the outlier. The dashboard plugin's "editable pair URL" feature (commit `d7e5fc8`) inherited the broken semantics because its request body forwards `host/port/tls` verbatim to the endpoint.
+
+**Fix.** `handle_pairing_mint` now mirrors the CLI shape exactly:
+- Top-level `host/port/tls` default from `RelayConfig.webapi_url` (parsed via `urllib.parse.urlparse`; host resolved through `pair._resolve_lan_ip` so `localhost` / `0.0.0.0` become the machine's LAN IP, which is what the phone needs)
+- Body overrides: `host` / `port` / `tls` / `api_key`
+- `relay_block["url"]` derived from `_relay_lan_base_url(server.config.host, server.config.port, tls=bool(server.config.ssl_cert))` — the relay knows its own WSS address
+- `relay_block["code"]` carries the minted value (used to live at top-level `key`; `key` is now the optional API bearer)
+
+Regression test at `plugin/tests/test_pairing_mint_schema.py` — 8 AioHTTP cases pinning the payload shape that `QrPairingScanner.kt` parses, including that the minted code lands in `relay.code` (not top-level `key`) and top-level port defaults to 8642 (not 8767). All pass. Test file uses `unittest` per CLAUDE.md — `pytest` tripped on `conftest.py`'s `responses` import on the server venv.
+
+**Doc sync.** `docs/spec.md` §3.3.1 already documented the correct wire format — this fix brought the server code back into line. Bumped the Updated stamp from 2026-04-13 to 2026-04-18 and added a line under Implementation references pointing at `handle_pairing_mint` + the new regression test. `CLAUDE.md` Key Files rows for `plugin/relay/server.py` + `plugin/dashboard/plugin_api.py` updated to reflect the API-server-at-top-level semantics.
+
+**Deployment hazard discovered along the way.** The server had two parallel checkouts: `~/hermes-relay/` (a dev clone, looked authoritative because SYSTEM.md lists `~/` as the project root) and `~/.hermes/hermes-relay/` (the actual symlinked install per CLAUDE.md). Running `git pull` in the wrong one updated nothing visible — restart-and-check reported stale version. Verified via `systemctl --user cat hermes-relay | grep WorkingDirectory` that the installed path is the `.hermes/` copy; then pulled + restarted on that one. Also noticed the installed repo was on a long-dead `feature/dashboard-plugin` branch with 10 local WIP commits (bisect diagnostics from the dashboard build-up). Switched to `main` (fast-forward clean, 45 commits) after confirming the local feature branch's meaningful work was already on origin/main through the merged PR. The dead branch stays in local refs for history; origin has no matching ref.
+
+**Bonus fix in the same branch.** Dashboard's Relay Management tab was crashing with minified React error #31 (`object with keys {chat, terminal, bridge}`) when rendering the paired-sessions list. `RelayManagement.jsx:172` wrapped a dict-shaped `s.grants` in a 1-element array then rendered each entry as a React child — Badge doesn't accept objects. Fix: `Object.keys(s.grants)` when the value is dict-shaped so Badge children are always channel-name strings. Rebuilt `plugin/dashboard/dist/index.js` via `npm run build` (the dashboard loads the pre-built IIFE verbatim, source edits without a rebuild are invisible).
+
+**Branch + PR.** `fix/pairing-mint-schema` — two commits (`4f0affa`, `ca50524`), pushed, deployed to `~/.hermes/hermes-relay/`, restarted, verified live `curl /pairing/mint` round-trip produces the correct shape. PR open at the origin-suggested URL — merge to land in v0.6.0.
+
+**Principle.** The original endpoint divergence would have been caught immediately by a schema round-trip test between the server's minted payload and the Android parser's data class. Added that test now as guardrail, not post-mortem — the two implementations will drift again eventually, this time CI yells instead of a silent field-mapping failure.
+
 ## 2026-04-18 — v0.5.1 release prep: lint iterations + VoicePlayerTest deferred
 
 **PR #31** (`feature/voice-quality-pass` → `main`, v0.5.1 candidate) — CI iteration, no app-behavior changes beyond the preceding v0.5.1 feature commits.
