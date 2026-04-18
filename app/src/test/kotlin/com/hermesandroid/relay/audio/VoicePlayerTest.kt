@@ -8,7 +8,6 @@ import io.mockk.Runs
 import io.mockk.every
 import io.mockk.just
 import io.mockk.mockk
-import io.mockk.mockkConstructor
 import io.mockk.slot
 import io.mockk.unmockkAll
 import io.mockk.verify
@@ -23,6 +22,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.io.File
 
 /**
@@ -40,8 +42,21 @@ import java.io.File
  *   - `awaitCompletion()` suspends while items are queued and resumes
  *     when the queue is empty and the player is not playing
  *   - amplitude StateFlow is exposed and initialized to 0f
+ *
+ * Uses the `exoPlayerFactory` seam added to [VoicePlayer]'s constructor
+ * (2026-04-18) to inject a MockK mock directly instead of trying to
+ * instrument Media3's `ExoPlayer.Builder`. The factory seam alone is
+ * insufficient however — creating `mockk<ExoPlayer>()` still triggers
+ * Objenesis to load the `ExoPlayer` class, and its static init chain
+ * references `android.os.Looper` which isn't available on the pure JVM.
+ * Robolectric provides shadow Android framework classes on the JVM so
+ * the class load + mock instantiation succeed. `@Config(sdk = [34])`
+ * picks a shadow manifest version that exists in Robolectric 4.14.1;
+ * the project's compileSdk 36 doesn't need to match.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
 class VoicePlayerTest {
 
     private lateinit var context: Context
@@ -62,15 +77,11 @@ class VoicePlayerTest {
             every { it.applicationContext } returns it
         }
 
-        // Construct-mock the Builder chain so `ExoPlayer.Builder(context)
-        // .setHandleAudioBecomingNoisy(true).build()` returns our mock.
-        mockkConstructor(ExoPlayer.Builder::class)
+        // The exoPlayer mock is passed in via the VoicePlayer factory seam.
+        // No mockkConstructor of ExoPlayer.Builder — that triggers
+        // ExceptionInInitializerError on the pure-JVM unit test classpath
+        // because Builder's static init pulls in android.os.Looper etc.
         exoPlayer = mockk(relaxed = true)
-
-        every { anyConstructed<ExoPlayer.Builder>().setHandleAudioBecomingNoisy(any()) } answers {
-            self as ExoPlayer.Builder
-        }
-        every { anyConstructed<ExoPlayer.Builder>().build() } returns exoPlayer
 
         // Listener registration — capture so tests can drive state transitions.
         val listenerSlot = slot<Player.Listener>()
@@ -126,13 +137,13 @@ class VoicePlayerTest {
 
     @Test
     fun `amplitude StateFlow is exposed and initialized to zero`() {
-        val player = VoicePlayer(context)
+        val player = VoicePlayer(context) { exoPlayer }
         assertEquals(0f, player.amplitude.value, 0.0001f)
     }
 
     @Test
     fun `play appends a MediaItem and prepares the player when idle`() {
-        val voicePlayer = VoicePlayer(context)
+        val voicePlayer = VoicePlayer(context) { exoPlayer }
         val file = File("/tmp/voice_tts_0.mp3")
 
         voicePlayer.play(file)
@@ -145,7 +156,7 @@ class VoicePlayerTest {
 
     @Test
     fun `stop clears media items and stops the player`() {
-        val voicePlayer = VoicePlayer(context)
+        val voicePlayer = VoicePlayer(context) { exoPlayer }
         voicePlayer.play(File("/tmp/voice_tts_0.mp3"))
 
         voicePlayer.stop()
@@ -158,14 +169,14 @@ class VoicePlayerTest {
 
     @Test
     fun `awaitCompletion returns immediately when queue is already drained`() = runTest {
-        val voicePlayer = VoicePlayer(context)
+        val voicePlayer = VoicePlayer(context) { exoPlayer }
         // Never played anything — queue is empty, player is not playing.
         withTimeout(200) { voicePlayer.awaitCompletion() }
     }
 
     @Test
     fun `awaitCompletion suspends while queue is non-empty and resumes on drain`() = runTest {
-        val voicePlayer = VoicePlayer(context)
+        val voicePlayer = VoicePlayer(context) { exoPlayer }
         voicePlayer.play(File("/tmp/voice_tts_0.mp3"))
 
         val waiter = async { voicePlayer.awaitCompletion() }
@@ -194,7 +205,7 @@ class VoicePlayerTest {
 
     @Test
     fun `duck sets exoPlayer volume to 0_3f and unduck restores to 1_0f`() {
-        val voicePlayer = VoicePlayer(context)
+        val voicePlayer = VoicePlayer(context) { exoPlayer }
 
         voicePlayer.duck()
 

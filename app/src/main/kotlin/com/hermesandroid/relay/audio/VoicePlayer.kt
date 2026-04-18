@@ -41,9 +41,18 @@ import kotlin.math.sqrt
  *
  * @param context used for [ExoPlayer.Builder]. Application context is fine;
  *   the player holds no view references.
+ * @param exoPlayerFactory seam for unit tests — production defaults to a
+ *   real Media3 `ExoPlayer.Builder` with `setHandleAudioBecomingNoisy`.
+ *   Tests inject a MockK mock directly to avoid
+ *   `mockkConstructor(ExoPlayer.Builder::class)`, which fails on the
+ *   JVM unit test classpath because Media3's `Builder` static init
+ *   chain pulls in android.os.Looper etc. that aren't shadowed there.
  */
 @OptIn(UnstableApi::class)
-class VoicePlayer(context: Context) {
+class VoicePlayer(
+    context: Context,
+    exoPlayerFactory: (Context) -> ExoPlayer = ::defaultExoPlayer,
+) {
 
     companion object {
         private const val TAG = "VoicePlayer"
@@ -75,41 +84,40 @@ class VoicePlayer(context: Context) {
     private var visualizer: Visualizer? = null
     private var visualizerAttached = false
 
-    private val exoPlayer: ExoPlayer = ExoPlayer.Builder(context.applicationContext)
-        .setHandleAudioBecomingNoisy(true)
-        .build()
-        .also { player ->
-            player.addListener(object : Player.Listener {
-                override fun onIsPlayingChanged(isPlaying: Boolean) {
-                    _isPlaying.value = isPlaying
-                    if (!isPlaying) _amplitude.value = 0f
-                    // Lazily attach the Visualizer the first time playback
-                    // actually begins — the audio session id is stable from
-                    // player construction on Media3 1.x but some OEM pipelines
-                    // don't allocate the track until playback starts.
-                    if (isPlaying && !visualizerAttached) {
-                        attachVisualizer(player.audioSessionId)
-                    }
-                }
+    private val exoPlayer: ExoPlayer = exoPlayerFactory(context.applicationContext)
 
-                override fun onMediaItemTransition(
-                    mediaItem: MediaItem?,
-                    reason: Int,
-                ) {
-                    // Refresh on every transition — covers auto-advance drain
-                    // at end-of-queue and explicit seekToNext paths.
-                    _queueCount.value = player.mediaItemCount
+    init {
+        exoPlayer.addListener(object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                _isPlaying.value = isPlaying
+                if (!isPlaying) _amplitude.value = 0f
+                // Lazily attach the Visualizer the first time playback
+                // actually begins — the audio session id is stable from
+                // player construction on Media3 1.x but some OEM pipelines
+                // don't allocate the track until playback starts.
+                if (isPlaying && !visualizerAttached) {
+                    attachVisualizer(exoPlayer.audioSessionId)
                 }
+            }
 
-                override fun onPlaybackStateChanged(state: Int) {
-                    if (state == Player.STATE_ENDED || state == Player.STATE_IDLE) {
-                        // ENDED fires when the full queue has been consumed;
-                        // sync queueCount so awaitCompletion can release.
-                        _queueCount.value = player.mediaItemCount
-                    }
+            override fun onMediaItemTransition(
+                mediaItem: MediaItem?,
+                reason: Int,
+            ) {
+                // Refresh on every transition — covers auto-advance drain
+                // at end-of-queue and explicit seekToNext paths.
+                _queueCount.value = exoPlayer.mediaItemCount
+            }
+
+            override fun onPlaybackStateChanged(state: Int) {
+                if (state == Player.STATE_ENDED || state == Player.STATE_IDLE) {
+                    // ENDED fires when the full queue has been consumed;
+                    // sync queueCount so awaitCompletion can release.
+                    _queueCount.value = exoPlayer.mediaItemCount
                 }
-            })
-        }
+            }
+        })
+    }
 
     /**
      * Append [audioFile] to the ExoPlayer queue. If the player is idle, also
@@ -323,3 +331,14 @@ class VoicePlayer(context: Context) {
                else normalized.coerceIn(0f, 1f)
     }
 }
+
+/**
+ * Production ExoPlayer factory — used as the default for [VoicePlayer].
+ * Split out as a top-level function so unit tests can swap it for a
+ * MockK mock without touching Media3's `Builder` class loader.
+ */
+@OptIn(UnstableApi::class)
+private fun defaultExoPlayer(context: Context): ExoPlayer =
+    ExoPlayer.Builder(context)
+        .setHandleAudioBecomingNoisy(true)
+        .build()

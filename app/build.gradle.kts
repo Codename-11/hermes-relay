@@ -166,6 +166,10 @@ android {
     // both failing with RuntimeException from unmocked Log.w calls.
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // Required for Robolectric 4.14+ to resolve merged manifest +
+        // R.java references during shadow class loading. Cheap in
+        // practice (only Robolectric-annotated tests pay the cost).
+        unitTests.isIncludeAndroidResources = true
     }
 }
 
@@ -261,6 +265,14 @@ dependencies {
     testImplementation(libs.mockk)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.kotlinx.serialization.json)
+    // Robolectric provides shadowed Android framework classes on the
+    // JVM so MockK's Objenesis-based mock creation doesn't trigger
+    // ExceptionInInitializerError when instantiating Media3 types like
+    // ExoPlayer (whose static init chain references android.os.Looper).
+    // Only VoicePlayerTest needs it today — other Android-free tests
+    // don't pay the ~500ms-per-class-load cost because Robolectric is
+    // lazy-invoked via @RunWith(RobolectricTestRunner::class).
+    testImplementation(libs.robolectric)
     androidTestImplementation(libs.compose.ui.test.junit4)
     debugImplementation(libs.compose.ui.tooling)
     debugImplementation(libs.compose.ui.test.manifest)
