@@ -3,6 +3,7 @@ package com.hermesandroid.relay.auth
 import android.content.Context
 import android.util.Log
 import com.hermesandroid.relay.data.PairingPreferences
+import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.models.Envelope
 import kotlinx.coroutines.CoroutineScope
@@ -57,7 +58,17 @@ sealed class AuthState {
 class AuthManager(
     private val context: Context,
     private val multiplexer: ChannelMultiplexer,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    /**
+     * Multi-profile: the id of the [com.hermesandroid.relay.data.Profile] this
+     * AuthManager is bound to. Drives which EncryptedSharedPreferences file
+     * the underlying [SessionTokenStore] reads/writes.
+     *
+     * Defaults to [PROFILE_ID_LEGACY] so the pre-multi-profile call site in
+     * `ConnectionViewModel` still compiles. Worker B removes the default and
+     * passes a real profile id when they wire the active profile through.
+     */
+    private val profileId: String = PROFILE_ID_LEGACY,
 ) : ChannelMultiplexer.ChannelHandler {
 
     companion object {
@@ -68,6 +79,15 @@ class AuthManager(
         private const val KEY_PAIRED_META = "paired_session_meta_json"
         private const val PAIRING_CODE_LENGTH = 6
         private val PAIRING_CODE_CHARS = ('A'..'Z') + ('0'..'9')
+
+        /**
+         * Sentinel [profileId] meaning "bind this AuthManager to the legacy
+         * single-profile EncryptedSharedPreferences file
+         * ([Profile.LEGACY_TOKEN_STORE_KEY])". Used as the default ctor arg so
+         * existing call sites don't need to change until Worker B threads
+         * a real profile id through.
+         */
+        const val PROFILE_ID_LEGACY: String = "legacy"
     }
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -92,8 +112,18 @@ class AuthManager(
         return storeMutex.withLock {
             _store?.let { return it }
             withContext(Dispatchers.IO) {
+                // Multi-profile: pick the EncryptedSharedPreferences filename
+                // based on the bound profile. The legacy sentinel keeps the
+                // pre-multi-profile install on its original file so the
+                // existing paired device keeps working with no migration.
+                val prefsName = if (profileId == PROFILE_ID_LEGACY) {
+                    Profile.LEGACY_TOKEN_STORE_KEY
+                } else {
+                    Profile.buildTokenStoreKey(profileId)
+                }
                 val picked: SessionTokenStore =
-                    KeystoreTokenStore.tryCreate(context) ?: LegacyEncryptedPrefsTokenStore(context)
+                    KeystoreTokenStore.tryCreate(context, prefsName)
+                        ?: LegacyEncryptedPrefsTokenStore(context, prefsName)
                 migrateFromLegacyIfNeeded(picked)
                 _store = picked
                 picked
@@ -109,6 +139,11 @@ class AuthManager(
      */
     private fun migrateFromLegacyIfNeeded(picked: SessionTokenStore) {
         if (picked is LegacyEncryptedPrefsTokenStore) return
+        // Multi-profile: only the legacy profile inherits from the pre-
+        // multi-profile `hermes_companion_auth` file. A freshly-minted
+        // per-profile store must NOT be seeded from the legacy file or we'd
+        // copy profile 0's token into every new profile.
+        if (profileId != PROFILE_ID_LEGACY) return
         val legacy = try {
             LegacyEncryptedPrefsTokenStore(context)
         } catch (_: Exception) {
@@ -207,8 +242,18 @@ class AuthManager(
      */
     private var pendingGrants: Map<String, Long>? = null
 
-    private val _profiles = MutableStateFlow<List<String>>(emptyList())
-    val profiles: StateFlow<List<String>> = _profiles.asStateFlow()
+    /**
+     * Server-issued session labels from the `auth.ok` payload's `profiles`
+     * field. This field predates the multi-profile work — it carries short
+     * human labels the RELAY tags sessions with, NOT the multi-server
+     * connection profiles modeled by [com.hermesandroid.relay.data.Profile].
+     *
+     * Renamed 2026-04-18 as part of the multi-profile rollout so the name
+     * no longer clashes with the new [com.hermesandroid.relay.data.Profile]
+     * concept.
+     */
+    private val _sessionLabels = MutableStateFlow<List<String>>(emptyList())
+    val sessionLabels: StateFlow<List<String>> = _sessionLabels.asStateFlow()
 
     /**
      * Whether an API key is currently stored. Updated reactively by
@@ -574,7 +619,7 @@ class AuthManager(
 
                 val profilesArray = payload["profiles"]?.jsonArray
                 if (profilesArray != null) {
-                    _profiles.value = profilesArray.map { it.jsonPrimitive.content }
+                    _sessionLabels.value = profilesArray.map { it.jsonPrimitive.content }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()

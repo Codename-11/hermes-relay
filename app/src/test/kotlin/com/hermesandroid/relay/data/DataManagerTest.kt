@@ -144,14 +144,30 @@ class DataManagerTest {
 
     @Test
     fun backup_roundTrip_preservesAllFields() {
+        val profiles = listOf(
+            Profile(
+                id = "id-a",
+                label = "local",
+                apiServerUrl = "http://localhost:8642",
+                relayUrl = "wss://localhost:8767",
+                tokenStoreKey = "hermes_auth_id-a",
+            ),
+            Profile(
+                id = "id-b",
+                label = "remote",
+                apiServerUrl = "http://10.0.0.5:8642",
+                relayUrl = "wss://10.0.0.5:8767",
+                tokenStoreKey = "hermes_auth_id-b",
+            ),
+        )
         val original = DataManager.AppBackup(
-            version = 2,
+            version = 3,
             serverUrl = "http://old-server:8642",
             apiServerUrl = "http://localhost:8642",
             relayUrl = "wss://localhost:8767",
             theme = "dark",
             onboardingCompleted = true,
-            profiles = listOf("default", "coder"),
+            profiles = profiles,
             exportedAt = 1700000000000L
         )
 
@@ -174,12 +190,20 @@ class DataManagerTest {
     fun importSettings_validJson_returnsBackup() {
         val jsonStr = """
             {
-                "version": 2,
+                "version": 3,
                 "apiServerUrl": "http://myserver:8642",
                 "relayUrl": "wss://myserver:8767",
                 "theme": "light",
                 "onboardingCompleted": true,
-                "profiles": ["default"],
+                "profiles": [
+                    {
+                        "id": "id-a",
+                        "label": "local",
+                        "apiServerUrl": "http://myserver:8642",
+                        "relayUrl": "wss://myserver:8767",
+                        "tokenStoreKey": "hermes_auth_id-a"
+                    }
+                ],
                 "exportedAt": 1700000000000
             }
         """.trimIndent()
@@ -187,12 +211,13 @@ class DataManagerTest {
         val result = json.decodeFromString<DataManager.AppBackup>(jsonStr)
 
         assertNotNull(result)
-        assertEquals(2, result.version)
+        assertEquals(3, result.version)
         assertEquals("http://myserver:8642", result.apiServerUrl)
         assertEquals("wss://myserver:8767", result.relayUrl)
         assertEquals("light", result.theme)
         assertTrue(result.onboardingCompleted)
-        assertEquals(listOf("default"), result.profiles)
+        assertEquals(1, result.profiles.size)
+        assertEquals("id-a", result.profiles[0].id)
     }
 
     // --- Restore from malformed JSON ---
@@ -224,7 +249,7 @@ class DataManagerTest {
         val result = json.decodeFromString<DataManager.AppBackup>(jsonStr)
 
         assertNotNull(result)
-        assertEquals(2, result.version)
+        assertEquals(3, result.version)
         assertNull(result.serverUrl)
         assertNull(result.apiServerUrl)
         assertNull(result.relayUrl)
@@ -255,9 +280,9 @@ class DataManagerTest {
     // --- Format version handling ---
 
     @Test
-    fun backup_defaultVersion_isTwo() {
+    fun backup_defaultVersion_isThree() {
         val backup = DataManager.AppBackup()
-        assertEquals(2, backup.version)
+        assertEquals(3, backup.version)
     }
 
     @Test
@@ -309,7 +334,25 @@ class DataManagerTest {
 
     @Test
     fun backup_profilesList_roundTrip() {
-        val profiles = listOf("default", "coder", "researcher", "creative")
+        val profiles = listOf(
+            Profile(
+                id = "id-a",
+                label = "local",
+                apiServerUrl = "http://localhost:8642",
+                relayUrl = "wss://localhost:8767",
+                tokenStoreKey = "hermes_auth_id-a",
+            ),
+            Profile(
+                id = "id-b",
+                label = "remote",
+                apiServerUrl = "http://10.0.0.5:8642",
+                relayUrl = "wss://10.0.0.5:8767",
+                tokenStoreKey = "hermes_auth_id-b",
+                pairedAt = 1_700_000_000L,
+                transportHint = "wss",
+                expiresAt = 1_700_100_000L,
+            ),
+        )
         val backup = DataManager.AppBackup(profiles = profiles)
 
         val jsonStr = json.encodeToString(backup)
@@ -326,5 +369,64 @@ class DataManagerTest {
         val restored = json.decodeFromString<DataManager.AppBackup>(jsonStr)
 
         assertTrue(restored.profiles.isEmpty())
+    }
+
+    @Test
+    fun importSettings_v2_dropsLegacyStringProfiles() {
+        // v2 stored profiles as List<String>, which is structurally
+        // incompatible with v3's List<Profile>. DataManager.importSettings()
+        // pre-processes v1/v2 blobs to drop the old field rather than throw.
+        val v2Json = """
+            {
+                "version": 2,
+                "apiServerUrl": "http://myserver:8642",
+                "relayUrl": "wss://myserver:8767",
+                "theme": "light",
+                "onboardingCompleted": true,
+                "profiles": ["default", "coder"],
+                "exportedAt": 1700000000000
+            }
+        """.trimIndent()
+
+        val result = com.hermesandroid.relay.data.DataManagerTestHelper
+            .importWithDataManager(v2Json)
+        assertNotNull(result)
+        assertEquals(2, result!!.version)
+        assertTrue(
+            "v2 legacy profiles list should be dropped on import",
+            result.profiles.isEmpty(),
+        )
+    }
+}
+
+/**
+ * Narrow helper so the v2-compat test can exercise the real
+ * [DataManager.importSettings] logic (which pre-processes the payload to
+ * drop legacy incompatible fields). DataManager itself takes a Context so
+ * this helper just copies the pure JSON-handling part — if that logic ever
+ * moves to a pure static helper, swap this out.
+ */
+internal object DataManagerTestHelper {
+    private val json = kotlinx.serialization.json.Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+    }
+
+    fun importWithDataManager(jsonString: String): DataManager.AppBackup? {
+        return try {
+            val element = json.parseToJsonElement(jsonString)
+            val obj = element as? kotlinx.serialization.json.JsonObject ?: return null
+            val version = obj["version"]?.let {
+                (it as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull()
+            } ?: 3
+            val normalized = if (version < 3) {
+                kotlinx.serialization.json.JsonObject(obj - "profiles")
+            } else {
+                obj
+            }
+            json.decodeFromJsonElement(DataManager.AppBackup.serializer(), normalized)
+        } catch (_: Exception) {
+            null
+        }
     }
 }

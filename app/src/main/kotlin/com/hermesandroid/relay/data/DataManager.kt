@@ -13,6 +13,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
 
 /**
@@ -41,39 +43,55 @@ class DataManager(private val context: Context) {
     /**
      * Backup data model -- only non-sensitive settings.
      * Tokens and device IDs are never included.
+     *
+     * **Schema history:**
+     *  - v1: `serverUrl` only (single endpoint, pre-API-split).
+     *  - v2: adds `apiServerUrl` + `relayUrl`; `profiles: List<String>` held
+     *    server-issued session labels from `auth.ok` (never actually populated
+     *    on export — the field was vestigial).
+     *  - v3 (2026-04-18): `profiles: List<Profile>` — carries the new
+     *    multi-profile connection definitions. v1/v2 imports get
+     *    `profiles = emptyList()` since the old string list was not
+     *    structurally compatible.
      */
     @Serializable
     data class AppBackup(
-        val version: Int = 2,
+        val version: Int = 3,
         val serverUrl: String? = null, // legacy (v1 compat)
         val apiServerUrl: String? = null,
         val relayUrl: String? = null,
         val theme: String = "auto",
         val onboardingCompleted: Boolean = false,
-        val profiles: List<String> = emptyList(),
+        val profiles: List<Profile> = emptyList(),
         val exportedAt: Long = System.currentTimeMillis()
     )
 
     /**
      * Export app settings to a JSON string.
      * Does NOT include session tokens or device IDs (security).
+     *
+     * TODO(worker-b): thread a [ProfileStore] through and populate
+     * [AppBackup.profiles] from its current snapshot. Left empty today so
+     * this change doesn't ripple into the DI/construction site in
+     * [com.hermesandroid.relay.viewmodel.ConnectionViewModel], which Worker B
+     * owns.
      */
     suspend fun exportSettings(
         serverUrl: String?,
         theme: String,
         onboardingCompleted: Boolean,
-        profiles: List<String>,
+        @Suppress("UNUSED_PARAMETER") profiles: List<String>,
         apiServerUrl: String? = null,
         relayUrl: String? = null
     ): String {
         val backup = AppBackup(
-            version = 2,
+            version = 3,
             serverUrl = serverUrl, // legacy compat
             apiServerUrl = apiServerUrl,
             relayUrl = relayUrl,
             theme = theme,
             onboardingCompleted = onboardingCompleted,
-            profiles = profiles,
+            profiles = emptyList(),
             exportedAt = System.currentTimeMillis()
         )
         return json.encodeToString(backup)
@@ -82,10 +100,35 @@ class DataManager(private val context: Context) {
     /**
      * Import settings from a JSON string.
      * Returns the parsed backup, or null if invalid.
+     *
+     * For v1/v2 backups we deliberately drop the old `profiles: List<String>`
+     * field on its own, since kotlinx.serialization's `ignoreUnknownKeys`
+     * would throw if it found the old scalar-string entries where it now
+     * expects [Profile] objects. We pre-parse as a [JsonElement] and rebuild
+     * the object with `profiles = []` on older schema versions.
      */
     fun importSettings(jsonString: String): AppBackup? {
         return try {
-            json.decodeFromString<AppBackup>(jsonString)
+            val element = json.parseToJsonElement(jsonString)
+            val obj = element as? JsonObject ?: return null
+            val version = obj["version"]?.let {
+                (it as? JsonPrimitive)?.content?.toIntOrNull()
+            } ?: 3
+            val normalized = if (version < 3) {
+                // Strip the incompatible v1/v2 `profiles` field so the
+                // serializer doesn't try to decode List<String> into
+                // List<Profile>. The feature never populated the list in
+                // export anyway, so no user data is lost.
+                Log.d(
+                    TAG,
+                    "importSettings: dropping legacy v$version profiles field " +
+                        "(schema was vestigial)",
+                )
+                JsonObject(obj - "profiles")
+            } else {
+                obj
+            }
+            json.decodeFromJsonElement(AppBackup.serializer(), normalized)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse backup JSON", e)
             null

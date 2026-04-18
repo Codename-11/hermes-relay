@@ -67,7 +67,8 @@ interface SessionTokenStore {
 class KeystoreTokenStore private constructor(
     private val context: Context,
     private val wantsStrongBox: Boolean,
-    override val hasHardwareBackedStorage: Boolean
+    override val hasHardwareBackedStorage: Boolean,
+    private val prefsName: String,
 ) : SessionTokenStore {
 
     // Mutable so [resetPrefs] can swap in a fresh instance after a corrupted
@@ -89,7 +90,7 @@ class KeystoreTokenStore private constructor(
         val masterKey = builder.build()
         return EncryptedSharedPreferences.create(
             context,
-            PREFS_NAME,
+            prefsName,
             masterKey,
             EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
@@ -114,16 +115,23 @@ class KeystoreTokenStore private constructor(
             prefs.edit().clear().apply()
         } catch (_: Exception) { /* expected on a wedged file */ }
         try {
-            context.deleteSharedPreferences(PREFS_NAME)
+            context.deleteSharedPreferences(prefsName)
         } catch (e: Exception) {
-            Log.w(TAG, "deleteSharedPreferences($PREFS_NAME) failed: ${e.message}")
+            Log.w(TAG, "deleteSharedPreferences($prefsName) failed: ${e.message}")
         }
         prefs = buildPrefs()
     }
 
     companion object {
         private const val TAG = "KeystoreTokenStore"
-        private const val PREFS_NAME = "hermes_companion_auth_hw"
+
+        /**
+         * Default EncryptedSharedPreferences filename. Pre-multi-profile
+         * installs have all their auth state in this single file — profile 0
+         * re-uses it as-is via [Profile.LEGACY_TOKEN_STORE_KEY] so no
+         * user-visible migration is needed.
+         */
+        const val DEFAULT_PREFS_NAME = "hermes_companion_auth_hw"
 
         /**
          * Try to build a [KeystoreTokenStore] on the current device. Returns
@@ -131,13 +139,21 @@ class KeystoreTokenStore private constructor(
          * AndroidKeystore implementations — we don't want the app to brick
          * itself trying to create a master key).
          *
+         * [prefsName] selects the EncryptedSharedPreferences file — defaults
+         * to [DEFAULT_PREFS_NAME] for backwards compat with the single-profile
+         * call sites. Multi-profile callers pass a per-profile filename built
+         * via [com.hermesandroid.relay.data.Profile.buildTokenStoreKey].
+         *
          * Also fires a one-shot read probe so a pre-corrupted file from a
          * previous install gets healed during construction rather than on the
          * first user-driven read. The probe routes through the instance's
          * own [getString], so if it throws, [resetPrefs] runs and we end up
          * with a fresh empty prefs file — not a permanently broken store.
          */
-        fun tryCreate(context: Context): KeystoreTokenStore? {
+        fun tryCreate(
+            context: Context,
+            prefsName: String = DEFAULT_PREFS_NAME,
+        ): KeystoreTokenStore? {
             return try {
                 val wantsStrongBox = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
                     context.packageManager.hasSystemFeature(
@@ -147,6 +163,7 @@ class KeystoreTokenStore private constructor(
                     context = context.applicationContext,
                     wantsStrongBox = wantsStrongBox,
                     hasHardwareBackedStorage = wantsStrongBox,
+                    prefsName = prefsName,
                 )
                 // Force a read so a wedged file from a prior install heals
                 // here rather than at the first user-visible call.
@@ -224,7 +241,10 @@ class KeystoreTokenStore private constructor(
  * (b) migration source for reading existing session tokens out of the legacy
  * prefs on first launch after the update.
  */
-class LegacyEncryptedPrefsTokenStore(context: Context) : SessionTokenStore {
+class LegacyEncryptedPrefsTokenStore(
+    context: Context,
+    private val prefsName: String = LEGACY_PREFS_NAME,
+) : SessionTokenStore {
 
     companion object {
         const val LEGACY_PREFS_NAME = "hermes_companion_auth"
@@ -243,7 +263,7 @@ class LegacyEncryptedPrefsTokenStore(context: Context) : SessionTokenStore {
             .build()
         return EncryptedSharedPreferences.create(
             appContext,
-            LEGACY_PREFS_NAME,
+            prefsName,
             masterKey,
             EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
@@ -255,9 +275,9 @@ class LegacyEncryptedPrefsTokenStore(context: Context) : SessionTokenStore {
             prefs.edit().clear().apply()
         } catch (_: Exception) { /* expected on a wedged file */ }
         try {
-            appContext.deleteSharedPreferences(LEGACY_PREFS_NAME)
+            appContext.deleteSharedPreferences(prefsName)
         } catch (e: Exception) {
-            Log.w(TAG, "deleteSharedPreferences($LEGACY_PREFS_NAME) failed: ${e.message}")
+            Log.w(TAG, "deleteSharedPreferences($prefsName) failed: ${e.message}")
         }
         prefs = buildPrefs()
     }
