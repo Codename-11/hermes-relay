@@ -256,14 +256,28 @@ done
 [ -z "$removed_any" ] && warn "No plugin symlinks were registered"
 
 # Best-effort hermes-agent dashboard rescan so the relay tab disappears
-# without requiring a dashboard restart. Silent if the dashboard isn't
-# running or is bound elsewhere — we don't care about the outcome.
+# without requiring a dashboard restart. Walks the systemd unit's
+# ExecStart for the real --host / --port when available, otherwise
+# falls back to common bind addresses. Silent on failure.
 if command -v curl >/dev/null 2>&1; then
-    for port in 9119 9100 9000; do
-        if curl -sf -m 2 -X GET "http://127.0.0.1:${port}/api/dashboard/plugins/rescan" >/dev/null 2>&1; then
-            ok "Triggered dashboard rescan on :${port}"
-            break
+    _dash_hosts=""
+    _dash_port=""
+    if command -v systemctl >/dev/null 2>&1; then
+        _exec_line="$(systemctl --user cat hermes-dashboard 2>/dev/null | grep -m1 '^ExecStart=' || true)"
+        if [ -n "$_exec_line" ]; then
+            _dash_hosts="$(echo "$_exec_line" | sed -nE 's/.*--host[[:space:]=]+([^[:space:]]+).*/\1/p')"
+            _dash_port="$(echo "$_exec_line" | sed -nE 's/.*--port[[:space:]=]+([0-9]+).*/\1/p')"
         fi
+    fi
+    [ -z "$_dash_port" ] && _dash_port="9119"
+    for host in 127.0.0.1 localhost ${_dash_hosts:-} 0.0.0.0; do
+        [ -z "$host" ] && continue
+        for port in "$_dash_port" 9119 9100 9000; do
+            if curl -sf -m 2 -X GET "http://${host}:${port}/api/dashboard/plugins/rescan" >/dev/null 2>&1; then
+                ok "Triggered dashboard rescan at ${host}:${port}"
+                break 2
+            fi
+        done
     done
 fi
 

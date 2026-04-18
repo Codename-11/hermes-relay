@@ -376,14 +376,41 @@ if [ -d "$RELAY_HOME/plugin/dashboard" ]; then
             ;;
     esac
     # Best-effort rescan so the toggle takes effect without a dashboard
-    # restart. Silent if the dashboard isn't running or isn't local.
+    # restart. Silent if the dashboard isn't running, or binds somewhere
+    # we can't see from here.
+    #
+    # The dashboard may bind to 127.0.0.1, localhost, 0.0.0.0, or a
+    # specific LAN IP. On hosts with a systemd user unit we extract the
+    # actual --host / --port from the ExecStart line so we hit the right
+    # endpoint instead of guessing. Falls back to a small list of common
+    # bind addresses for installs that don't use systemd.
     if command -v curl >/dev/null 2>&1; then
-        for port in 9119 9100 9000; do
-            if curl -sf -m 2 -X GET "http://127.0.0.1:${port}/api/dashboard/plugins/rescan" >/dev/null 2>&1; then
-                info "  Triggered dashboard rescan on :${port}"
-                break
+        _dash_hosts=""
+        _dash_port=""
+        if command -v systemctl >/dev/null 2>&1; then
+            _exec_line="$(systemctl --user cat hermes-dashboard 2>/dev/null | grep -m1 '^ExecStart=' || true)"
+            if [ -n "$_exec_line" ]; then
+                _dash_hosts="$(echo "$_exec_line" | sed -nE 's/.*--host[[:space:]=]+([^[:space:]]+).*/\1/p')"
+                _dash_port="$(echo "$_exec_line" | sed -nE 's/.*--port[[:space:]=]+([0-9]+).*/\1/p')"
             fi
+        fi
+        [ -z "$_dash_port" ] && _dash_port="9119"
+        # Always try loopback first; if the systemd unit advertises a
+        # specific bind host, try that second. Keep a couple of common
+        # fallbacks for non-systemd hosts.
+        _rescan_hit=""
+        for host in 127.0.0.1 localhost ${_dash_hosts:-} 0.0.0.0; do
+            [ -z "$host" ] && continue
+            for port in "$_dash_port" 9119 9100 9000; do
+                url="http://${host}:${port}/api/dashboard/plugins/rescan"
+                if curl -sf -m 2 -X GET "$url" >/dev/null 2>&1; then
+                    info "  Triggered dashboard rescan at ${host}:${port}"
+                    _rescan_hit=1
+                    break 2
+                fi
+            done
         done
+        [ -z "$_rescan_hit" ] && info "  (dashboard not reachable — restart it if the toggle doesn't take effect)"
     fi
 fi
 
