@@ -9,8 +9,8 @@ import kotlinx.serialization.Serializable
  * Historically (pre-R1) the server scanned a non-existent top-level
  * `profiles:` key in `~/.hermes/config.yaml` and effectively shipped an
  * empty list. Worker R1 rewrote the relay-side loader to scan the REAL
- * upstream layout (`~/.hermes/profiles/*/` directories) and added
- * [systemMessage], sourced from each profile's `SOUL.md`.
+ * upstream layout (one directory per profile under `~/.hermes/profiles/`)
+ * and added [systemMessage], sourced from each profile's `SOUL.md`.
  *
  * A Profile is a NAMED AGENT CONFIG within a Connection. Switching profile
  * changes:

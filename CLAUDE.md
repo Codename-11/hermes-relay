@@ -138,7 +138,8 @@ hermes-android/
 | **App — Core** | |
 | `ui/RelayApp.kt` | Main scaffold — bottom nav, Compose navigation |
 | `viewmodel/ChatViewModel.kt` | Chat orchestration — send, stream, cancel, slash commands |
-| `viewmodel/ConnectionViewModel.kt` | Dual connection model (API + relay); `resolveStreamingEndpoint()` |
+| `viewmodel/ConnectionViewModel.kt` | Dual connection model (API + relay); `resolveStreamingEndpoint()`; derived `relayUiState` flow + `markPaired` hook stamp the active Connection |
+| `viewmodel/RelayUiState.kt` | Shared sealed state for the relay row — 5 cases + `asBadgeState()` / `statusText()` extensions; 5s grace window before Stale |
 | `network/HermesApiClient.kt` | Direct HTTP/SSE — `sendRunStream()`, `sendChatStream()`, `probeCapabilities()` |
 | `network/ConnectionManager.kt` | WSS to relay with auto-reconnect; rebuilds OkHttpClient with fresh CertPinner on connect |
 | `network/ChannelMultiplexer.kt` | Envelope routing by channel; `sendNotification()` for notification outbound |

@@ -70,6 +70,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         private val KEY_SERVER_URL = stringPreferencesKey("server_url") // legacy migration
         private const val DEFAULT_RELAY_URL = "wss://localhost:8767"
 
+        // How long the derived [relayUiState] shows `Connecting` before
+        // promoting a Paired-but-Disconnected pose to `Stale`. Tuned to
+        // cover a typical WSS handshake (~500-2000 ms) plus a cushion so
+        // we don't flash "Stale" during a normal post-resume reconnect,
+        // while still surfacing a tap-to-retry affordance when the
+        // reconnect genuinely fails (server down, bad network).
+        private const val RELAY_RECONNECT_GRACE_MS = 5_000L
+
         // Shared
         private val KEY_THEME = stringPreferencesKey("theme")
         private val KEY_FONT_SCALE = floatPreferencesKey("font_scale")
@@ -235,6 +243,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     // --- Relay connection state ---
     val relayConnectionState: StateFlow<ConnectionState> = connectionManager.connectionState
+
+    // Resolved UI state for the relay row — the single source of truth all
+    // three connection-related screens consume. Driven by a coroutine in
+    // `init` that combines authState + relayConnectionState + relayUrl and
+    // applies a grace window before promoting Paired-but-Disconnected to
+    // Stale. See [RelayUiState] kdoc for the full rationale.
+    private val _relayUiState = MutableStateFlow<RelayUiState>(RelayUiState.NotConfigured)
+    val relayUiState: StateFlow<RelayUiState> = _relayUiState.asStateFlow()
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val authState: StateFlow<AuthState> = _authManagerFlow
@@ -1067,6 +1083,47 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         com.hermesandroid.relay.notifications.HermesNotificationCompanion
             .multiplexer = multiplexer
         // === END PHASE3-notif-listener-followup ===
+
+        // Resolve [relayUiState] from the three raw inputs (authState,
+        // relayConnectionState, relayUrl) with a grace-window transition
+        // to Stale. Lifted here from three separate ad-hoc helpers across
+        // SettingsScreen / ConnectionSettingsScreen so every screen renders
+        // the relay row consistently. `pendingStaleJob` is the single
+        // in-flight grace timer; each new raw-state change cancels any
+        // prior timer, so we never get two "promote to Stale" jobs racing.
+        viewModelScope.launch {
+            var pendingStaleJob: Job? = null
+            combine(
+                authState,
+                relayConnectionState,
+                _relayUrl,
+            ) { auth, conn, url -> Triple(auth, conn, url) }
+                .collect { (auth, conn, url) ->
+                    pendingStaleJob?.cancel()
+                    pendingStaleJob = null
+                    _relayUiState.value = when {
+                        url.isBlank() -> RelayUiState.NotConfigured
+                        conn == ConnectionState.Connected -> RelayUiState.Connected
+                        conn == ConnectionState.Connecting ||
+                            conn == ConnectionState.Reconnecting ->
+                            RelayUiState.Connecting
+                        auth is AuthState.Paired &&
+                            conn == ConnectionState.Disconnected -> {
+                            // Start the grace-window timer. If the WSS
+                            // doesn't come up within RELAY_RECONNECT_GRACE_MS,
+                            // we promote to Stale so the UI stops lying
+                            // ("Connecting…" forever) and surfaces a
+                            // tap-to-retry affordance.
+                            pendingStaleJob = launch {
+                                delay(RELAY_RECONNECT_GRACE_MS)
+                                _relayUiState.value = RelayUiState.Stale
+                            }
+                            RelayUiState.Connecting
+                        }
+                        else -> RelayUiState.Disconnected
+                    }
+                }
+        }
 
         // Multi-connection: stamp the active Connection with pairing metadata
         // when AuthManager surfaces a fresh PairedSession. Closes the bug

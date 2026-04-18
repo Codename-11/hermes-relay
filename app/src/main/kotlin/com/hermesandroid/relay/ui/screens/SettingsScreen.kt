@@ -56,8 +56,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.FeatureFlags
-import com.hermesandroid.relay.network.ConnectionState
 import com.hermesandroid.relay.ui.components.ConnectionStatusRow
+import com.hermesandroid.relay.viewmodel.asBadgeState
+import com.hermesandroid.relay.viewmodel.statusText
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
@@ -113,11 +114,10 @@ fun SettingsScreen(
 
     val apiReachable by connectionViewModel.apiServerReachable.collectAsState()
     val apiHealth by connectionViewModel.apiServerHealth.collectAsState()
-    val relayHealth by connectionViewModel.relayServerHealth.collectAsState()
-    val relayConnectionState by connectionViewModel.relayConnectionState.collectAsState()
     val authState by connectionViewModel.authState.collectAsState()
     val apiUrl by connectionViewModel.apiServerUrl.collectAsState()
     val relayUrl by connectionViewModel.relayUrl.collectAsState()
+    val relayUiState by connectionViewModel.relayUiState.collectAsState()
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
     // Active Agent card inputs — personality + profile drive the title,
     // ring-accent, and subtitle. Kept next to the other top-level
@@ -246,30 +246,15 @@ fun SettingsScreen(
 
                     if (relayFeatureEnabled) {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
-                        // Treat "Paired session, WSS briefly down" as
-                        // Connecting instead of Disconnected so the card
-                        // doesn't flash red between app launch and the
-                        // reconnectIfStale() LaunchedEffect above landing the
-                        // WSS handshake. The real Disconnected state still
-                        // renders red when authState is Unpaired/Failed.
-                        val pairedButRelayDown = authState is AuthState.Paired &&
-                            relayConnectionState == ConnectionState.Disconnected
+                        // All state-resolution rules live in ConnectionViewModel's
+                        // relayUiState flow — this row just maps that resolved
+                        // state onto the row's badge + text. Settings shows the
+                        // full relay URL in the Connected case; other screens
+                        // show "Connected" via a different label.
                         ConnectionStatusRow(
                             label = "Relay",
-                            isConnected = relayConnectionState == ConnectionState.Connected,
-                            isConnecting = relayConnectionState == ConnectionState.Connecting ||
-                                relayConnectionState == ConnectionState.Reconnecting ||
-                                pairedButRelayDown,
-                            isProbing = relayConnectionState == ConnectionState.Disconnected &&
-                                !pairedButRelayDown &&
-                                relayHealth == ConnectionViewModel.HealthStatus.Probing,
-                            statusText = when {
-                                relayUrl.isBlank() -> "Not configured"
-                                relayConnectionState == ConnectionState.Connected -> relayUrl
-                                pairedButRelayDown -> "Reconnecting…"
-                                relayHealth == ConnectionViewModel.HealthStatus.Probing -> "Checking…"
-                                else -> "Disconnected"
-                            }
+                            state = relayUiState.asBadgeState(),
+                            statusText = relayUiState.statusText(connectedLabel = relayUrl),
                         )
                         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
                         ConnectionStatusRow(

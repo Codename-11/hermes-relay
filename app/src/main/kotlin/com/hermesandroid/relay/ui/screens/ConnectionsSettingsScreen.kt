@@ -40,6 +40,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.viewmodel.RelayUiState
+import com.hermesandroid.relay.viewmodel.statusText
 import java.util.concurrent.TimeUnit
 
 /**
@@ -61,6 +63,12 @@ import java.util.concurrent.TimeUnit
 fun ConnectionsSettingsScreen(
     connections: List<Connection>,
     activeConnectionId: String?,
+    // Live WSS state for the currently-active connection. Surfaced in the
+    // active card's subtitle so users see "Connected" / "Reconnecting…" /
+    // "Stale — tap to reconnect" in real time, not the static pairedAt
+    // timestamp. Ignored for non-active cards (they fall back to pairedAt).
+    activeRelayUiState: RelayUiState,
+    onReconnectActive: () -> Unit,
     onRenameConnection: (id: String, newLabel: String) -> Unit,
     onRepairConnection: (id: String) -> Unit,
     onRevokeConnection: (id: String) -> Unit,
@@ -130,9 +138,16 @@ fun ConnectionsSettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 items(connections, key = { it.id }) { connection ->
+                    val isActive = connection.id == activeConnectionId
                     ConnectionCard(
                         connection = connection,
-                        isActive = connection.id == activeConnectionId,
+                        isActive = isActive,
+                        // Only the active card gets a live state; others
+                        // fall back to the persistent pairedAt timestamp
+                        // since we don't track WSS state for background
+                        // connections.
+                        liveState = if (isActive) activeRelayUiState else null,
+                        onReconnect = onReconnectActive,
                         onRename = { newLabel -> onRenameConnection(connection.id, newLabel) },
                         onRepair = { onRepairConnection(connection.id) },
                         onRevoke = { onRevokeConnection(connection.id) },
@@ -150,6 +165,10 @@ fun ConnectionsSettingsScreen(
 private fun ConnectionCard(
     connection: Connection,
     isActive: Boolean,
+    // Live state for the active connection. Null for inactive ones — they
+    // render the persistent "Paired 2 days ago" style timestamp instead.
+    liveState: RelayUiState?,
+    onReconnect: () -> Unit,
     onRename: (String) -> Unit,
     onRepair: () -> Unit,
     onRevoke: () -> Unit,
@@ -196,12 +215,29 @@ private fun ConnectionCard(
             }
 
             val hostname = Connection.extractDefaultLabel(connection.apiServerUrl)
-            val pairedStatus = connection.pairedAt?.let { formatPairedRelative(it) }
-                ?: "Not paired"
+            // For the active card, surface live WSS state (Connected,
+            // Reconnecting…, Stale, etc.) so the subtitle is a real-time
+            // reflection rather than a stale "Paired 5 minutes ago". For
+            // non-active cards the persistent pairedAt timestamp is all we
+            // have, so it stays.
+            val pairedStatus = when {
+                liveState != null -> liveState.statusText(connectedLabel = "Connected")
+                connection.pairedAt != null -> formatPairedRelative(connection.pairedAt)
+                else -> "Not paired"
+            }
+            // Tint the subtitle amber when the live state is Stale so the
+            // row visually signals "attention — tap Reconnect" even before
+            // the explicit button is read. Other states keep the muted
+            // color.
+            val statusColor = if (liveState == RelayUiState.Stale) {
+                MaterialTheme.colorScheme.tertiary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            }
             Text(
                 text = "$hostname • $pairedStatus",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = statusColor,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -210,6 +246,15 @@ private fun ConnectionCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
+                // Stale-only Reconnect action. Promoted to first position so
+                // it reads as the primary recovery affordance when the row
+                // needs it, and simply absent otherwise so the Rename/Re-pair/
+                // Revoke/Remove sequence isn't disrupted.
+                if (liveState == RelayUiState.Stale) {
+                    TextButton(onClick = onReconnect) {
+                        Text("Reconnect")
+                    }
+                }
                 TextButton(onClick = { showRenameDialog = true }) {
                     Text("Rename")
                 }
