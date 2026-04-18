@@ -13,6 +13,7 @@ import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.MediaSettings
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.network.HermesApiClient
 import com.hermesandroid.relay.network.RelayHttpClient
 import com.hermesandroid.relay.network.handlers.ChatHandler
@@ -157,6 +158,32 @@ class ChatViewModel : ViewModel() {
      * which would 404 on vanilla upstream installs.
      */
     var streamingEndpoint: String = "runs"
+
+    /**
+     * Provider for the active agent-profile pick — wired from [RelayApp] at
+     * composition time so this VM stays ignorant of [ConnectionViewModel].
+     *
+     * `null` return means "no pick — let the server fall back to its
+     * configured default model" and the send pipeline leaves `modelOverride`
+     * off the wire. A non-null [Profile] with a non-blank `model` causes
+     * the request body to carry `"model": profile.model` for that turn.
+     *
+     * Default provider returns `null` so a fresh VM (before RelayApp has
+     * wired the flow) behaves identically to pre-profile-picker installs.
+     */
+    private var selectedProfileProvider: () -> Profile? = { null }
+
+    /**
+     * Wire the agent-profile provider. The provider is typically a lambda
+     * that reads from
+     * [com.hermesandroid.relay.viewmodel.ConnectionViewModel.selectedProfile]'s
+     * `.value` — giving us a fresh pick on every send without holding a
+     * direct reference to the other VM. Idempotent; later calls replace
+     * the stored provider.
+     */
+    fun setSelectedProfileProvider(provider: () -> Profile?) {
+        selectedProfileProvider = provider
+    }
 
     fun selectPersonality(name: String) {
         _selectedPersonality.value = name
@@ -685,6 +712,14 @@ class ChatViewModel : ViewModel() {
         } else null
         // === END v0.4.1 voice-intent sync ===
 
+        // Resolve the active agent-profile pick to a `modelOverride` string
+        // for this send. `null` (or blank) means "no override — let the
+        // server use its configured default model"; the API client drops
+        // the field from the request body in that case.
+        val modelOverride: String? = selectedProfileProvider()
+            ?.model
+            ?.takeIf { it.isNotBlank() }
+
         activeStream = if (streamingEndpoint == "runs") {
             client.sendRunStream(
                 message = message,
@@ -704,7 +739,8 @@ class ChatViewModel : ViewModel() {
                 onTurnComplete = onTurnCompleteCb,
                 onComplete = onCompleteCb,
                 onUsage = onUsageCb,
-                onError = onErrorCb
+                onError = onErrorCb,
+                modelOverride = modelOverride,
             )
         } else {
             client.sendChatStream(
@@ -723,7 +759,8 @@ class ChatViewModel : ViewModel() {
                 onTurnComplete = onTurnCompleteCb,
                 onComplete = onCompleteCb,
                 onUsage = onUsageCb,
-                onError = onErrorCb
+                onError = onErrorCb,
+                modelOverride = modelOverride,
             )
         }
 

@@ -124,6 +124,7 @@ import com.hermesandroid.relay.ui.components.MessageBubble
 import com.hermesandroid.relay.ui.components.MorphingSphere
 import com.hermesandroid.relay.ui.components.SphereState
 import com.hermesandroid.relay.ui.components.PersonalityPicker
+import com.hermesandroid.relay.ui.components.ProfilePicker
 import com.hermesandroid.relay.ui.components.SessionDrawerContent
 import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.ui.components.StreamingDots
@@ -228,6 +229,11 @@ fun ChatScreen(
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
     val personalityNames by chatViewModel.personalityNames.collectAsState()
     val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
+    // Agent-profile picker state (Pass 2 multi-profile work). Hidden by the
+    // picker itself when the server advertises no profiles; greyed out
+    // mid-stream so a profile swap can't race an in-flight chat request.
+    val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
+    val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
     val serverModelName by chatViewModel.serverModelName.collectAsState()
     val networkStatus by connectionViewModel.networkStatus.collectAsState()
     val showThinking by connectionViewModel.showThinking.collectAsState()
@@ -689,6 +695,19 @@ fun ChatScreen(
                             )
                         }
                     }
+
+                    // Agent-profile picker — sits LEFT of the personality
+                    // picker. Self-hides when [agentProfiles] is empty so
+                    // servers without a profiles: block in config.yaml get
+                    // the same lean top bar as before. Disabled while a
+                    // chat turn is mid-stream so the user can't swap the
+                    // model under an in-flight request.
+                    ProfilePicker(
+                        profiles = agentProfiles,
+                        selected = selectedProfile,
+                        onSelect = connectionViewModel::selectProfile,
+                        enabled = !isStreaming,
+                    )
 
                     // Personality picker
                     PersonalityPicker(

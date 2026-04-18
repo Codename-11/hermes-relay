@@ -338,6 +338,15 @@ fun RelayApp() {
                 mediaCacheWriter = connectionViewModel.mediaCacheWriter
             )
 
+            // Agent-profile pick provider (Pass 2). Lambda reads the latest
+            // StateFlow value on every send, so ChatViewModel never needs a
+            // direct reference to ConnectionViewModel. Safe to rewire on
+            // every API-client swap — the lambda captures the long-lived
+            // VM, not the (per-connection) apiClient.
+            chatViewModel.setSelectedProfileProvider {
+                connectionViewModel.selectedProfile.value
+            }
+
             // Wire session persistence callback
             chatViewModel.onSessionChanged = { sessionId ->
                 connectionViewModel.saveLastSessionId(sessionId)
