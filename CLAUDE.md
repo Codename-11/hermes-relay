@@ -154,7 +154,9 @@ hermes-android/
 | `viewmodel/BridgeViewModel.kt` | BridgeScreen VM — masterToggle, bridgeStatus, permissionStatus, activityLog |
 | `bridge/BridgeSafetyManager.kt` | Blocklist + destructive-verb confirmation + auto-disable timer; fails-closed on /call and /send_sms |
 | `data/BridgeSafetyPreferences.kt` | DataStore for blocklist, destructive verbs, auto-disable minutes, confirmation timeout |
-| `ui/screens/BridgeScreen.kt` | Bridge UI — master toggle, status, permission checklist, safety summary, activity log |
+| `ui/screens/BridgeScreen.kt` | Bridge UI — master → permission checklist → [Advanced] → unattended → safety → activity log (v0.4.1 reorder) |
+| `ui/components/UnattendedAccessRow.kt` | Unattended toggle card (sideload); `enabled=masterEnabled`; inline `KeyguardDetectedAlert` |
+| `ui/components/UnattendedGlobalBanner.kt` | 28dp amber strip at scaffold top when master+unattended on (sideload); tap → Bridge tab |
 | `bridge/BridgeStatusOverlay.kt` | WindowManager overlay; `ConfirmationOverlayHost`; requires `SavedStateRegistryOwner` init order (CREATED→restore→RESUMED) |
 | `accessibility/HermesAccessibilityService.kt` | AccessibilityService subclass; `@Volatile instance` singleton for BridgeCommandHandler |
 | `accessibility/ScreenReader.kt` | UI tree → ScreenContent; `findNodeBoundsByText()`, `findFocusedInput()` |

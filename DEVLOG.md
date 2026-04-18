@@ -1,5 +1,24 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-17 — v0.4.1 Bridge page polish pass
+
+**Motivation.** The Bridge tab had accreted cards without an information hierarchy — the master toggle, a separate status card, the permission checklist, unattended access, a standalone keyguard warning chip, and the safety summary all sat at the same visual weight, and tapping the master Switch when Accessibility wasn't granted was a silent no-op (stock Android disabled-switch behavior). Unattended Access lacked a master dependency, and once ON there was no in-app affordance while the user was on another tab. The LLM also had to learn reactively that commands wouldn't reach apps on a sleeping/locked device (via `keyguard_blocked` errors) instead of being told upfront.
+
+**What landed on `feature/v0.4.1-integration`:**
+
+- **Bridge card hierarchy rewrite.** New order: Master → Permission Checklist → [Advanced divider] → Unattended Access → Safety Summary → Activity Log. Master toggle copy now leads with "Master switch —" and carries a `MASTER` pill so its parent-gate role is legible at a glance. The old `BridgeStatusCard` was dropped from the layout (its status rows already live inside the master card); the component file stays in-tree for now.
+- **Master-toggle feedback fix.** Tapping the Switch when `HermesAccessibilityService` isn't granted now surfaces a snackbar ("Accessibility Service must be enabled first.") with an "Open Settings" action that deep-links to `ACTION_ACCESSIBILITY_SETTINGS`, instead of the previous silent-drop disabled-switch behavior. The master-toggle info dialog also gained a paragraph attributing the "Hermes has device control" persistent notification to the master switch.
+- **Unattended Access gated on master.** `UnattendedAccessRow`'s Switch is `enabled = masterEnabled` and shows "Requires Agent Control — enable the master switch above first." when master is off. The standalone `KeyguardDetectedChip` was inlined as a `KeyguardDetectedAlert` Surface band inside the Unattended Access card so the credential-lock warning lives next to the thing that triggers it. Unattended scary-dialog copy no longer implies the unattended toggle owns the persistent notification — attributes it correctly to the master switch.
+- **`UnattendedGlobalBanner` — in-app banner vs. system chip split.** New 28dp amber strip renders at the top of `RelayApp`'s scaffold on every tab when master + unattended are both on (sideload only). Theme-aware amber (amber-on-dark vs. dark-amber-on-pale in light mode), pulsing dot, "Unattended access ON — agent can wake and drive this device" copy, chevron → navigates to the Bridge tab. The existing WindowManager `BridgeStatusOverlayChip` continues to handle the backgrounded-app case (foreground-gating of the chip is in flight on a sibling branch). Net: banner when the user is IN Hermes-Relay, system chip when the app is backgrounded.
+- **Agent-awareness upgrades to `PhoneSnapshot`.** Three new fields: `unattendedEnabled`, `credentialLockDetected`, `screenOn`. `PhoneStatusPromptBuilder.buildBridgeLine()` appends explicit guidance so the LLM knows upfront whether commands will land while the user is away, instead of finding out reactively via `keyguard_blocked` responses.
+- **Bug fixes bundled in.** Permission checklist Optional pill no longer wraps mid-pill on narrow titles (switched to `FlowRow` + `softWrap=false`); runtime-permission rows (Mic, Camera, Contacts, SMS, Phone, Location) now fall back to `Settings.ACTION_APPLICATION_DETAILS_SETTINGS` when a permission has been permanently denied, instead of silently no-opping.
+
+**Next.** Bailey's on-device verification of the reordered layout, master-snackbar, global banner, and `PhoneSnapshot` fields on the Samsung S24 / Android 14 sideload build. After that, version bump to v0.4.1 release tag via `bash scripts/bump-version.sh 0.4.1` → push tag → CI.
+
+**No blockers.**
+
+---
+
 ## 2026-04-16 — v0.4.1: Tiered permission checklist + JIT permission-denied surfacing
 
 **Motivation.** Two v0.4.x fast-follows from ROADMAP.md, scoped to ship together because they share the same UX axis ("the user understands which permission is missing and what to do about it"). Until now the Bridge tab's checklist was a flat 4-row layout that lumped optional and required perms together, and `android_search_contacts` / `android_send_sms` / `android_call` / `android_location` failures bubbled up as opaque error strings — the LLM had to pattern-match the phrasing to figure out it was a permission issue. Both surfaces now make the missing-permission state legible to humans AND to the agent.

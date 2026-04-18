@@ -6,6 +6,67 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added — v0.4.1 Bridge page polish pass
+
+- **`UnattendedGlobalBanner`** — thin 28dp amber strip at the top of
+  `RelayApp`'s scaffold, visible on every tab when master + unattended
+  are both on (sideload only). Pulsing amber dot, copy "Unattended
+  access ON — agent can wake and drive this device", chevron →
+  navigates to the Bridge tab. Theme-aware colours (amber-on-dark in
+  dark mode, dark-amber-on-pale-amber in light). Pairs with the existing
+  `BridgeStatusOverlayChip` — banner handles the app-foregrounded case,
+  the overlay chip handles the app-backgrounded case.
+- **`PhoneSnapshot` agent-awareness fields** — `unattendedEnabled`,
+  `credentialLockDetected`, `screenOn`.
+  `PhoneStatusPromptBuilder.buildBridgeLine()` now appends explicit
+  guidance so the LLM knows upfront whether commands will land on the
+  device while the user is away, instead of finding out reactively via
+  `keyguard_blocked` error responses.
+- **`MASTER` pill** next to the master-toggle title, and leading
+  "Master switch —" subtitle copy, so the parent-gate role of the
+  toggle is legible without reading a wall of helper text.
+
+### Changed — v0.4.1 Bridge page polish pass
+
+- **Bridge tab card order** rewritten with a clear hierarchy: Master →
+  Permission Checklist → [Advanced divider] → Unattended Access → Safety
+  Summary → Activity Log. The previous standalone `BridgeStatusCard`
+  was dropped from the layout because its device / battery / screen /
+  current-app rows already render inline inside the master toggle card.
+  (The component file remains in-tree and is still unit-testable; it's
+  just not rendered by `BridgeScreen` any more.)
+- **Unattended Access gated on the master toggle.** The Switch inside
+  `UnattendedAccessRow` is now `enabled = masterEnabled` and the
+  subtitle reads "Requires Agent Control — enable the master switch
+  above first." when master is off. The standalone
+  `KeyguardDetectedChip` card was inlined as a `KeyguardDetectedAlert`
+  Surface band inside the Unattended Access card so the credential-lock
+  warning lives next to the thing that triggers it (same concern, one
+  card).
+- **Persistent-notification copy corrected.** The unattended one-time
+  scary dialog no longer implies the unattended toggle owns the
+  "Hermes has device control" notification — explicitly attributes it
+  to the master switch. The master-toggle info dialog gained a
+  matching paragraph naming the persistent notification.
+
+### Fixed — v0.4.1 Bridge page polish pass
+
+- **Master toggle silent no-op** when Accessibility Service isn't
+  granted. Tapping the disabled Switch used to do nothing (stock
+  Android disabled-switch behavior); now it surfaces a snackbar —
+  "Accessibility Service must be enabled first." — with an "Open
+  Settings" action that deep-links to
+  `Settings.ACTION_ACCESSIBILITY_SETTINGS`.
+- **Permission checklist Optional pill wrapped** on narrow titles
+  (e.g. "Notification Listener"). Switched the row layout to
+  `FlowRow` and forced `softWrap=false` on the pill's text so the
+  pill renders as a single unbroken element.
+- **Runtime-permission rows silently no-opped** after permanent denial.
+  Mic / Camera / Contacts / SMS / Phone / Location rows now fall back
+  to `Settings.ACTION_APPLICATION_DETAILS_SETTINGS` when the user has
+  selected "Don't ask again", taking the user straight to the app's
+  permission page instead of consuming the tap.
+
 ### Added — v0.4.1 Bridge fast-follows (in progress)
 
 - **Tiered permission checklist** on the Bridge tab — the previously-flat

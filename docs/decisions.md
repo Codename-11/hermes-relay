@@ -579,6 +579,48 @@ The `data` field tells the activity log and agent trace which tier succeeded, wh
 
 ---
 
+### 18. Unattended-access visibility: in-app banner vs. system-overlay chip (2026-04-17)
+
+**Context:** v0.4.1's unattended-access mode (sideload-only) lets the agent wake the screen and dismiss the keyguard while the user is physically away from the phone. That's a meaningful expansion of agent authority — the user should have a prominent, always-on affordance telling them the mode is live so they can disable it at a glance. The existing v0.4.1 unattended work shipped the WindowManager `BridgeStatusOverlayChip` in an "amber Unattended ON" variant to cover this, but that surface only renders when the Hermes-Relay app is backgrounded (the floating chip is drawn via `SYSTEM_ALERT_WINDOW` and the user doesn't see their own app's overlay on top of itself). While the user is IN Hermes-Relay — on any tab — there was no always-on affordance at all; they had to scroll the Bridge tab down to the Unattended Access card to check status.
+
+**Decision:** Ship two complementary affordances with distinct visibility windows, kept deliberately separate rather than trying to unify them.
+
+1. **`UnattendedGlobalBanner`** (in-app) — Compose-drawn 28dp amber strip at the top of `RelayApp`'s scaffold, rendered unconditionally on every tab when `masterEnabled && unattendedEnabled && BuildFlavor.isSideload`. Theme-aware colours (amber-on-dark / dark-amber-on-pale-amber), pulsing dot, chevron → navigates to Bridge. Handles the **app-foregrounded** case.
+2. **`BridgeStatusOverlayChip`** (existing) — WindowManager overlay via `SYSTEM_ALERT_WINDOW`, renders the amber "Unattended ON" variant when unattended is on. Forced visible whenever unattended is on, independent of the user's regular "show status overlay" preference. Handles the **app-backgrounded** case.
+
+**Why split, not unified:**
+
+- **OS constraint.** WindowManager overlays don't render on top of the owning app's UI in the foregrounded state — Android deliberately hides a package's own overlays when that package is itself foreground. One surface cannot cover both states.
+- **Different visual budgets.** The in-app banner sits inside `RelayApp`'s scaffold and can occupy a full-width strip with text + chevron. The system chip is a floating pill with strict size limits (~180dp wide) to avoid obscuring content in the host app. Text copy differs accordingly.
+- **Different z-order semantics.** The in-app banner composes with the rest of the app's UI and respects tab navigation. The system chip is user-positionable via drag and persists across app switches. Unifying them would force the weaker of the two behaviours onto the stronger surface.
+- **Different dismissibility.** The in-app banner is non-dismissible and always renders when the preconditions are met (it's a fixed affordance, not a notification). The system chip is user-draggable but non-tap-dismissable while unattended is on. Both fail-closed.
+
+**What the user sees (sideload only, unattended on):**
+
+- On any Hermes-Relay tab → amber banner pinned to the top of the scaffold. Tap the chevron to jump to the Bridge tab and disable.
+- App in the background (any other app foregrounded, or home screen) → floating amber "Unattended ON" chip in the system overlay. Tap to return to Hermes-Relay.
+
+**Consequences:**
+
+- **Correct coverage.** There is now no app-state window in which the user can miss that unattended mode is on.
+- **Two places to maintain.** Copy changes need to ripple to both surfaces. Mitigated by keeping the strings short and similar but not identical (the in-app banner has more room and uses "agent can wake and drive this device"; the system chip uses the tighter "Unattended ON"). Both surfaces are driven by the same `unattendedEnabled` StateFlow, so state can't drift.
+- **Theme story differs.** The in-app banner honours the Material 3 theme (light / dark / dynamic colour). The system chip uses a fixed amber for visibility on arbitrary host apps. This is a feature, not a defect — the system chip has no knowledge of the underlying app's theme and amber on amber would vanish.
+
+**Alternatives rejected:**
+
+- **One unified overlay chip, rendered even while the app is foregrounded.** Requires a custom always-foreground overlay mode via `TYPE_APPLICATION_OVERLAY` + manual z-order tricks; Android actively fights this on modern targets. Cost / benefit not worth it when a Compose-drawn banner solves the foreground case trivially.
+- **Persistent foreground notification as the only affordance.** We already have one (`BridgeForegroundService`), and it's the authoritative in-sight kill switch. But (a) it lives in the shade until the user pulls it down and (b) it's for the master-toggle-on state, not for unattended specifically. A per-mode notification channel was considered and rejected as notification shade clutter.
+- **In-app banner only, drop the system chip.** Regresses the backgrounded-app case. The system chip is the only surface that can tell the user at a glance that unattended is on while their phone is running a different app — exactly the case unattended is designed for.
+
+**References:**
+
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/components/UnattendedGlobalBanner.kt` (new in v0.4.1 polish pass)
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/RelayApp.kt` — banner mount point at scaffold top
+- `app/src/main/kotlin/com/hermesandroid/relay/bridge/BridgeStatusOverlay.kt` — `BridgeStatusOverlayChip` amber variant (shipped with the initial v0.4.1 unattended work)
+- `docs/spec.md` §5 Bridge Tab — user-facing description
+
+---
+
 ## Voice Mode — Architecture
 
 **Context:** We wanted real-time voice conversation with the Hermes agent — user speaks, agent listens, agent speaks back, orb reacts. Hermes-agent has six TTS providers and five STT providers fully implemented in `tools/tts_tool.py` and `tools/transcription_tools.py`, plus a CLI `voice_mode.py` that uses them for push-to-talk — but none of it is exposed via the WebAPI server at `:8642`. The phone has no way to call voice functions over HTTP.
