@@ -21,6 +21,7 @@ mlkit-barcode = "17.3.0"
 camera = "1.6.0"
 play-publisher = "4.0.0"
 media3 = "1.9.3"
+androidVad = "2.0.10"
 
 [libraries]
 # Compose BOM
@@ -72,6 +73,9 @@ camera-view = { group = "androidx.camera", name = "camera-view", version.ref = "
 
 # Media3 (ExoPlayer) — gapless TTS playback in VoicePlayer
 media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "media3" }
+
+# android-vad (Silero) — on-device voice activity detection for barge-in (B2)
+android-vad-silero = { group = "com.github.gkonovalov.android-vad", name = "silero", version.ref = "androidVad" }
 
 # Serialization
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
