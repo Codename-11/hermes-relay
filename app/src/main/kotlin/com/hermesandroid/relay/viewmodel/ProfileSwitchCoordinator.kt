@@ -15,7 +15,6 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -118,7 +117,14 @@ class ProfileSwitchCoordinator(
          * the only slow path is Keystore init on the very first launch,
          * which well fits inside this budget.
          */
-        const val AUTH_HYDRATE_TIMEOUT_MS: Long = 2_000L
+        // Switching to a brand-new (unpaired) profile is the common "Add
+        // profile" path; AuthManager's init coroutine finishes without
+        // transitioning away from Unpaired, so this timeout IS the happy
+        // path there. Keep it short so the UI freeze on add-profile is
+        // imperceptible. AuthManager.init reads EncryptedSharedPreferences
+        // which takes < 50 ms on a warm device; 500 ms is generous even
+        // with cold disk.
+        const val AUTH_HYDRATE_TIMEOUT_MS: Long = 500L
     }
 
     private val switchMutex = Mutex()
@@ -253,16 +259,18 @@ class ProfileSwitchCoordinator(
     }
 
     /**
-     * Suspend until [authState] emits something other than
-     * [AuthState.Unpaired] (meaning the stored token, if any, has been
-     * loaded). Returns the first stable state.
+     * Suspend until [authState] emits a terminal state — [AuthState.Paired]
+     * (stored token hydrated) or [AuthState.Failed] (keystore unreadable /
+     * corrupt). Returns the first such emission.
      *
      * AuthManager's init coroutine transitions Unpaired → Paired once the
-     * token store is read. If no token exists we stay on Unpaired forever,
-     * which is why the caller wraps this in a [withTimeoutOrNull].
+     * token store is read. If no token exists we stay on Unpaired forever
+     * — the caller's [withTimeoutOrNull] wrap is the exit for that case.
+     * Accepting Failed as terminal too means a broken keystore unblocks
+     * the switch immediately instead of waiting out the full timeout.
      */
     private suspend fun waitForStableAuth(authState: StateFlow<AuthState>): AuthState {
-        return authState.filter { it !is AuthState.Unpaired }.first()
+        return authState.first { it is AuthState.Paired || it is AuthState.Failed }
     }
 
 }

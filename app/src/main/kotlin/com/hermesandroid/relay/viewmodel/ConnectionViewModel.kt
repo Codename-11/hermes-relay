@@ -49,8 +49,10 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -143,6 +145,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     )
         private set
 
+    // Multi-profile: authState, pairingCode, and currentPairedSession were
+    // previously direct references to the initial AuthManager's backing flows.
+    // After a profile switch, `authManager` is replaced but a captured
+    // reference still points at the OLD instance — Compose's collectAsState
+    // caches the flow on first composition, so consumers would show the
+    // previous profile's auth state forever. We flatMapLatest over this
+    // MutableStateFlow so the public flows re-subscribe to the new manager
+    // whenever installAuthManager() swaps it.
+    private val _authManagerFlow = MutableStateFlow(authManager)
+
     // Pass hasPairContext as the reconnect gate — the auto-reconnect loop
     // inside ConnectionManager bypasses ConnectionViewModel.connectRelay's
     // primary gate, so we plumb the same AuthManager check directly into
@@ -217,7 +229,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     // --- Relay connection state ---
     val relayConnectionState: StateFlow<ConnectionState> = connectionManager.connectionState
-    val authState: StateFlow<AuthState> = authManager.authState
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val authState: StateFlow<AuthState> = _authManagerFlow
+        .flatMapLatest { it.authState }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, authManager.authState.value)
+
     val insecureMode: StateFlow<Boolean> = connectionManager.insecureMode
     val isInsecureConnection: StateFlow<Boolean> = connectionManager.isInsecureConnection
 
@@ -294,13 +311,20 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     private val _onboardingCompleted = MutableStateFlow(true) // default true to avoid flash
     val onboardingCompleted: StateFlow<Boolean> = _onboardingCompleted.asStateFlow()
 
-    // Pairing code from AuthManager
-    val pairingCode: StateFlow<String> = authManager.pairingCode
+    // Pairing code from AuthManager — see _authManagerFlow comment above for
+    // why this flatMapLatches rather than referencing authManager directly.
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val pairingCode: StateFlow<String> = _authManagerFlow
+        .flatMapLatest { it.pairingCode }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, authManager.pairingCode.value)
 
     // Paired-session snapshot (expires_at, grants, transport hint) from AuthManager.
     // Exposed straight through so SettingsScreen + PairedDevicesScreen can
     // render expiry + grant chips without poking at prefs.
-    val currentPairedSession: StateFlow<PairedSession?> = authManager.currentPairedSession
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val currentPairedSession: StateFlow<PairedSession?> = _authManagerFlow
+        .flatMapLatest { it.currentPairedSession }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, authManager.currentPairedSession.value)
 
     // --- Paired devices list (GET /sessions) -------------------------------
     //
@@ -645,7 +669,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 profileId = pid,
             )
         },
-        installAuthManager = { am -> authManager = am },
+        installAuthManager = { am ->
+            authManager = am
+            // Push into the flow so the flatMapLatest chains on authState /
+            // pairingCode / currentPairedSession repoint to the new manager.
+            // Without this, existing Compose collectors stay bound to the
+            // previous AuthManager's backing flows forever.
+            _authManagerFlow.value = am
+        },
         setApiServerUrl = { url -> _apiServerUrl.value = url },
         setRelayUrl = { url -> _relayUrl.value = url },
         persistUrls = { apiUrl, relayUrl ->
@@ -673,9 +704,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * [activeProfileId]. Fires and forgets — UI watches [activeProfile]
      * for the completed state.
      */
-    fun switchProfile(profileId: String) {
+    fun switchProfile(profileId: String): Job =
         profileSwitchCoordinator.switchProfile(profileId)
-    }
 
     /**
      * Multi-profile: RelayApp calls this at composition time with a
@@ -835,7 +865,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         if (wasActive) {
             val other = profileStore.profiles.value.firstOrNull { it.id != profileId }
             if (other != null) {
-                switchProfile(other.id)
+                // Await the full switch before deleting the store file.
+                // switchProfile launches on viewModelScope; if we proceeded
+                // to ProfileStore.removeProfile (which calls
+                // Context.deleteSharedPreferences) before the coordinator
+                // finished tearing down the old AuthManager, the old
+                // manager's in-flight init/hydrate coroutine could fault
+                // reading a file that was just deleted.
+                switchProfile(other.id).join()
             }
             // If no other profile exists, ProfileStore.removeProfile will
             // clear the active pointer on its own.

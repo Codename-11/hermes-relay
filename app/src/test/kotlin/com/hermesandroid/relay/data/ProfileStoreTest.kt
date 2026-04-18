@@ -197,9 +197,9 @@ class ProfileStoreTest {
 
         store.markPaired(
             profileId = a.id,
-            pairedAt = 1_700_000_000L,
+            pairedAtMillis = 1_700_000_000L,
             transportHint = "wss",
-            expiresAt = 1_700_100_000L,
+            expiresAtMillis = 1_700_100_000L,
         )
 
         val list = awaitFlowValue(store.profiles) {

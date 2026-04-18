@@ -35,9 +35,11 @@ data class Profile(
     val apiServerUrl: String,
     val relayUrl: String,
     val tokenStoreKey: String,
+    /** Epoch milliseconds. Pass `System.currentTimeMillis()`; do not pass seconds. */
     val pairedAt: Long? = null,
     val lastActiveSessionId: String? = null,
     val transportHint: String? = null,
+    /** Epoch milliseconds. The auth.ok `expires_at` field is seconds — multiply by 1000 at the call site. */
     val expiresAt: Long? = null,
 ) {
     companion object {

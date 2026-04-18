@@ -226,12 +226,18 @@ class ProfileStore private constructor(
      * Stamp the identified profile with pairing metadata pulled out of an
      * `auth.ok` payload. No-op if the profile doesn't exist — callers are
      * responsible for ordering this after [addProfile].
+     *
+     * Both [pairedAtMillis] and [expiresAtMillis] are epoch milliseconds —
+     * pass `System.currentTimeMillis()` for pairedAt and `expires_at * 1000`
+     * for the seconds-based auth.ok payload field. `ProfilesSettingsScreen`
+     * assumes millis when rendering relative time; pass seconds here and
+     * cards will always read as "Paired decades ago".
      */
     suspend fun markPaired(
         profileId: String,
-        pairedAt: Long,
+        pairedAtMillis: Long,
         transportHint: String?,
-        expiresAt: Long?,
+        expiresAtMillis: Long?,
     ) {
         writeMutex.withLock {
             dataStore.edit { prefs ->
@@ -240,9 +246,9 @@ class ProfileStore private constructor(
                 val next = current.map {
                     if (it.id == profileId) {
                         target.copy(
-                            pairedAt = pairedAt,
+                            pairedAt = pairedAtMillis,
                             transportHint = transportHint,
-                            expiresAt = expiresAt,
+                            expiresAt = expiresAtMillis,
                         )
                     } else {
                         it
