@@ -1,98 +1,73 @@
-# Hermes-Relay v0.5.0
+# Hermes-Relay v0.5.1
 
-**Release Date:** April 17, 2026
-**Since v0.4.0:** v0.4.1 fast-follows (bootstrap middleware, tiered permissions, unattended access mode, voice-session sync) + 2026-04-17 polish pass (UI redesign, agent-aware status, auto-return, activity log)
+**Release Date:** April 18, 2026
+**Since v0.5.0:** Voice-focused patch release — TTS quality pass, conversational barge-in, silence-based auto-stop, plus a bootstrap crash fix
 
-> **The polish release.** v0.4.0 shipped the bridge channel surface; v0.5.0 makes it usable. The Bridge tab is restructured around a clear master/sub-feature hierarchy, the agent now knows about your phone's unattended state and screen lock so it can warn you instead of failing silently, and the phone auto-returns to Hermes-Relay after every run so you're never stranded on Starbucks/Chrome/whatever the agent left you in.
+> **The voice release.** v0.5.0 shipped the bridge polish; v0.5.1 makes voice mode feel like a real conversation. Gapless ExoPlayer playback, client + relay sanitizers so the agent stops reading emoji and markdown fences aloud, sentence-prefetch so there's no dead air between chunks, barge-in so you can interrupt by just speaking, and silence-based auto-stop so Continuous mode actually ends your turn when you stop talking.
 
 ---
 
 ## 📥 Download
 
-v0.5.0 ships in **two build flavors**. APK filenames are version-tagged:
+v0.5.1 ships in **two build flavors**. APK filenames are version-tagged:
 
 | Flavor | File | Who it's for |
 |---|---|---|
-| **sideload** (recommended) | `hermes-relay-0.5.0-sideload-release.apk` | Full feature set — bridge channel, voice intents, unattended access, vision-driven `android_navigate`. Installs alongside the Play build with a `.sideload` applicationId. |
-| **Google Play** | `hermes-relay-0.5.0-googlePlay-release.aab` | Conservative feature set (chat, voice, safety rails — no agent device control) to match Play Store's Accessibility policy. |
-| googlePlay APK | `hermes-relay-0.5.0-googlePlay-release.apk` | Parity + diff tooling — not the primary download. |
-| sideload AAB | `hermes-relay-0.5.0-sideload-release.aab` | Parity + diff tooling — not the primary download. |
+| **sideload** (recommended) | `hermes-relay-0.5.1-sideload-release.apk` | Full feature set — bridge channel, voice intents, unattended access, vision-driven `android_navigate`. Installs alongside the Play build with a `.sideload` applicationId. |
+| **Google Play** | `hermes-relay-0.5.1-googlePlay-release.aab` | Conservative feature set (chat, voice, safety rails — no agent device control) to match Play Store's Accessibility policy. |
+| googlePlay APK | `hermes-relay-0.5.1-googlePlay-release.apk` | Parity + diff tooling — not the primary download. |
+| sideload AAB | `hermes-relay-0.5.1-sideload-release.aab` | Parity + diff tooling — not the primary download. |
 
 **Verify integrity** with `SHA256SUMS.txt` from the same release. See the [Sideload guide](https://codename-11.github.io/hermes-relay/guide/getting-started.html#sideload-apk) for install steps.
-
-> **Why two flavors?** The `googlePlay` build stays inside Play Store's Accessibility Service policy. The `sideload` build unlocks the full agent-control feature set and installs with a `.sideload` applicationId so both can coexist (sideload launcher labelled **"Hermes Dev"**). See [Release tracks comparison](https://codename-11.github.io/hermes-relay/guide/release-tracks.html).
 
 ---
 
 ## ✨ Highlights
 
-### Bridge tab redesign
+### Voice quality pass
 
-- **MASTER pill + rewritten copy.** The "Allow Agent Control" toggle now reads as the parent gate it actually is — a small "MASTER" pill next to the title plus subtitle text that explicitly names sub-features ("master switch — agent can read screen and act via the sub-features below"). No more wondering whether unattended is a peer or a child.
-- **Snackbar instead of dead taps.** Tapping the master Switch when accessibility isn't granted used to be a silent no-op (Android's disabled-Switch behavior). Now it shows a snackbar with an "Open Settings" action that deep-links straight to Android's Accessibility Settings page.
-- **Card reorder.** Master → Permission Checklist → [Advanced] → Unattended → Safety → Activity Log. Prereqs come before opt-in features; Activity Log goes last because it's a history view.
-- **Runtime-permission rows always do something.** Tapping Microphone / Camera / Contacts / SMS / Phone / Location / Notifications now opens Android's app-info Settings page on every tap — same affordance as the special-permission rows (Accessibility, Overlay, Notification Listener). Eliminates the silent no-op after permanent denial that confused users on previous releases.
-- **Optional badge no longer wraps.** "Notification Listener" + "Optional" on a portrait phone used to render as a lumpy two-line pill. Fixed via FlowRow layout + non-wrapping badge text.
+- **Gapless TTS playback.** Swapped `MediaPlayer` for Media3 `ExoPlayer` with a persistent instance and `addMediaItem` queuing. No more 200–400 ms silence between sentence chunks, no more pop / click on chunk boundaries.
+- **Client + relay text sanitizers.** Assistant output is stripped of markdown fences, tool-call annotations (`` `💻 terminal` ``), URLs, and emoji *before* hitting ElevenLabs — on the relay (`plugin/relay/tts_sanitizer.py`) and on the phone (`VoiceViewModel.sanitizeForTts`). The chat UI still shows emoji; only the voice path is cleaned. Solves "agent reads `colon rocket` out loud" and "agent reads `https colon slash slash github dot com`."
+- **Sentence coalescing + secondary-break chunking.** Minimum 40-char chunks with 800 ms idle flush; ellipses / dashes treated as soft breaks when the primary sentence end is far away. Keeps prosody natural without waiting for a full paragraph.
+- **Prefetch synth-while-playing pipeline.** Two coroutines in a `supervisorScope` — one synthesizing the next sentence while the previous one plays. Channel-backed with capacity 2 so the player never starves.
 
-### Unattended access — gating + global banner (sideload only)
+### Voice barge-in (off by default, opt-in via Voice Settings)
 
-- **Gated on master.** The unattended Switch is now disabled when Agent Control is off, with subtitle text "Requires Agent Control — enable the master switch above first." User can't flip it without observable feedback.
-- **Inline keyguard alert.** The "Keyguard detected" warning is now an inline alert band inside the Unattended card instead of a separate sibling card.
-- **Global UnattendedGlobalBanner.** Thin amber strip (28dp) at the top of every tab when master + unattended are both on. Pulsing amber dot, "Unattended access ON — agent can wake and drive this device", tap-to-Bridge. Theme-aware colours, WCAG AA+ in both light and dark mode.
-- **System overlay chip + in-app banner now coordinate.** The cross-app WindowManager chip (visible when Hermes-Relay is backgrounded) hides when our app is foregrounded — the banner takes over. Backed by a new `AppForegroundTracker` (ProcessLifecycleOwner). Result: one indicator at a time, no visual noise.
+- **Silero VAD + AcousticEchoCanceler + hysteresis.** Duplex AudioRecord (`VOICE_COMMUNICATION` source) monitored by a Silero VAD engine with 2–3 consecutive-frame hysteresis. AEC binds to the ExoPlayer audio session id so the VAD sees your voice, not the agent's playback echo.
+- **Soft-duck → hard-cut interrupt.** Single VAD positive triggers a 30 % volume duck; confirmed hysteresis pass hard-cuts playback and starts a new listening turn. 500 ms duck-watchdog un-ducks on a single-frame false positive so stray clicks only briefly dip the volume.
+- **Optional resume-from-next-sentence.** After a barge-in interrupt, a 600 ms silence watchdog checks whether the user actually continued speaking. If not (cough, false positive, stray laugh), the remaining un-played sentences are re-queued. Toggle in Voice Settings.
+- **Sensitivity picker (Off / Low / Default / High)** with an always-visible AEC compatibility badge so users know when their device's echo canceler isn't loaded (affects false-positive rate on some Samsung / Motorola / older Pixel builds).
 
-### Agent-aware phone status
+### Silence-based auto-stop for listening turns
 
-- **Unattended/screen/credential-lock visible to the LLM.** The system-prompt block (built by `PhoneStatusPromptBuilder`) and the `bridge.status` envelope (consumed by the host-side `android_phone_status` tool) both gained `unattended.supported / .enabled / .credential_lock_detected` and `screen_on` fields. The agent can now warn you upfront ("the screen is off and unattended access is off — wake the phone first") instead of finding out reactively via `keyguard_blocked` errors after a wasted command.
-- **`android_phone_status` tool description tightened.** The LLM is now told explicitly when to warn (screen-off + unattended-off → ask user to wake; unattended-on + credential-lock → expect `keyguard_blocked`). Push-on-toggle so host cache reflects state changes within ~1s.
-
-### Auto-return to Hermes-Relay
-
-- **Tightened tool prompts.** `android_return_to_hermes` and `android_open_app` descriptions are rewritten with explicit `REQUIRED FINAL STEP` / `MANDATORY CLEANUP` framing. Less likely to be skipped.
-- **Dual-signal safety net.** New `BridgeRunTracker` singleton coordinates two completion signals: Chat-tab SSE `run.completed` (fast, fires when phone's Chat tab is in the loop) and a 12s bridge-idle timer (works for ANY frontend — Discord, CLI, web, Slack). Whichever fires first dispatches a local `/return_to_hermes` so the phone auto-returns to Hermes-Relay after the agent finishes — even if the LLM forgot to call the return tool itself.
-
-### Activity log finally records actions
-
-- The Bridge tab's Activity Log card was scaffolded in v0.3 but never wired — the UI rendered the flow, the DataStore was ready, but no code ever called `recordActivity()`. Fixed in v0.5.0: `BridgeCommandHandler` now emits a `BridgeActivityEntry` for every dispatched command, with Success / Failed / Blocked status, route-specific summaries (`tap (540, 1200)`, `open_app com.starbucks.mobilecard`, `type "hello"`), and error text on failures. High-frequency polls (`/ping`, `/events`, `/current_app`) suppressed so the log shows user-meaningful activity, not noise.
-
-### "Current app" status finally populated
-
-- The `Current app` field in the Bridge tab's master card was hardcoded `null` with a TODO. Now wired to `HermesAccessibilityService.instance.currentApp` with a 5s periodic refresh — finally shows the actual foreground package.
+- **The `silenceThresholdMs` preference is finally wired.** Previously the Settings slider persisted a value nothing ever read — Continuous mode would re-arm the mic after TTS drained and then wait forever for a manual tap to send. Now `VoiceViewModel.startListening()` arms a watchdog that polls amplitude every 150 ms and auto-calls `stopListening()` after the configured silence window (default 3 s) following at least one above-floor frame.
+- **Grace window** — auto-stop never fires before the user's first above-floor frame, so "tap mic, take a beat" doesn't insta-close the turn.
+- **Skipped in Hold-to-Talk.** The physical release is the authoritative stop there; auto-stopping mid-hold would be surprising.
 
 ---
 
 ## 🔧 Fixes
 
-- **Banner status-bar overlap.** The new global banner sat at y=0 of the window with no inset padding, so on Android 15 edge-to-edge mode the system status bar icons (clock / wifi / battery) drew on top of the banner text. Fixed via `windowInsetsPadding(WindowInsets.statusBars)` + conditional `consumeWindowInsets` on the Scaffold so child TopAppBars don't double-pad.
-- **TalkBack semantics.** Banner is now announced as a Button with the role hint, not just plain prose with a clickable hit-target.
-- **Repository config-change churn.** `remember(LocalContext.current) { Repository(ctx) }` would re-instantiate DataStore repos on every rotation / dark-mode swap / locale change. Switched to keying off `applicationContext` (process-stable).
-
----
-
-## 🏗️ Includes from v0.4.1 fast-follows
-
-(Already merged into the integration branch before the polish pass — listed here for context since v0.4.1 wasn't tagged on its own.)
-
-- **Bootstrap command middleware** for `/v1/chat/completions` + `/v1/runs` so vanilla upstream installs still see slash-command routing without the fork.
-- **Tiered permission checklist** with JIT error surfacing for missing permissions.
-- **Unattended access mode** (sideload-only) — the wake-lock + keyguard-dismiss machinery this release polishes.
-- **Voice-session sync** so phone-local voice intents land in the server LLM session as proper assistant/tool message pairs.
+- **"Final short sentence with emoji not spoken in Continuous mode."** Race in `maybeAutoResume` where Continuous mode's `startListening()` → `player.stop()` clobbered the still-in-flight final chunk's playback pipeline. Fixed with an `AtomicInteger` gate on the synth queue; auto-resume now defers until the TTS pipeline actually drains.
+- **Continuous mode didn't persist across app restarts.** `VoiceViewModel` never subscribed to `VoicePreferencesRepository.settings.interactionMode`, so cold starts always defaulted to Tap-to-Talk regardless of the saved pref. Now subscribes on `initialize` and mirrors the saved value into `uiState`.
+- **Bootstrap gateway crash: `'tuple' object has no attribute 'freeze'`.** `hermes_relay_bootstrap/_command_middleware.py::maybe_install_middleware` was replacing aiohttp's `FrozenList` with a plain tuple, which broke when `AppRunner.setup()` later called `.freeze()`. Switched to in-place `app._middlewares.append(middleware)`. 31/31 middleware tests pass.
 
 ---
 
 ## 🧪 Verification checklist (post-install)
 
-- Bridge tab: master toggle, MASTER pill, Settings-deep-link snackbar on accessibility-needed.
-- Permission rows tap → Android app-info page (every row).
-- Unattended toggle disabled when master is off; enabled + scary-dialog when master is on.
-- Global banner appears when master + unattended both ON; hides on Onboarding / Voice mode.
-- WindowManager chip hides when Hermes-Relay is foregrounded.
-- "Current app" status updates every ~5s while the Bridge tab is open.
-- Activity Log populates with bridge commands (open_app, screen, tap, type, etc.) with Success/Failed/Blocked status.
-- Discord-test: ask the agent to open Starbucks and read order history. After it finishes (no more tool calls), phone auto-returns to Hermes within ~12s.
-- `/bridge/status` JSON envelope includes `unattended.{supported, enabled, credential_lock_detected}`.
+- Voice mode → ask the agent a multi-sentence question. No gap / click between sentences; no emoji or markdown spoken aloud.
+- Speak over the agent mid-response with barge-in ON → playback cuts within ~100 ms, a new listening turn starts.
+- Briefly cough during playback with barge-in ON and "Resume after interruption" ON → playback ducks briefly but resumes from the next unplayed sentence.
+- Voice Settings → Interaction Mode → **Continuous** → force-stop the app → relaunch → Voice mode still comes up in Continuous.
+- Voice Settings → Silence Threshold slider at 3 s → start a Tap-to-Talk turn → speak one sentence → stop talking → within ~3 s the turn auto-submits.
+- Device without AEC → Voice Settings shows the compatibility badge next to the Barge-in section.
 
-See `CHANGELOG.md` for the full file-level diff and `DEVLOG.md` for the session narrative.
+## 🧩 Known — test suite deferred
+
+8 new voice/audio unit tests added in this release are `@Ignore`'d pending a test-infra follow-up. See [issue #32](https://github.com/Codename-11/hermes-relay/issues/32) for the root-cause breakdown (coroutine `.cancel()` without `.join()` + Media3 static init on pure JVM + Robolectric classloader leakage). No app-behavior impact — the tests describe intent + assertions for the new voice code and will be un-`@Ignore`'d once the separate-source-set split lands. On-device smoke testing (by Bailey, Samsung) validated the feature behavior.
+
+See `CHANGELOG.md` for the full file-level diff and `DEVLOG.md` for the per-feature session narrative.
 
 ---
 

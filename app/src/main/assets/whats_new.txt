@@ -1,32 +1,25 @@
-v0.5.0 — Bridge Polish + Auto-Return
+v0.5.1 — Voice Mode Quality Pass
 
-Bridge Tab Redesign
-• Master toggle now reads as the parent gate (MASTER pill + clearer copy)
-• Tap Switch without accessibility → Settings deep-link snackbar
-• Card order: Master → Permissions → Advanced → Unattended → Safety → Log
-• Permission rows always open Android Settings on tap (no more dead taps)
+Voice Quality
+• Gapless TTS playback — Media3 ExoPlayer with persistent player + addMediaItem
+• Sanitizer strips markdown, tool annotations, URLs, and emoji before ElevenLabs
+  (chat UI still shows emoji — only the voice path is cleaned)
+• Sentence coalescing + 800ms idle flush so short fragments join naturally
+• Prefetch-while-playing pipeline — no dead air between sentence chunks
 
-Unattended Access (sideload)
-• Disabled when master is off — clear "Requires Agent Control" hint
-• New global banner across every tab when unattended is active
-• System overlay chip hides when you're inside Hermes-Relay (banner takes over)
+Conversational Barge-In (opt-in, Voice Settings)
+• Interrupt the agent by just speaking — Silero VAD + AEC + hysteresis
+• Soft-duck on first positive, hard-cut on confirmed speech
+• Optional resume-from-next-sentence if the barge-in was a cough
+• Sensitivity picker (Off / Low / Default / High) + AEC compatibility hint
 
-Smarter Agent Awareness
-• LLM now sees unattended state, screen state, and credential lock upfront
-• android_phone_status tool warns about screen-off + unattended-off ahead of time
-• Tool description updates push to host immediately on toggle flip
+Silence Auto-Stop
+• The Silence Threshold slider in Voice Settings finally works — Continuous
+  and Tap-to-Talk modes now auto-submit after your configured silence window
+• Grace window: auto-stop waits until you've actually started speaking
+• Hold-to-Talk unchanged (physical release is the stop signal)
 
-Auto-Return After Tasks
-• Tightened LLM prompts to call android_return_to_hermes as the final step
-• 12s idle-timer safety net auto-fires the return for ANY frontend
-  (Discord, CLI, web, voice) — phone goes back to Hermes-Relay automatically
-
-Activity Log
-• Now actually records what the agent did — every tap, type, open_app, etc.
-• Success / Failed / Blocked status with route-specific summaries
-• Polling noise (ping, events) suppressed
-
-Other
-• "Current app" status finally populates and updates live (~5s tick)
-• Banner status-bar overlap fixed
-• TalkBack semantics added to global banner
+Fixes
+• Final short sentence with emoji now spoken in Continuous mode
+• Continuous mode preference survives app restarts
+• Bootstrap gateway crash on startup ('tuple' has no attribute 'freeze') — fixed
