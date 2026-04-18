@@ -18,6 +18,7 @@ import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.PairingPreferences
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.ProfileStore
+import com.hermesandroid.relay.data.ProfileValidation
 import com.hermesandroid.relay.data.relayDataStore
 import com.hermesandroid.relay.util.TailscaleDetector
 import com.hermesandroid.relay.network.ChannelMultiplexer
@@ -762,13 +763,38 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         label: String?,
         apiServerUrl: String,
         relayUrl: String,
-    ): String {
+    ): Result<String> {
+        val resolvedLabel = (label?.trim()?.takeIf { it.isNotEmpty() })
+            ?: Profile.extractDefaultLabel(apiServerUrl)
+
+        // Validate in the same order the fields appear to the user — label
+        // then URLs — so the first error surfaced matches where their eye
+        // would be.
+        ProfileValidation.validateLabel(resolvedLabel)?.let {
+            return Result.failure(IllegalArgumentException(it))
+        }
+        ProfileValidation.validateApiServerUrl(apiServerUrl)?.let {
+            return Result.failure(IllegalArgumentException(it))
+        }
+        ProfileValidation.validateRelayUrl(relayUrl)?.let {
+            return Result.failure(IllegalArgumentException(it))
+        }
+        ProfileValidation.findDuplicate(
+            profiles = profileStore.profiles.value,
+            apiServerUrl = apiServerUrl,
+            relayUrl = relayUrl,
+        )?.let { dup ->
+            return Result.failure(
+                IllegalStateException("A profile for this server already exists (\"${dup.label}\")"),
+            )
+        }
+
         val id = java.util.UUID.randomUUID().toString()
         val profile = Profile(
             id = id,
-            label = label ?: Profile.extractDefaultLabel(apiServerUrl),
-            apiServerUrl = apiServerUrl,
-            relayUrl = relayUrl,
+            label = resolvedLabel,
+            apiServerUrl = apiServerUrl.trim(),
+            relayUrl = relayUrl.trim(),
             tokenStoreKey = Profile.buildTokenStoreKey(id),
             pairedAt = null,
             lastActiveSessionId = null,
@@ -780,7 +806,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // uses its (currently empty) token store. Per the KDoc above, the
         // user will need to re-pair against this profile to populate it.
         switchProfile(id)
-        return id
+        return Result.success(id)
     }
 
     /**
@@ -788,10 +814,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * [ProfileStore.updateProfile]. Does not touch auth state; does not
      * trigger a switch. No-op when the profile id is unknown.
      */
-    suspend fun renameProfile(profileId: String, newLabel: String) {
+    suspend fun renameProfile(profileId: String, newLabel: String): Result<Unit> {
         val existing = profileStore.profiles.value.firstOrNull { it.id == profileId }
-            ?: return
-        profileStore.updateProfile(existing.copy(label = newLabel))
+            ?: return Result.failure(NoSuchElementException("No profile with id=$profileId"))
+        ProfileValidation.validateLabel(newLabel)?.let {
+            return Result.failure(IllegalArgumentException(it))
+        }
+        profileStore.updateProfile(existing.copy(label = newLabel.trim()))
+        return Result.success(Unit)
     }
 
     /**
@@ -1341,7 +1371,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             _apiServerHealth.value = HealthStatus.Probing
             val client = HermesApiClient(baseUrl = url, apiKey = key)
             _apiClient.value = client
-            oldClient?.shutdown()
+            shutdownClientOffMain(oldClient)
             val ok = client.checkHealth()
             _apiServerReachable.value = ok
             _apiServerHealth.value = if (ok) HealthStatus.Reachable else HealthStatus.Unreachable
@@ -1353,12 +1383,26 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             _chatMode.value = caps.toChatMode()
         } else {
             _apiClient.value = null
-            oldClient?.shutdown()
+            shutdownClientOffMain(oldClient)
             _apiServerReachable.value = false
             _apiServerHealth.value = HealthStatus.Unknown
             _chatMode.value = ChatMode.DISCONNECTED
             _serverCapabilities.value = ServerCapabilities.DISCONNECTED
         }
+    }
+
+    /**
+     * [HermesApiClient.shutdown] eventually drives OkHttp's
+     * [okhttp3.ConnectionPool.evictAll], which closes live SSL sockets
+     * synchronously — i.e. it performs network writes. Running that on
+     * the main thread trips StrictMode's `NetworkOnMainThreadException`
+     * on any keep-alive connection (observed on profile switch +
+     * updateApiServerUrl). Always hand off to IO.
+     */
+    private suspend fun shutdownClientOffMain(client: HermesApiClient?) {
+        if (client == null) return
+        runCatching { withContext(Dispatchers.IO) { client.shutdown() } }
+            .onFailure { Log.w("ConnectionVM", "HermesApiClient.shutdown failed: ${it.message}") }
     }
 
     // --- Relay methods ---
@@ -1618,7 +1662,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             dataManager.resetAppData()
             _apiServerUrl.value = DEFAULT_API_URL
             _relayUrl.value = DEFAULT_RELAY_URL
-            _apiClient.value?.shutdown()
+            shutdownClientOffMain(_apiClient.value)
             _apiClient.value = null
             _apiServerReachable.value = false
         }
@@ -1874,7 +1918,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     override fun onCleared() {
         super.onCleared()
         connectionManager.shutdown()
-        _apiClient.value?.shutdown()
+        // ViewModel.onCleared runs on the main thread and viewModelScope
+        // is already being cancelled — fire-and-forget the client
+        // shutdown on a plain background Thread so
+        // ConnectionPool.evictAll doesn't trip
+        // NetworkOnMainThreadException on live SSL sockets.
+        _apiClient.value?.let { client ->
+            Thread({ runCatching { client.shutdown() } }, "HermesApiClient-shutdown").start()
+        }
         tailscaleDetector.shutdown()
         // Release the cached VirtualDisplay + ImageReader + HandlerThread
         // built by ScreenCapture on the first /screenshot call. Without

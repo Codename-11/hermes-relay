@@ -306,6 +306,9 @@ private fun RenameProfileDialog(
     onConfirm: (String) -> Unit,
 ) {
     var value by remember { mutableStateOf(initialLabel) }
+    // Validate on every keystroke so the Save button disables + the
+    // supporting text appears without needing a failed submit first.
+    val validationError = com.hermesandroid.relay.data.ProfileValidation.validateLabel(value)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Rename profile") },
@@ -315,18 +318,22 @@ private fun RenameProfileDialog(
                 onValueChange = { value = it },
                 singleLine = true,
                 label = { Text("Label") },
+                isError = validationError != null && value.isNotEmpty(),
+                supportingText = {
+                    // Only show the error message once the user has typed
+                    // *something* — starting with the initial value we don't
+                    // want the dialog to appear with a red "can't be blank"
+                    // on first open.
+                    if (validationError != null && value.isNotEmpty()) {
+                        Text(validationError)
+                    }
+                },
             )
         },
         confirmButton = {
             TextButton(
-                onClick = {
-                    val trimmed = value.trim()
-                    if (trimmed.isNotEmpty()) {
-                        onConfirm(trimmed)
-                    } else {
-                        onDismiss()
-                    }
-                },
+                enabled = validationError == null,
+                onClick = { onConfirm(value.trim()) },
             ) {
                 Text("Save")
             }

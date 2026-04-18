@@ -859,6 +859,11 @@ fun RelayApp() {
                         onRenameProfile = { id, newLabel ->
                             profileSwitchScope.launch {
                                 connectionViewModel.renameProfile(id, newLabel)
+                                    .onFailure { err ->
+                                        snackbarHostState.showSnackbar(
+                                            err.message ?: "Rename failed",
+                                        )
+                                    }
                             }
                         },
                         onRepairProfile = { id ->
@@ -941,7 +946,11 @@ fun RelayApp() {
                                         label = null,
                                         apiServerUrl = connectionViewModel.apiServerUrl.value,
                                         relayUrl = connectionViewModel.relayUrl.value,
-                                    )
+                                    ).onFailure { err ->
+                                        snackbarHostState.showSnackbar(
+                                            err.message ?: "Could not save profile",
+                                        )
+                                    }
                                 }
                             }
                             navController.popBackStack()
