@@ -36,3 +36,17 @@ export function getMedia({ includeExpired = false } = {}) {
 export function getPush() {
   return fetchJSON("/push");
 }
+
+export function mintPairing(body = {}) {
+  return fetchJSON("/pairing", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function revokeSession(tokenPrefix) {
+  return fetchJSON(`/sessions/${encodeURIComponent(tokenPrefix)}`, {
+    method: "DELETE",
+  });
+}

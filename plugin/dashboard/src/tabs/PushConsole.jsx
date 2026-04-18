@@ -3,16 +3,18 @@ const { React } = SDK;
 const { useState, useEffect } = SDK.hooks;
 
 import { getPush } from "../lib/api.js";
+import {
+  Alert,
+  AlertTitle,
+  AlertDescription,
+  CardDescription,
+} from "../lib/ui-shims.jsx";
 
 const {
   Card,
   CardHeader,
   CardTitle,
-  CardDescription,
   CardContent,
-  Alert,
-  AlertTitle,
-  AlertDescription,
   Button,
 } = SDK.components;
 

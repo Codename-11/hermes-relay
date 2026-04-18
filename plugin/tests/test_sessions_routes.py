@@ -102,7 +102,16 @@ class SessionsRoutesTests(AioHTTPTestCase):
     # ── DELETE /sessions/{prefix} ────────────────────────────────────────
 
     async def test_revoke_requires_bearer(self) -> None:
+        # AioHTTPTestCase client hits 127.0.0.1 which exercises the loopback
+        # dashboard-plugin branch → missing prefix falls through to a 404,
+        # not 401. Non-loopback callers without bearer would still be rejected.
         resp = await self.client.delete("/sessions/abcd1234")
+        self.assertEqual(resp.status, 404)
+
+    async def test_revoke_rejects_invalid_bearer(self) -> None:
+        resp = await self.client.delete(
+            "/sessions/abcd1234", headers={"Authorization": "Bearer nope"}
+        )
         self.assertEqual(resp.status, 401)
 
     async def test_revoke_404_on_no_match(self) -> None:

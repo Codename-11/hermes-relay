@@ -4,25 +4,27 @@ const { useState, useEffect, useCallback } = SDK.hooks;
 
 import { getMedia } from "../lib/api.js";
 import { relativeTime, bytes, ttlCountdown, shortToken } from "../lib/formatters.js";
+import {
+  Alert,
+  AlertTitle,
+  AlertDescription,
+  CardDescription,
+  Switch,
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "../lib/ui-shims.jsx";
 
 const {
   Card,
   CardHeader,
   CardTitle,
-  CardDescription,
   CardContent,
   Button,
   Badge,
-  Switch,
-  Table,
-  TableHeader,
-  TableRow,
-  TableHead,
-  TableBody,
-  TableCell,
-  Alert,
-  AlertTitle,
-  AlertDescription,
   Label,
 } = SDK.components;
 
@@ -96,27 +98,12 @@ export default function MediaInspector({ autoRefresh }) {
       <CardContent>
         <div className="mb-3 flex items-center gap-3">
           <div className="flex items-center gap-2">
-            {Switch ? (
-              <Switch
-                id="include-expired"
-                checked={includeExpired}
-                onCheckedChange={setIncludeExpired}
-              />
-            ) : (
-              <input
-                id="include-expired"
-                type="checkbox"
-                checked={includeExpired}
-                onChange={(e) => setIncludeExpired(e.target.checked)}
-              />
-            )}
-            {Label ? (
-              <Label htmlFor="include-expired">Include expired</Label>
-            ) : (
-              <label htmlFor="include-expired" className="text-sm">
-                Include expired
-              </label>
-            )}
+            <Switch
+              id="include-expired"
+              checked={includeExpired}
+              onCheckedChange={setIncludeExpired}
+            />
+            <Label htmlFor="include-expired">Include expired</Label>
           </div>
           {!autoRefresh ? (
             <Button size="sm" variant="ghost" className="ml-auto" onClick={load}>

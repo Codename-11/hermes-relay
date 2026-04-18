@@ -267,6 +267,102 @@ def _parse_pairing_metadata(
     return ttl_seconds, grants, transport_hint, None
 
 
+async def handle_pairing_mint(request: web.Request) -> web.Response:
+    """Mint a fresh pairing code and return a signed QR payload.
+
+    Loopback-only. Used by the dashboard plugin's "pair new device" flow.
+    Generates a random 6-char A-Z/0-9 code, registers it via the
+    PairingManager, then hands back the same signed JSON blob that
+    ``hermes pair`` would print so the caller can render it as a QR
+    image.
+
+    POST /pairing/mint
+      body: {"host": "172.16.24.250", "port": 8767, "tls": false,
+             "ttl_seconds": <int optional>, "transport_hint": "wss"|"ws",
+             "grants": {...} optional}
+      → 200 {"code": "ABC123", "qr_payload": "{...}",
+             "expires_at": <unix ts>, "host": "...", "port": 8767,
+             "tls": false}
+      → 400 invalid JSON
+      → 403 non-loopback caller
+    """
+    _require_loopback(request)
+
+    import secrets
+    import string
+
+    try:
+        payload = await request.json() if request.body_exists else {}
+    except (json.JSONDecodeError, ValueError):
+        return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
+    if not isinstance(payload, dict):
+        payload = {}
+
+    server: RelayServer = request.app["server"]
+    host = str(payload.get("host") or server.config.host or "").strip()
+    if not host or host == "0.0.0.0":
+        return web.json_response(
+            {"ok": False, "error": "missing 'host' — relay binds to 0.0.0.0"},
+            status=400,
+        )
+    port = int(payload.get("port") or server.config.port)
+    tls = bool(payload.get("tls", False))
+
+    ttl_seconds, grants, transport_hint, err = _parse_pairing_metadata(payload)
+    if err is not None:
+        return web.json_response({"ok": False, "error": err}, status=400)
+
+    alphabet = string.ascii_uppercase + string.digits
+    # Retry on the off-chance of a collision with an already-registered code.
+    for _ in range(5):
+        code = "".join(secrets.choice(alphabet) for _ in range(6))
+        if server.pairing.register_code(
+            code,
+            ttl_seconds=ttl_seconds,
+            grants=grants,
+            transport_hint=transport_hint,
+        ):
+            break
+    else:
+        return web.json_response(
+            {"ok": False, "error": "could not mint a unique code"}, status=503
+        )
+
+    from ..pair import build_payload
+
+    relay_block: dict[str, Any] | None = None
+    if ttl_seconds is not None or grants is not None or transport_hint is not None:
+        relay_block = {}
+        if ttl_seconds is not None:
+            relay_block["ttl_seconds"] = ttl_seconds
+        if grants is not None:
+            relay_block["grants"] = grants
+        if transport_hint is not None:
+            relay_block["transport_hint"] = transport_hint
+
+    qr_payload = build_payload(
+        host=host, port=port, key=code, tls=tls, relay=relay_block, sign=True
+    )
+
+    expires_at = int(time.time()) + (
+        int(ttl_seconds) if ttl_seconds and ttl_seconds > 0 else 60
+    )
+
+    logger.info(
+        "Minted pairing code via /pairing/mint: %s (host=%s port=%d tls=%s)",
+        code, host, port, tls,
+    )
+    return web.json_response({
+        "ok": True,
+        "code": code,
+        "qr_payload": qr_payload,
+        "expires_at": expires_at,
+        "host": host,
+        "port": port,
+        "tls": tls,
+    })
+
+
 async def handle_pairing_approve(request: web.Request) -> web.Response:
     """Approve a phone-initiated pairing code (Phase 3 bidirectional pairing).
 
@@ -445,7 +541,16 @@ async def handle_sessions_revoke(request: web.Request) -> web.Response:
       → 404 no match
       → 409 multiple matches — caller should retry with more chars
     """
-    server, current_session = _require_bearer_session(request)
+    # Loopback-without-bearer branch — co-hosted dashboard plugin revokes
+    # sessions on behalf of the operator without minting its own bearer.
+    is_loopback = request.remote in ("127.0.0.1", "::1")
+    if is_loopback and not request.headers.get("Authorization"):
+        server: RelayServer = request.app["server"]
+        current_token: str | None = None
+    else:
+        server, current_session = _require_bearer_session(request)
+        current_token = current_session.token
+
     prefix = request.match_info.get("token_prefix", "").strip()
     if not prefix:
         return web.json_response(
@@ -468,7 +573,7 @@ async def handle_sessions_revoke(request: web.Request) -> web.Response:
         )
 
     target = matches[0]
-    revoked_self = target.token == current_session.token
+    revoked_self = current_token is not None and target.token == current_token
     server.sessions.revoke_session(target.token)
     logger.info(
         "Revoked session %s... (%s)%s",
@@ -1894,6 +1999,7 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_get("/health", handle_health)
     app.router.add_post("/pairing", handle_pairing)
     app.router.add_post("/pairing/register", handle_pairing_register)
+    app.router.add_post("/pairing/mint", handle_pairing_mint)
     app.router.add_post("/pairing/approve", handle_pairing_approve)
     # Sessions API — list + revoke paired devices. The fixed-path /sessions
     # route is distinct from /sessions/{token_prefix} so there's no wildcard

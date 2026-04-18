@@ -27,7 +27,7 @@ import os
 from typing import Any, Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Path, Query
 
 # Read once at import time — hermes-agent restarts pick up env changes.
 RELAY_PORT: int = int(os.environ.get("HERMES_RELAY_PORT", "8767"))
@@ -127,6 +127,59 @@ async def get_push() -> dict[str, Any]:
             "and the 'Deferred Features' memory entry."
         ),
     }
+
+
+async def _proxy(
+    method: str,
+    path: str,
+    *,
+    json: Optional[dict[str, Any]] = None,
+) -> Any:
+    """Forward an arbitrary method to the relay, translating errors."""
+    url = f"{_RELAY_BASE}{path}"
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.request(method, url, json=json)
+    except (httpx.TimeoutException, httpx.ConnectError, httpx.TransportError) as err:
+        raise _relay_unreachable(err) from err
+    except httpx.HTTPError as err:
+        raise _relay_unreachable(err) from err
+
+    if 500 <= resp.status_code < 600:
+        raise _relay_unreachable(
+            RuntimeError(f"relay returned {resp.status_code}: {resp.text[:200]}")
+        )
+    if 400 <= resp.status_code < 500:
+        try:
+            detail: Any = resp.json()
+        except ValueError:
+            detail = resp.text
+        raise HTTPException(status_code=resp.status_code, detail=detail)
+    try:
+        return resp.json()
+    except ValueError:
+        return resp.text
+
+
+@router.post("/pairing")
+async def mint_pairing(body: dict[str, Any] = Body(default_factory=dict)) -> Any:
+    """Mint a fresh pairing code + return a signed QR payload.
+
+    Body (all fields optional except host):
+      - host: "172.16.24.250" (required — the phone-reachable address)
+      - port: 8767
+      - tls: false
+      - ttl_seconds, grants, transport_hint: forwarded to the pairing manager
+    """
+    return await _proxy("POST", "/pairing/mint", json=body)
+
+
+@router.delete("/sessions/{token_prefix}")
+async def revoke_session(
+    token_prefix: str = Path(..., min_length=1, max_length=64),
+) -> Any:
+    """Revoke a paired device by token prefix (loopback branch on relay)."""
+    return await _proxy("DELETE", f"/sessions/{token_prefix}")
 
 
 __all__ = ["router", "RELAY_PORT"]

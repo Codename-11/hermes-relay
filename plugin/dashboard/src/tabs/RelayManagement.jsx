@@ -2,26 +2,29 @@ const SDK = window.__HERMES_PLUGIN_SDK__;
 const { React } = SDK;
 const { useState, useEffect, useCallback } = SDK.hooks;
 
-import { getOverview, getSessions } from "../lib/api.js";
+import { getOverview, getSessions, revokeSession } from "../lib/api.js";
 import { relativeTime, uptime, shortToken } from "../lib/formatters.js";
+import PairDialog from "../components/PairDialog.jsx";
+import {
+  Alert,
+  AlertTitle,
+  AlertDescription,
+  CardDescription,
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "../lib/ui-shims.jsx";
 
 const {
   Card,
   CardHeader,
   CardTitle,
-  CardDescription,
   CardContent,
   Button,
   Badge,
-  Table,
-  TableHeader,
-  TableRow,
-  TableHead,
-  TableBody,
-  TableCell,
-  Alert,
-  AlertTitle,
-  AlertDescription,
 } = SDK.components;
 
 function StatCard({ label, value, hint }) {
@@ -43,6 +46,8 @@ export default function RelayManagement({ autoRefresh }) {
   const [sessions, setSessions] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [pairOpen, setPairOpen] = useState(false);
+  const [revoking, setRevoking] = useState(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -69,17 +74,22 @@ export default function RelayManagement({ autoRefresh }) {
     return () => clearInterval(id);
   }, [autoRefresh, load]);
 
-  const onRevoke = (prefix) => {
-    // D2 Option A: placeholder per plan. D1 doesn't proxy DELETE; real revoke
-    // requires a future /sessions/{prefix}/revoke proxy route or a re-pair
-    // from the phone. Keep the button visible so operators see the action
-    // exists, but explain why it's not wired.
-    window.alert(
-      "Session revocation from the dashboard requires re-pairing from the phone.\n\n" +
-        `Session: ${prefix}\n\n` +
-        "TODO: add POST /api/plugins/hermes-relay/sessions/{prefix}/revoke to the plugin backend."
-    );
-  };
+  const onRevoke = useCallback(async (prefix, label) => {
+    if (!window.confirm(
+      `Revoke paired device${label ? ` "${label}"` : ""}?\n\n` +
+      `Token prefix: ${prefix}\n\n` +
+      "The phone will need to re-pair. This cannot be undone."
+    )) return;
+    setRevoking(prefix);
+    try {
+      await revokeSession(prefix);
+      await load();
+    } catch (err) {
+      window.alert(`Revoke failed: ${err && err.message ? err.message : err}`);
+    } finally {
+      setRevoking(null);
+    }
+  }, [load]);
 
   if (loading) {
     return <div className="text-sm text-muted-foreground">Loading overview…</div>;
@@ -122,11 +132,16 @@ export default function RelayManagement({ autoRefresh }) {
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Paired sessions</CardTitle>
-          <CardDescription>
-            Devices currently authorized against the relay. Revocation requires re-pair from the phone.
-          </CardDescription>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <div>
+            <CardTitle>Paired sessions</CardTitle>
+            <CardDescription>
+              Devices currently authorized against the relay.
+            </CardDescription>
+          </div>
+          <Button size="sm" onClick={() => setPairOpen(true)}>
+            Pair new device
+          </Button>
         </CardHeader>
         <CardContent>
           {!autoRefresh ? (
@@ -177,17 +192,10 @@ export default function RelayManagement({ autoRefresh }) {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => {
-                            if (
-                              window.confirm(
-                                `Revoke session "${label}"? This will force the device to re-pair.`
-                              )
-                            ) {
-                              onRevoke(token);
-                            }
-                          }}
+                          disabled={revoking === token || !token}
+                          onClick={() => onRevoke(token, label)}
                         >
-                          Revoke
+                          {revoking === token ? "Revoking…" : "Revoke"}
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -198,6 +206,13 @@ export default function RelayManagement({ autoRefresh }) {
           )}
         </CardContent>
       </Card>
+      <PairDialog
+        open={pairOpen}
+        onClose={() => { setPairOpen(false); load(); }}
+        host={typeof window !== "undefined" ? window.location.hostname : ""}
+        port={ov.relay_port || 8767}
+        tls={false}
+      />
     </div>
   );
 }

@@ -6,17 +6,18 @@ import RelayManagement from "./tabs/RelayManagement.jsx";
 import BridgeActivity from "./tabs/BridgeActivity.jsx";
 import PushConsole from "./tabs/PushConsole.jsx";
 import MediaInspector from "./tabs/MediaInspector.jsx";
+import { Switch } from "./lib/ui-shims.jsx";
 
-const {
-  Tabs,
-  TabsList,
-  TabsTrigger,
-  TabsContent,
-  Switch,
-  Label,
-} = SDK.components;
+const { Label } = SDK.components;
 
 const AUTO_REFRESH_KEY = "hermes-relay-autorefresh";
+
+const TABS = [
+  { key: "management", label: "Management" },
+  { key: "activity", label: "Activity" },
+  { key: "push", label: "Push" },
+  { key: "media", label: "Media" },
+];
 
 function readAutoRefresh() {
   try {
@@ -34,6 +35,18 @@ function writeAutoRefresh(value) {
   } catch (_err) {
     /* localStorage unavailable — ignore */
   }
+}
+
+function TabButton({ active, onClick, children }) {
+  const base =
+    "px-4 py-2 text-sm font-medium border-b-2 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+  const on = "border-foreground text-foreground";
+  const off = "border-transparent text-muted-foreground hover:text-foreground";
+  return (
+    <button type="button" onClick={onClick} className={`${base} ${active ? on : off}`}>
+      {children}
+    </button>
+  );
 }
 
 function RelayPluginRoot() {
@@ -60,62 +73,42 @@ function RelayPluginRoot() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {Switch ? (
-            <Switch
-              id="auto-refresh"
-              checked={autoRefresh}
-              onCheckedChange={setAutoRefresh}
-            />
-          ) : (
-            <input
-              id="auto-refresh"
-              type="checkbox"
-              checked={autoRefresh}
-              onChange={(e) => setAutoRefresh(e.target.checked)}
-            />
-          )}
-          {Label ? (
-            <Label htmlFor="auto-refresh">Auto-refresh</Label>
-          ) : (
-            <label htmlFor="auto-refresh" className="text-sm">
-              Auto-refresh
-            </label>
-          )}
+          <Switch
+            id="auto-refresh"
+            checked={autoRefresh}
+            onCheckedChange={setAutoRefresh}
+          />
+          <Label htmlFor="auto-refresh">Auto-refresh</Label>
         </div>
       </div>
 
-      <Tabs value={tab} onValueChange={setTab} className="w-full">
-        <TabsList>
-          <TabsTrigger value="management">Management</TabsTrigger>
-          <TabsTrigger value="activity">Activity</TabsTrigger>
-          <TabsTrigger value="push">Push</TabsTrigger>
-          <TabsTrigger value="media">Media</TabsTrigger>
-        </TabsList>
-        <TabsContent value="management" className="mt-4">
-          <RelayManagement autoRefresh={autoRefresh} />
-        </TabsContent>
-        <TabsContent value="activity" className="mt-4">
-          <BridgeActivity autoRefresh={autoRefresh} />
-        </TabsContent>
-        <TabsContent value="push" className="mt-4">
-          <PushConsole />
-        </TabsContent>
-        <TabsContent value="media" className="mt-4">
-          <MediaInspector autoRefresh={autoRefresh} />
-        </TabsContent>
-      </Tabs>
+      <div role="tablist" className="flex items-center gap-1 border-b border-border">
+        {TABS.map((t) => (
+          <TabButton
+            key={t.key}
+            active={tab === t.key}
+            onClick={() => setTab(t.key)}
+          >
+            {t.label}
+          </TabButton>
+        ))}
+      </div>
+
+      <div className="mt-4">
+        {tab === "management" && <RelayManagement autoRefresh={autoRefresh} />}
+        {tab === "activity" && <BridgeActivity autoRefresh={autoRefresh} />}
+        {tab === "push" && <PushConsole />}
+        {tab === "media" && <MediaInspector autoRefresh={autoRefresh} />}
+      </div>
     </div>
   );
 }
 
-// Register with the dashboard plugin host.
 if (typeof window !== "undefined") {
   const hub = window.__HERMES_PLUGINS__;
   if (hub && typeof hub.register === "function") {
     hub.register("hermes-relay", RelayPluginRoot);
   } else {
-    // Surface a clear console error if the SDK is missing — helps operators
-    // distinguish "plugin didn't load" from "plugin has a runtime error".
     // eslint-disable-next-line no-console
     console.error(
       "[hermes-relay] window.__HERMES_PLUGINS__.register unavailable — dashboard shell did not initialize."

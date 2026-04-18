@@ -4,24 +4,26 @@ const { useState, useEffect, useCallback, useMemo } = SDK.hooks;
 
 import { getBridgeActivity } from "../lib/api.js";
 import { relativeTime } from "../lib/formatters.js";
+import {
+  Alert,
+  AlertTitle,
+  AlertDescription,
+  CardDescription,
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "../lib/ui-shims.jsx";
 
 const {
   Card,
   CardHeader,
   CardTitle,
-  CardDescription,
   CardContent,
   Button,
   Badge,
-  Table,
-  TableHeader,
-  TableRow,
-  TableHead,
-  TableBody,
-  TableCell,
-  Alert,
-  AlertTitle,
-  AlertDescription,
 } = SDK.components;
 
 const FILTERS = ["All", "Executed", "Blocked", "Confirmed", "Timeout", "Error"];

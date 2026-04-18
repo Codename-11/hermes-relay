@@ -8,6 +8,7 @@
     "watch": "esbuild src/index.jsx --bundle --format=iife --target=es2020 --outfile=dist/index.js --loader:.jsx=jsx --jsx=transform --jsx-factory=React.createElement --jsx-fragment=React.Fragment --watch"
   },
   "devDependencies": {
-    "esbuild": "^0.23.0"
+    "esbuild": "^0.23.0",
+    "qrcode": "^1.5.4"
   }
 }
