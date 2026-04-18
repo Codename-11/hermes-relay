@@ -209,9 +209,6 @@ export default function RelayManagement({ autoRefresh }) {
       <PairDialog
         open={pairOpen}
         onClose={() => { setPairOpen(false); load(); }}
-        host={typeof window !== "undefined" ? window.location.hostname : ""}
-        port={ov.relay_port || 8767}
-        tls={false}
       />
     </div>
   );
