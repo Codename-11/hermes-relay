@@ -710,6 +710,12 @@ fun ChatScreen(
                     )
 
                     // Personality picker
+                    // TODO(profile-overrides-personality): when the selected
+                    //  profile has a non-blank `systemMessage`, visually
+                    //  indicate that the personality pick is being overridden
+                    //  by the profile (e.g. greyed-out label, subtitle
+                    //  "overridden by profile"). ChatViewModel already honors
+                    //  the precedence rule — this is a pure UI polish pass.
                     PersonalityPicker(
                         selected = selectedPersonality,
                         personalities = personalityNames,

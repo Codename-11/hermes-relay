@@ -106,6 +106,11 @@ class AuthManager(
          *    still renders as a selectable chip (server misconfiguration,
          *    but we don't want to silently drop the only profile).
          *  - `description` defaults to `""`.
+         *  - `system_message` is passed through as-is, including JSON `null`.
+         *    A null or missing value means "this profile has no SOUL.md on
+         *    disk — fall back to the personality/default system prompt at
+         *    send time". Kept separate from an empty string so ChatViewModel
+         *    can cleanly detect "no override" via `systemMessage?.isNotBlank()`.
          */
         fun parseAgentProfiles(array: JsonArray): List<Profile> {
             return array.mapNotNull { entry ->
@@ -116,10 +121,12 @@ class AuthManager(
                     ?: "unknown"
                 val description = obj["description"]?.jsonPrimitive?.contentOrNull
                     ?: ""
+                val systemMessage = obj["system_message"]?.jsonPrimitive?.contentOrNull
                 Profile(
                     name = name,
                     model = model,
                     description = description,
+                    systemMessage = systemMessage,
                 )
             }
         }

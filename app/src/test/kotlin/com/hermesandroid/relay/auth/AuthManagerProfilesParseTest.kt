@@ -1,11 +1,13 @@
 package com.hermesandroid.relay.auth
 
 import com.hermesandroid.relay.data.Profile
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -124,5 +126,71 @@ class AuthManagerProfilesParseTest {
     fun emptyArrayProducesEmptyList() {
         val parsed = AuthManager.parseAgentProfiles(buildJsonArray { })
         assertTrue(parsed.isEmpty())
+    }
+
+    // --- Pass 3: system_message field (Worker R1 contract) --------------
+
+    @Test
+    fun parsesSystemMessageWhenPresent() {
+        // Happy path — profile has a SOUL.md on the server, so the relay
+        // populates system_message with its contents.
+        val profilesArray = buildJsonArray {
+            add(buildJsonObject {
+                put("name", "mizu")
+                put("model", "claude-opus-4-6")
+                put("description", "Axiom-Labs Public Ops")
+                put(
+                    "system_message",
+                    "You are Mizu, the public-facing agent at Axiom-Labs.",
+                )
+            })
+        }
+
+        val parsed = AuthManager.parseAgentProfiles(profilesArray)
+
+        assertEquals(1, parsed.size)
+        assertEquals(
+            "You are Mizu, the public-facing agent at Axiom-Labs.",
+            parsed[0].systemMessage,
+        )
+    }
+
+    @Test
+    fun treatsExplicitNullSystemMessageAsNull() {
+        // Per the R1 contract: system_message may be JSON null when the
+        // profile has no SOUL.md on disk. Must deserialize to Kotlin null
+        // so ChatViewModel's `systemMessage?.isNotBlank() == true` falls
+        // through to the personality fallback.
+        val profilesArray = buildJsonArray {
+            add(buildJsonObject {
+                put("name", "bare")
+                put("model", "claude-opus-4-6")
+                put("description", "")
+                put("system_message", JsonNull)
+            })
+        }
+
+        val parsed = AuthManager.parseAgentProfiles(profilesArray)
+
+        assertEquals(1, parsed.size)
+        assertNull(parsed[0].systemMessage)
+    }
+
+    @Test
+    fun defaultsSystemMessageToNullWhenKeyMissing() {
+        // Older relay versions (pre-R1) won't send the key at all.
+        // Parser must default to null — not crash, not empty string.
+        val profilesArray = buildJsonArray {
+            add(buildJsonObject {
+                put("name", "legacy")
+                put("model", "claude-opus-4-6")
+                put("description", "Pre-R1 server")
+            })
+        }
+
+        val parsed = AuthManager.parseAgentProfiles(profilesArray)
+
+        assertEquals(1, parsed.size)
+        assertNull(parsed[0].systemMessage)
     }
 }

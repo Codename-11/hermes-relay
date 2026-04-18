@@ -562,6 +562,26 @@ class ChatViewModel : ViewModel() {
         }
     }
 
+    /**
+     * Kick off an SSE chat turn against either the runs or sessions endpoint.
+     *
+     * **System-message precedence (Pass 3, 2026-04-18):**
+     *
+     *  1. **Selected profile with a non-blank [Profile.systemMessage]** —
+     *     profile wins outright. Profile is a richer, newer concept than
+     *     personality: it bundles model + persona (from the profile's
+     *     `SOUL.md`) into a single named unit, so a user who picks a profile
+     *     has explicitly asked for that profile's full identity. The
+     *     personality prompt is skipped in this case.
+     *  2. **Selected non-default personality** — send the personality's
+     *     stored system prompt. This is the pre-Pass-3 path.
+     *  3. **Neither selected** — no personality prompt, server uses its own
+     *     configured default.
+     *
+     * The phone-status [appContextSettings] block is appended to whichever
+     * of the above wins (or sent alone in case 3), so the LLM always sees
+     * phone state regardless of persona source.
+     */
     private fun startStream(
         client: HermesApiClient,
         handler: ChatHandler,
@@ -570,15 +590,26 @@ class ChatViewModel : ViewModel() {
         assistantMessageId: String,
         attachments: List<Attachment>? = null
     ) {
-        // Build system_message from personality prompt + app context
+        // Resolve the active profile pick once — used below for both
+        // modelOverride and the system_message precedence rule.
+        val selectedProfile = selectedProfileProvider()
+
+        // Build persona prompt following the precedence rule documented on
+        // this function's KDoc. A profile's systemMessage wins over a
+        // selected personality when both are set.
         val selected = _selectedPersonality.value
-        val personalityPrompt = if (selected != "default" && selected != _defaultPersonality.value) {
-            // Non-default personality selected — send its system prompt to override server default
-            personalityPrompts[selected]
-        } else null
+        val profileSystemMessage = selectedProfile?.systemMessage?.takeIf { it.isNotBlank() }
+        val personaPrompt: String? = when {
+            profileSystemMessage != null -> profileSystemMessage
+            selected != "default" && selected != _defaultPersonality.value ->
+                // Non-default personality selected — send its system prompt
+                // to override the server default.
+                personalityPrompts[selected]
+            else -> null
+        }
         // === PHASE3-status: dynamic phone-status block ===
         val appContext = buildPromptBlock(appContextSettings, capturePhoneSnapshot())
-        val systemMsg = listOfNotNull(personalityPrompt, appContext)
+        val systemMsg = listOfNotNull(personaPrompt, appContext)
             .joinToString("\n\n")
             .ifBlank { null }
         // === END PHASE3-status ===
@@ -715,8 +746,11 @@ class ChatViewModel : ViewModel() {
         // Resolve the active agent-profile pick to a `modelOverride` string
         // for this send. `null` (or blank) means "no override — let the
         // server use its configured default model"; the API client drops
-        // the field from the request body in that case.
-        val modelOverride: String? = selectedProfileProvider()
+        // the field from the request body in that case. Reuses the
+        // [selectedProfile] resolved at the top of this function so a
+        // rapid switch doesn't give us a systemMessage from profile A but
+        // a model from profile B.
+        val modelOverride: String? = selectedProfile
             ?.model
             ?.takeIf { it.isNotBlank() }
 
