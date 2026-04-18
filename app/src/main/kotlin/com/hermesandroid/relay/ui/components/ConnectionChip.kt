@@ -18,8 +18,8 @@ import androidx.compose.ui.unit.dp
 /**
  * Compact top-bar chip showing the currently-active Hermes connection.
  * Tapping opens [ConnectionSwitcherSheet]. Kept deliberately minimal — a
- * single row of label + dropdown caret — so it fits next to the existing
- * [PersonalityPicker] on the Chat top bar without hogging horizontal space.
+ * single row of label + dropdown caret — so it fits into the Chat top bar
+ * without hogging horizontal space.
  */
 @Composable
 fun ConnectionChip(

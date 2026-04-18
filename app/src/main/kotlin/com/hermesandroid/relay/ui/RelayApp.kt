@@ -740,7 +740,13 @@ fun RelayApp() {
                         chatViewModel = chatViewModel,
                         connectionViewModel = connectionViewModel,
                         voiceViewModel = voiceViewModel,
-                        maxBubbleWidth = maxBubbleWidth
+                        maxBubbleWidth = maxBubbleWidth,
+                        // AgentInfoSheet footer jumps straight into the full
+                        // Connections CRUD screen — saves a detour through
+                        // Settings → Connections.
+                        onNavigateToConnections = {
+                            navController.navigate(Screen.ConnectionsSettings.route)
+                        },
                     )
                 }
                 composable(Screen.Terminal.route) {

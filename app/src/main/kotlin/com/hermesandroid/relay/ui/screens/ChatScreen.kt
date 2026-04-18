@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -47,7 +48,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -115,6 +115,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.ui.platform.LocalContext
 import com.hermesandroid.relay.data.Attachment
+import com.hermesandroid.relay.ui.components.AgentInfoSheet
 import com.hermesandroid.relay.ui.components.CommandPalette
 import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
 import com.hermesandroid.relay.ui.components.CommandRow
@@ -123,8 +124,6 @@ import com.hermesandroid.relay.ui.components.InlineAutocomplete
 import com.hermesandroid.relay.ui.components.MessageBubble
 import com.hermesandroid.relay.ui.components.MorphingSphere
 import com.hermesandroid.relay.ui.components.SphereState
-import com.hermesandroid.relay.ui.components.PersonalityPicker
-import com.hermesandroid.relay.ui.components.ProfilePicker
 import com.hermesandroid.relay.ui.components.SessionDrawerContent
 import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.ui.components.StreamingDots
@@ -164,7 +163,11 @@ fun ChatScreen(
     chatViewModel: ChatViewModel,
     connectionViewModel: ConnectionViewModel,
     voiceViewModel: VoiceViewModel,
-    maxBubbleWidth: Dp = 300.dp
+    maxBubbleWidth: Dp = 300.dp,
+    // Sheet footer shortcut: jump out of chat into the full Connections CRUD
+    // screen. Default no-op preserves existing test/preview call sites that
+    // don't wire navigation.
+    onNavigateToConnections: () -> Unit = {},
 ) {
     val voiceUiState by voiceViewModel.uiState.collectAsState()
     val chatAlpha by animateFloatAsState(
@@ -229,10 +232,9 @@ fun ChatScreen(
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
     val personalityNames by chatViewModel.personalityNames.collectAsState()
     val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
-    // Agent-profile picker state (Pass 2 multi-profile work). Hidden by the
-    // picker itself when the server advertises no profiles; greyed out
-    // mid-stream so a profile swap can't race an in-flight chat request.
-    val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
+    // Agent-profile selection — drives the customization ring on the avatar
+    // and is consumed by the AgentInfoSheet for the Profile section. The list
+    // of available profiles itself now lives entirely inside the sheet.
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
     val serverModelName by chatViewModel.serverModelName.collectAsState()
     val networkStatus by connectionViewModel.networkStatus.collectAsState()
@@ -625,26 +627,80 @@ fun ChatScreen(
                         else -> MaterialTheme.colorScheme.error
                     }
 
+                    // Customization cue — true when the user has overridden
+                    // the server defaults via either picker. Drives the 2dp
+                    // accent ring on the avatar (subtle, at-a-glance signal
+                    // that "you've customized this agent"). Personality
+                    // defaults to the sentinel "default" string — any other
+                    // value means explicit pick.
+                    val customized = selectedProfile != null ||
+                        selectedPersonality != "default"
+
+                    // Single-line subtitle: when we have a model name we show
+                    // `model · personality` so the user sees both dimensions
+                    // at once. Before the server config lands (or while
+                    // disconnected) we fall back to the connection status.
+                    val personalityLabel = when {
+                        selectedPersonality != "default" ->
+                            selectedPersonality.replaceFirstChar { it.uppercase() }
+                        defaultPersonality.isNotBlank() ->
+                            defaultPersonality.replaceFirstChar { it.uppercase() }
+                        else -> "Default"
+                    }
+                    val subtitleText = when {
+                        !apiReachable -> statusText
+                        serverModelName.isNotBlank() ->
+                            "$serverModelName \u00B7 $personalityLabel"
+                        else -> personalityLabel
+                    }
+                    val subtitleColor = if (apiReachable) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        statusColor
+                    }
+
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         modifier = Modifier.clickable { showAgentInfo = true }
                     ) {
-                        // Avatar with status dot overlay
-                        Box(modifier = Modifier.size(36.dp)) {
-                            Surface(
-                                modifier = Modifier.size(36.dp),
-                                shape = CircleShape,
-                                color = MaterialTheme.colorScheme.primary
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text(
-                                        text = if (agentDisplayName.isNotBlank()) {
-                                            agentDisplayName.first().uppercase()
-                                        } else "H",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        color = MaterialTheme.colorScheme.onPrimary
+                        // Avatar — 40dp, optional 2dp primary-color accent ring
+                        // when the user has overridden any of the agent
+                        // defaults. Ring sits OUTSIDE the avatar circle; the
+                        // inner Surface is downsized by ring width so the
+                        // overall footprint stays at 40dp.
+                        val ringWidth = if (customized) 2.dp else 0.dp
+                        val innerSize = 40.dp - (ringWidth * 2)
+                        Box(modifier = Modifier.size(40.dp)) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .then(
+                                        if (customized) {
+                                            Modifier.border(
+                                                width = ringWidth,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                shape = CircleShape,
+                                            )
+                                        } else Modifier
                                     )
+                                    .padding(ringWidth),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Surface(
+                                    modifier = Modifier.size(innerSize),
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.primary
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = if (agentDisplayName.isNotBlank()) {
+                                                agentDisplayName.first().uppercase()
+                                            } else "H",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            color = MaterialTheme.colorScheme.onPrimary
+                                        )
+                                    }
                                 }
                             }
                             ConnectionStatusBadge(
@@ -657,35 +713,30 @@ fun ChatScreen(
                             )
                         }
 
-                        // Name + Hermes Agent + model + status
+                        // Name + single-line subtitle.
                         Column {
                             Text(
                                 text = if (agentDisplayName.isNotBlank()) agentDisplayName else "Hermes",
                                 style = MaterialTheme.typography.titleMedium,
-                                maxLines = 1
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                             )
                             Text(
-                                text = buildString {
-                                    append("Hermes Agent")
-                                    if (serverModelName.isNotBlank()) {
-                                        append(" · $serverModelName")
-                                    }
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1
-                            )
-                            Text(
-                                text = statusText,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = statusColor,
-                                maxLines = 1
+                                text = subtitleText,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = subtitleColor,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                             )
                         }
                     }
                 },
                 actions = {
-                    // Ambient mode toggle (show/hide sphere visualization)
+                    // Ambient mode toggle (show/hide sphere visualization).
+                    // Profile + personality pickers moved into the agent sheet
+                    // that opens on title tap — the top bar no longer owns
+                    // those chips, reclaiming the horizontal space for a
+                    // cleaner title block.
                     if (animationEnabled) {
                         IconButton(onClick = { ambientMode = !ambientMode }) {
                             Icon(
@@ -695,33 +746,6 @@ fun ChatScreen(
                             )
                         }
                     }
-
-                    // Agent-profile picker — sits LEFT of the personality
-                    // picker. Self-hides when [agentProfiles] is empty so
-                    // servers without a profiles: block in config.yaml get
-                    // the same lean top bar as before. Disabled while a
-                    // chat turn is mid-stream so the user can't swap the
-                    // model under an in-flight request.
-                    ProfilePicker(
-                        profiles = agentProfiles,
-                        selected = selectedProfile,
-                        onSelect = connectionViewModel::selectProfile,
-                        enabled = !isStreaming,
-                    )
-
-                    // Personality picker
-                    // TODO(profile-overrides-personality): when the selected
-                    //  profile has a non-blank `systemMessage`, visually
-                    //  indicate that the personality pick is being overridden
-                    //  by the profile (e.g. greyed-out label, subtitle
-                    //  "overridden by profile"). ChatViewModel already honors
-                    //  the precedence rule — this is a pure UI polish pass.
-                    PersonalityPicker(
-                        selected = selectedPersonality,
-                        personalities = personalityNames,
-                        defaultName = defaultPersonality,
-                        onSelect = { chatViewModel.selectPersonality(it) }
-                    )
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface
@@ -1394,70 +1418,16 @@ fun ChatScreen(
         )
     }
 
-    // Agent info dialog — shown when tapping the header
+    // Agent info sheet — one consolidated surface for agent state (profile,
+    // personality, connection summary). Replaces the old AlertDialog and the
+    // two top-bar chips (ProfilePicker + PersonalityPicker). Tap target is
+    // the title Row in the TopAppBar above.
     if (showAgentInfo) {
-        val currentSession = sessions.find { it.sessionId == currentSessionId }
-
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { showAgentInfo = false },
-            title = {
-                Text(
-                    text = if (agentDisplayName.isNotBlank()) agentDisplayName else "Hermes Agent"
-                )
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (serverModelName.isNotBlank()) {
-                        Row {
-                            Text("Model", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(80.dp))
-                            Text(serverModelName, style = MaterialTheme.typography.bodyMedium)
-                        }
-                    }
-                    Row {
-                        Text("Status", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(80.dp))
-                        Text(
-                            text = when {
-                                apiReachable -> "Connected"
-                                chatMode != ChatMode.DISCONNECTED -> "Connecting..."
-                                else -> "Disconnected"
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = when {
-                                apiReachable -> Color(0xFF4CAF50)
-                                chatMode != ChatMode.DISCONNECTED -> Color(0xFFFFA726)
-                                else -> MaterialTheme.colorScheme.error
-                            }
-                        )
-                    }
-                    Row {
-                        Text("Personality", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(80.dp))
-                        Text(
-                            text = if (selectedPersonality == "default") {
-                                "${defaultPersonality.replaceFirstChar { it.uppercase() }} (default)"
-                            } else {
-                                selectedPersonality.replaceFirstChar { it.uppercase() }
-                            },
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-                    if (currentSession != null) {
-                        HorizontalDivider()
-                        Row {
-                            Text("Session", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(80.dp))
-                            Text(currentSession.title ?: currentSession.sessionId.take(12), style = MaterialTheme.typography.bodyMedium)
-                        }
-                        Row {
-                            Text("Messages", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(80.dp))
-                            Text("${messages.size}", style = MaterialTheme.typography.bodyMedium)
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showAgentInfo = false }) {
-                    Text("Close")
-                }
-            }
+        AgentInfoSheet(
+            connectionViewModel = connectionViewModel,
+            chatViewModel = chatViewModel,
+            onDismiss = { showAgentInfo = false },
+            onNavigateToConnections = onNavigateToConnections,
         )
     }
 }

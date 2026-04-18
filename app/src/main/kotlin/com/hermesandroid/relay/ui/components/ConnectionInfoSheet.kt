@@ -2,7 +2,10 @@ package com.hermesandroid.relay.ui.components
 
 import android.content.ClipData
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,9 +13,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -21,7 +31,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -32,17 +45,22 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.FeatureFlags
+import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.network.ChatMode
 import com.hermesandroid.relay.network.ConnectionState
+import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.launch
 
@@ -537,6 +555,460 @@ fun RelayInfoSheet(
                     Text("Disconnect")
                 }
             }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 4. AgentInfoSheet
+// ---------------------------------------------------------------------------
+//
+// Consolidated "agent" sheet opened from the Chat top bar. Replaces the three
+// separate surfaces that used to split agent state across the UI:
+//   - the old AlertDialog on header tap (read-only connection summary)
+//   - the ProfilePicker chip (profile dropdown)
+//   - the PersonalityPicker chip (personality dropdown)
+//
+// One bottom sheet, one hierarchy: Profile → Personality → Connection. Mirrors
+// ChatViewModel.startStream's precedence rule: a profile with a non-blank
+// systemMessage overrides whatever personality is selected. When that case
+// triggers, the Personality section visually de-emphasizes (alpha drop) and
+// the Profile section footer spells out the override.
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AgentInfoSheet(
+    connectionViewModel: ConnectionViewModel,
+    chatViewModel: ChatViewModel,
+    onDismiss: () -> Unit,
+    onNavigateToConnections: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    // Profile + personality state — same flows the old pickers consumed.
+    val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
+    val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
+    val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
+    val personalityNames by chatViewModel.personalityNames.collectAsState()
+    val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
+
+    // Connection summary state.
+    val authState by connectionViewModel.authState.collectAsState()
+    val apiServerUrl by connectionViewModel.apiServerUrl.collectAsState()
+    val apiServerReachable by connectionViewModel.apiServerReachable.collectAsState()
+    val chatMode by connectionViewModel.chatMode.collectAsState()
+    val relayUrl by connectionViewModel.relayUrl.collectAsState()
+    val relayConnectionState by connectionViewModel.relayConnectionState.collectAsState()
+    val pairingCode by connectionViewModel.pairingCode.collectAsState()
+    val serverModelName by chatViewModel.serverModelName.collectAsState()
+
+    // Mid-stream gate — mirrors what ProfilePicker's `enabled` flag was doing:
+    // a radio tap during an in-flight chat turn would race the request. Apply
+    // to BOTH sections (profile + personality) since they both feed startStream.
+    val isStreaming by chatViewModel.isStreaming.collectAsState()
+
+    val profileOverridesPersonality =
+        selectedProfile?.systemMessage?.isNotBlank() == true
+    var endpointsExpanded by remember { mutableStateOf(false) }
+
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 24.dp, vertical = 16.dp)
+                .navigationBarsPadding(),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            // ---- Header: avatar + agent name + live status ----
+            AgentSheetHeader(
+                selectedProfile = selectedProfile,
+                selectedPersonality = selectedPersonality,
+                defaultPersonality = defaultPersonality,
+                serverModelName = serverModelName,
+                apiServerReachable = apiServerReachable,
+                chatMode = chatMode,
+            )
+
+            HorizontalDivider()
+
+            // ---- Profile section (hidden when server advertises none) ----
+            if (agentProfiles.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    SectionLabel(
+                        title = "Profile",
+                        hint = "Overlay an agent's model + SOUL",
+                    )
+
+                    // Default row — clears the profile override.
+                    ProfileRadioRow(
+                        primary = "Default",
+                        secondary = "Server-configured model",
+                        selected = selectedProfile == null,
+                        enabled = !isStreaming,
+                        onSelect = { connectionViewModel.selectProfile(null) },
+                    )
+
+                    agentProfiles.forEach { profile ->
+                        ProfileRadioRow(
+                            primary = profile.name.replaceFirstChar { it.uppercase() },
+                            secondary = profile.model,
+                            tertiary = profile.description.takeIf { it.isNotBlank() },
+                            selected = selectedProfile?.name == profile.name,
+                            enabled = !isStreaming,
+                            onSelect = { connectionViewModel.selectProfile(profile) },
+                        )
+                    }
+
+                    if (profileOverridesPersonality) {
+                        Text(
+                            text = "This profile's system message overrides the personality below.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp, start = 4.dp),
+                        )
+                    }
+                }
+
+                HorizontalDivider()
+            }
+
+            // ---- Personality section ----
+            // De-emphasize when a profile's systemMessage is taking over — the
+            // row is still tappable because the user may want to queue the
+            // choice for after they clear the profile. No alpha on the entire
+            // Column because the section header would look broken.
+            Column(
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.alpha(if (profileOverridesPersonality) 0.55f else 1f),
+            ) {
+                SectionLabel(
+                    title = "Personality",
+                    hint = "System-prompt preset on this agent",
+                )
+
+                // Default row — maps to selectedPersonality == "default" which
+                // the VM resolves to whatever server-side personality is
+                // currently active.
+                ProfileRadioRow(
+                    primary = if (defaultPersonality.isNotBlank()) {
+                        "${defaultPersonality.replaceFirstChar { it.uppercase() }} (default)"
+                    } else {
+                        "Default"
+                    },
+                    secondary = null,
+                    selected = selectedPersonality == "default",
+                    enabled = !isStreaming,
+                    onSelect = { chatViewModel.selectPersonality("default") },
+                )
+
+                personalityNames
+                    .filter { it != defaultPersonality }
+                    .forEach { name ->
+                        ProfileRadioRow(
+                            primary = name.replaceFirstChar { it.uppercase() },
+                            secondary = null,
+                            selected = selectedPersonality == name,
+                            enabled = !isStreaming,
+                            onSelect = { chatViewModel.selectPersonality(name) },
+                        )
+                    }
+            }
+
+            HorizontalDivider()
+
+            // ---- Connection section (condensed) ----
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SectionLabel(title = "Connection", hint = null)
+
+                ChipRow(label = "Auth") { authStateChip(authState) }
+                ChipRow(label = "API reachable") {
+                    val (label, bg, fg) = if (apiServerReachable) {
+                        Triple(
+                            "Yes",
+                            MaterialTheme.colorScheme.primaryContainer,
+                            MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    } else {
+                        Triple(
+                            "No",
+                            MaterialTheme.colorScheme.errorContainer,
+                            MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    }
+                    StatusChip(text = label, background = bg, contentColor = fg)
+                }
+
+                // Pairing code only while the user is mid-pairing — no point
+                // showing it once we're paired (it's consumed).
+                if (authState is AuthState.Pairing && pairingCode.isNotBlank()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "Pairing code",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = pairingCode,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            IconButton(onClick = {
+                                scope.launch {
+                                    clipboard.setClipEntry(
+                                        ClipEntry(
+                                            ClipData.newPlainText(
+                                                "Pairing code",
+                                                pairingCode,
+                                            )
+                                        )
+                                    )
+                                }
+                            }) {
+                                Icon(
+                                    imageVector = Icons.Default.ContentCopy,
+                                    contentDescription = "Copy pairing code",
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Collapsible endpoint block — keeps the default view tidy.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { endpointsExpanded = !endpointsExpanded }
+                        .padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = if (endpointsExpanded) "Hide endpoints" else "Show endpoints",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Icon(
+                        imageVector = if (endpointsExpanded) {
+                            Icons.Filled.KeyboardArrowUp
+                        } else {
+                            Icons.Filled.KeyboardArrowDown
+                        },
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+
+                if (endpointsExpanded) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        InfoRow(label = "API", value = apiServerUrl, monospace = true)
+                        InfoRow(label = "Relay", value = relayUrl, monospace = true)
+                        ChipRow(label = "Relay state") {
+                            connectionChip(relayConnectionState)
+                        }
+                        InfoRow(label = "Streaming", value = chatMode.toString())
+                    }
+                }
+            }
+
+            HorizontalDivider()
+
+            // ---- Footer action: jump to Connections settings ----
+            TextButton(
+                onClick = {
+                    onDismiss()
+                    onNavigateToConnections()
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Tune,
+                    contentDescription = null,
+                )
+                Spacer(modifier = Modifier.size(8.dp))
+                Text("Manage connections\u2026")
+            }
+        }
+    }
+}
+
+// --- AgentInfoSheet helpers ----------------------------------------------
+
+@Composable
+private fun SectionLabel(title: String, hint: String?) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        if (hint != null) {
+            Text(
+                text = hint,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * Radio-style row used by both Profile and Personality sections. Whole row
+ * is a tap target (and selectable() for a11y). Disabled when [enabled] is
+ * false — look and behaviour both propagate the gate.
+ */
+@Composable
+private fun ProfileRadioRow(
+    primary: String,
+    secondary: String?,
+    tertiary: String? = null,
+    selected: Boolean,
+    enabled: Boolean,
+    onSelect: () -> Unit,
+) {
+    val rowAlpha = if (enabled) 1f else 0.5f
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .selectable(
+                selected = selected,
+                enabled = enabled,
+                role = Role.RadioButton,
+                onClick = onSelect,
+            )
+            .padding(vertical = 6.dp, horizontal = 4.dp)
+            .alpha(rowAlpha),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(
+            selected = selected,
+            onClick = null,
+            enabled = enabled,
+        )
+        Spacer(modifier = Modifier.size(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = primary,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            if (secondary != null) {
+                Text(
+                    text = secondary,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (tertiary != null) {
+                Text(
+                    text = tertiary,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (selected) {
+            Icon(
+                imageVector = Icons.Filled.Check,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AgentSheetHeader(
+    selectedProfile: Profile?,
+    selectedPersonality: String,
+    defaultPersonality: String,
+    serverModelName: String,
+    apiServerReachable: Boolean,
+    chatMode: ChatMode,
+) {
+    val agentName = when {
+        selectedProfile != null -> selectedProfile.name.replaceFirstChar { it.uppercase() }
+        selectedPersonality != "default" -> selectedPersonality.replaceFirstChar { it.uppercase() }
+        defaultPersonality.isNotBlank() -> defaultPersonality.replaceFirstChar { it.uppercase() }
+        else -> "Hermes"
+    }
+    val modelLabel = selectedProfile?.model ?: serverModelName
+    val isConnecting = !apiServerReachable && chatMode != ChatMode.DISCONNECTED
+    val statusText = when {
+        apiServerReachable -> "Connected"
+        isConnecting -> "Connecting\u2026"
+        else -> "Disconnected"
+    }
+    val statusColor = when {
+        apiServerReachable -> MaterialTheme.colorScheme.primary
+        isConnecting -> MaterialTheme.colorScheme.tertiary
+        else -> MaterialTheme.colorScheme.error
+    }
+    val customized = selectedProfile != null || selectedPersonality != "default"
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .then(
+                    if (customized) {
+                        Modifier.border(
+                            width = 2.dp,
+                            color = MaterialTheme.colorScheme.primary,
+                            shape = CircleShape,
+                        )
+                    } else Modifier
+                )
+                .padding(2.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Surface(
+                modifier = Modifier.size(44.dp),
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primary,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = agentName.firstOrNull()?.uppercase() ?: "H",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                    )
+                }
+            }
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = agentName,
+                style = MaterialTheme.typography.titleLarge,
+                maxLines = 1,
+            )
+            if (modelLabel.isNotBlank()) {
+                Text(
+                    text = modelLabel,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+            Text(
+                text = statusText,
+                style = MaterialTheme.typography.labelSmall,
+                color = statusColor,
+                maxLines = 1,
+            )
         }
     }
 }
