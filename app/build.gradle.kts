@@ -153,6 +153,20 @@ android {
             kotlin.srcDirs("src/androidTest/kotlin")
         }
     }
+
+    // JVM unit tests run against the stubbed Android SDK jar, where every
+    // platform API method throws RuntimeException("... not mocked") by
+    // default. With returnDefaultValues = true, those stubs instead
+    // return the Java defaults (0 / null / false / empty). This unblocks
+    // tests that exercise production code calling android.util.Log (which
+    // UnattendedAccessManager does defensively in catch blocks) without
+    // needing every test to mockkStatic(Log::class). Regression discovered
+    // when v0.5.0 CI release caught UnattendedAccessManagerTest's
+    // acquireForAction_uninitialized + refreshKeyguardState_threwException
+    // both failing with RuntimeException from unmocked Log.w calls.
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 // Google Play Publisher — optional automated upload to Play Console.
