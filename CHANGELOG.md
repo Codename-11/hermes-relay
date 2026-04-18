@@ -183,6 +183,70 @@ sees the toggle, never installs the wake lock, and never invokes
 - **Zero server changes.** Frontend-only, no hermes-agent edits needed.
 - **Files.** `data/ChatMessage.kt` (new `voiceIntent: VoiceIntentTrace?` field), `voice/VoiceIntentSyncBuilder.kt` (pure-function builder + helpers), `network/HermesApiClient.kt` (optional `voiceIntentMessages` parameter on both stream methods), `viewmodel/ChatViewModel.kt` (build + sync + flag flip in `startStream`), `viewmodel/VoiceViewModel.kt` (extended dispatch callback wires the structured trace into the chat-trace bubble), `voice/VoiceBridgeIntentHandler.kt` (new `androidToolName` + `androidToolArgsJson` on `IntentResult.Handled`), sideload `VoiceBridgeIntentHandlerImpl.kt` populates them per intent, sideload + googlePlay `VoiceBridgeIntentFactory.kt` typealias updates. Tests in `test/voice/VoiceIntentSyncBuilderTest.kt` (12 cases — empty input, single success, failure with error_code, idempotency, chronological order, prefix gate, blank-args gate, call-id pairing, helpers) and `test/network/handlers/ChatHandlerTest.kt` (4 new cases for trace storage + `markVoiceIntentsSynced`).
 
+### Added — Barge-in (interrupt the agent)
+
+Voice mode can now be interrupted by speaking while the agent is
+replying — the same turn-taking pattern ChatGPT, Siri, and Google
+Assistant use. Stops the current TTS response the moment your voice
+is detected, flips to Listening, and hands the mic back to you
+without you needing to tap anything. If you then stay quiet for
+~600 ms, the agent resumes from the next sentence of the response
+you interrupted — so a quick breath or pause won't throw away its
+answer.
+
+- **Duplex audio + Silero VAD.** A new `BargeInListener` runs a
+  continuous `AudioRecord` (16 kHz mono PCM, `VOICE_COMMUNICATION`
+  source) alongside TTS playback, feeding 32 ms frames to a bundled
+  Silero voice-activity-detection model via `com.github.gkonovalov:
+  android-vad:silero`. `AcousticEchoCanceler` + `NoiseSuppressor` are
+  attached to the ExoPlayer audio session so the VAD doesn't trip on
+  our own TTS output. A second hysteresis layer on top of the library
+  (`2`–`3` consecutive speech frames depending on sensitivity) rejects
+  isolated false-positive frames.
+- **Two-stage ducking → cutoff.** A single raw speech frame fires a
+  `maybeSpeech` event → TTS volume ducks to 30 % as a soft
+  acknowledgement (user hears the shift, knows we heard something).
+  If hysteresis passes → hard `bargeInDetected` → `interruptSpeaking()`
+  fires (same path V4 wired for user-initiated interrupts in the
+  voice-quality-pass — cancels synth/play workers, deletes pending
+  cache files). If no follow-up detection within 500 ms, a watchdog
+  un-ducks so a single stray frame doesn't leave playback quieted.
+- **Resume-from-next-sentence.** `VoiceViewModel` tracks the list of
+  sentence chunks the play worker has spoken plus the index the user
+  interrupted at. After an interrupt, a 600 ms watchdog listens to
+  `VoiceRecorder.amplitude` — if the user keeps speaking past the
+  threshold, the new turn proceeds normally and the interrupted
+  response is dropped. If silence wins, remaining chunks re-enqueue
+  onto the TTS queue and playback resumes from the sentence after the
+  cut. Controlled by the "Resume after interruption" sub-toggle
+  (default on).
+- **Settings UI.** New "Barge-in" section in Voice Settings: master
+  toggle (default off), sensitivity segmented button (`Off / Low /
+  Default / High` — inverted from the library's `Mode` enum so higher
+  user-facing value = more sensitive), resume sub-toggle, and a
+  compatibility warning badge that shows on devices where
+  `AcousticEchoCanceler.isAvailable() == false` ("Your device may have
+  limited echo cancellation. Barge-in quality will vary.").
+  Preferences live in `BargeInPreferences` DataStore following the
+  existing `BridgeSafetyPreferences` shape.
+- **Shipped default-off.** AEC quality varies widely across Android
+  OEMs — Pixel is solid, many mid-tier and older devices aren't. The
+  feature ships disabled by default; users opt in from Voice Settings
+  and see the compatibility badge if their device has no AEC. A
+  `useExoPlayerVoice` flavor-safe architecture from the voice-quality-
+  pass already exposed `VoicePlayer.audioSessionId`, which is what
+  AEC binds against.
+- **Live settings reactivity.** Toggling the feature on or off
+  mid-conversation works without restarting voice mode; the
+  coordinator observes `BargeInPreferences.flow` and starts/stops the
+  listener on each emission.
+
+Tests: 7 new `VoiceViewModelBargeInTest` cases covering the
+interrupt path, resume-vs-keep-talking branches, the ducking
+watchdog, and live prefs-change reactivity. Plus unit tests for each
+new subsystem (VAD engine, duplex listener with `AudioFrameSource`
+seam for non-instrumented tests, ducking helpers, DataStore).
+
 ### Changed — Voice output quality pass
 
 Addresses four symptom classes that surfaced in on-device voice testing
