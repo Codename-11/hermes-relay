@@ -73,6 +73,10 @@ import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 @Composable
 fun SettingsScreen(
     connectionViewModel: ConnectionViewModel,
+    // Multi-profile: entry point for the Profiles manager. Kept at the top
+    // of the category list so switching server connections is one tap from
+    // the bottom nav, not buried behind "Connection → Paired devices".
+    onNavigateToProfiles: () -> Unit,
     onNavigateToConnectionSettings: () -> Unit,
     onNavigateToChatSettings: () -> Unit,
     onNavigateToMediaSettings: () -> Unit,
@@ -202,6 +206,19 @@ fun SettingsScreen(
             }
 
             // ── Category list ──────────────────────────────────────────
+            // Multi-profile: Profiles sits at the very top of the list so
+            // users who just want to switch server connections don't have to
+            // hunt for it. `Icons.Filled.Devices` is already imported for
+            // the "Paired devices" row below — reusing it here is visually
+            // fine since both rows cover server / device relationships.
+            SettingsCategoryRow(
+                icon = Icons.Filled.Devices,
+                title = "Profiles",
+                subtitle = "Switch or manage server connections",
+                onClick = onNavigateToProfiles,
+                isDarkTheme = isDarkTheme,
+            )
+
             SettingsCategoryRow(
                 icon = Icons.AutoMirrored.Filled.Chat,
                 title = "Chat",

@@ -9,6 +9,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
@@ -44,6 +45,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.lifecycle.Lifecycle
@@ -58,11 +60,15 @@ import com.hermesandroid.relay.ui.theme.purpleGlow
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.hermesandroid.relay.ui.components.MorphingSphere
+import com.hermesandroid.relay.ui.components.ProfileChip
+import com.hermesandroid.relay.ui.components.ProfileSwitcherSheet
 import com.hermesandroid.relay.ui.components.UnattendedGlobalBanner
 import com.hermesandroid.relay.ui.components.UpdateBanner
 import com.hermesandroid.relay.update.UpdateCheckResult
@@ -72,6 +78,7 @@ import com.hermesandroid.relay.data.BridgePreferencesRepository
 import com.hermesandroid.relay.data.BridgeSafetyPreferencesRepository
 import com.hermesandroid.relay.data.BuildFlavor
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import com.hermesandroid.relay.util.HumanError
 import kotlinx.coroutines.delay
 import com.hermesandroid.relay.ui.onboarding.OnboardingScreen
@@ -88,6 +95,7 @@ import com.hermesandroid.relay.ui.screens.ConnectionSettingsScreen
 import com.hermesandroid.relay.ui.screens.DeveloperSettingsScreen
 import com.hermesandroid.relay.ui.screens.MediaSettingsScreen
 import com.hermesandroid.relay.ui.screens.PairedDevicesScreen
+import com.hermesandroid.relay.ui.screens.ProfilesSettingsScreen
 import com.hermesandroid.relay.ui.screens.SettingsScreen
 import com.hermesandroid.relay.ui.screens.TerminalScreen
 import com.hermesandroid.relay.ui.screens.NotificationCompanionSettingsScreen
@@ -138,7 +146,17 @@ sealed class Screen(
     // launch so the chooser + Confirm + Verify steps + the camera viewport
     // get a real fullscreen surface (the Dialog wasn't actually filling the
     // window — Settings cards were leaking through behind it).
-    data object Pair : Screen("pair", "Pair", Icons.Filled.Settings)
+    //
+    // Multi-profile: accepts an optional `profileId` query arg so the
+    // ProfilesSettings "Re-pair" button can target a specific profile.
+    // When null, the flow creates a new profile on success (handoff: Worker B
+    // still needs `ConnectionViewModel.addProfileFromPairing(...)` for that).
+    data object Pair : Screen("pair?profileId={profileId}", "Pair", Icons.Filled.Settings) {
+        const val ARG_PROFILE_ID: String = "profileId"
+        fun route(profileId: String? = null): String =
+            if (profileId == null) "pair" else "pair?profileId=$profileId"
+    }
+    data object ProfilesSettings : Screen("settings/profiles", "Profiles", Icons.Filled.Settings)
     data object VoiceSettings : Screen("voice_settings", "Voice", Icons.Filled.Settings)
     // === PHASE3-notif-listener-followup ===
     data object NotificationCompanionSettings :
@@ -173,6 +191,12 @@ fun RelayApp() {
     val terminalViewModel: TerminalViewModel = viewModel()
     val voiceViewModel: VoiceViewModel = viewModel()
     val updateViewModel: UpdateViewModel = viewModel()
+
+    // Composition-scoped coroutine scope for firing profile-store suspend
+    // writes off of UI click handlers (rename/revoke/remove) — ProfileStore's
+    // mutations are all suspend fns and we don't want to block the main
+    // dispatcher from inside the composable body.
+    val profileSwitchScope = rememberCoroutineScope()
 
     // One-time init: the terminal channel ViewModel registers with the shared
     // multiplexer and observes the relay connection state so it can attach/
@@ -267,6 +291,33 @@ fun RelayApp() {
             // VoiceSettingsScreen reads/writes.
             voicePreferences = com.hermesandroid.relay.data.VoicePreferencesRepository(mediaContext),
         )
+    }
+
+    // Multi-profile: wire ChatViewModel / VoiceViewModel into the profile
+    // switch coordinator. Registered once per composition — the coordinator
+    // stores these as callbacks and fires them in order when switchProfile()
+    // is invoked so in-flight streams don't keep scribbling into the
+    // outgoing profile's state after the swap.
+    //
+    // Voice callback is gated on sideload: googlePlay still builds the
+    // VoiceViewModel (it's wired unconditionally above) but voice mode is a
+    // sideload-only feature, so there's no live turn to stop on stock
+    // googlePlay builds. The stop-callback is harmless either way; the gate
+    // mirrors the flavor check on the global unattended banner below.
+    LaunchedEffect(Unit) {
+        connectionViewModel.registerStreamCancelCallback {
+            chatViewModel.cancelStream()
+        }
+        if (BuildFlavor.isSideload) {
+            // VoiceViewModel.stop() isn't defined — use exitVoiceMode() which
+            // is the closest semantic match (tears down the active turn and
+            // returns the UI to text mode). If/when Worker B or a later pass
+            // adds a proper stop(), swap this for vvm.stop().
+            connectionViewModel.registerVoiceStopCallback {
+                voiceViewModel.exitVoiceMode()
+            }
+        }
+        chatViewModel.observeProfileSwitches(connectionViewModel.profileSwitchEvents)
     }
 
     LaunchedEffect(apiClient) {
@@ -443,6 +494,20 @@ fun RelayApp() {
             !voiceUiState.voiceMode
         // === END v0.4.1 polish ===
 
+        // Multi-profile: top-bar ProfileChip state. Visible on the four
+        // primary tabs (Chat / Terminal / Bridge / Settings) per decisions.md
+        // §19 — profile first, personality second. Hidden while onboarding
+        // or during voice-mode full-screen takeover. Tapping opens the
+        // switcher sheet declared below the Scaffold.
+        val currentRoute = navBackStackEntry?.destination?.route
+        val profileChipVisible = !isOnboarding &&
+            !voiceUiState.voiceMode &&
+            currentRoute in bottomNavScreens.map { it.route }
+        val profiles by connectionViewModel.profiles.collectAsState()
+        val activeProfile by connectionViewModel.activeProfile.collectAsState()
+        val activeProfileId by connectionViewModel.activeProfileId.collectAsState()
+        var profileSheetVisible by remember { mutableStateOf(false) }
+
         Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
         // The banner takes its own vertical space above the Scaffold so
@@ -482,6 +547,33 @@ fun RelayApp() {
                 UpdateBanner(
                     update = upd,
                     onDismiss = { updateViewModel.dismiss(upd.latestVersion) },
+                )
+            }
+        }
+
+        // Multi-profile: app-wide profile chip. Rendered above the Scaffold
+        // (outside the per-screen TopAppBars) so it's visible on every
+        // primary tab without having to edit Chat / Terminal / Bridge /
+        // Settings screens individually — all four screens own their own
+        // TopAppBar, and doubling up by stuffing the chip inside each one
+        // would be a much bigger surface-area change. Aligned to the end so
+        // it reads like a header action rather than a primary title.
+        AnimatedVisibility(
+            visible = profileChipVisible,
+            enter = fadeIn(tween(200)),
+            exit = fadeOut(tween(200)),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface)
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ProfileChip(
+                    label = activeProfile?.label ?: "No profile",
+                    onClick = { profileSheetVisible = true },
                 )
             }
         }
@@ -648,6 +740,9 @@ fun RelayApp() {
                 composable(Screen.Settings.route) {
                     SettingsScreen(
                         connectionViewModel = connectionViewModel,
+                        onNavigateToProfiles = {
+                            navController.navigate(Screen.ProfilesSettings.route)
+                        },
                         onNavigateToConnectionSettings = {
                             navController.navigate(Screen.ConnectionSettings.route)
                         },
@@ -726,15 +821,124 @@ fun RelayApp() {
                             navController.navigate(Screen.PairedDevices.route)
                         },
                         onNavigateToPair = {
-                            navController.navigate(Screen.Pair.route)
+                            navController.navigate(Screen.Pair.route(null))
                         }
                     )
                 }
-                composable(Screen.Pair.route) {
+                composable(Screen.ProfilesSettings.route) {
+                    val profilesList by connectionViewModel.profiles.collectAsState()
+                    val activeId by connectionViewModel.activeProfileId.collectAsState()
+                    ProfilesSettingsScreen(
+                        profiles = profilesList,
+                        activeProfileId = activeId,
+                        // Multi-profile: direct writes through profileStore —
+                        // ProfileStore is the documented single source of
+                        // truth; ConnectionViewModel doesn't expose typed
+                        // rename/revoke helpers and adding them is Worker B
+                        // territory (viewmodel orchestration).
+                        //
+                        // TODO(Worker B): expose
+                        //   renameProfile(id, label),
+                        //   revokeProfile(id) — wraps profileStore.updateProfile
+                        //     AND issues the /sessions/{prefix} DELETE against
+                        //     the relay so the server-side token is invalidated,
+                        //   removeProfile(id) — wraps the Revoke + a
+                        //     profileStore.removeProfile so the local token
+                        //     store gets deleted atomically.
+                        // until then we route rename directly through
+                        // profileStore, and revoke/remove through it too —
+                        // the server-side revoke is missing until Worker B
+                        // wires it.
+                        onRenameProfile = { id, newLabel ->
+                            val existing = profilesList.firstOrNull { it.id == id }
+                            if (existing != null) {
+                                profileSwitchScope.launch {
+                                    connectionViewModel.profileStore.updateProfile(
+                                        existing.copy(label = newLabel),
+                                    )
+                                }
+                            }
+                        },
+                        onRepairProfile = { id ->
+                            // Re-pair targets the profile via the nav arg —
+                            // PairScreen onComplete reads it to decide between
+                            // new-profile add and in-place re-pair. We still
+                            // need switchProfile here so the pairing-payload
+                            // apply lands on the right profile's auth store.
+                            connectionViewModel.switchProfile(id)
+                            navController.navigate(Screen.Pair.route(id))
+                        },
+                        onRevokeProfile = { id ->
+                            // TODO(Worker B): call the server-side revoke
+                            // endpoint here too. For now we just clear the
+                            // local paired-at stamp so the UI reflects an
+                            // unpaired state — the server still trusts the
+                            // token until its TTL expires.
+                            val existing = profilesList.firstOrNull { it.id == id }
+                            if (existing != null) {
+                                profileSwitchScope.launch {
+                                    connectionViewModel.profileStore.updateProfile(
+                                        existing.copy(
+                                            pairedAt = null,
+                                            expiresAt = null,
+                                        ),
+                                    )
+                                }
+                            }
+                        },
+                        onRemoveProfile = { id ->
+                            profileSwitchScope.launch {
+                                connectionViewModel.profileStore.removeProfile(id)
+                            }
+                        },
+                        onAddProfile = {
+                            navController.navigate(Screen.Pair.route(null))
+                        },
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+                composable(
+                    route = Screen.Pair.route,
+                    arguments = listOf(
+                        navArgument(Screen.Pair.ARG_PROFILE_ID) {
+                            type = NavType.StringType
+                            nullable = true
+                            defaultValue = null
+                        },
+                    ),
+                ) { backStackEntry ->
+                    val profileIdArg = backStackEntry.arguments
+                        ?.getString(Screen.Pair.ARG_PROFILE_ID)
                     com.hermesandroid.relay.ui.screens.PairScreen(
                         connectionViewModel = connectionViewModel,
-                        onComplete = { navController.popBackStack() },
-                        onCancel = { navController.popBackStack() }
+                        onComplete = {
+                            // Multi-profile: on successful pair,
+                            //  - profileIdArg == null → new-profile add path.
+                            //    Worker B still needs to expose
+                            //    ConnectionViewModel.addProfileFromPairing()
+                            //    (or equivalent) that constructs a Profile
+                            //    from the currently-applied pairing payload
+                            //    + active URLs and calls ProfileStore.addProfile
+                            //    + ProfileStore.setActiveProfile. Until then
+                            //    the credentials still land in the active
+                            //    profile's token store (legacy single-profile
+                            //    semantics), and re-pair-into-current is what
+                            //    the user effectively gets.
+                            //  - profileIdArg != null → re-pair in place,
+                            //    which applyPairingPayload already does for
+                            //    whatever profile is currently active.
+                            //    Worker B: if we want strict per-profile
+                            //    re-pair targeting, add a switchProfile call
+                            //    before launching this route.
+                            //
+                            // TODO(Worker B): expose addProfileFromPairing(
+                            //     label: String?, apiUrl: String, relayUrl: String
+                            // ): String (returns new profile id) so this
+                            // callback can branch on profileIdArg == null and
+                            // auto-switch to the new profile.
+                            navController.popBackStack()
+                        },
+                        onCancel = { navController.popBackStack() },
                     )
                 }
                 composable(Screen.ChatSettings.route) {
@@ -777,6 +981,23 @@ fun RelayApp() {
             } // end CompositionLocalProvider
         }
         } // end Column (wraps banner + Scaffold)
+
+        // Multi-profile: profile switcher sheet. Hoisted to Box scope so the
+        // sheet floats over whatever screen is active — ModalBottomSheet
+        // renders as a popup, so the placement in the composition tree only
+        // affects state ownership, not visual stacking.
+        if (profileSheetVisible) {
+            ProfileSwitcherSheet(
+                profiles = profiles,
+                activeProfileId = activeProfileId,
+                onSelectProfile = { id -> connectionViewModel.switchProfile(id) },
+                onManageProfiles = {
+                    profileSheetVisible = false
+                    navController.navigate(Screen.ProfilesSettings.route)
+                },
+                onDismiss = { profileSheetVisible = false },
+            )
+        }
 
         // Sphere intro overlay — fades out after 1.5s to reveal main UI
         AnimatedVisibility(

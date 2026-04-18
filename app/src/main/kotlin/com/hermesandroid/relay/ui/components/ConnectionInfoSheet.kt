@@ -178,7 +178,11 @@ fun SessionInfoSheet(
     val relayUrl by connectionViewModel.relayUrl.collectAsState()
     val relayConnectionState by connectionViewModel.relayConnectionState.collectAsState()
     val pairingCode by connectionViewModel.pairingCode.collectAsState()
-    val profiles by connectionViewModel.authManager.profiles.collectAsState()
+    // Note: this is the list of server-issued *session labels* pulled from
+    // the `auth.ok` payload (e.g. `["chat", "terminal"]`) — not the list of
+    // multi-profile connection profiles. The field was renamed on AuthManager
+    // to avoid that exact confusion; the local is kept as `sessionLabels`.
+    val sessionLabels by connectionViewModel.authManager.sessionLabels.collectAsState()
     val pairedSession by connectionViewModel.currentPairedSession.collectAsState()
 
     ModalBottomSheet(
@@ -261,8 +265,8 @@ fun SessionInfoSheet(
             )
 
             InfoRow(
-                label = "Profiles",
-                value = if (profiles.isEmpty()) "(none)" else profiles.joinToString(", ")
+                label = "Session labels",
+                value = if (sessionLabels.isEmpty()) "(none)" else sessionLabels.joinToString(", ")
             )
 
             // Security overhaul (2026-04-11) — show expiry + grants + storage.
