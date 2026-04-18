@@ -321,5 +321,87 @@ class BridgeActivityTests(unittest.TestCase):
         self.assertEqual(recent[0]["request_id"], "req-2")
 
 
+class BridgeActivityRouteTests(unittest.IsolatedAsyncioTestCase):
+    """Covers the ``GET /bridge/activity`` HTTP handler."""
+
+    async def _make_app(self):
+        from aiohttp import web
+
+        from plugin.relay.server import handle_bridge_activity
+
+        app = web.Application()
+
+        class _StubServer:
+            def __init__(self) -> None:
+                self.bridge = BridgeHandler()
+
+        app["server"] = _StubServer()
+        app.router.add_get("/bridge/activity", handle_bridge_activity)
+        return app
+
+    def _seed(self, bridge: BridgeHandler, n: int) -> None:
+        for i in range(n):
+            bridge.recent_commands.append(
+                BridgeCommandRecord(
+                    request_id=f"req-{i}",
+                    method="GET",
+                    path=f"/p{i}",
+                    sent_at=float(i),
+                )
+            )
+
+    async def test_loopback_caller_returns_activity_shape(self) -> None:
+        from aiohttp.test_utils import TestClient, TestServer
+
+        app = await self._make_app()
+        self._seed(app["server"].bridge, 3)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/bridge/activity")
+            self.assertEqual(resp.status, 200)
+            body = await resp.json()
+            self.assertIn("activity", body)
+            self.assertIsInstance(body["activity"], list)
+            self.assertEqual(len(body["activity"]), 3)
+            # Newest-first ordering preserved.
+            self.assertEqual(body["activity"][0]["request_id"], "req-2")
+
+    async def test_limit_query_param_enforced(self) -> None:
+        from aiohttp.test_utils import TestClient, TestServer
+
+        app = await self._make_app()
+        self._seed(app["server"].bridge, 20)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/bridge/activity?limit=5")
+            self.assertEqual(resp.status, 200)
+            body = await resp.json()
+            self.assertEqual(len(body["activity"]), 5)
+
+    async def test_non_loopback_returns_403(self) -> None:
+        # Direct handler invocation with a spoofed remote — mirrors the
+        # pattern in test_bridge_status.py. AioHTTPTestCase always reports
+        # 127.0.0.1 for its client, so this is the standard way to cover
+        # the non-loopback branch.
+        from aiohttp import web
+
+        from plugin.relay.server import handle_bridge_activity
+
+        class _Req:
+            def __init__(self, remote: str, server: object) -> None:
+                self.remote = remote
+                self.app = {"server": server}
+                self.query: dict[str, str] = {}
+
+            @property
+            def headers(self):
+                return {}
+
+        class _StubServer:
+            bridge = BridgeHandler()
+
+        req = _Req(remote="10.0.0.1", server=_StubServer())
+        with self.assertRaises(web.HTTPForbidden):
+            await handle_bridge_activity(req)  # type: ignore[arg-type]
+
+
 if __name__ == "__main__":
     unittest.main()

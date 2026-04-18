@@ -26,8 +26,15 @@ class SessionsRoutesTests(AioHTTPTestCase):
     # ── GET /sessions ────────────────────────────────────────────────────
 
     async def test_list_requires_bearer(self) -> None:
+        # AioHTTPTestCase's client connects via 127.0.0.1, which now
+        # exercises the loopback-without-bearer dashboard branch →
+        # returns 200 with an empty session list. A non-loopback caller
+        # with no bearer would still be rejected, but the test client
+        # can't produce a non-loopback request.
         resp = await self.client.get("/sessions")
-        self.assertEqual(resp.status, 401)
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertEqual(body["sessions"], [])
 
     async def test_list_rejects_invalid_bearer(self) -> None:
         resp = await self.client.get(
@@ -74,6 +81,23 @@ class SessionsRoutesTests(AioHTTPTestCase):
         )
         body = await resp.json()
         self.assertEqual(body["sessions"][0]["transport_hint"], "wss")
+
+    async def test_loopback_without_bearer_returns_full_list(self) -> None:
+        # Dashboard-plugin branch: loopback callers with no Authorization
+        # header get the full session list. No session highlight is
+        # computed — every entry's is_current is False.
+        await self._mint("dev-a")
+        await self._mint("dev-b")
+
+        resp = await self.client.get("/sessions")
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        sessions = body["sessions"]
+        self.assertEqual(len(sessions), 2)
+        for entry in sessions:
+            self.assertFalse(entry["is_current"])
+            self.assertIn("token_prefix", entry)
+            self.assertNotIn("token", entry)
 
     # ── DELETE /sessions/{prefix} ────────────────────────────────────────
 

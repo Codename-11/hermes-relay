@@ -180,5 +180,94 @@ class MediaRegistryListAllTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(result[1]["created_at"], result[2]["created_at"])
 
 
+class MediaInspectRouteTests(unittest.IsolatedAsyncioTestCase):
+    """Covers the ``GET /media/inspect`` HTTP handler."""
+
+    def setUp(self) -> None:
+        self._sandbox = tempfile.mkdtemp(prefix="hermes_relay_inspect_route_")
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self._sandbox, ignore_errors=True)
+
+    async def _make_app(self, registry: MediaRegistry):
+        from aiohttp import web
+
+        from plugin.relay.server import handle_media_inspect
+
+        app = web.Application()
+
+        class _StubServer:
+            def __init__(self, r: MediaRegistry) -> None:
+                self.media = r
+
+        app["server"] = _StubServer(registry)
+        app.router.add_get("/media/inspect", handle_media_inspect)
+        return app
+
+    async def test_loopback_caller_returns_media_shape(self) -> None:
+        from aiohttp.test_utils import TestClient, TestServer
+
+        registry = _make_registry(self._sandbox)
+        path = _write_file(self._sandbox, "shot.png")
+        await registry.register(path, "image/png", file_name="shot.png")
+
+        app = await self._make_app(registry)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/media/inspect")
+            self.assertEqual(resp.status, 200)
+            body = await resp.json()
+            self.assertIn("media", body)
+            self.assertEqual(len(body["media"]), 1)
+            self.assertEqual(body["media"][0]["file_name"], "shot.png")
+            self.assertNotIn("path", body["media"][0])
+
+    async def test_include_expired_flag_surfaces_expired(self) -> None:
+        from aiohttp.test_utils import TestClient, TestServer
+
+        registry = _make_registry(self._sandbox)
+        path = _write_file(self._sandbox, "old.png")
+        entry = await registry.register(path, "image/png", file_name="old.png")
+        async with registry._lock:
+            registry._entries[entry.token].expires_at = time.time() - 10
+
+        app = await self._make_app(registry)
+        async with TestClient(TestServer(app)) as client:
+            # Default — expired hidden.
+            resp = await client.get("/media/inspect")
+            body = await resp.json()
+            self.assertEqual(body["media"], [])
+
+            # Explicit flag — expired surfaced.
+            resp = await client.get("/media/inspect?include_expired=true")
+            body = await resp.json()
+            self.assertEqual(len(body["media"]), 1)
+            self.assertTrue(body["media"][0]["is_expired"])
+
+    async def test_non_loopback_returns_403(self) -> None:
+        from aiohttp import web
+
+        from plugin.relay.server import handle_media_inspect
+
+        registry = _make_registry(self._sandbox)
+
+        class _Req:
+            def __init__(self, remote: str, r: MediaRegistry) -> None:
+                self.remote = remote
+
+                class _S:
+                    media = r
+
+                self.app = {"server": _S()}
+                self.query: dict[str, str] = {}
+
+            @property
+            def headers(self):
+                return {}
+
+        req = _Req(remote="192.168.1.5", r=registry)
+        with self.assertRaises(web.HTTPForbidden):
+            await handle_media_inspect(req)  # type: ignore[arg-type]
+
+
 if __name__ == "__main__":
     unittest.main()

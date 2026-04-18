@@ -62,6 +62,7 @@ class RelayServer:
 
     def __init__(self, config: RelayConfig) -> None:
         self.config = config
+        self.start_time: float = time.monotonic()
 
         # Auth
         self.pairing = PairingManager()
@@ -399,6 +400,11 @@ def _require_bearer_session(
     return server, session
 
 
+def _require_loopback(request: web.Request) -> None:
+    if request.remote not in ("127.0.0.1", "::1"):
+        raise web.HTTPForbidden(reason="loopback only")
+
+
 async def handle_sessions_list(request: web.Request) -> web.Response:
     """List all paired devices.
 
@@ -406,6 +412,20 @@ async def handle_sessions_list(request: web.Request) -> web.Response:
       → 200 {"sessions": [...]}
       → 401 missing/invalid bearer
     """
+    # Loopback-without-bearer branch — used by the co-hosted dashboard
+    # plugin to enumerate paired devices without minting a bearer. The
+    # response omits the is_current highlight (there is no calling
+    # session). Bearer-authenticated callers fall through to the
+    # existing code path below.
+    is_loopback = request.remote in ("127.0.0.1", "::1")
+    if is_loopback and not request.headers.get("Authorization"):
+        server: RelayServer = request.app["server"]
+        entries = [
+            _session_to_dict(s, None) for s in server.sessions.list_sessions()
+        ]
+        entries.sort(key=lambda e: e["last_seen"], reverse=True)
+        return web.json_response({"sessions": entries})
+
     server, current_session = _require_bearer_session(request)
     entries = [
         _session_to_dict(s, current_session.token)
@@ -1327,6 +1347,90 @@ async def handle_bridge_status(request: web.Request) -> web.Response:
 # === END PHASE3-status ===
 
 
+# ── Dashboard-plugin loopback routes ─────────────────────────────────────────
+#
+# Three loopback-only endpoints surfaced for the co-hosted dashboard
+# plugin. They expose relay state (bridge command ring buffer, media
+# registry snapshot, aggregate /relay/info) that upstream can't see.
+# Loopback-gated because the dashboard runs inside the gateway process
+# on the same host; no bearer is needed.
+
+
+async def handle_bridge_activity(request: web.Request) -> web.Response:
+    """Return the recent bridge-command ring buffer (newest-first).
+
+    GET /bridge/activity?limit=N
+      → 200 {"activity": [...]}
+      → 403 non-loopback caller
+    """
+    _require_loopback(request)
+
+    raw_limit = request.query.get("limit")
+    limit = 100
+    if raw_limit is not None:
+        try:
+            parsed = int(raw_limit)
+            if 1 <= parsed <= 500:
+                limit = parsed
+            elif parsed > 500:
+                limit = 500
+            elif parsed < 1:
+                limit = 100
+        except (TypeError, ValueError):
+            limit = 100
+
+    server: RelayServer = request.app["server"]
+    activity = server.bridge.get_recent(limit)
+    return web.json_response({"activity": activity})
+
+
+async def handle_media_inspect(request: web.Request) -> web.Response:
+    """Return a sanitized snapshot of the MediaRegistry.
+
+    GET /media/inspect?include_expired=true
+      → 200 {"media": [...]}
+      → 403 non-loopback caller
+    """
+    _require_loopback(request)
+
+    raw = request.query.get("include_expired", "")
+    include_expired = raw.strip().lower() in ("1", "true", "yes")
+
+    server: RelayServer = request.app["server"]
+    media = await server.media.list_all(include_expired=include_expired)
+    return web.json_response({"media": media})
+
+
+async def handle_relay_info(request: web.Request) -> web.Response:
+    """Aggregate relay-status endpoint consumed by the dashboard overview tab.
+
+    GET /relay/info
+      → 200 {version, uptime_seconds, session_count, paired_device_count,
+             pending_commands, media_entry_count, health}
+      → 403 non-loopback caller
+    """
+    _require_loopback(request)
+
+    server: RelayServer = request.app["server"]
+    uptime_seconds = int(time.monotonic() - server.start_time)
+    session_count = len(server.sessions.list_sessions())
+    pending_commands = len(server.bridge.pending)
+    media_entry_count = await server.media.size()
+
+    return web.json_response(
+        {
+            "version": __version__,
+            "uptime_seconds": uptime_seconds,
+            "session_count": session_count,
+            # Sessions == paired devices in the current auth model.
+            "paired_device_count": session_count,
+            "pending_commands": pending_commands,
+            "media_entry_count": media_entry_count,
+            "health": "ok",
+        }
+    )
+
+
 # === PHASE3-notif-listener: notifications HTTP routes ===
 #
 # Bearer-auth'd HTTP read endpoint for the cached notification deque
@@ -1874,6 +1978,11 @@ def create_app(config: RelayConfig) -> web.Application:
     # === PHASE3-status: loopback-gated structured phone status ===
     app.router.add_get("/bridge/status", handle_bridge_status)
     # === END PHASE3-status ===
+
+    # Dashboard-plugin loopback routes — see handlers above.
+    app.router.add_get("/bridge/activity", handle_bridge_activity)
+    app.router.add_get("/media/inspect", handle_media_inspect)
+    app.router.add_get("/relay/info", handle_relay_info)
 
     # === PHASE3-notif-listener: notifications HTTP routes ===
     app.router.add_get("/notifications/recent", handle_notifications_recent)
