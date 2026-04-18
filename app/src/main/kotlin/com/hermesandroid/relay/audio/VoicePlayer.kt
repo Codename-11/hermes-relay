@@ -50,6 +50,14 @@ class VoicePlayer(context: Context) {
     private val _amplitude = MutableStateFlow(0f)
     val amplitude: StateFlow<Float> = _amplitude.asStateFlow()
 
+    // Mirrors the most recent value passed to [setVolume] / [duck] / [unduck].
+    // ExoPlayer's own `volume` getter is the source of truth for the audio
+    // pipeline, but we keep a local copy so callers can introspect current
+    // ducking state without racing the underlying ExoPlayer thread, and so
+    // future reconfig paths (reconstruct ExoPlayer, swap sink, etc.) can
+    // re-apply the same volume without losing the caller's intent.
+    @Volatile private var currentVolume: Float = 1f
+
     // Tracked via Player.Listener.onIsPlayingChanged so awaitCompletion can
     // suspend on the combined (isPlaying, mediaItemCount) signal without
     // polling the player from arbitrary threads.
@@ -172,6 +180,46 @@ class VoicePlayer(context: Context) {
      * mid-queue). Matches the old semantic of "there's audio in flight".
      */
     fun isPlaying(): Boolean = _queueCount.value > 0
+
+    /**
+     * Set the playback volume of the underlying ExoPlayer.
+     *
+     * **Barge-in use case.** The barge-in pipeline (see
+     * `docs/plans/2026-04-17-voice-barge-in.md`, unit B6) runs the mic
+     * through a Silero VAD while TTS plays. On a *single* "maybe speech"
+     * frame — one positive frame that hasn't yet passed the hysteresis
+     * debounce — we soft-duck via [duck] instead of hard-stopping. If the
+     * speech is confirmed (enough consecutive positive frames pass the
+     * debounce), [VoiceViewModel] calls the hard-stop path
+     * (`interruptSpeaking()`); if the frame was a false positive, a
+     * watchdog re-calls [unduck] to restore full volume. The result is a
+     * fast-reacting but false-positive-tolerant interruption feel.
+     *
+     * @param volume linear gain in the range `0f..1f`; values outside this
+     *   range are clamped. Forwarded verbatim to `ExoPlayer.volume`.
+     */
+    fun setVolume(volume: Float) {
+        val clamped = volume.coerceIn(0f, 1f)
+        currentVolume = clamped
+        exoPlayer.volume = clamped
+    }
+
+    /**
+     * Soft-duck TTS to 30% of full volume. See [setVolume] for context —
+     * used by barge-in on a single VAD positive frame, before the
+     * hysteresis debounce confirms an actual interruption.
+     */
+    fun duck() {
+        setVolume(0.3f)
+    }
+
+    /**
+     * Restore TTS to full volume. Pair with [duck]; safe to call even if
+     * not currently ducked.
+     */
+    fun unduck() {
+        setVolume(1.0f)
+    }
 
     /**
      * Fully release the underlying ExoPlayer. Call when the owning scope is

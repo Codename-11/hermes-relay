@@ -54,6 +54,7 @@ class VoicePlayerTest {
     private var fakeMediaItemCount: Int = 0
     private var fakeIsPlaying: Boolean = false
     private var fakePlaybackState: Int = Player.STATE_IDLE
+    private var fakeVolume: Float = 1f
 
     @Before
     fun setUp() {
@@ -104,6 +105,13 @@ class VoicePlayerTest {
             listener?.onIsPlayingChanged(false)
         }
         every { exoPlayer.release() } just Runs
+
+        // Volume is a var in ExoPlayer; back it with a field so set/get
+        // round-trips consistently (matches how the other counters work).
+        every { exoPlayer.volume = any() } answers {
+            fakeVolume = firstArg()
+        }
+        every { exoPlayer.volume } answers { fakeVolume }
     }
 
     @After
@@ -113,6 +121,7 @@ class VoicePlayerTest {
         fakeMediaItemCount = 0
         fakeIsPlaying = false
         fakePlaybackState = Player.STATE_IDLE
+        fakeVolume = 1f
     }
 
     @Test
@@ -181,5 +190,20 @@ class VoicePlayerTest {
         listener?.onPlaybackStateChanged(Player.STATE_ENDED)
 
         withTimeout(500) { waiter.await() }
+    }
+
+    @Test
+    fun `duck sets exoPlayer volume to 0_3f and unduck restores to 1_0f`() {
+        val voicePlayer = VoicePlayer(context)
+
+        voicePlayer.duck()
+
+        verify { exoPlayer.volume = 0.3f }
+        assertEquals(0.3f, fakeVolume, 0.0001f)
+
+        voicePlayer.unduck()
+
+        verify { exoPlayer.volume = 1.0f }
+        assertEquals(1.0f, fakeVolume, 0.0001f)
     }
 }
