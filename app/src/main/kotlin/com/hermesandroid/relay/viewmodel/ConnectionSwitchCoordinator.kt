@@ -3,8 +3,8 @@ package com.hermesandroid.relay.viewmodel
 import android.util.Log
 import com.hermesandroid.relay.auth.AuthManager
 import com.hermesandroid.relay.auth.AuthState
-import com.hermesandroid.relay.data.Profile
-import com.hermesandroid.relay.data.ProfileStore
+import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.ConnectionStore
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.ConnectionManager
 import com.hermesandroid.relay.network.HermesApiClient
@@ -23,7 +23,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Orchestrates the "heavy context swap" that happens when the user switches
- * between Hermes connection profiles. Extracted out of
+ * between Hermes connections. Extracted out of
  * [ConnectionViewModel] so the swap sequence is testable without having to
  * stand up an Android [android.app.Application] + DataStore + EncryptedPrefs
  * + MediaProjection + ... — every collaborator here is either an interface
@@ -31,7 +31,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  *
  * Sequence (must happen in order):
  *
- *  1. Guard — no-op if the requested id equals [ProfileStore.activeProfileId].
+ *  1. Guard — no-op if the requested id equals [ConnectionStore.activeConnectionId].
  *  2. Invoke the stream-cancel callback registered via
  *     [registerStreamCancelCallback] so any in-flight SSE chat stream held
  *     by [ChatViewModel] is torn down before its API client disappears.
@@ -42,18 +42,18 @@ import kotlinx.coroutines.withTimeoutOrNull
  *     connection layer and voice is an optional feature wired on top.
  *  4. Call [ConnectionManager.disconnect] — flips `shouldReconnect = false`
  *     and closes the WSS, preventing the auto-reconnect loop from firing
- *     an auth envelope with the old profile's session token against the
- *     new profile's relay.
- *  5. Emit a [profileSwitchEvents] event with the new profile id so
- *     [ChatViewModel] (and any other profile-scoped holder) can wipe local
- *     state — messages, session id, queued sends — before the rebuilt
- *     clients start serving the new profile.
- *  6. Look up the new [Profile] in [profileStore]. If the id is unknown
- *     we log + abort (no state mutation); a stale UI reference is safer
- *     than proceeding with a half-switched context.
+ *     an auth envelope with the old connection's session token against the
+ *     new connection's relay.
+ *  5. Emit a [connectionSwitchEvents] event with the new connection id so
+ *     [ChatViewModel] (and any other connection-scoped holder) can wipe
+ *     local state — messages, session id, queued sends — before the
+ *     rebuilt clients start serving the new connection.
+ *  6. Look up the new [Connection] in [connectionStore]. If the id is
+ *     unknown we log + abort (no state mutation); a stale UI reference is
+ *     safer than proceeding with a half-switched context.
  *  7. Rebuild [AuthManager] via [authManagerFactory] bound to the new
- *     profile id. The new AuthManager's init block re-registers itself on
- *     [multiplexer] as the "system" channel handler, which transparently
+ *     connection id. The new AuthManager's init block re-registers itself
+ *     on [multiplexer] as the "system" channel handler, which transparently
  *     overwrites the previous one (see [ChannelMultiplexer.registerHandler]).
  *  8. Update URL flows via [setApiServerUrl] and [setRelayUrl] so
  *     [HermesApiClient] and [RelayHttpClient] pick up the new endpoints.
@@ -66,23 +66,25 @@ import kotlinx.coroutines.withTimeoutOrNull
  *     auth envelope with no pair context, which tick the relay's rate
  *     limiter — exactly the trap [AuthManager.hasPairContext] was
  *     introduced to avoid.
- * 11. Persist the new active-profile id via [ProfileStore.setActiveProfile]
- *     last so an early failure leaves the previous active profile in place.
+ * 11. Persist the new active-connection id via
+ *     [ConnectionStore.setActiveConnection] last so an early failure leaves
+ *     the previous active connection in place.
  *
  * The whole sequence runs under [switchMutex] so rapid-fire switches from
  * the UI queue cleanly instead of interleaving partial teardowns.
  */
-class ProfileSwitchCoordinator(
-    private val profileStore: ProfileStore,
+class ConnectionSwitchCoordinator(
+    private val connectionStore: ConnectionStore,
     private val connectionManager: ConnectionManager,
     private val scope: CoroutineScope,
     /**
      * Factory that constructs a brand-new [AuthManager] bound to a given
-     * profile id. Called once per successful switch. The returned instance
-     * must have already registered itself on [multiplexer] — AuthManager's
-     * init block handles that via `multiplexer.registerHandler("system", this)`.
+     * connection id. Called once per successful switch. The returned
+     * instance must have already registered itself on [multiplexer] —
+     * AuthManager's init block handles that via
+     * `multiplexer.registerHandler("system", this)`.
      */
-    private val authManagerFactory: (profileId: String) -> AuthManager,
+    private val authManagerFactory: (connectionId: String) -> AuthManager,
     /**
      * Installs a freshly-built [AuthManager] on the holder so the
      * reconnect gate and any other `authManager.*` call sites see it.
@@ -109,7 +111,7 @@ class ProfileSwitchCoordinator(
 ) {
 
     companion object {
-        private const val TAG = "ProfileSwitch"
+        private const val TAG = "ConnectionSwitch"
 
         /**
          * Max time we wait for the new [AuthManager] to report a stable
@@ -117,10 +119,10 @@ class ProfileSwitchCoordinator(
          * the only slow path is Keystore init on the very first launch,
          * which well fits inside this budget.
          */
-        // Switching to a brand-new (unpaired) profile is the common "Add
-        // profile" path; AuthManager's init coroutine finishes without
+        // Switching to a brand-new (unpaired) connection is the common "Add
+        // connection" path; AuthManager's init coroutine finishes without
         // transitioning away from Unpaired, so this timeout IS the happy
-        // path there. Keep it short so the UI freeze on add-profile is
+        // path there. Keep it short so the UI freeze on add-connection is
         // imperceptible. AuthManager.init reads EncryptedSharedPreferences
         // which takes < 50 ms on a warm device; 500 ms is generous even
         // with cold disk.
@@ -132,18 +134,18 @@ class ProfileSwitchCoordinator(
     private var streamCancelCallback: (() -> Unit)? = null
     private var voiceStopCallback: (() -> Unit)? = null
 
-    private val _profileSwitchEvents = MutableSharedFlow<String>(
+    private val _connectionSwitchEvents = MutableSharedFlow<String>(
         replay = 0,
         extraBufferCapacity = 4,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
 
     /**
-     * One-shot events emitted after step 5 of [switchProfile]. The payload
-     * is the id of the *new* profile being switched to. Subscribers
-     * (notably [ChatViewModel]) use this to wipe per-profile local state.
+     * One-shot events emitted after step 5 of [switchConnection]. The payload
+     * is the id of the *new* connection being switched to. Subscribers
+     * (notably [ChatViewModel]) use this to wipe per-connection local state.
      */
-    val profileSwitchEvents: SharedFlow<String> = _profileSwitchEvents.asSharedFlow()
+    val connectionSwitchEvents: SharedFlow<String> = _connectionSwitchEvents.asSharedFlow()
 
     /**
      * Register a callback that cancels any in-flight HTTP/SSE stream
@@ -168,15 +170,15 @@ class ProfileSwitchCoordinator(
      * [Job] so callers can `.join()` in tests; in production the VM fires
      * and forgets.
      */
-    fun switchProfile(profileId: String): Job = scope.launch {
+    fun switchConnection(connectionId: String): Job = scope.launch {
         switchMutex.withLock {
-            if (profileStore.activeProfileId.value == profileId) {
-                Log.i(TAG, "switchProfile: $profileId already active — no-op")
+            if (connectionStore.activeConnectionId.value == connectionId) {
+                Log.i(TAG, "switchConnection: $connectionId already active — no-op")
                 return@withLock
             }
 
             // 2 + 3 — tear down anything that would keep talking to the old
-            // profile's endpoints.
+            // connection's endpoints.
             runCatching { streamCancelCallback?.invoke() }
                 .onFailure { Log.w(TAG, "streamCancelCallback failed: ${it.message}") }
             runCatching { voiceStopCallback?.invoke() }
@@ -190,28 +192,28 @@ class ProfileSwitchCoordinator(
             // clients underneath them. Use emit (suspending) rather than
             // tryEmit so a full buffer blocks this coroutine instead of
             // silently dropping the event — losing the switch notification
-            // would leak the previous profile's chat history into the new
-            // profile.
-            _profileSwitchEvents.emit(profileId)
+            // would leak the previous connection's chat history into the new
+            // connection.
+            _connectionSwitchEvents.emit(connectionId)
 
             // 6 — look up target. Guard against stale IDs from UI before
             // we start mutating shared state.
-            val target = profileStore.profiles.value.firstOrNull { it.id == profileId }
+            val target = connectionStore.connections.value.firstOrNull { it.id == connectionId }
             if (target == null) {
                 Log.w(
                     TAG,
-                    "switchProfile: unknown profileId=$profileId — aborting switch, " +
-                        "active profile unchanged",
+                    "switchConnection: unknown connectionId=$connectionId — aborting switch, " +
+                        "active connection unchanged",
                 )
                 return@withLock
             }
 
             // 7 — swap the AuthManager. Factory-built instance re-registers
             // itself on the multiplexer in its own init block.
-            val newAuth = authManagerFactory(profileId)
+            val newAuth = authManagerFactory(connectionId)
             installAuthManager(newAuth)
 
-            // 8 — point the URL flows at the new profile's endpoints.
+            // 8 — point the URL flows at the new connection's endpoints.
             setApiServerUrl(target.apiServerUrl)
             setRelayUrl(target.relayUrl)
             runCatching { persistUrls(target.apiServerUrl, target.relayUrl) }
@@ -232,7 +234,7 @@ class ProfileSwitchCoordinator(
             if (hydrated == null) {
                 Log.i(
                     TAG,
-                    "switchProfile: auth hydrate timeout after ${AUTH_HYDRATE_TIMEOUT_MS}ms " +
+                    "switchConnection: auth hydrate timeout after ${AUTH_HYDRATE_TIMEOUT_MS}ms " +
                         "— relying on current hasPairContext snapshot",
                 )
             }
@@ -243,18 +245,18 @@ class ProfileSwitchCoordinator(
             } else {
                 Log.i(
                     TAG,
-                    "switchProfile: new profile has no pair context — skipping WSS connect " +
+                    "switchConnection: new connection has no pair context — skipping WSS connect " +
                         "(user will pair from the Connection screen)",
                 )
             }
 
             // 11 — persist last so an earlier failure leaves the previous
-            // active pointer in place. setActiveProfile updates the
-            // profileStore.activeProfileId StateFlow synchronously after
-            // the DataStore write lands, so the UI reacts without waiting
-            // for a recomposition pass.
-            runCatching { profileStore.setActiveProfile(profileId) }
-                .onFailure { Log.w(TAG, "profileStore.setActiveProfile failed: ${it.message}") }
+            // active pointer in place. setActiveConnection updates the
+            // connectionStore.activeConnectionId StateFlow synchronously
+            // after the DataStore write lands, so the UI reacts without
+            // waiting for a recomposition pass.
+            runCatching { connectionStore.setActiveConnection(connectionId) }
+                .onFailure { Log.w(TAG, "connectionStore.setActiveConnection failed: ${it.message}") }
         }
     }
 

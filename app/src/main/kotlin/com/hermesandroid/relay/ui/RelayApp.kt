@@ -68,8 +68,8 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.hermesandroid.relay.ui.components.MorphingSphere
-import com.hermesandroid.relay.ui.components.ProfileChip
-import com.hermesandroid.relay.ui.components.ProfileSwitcherSheet
+import com.hermesandroid.relay.ui.components.ConnectionChip
+import com.hermesandroid.relay.ui.components.ConnectionSwitcherSheet
 import com.hermesandroid.relay.ui.components.UnattendedGlobalBanner
 import com.hermesandroid.relay.ui.components.UpdateBanner
 import com.hermesandroid.relay.update.UpdateCheckResult
@@ -96,7 +96,7 @@ import com.hermesandroid.relay.ui.screens.ConnectionSettingsScreen
 import com.hermesandroid.relay.ui.screens.DeveloperSettingsScreen
 import com.hermesandroid.relay.ui.screens.MediaSettingsScreen
 import com.hermesandroid.relay.ui.screens.PairedDevicesScreen
-import com.hermesandroid.relay.ui.screens.ProfilesSettingsScreen
+import com.hermesandroid.relay.ui.screens.ConnectionsSettingsScreen
 import com.hermesandroid.relay.ui.screens.SettingsScreen
 import com.hermesandroid.relay.ui.screens.TerminalScreen
 import com.hermesandroid.relay.ui.screens.NotificationCompanionSettingsScreen
@@ -148,16 +148,17 @@ sealed class Screen(
     // get a real fullscreen surface (the Dialog wasn't actually filling the
     // window — Settings cards were leaking through behind it).
     //
-    // Multi-profile: accepts an optional `profileId` query arg so the
-    // ProfilesSettings "Re-pair" button can target a specific profile.
-    // When null, the flow creates a new profile on success (handoff: Worker B
-    // still needs `ConnectionViewModel.addProfileFromPairing(...)` for that).
-    data object Pair : Screen("pair?profileId={profileId}", "Pair", Icons.Filled.Settings) {
-        const val ARG_PROFILE_ID: String = "profileId"
-        fun route(profileId: String? = null): String =
-            if (profileId == null) "pair" else "pair?profileId=$profileId"
+    // Multi-connection: accepts an optional `connectionId` query arg so
+    // the ConnectionsSettings "Re-pair" button can target a specific
+    // connection. When null, the flow creates a new connection on success
+    // (handoff: Worker B still needs
+    // `ConnectionViewModel.addConnectionFromPairing(...)` for that).
+    data object Pair : Screen("pair?connectionId={connectionId}", "Pair", Icons.Filled.Settings) {
+        const val ARG_CONNECTION_ID: String = "connectionId"
+        fun route(connectionId: String? = null): String =
+            if (connectionId == null) "pair" else "pair?connectionId=$connectionId"
     }
-    data object ProfilesSettings : Screen("settings/profiles", "Profiles", Icons.Filled.Settings)
+    data object ConnectionsSettings : Screen("settings/connections", "Connections", Icons.Filled.Settings)
     data object VoiceSettings : Screen("voice_settings", "Voice", Icons.Filled.Settings)
     // === PHASE3-notif-listener-followup ===
     data object NotificationCompanionSettings :
@@ -193,11 +194,11 @@ fun RelayApp() {
     val voiceViewModel: VoiceViewModel = viewModel()
     val updateViewModel: UpdateViewModel = viewModel()
 
-    // Composition-scoped coroutine scope for firing profile-store suspend
-    // writes off of UI click handlers (rename/revoke/remove) — ProfileStore's
-    // mutations are all suspend fns and we don't want to block the main
-    // dispatcher from inside the composable body.
-    val profileSwitchScope = rememberCoroutineScope()
+    // Composition-scoped coroutine scope for firing connection-store suspend
+    // writes off of UI click handlers (rename/revoke/remove) —
+    // ConnectionStore's mutations are all suspend fns and we don't want to
+    // block the main dispatcher from inside the composable body.
+    val connectionSwitchScope = rememberCoroutineScope()
 
     // One-time init: the terminal channel ViewModel registers with the shared
     // multiplexer and observes the relay connection state so it can attach/
@@ -294,11 +295,11 @@ fun RelayApp() {
         )
     }
 
-    // Multi-profile: wire ChatViewModel / VoiceViewModel into the profile
-    // switch coordinator. Registered once per composition — the coordinator
-    // stores these as callbacks and fires them in order when switchProfile()
-    // is invoked so in-flight streams don't keep scribbling into the
-    // outgoing profile's state after the swap.
+    // Multi-connection: wire ChatViewModel / VoiceViewModel into the
+    // connection switch coordinator. Registered once per composition — the
+    // coordinator stores these as callbacks and fires them in order when
+    // switchConnection() is invoked so in-flight streams don't keep
+    // scribbling into the outgoing connection's state after the swap.
     //
     // Voice callback is gated on sideload: googlePlay still builds the
     // VoiceViewModel (it's wired unconditionally above) but voice mode is a
@@ -313,14 +314,14 @@ fun RelayApp() {
             // VoiceViewModel.stop() isn't defined — use exitVoiceMode() which
             // is the closest semantic match (tears down the active turn and
             // returns the UI to text mode). Worker B2 confirmed no stop()
-            // method exists as of the profile-switch pass, so this rename is
-            // intentional and kept as-is. If a proper stop() is added later,
-            // swap this for vvm.stop().
+            // method exists as of the connection-switch pass, so this rename
+            // is intentional and kept as-is. If a proper stop() is added
+            // later, swap this for vvm.stop().
             connectionViewModel.registerVoiceStopCallback {
                 voiceViewModel.exitVoiceMode()
             }
         }
-        chatViewModel.observeProfileSwitches(connectionViewModel.profileSwitchEvents)
+        chatViewModel.observeConnectionSwitches(connectionViewModel.connectionSwitchEvents)
     }
 
     LaunchedEffect(apiClient) {
@@ -497,25 +498,25 @@ fun RelayApp() {
             !voiceUiState.voiceMode
         // === END v0.4.1 polish ===
 
-        // Multi-profile: top-bar ProfileChip state. Visible on the four
-        // primary tabs (Chat / Terminal / Bridge / Settings) per decisions.md
-        // §19 — profile first, personality second. Hidden while onboarding
-        // or during voice-mode full-screen takeover. Tapping opens the
-        // switcher sheet declared below the Scaffold.
+        // Multi-connection: top-bar ConnectionChip state. Visible on the
+        // four primary tabs (Chat / Terminal / Bridge / Settings) per
+        // decisions.md §19 — connection first, personality second. Hidden
+        // while onboarding or during voice-mode full-screen takeover.
+        // Tapping opens the switcher sheet declared below the Scaffold.
         val currentRoute = navBackStackEntry?.destination?.route
-        val profiles by connectionViewModel.profiles.collectAsState()
-        val activeProfile by connectionViewModel.activeProfile.collectAsState()
-        val activeProfileId by connectionViewModel.activeProfileId.collectAsState()
-        var profileSheetVisible by remember { mutableStateOf(false) }
+        val connections by connectionViewModel.connections.collectAsState()
+        val activeConnection by connectionViewModel.activeConnection.collectAsState()
+        val activeConnectionId by connectionViewModel.activeConnectionId.collectAsState()
+        var connectionSheetVisible by remember { mutableStateOf(false) }
         // Only surface the chip when there's something to switch between.
-        // With a single profile (the default after migration) the strip is
-        // just dead chrome above every screen — users reach it via Settings
-        // → Profiles → Add instead. Hidden during onboarding and voice-mode
-        // takeovers regardless.
-        val profileChipVisible = !isOnboarding &&
+        // With a single connection (the default after migration) the strip
+        // is just dead chrome above every screen — users reach it via
+        // Settings → Connections → Add instead. Hidden during onboarding
+        // and voice-mode takeovers regardless.
+        val connectionChipVisible = !isOnboarding &&
             !voiceUiState.voiceMode &&
             currentRoute in bottomNavScreens.map { it.route } &&
-            profiles.size >= 2
+            connections.size >= 2
 
         Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -560,15 +561,16 @@ fun RelayApp() {
             }
         }
 
-        // Multi-profile: app-wide profile chip. Rendered above the Scaffold
-        // (outside the per-screen TopAppBars) so it's visible on every
-        // primary tab without having to edit Chat / Terminal / Bridge /
-        // Settings screens individually — all four screens own their own
-        // TopAppBar, and doubling up by stuffing the chip inside each one
-        // would be a much bigger surface-area change. Aligned to the end so
-        // it reads like a header action rather than a primary title.
+        // Multi-connection: app-wide connection chip. Rendered above the
+        // Scaffold (outside the per-screen TopAppBars) so it's visible on
+        // every primary tab without having to edit Chat / Terminal /
+        // Bridge / Settings screens individually — all four screens own
+        // their own TopAppBar, and doubling up by stuffing the chip inside
+        // each one would be a much bigger surface-area change. Aligned to
+        // the end so it reads like a header action rather than a primary
+        // title.
         AnimatedVisibility(
-            visible = profileChipVisible,
+            visible = connectionChipVisible,
             enter = fadeIn(tween(200)),
             exit = fadeOut(tween(200)),
         ) {
@@ -585,9 +587,9 @@ fun RelayApp() {
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                ProfileChip(
-                    label = activeProfile?.label ?: "No profile",
-                    onClick = { profileSheetVisible = true },
+                ConnectionChip(
+                    label = activeConnection?.label ?: "No connection",
+                    onClick = { connectionSheetVisible = true },
                 )
             }
         }
@@ -614,7 +616,7 @@ fun RelayApp() {
                     // would otherwise double-pad and render too far down.
                     // Consume the inset here so the Scaffold tree treats
                     // the top edge as already handled.
-                    if (showUnattendedBanner || profileChipVisible) {
+                    if (showUnattendedBanner || connectionChipVisible) {
                         Modifier.consumeWindowInsets(WindowInsets.statusBars)
                     } else {
                         Modifier
@@ -759,8 +761,8 @@ fun RelayApp() {
                 composable(Screen.Settings.route) {
                     SettingsScreen(
                         connectionViewModel = connectionViewModel,
-                        onNavigateToProfiles = {
-                            navController.navigate(Screen.ProfilesSettings.route)
+                        onNavigateToConnections = {
+                            navController.navigate(Screen.ConnectionsSettings.route)
                         },
                         onNavigateToConnectionSettings = {
                             navController.navigate(Screen.ConnectionSettings.route)
@@ -844,21 +846,21 @@ fun RelayApp() {
                         }
                     )
                 }
-                composable(Screen.ProfilesSettings.route) {
-                    val profilesList by connectionViewModel.profiles.collectAsState()
-                    val activeId by connectionViewModel.activeProfileId.collectAsState()
-                    ProfilesSettingsScreen(
-                        profiles = profilesList,
-                        activeProfileId = activeId,
-                        // Multi-profile: typed VM helpers (Worker B2) handle
-                        // the full mutations — rename persists via
-                        // ProfileStore.updateProfile; revoke issues the
-                        // server-side /sessions/{prefix} DELETE and clears
-                        // local auth; remove deletes the backing
-                        // EncryptedSharedPreferences via ProfileStore.
-                        onRenameProfile = { id, newLabel ->
-                            profileSwitchScope.launch {
-                                connectionViewModel.renameProfile(id, newLabel)
+                composable(Screen.ConnectionsSettings.route) {
+                    val connectionsList by connectionViewModel.connections.collectAsState()
+                    val activeId by connectionViewModel.activeConnectionId.collectAsState()
+                    ConnectionsSettingsScreen(
+                        connections = connectionsList,
+                        activeConnectionId = activeId,
+                        // Multi-connection: typed VM helpers (Worker B2)
+                        // handle the full mutations — rename persists via
+                        // ConnectionStore.updateConnection; revoke issues
+                        // the server-side /sessions/{prefix} DELETE and
+                        // clears local auth; remove deletes the backing
+                        // EncryptedSharedPreferences via ConnectionStore.
+                        onRenameConnection = { id, newLabel ->
+                            connectionSwitchScope.launch {
+                                connectionViewModel.renameConnection(id, newLabel)
                                     .onFailure { err ->
                                         snackbarHostState.showSnackbar(
                                             err.message ?: "Rename failed",
@@ -866,35 +868,37 @@ fun RelayApp() {
                                     }
                             }
                         },
-                        onRepairProfile = { id ->
-                            // Re-pair targets the profile via the nav arg —
-                            // PairScreen onComplete reads it to decide between
-                            // new-profile add and in-place re-pair. We still
-                            // need switchProfile here so the pairing-payload
-                            // apply lands on the right profile's auth store.
-                            connectionViewModel.switchProfile(id)
+                        onRepairConnection = { id ->
+                            // Re-pair targets the connection via the nav
+                            // arg — PairScreen onComplete reads it to
+                            // decide between new-connection add and
+                            // in-place re-pair. We still need
+                            // switchConnection here so the pairing-payload
+                            // apply lands on the right connection's auth
+                            // store.
+                            connectionViewModel.switchConnection(id)
                             navController.navigate(Screen.Pair.route(id))
                         },
-                        onRevokeProfile = { id ->
-                            profileSwitchScope.launch {
-                                val result = connectionViewModel.revokeProfile(id)
+                        onRevokeConnection = { id ->
+                            connectionSwitchScope.launch {
+                                val result = connectionViewModel.revokeConnection(id)
                                 if (result.isFailure) {
-                                    // v1 constraint: revokeProfile only works
-                                    // on the active profile. Surface a snackbar
-                                    // so the user understands why nothing
-                                    // happened.
+                                    // v1 constraint: revokeConnection only
+                                    // works on the active connection.
+                                    // Surface a snackbar so the user
+                                    // understands why nothing happened.
                                     snackbarHostState.showSnackbar(
-                                        "Only the active profile can be revoked right now",
+                                        "Only the active connection can be revoked right now",
                                     )
                                 }
                             }
                         },
-                        onRemoveProfile = { id ->
-                            profileSwitchScope.launch {
-                                connectionViewModel.removeProfile(id)
+                        onRemoveConnection = { id ->
+                            connectionSwitchScope.launch {
+                                connectionViewModel.removeConnection(id)
                             }
                         },
-                        onAddProfile = {
+                        onAddConnection = {
                             navController.navigate(Screen.Pair.route(null))
                         },
                         onBack = { navController.popBackStack() },
@@ -903,52 +907,54 @@ fun RelayApp() {
                 composable(
                     route = Screen.Pair.route,
                     arguments = listOf(
-                        navArgument(Screen.Pair.ARG_PROFILE_ID) {
+                        navArgument(Screen.Pair.ARG_CONNECTION_ID) {
                             type = NavType.StringType
                             nullable = true
                             defaultValue = null
                         },
                     ),
                 ) { backStackEntry ->
-                    val profileIdArg = backStackEntry.arguments
-                        ?.getString(Screen.Pair.ARG_PROFILE_ID)
+                    val connectionIdArg = backStackEntry.arguments
+                        ?.getString(Screen.Pair.ARG_CONNECTION_ID)
                     com.hermesandroid.relay.ui.screens.PairScreen(
                         connectionViewModel = connectionViewModel,
                         onComplete = {
-                            // Multi-profile: on successful pair,
-                            //  - profileIdArg == null → new-profile add path.
-                            //    Call addProfileFromPairing which creates a
-                            //    fresh Profile (with its own tokenStoreKey)
-                            //    and switches to it.
+                            // Multi-connection: on successful pair,
+                            //  - connectionIdArg == null → new-connection
+                            //    add path. Call addConnectionFromPairing
+                            //    which creates a fresh Connection (with
+                            //    its own tokenStoreKey) and switches to it.
                             //
                             //    **v1 pairing-token limitation:** the pair
                             //    that just completed wrote its session token
-                            //    into the previously-active profile's token
-                            //    store — NOT the new profile's (because
-                            //    applyPairingPayload runs against the live
-                            //    authManager, which was still bound to the
-                            //    outgoing profile when the pair completed).
-                            //    The new profile therefore lands in an
-                            //    unpaired state and the user must re-pair
-                            //    it (scan a second QR while the new profile
-                            //    is active). A cleaner fix — targeting
+                            //    into the previously-active connection's
+                            //    token store — NOT the new connection's
+                            //    (because applyPairingPayload runs against
+                            //    the live authManager, which was still
+                            //    bound to the outgoing connection when the
+                            //    pair completed). The new connection
+                            //    therefore lands in an unpaired state and
+                            //    the user must re-pair it (scan a second
+                            //    QR while the new connection is active). A
+                            //    cleaner fix — targeting
                             //    applyPairingPayload at a specific store
                             //    BEFORE the pair runs — is a deferred
                             //    follow-up.
-                            //  - profileIdArg != null → re-pair in place.
+                            //  - connectionIdArg != null → re-pair in place.
                             //    applyPairingPayload already wrote to the
-                            //    active profile's auth store (the calling
-                            //    site switched to it before navigating), so
-                            //    there's nothing extra to do here.
-                            if (profileIdArg == null) {
-                                profileSwitchScope.launch {
-                                    connectionViewModel.addProfileFromPairing(
+                            //    active connection's auth store (the
+                            //    calling site switched to it before
+                            //    navigating), so there's nothing extra to
+                            //    do here.
+                            if (connectionIdArg == null) {
+                                connectionSwitchScope.launch {
+                                    connectionViewModel.addConnectionFromPairing(
                                         label = null,
                                         apiServerUrl = connectionViewModel.apiServerUrl.value,
                                         relayUrl = connectionViewModel.relayUrl.value,
                                     ).onFailure { err ->
                                         snackbarHostState.showSnackbar(
-                                            err.message ?: "Could not save profile",
+                                            err.message ?: "Could not save connection",
                                         )
                                     }
                                 }
@@ -999,20 +1005,21 @@ fun RelayApp() {
         }
         } // end Column (wraps banner + Scaffold)
 
-        // Multi-profile: profile switcher sheet. Hoisted to Box scope so the
-        // sheet floats over whatever screen is active — ModalBottomSheet
-        // renders as a popup, so the placement in the composition tree only
-        // affects state ownership, not visual stacking.
-        if (profileSheetVisible) {
-            ProfileSwitcherSheet(
-                profiles = profiles,
-                activeProfileId = activeProfileId,
-                onSelectProfile = { id -> connectionViewModel.switchProfile(id) },
-                onManageProfiles = {
-                    profileSheetVisible = false
-                    navController.navigate(Screen.ProfilesSettings.route)
+        // Multi-connection: connection switcher sheet. Hoisted to Box
+        // scope so the sheet floats over whatever screen is active —
+        // ModalBottomSheet renders as a popup, so the placement in the
+        // composition tree only affects state ownership, not visual
+        // stacking.
+        if (connectionSheetVisible) {
+            ConnectionSwitcherSheet(
+                connections = connections,
+                activeConnectionId = activeConnectionId,
+                onSelectConnection = { id -> connectionViewModel.switchConnection(id) },
+                onManageConnections = {
+                    connectionSheetVisible = false
+                    navController.navigate(Screen.ConnectionsSettings.route)
                 },
-                onDismiss = { profileSheetVisible = false },
+                onDismiss = { connectionSheetVisible = false },
             )
         }
 

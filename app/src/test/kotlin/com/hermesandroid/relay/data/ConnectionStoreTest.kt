@@ -21,7 +21,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
 /**
- * JVM unit tests for [ProfileStore].
+ * JVM unit tests for [ConnectionStore].
  *
  * Exercises the public suspend API against a real [DataStore] backed by a
  * temp-folder preferences file — no Android Context, no instrumentation.
@@ -29,23 +29,23 @@ import org.junit.rules.TemporaryFolder
  * actually want to verify; instantiating a fresh store per test via
  * [TemporaryFolder] keeps the suite hermetic.
  */
-class ProfileStoreTest {
+class ConnectionStoreTest {
 
     @get:Rule
     val tempFolder = TemporaryFolder()
 
     private lateinit var dataStoreScope: CoroutineScope
     private lateinit var dataStore: DataStore<Preferences>
-    private lateinit var store: ProfileStore
+    private lateinit var store: ConnectionStore
 
     @Before
     fun setUp() {
         dataStoreScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         dataStore = PreferenceDataStoreFactory.create(
             scope = dataStoreScope,
-            produceFile = { tempFolder.newFile("test_profiles.preferences_pb") },
+            produceFile = { tempFolder.newFile("test_connections.preferences_pb") },
         )
-        store = ProfileStore(dataStore)
+        store = ConnectionStore(dataStore)
     }
 
     @After
@@ -56,21 +56,21 @@ class ProfileStoreTest {
 
     // --- Sample builder -----------------------------------------------------
 
-    private fun sampleProfile(
+    private fun sampleConnection(
         id: String = "11111111-2222-3333-4444-555555555555",
         label: String = "local",
         apiUrl: String = "http://localhost:8642",
         relayUrl: String = "wss://localhost:8767",
-    ): Profile = Profile(
+    ): Connection = Connection(
         id = id,
         label = label,
         apiServerUrl = apiUrl,
         relayUrl = relayUrl,
-        tokenStoreKey = Profile.buildTokenStoreKey(id),
+        tokenStoreKey = Connection.buildTokenStoreKey(id),
     )
 
     // Read-until-matches helper: the public StateFlows are hydrated on a
-    // background coroutine in ProfileStore.init, so a naive `.value` read
+    // background coroutine in ConnectionStore.init, so a naive `.value` read
     // right after a write can race. We poll with a short timeout.
     private suspend fun <T> awaitFlowValue(
         flow: kotlinx.coroutines.flow.Flow<T>,
@@ -82,90 +82,90 @@ class ProfileStoreTest {
     // --- Tests --------------------------------------------------------------
 
     @Test
-    fun addProfile_persistsAndEmitsInFlow() = runTest {
-        val profile = sampleProfile()
-        store.addProfile(profile)
+    fun addConnection_persistsAndEmitsInFlow() = runTest {
+        val connection = sampleConnection()
+        store.addConnection(connection)
 
-        val list = awaitFlowValue(store.profiles) { it.any { p -> p.id == profile.id } }
+        val list = awaitFlowValue(store.connections) { it.any { c -> c.id == connection.id } }
         assertEquals(1, list.size)
-        assertEquals(profile.id, list[0].id)
-        assertEquals(profile.label, list[0].label)
+        assertEquals(connection.id, list[0].id)
+        assertEquals(connection.label, list[0].label)
 
-        // Reload via a fresh ProfileStore pointed at the same DataStore.
+        // Reload via a fresh ConnectionStore pointed at the same DataStore.
         // Proves the write hit the actual preferences file, not just the
         // in-memory StateFlow.
-        val reloaded = ProfileStore(dataStore)
-        val reloadedList = awaitFlowValue(reloaded.profiles) { it.isNotEmpty() }
+        val reloaded = ConnectionStore(dataStore)
+        val reloadedList = awaitFlowValue(reloaded.connections) { it.isNotEmpty() }
         assertEquals(1, reloadedList.size)
-        assertEquals(profile.id, reloadedList[0].id)
+        assertEquals(connection.id, reloadedList[0].id)
     }
 
     @Test
-    fun removeProfile_removesFromList() = runTest {
-        val a = sampleProfile(id = "aaaaaaaa-0000-0000-0000-000000000000", label = "A")
-        val b = sampleProfile(id = "bbbbbbbb-0000-0000-0000-000000000000", label = "B")
-        store.addProfile(a)
-        store.addProfile(b)
-        awaitFlowValue(store.profiles) { it.size == 2 }
+    fun removeConnection_removesFromList() = runTest {
+        val a = sampleConnection(id = "aaaaaaaa-0000-0000-0000-000000000000", label = "A")
+        val b = sampleConnection(id = "bbbbbbbb-0000-0000-0000-000000000000", label = "B")
+        store.addConnection(a)
+        store.addConnection(b)
+        awaitFlowValue(store.connections) { it.size == 2 }
 
-        store.removeProfile(a.id)
-        val after = awaitFlowValue(store.profiles) { it.size == 1 }
+        store.removeConnection(a.id)
+        val after = awaitFlowValue(store.connections) { it.size == 1 }
         assertEquals(1, after.size)
         assertEquals(b.id, after[0].id)
     }
 
     @Test
-    fun removeProfile_clearsActivePointerWhenRemovingActive() = runTest {
-        val a = sampleProfile(id = "aaaaaaaa-0000-0000-0000-000000000000", label = "A")
-        store.addProfile(a)
-        store.setActiveProfile(a.id)
-        awaitFlowValue(store.activeProfileId) { it == a.id }
+    fun removeConnection_clearsActivePointerWhenRemovingActive() = runTest {
+        val a = sampleConnection(id = "aaaaaaaa-0000-0000-0000-000000000000", label = "A")
+        store.addConnection(a)
+        store.setActiveConnection(a.id)
+        awaitFlowValue(store.activeConnectionId) { it == a.id }
 
-        store.removeProfile(a.id)
-        val active = awaitFlowValue(store.activeProfileId) { it == null }
+        store.removeConnection(a.id)
+        val active = awaitFlowValue(store.activeConnectionId) { it == null }
         assertNull(active)
     }
 
     @Test
-    fun setActiveProfile_updatesActiveProfileId() = runTest {
-        val a = sampleProfile(id = "aaaaaaaa-0000-0000-0000-000000000000", label = "A")
-        val b = sampleProfile(id = "bbbbbbbb-0000-0000-0000-000000000000", label = "B")
-        store.addProfile(a)
-        store.addProfile(b)
+    fun setActiveConnection_updatesActiveConnectionId() = runTest {
+        val a = sampleConnection(id = "aaaaaaaa-0000-0000-0000-000000000000", label = "A")
+        val b = sampleConnection(id = "bbbbbbbb-0000-0000-0000-000000000000", label = "B")
+        store.addConnection(a)
+        store.addConnection(b)
 
-        store.setActiveProfile(b.id)
-        val activeId = awaitFlowValue(store.activeProfileId) { it == b.id }
+        store.setActiveConnection(b.id)
+        val activeId = awaitFlowValue(store.activeConnectionId) { it == b.id }
         assertEquals(b.id, activeId)
     }
 
     @Test
-    fun activeProfile_derivesCorrectly() = runTest {
-        val a = sampleProfile(id = "aaaaaaaa-0000-0000-0000-000000000000", label = "A")
-        store.addProfile(a)
-        store.setActiveProfile(a.id)
+    fun activeConnection_derivesCorrectly() = runTest {
+        val a = sampleConnection(id = "aaaaaaaa-0000-0000-0000-000000000000", label = "A")
+        store.addConnection(a)
+        store.setActiveConnection(a.id)
 
-        val active = awaitFlowValue(store.activeProfile) { it?.id == a.id }
+        val active = awaitFlowValue(store.activeConnection) { it?.id == a.id }
         assertNotNull(active)
         assertEquals(a.id, active!!.id)
         assertEquals("A", active.label)
 
-        // Active ID referring to a non-existent profile → null. Force the
-        // situation by writing an active ID that no profile claims.
-        store.setActiveProfile("nonexistent-id")
-        val gone = awaitFlowValue(store.activeProfile) { it == null }
+        // Active ID referring to a non-existent connection → null. Force the
+        // situation by writing an active ID that no connection claims.
+        store.setActiveConnection("nonexistent-id")
+        val gone = awaitFlowValue(store.activeConnection) { it == null }
         assertNull(gone)
     }
 
     @Test
-    fun updateProfile_replacesMatchingIdOnly() = runTest {
-        val a = sampleProfile(id = "aaaaaaaa-0000-0000-0000-000000000000", label = "A")
-        val b = sampleProfile(id = "bbbbbbbb-0000-0000-0000-000000000000", label = "B")
-        store.addProfile(a)
-        store.addProfile(b)
+    fun updateConnection_replacesMatchingIdOnly() = runTest {
+        val a = sampleConnection(id = "aaaaaaaa-0000-0000-0000-000000000000", label = "A")
+        val b = sampleConnection(id = "bbbbbbbb-0000-0000-0000-000000000000", label = "B")
+        store.addConnection(a)
+        store.addConnection(b)
 
-        store.updateProfile(a.copy(label = "A-renamed"))
-        val list = awaitFlowValue(store.profiles) {
-            it.firstOrNull { p -> p.id == a.id }?.label == "A-renamed"
+        store.updateConnection(a.copy(label = "A-renamed"))
+        val list = awaitFlowValue(store.connections) {
+            it.firstOrNull { c -> c.id == a.id }?.label == "A-renamed"
         }
         assertEquals(2, list.size)
         assertEquals("A-renamed", list.first { it.id == a.id }.label)
@@ -173,18 +173,18 @@ class ProfileStoreTest {
     }
 
     @Test
-    fun setLastActiveSessionId_updatesProfile() = runTest {
-        val a = sampleProfile()
-        store.addProfile(a)
+    fun setLastActiveSessionId_updatesConnection() = runTest {
+        val a = sampleConnection()
+        store.addConnection(a)
 
         store.setLastActiveSessionId(a.id, "sess-123")
-        val list = awaitFlowValue(store.profiles) {
+        val list = awaitFlowValue(store.connections) {
             it.firstOrNull()?.lastActiveSessionId == "sess-123"
         }
         assertEquals("sess-123", list[0].lastActiveSessionId)
 
         store.setLastActiveSessionId(a.id, null)
-        val cleared = awaitFlowValue(store.profiles) {
+        val cleared = awaitFlowValue(store.connections) {
             it.firstOrNull()?.lastActiveSessionId == null
         }
         assertNull(cleared[0].lastActiveSessionId)
@@ -192,17 +192,17 @@ class ProfileStoreTest {
 
     @Test
     fun markPaired_stampsMetadata() = runTest {
-        val a = sampleProfile()
-        store.addProfile(a)
+        val a = sampleConnection()
+        store.addConnection(a)
 
         store.markPaired(
-            profileId = a.id,
+            connectionId = a.id,
             pairedAtMillis = 1_700_000_000L,
             transportHint = "wss",
             expiresAtMillis = 1_700_100_000L,
         )
 
-        val list = awaitFlowValue(store.profiles) {
+        val list = awaitFlowValue(store.connections) {
             it.firstOrNull()?.pairedAt == 1_700_000_000L
         }
         assertEquals(1_700_000_000L, list[0].pairedAt)
@@ -211,64 +211,64 @@ class ProfileStoreTest {
     }
 
     @Test
-    fun migrateLegacyProfileIfNeeded_seedsProfile0WhenEmpty() = runTest {
-        store.migrateLegacyProfileIfNeeded(
+    fun migrateLegacyConnectionIfNeeded_seedsConnection0WhenEmpty() = runTest {
+        store.migrateLegacyConnectionIfNeeded(
             legacyApiServerUrl = "http://10.0.0.5:8642",
             legacyRelayUrl = "wss://10.0.0.5:8767",
             legacyLastSessionId = "sess-legacy",
         )
 
-        val list = awaitFlowValue(store.profiles) { it.isNotEmpty() }
+        val list = awaitFlowValue(store.connections) { it.isNotEmpty() }
         assertEquals(1, list.size)
         val seeded = list[0]
         assertEquals("10.0.0.5", seeded.label)
         assertEquals("http://10.0.0.5:8642", seeded.apiServerUrl)
         assertEquals("wss://10.0.0.5:8767", seeded.relayUrl)
-        assertEquals(Profile.LEGACY_TOKEN_STORE_KEY, seeded.tokenStoreKey)
+        assertEquals(Connection.LEGACY_TOKEN_STORE_KEY, seeded.tokenStoreKey)
         assertEquals("sess-legacy", seeded.lastActiveSessionId)
 
         // Active pointer should now target the seed.
-        val active = awaitFlowValue(store.activeProfileId) { it != null }
+        val active = awaitFlowValue(store.activeConnectionId) { it != null }
         assertEquals(seeded.id, active)
     }
 
     @Test
-    fun migrateLegacyProfileIfNeeded_isIdempotent() = runTest {
-        val existing = sampleProfile(
+    fun migrateLegacyConnectionIfNeeded_isIdempotent() = runTest {
+        val existing = sampleConnection(
             id = "11111111-0000-0000-0000-000000000000",
             label = "pre-existing",
         )
-        store.addProfile(existing)
-        awaitFlowValue(store.profiles) { it.isNotEmpty() }
+        store.addConnection(existing)
+        awaitFlowValue(store.connections) { it.isNotEmpty() }
 
-        store.migrateLegacyProfileIfNeeded(
+        store.migrateLegacyConnectionIfNeeded(
             legacyApiServerUrl = "http://should-be-ignored:8642",
             legacyRelayUrl = "wss://should-be-ignored:8767",
             legacyLastSessionId = null,
         )
 
         // Second migration call must not change the list at all.
-        val list = store.profiles.value
+        val list = store.connections.value
         assertEquals(1, list.size)
         assertEquals(existing.id, list[0].id)
         assertEquals("pre-existing", list[0].label)
         assertFalse(
-            "Legacy migration must NOT add a profile when list is non-empty",
-            list.any { it.tokenStoreKey == Profile.LEGACY_TOKEN_STORE_KEY },
+            "Legacy migration must NOT add a connection when list is non-empty",
+            list.any { it.tokenStoreKey == Connection.LEGACY_TOKEN_STORE_KEY },
         )
     }
 
     @Test
-    fun profile_buildTokenStoreKey_usesFirst8Chars() {
+    fun connection_buildTokenStoreKey_usesFirst8Chars() {
         val id = "abcdef01-2345-6789-abcd-ef0123456789"
-        assertEquals("hermes_auth_abcdef01", Profile.buildTokenStoreKey(id))
+        assertEquals("hermes_auth_abcdef01", Connection.buildTokenStoreKey(id))
     }
 
     @Test
-    fun profile_extractDefaultLabel_fallsBackToRawOnInvalid() {
-        assertEquals("192.168.1.10", Profile.extractDefaultLabel("http://192.168.1.10:8642"))
+    fun connection_extractDefaultLabel_fallsBackToRawOnInvalid() {
+        assertEquals("192.168.1.10", Connection.extractDefaultLabel("http://192.168.1.10:8642"))
         // No scheme → URI#getHost returns null → fallback.
         val raw = "not a url"
-        assertEquals(raw, Profile.extractDefaultLabel(raw))
+        assertEquals(raw, Connection.extractDefaultLabel(raw))
     }
 }

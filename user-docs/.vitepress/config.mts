@@ -76,7 +76,7 @@ export default defineConfig({
             { text: 'Direct API Connection', link: '/features/direct-api' },
             { text: 'Markdown Rendering', link: '/features/markdown' },
             { text: 'Reasoning Display', link: '/features/reasoning' },
-            { text: 'Profiles', link: '/features/profiles' },
+            { text: 'Connections', link: '/features/connections' },
             { text: 'Personalities', link: '/features/personalities' },
             { text: 'Token Tracking', link: '/features/tokens' },
             { text: 'Tool Progress', link: '/features/tools' },

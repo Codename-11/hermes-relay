@@ -2,8 +2,8 @@ package com.hermesandroid.relay.auth
 
 import android.content.Context
 import android.util.Log
+import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.PairingPreferences
-import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.models.Envelope
 import kotlinx.coroutines.CoroutineScope
@@ -60,15 +60,16 @@ class AuthManager(
     private val multiplexer: ChannelMultiplexer,
     private val scope: CoroutineScope,
     /**
-     * Multi-profile: the id of the [com.hermesandroid.relay.data.Profile] this
-     * AuthManager is bound to. Drives which EncryptedSharedPreferences file
-     * the underlying [SessionTokenStore] reads/writes.
+     * Multi-connection: the id of the [com.hermesandroid.relay.data.Connection]
+     * this AuthManager is bound to. Drives which EncryptedSharedPreferences
+     * file the underlying [SessionTokenStore] reads/writes.
      *
-     * Defaults to [PROFILE_ID_LEGACY] so the pre-multi-profile call site in
-     * `ConnectionViewModel` still compiles. Worker B removes the default and
-     * passes a real profile id when they wire the active profile through.
+     * Defaults to [CONNECTION_ID_LEGACY] so the pre-multi-connection call site
+     * in `ConnectionViewModel` still compiles. Worker B removes the default
+     * and passes a real connection id when they wire the active connection
+     * through.
      */
-    private val profileId: String = PROFILE_ID_LEGACY,
+    private val connectionId: String = CONNECTION_ID_LEGACY,
 ) : ChannelMultiplexer.ChannelHandler {
 
     companion object {
@@ -81,13 +82,13 @@ class AuthManager(
         private val PAIRING_CODE_CHARS = ('A'..'Z') + ('0'..'9')
 
         /**
-         * Sentinel [profileId] meaning "bind this AuthManager to the legacy
-         * single-profile EncryptedSharedPreferences file
-         * ([Profile.LEGACY_TOKEN_STORE_KEY])". Used as the default ctor arg so
-         * existing call sites don't need to change until Worker B threads
-         * a real profile id through.
+         * Sentinel [connectionId] meaning "bind this AuthManager to the legacy
+         * single-connection EncryptedSharedPreferences file
+         * ([Connection.LEGACY_TOKEN_STORE_KEY])". Used as the default ctor arg
+         * so existing call sites don't need to change until Worker B threads
+         * a real connection id through.
          */
-        const val PROFILE_ID_LEGACY: String = "legacy"
+        const val CONNECTION_ID_LEGACY: String = "legacy"
     }
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -112,14 +113,15 @@ class AuthManager(
         return storeMutex.withLock {
             _store?.let { return it }
             withContext(Dispatchers.IO) {
-                // Multi-profile: pick the EncryptedSharedPreferences filename
-                // based on the bound profile. The legacy sentinel keeps the
-                // pre-multi-profile install on its original file so the
-                // existing paired device keeps working with no migration.
-                val prefsName = if (profileId == PROFILE_ID_LEGACY) {
-                    Profile.LEGACY_TOKEN_STORE_KEY
+                // Multi-connection: pick the EncryptedSharedPreferences
+                // filename based on the bound connection. The legacy sentinel
+                // keeps the pre-multi-connection install on its original file
+                // so the existing paired device keeps working with no
+                // migration.
+                val prefsName = if (connectionId == CONNECTION_ID_LEGACY) {
+                    Connection.LEGACY_TOKEN_STORE_KEY
                 } else {
-                    Profile.buildTokenStoreKey(profileId)
+                    Connection.buildTokenStoreKey(connectionId)
                 }
                 val picked: SessionTokenStore =
                     KeystoreTokenStore.tryCreate(context, prefsName)
@@ -139,11 +141,11 @@ class AuthManager(
      */
     private fun migrateFromLegacyIfNeeded(picked: SessionTokenStore) {
         if (picked is LegacyEncryptedPrefsTokenStore) return
-        // Multi-profile: only the legacy profile inherits from the pre-
-        // multi-profile `hermes_companion_auth` file. A freshly-minted
-        // per-profile store must NOT be seeded from the legacy file or we'd
-        // copy profile 0's token into every new profile.
-        if (profileId != PROFILE_ID_LEGACY) return
+        // Multi-connection: only the legacy connection inherits from the pre-
+        // multi-connection `hermes_companion_auth` file. A freshly-minted
+        // per-connection store must NOT be seeded from the legacy file or
+        // we'd copy connection 0's token into every new connection.
+        if (connectionId != CONNECTION_ID_LEGACY) return
         val legacy = try {
             LegacyEncryptedPrefsTokenStore(context)
         } catch (_: Exception) {
@@ -244,13 +246,14 @@ class AuthManager(
 
     /**
      * Server-issued session labels from the `auth.ok` payload's `profiles`
-     * field. This field predates the multi-profile work — it carries short
+     * field. This field predates the multi-connection work — it carries short
      * human labels the RELAY tags sessions with, NOT the multi-server
-     * connection profiles modeled by [com.hermesandroid.relay.data.Profile].
+     * connections modeled by [com.hermesandroid.relay.data.Connection].
      *
-     * Renamed 2026-04-18 as part of the multi-profile rollout so the name
-     * no longer clashes with the new [com.hermesandroid.relay.data.Profile]
-     * concept.
+     * Renamed 2026-04-18 as part of the multi-connection rollout so the name
+     * no longer clashes with the [com.hermesandroid.relay.data.Connection]
+     * concept. Pass 2 will replace this with a proper parsed `agentProfiles`
+     * StateFlow backed by Hermes's agent-profile config.
      */
     private val _sessionLabels = MutableStateFlow<List<String>>(emptyList())
     val sessionLabels: StateFlow<List<String>> = _sessionLabels.asStateFlow()

@@ -16,9 +16,9 @@ import com.hermesandroid.relay.auth.PairedSession
 import com.hermesandroid.relay.data.DataManager
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.PairingPreferences
-import com.hermesandroid.relay.data.Profile
-import com.hermesandroid.relay.data.ProfileStore
-import com.hermesandroid.relay.data.ProfileValidation
+import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.ConnectionStore
+import com.hermesandroid.relay.data.ConnectionValidation
 import com.hermesandroid.relay.data.relayDataStore
 import com.hermesandroid.relay.util.TailscaleDetector
 import com.hermesandroid.relay.network.ChannelMultiplexer
@@ -106,54 +106,57 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val multiplexer = ChannelMultiplexer()
     val chatHandler = ChatHandler()
 
-    // Multi-profile: the ProfileStore is the source of truth for the list
-    // of Hermes connection profiles and which one is active. Constructed
-    // before AuthManager so the init-time migrateLegacyProfileIfNeeded()
-    // call can see the existing URL preferences and seed profile 0.
-    val profileStore: ProfileStore = ProfileStore(application)
+    // Multi-connection: the ConnectionStore is the source of truth for the
+    // list of Hermes server connections and which one is active. Constructed
+    // before AuthManager so the init-time migrateLegacyConnectionIfNeeded()
+    // call can see the existing URL preferences and seed connection 0.
+    val connectionStore: ConnectionStore = ConnectionStore(application)
 
     /**
-     * Multi-profile: id of the currently-active [Profile], or null if no
-     * profile has been seeded yet (cold boot before migrateLegacyProfileIfNeeded
-     * runs). Exposed through [profileStore] directly for cheap access.
+     * Multi-connection: id of the currently-active [Connection], or null if
+     * no connection has been seeded yet (cold boot before
+     * migrateLegacyConnectionIfNeeded runs). Exposed through
+     * [connectionStore] directly for cheap access.
      */
-    val profiles: StateFlow<List<Profile>> = profileStore.profiles
-    val activeProfile: StateFlow<Profile?> = profileStore.activeProfile
-    val activeProfileId: StateFlow<String?> = profileStore.activeProfileId
+    val connections: StateFlow<List<Connection>> = connectionStore.connections
+    val activeConnection: StateFlow<Connection?> = connectionStore.activeConnection
+    val activeConnectionId: StateFlow<String?> = connectionStore.activeConnectionId
 
     // AuthManager owns the CertPinStore; ConnectionManager takes a snapshot
     // of the store's current pins on every connect so re-pair wipes land.
     // AuthManager must be constructed before ConnectionManager so the pin
     // store is available for the certificate pinner.
     //
-    // Multi-profile: AuthManager is now a `var` — switchProfile() rebuilds
-    // it bound to the newly-active profile id. Every call site that touches
-    // this field goes through `this.authManager` so the reconnect gate, the
-    // multiplexer sendCallback, and the media-projection screen-capture
-    // token provider all read the current instance after a swap.
+    // Multi-connection: AuthManager is now a `var` — switchConnection()
+    // rebuilds it bound to the newly-active connection id. Every call site
+    // that touches this field goes through `this.authManager` so the
+    // reconnect gate, the multiplexer sendCallback, and the
+    // media-projection screen-capture token provider all read the current
+    // instance after a swap.
     //
-    // Initial value uses the active profile id if ProfileStore has already
-    // hydrated by the time this field initializer runs — which it normally
-    // hasn't, since hydration is async. We fall back to the legacy sentinel
-    // so the very first boot before migration mid-flight still binds to the
-    // legacy token store. The init block below then observes the first
-    // profile emission and rebuilds against the migrated id.
+    // Initial value uses the active connection id if ConnectionStore has
+    // already hydrated by the time this field initializer runs — which it
+    // normally hasn't, since hydration is async. We fall back to the legacy
+    // sentinel so the very first boot before migration mid-flight still
+    // binds to the legacy token store. The init block below then observes
+    // the first connection emission and rebuilds against the migrated id.
     var authManager: AuthManager = AuthManager(
         context = application,
         multiplexer = multiplexer,
         scope = viewModelScope,
-        profileId = AuthManager.PROFILE_ID_LEGACY,
+        connectionId = AuthManager.CONNECTION_ID_LEGACY,
     )
         private set
 
-    // Multi-profile: authState, pairingCode, and currentPairedSession were
-    // previously direct references to the initial AuthManager's backing flows.
-    // After a profile switch, `authManager` is replaced but a captured
-    // reference still points at the OLD instance — Compose's collectAsState
-    // caches the flow on first composition, so consumers would show the
-    // previous profile's auth state forever. We flatMapLatest over this
-    // MutableStateFlow so the public flows re-subscribe to the new manager
-    // whenever installAuthManager() swaps it.
+    // Multi-connection: authState, pairingCode, and currentPairedSession
+    // were previously direct references to the initial AuthManager's
+    // backing flows. After a connection switch, `authManager` is replaced
+    // but a captured reference still points at the OLD instance —
+    // Compose's collectAsState caches the flow on first composition, so
+    // consumers would show the previous connection's auth state forever.
+    // We flatMapLatest over this MutableStateFlow so the public flows
+    // re-subscribe to the new manager whenever installAuthManager() swaps
+    // it.
     private val _authManagerFlow = MutableStateFlow(authManager)
 
     // Pass hasPairContext as the reconnect gate — the auto-reconnect loop
@@ -162,20 +165,21 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // the internal scheduler. Without this, clearSession leaves a live
     // reconnect loop that fires stale auth envelopes and rate-limits us.
     //
-    // Multi-profile: the gate reads `this.authManager.hasPairContext` on
-    // every invocation so a profile switch's freshly-built AuthManager is
-    // honored without having to plumb a new gate through ConnectionManager.
-    // CertPinStore is process-wide (not per-profile) so holding a reference
-    // to the legacy AuthManager's pin store is still correct after a swap.
+    // Multi-connection: the gate reads `this.authManager.hasPairContext` on
+    // every invocation so a connection switch's freshly-built AuthManager
+    // is honored without having to plumb a new gate through
+    // ConnectionManager. CertPinStore is process-wide (not per-connection)
+    // so holding a reference to the legacy AuthManager's pin store is
+    // still correct after a swap.
     private val connectionManager = ConnectionManager(
         multiplexer,
         authManager.certPinStore,
         reconnectGate = { authManager.hasPairContext }
     )
 
-    // Data management — ProfileStore flows through so exportSettings() can
-    // include the current multi-profile snapshot in the backup blob.
-    val dataManager = DataManager(application, profileStore)
+    // Data management — ConnectionStore flows through so exportSettings()
+    // can include the current multi-connection snapshot in the backup blob.
+    val dataManager = DataManager(application, connectionStore)
 
     // --- Inbound media pipeline ------------------------------------------------
     //
@@ -652,22 +656,22 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     )
     // === END PHASE3-accessibility (plus safety-rails wiring above) ===
 
-    // --- Profile switch orchestration --------------------------------------
+    // --- Connection switch orchestration ----------------------------------
     //
-    // Multi-profile v0.5.0: the coordinator owns the heavy swap sequence
+    // Multi-connection v0.5.0: the coordinator owns the heavy swap sequence
     // (cancel stream → stop voice → disconnect WSS → rebuild AuthManager +
     // api client → reconnect WSS if paired). Extracted so the swap is
     // unit-testable without having to mock AndroidViewModel / DataStore.
-    private val profileSwitchCoordinator = ProfileSwitchCoordinator(
-        profileStore = profileStore,
+    private val connectionSwitchCoordinator = ConnectionSwitchCoordinator(
+        connectionStore = connectionStore,
         connectionManager = connectionManager,
         scope = viewModelScope,
-        authManagerFactory = { pid ->
+        authManagerFactory = { cid ->
             AuthManager(
                 context = application,
                 multiplexer = multiplexer,
                 scope = viewModelScope,
-                profileId = pid,
+                connectionId = cid,
             )
         },
         installAuthManager = { am ->
@@ -690,168 +694,172 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     )
 
     /**
-     * Multi-profile: emits the id of the newly-active profile right after
-     * the connection teardown half of the switch completes but before the
-     * rebuilt API/relay clients start serving requests. [ChatViewModel]
-     * subscribes to clear its per-profile local state (messages, session
+     * Multi-connection: emits the id of the newly-active connection right
+     * after the connection teardown half of the switch completes but before
+     * the rebuilt API/relay clients start serving requests. [ChatViewModel]
+     * subscribes to clear its per-connection local state (messages, session
      * id, queued sends).
      */
-    val profileSwitchEvents: SharedFlow<String> = profileSwitchCoordinator.profileSwitchEvents
+    val connectionSwitchEvents: SharedFlow<String> = connectionSwitchCoordinator.connectionSwitchEvents
 
     /**
-     * Multi-profile: start the full profile swap sequence. See
-     * [ProfileSwitchCoordinator] for the ordered steps and why the order
-     * matters. No-ops when [profileId] equals the current
-     * [activeProfileId]. Fires and forgets — UI watches [activeProfile]
-     * for the completed state.
+     * Multi-connection: start the full connection swap sequence. See
+     * [ConnectionSwitchCoordinator] for the ordered steps and why the order
+     * matters. No-ops when [connectionId] equals the current
+     * [activeConnectionId]. Fires and forgets — UI watches
+     * [activeConnection] for the completed state.
      */
-    fun switchProfile(profileId: String): Job =
-        profileSwitchCoordinator.switchProfile(profileId)
+    fun switchConnection(connectionId: String): Job =
+        connectionSwitchCoordinator.switchConnection(connectionId)
 
     /**
-     * Multi-profile: RelayApp calls this at composition time with a
+     * Multi-connection: RelayApp calls this at composition time with a
      * callback that tears down [ChatViewModel]'s in-flight stream. The
      * coordinator invokes it first in the switch sequence so the stream
      * doesn't keep scribbling into `_messages` after the handler's API
      * client reference gets rebuilt under it.
      */
     fun registerStreamCancelCallback(callback: () -> Unit) {
-        profileSwitchCoordinator.registerStreamCancelCallback(callback)
+        connectionSwitchCoordinator.registerStreamCancelCallback(callback)
     }
 
     /**
-     * Multi-profile: RelayApp calls this at composition time with a
+     * Multi-connection: RelayApp calls this at composition time with a
      * callback that stops any active voice turn. Kept as a registration
      * hook (rather than a direct VoiceViewModel field) so
      * [ConnectionViewModel] doesn't take on a hard voice dependency —
      * voice is an optional feature wired per build flavor.
      */
     fun registerVoiceStopCallback(callback: () -> Unit) {
-        profileSwitchCoordinator.registerVoiceStopCallback(callback)
+        connectionSwitchCoordinator.registerVoiceStopCallback(callback)
     }
 
-    // --- Profile CRUD helpers (Worker B2) ---------------------------------
+    // --- Connection CRUD helpers (Worker B2) ------------------------------
     //
-    // These wrap [ProfileStore] so callers (currently RelayApp's
-    // ProfilesSettings + Pair routes) don't have to reach directly into the
-    // store for common mutations. Each method documents its scope and v1
-    // constraints.
+    // These wrap [ConnectionStore] so callers (currently RelayApp's
+    // ConnectionsSettings + Pair routes) don't have to reach directly into
+    // the store for common mutations. Each method documents its scope and
+    // v1 constraints.
 
     /**
-     * Creates a new profile from completed pairing data, persists it via
-     * [ProfileStore], and switches the app to it. Returns the new profile id.
+     * Creates a new connection from completed pairing data, persists it via
+     * [ConnectionStore], and switches the app to it. Returns the new
+     * connection id.
      *
-     * Called from the Pair success handler when no existing `profileId` was
-     * passed (i.e. the "Add profile" FAB flow).
+     * Called from the Pair success handler when no existing `connectionId`
+     * was passed (i.e. the "Add connection" FAB flow).
      *
      * **v1 pairing-token limitation:** this method is invoked AFTER
      * [applyPairingPayload] has already run, which writes the freshly-minted
-     * session token into the **currently-active** profile's EncryptedSharedPreferences
-     * (via the active [authManager] instance). The new profile that this
-     * method creates has its own distinct [Profile.tokenStoreKey] and does
-     * NOT carry those credentials across. Consequence: immediately after
-     * "Add profile → scan QR → switch to new profile", the new profile is
-     * unpaired from the token store's perspective and the user must re-pair
-     * it (scan a second QR while the new profile is active).
+     * session token into the **currently-active** connection's
+     * EncryptedSharedPreferences (via the active [authManager] instance).
+     * The new connection that this method creates has its own distinct
+     * [Connection.tokenStoreKey] and does NOT carry those credentials
+     * across. Consequence: immediately after "Add connection → scan QR →
+     * switch to new connection", the new connection is unpaired from the
+     * token store's perspective and the user must re-pair it (scan a
+     * second QR while the new connection is active).
      *
      * A cleaner fix would require targeting [applyPairingPayload] at a
      * specific token store BEFORE the pair runs — that's a bigger refactor
      * deferred to a follow-up. See the TODO at the top of RelayApp's Pair
      * route for the user-facing journey.
      */
-    suspend fun addProfileFromPairing(
+    suspend fun addConnectionFromPairing(
         label: String?,
         apiServerUrl: String,
         relayUrl: String,
     ): Result<String> {
         val resolvedLabel = (label?.trim()?.takeIf { it.isNotEmpty() })
-            ?: Profile.extractDefaultLabel(apiServerUrl)
+            ?: Connection.extractDefaultLabel(apiServerUrl)
 
         // Validate in the same order the fields appear to the user — label
         // then URLs — so the first error surfaced matches where their eye
         // would be.
-        ProfileValidation.validateLabel(resolvedLabel)?.let {
+        ConnectionValidation.validateLabel(resolvedLabel)?.let {
             return Result.failure(IllegalArgumentException(it))
         }
-        ProfileValidation.validateApiServerUrl(apiServerUrl)?.let {
+        ConnectionValidation.validateApiServerUrl(apiServerUrl)?.let {
             return Result.failure(IllegalArgumentException(it))
         }
-        ProfileValidation.validateRelayUrl(relayUrl)?.let {
+        ConnectionValidation.validateRelayUrl(relayUrl)?.let {
             return Result.failure(IllegalArgumentException(it))
         }
-        ProfileValidation.findDuplicate(
-            profiles = profileStore.profiles.value,
+        ConnectionValidation.findDuplicate(
+            connections = connectionStore.connections.value,
             apiServerUrl = apiServerUrl,
             relayUrl = relayUrl,
         )?.let { dup ->
             return Result.failure(
-                IllegalStateException("A profile for this server already exists (\"${dup.label}\")"),
+                IllegalStateException("A connection for this server already exists (\"${dup.label}\")"),
             )
         }
 
         val id = java.util.UUID.randomUUID().toString()
-        val profile = Profile(
+        val connection = Connection(
             id = id,
             label = resolvedLabel,
             apiServerUrl = apiServerUrl.trim(),
             relayUrl = relayUrl.trim(),
-            tokenStoreKey = Profile.buildTokenStoreKey(id),
+            tokenStoreKey = Connection.buildTokenStoreKey(id),
             pairedAt = null,
             lastActiveSessionId = null,
             transportHint = null,
             expiresAt = null,
         )
-        profileStore.addProfile(profile)
-        // Switch to the new profile so subsequent chat/bridge/voice traffic
-        // uses its (currently empty) token store. Per the KDoc above, the
-        // user will need to re-pair against this profile to populate it.
-        switchProfile(id)
+        connectionStore.addConnection(connection)
+        // Switch to the new connection so subsequent chat/bridge/voice
+        // traffic uses its (currently empty) token store. Per the KDoc
+        // above, the user will need to re-pair against this connection to
+        // populate it.
+        switchConnection(id)
         return Result.success(id)
     }
 
     /**
-     * Updates the label on a stored profile. Persists via
-     * [ProfileStore.updateProfile]. Does not touch auth state; does not
-     * trigger a switch. No-op when the profile id is unknown.
+     * Updates the label on a stored connection. Persists via
+     * [ConnectionStore.updateConnection]. Does not touch auth state; does
+     * not trigger a switch. No-op when the connection id is unknown.
      */
-    suspend fun renameProfile(profileId: String, newLabel: String): Result<Unit> {
-        val existing = profileStore.profiles.value.firstOrNull { it.id == profileId }
-            ?: return Result.failure(NoSuchElementException("No profile with id=$profileId"))
-        ProfileValidation.validateLabel(newLabel)?.let {
+    suspend fun renameConnection(connectionId: String, newLabel: String): Result<Unit> {
+        val existing = connectionStore.connections.value.firstOrNull { it.id == connectionId }
+            ?: return Result.failure(NoSuchElementException("No connection with id=$connectionId"))
+        ConnectionValidation.validateLabel(newLabel)?.let {
             return Result.failure(IllegalArgumentException(it))
         }
-        profileStore.updateProfile(existing.copy(label = newLabel.trim()))
+        connectionStore.updateConnection(existing.copy(label = newLabel.trim()))
         return Result.success(Unit)
     }
 
     /**
-     * Revokes the profile's server-side session (`DELETE /sessions/{tokenPrefix}`)
-     * and clears the local auth material.
+     * Revokes the connection's server-side session
+     * (`DELETE /sessions/{tokenPrefix}`) and clears the local auth material.
      *
-     * **v1 constraint — active profile only:** if [profileId] does not match
-     * [activeProfileId] this returns [Result.failure] with a clear message
-     * and does nothing. Revoking an inactive profile would require loading
-     * its [com.hermesandroid.relay.auth.SessionTokenStore] out-of-band to
-     * read the bearer for the DELETE call, which is a bigger change — the
-     * current singleton [authManager] only reads the active profile's store.
-     * Deferred; documented as a follow-up.
+     * **v1 constraint — active connection only:** if [connectionId] does
+     * not match [activeConnectionId] this returns [Result.failure] with a
+     * clear message and does nothing. Revoking an inactive connection
+     * would require loading its
+     * [com.hermesandroid.relay.auth.SessionTokenStore] out-of-band to read
+     * the bearer for the DELETE call, which is a bigger change — the
+     * current singleton [authManager] only reads the active connection's
+     * store. Deferred; documented as a follow-up.
      *
-     * On success, marks the profile as unpaired (`pairedAt = null`,
-     * `expiresAt = null`, `transportHint = null`) via [ProfileStore] so the
-     * UI reflects it. Also disconnects the relay and wipes the local
+     * On success, marks the connection as unpaired (`pairedAt = null`,
+     * `expiresAt = null`, `transportHint = null`) via [ConnectionStore] so
+     * the UI reflects it. Also disconnects the relay and wipes the local
      * session token via [AuthManager.clearSession].
      */
-    suspend fun revokeProfile(profileId: String): Result<Unit> {
-        if (profileId != activeProfileId.value) {
+    suspend fun revokeConnection(connectionId: String): Result<Unit> {
+        if (connectionId != activeConnectionId.value) {
             return Result.failure(
                 IllegalStateException(
-                    "revoke is limited to the active profile in v1",
+                    "revoke is limited to the active connection in v1",
                 ),
             )
         }
-        val existing = profileStore.profiles.value.firstOrNull { it.id == profileId }
+        val existing = connectionStore.connections.value.firstOrNull { it.id == connectionId }
             ?: return Result.failure(
-                IllegalStateException("profile $profileId not found"),
+                IllegalStateException("connection $connectionId not found"),
             )
         // Token prefix = first 8 chars of the current session token.
         // Matches the relay's `session.token[:8]` convention (see
@@ -870,7 +878,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Clear local auth material + tear down the WSS so the reconnect
         // loop doesn't keep re-authing with the just-revoked token.
         clearSession()
-        profileStore.updateProfile(
+        connectionStore.updateConnection(
             existing.copy(
                 pairedAt = null,
                 expiresAt = null,
@@ -881,33 +889,33 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     /**
-     * Removes a profile and its stored auth material. [ProfileStore] handles
-     * the [android.content.Context.deleteSharedPreferences] side effect for
-     * the profile's EncryptedSharedPreferences file.
+     * Removes a connection and its stored auth material. [ConnectionStore]
+     * handles the [android.content.Context.deleteSharedPreferences] side
+     * effect for the connection's EncryptedSharedPreferences file.
      *
-     * If the removed profile was active, this switches to another profile
-     * (if one exists) first so the app lands on a valid context; otherwise
-     * [activeProfileId] ends up null and the top bar renders "No profile"
-     * until the user adds one via Settings.
+     * If the removed connection was active, this switches to another
+     * connection (if one exists) first so the app lands on a valid
+     * context; otherwise [activeConnectionId] ends up null and the top bar
+     * renders "No connection" until the user adds one via Settings.
      */
-    suspend fun removeProfile(profileId: String) {
-        val wasActive = profileId == activeProfileId.value
+    suspend fun removeConnection(connectionId: String) {
+        val wasActive = connectionId == activeConnectionId.value
         if (wasActive) {
-            val other = profileStore.profiles.value.firstOrNull { it.id != profileId }
+            val other = connectionStore.connections.value.firstOrNull { it.id != connectionId }
             if (other != null) {
                 // Await the full switch before deleting the store file.
-                // switchProfile launches on viewModelScope; if we proceeded
-                // to ProfileStore.removeProfile (which calls
-                // Context.deleteSharedPreferences) before the coordinator
-                // finished tearing down the old AuthManager, the old
-                // manager's in-flight init/hydrate coroutine could fault
-                // reading a file that was just deleted.
-                switchProfile(other.id).join()
+                // switchConnection launches on viewModelScope; if we
+                // proceeded to ConnectionStore.removeConnection (which
+                // calls Context.deleteSharedPreferences) before the
+                // coordinator finished tearing down the old AuthManager,
+                // the old manager's in-flight init/hydrate coroutine could
+                // fault reading a file that was just deleted.
+                switchConnection(other.id).join()
             }
-            // If no other profile exists, ProfileStore.removeProfile will
-            // clear the active pointer on its own.
+            // If no other connection exists, ConnectionStore.removeConnection
+            // will clear the active pointer on its own.
         }
-        profileStore.removeProfile(profileId)
+        connectionStore.removeConnection(connectionId)
     }
 
     init {
@@ -1024,17 +1032,18 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             .multiplexer = multiplexer
         // === END PHASE3-notif-listener-followup ===
 
-        // Multi-profile: on cold boot, if no profiles are persisted yet,
-        // seed profile 0 from whatever URLs/session id the pre-multi-profile
-        // install left in DataStore. Idempotent — a no-op once profile 0
-        // (or any user-created profile) is already in the list.
+        // Multi-connection: on cold boot, if no connections are persisted
+        // yet, seed connection 0 from whatever URLs/session id the
+        // pre-multi-connection install left in DataStore. Idempotent — a
+        // no-op once connection 0 (or any user-created connection) is
+        // already in the list.
         //
         // Runs on its own coroutine so it doesn't block the DataStore
         // collect loop below. A race where the collect-loop writes a new
-        // URL value mid-migration is benign — migrateLegacyProfileIfNeeded
-        // is guarded by ProfileStore.writeMutex and early-returns once any
-        // profile exists, so a second call observing the freshly-seeded
-        // profile just exits.
+        // URL value mid-migration is benign — migrateLegacyConnectionIfNeeded
+        // is guarded by ConnectionStore.writeMutex and early-returns once
+        // any connection exists, so a second call observing the
+        // freshly-seeded connection just exits.
         viewModelScope.launch {
             try {
                 val prefs = application.relayDataStore.data.first()
@@ -1043,7 +1052,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     ?: prefs[KEY_SERVER_URL]
                     ?: _relayUrl.value
                 val legacySessionId = prefs[KEY_LAST_SESSION_ID]
-                profileStore.migrateLegacyProfileIfNeeded(
+                connectionStore.migrateLegacyConnectionIfNeeded(
                     legacyApiServerUrl = legacyApiUrl,
                     legacyRelayUrl = legacyRelayUrl,
                     legacyLastSessionId = legacySessionId,
@@ -1051,7 +1060,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             } catch (e: Exception) {
                 android.util.Log.w(
                     "ConnectionViewModel",
-                    "migrateLegacyProfileIfNeeded failed: ${e.message}",
+                    "migrateLegacyConnectionIfNeeded failed: ${e.message}",
                 )
             }
         }
@@ -1396,7 +1405,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * [okhttp3.ConnectionPool.evictAll], which closes live SSL sockets
      * synchronously — i.e. it performs network writes. Running that on
      * the main thread trips StrictMode's `NetworkOnMainThreadException`
-     * on any keep-alive connection (observed on profile switch +
+     * on any keep-alive connection (observed on connection switch +
      * updateApiServerUrl). Always hand off to IO.
      */
     private suspend fun shutdownClientOffMain(client: HermesApiClient?) {
@@ -1674,7 +1683,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 serverUrl = _relayUrl.value,
                 theme = theme.value,
                 onboardingCompleted = _onboardingCompleted.value,
-                profiles = authManager.sessionLabels.value,
+                sessionLabels = authManager.sessionLabels.value,
                 apiServerUrl = _apiServerUrl.value,
                 relayUrl = _relayUrl.value
             )

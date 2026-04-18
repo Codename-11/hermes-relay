@@ -4,17 +4,17 @@ import java.net.URI
 import java.net.URISyntaxException
 
 /**
- * Validation rules for user-editable profile fields. Kept as a standalone
+ * Validation rules for user-editable connection fields. Kept as a standalone
  * object so the same rules fire in all save paths — inline dialog feedback,
- * post-pairing add-profile, and any future import path — without the VM,
+ * post-pairing add-connection, and any future import path — without the VM,
  * the UI, and the data layer each re-implementing string checks.
  *
  * All validators return null on success or a short human-readable message
  * suitable for surfacing in an OutlinedTextField `supportingText` slot or a
  * Snackbar. Messages are intentionally concise — callers add context ("in
- * profile label", "in relay URL") if the surface needs it.
+ * connection label", "in relay URL") if the surface needs it.
  */
-object ProfileValidation {
+object ConnectionValidation {
 
     const val LABEL_MAX_LEN: Int = 40
 
@@ -35,7 +35,7 @@ object ProfileValidation {
 
     /**
      * API server must be http:// or https:// with a host. The user pairs
-     * before they can save a profile, so malformed URLs shouldn't reach
+     * before they can save a connection, so malformed URLs shouldn't reach
      * this path — but defense-in-depth against manual edits / restored
      * backups is worth the few lines.
      */
@@ -54,23 +54,23 @@ object ProfileValidation {
 
     /**
      * Catches the "added the same server twice" mistake. Matches when the
-     * candidate's api + relay URLs exactly match an existing profile
+     * candidate's api + relay URLs exactly match an existing connection
      * (case-insensitive on scheme + host, per RFC 3986). [excludeId] skips
-     * a specific profile so renames don't trip over their own entry.
+     * a specific connection so renames don't trip over their own entry.
      *
-     * Deliberately lenient: two profiles may share either URL alone (dev
+     * Deliberately lenient: two connections may share either URL alone (dev
      * that points API at prod + relay at a test box, say). Full exact-match
      * on both is the only blocked case.
      */
     fun findDuplicate(
-        profiles: List<Profile>,
+        connections: List<Connection>,
         apiServerUrl: String,
         relayUrl: String,
         excludeId: String? = null,
-    ): Profile? = profiles.firstOrNull { p ->
-        p.id != excludeId &&
-            p.apiServerUrl.equals(apiServerUrl, ignoreCase = true) &&
-            p.relayUrl.equals(relayUrl, ignoreCase = true)
+    ): Connection? = connections.firstOrNull { c ->
+        c.id != excludeId &&
+            c.apiServerUrl.equals(apiServerUrl, ignoreCase = true) &&
+            c.relayUrl.equals(relayUrl, ignoreCase = true)
     }
 
     private fun validateUrl(raw: String, allowedSchemes: Set<String>, kind: String): String? {

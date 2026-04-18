@@ -26,13 +26,13 @@ import java.io.File
 class DataManager(
     private val context: Context,
     /**
-     * Multi-profile: the [ProfileStore] singleton whose snapshot gets
-     * written into [AppBackup.profiles] on export. Nullable for
+     * Multi-connection: the [ConnectionStore] singleton whose snapshot gets
+     * written into [AppBackup.connections] on export. Nullable for
      * legacy/compat call sites that construct a [DataManager] without
-     * profile support; a null store just means "export an empty profiles
-     * list" (equivalent to v2 behavior).
+     * connection support; a null store just means "export an empty
+     * connections list" (equivalent to v2 behavior).
      */
-    private val profileStore: ProfileStore? = null,
+    private val connectionStore: ConnectionStore? = null,
 ) {
 
     companion object {
@@ -59,20 +59,23 @@ class DataManager(
      *  - v2: adds `apiServerUrl` + `relayUrl`; `profiles: List<String>` held
      *    server-issued session labels from `auth.ok` (never actually populated
      *    on export — the field was vestigial).
-     *  - v3 (2026-04-18): `profiles: List<Profile>` — carries the new
-     *    multi-profile connection definitions. v1/v2 imports get
-     *    `profiles = emptyList()` since the old string list was not
+     *  - v3 (2026-04-18): `profiles: List<Profile>` — carried the new
+     *    multi-connection definitions under the then-current "Profile" name.
+     *  - v4 (2026-04-18): `connections: List<Connection>` — same shape as v3
+     *    under the renamed concept. v3 imports get their `profiles` field
+     *    re-mapped to `connections` (see [importSettings]). v1/v2 imports
+     *    get `connections = emptyList()` since the old string list was not
      *    structurally compatible.
      */
     @Serializable
     data class AppBackup(
-        val version: Int = 3,
+        val version: Int = 4,
         val serverUrl: String? = null, // legacy (v1 compat)
         val apiServerUrl: String? = null,
         val relayUrl: String? = null,
         val theme: String = "auto",
         val onboardingCompleted: Boolean = false,
-        val profiles: List<Profile> = emptyList(),
+        val connections: List<Connection> = emptyList(),
         val exportedAt: Long = System.currentTimeMillis()
     )
 
@@ -80,36 +83,36 @@ class DataManager(
      * Export app settings to a JSON string.
      * Does NOT include session tokens or device IDs (security).
      *
-     * The `profiles` parameter is the legacy session-labels list sourced from
-     * [com.hermesandroid.relay.auth.AuthManager.sessionLabels] and is kept
-     * only for call-site signature stability — it is not written to the
-     * backup. The backup's [AppBackup.profiles] comes from the injected
-     * [profileStore] snapshot (the new multi-profile connection definitions).
+     * The `sessionLabels` parameter is the legacy session-labels list
+     * sourced from [com.hermesandroid.relay.auth.AuthManager.sessionLabels]
+     * and is kept only for call-site signature stability — it is not
+     * written to the backup. The backup's [AppBackup.connections] comes
+     * from the injected [connectionStore] snapshot.
      */
     suspend fun exportSettings(
         serverUrl: String?,
         theme: String,
         onboardingCompleted: Boolean,
-        @Suppress("UNUSED_PARAMETER") profiles: List<String>,
+        @Suppress("UNUSED_PARAMETER") sessionLabels: List<String>,
         apiServerUrl: String? = null,
         relayUrl: String? = null
     ): String {
-        val profileSnapshot = profileStore?.profiles?.value
-        if (profileStore == null) {
+        val connectionsSnapshot = connectionStore?.connections?.value
+        if (connectionStore == null) {
             Log.w(
                 TAG,
-                "exportSettings: no ProfileStore wired — writing empty profiles list " +
-                    "(caller constructed DataManager without the multi-profile ctor arg)",
+                "exportSettings: no ConnectionStore wired — writing empty connections list " +
+                    "(caller constructed DataManager without the multi-connection ctor arg)",
             )
         }
         val backup = AppBackup(
-            version = 3,
+            version = 4,
             serverUrl = serverUrl, // legacy compat
             apiServerUrl = apiServerUrl,
             relayUrl = relayUrl,
             theme = theme,
             onboardingCompleted = onboardingCompleted,
-            profiles = profileSnapshot ?: emptyList(),
+            connections = connectionsSnapshot ?: emptyList(),
             exportedAt = System.currentTimeMillis()
         )
         return json.encodeToString(backup)
@@ -122,8 +125,11 @@ class DataManager(
      * For v1/v2 backups we deliberately drop the old `profiles: List<String>`
      * field on its own, since kotlinx.serialization's `ignoreUnknownKeys`
      * would throw if it found the old scalar-string entries where it now
-     * expects [Profile] objects. We pre-parse as a [JsonElement] and rebuild
-     * the object with `profiles = []` on older schema versions.
+     * expects [Connection] objects. We pre-parse as a [JsonElement] and
+     * rebuild the object with `connections = []` on older schema versions.
+     *
+     * For v3 backups, the old `profiles: List<Profile>` field is re-mapped
+     * to `connections: List<Connection>` — same wire shape, just renamed.
      */
     fun importSettings(jsonString: String): AppBackup? {
         return try {
@@ -131,20 +137,33 @@ class DataManager(
             val obj = element as? JsonObject ?: return null
             val version = obj["version"]?.let {
                 (it as? JsonPrimitive)?.content?.toIntOrNull()
-            } ?: 3
-            val normalized = if (version < 3) {
-                // Strip the incompatible v1/v2 `profiles` field so the
-                // serializer doesn't try to decode List<String> into
-                // List<Profile>. The feature never populated the list in
-                // export anyway, so no user data is lost.
-                Log.d(
-                    TAG,
-                    "importSettings: dropping legacy v$version profiles field " +
-                        "(schema was vestigial)",
-                )
-                JsonObject(obj - "profiles")
-            } else {
-                obj
+            } ?: 4
+            val normalized = when {
+                version < 3 -> {
+                    // Strip the incompatible v1/v2 `profiles` field so the
+                    // serializer doesn't try to decode List<String> into
+                    // List<Connection>. The feature never populated the list
+                    // in export anyway, so no user data is lost.
+                    Log.d(
+                        TAG,
+                        "importSettings: dropping legacy v$version profiles field " +
+                            "(schema was vestigial)",
+                    )
+                    JsonObject(obj - "profiles")
+                }
+                version == 3 -> {
+                    // v3 used `profiles: List<Profile>` with the same wire
+                    // shape as v4's `connections: List<Connection>`. Swap
+                    // the key name and decode as v4.
+                    val profilesField = obj["profiles"]
+                    val withoutProfiles = obj - "profiles"
+                    if (profilesField != null) {
+                        JsonObject(withoutProfiles + ("connections" to profilesField))
+                    } else {
+                        withoutProfiles
+                    }
+                }
+                else -> obj
             }
             json.decodeFromJsonElement(AppBackup.serializer(), normalized)
         } catch (e: Exception) {

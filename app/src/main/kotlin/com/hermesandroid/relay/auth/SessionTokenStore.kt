@@ -126,10 +126,11 @@ class KeystoreTokenStore private constructor(
         private const val TAG = "KeystoreTokenStore"
 
         /**
-         * Default EncryptedSharedPreferences filename. Pre-multi-profile
-         * installs have all their auth state in this single file — profile 0
-         * re-uses it as-is via [Profile.LEGACY_TOKEN_STORE_KEY] so no
-         * user-visible migration is needed.
+         * Default EncryptedSharedPreferences filename. Pre-multi-connection
+         * installs have all their auth state in this single file —
+         * connection 0 re-uses it as-is via
+         * [Connection.LEGACY_TOKEN_STORE_KEY] so no user-visible migration is
+         * needed.
          */
         const val DEFAULT_PREFS_NAME = "hermes_companion_auth_hw"
 
@@ -140,9 +141,10 @@ class KeystoreTokenStore private constructor(
          * itself trying to create a master key).
          *
          * [prefsName] selects the EncryptedSharedPreferences file — defaults
-         * to [DEFAULT_PREFS_NAME] for backwards compat with the single-profile
-         * call sites. Multi-profile callers pass a per-profile filename built
-         * via [com.hermesandroid.relay.data.Profile.buildTokenStoreKey].
+         * to [DEFAULT_PREFS_NAME] for backwards compat with the
+         * single-connection call sites. Multi-connection callers pass a
+         * per-connection filename built via
+         * [com.hermesandroid.relay.data.Connection.buildTokenStoreKey].
          *
          * Also fires a one-shot read probe so a pre-corrupted file from a
          * previous install gets healed during construction rather than on the

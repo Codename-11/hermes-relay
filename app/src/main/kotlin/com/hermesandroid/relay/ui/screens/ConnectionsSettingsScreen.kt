@@ -39,38 +39,39 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.Connection
 import java.util.concurrent.TimeUnit
 
 /**
- * Full-screen manager for the list of connection profiles. Reachable via
- * Settings → Profiles and via the "Manage profiles…" button in the profile
- * switcher bottom sheet.
+ * Full-screen manager for the list of Hermes connections. Reachable via
+ * Settings → Connections and via the "Manage connections…" button in the
+ * connection switcher bottom sheet.
  *
- * Each profile is a card with:
+ * Each connection is a card with:
  *  - Label (tappable → rename dialog)
  *  - Hostname + paired status subtitle
  *  - Re-pair / Revoke / Remove actions
- *  - "Active" badge + tonal highlight on the currently-active profile
+ *  - "Active" badge + tonal highlight on the currently-active connection
  *
- * An Extended FAB pinned bottom-right launches the add-profile pairing flow.
+ * An Extended FAB pinned bottom-right launches the add-connection pairing
+ * flow.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ProfilesSettingsScreen(
-    profiles: List<Profile>,
-    activeProfileId: String?,
-    onRenameProfile: (id: String, newLabel: String) -> Unit,
-    onRepairProfile: (id: String) -> Unit,
-    onRevokeProfile: (id: String) -> Unit,
-    onRemoveProfile: (id: String) -> Unit,
-    onAddProfile: () -> Unit,
+fun ConnectionsSettingsScreen(
+    connections: List<Connection>,
+    activeConnectionId: String?,
+    onRenameConnection: (id: String, newLabel: String) -> Unit,
+    onRepairConnection: (id: String) -> Unit,
+    onRevokeConnection: (id: String) -> Unit,
+    onRemoveConnection: (id: String) -> Unit,
+    onAddConnection: () -> Unit,
     onBack: () -> Unit,
 ) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Profiles") },
+                title = { Text("Connections") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -86,18 +87,18 @@ fun ProfilesSettingsScreen(
         },
         floatingActionButton = {
             ExtendedFloatingActionButton(
-                onClick = onAddProfile,
+                onClick = onAddConnection,
                 icon = {
                     Icon(
                         imageVector = Icons.Filled.Add,
                         contentDescription = null,
                     )
                 },
-                text = { Text("Add profile") },
+                text = { Text("Add connection") },
             )
         },
     ) { innerPadding ->
-        if (profiles.isEmpty()) {
+        if (connections.isEmpty()) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -107,12 +108,12 @@ fun ProfilesSettingsScreen(
                 verticalArrangement = Arrangement.Center,
             ) {
                 Text(
-                    text = "No profiles yet",
+                    text = "No connections yet",
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Pair with a Hermes server to add your first profile.",
+                    text = "Pair with a Hermes server to add your first connection.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -128,14 +129,14 @@ fun ProfilesSettingsScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                items(profiles, key = { it.id }) { profile ->
-                    ProfileCard(
-                        profile = profile,
-                        isActive = profile.id == activeProfileId,
-                        onRename = { newLabel -> onRenameProfile(profile.id, newLabel) },
-                        onRepair = { onRepairProfile(profile.id) },
-                        onRevoke = { onRevokeProfile(profile.id) },
-                        onRemove = { onRemoveProfile(profile.id) },
+                items(connections, key = { it.id }) { connection ->
+                    ConnectionCard(
+                        connection = connection,
+                        isActive = connection.id == activeConnectionId,
+                        onRename = { newLabel -> onRenameConnection(connection.id, newLabel) },
+                        onRepair = { onRepairConnection(connection.id) },
+                        onRevoke = { onRevokeConnection(connection.id) },
+                        onRemove = { onRemoveConnection(connection.id) },
                     )
                 }
                 // Footer spacer so the last card isn't hidden by the FAB.
@@ -146,8 +147,8 @@ fun ProfilesSettingsScreen(
 }
 
 @Composable
-private fun ProfileCard(
-    profile: Profile,
+private fun ConnectionCard(
+    connection: Connection,
     isActive: Boolean,
     onRename: (String) -> Unit,
     onRepair: () -> Unit,
@@ -175,7 +176,7 @@ private fun ProfileCard(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = profile.label,
+                    text = connection.label,
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -194,8 +195,8 @@ private fun ProfileCard(
                 }
             }
 
-            val hostname = Profile.extractDefaultLabel(profile.apiServerUrl)
-            val pairedStatus = profile.pairedAt?.let { formatPairedRelative(it) }
+            val hostname = Connection.extractDefaultLabel(connection.apiServerUrl)
+            val pairedStatus = connection.pairedAt?.let { formatPairedRelative(it) }
                 ?: "Not paired"
             Text(
                 text = "$hostname • $pairedStatus",
@@ -229,8 +230,8 @@ private fun ProfileCard(
     }
 
     if (showRenameDialog) {
-        RenameProfileDialog(
-            initialLabel = profile.label,
+        RenameConnectionDialog(
+            initialLabel = connection.label,
             onDismiss = { showRenameDialog = false },
             onConfirm = { newLabel ->
                 onRename(newLabel)
@@ -242,10 +243,10 @@ private fun ProfileCard(
     if (showRevokeConfirm) {
         AlertDialog(
             onDismissRequest = { showRevokeConfirm = false },
-            title = { Text("Revoke this profile?") },
+            title = { Text("Revoke this connection?") },
             text = {
                 Text(
-                    "The server session will be invalidated. The profile stays " +
+                    "The server session will be invalidated. The connection stays " +
                         "on this device but will need to be re-paired to use again.",
                 )
             },
@@ -270,10 +271,10 @@ private fun ProfileCard(
     if (showRemoveConfirm) {
         AlertDialog(
             onDismissRequest = { showRemoveConfirm = false },
-            title = { Text("Remove this profile?") },
+            title = { Text("Remove this connection?") },
             text = {
                 Text(
-                    "The profile will be deleted from this device along with its " +
+                    "The connection will be deleted from this device along with its " +
                         "saved session token. This cannot be undone.",
                 )
             },
@@ -300,7 +301,7 @@ private fun ProfileCard(
 }
 
 @Composable
-private fun RenameProfileDialog(
+private fun RenameConnectionDialog(
     initialLabel: String,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
@@ -308,10 +309,10 @@ private fun RenameProfileDialog(
     var value by remember { mutableStateOf(initialLabel) }
     // Validate on every keystroke so the Save button disables + the
     // supporting text appears without needing a failed submit first.
-    val validationError = com.hermesandroid.relay.data.ProfileValidation.validateLabel(value)
+    val validationError = com.hermesandroid.relay.data.ConnectionValidation.validateLabel(value)
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Rename profile") },
+        title = { Text("Rename connection") },
         text = {
             OutlinedTextField(
                 value = value,

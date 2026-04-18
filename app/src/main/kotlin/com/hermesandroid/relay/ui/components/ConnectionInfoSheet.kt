@@ -180,8 +180,8 @@ fun SessionInfoSheet(
     val pairingCode by connectionViewModel.pairingCode.collectAsState()
     // Note: this is the list of server-issued *session labels* pulled from
     // the `auth.ok` payload (e.g. `["chat", "terminal"]`) — not the list of
-    // multi-profile connection profiles. The field was renamed on AuthManager
-    // to avoid that exact confusion; the local is kept as `sessionLabels`.
+    // multi-connection entries. The field was renamed on AuthManager to
+    // avoid that exact confusion; the local is kept as `sessionLabels`.
     val sessionLabels by connectionViewModel.authManager.sessionLabels.collectAsState()
     val pairedSession by connectionViewModel.currentPairedSession.collectAsState()
 

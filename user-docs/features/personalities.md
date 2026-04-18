@@ -2,7 +2,7 @@
 
 Hermes-Relay fetches available personalities from the Hermes API Server and lets you switch between them.
 
-> A **personality** is a system-prompt preset on one agent — switching a personality changes how the agent behaves on the next message, but not the server, sessions, memory, or tools. For switching between entirely different Hermes servers, see [Profiles](./profiles.md).
+> A **personality** is a system-prompt preset on one agent — switching a personality changes how the agent behaves on the next message, but not the server, sessions, memory, or tools. For switching between entirely different Hermes servers, see [Connections](./connections.md).
 
 ## Personality Picker
 

@@ -25,24 +25,25 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.Connection
 
 /**
- * Bottom sheet chooser for switching between connection profiles. Driven by
- * the top-bar [ProfileChip] tap and the Settings → Profiles row. Each row is
- * a radio selection — tapping commits immediately and dismisses the sheet so
- * the swap kicks off before the user's finger is off the screen.
+ * Bottom sheet chooser for switching between Hermes connections. Driven by
+ * the top-bar [ConnectionChip] tap and the Settings → Connections row.
+ * Each row is a radio selection — tapping commits immediately and dismisses
+ * the sheet so the swap kicks off before the user's finger is off the screen.
  *
- * The "Manage profiles…" footer button navigates to [ProfilesSettingsScreen]
- * for rename / re-pair / revoke / remove — anything beyond plain switching.
+ * The "Manage connections…" footer button navigates to
+ * [ConnectionsSettingsScreen] for rename / re-pair / revoke / remove —
+ * anything beyond plain switching.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ProfileSwitcherSheet(
-    profiles: List<Profile>,
-    activeProfileId: String?,
-    onSelectProfile: (String) -> Unit,
-    onManageProfiles: () -> Unit,
+fun ConnectionSwitcherSheet(
+    connections: List<Connection>,
+    activeConnectionId: String?,
+    onSelectConnection: (String) -> Unit,
+    onManageConnections: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
@@ -59,36 +60,36 @@ fun ProfileSwitcherSheet(
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(
-                text = "Switch profile",
+                text = "Switch connection",
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.padding(bottom = 8.dp),
             )
 
-            if (profiles.isEmpty()) {
-                // Defensive: the legacy migration should always seed profile 0,
+            if (connections.isEmpty()) {
+                // Defensive: the legacy migration should always seed connection 0,
                 // but fall back to a Manage-only state if the list is empty.
                 Text(
-                    text = "No profiles yet",
+                    text = "No connections yet",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(vertical = 12.dp),
                 )
                 TextButton(
-                    onClick = onManageProfiles,
+                    onClick = onManageConnections,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Manage profiles…")
+                    Text("Manage connections…")
                 }
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    items(profiles, key = { it.id }) { profile ->
-                        ProfileRow(
-                            profile = profile,
-                            isActive = profile.id == activeProfileId,
+                    items(connections, key = { it.id }) { connection ->
+                        ConnectionRow(
+                            connection = connection,
+                            isActive = connection.id == activeConnectionId,
                             onClick = {
-                                onSelectProfile(profile.id)
+                                onSelectConnection(connection.id)
                                 onDismiss()
                             },
                         )
@@ -100,10 +101,10 @@ fun ProfileSwitcherSheet(
                     color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f),
                 )
                 TextButton(
-                    onClick = onManageProfiles,
+                    onClick = onManageConnections,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Manage profiles…")
+                    Text("Manage connections…")
                 }
             }
         }
@@ -111,13 +112,13 @@ fun ProfileSwitcherSheet(
 }
 
 @Composable
-private fun ProfileRow(
-    profile: Profile,
+private fun ConnectionRow(
+    connection: Connection,
     isActive: Boolean,
     onClick: () -> Unit,
 ) {
-    val hostname = Profile.extractDefaultLabel(profile.apiServerUrl)
-    val statusLine = if (profile.pairedAt == null) {
+    val hostname = Connection.extractDefaultLabel(connection.apiServerUrl)
+    val statusLine = if (connection.pairedAt == null) {
         "$hostname • Not paired"
     } else {
         "$hostname • Paired"
@@ -137,7 +138,7 @@ private fun ProfileRow(
         Spacer(modifier = Modifier.width(8.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = profile.label,
+                text = connection.label,
                 style = MaterialTheme.typography.bodyLarge,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

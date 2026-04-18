@@ -16,13 +16,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
 /**
- * Compact top-bar chip showing the currently-active connection profile.
- * Tapping opens [ProfileSwitcherSheet]. Kept deliberately minimal — a single
- * row of label + dropdown caret — so it fits next to the existing
+ * Compact top-bar chip showing the currently-active Hermes connection.
+ * Tapping opens [ConnectionSwitcherSheet]. Kept deliberately minimal — a
+ * single row of label + dropdown caret — so it fits next to the existing
  * [PersonalityPicker] on the Chat top bar without hogging horizontal space.
  */
 @Composable
-fun ProfileChip(
+fun ConnectionChip(
     label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -40,7 +40,7 @@ fun ProfileChip(
                 Spacer(modifier = Modifier.width(2.dp))
                 Icon(
                     imageVector = Icons.Filled.ArrowDropDown,
-                    contentDescription = "Switch profile",
+                    contentDescription = "Switch connection",
                     modifier = Modifier,
                 )
             }

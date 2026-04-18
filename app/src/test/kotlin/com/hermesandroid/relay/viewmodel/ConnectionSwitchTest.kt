@@ -2,8 +2,8 @@ package com.hermesandroid.relay.viewmodel
 
 import com.hermesandroid.relay.auth.AuthManager
 import com.hermesandroid.relay.auth.AuthState
-import com.hermesandroid.relay.data.Profile
-import com.hermesandroid.relay.data.ProfileStore
+import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.ConnectionStore
 import com.hermesandroid.relay.network.ConnectionManager
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -26,8 +26,8 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * Unit tests for [ProfileSwitchCoordinator] — the extracted orchestration
- * layer that runs the heavy profile-swap sequence described on its KDoc.
+ * Unit tests for [ConnectionSwitchCoordinator] — the extracted orchestration
+ * layer that runs the heavy connection-swap sequence described on its KDoc.
  *
  * Each collaborator is mocked so the test exercises the coordinator in
  * isolation without standing up an Android Application, DataStore, or
@@ -43,12 +43,12 @@ import org.junit.Test
  * `app/build.gradle.kts` — no MockK static mocking needed.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
-class ProfileSwitchTest {
+class ConnectionSwitchTest {
 
     private val dispatcher = StandardTestDispatcher()
     private lateinit var testScope: TestScope
 
-    private lateinit var profileStore: ProfileStore
+    private lateinit var connectionStore: ConnectionStore
     private lateinit var connectionManager: ConnectionManager
 
     private lateinit var streamCancelInvocations: Channel<Unit>
@@ -59,22 +59,22 @@ class ProfileSwitchTest {
     private lateinit var setRelayUrlCapture: MutableList<String>
     private lateinit var persistUrlsCapture: MutableList<Pair<String, String>>
 
-    private val activeProfileIdFlow = MutableStateFlow<String?>("profile-a")
-    private val profilesFlow = MutableStateFlow<List<Profile>>(emptyList())
+    private val activeConnectionIdFlow = MutableStateFlow<String?>("connection-a")
+    private val connectionsFlow = MutableStateFlow<List<Connection>>(emptyList())
 
-    private val sampleA = Profile(
-        id = "profile-a",
+    private val sampleA = Connection(
+        id = "connection-a",
         label = "A",
         apiServerUrl = "http://host-a:8642",
         relayUrl = "wss://host-a:8767",
-        tokenStoreKey = Profile.buildTokenStoreKey("profile-a"),
+        tokenStoreKey = Connection.buildTokenStoreKey("connection-a"),
     )
-    private val sampleB = Profile(
-        id = "profile-b",
+    private val sampleB = Connection(
+        id = "connection-b",
         label = "B",
         apiServerUrl = "http://host-b:8642",
         relayUrl = "wss://host-b:8767",
-        tokenStoreKey = Profile.buildTokenStoreKey("profile-b"),
+        tokenStoreKey = Connection.buildTokenStoreKey("connection-b"),
     )
 
     private var installedAuthManager: AuthManager? = null
@@ -86,14 +86,14 @@ class ProfileSwitchTest {
         // module's build.gradle.kts — no MockK static mocks needed.
         testScope = TestScope(dispatcher)
 
-        profilesFlow.value = listOf(sampleA, sampleB)
-        activeProfileIdFlow.value = "profile-a"
+        connectionsFlow.value = listOf(sampleA, sampleB)
+        activeConnectionIdFlow.value = "connection-a"
 
-        profileStore = mockk(relaxed = true)
-        every { profileStore.profiles } returns profilesFlow.asStateFlow()
-        every { profileStore.activeProfileId } returns activeProfileIdFlow.asStateFlow()
-        coEvery { profileStore.setActiveProfile(any()) } coAnswers {
-            activeProfileIdFlow.value = firstArg()
+        connectionStore = mockk(relaxed = true)
+        every { connectionStore.connections } returns connectionsFlow.asStateFlow()
+        every { connectionStore.activeConnectionId } returns activeConnectionIdFlow.asStateFlow()
+        coEvery { connectionStore.setActiveConnection(any()) } coAnswers {
+            activeConnectionIdFlow.value = firstArg()
         }
 
         connectionManager = mockk(relaxed = true)
@@ -116,23 +116,23 @@ class ProfileSwitchTest {
     }
 
     private fun buildCoordinator(
-        authFactory: (String) -> AuthManager = { pid ->
+        authFactory: (String) -> AuthManager = { cid ->
             newAuthManagerMock(
-                authState = if (pid == "profile-b") {
-                    AuthState.Paired("token-for-$pid")
+                authState = if (cid == "connection-b") {
+                    AuthState.Paired("token-for-$cid")
                 } else {
                     AuthState.Unpaired
                 },
-                hasPairCtx = pid == "profile-b",
+                hasPairCtx = cid == "connection-b",
             )
         },
-    ): ProfileSwitchCoordinator {
+    ): ConnectionSwitchCoordinator {
         installedAuthManager = newAuthManagerMock(
             authState = AuthState.Paired("initial-token"),
             hasPairCtx = true,
         )
-        return ProfileSwitchCoordinator(
-            profileStore = profileStore,
+        return ConnectionSwitchCoordinator(
+            connectionStore = connectionStore,
             connectionManager = connectionManager,
             scope = testScope,
             authManagerFactory = authFactory,
@@ -150,13 +150,13 @@ class ProfileSwitchTest {
     // --- Tests --------------------------------------------------------------
 
     @Test
-    fun switchProfile_noOpWhenSameProfile() = runTest(dispatcher) {
+    fun switchConnection_noOpWhenSameConnection() = runTest(dispatcher) {
         val coord = buildCoordinator()
-        coord.switchProfile("profile-a").join()
+        coord.switchConnection("connection-a").join()
 
-        assertEquals("profile-a", activeProfileIdFlow.value)
+        assertEquals("connection-a", activeConnectionIdFlow.value)
         assertTrue(
-            "stream-cancel should not fire for same-profile switch",
+            "stream-cancel should not fire for same-connection switch",
             streamCancelInvocations.tryReceive().isFailure,
         )
         verify(exactly = 0) { connectionManager.disconnect() }
@@ -166,9 +166,9 @@ class ProfileSwitchTest {
     }
 
     @Test
-    fun switchProfile_cancelsActiveStream() = runTest(dispatcher) {
+    fun switchConnection_cancelsActiveStream() = runTest(dispatcher) {
         val coord = buildCoordinator()
-        coord.switchProfile("profile-b").join()
+        coord.switchConnection("connection-b").join()
 
         assertTrue(
             "stream-cancel callback should have been invoked exactly once",
@@ -179,9 +179,9 @@ class ProfileSwitchTest {
     }
 
     @Test
-    fun switchProfile_stopsVoice() = runTest(dispatcher) {
+    fun switchConnection_stopsVoice() = runTest(dispatcher) {
         val coord = buildCoordinator()
-        coord.switchProfile("profile-b").join()
+        coord.switchConnection("connection-b").join()
 
         assertTrue(
             "voice-stop callback should have been invoked exactly once",
@@ -191,18 +191,18 @@ class ProfileSwitchTest {
     }
 
     @Test
-    fun switchProfile_disconnectsAndReconnectsWSS() = runTest(dispatcher) {
+    fun switchConnection_disconnectsAndReconnectsWSS() = runTest(dispatcher) {
         val coord = buildCoordinator()
-        coord.switchProfile("profile-b").join()
+        coord.switchConnection("connection-b").join()
 
         verify(exactly = 1) { connectionManager.disconnect() }
         verify(exactly = 1) { connectionManager.connect(sampleB.relayUrl) }
     }
 
     @Test
-    fun switchProfile_rebuildsApiClient() = runTest(dispatcher) {
+    fun switchConnection_rebuildsApiClient() = runTest(dispatcher) {
         val coord = buildCoordinator()
-        coord.switchProfile("profile-b").join()
+        coord.switchConnection("connection-b").join()
 
         assertEquals(1, apiClientRebuildCount[0])
         assertEquals(listOf(sampleB.apiServerUrl), setApiServerUrlCapture)
@@ -214,26 +214,26 @@ class ProfileSwitchTest {
     }
 
     @Test
-    fun switchProfile_emitsProfileSwitchEventWithNewId() = runTest(dispatcher) {
+    fun switchConnection_emitsConnectionSwitchEventWithNewId() = runTest(dispatcher) {
         val coord = buildCoordinator()
         val collected = mutableListOf<String>()
         val job = launch {
-            coord.profileSwitchEvents.collect { collected += it }
+            coord.connectionSwitchEvents.collect { collected += it }
         }
         // Let the collector subscribe before we emit.
         advanceUntilIdle()
 
-        coord.switchProfile("profile-b").join()
+        coord.switchConnection("connection-b").join()
         advanceUntilIdle()
 
-        assertEquals(listOf("profile-b"), collected)
+        assertEquals(listOf("connection-b"), collected)
         job.cancel()
     }
 
     @Test
-    fun switchProfile_abortsIfProfileIdUnknown() = runTest(dispatcher) {
+    fun switchConnection_abortsIfConnectionIdUnknown() = runTest(dispatcher) {
         val coord = buildCoordinator()
-        coord.switchProfile("profile-does-not-exist").join()
+        coord.switchConnection("connection-does-not-exist").join()
 
         // Disconnect/stream-cancel do fire (teardown is unconditional by
         // design — we want the current connection torn down even if we
@@ -243,35 +243,35 @@ class ProfileSwitchTest {
         assertTrue(setApiServerUrlCapture.isEmpty())
         assertTrue(setRelayUrlCapture.isEmpty())
         verify(exactly = 0) { connectionManager.connect(any()) }
-        coVerify(exactly = 0) { profileStore.setActiveProfile(any()) }
+        coVerify(exactly = 0) { connectionStore.setActiveConnection(any()) }
         // Active pointer unchanged.
-        assertEquals("profile-a", activeProfileIdFlow.value)
+        assertEquals("connection-a", activeConnectionIdFlow.value)
     }
 
     @Test
-    fun switchProfile_skipsReconnectWhenNewProfileHasNoPairContext() = runTest(dispatcher) {
+    fun switchConnection_skipsReconnectWhenNewConnectionHasNoPairContext() = runTest(dispatcher) {
         val coord = buildCoordinator(authFactory = { _ ->
             newAuthManagerMock(authState = AuthState.Paired("t"), hasPairCtx = false)
         })
-        coord.switchProfile("profile-b").join()
+        coord.switchConnection("connection-b").join()
 
         verify(exactly = 1) { connectionManager.disconnect() }
         verify(exactly = 0) { connectionManager.connect(any()) }
-        // Still persists the new active profile even though we didn't
+        // Still persists the new active connection even though we didn't
         // connect — the user explicitly asked to switch.
-        coVerify(exactly = 1) { profileStore.setActiveProfile("profile-b") }
+        coVerify(exactly = 1) { connectionStore.setActiveConnection("connection-b") }
     }
 
     @Test
-    fun switchProfile_installsNewAuthManager() = runTest(dispatcher) {
+    fun switchConnection_installsNewAuthManager() = runTest(dispatcher) {
         val built = mutableListOf<AuthManager>()
-        val coord = buildCoordinator(authFactory = { pid ->
-            val am = newAuthManagerMock(AuthState.Paired("t-$pid"), hasPairCtx = true)
+        val coord = buildCoordinator(authFactory = { cid ->
+            val am = newAuthManagerMock(AuthState.Paired("t-$cid"), hasPairCtx = true)
             built += am
             am
         })
         val before = installedAuthManager
-        coord.switchProfile("profile-b").join()
+        coord.switchConnection("connection-b").join()
 
         assertEquals(1, built.size)
         assertTrue(
