@@ -22,7 +22,7 @@ See ``plugin/relay/server.py`` for the aiohttp server,
 # constant after a successful pull, while pyproject had drifted to 0.5.0
 # ahead of any actual release and I bumped this to match that — both were
 # wrong; 0.3.0 is the real in-progress target).
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 from .server import create_app, main  # noqa: E402 — must come after __version__
 

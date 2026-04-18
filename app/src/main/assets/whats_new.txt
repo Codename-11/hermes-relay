@@ -1,32 +1,32 @@
-v0.4.0 — Bridge Feature Expansion
+v0.5.0 — Bridge Polish + Auto-Return
 
-Bridge Channel
-• Long-press and drag gestures via ActionExecutor
-• Clipboard read/write over bridge protocol
-• Intent send (open URLs, share, launch activities)
-• Location, contacts, call, and SMS bridge commands
-• Multi-window screen reading in ScreenReader
-• Macro recording and playback support
-• Expanded BridgeCommandHandler path inventory
+Bridge Tab Redesign
+• Master toggle now reads as the parent gate (MASTER pill + clearer copy)
+• Tap Switch without accessibility → Settings deep-link snackbar
+• Card order: Master → Permissions → Advanced → Unattended → Safety → Log
+• Permission rows always open Android Settings on tap (no more dead taps)
 
-Voice
-• Voice-to-bridge intent routing (sideload)
-• VoiceBridgeIntentHandler with per-flavor factory
-• VoiceIntentClassifier regex phone-control detection
-• Local chat trace for voice actions
+Unattended Access (sideload)
+• Disabled when master is off — clear "Requires Agent Control" hint
+• New global banner across every tab when unattended is active
+• System overlay chip hides when you're inside Hermes-Relay (banner takes over)
 
-Safety
-• Tiered permission system per bridge command category
-• JIT error surfacing for missing permissions
-• BridgeSafetyManager blocklist + destructive-verb confirmation
-• Auto-disable timer for bridge sessions
+Smarter Agent Awareness
+• LLM now sees unattended state, screen state, and credential lock upfront
+• android_phone_status tool warns about screen-off + unattended-off ahead of time
+• Tool description updates push to host immediately on toggle flip
 
-Notifications
-• HermesNotificationCompanion — opt-in NotificationListenerService
-• Notification forwarding to agent via ChannelMultiplexer
-• Bounded relay-side deque (100 entries)
+Auto-Return After Tasks
+• Tightened LLM prompts to call android_return_to_hermes as the final step
+• 12s idle-timer safety net auto-fires the return for ANY frontend
+  (Discord, CLI, web, voice) — phone goes back to Hermes-Relay automatically
 
-Prior releases
-• v0.3.0 — Bridge channel, voice mode, notification companion, two build flavors
-• v0.2.0 — Voice foundation, terminal preview, TOFU cert pinning
-• v0.1.0 — Chat, sessions, QR pairing, encrypted storage
+Activity Log
+• Now actually records what the agent did — every tap, type, open_app, etc.
+• Success / Failed / Blocked status with route-specific summaries
+• Polling noise (ping, events) suppressed
+
+Other
+• "Current app" status finally populates and updates live (~5s tick)
+• Banner status-bar overlap fixed
+• TalkBack semantics added to global banner
