@@ -182,6 +182,23 @@ class VoicePlayer(context: Context) {
     fun isPlaying(): Boolean = _queueCount.value > 0
 
     /**
+     * Current ExoPlayer audio session id. Returns `0` until the underlying
+     * [android.media.AudioTrack] has been allocated — Media3 defers that
+     * allocation to first playback on most devices. Callers that need a
+     * non-zero session id (barge-in's [android.media.audiofx.AcousticEchoCanceler]
+     * attach path in [com.hermesandroid.relay.audio.BargeInListener]) should
+     * poll this property briefly rather than assume it's hot-ready at
+     * [VoicePlayer] construction time.
+     *
+     * Exposed read-only. Internally the same id drives the Visualizer
+     * attach logic in [attachVisualizer]; B4 reads it via a provider
+     * lambda so the listener can re-check across the 1 s poll window
+     * without holding a stale reference.
+     */
+    val audioSessionId: Int
+        get() = exoPlayer.audioSessionId
+
+    /**
      * Set the playback volume of the underlying ExoPlayer.
      *
      * **Barge-in use case.** The barge-in pipeline (see

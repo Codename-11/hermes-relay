@@ -5,9 +5,14 @@ import android.util.Log
 import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.hermesandroid.relay.audio.BargeInListener
+import com.hermesandroid.relay.audio.VadEngine
 import com.hermesandroid.relay.audio.VoicePlayer
 import com.hermesandroid.relay.audio.VoiceRecorder
 import com.hermesandroid.relay.audio.VoiceSfxPlayer
+import com.hermesandroid.relay.data.BargeInPreferences
+import com.hermesandroid.relay.data.BargeInPreferencesRepository
+import com.hermesandroid.relay.data.BargeInSensitivity
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.network.ChannelMultiplexer
@@ -36,6 +41,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.contentOrNull
 import java.io.File
 import java.util.Collections
@@ -169,6 +175,32 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
          * the user doesn't perceive a stall.
          */
         private const val TIMER_FLUSH_MS = 800L
+
+        /**
+         * Duck watchdog window (B4). If `maybeSpeech` ducks the TTS but no
+         * `bargeInDetected` fires within this many ms, the single VAD
+         * positive was almost certainly a false-positive and we restore
+         * full volume so the agent continues audibly.
+         */
+        internal const val DUCK_WATCHDOG_MS = 500L
+
+        /**
+         * Resume watchdog window (B4). After a hard barge-in interrupt, the
+         * VoiceViewModel listens for user-speech silence for this many ms
+         * before deciding the interrupt was a brief cough / false-positive
+         * that didn't lead into an actual utterance. On silence + resume-
+         * enabled, we re-enqueue the un-played chunks.
+         */
+        internal const val RESUME_WATCHDOG_MS = 600L
+
+        /**
+         * Amplitude threshold (0f..1f) below which the post-barge-in window
+         * is treated as silence. [VoiceRecorder.amplitude] is already
+         * perceptually-scaled; empirically a value of 0.08 excludes mic
+         * hiss + room tone on Bailey's devices while still catching a
+         * whispered continuation. Tune from telemetry if this bites.
+         */
+        internal const val RESUME_SILENCE_THRESHOLD: Float = 0.08f
 
         /**
          * Explicit allow-list of cancel utterances. Intentionally NOT
@@ -318,6 +350,100 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         Collections.synchronizedSet(mutableSetOf())
 
     // ---------------------------------------------------------------------
+    // B4 barge-in state (voice-barge-in 2026-04-17)
+    // ---------------------------------------------------------------------
+    //
+    // BargeInListener is created lazily on the transition into Speaking when
+    // the user has barge-in enabled + a non-Off sensitivity, then torn down
+    // on Speaking-exit. The lifecycle is "per Speaking turn" — one listener
+    // per response the agent gives, not one for the lifetime of voice mode.
+    //
+    // The listener owns an AudioRecord under the hood; bracketing it around
+    // Speaking keeps the mic permission footprint tight, avoids contesting
+    // with the VoiceRecorder during Listening, and means "barge-in = off"
+    // genuinely means no mic is ever opened during Speaking.
+    //
+    // [bargeInPreferences] is initialized from [initialize] and mirrors the
+    // datastore value via [viewModelScope]. Null before initialize — which
+    // matches the rest of the collaborator pattern. Reads during Speaking
+    // transitions are against the latest StateFlow value, not the store.
+
+    private var bargeInPreferences: BargeInPreferencesRepository? = null
+    private var vadEngineFactory: (() -> VadEngine)? = null
+    private var bargeInListenerFactory: ((VadEngine, () -> Int) -> BargeInListener)? = null
+
+    /**
+     * Current barge-in settings snapshot. Updated reactively from the
+     * repository flow; read synchronously on the Speaking-entry path.
+     */
+    private val _bargeInPrefs = MutableStateFlow(BargeInPreferences())
+
+    /**
+     * The active listener for the current Speaking turn. Null outside of
+     * Speaking or when barge-in is off.
+     */
+    private var bargeInListener: BargeInListener? = null
+    private var bargeInListenerJob: Job? = null
+    private var bargeInVadEngine: VadEngine? = null
+
+    /**
+     * The ordered list of sentence chunks the synth worker has seen during
+     * the current Speaking turn. Appended inside `runSynthWorker`'s
+     * synthesize callback (additive, no contract change to V4) so the
+     * barge-in resume path can re-enqueue un-played chunks.
+     *
+     * Cleared via [clearSpokenChunksState] at turn boundaries — new user
+     * input, successful drain, or exit from voice mode.
+     *
+     * Synchronized via the same `Collections.synchronizedList` discipline
+     * as [pendingTtsFiles]. Access is cheap (append + read-at-index) and
+     * concurrent reads are allowed.
+     */
+    private val spokenChunks: MutableList<String> =
+        Collections.synchronizedList(mutableListOf())
+
+    /**
+     * Monotonically-incrementing index of the chunk currently handed to
+     * [VoicePlayer.play]. `-1` means no chunk has started this turn; the
+     * play worker increments it each time [runTtsPlayWorker]'s `onFileReady`
+     * fires (which is also the Speaking-state transition point).
+     *
+     * Exposed as a read-only [StateFlow] for observability; barge-in reads
+     * the latest value synchronously when the VAD fires.
+     */
+    private val _currentPlayingChunkIndex = MutableStateFlow(-1)
+    val currentPlayingChunkIndex: StateFlow<Int> = _currentPlayingChunkIndex.asStateFlow()
+
+    /**
+     * Chunk index that was playing at the moment of the last barge-in
+     * interruption. Null outside an active interruption window. Used by the
+     * resume-watchdog to slice [spokenChunks] at `lastInterruptedAtChunkIndex + 1`
+     * and re-enqueue the tail.
+     */
+    private var lastInterruptedAtChunkIndex: Int? = null
+
+    /** True while TTS volume is ducked from a `maybeSpeech` event. */
+    @Volatile private var isDucked: Boolean = false
+
+    /**
+     * Timer that un-ducks 500 ms after [onMaybeSpeech] if no
+     * `bargeInDetected` follows (single-frame VAD false-positive). Cancelled
+     * and restarted on every [onMaybeSpeech]; cancelled outright by
+     * [onBargeInDetected] which hands off to the hard-interrupt path.
+     */
+    private var duckingWatchdog: Job? = null
+
+    /**
+     * Timer that polls the VoiceRecorder amplitude for 600 ms after a hard
+     * barge-in interrupt. If peak stays below [RESUME_SILENCE_THRESHOLD],
+     * we treat it as "user didn't actually continue speaking" and
+     * re-enqueue the un-played tail of [spokenChunks] (gated on
+     * [BargeInPreferences.resumeAfterInterruption]). Cancelled if a new
+     * user turn begins normally or if we exit voice mode.
+     */
+    private var resumeWatchdog: Job? = null
+
+    // ---------------------------------------------------------------------
     // Initialization
     // ---------------------------------------------------------------------
 
@@ -342,12 +468,46 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         bridgeMultiplexer: ChannelMultiplexer? = null,
         localBridgeDispatcher: LocalBridgeDispatcher? = null,
         // === END PHASE3-voice-intents ===
+        // === B4 barge-in: optional so the pre-barge-in call sites compile.
+        // When all three are null, barge-in is silently disabled — e.g. an
+        // emulator without a working VAD build, or unit tests that don't
+        // exercise the listener path. When any one is non-null the triple
+        // must be complete; we log and disable barge-in if not. ===
+        bargeInPreferences: BargeInPreferencesRepository? = null,
+        vadEngineFactory: (() -> VadEngine)? = null,
+        bargeInListenerFactory: ((VadEngine, () -> Int) -> BargeInListener)? = null,
     ) {
         this.voiceClient = voiceClient
         this.chatViewModel = chatViewModel
         this.recorder = recorder
         this.player = player
         this.sfxPlayer = sfxPlayer
+
+        // B4 barge-in wiring. All-or-nothing: if any of the three is null
+        // we disable barge-in entirely rather than half-wiring. This
+        // matches the "default off at launch" posture in the plan.
+        if (bargeInPreferences != null && vadEngineFactory != null && bargeInListenerFactory != null) {
+            this.bargeInPreferences = bargeInPreferences
+            this.vadEngineFactory = vadEngineFactory
+            this.bargeInListenerFactory = bargeInListenerFactory
+            viewModelScope.launch {
+                bargeInPreferences.flow.collect { prefs ->
+                    _bargeInPrefs.value = prefs
+                    // If the user flips the toggle off mid-Speaking, tear
+                    // the listener down immediately — don't wait for the
+                    // next Speaking transition.
+                    if ((!prefs.enabled || prefs.sensitivity == BargeInSensitivity.Off) &&
+                        bargeInListener != null
+                    ) {
+                        stopBargeInListener()
+                    }
+                }
+            }
+        } else if (bargeInPreferences != null || vadEngineFactory != null ||
+            bargeInListenerFactory != null
+        ) {
+            Log.w(TAG, "barge-in collaborators only partially wired; disabling barge-in")
+        }
 
         // === PHASE3-voice-intents: voice→bridge intent routing ===
         // Call the flavor-selected factory exactly once. On googlePlay this
@@ -452,6 +612,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     fun exitVoiceMode() {
         // Chime BEFORE teardown — AudioTrack release would cut it off otherwise.
         try { sfxPlayer?.playExit() } catch (_: Exception) { /* ignore */ }
+        // B4: tear down the barge-in listener + timers before we kill the
+        // player so AEC doesn't try to track a released audio session.
+        stopBargeInListener()
+        duckingWatchdog?.cancel(); duckingWatchdog = null
+        resumeWatchdog?.cancel(); resumeWatchdog = null
+        clearSpokenChunksState()
         // Tear down anything in flight.
         try {
             recorder?.cancel()
@@ -511,6 +677,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (_uiState.value.state == VoiceState.Listening) return
 
+        // B4: user manually started a turn → tear down the barge-in
+        // listener and cancel any pending resume. Normal "tap mic to
+        // talk" path also lands here, so we always leave Speaking cleanly.
+        stopBargeInListener()
+        resumeWatchdog?.cancel(); resumeWatchdog = null
+        lastInterruptedAtChunkIndex = null
+        clearSpokenChunksState()
+
         // Stop any TTS playback when the user starts talking.
         try { player?.stop() } catch (_: Exception) { /* ignore */ }
 
@@ -562,6 +736,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * mental model is "stop" = ready to start a new turn on mic tap).
      */
     fun interruptSpeaking() {
+        // B4: tear down the barge-in listener immediately so we don't
+        // double-trigger on the ducking watchdog or emit another
+        // bargeInDetected while the resume watchdog is deliberating.
+        // stopBargeInListener is null-safe.
+        stopBargeInListener()
         // Drain queued sentences without closing the channel.
         while (true) {
             val r = ttsQueue.tryReceive()
@@ -860,6 +1039,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         streamComplete = false
         idleFlushJob?.cancel()
         idleFlushJob = null
+        // B4: wipe the barge-in resume state — the user started a fresh
+        // turn, so anything that was queued for a potential resume is now
+        // stale. Also cancel any pending resume watchdog so it can't fire
+        // against the new turn's Speaking chunks.
+        resumeWatchdog?.cancel(); resumeWatchdog = null
+        clearSpokenChunksState()
 
         // Capture the id of the assistant message that currently sits at
         // the end of history. StateFlow.collect replays the current value
@@ -1150,6 +1335,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * Synth worker: consume sentences from [ttsQueue], produce audio
      * files into [queue]. Delegates to the testable [runTtsSynthWorker]
      * top-level function with this ViewModel's dependencies bound.
+     *
+     * B4 hook: on successful synthesize we append the sentence to
+     * [spokenChunks] so the barge-in resume path can later re-enqueue
+     * un-played tail chunks. Additive to the V4 worker contract — the
+     * worker itself is unaware; we wrap the `synthesize` callable.
      */
     private suspend fun runSynthWorker(queue: Channel<File>) {
         runTtsSynthWorker(
@@ -1157,11 +1347,21 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             output = queue,
             synthesize = { sentence ->
                 val client = voiceClient
-                if (client == null) {
+                val result = if (client == null) {
                     Result.failure(IllegalStateException("voiceClient not initialized"))
                 } else {
                     client.synthesize(sentence)
                 }
+                // B4: track the chunk regardless of success so the resume
+                // path can decide whether the text was spoken or not. Only
+                // successful synthesis makes it into spokenChunks — a
+                // failed chunk never reached the player, so replaying it
+                // in a resume would double-surface the sentence while the
+                // user's screen shows it skipped.
+                if (result.isSuccess) {
+                    spokenChunks.add(sentence)
+                }
+                result
             },
             pendingFiles = pendingTtsFiles,
             onSynthError = { err -> surfaceError(err, context = "synthesize") },
@@ -1172,6 +1372,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * Play worker: consume files from [queue], hand each to [VoicePlayer]
      * and await its drain. Delegates to the testable [runTtsPlayWorker]
      * top-level function with this ViewModel's dependencies bound.
+     *
+     * B4 hook: on each new file we bump [_currentPlayingChunkIndex] and
+     * start the BargeInListener if it isn't running and the user has
+     * opted into barge-in. Teardown happens elsewhere (interruptSpeaking,
+     * exitVoiceMode, maybeAutoResume).
      */
     private suspend fun runPlayWorker(queue: Channel<File>) {
         runTtsPlayWorker(
@@ -1184,10 +1389,26 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 if (_uiState.value.voiceMode && _uiState.value.state != VoiceState.Speaking) {
                     _uiState.update { it.copy(state = VoiceState.Speaking) }
                 }
+                // B4: advance the playing-chunk cursor BEFORE we call
+                // trackTtsFile so lastInterruptedAtChunkIndex reflects
+                // "currently playing" from the moment play() returns.
+                _currentPlayingChunkIndex.value = _currentPlayingChunkIndex.value + 1
                 trackTtsFile(file)
+                // B4: first chunk of a Speaking run → spin up the listener
+                // if the user has it enabled. Idempotent — startBargeInListener
+                // no-ops if already active.
+                startBargeInListenerIfEnabled()
             },
             pendingFiles = pendingTtsFiles,
-            onQueueDrained = { maybeAutoResume() },
+            onQueueDrained = {
+                // B4: queue drained at end of response → Speaking is about
+                // to flip to Idle via maybeAutoResume. Tear the listener
+                // down now rather than waiting for the state update so we
+                // don't leak mic time across the Speaking→Idle boundary.
+                stopBargeInListener()
+                clearSpokenChunksState()
+                maybeAutoResume()
+            },
         )
     }
 
@@ -1237,6 +1458,358 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         ) {
             startListening()
         }
+    }
+
+    // ---------------------------------------------------------------------
+    // B4 barge-in — lifecycle + event wiring (voice-barge-in 2026-04-17)
+    // ---------------------------------------------------------------------
+
+    /**
+     * Start a [BargeInListener] for the current Speaking turn if the user
+     * has barge-in enabled with a non-Off sensitivity and the listener is
+     * not already running. Idempotent. Safe to call on any dispatcher.
+     *
+     * The listener's `start` lazily attaches AEC against the ExoPlayer's
+     * audio session id — we pass a lambda that reads it every time so the
+     * listener's internal poll loop can watch it flip from 0 to non-zero
+     * as playback begins.
+     */
+    private fun startBargeInListenerIfEnabled() {
+        // Already running → no-op. We bracket per Speaking turn, not per
+        // chunk within a turn.
+        if (bargeInListener != null) return
+
+        val factory = bargeInListenerFactory ?: return
+        val vadFactory = vadEngineFactory ?: return
+        val prefs = _bargeInPrefs.value
+        if (!prefs.enabled || prefs.sensitivity == BargeInSensitivity.Off) return
+
+        val p = player ?: return
+
+        val vad = try {
+            vadFactory().also { it.setSensitivity(prefs.sensitivity) }
+        } catch (t: Throwable) {
+            Log.w(TAG, "VadEngine construction failed; skipping barge-in: ${t.message}")
+            return
+        }
+        bargeInVadEngine = vad
+
+        val listener = try {
+            factory(vad) { p.audioSessionId }
+        } catch (t: Throwable) {
+            Log.w(TAG, "BargeInListener construction failed; skipping barge-in: ${t.message}")
+            try { vad.close() } catch (_: Throwable) { /* ignore */ }
+            bargeInVadEngine = null
+            return
+        }
+
+        bargeInListener = listener
+        bargeInListenerJob = viewModelScope.launch {
+            // Fan out the two event flows on child coroutines of this job.
+            launch { listener.maybeSpeech.collect { onMaybeSpeech() } }
+            launch { listener.bargeInDetected.collect { onBargeInDetected() } }
+        }
+        try {
+            listener.start(viewModelScope)
+        } catch (t: Throwable) {
+            Log.w(TAG, "BargeInListener.start failed: ${t.message}")
+            stopBargeInListener()
+        }
+    }
+
+    /**
+     * Tear down the active [BargeInListener], cancel its event subscribers,
+     * unduck the player (in case a ducking watchdog hadn't yet restored
+     * volume), and release the owned VAD engine. Idempotent.
+     */
+    private fun stopBargeInListener() {
+        bargeInListenerJob?.cancel(); bargeInListenerJob = null
+        try { bargeInListener?.stop() } catch (_: Throwable) { /* ignore */ }
+        bargeInListener = null
+        try { bargeInVadEngine?.close() } catch (_: Throwable) { /* ignore */ }
+        bargeInVadEngine = null
+        duckingWatchdog?.cancel(); duckingWatchdog = null
+        // Best-effort un-duck so the next playback starts at full volume.
+        if (isDucked) {
+            try { player?.unduck() } catch (_: Throwable) { /* ignore */ }
+            isDucked = false
+        }
+    }
+
+    /**
+     * Raw-VAD positive frame — soft-duck the TTS and arm the un-duck
+     * watchdog. If the next frame passes the hysteresis threshold,
+     * [onBargeInDetected] fires and cancels the watchdog; otherwise the
+     * watchdog restores full volume after [DUCK_WATCHDOG_MS].
+     *
+     * Idempotent for "already ducked" — keeps the watchdog fresh so a
+     * bursty speech signal keeps the duck alive without flickering.
+     */
+    internal fun onMaybeSpeech() {
+        if (!isDucked) {
+            try { player?.duck() } catch (_: Throwable) { /* ignore */ }
+            isDucked = true
+        }
+        scheduleDuckingWatchdog()
+    }
+
+    /**
+     * Post-hysteresis VAD fire — the user is actually speaking. Capture
+     * the current playing chunk for resume, call [interruptSpeaking] to
+     * tear down the synth/play pipeline, flip state to Listening,
+     * pre-warm the recorder, and arm the resume watchdog.
+     *
+     * The order matters: capture [lastInterruptedAtChunkIndex] BEFORE
+     * [interruptSpeaking] because we don't want the interrupt path's
+     * state updates racing our read of [_currentPlayingChunkIndex].
+     * We keep [spokenChunks] intact here — [interruptSpeaking] must
+     * NOT clear it; the resume watchdog will consume it.
+     */
+    internal fun onBargeInDetected() {
+        duckingWatchdog?.cancel(); duckingWatchdog = null
+        lastInterruptedAtChunkIndex = _currentPlayingChunkIndex.value
+
+        // interruptSpeaking tears down the listener itself, so subsequent
+        // bargeInDetected emissions are impossible until the next
+        // Speaking entry. Belt-and-braces: we also cancel the subscriber
+        // job as part of stopBargeInListener which interruptSpeaking calls.
+        interruptSpeaking()
+
+        // interruptSpeaking landed us in Idle — flip to Listening and
+        // pre-warm the recorder so the first ~100 ms of user speech
+        // isn't clipped by recorder cold-start.
+        _uiState.update { it.copy(state = VoiceState.Listening, error = null, responseText = "") }
+        val rec = recorder
+        if (rec != null && !rec.isRecording()) {
+            try {
+                rec.startRecording()
+            } catch (t: Throwable) {
+                Log.w(TAG, "barge-in pre-warm recorder failed: ${t.message}")
+                surfaceError(t, context = "record")
+                return
+            }
+        }
+
+        scheduleResumeWatchdog()
+    }
+
+    /**
+     * Arm (or re-arm) the duck watchdog. Cancels any pending job first so
+     * a rapid burst of `maybeSpeech` frames keeps extending the watchdog
+     * window instead of stacking timers.
+     */
+    private fun scheduleDuckingWatchdog() {
+        duckingWatchdog?.cancel()
+        duckingWatchdog = viewModelScope.launch {
+            delay(DUCK_WATCHDOG_MS)
+            // Watchdog fired — no bargeInDetected arrived in time. This
+            // was almost certainly a single-frame false positive. Restore
+            // full volume.
+            if (isDucked) {
+                try { player?.unduck() } catch (_: Throwable) { /* ignore */ }
+                isDucked = false
+            }
+        }
+    }
+
+    /**
+     * Arm the resume watchdog. After [RESUME_WATCHDOG_MS] of user-speech
+     * silence (peak VoiceRecorder amplitude < [RESUME_SILENCE_THRESHOLD])
+     * and with `resumeAfterInterruption == true`, re-enqueue the un-played
+     * tail of [spokenChunks] so TTS picks up where it left off.
+     *
+     * "Silence" signal choice — we use [VoiceRecorder.amplitude] rather
+     * than re-subscribing to the BargeInListener. Reasons:
+     *   1. The listener was stopped by [interruptSpeaking]; restarting it
+     *      mid-watchdog would double-open AudioRecord.
+     *   2. The recorder is already running (pre-warmed in
+     *      [onBargeInDetected]) and its amplitude flow is hot.
+     *   3. Amplitude is a simpler, threshold-based signal — if the user
+     *      trailed off after a cough, the follower settles back to zero
+     *      quickly; if they're actively speaking, it stays well above
+     *      the threshold across the 600 ms window.
+     */
+    private fun scheduleResumeWatchdog() {
+        resumeWatchdog?.cancel()
+        resumeWatchdog = viewModelScope.launch {
+            val peak = observePeakAmplitude(RESUME_WATCHDOG_MS)
+            val prefs = _bargeInPrefs.value
+            val wasSilent = peak < RESUME_SILENCE_THRESHOLD
+
+            if (!wasSilent) {
+                // User kept speaking. Clear the resume state — the new
+                // turn should proceed normally; their utterance will be
+                // handled by the existing stopListening → processVoiceInput
+                // pipeline.
+                lastInterruptedAtChunkIndex = null
+                return@launch
+            }
+
+            // Silence after interrupt. If resume is off, drop the tail
+            // and return to Idle (the user wanted a hard cancel semantic).
+            if (!prefs.resumeAfterInterruption) {
+                lastInterruptedAtChunkIndex = null
+                // Recorder was pre-warmed under the assumption the user
+                // would keep speaking; cancel it so it doesn't hang open.
+                try { recorder?.cancel() } catch (_: Throwable) { /* ignore */ }
+                _uiState.update { it.copy(state = VoiceState.Idle, amplitude = 0f) }
+                return@launch
+            }
+
+            // Silence + resume enabled → re-enqueue un-played chunks.
+            val startIdx = (lastInterruptedAtChunkIndex ?: -1) + 1
+            val snapshot: List<String> = synchronized(spokenChunks) { spokenChunks.toList() }
+            val tail = if (startIdx in snapshot.indices) snapshot.drop(startIdx) else emptyList()
+
+            // Cancel the recorder that was pre-warmed for a user turn
+            // that didn't materialize.
+            try { recorder?.cancel() } catch (_: Throwable) { /* ignore */ }
+
+            if (tail.isEmpty()) {
+                lastInterruptedAtChunkIndex = null
+                _uiState.update { it.copy(state = VoiceState.Idle, amplitude = 0f) }
+                return@launch
+            }
+
+            // Reset per-turn tracking so the play worker's chunk cursor
+            // starts fresh on the resumed tail and spokenChunks rebuilds
+            // cleanly when the synth worker re-processes the re-enqueued
+            // text.
+            lastInterruptedAtChunkIndex = null
+            clearSpokenChunksState()
+
+            // Flip UI back to Speaking and un-duck in case the watchdog
+            // didn't clear earlier (shouldn't happen — duckingWatchdog
+            // was cancelled in onBargeInDetected — but cheap insurance).
+            if (isDucked) {
+                try { player?.unduck() } catch (_: Throwable) { /* ignore */ }
+                isDucked = false
+            }
+            _uiState.update { it.copy(state = VoiceState.Speaking) }
+
+            // Send each tail chunk back through the TTS queue. The synth
+            // worker will re-synthesize (our cache isn't content-addressed)
+            // and the play worker will pick them up in order.
+            for (chunk in tail) {
+                val sent = ttsQueue.trySend(chunk)
+                if (sent.isFailure) {
+                    Log.w(TAG, "resume re-enqueue dropped chunk: ${sent.exceptionOrNull()?.message}")
+                    break
+                }
+            }
+            // Re-arm the barge-in listener for the resumed Speaking — the
+            // play worker's onFileReady will also trigger this but a
+            // redundant call is a cheap no-op.
+            startBargeInListenerIfEnabled()
+        }
+    }
+
+    /**
+     * Suspend for up to [windowMs] and return the peak
+     * [VoiceRecorder.amplitude] observed during the window. If the
+     * recorder never emits (not initialized or cancelled mid-window),
+     * returns 0f.
+     *
+     * Implementation note: we `first { ... }` on an above-threshold
+     * value with a short timeout so we can fast-exit the moment the user
+     * is clearly speaking — but we still need the full window when they
+     * stay silent, so the no-match path falls back to the last seen peak.
+     * For simplicity we use the full window uniformly; the resume
+     * decision is infrequent (one fire per interrupt) so the extra
+     * 600 ms latency on a confirmed resume is acceptable.
+     */
+    private suspend fun observePeakAmplitude(windowMs: Long): Float {
+        val rec = recorder ?: return 0f
+        var peak = 0f
+        withTimeoutOrNull(windowMs) {
+            rec.amplitude.collect { amp ->
+                val sanitized = sanitizeAmplitude(amp)
+                if (sanitized > peak) peak = sanitized
+            }
+        }
+        return peak
+    }
+
+    /**
+     * Clear the per-turn barge-in state so the next Speaking turn starts
+     * from index -1 with an empty [spokenChunks]. Called on turn
+     * boundaries and voice-mode exit.
+     */
+    private fun clearSpokenChunksState() {
+        synchronized(spokenChunks) { spokenChunks.clear() }
+        _currentPlayingChunkIndex.value = -1
+    }
+
+    // ---------------------------------------------------------------------
+    // B4 barge-in — test seams (voice-barge-in 2026-04-17)
+    // ---------------------------------------------------------------------
+    //
+    // These are `internal` solely so `VoiceViewModelBargeInTest` in the test
+    // source set can exercise the coordinator without spinning up the full
+    // VoicePlayer → ExoPlayer → supervisorScope pipeline that owns the
+    // production startBargeInListenerIfEnabled call site (runPlayWorker's
+    // onFileReady). Production callers never invoke these.
+
+    /**
+     * Test hook: force the lazy barge-in listener creation path without
+     * pushing a file through the play pipeline. No-op if barge-in is off
+     * or collaborators aren't wired — matches the production predicate in
+     * [startBargeInListenerIfEnabled].
+     */
+    @androidx.annotation.VisibleForTesting
+    internal fun startBargeInListenerForTest() {
+        startBargeInListenerIfEnabled()
+    }
+
+    /**
+     * Test hook: seed the Speaking state + spoken-chunk ledger so a
+     * synthetic `onBargeInDetected()` can exercise the resume-watchdog
+     * decisions without re-running the V4 synth worker. Mirrors the
+     * invariants the synth worker + play worker would have established on
+     * a live turn (one successful synthesize per chunk, chunkIndex reflects
+     * currently-playing file).
+     */
+    @androidx.annotation.VisibleForTesting
+    internal fun seedSpeakingStateForTest(chunks: List<String>, currentIdx: Int) {
+        synchronized(spokenChunks) {
+            spokenChunks.clear()
+            spokenChunks.addAll(chunks)
+        }
+        _currentPlayingChunkIndex.value = currentIdx
+        _uiState.update { it.copy(voiceMode = true, state = VoiceState.Speaking) }
+    }
+
+    /**
+     * Test hook: cancel the V4 synth/play consumer scope so subsequent
+     * `ttsQueue.trySend` calls aren't raced by the background worker.
+     * Used by the resume-watchdog tests to get a deterministic view of
+     * the queue — production never calls this.
+     */
+    @androidx.annotation.VisibleForTesting
+    internal fun stopTtsConsumerForTest() {
+        ttsConsumerJob?.cancel()
+        ttsConsumerJob = null
+    }
+
+    /**
+     * Test hook: non-blocking drain of the TTS queue into a list. Used by
+     * the resume-watchdog tests to assert which chunks were re-enqueued.
+     * The consumer pipeline also reads from this channel, so drain order
+     * matters — in tests we stop the consumer (or never touch it) before
+     * calling this to get a deterministic view.
+     */
+    @androidx.annotation.VisibleForTesting
+    internal fun drainTtsQueueForTest(): List<String> {
+        val out = mutableListOf<String>()
+        while (true) {
+            val r = ttsQueue.tryReceive()
+            if (r.isSuccess) {
+                r.getOrNull()?.let { out.add(it) }
+            } else {
+                break
+            }
+        }
+        return out
     }
 
     private fun trackTtsFile(file: File) {
@@ -1340,6 +1913,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        // B4: release the listener + VAD engine native resources before
+        // anything else. stopBargeInListener is defensive / idempotent.
+        stopBargeInListener()
+        duckingWatchdog?.cancel()
+        resumeWatchdog?.cancel()
         try { recorder?.cancel() } catch (_: Exception) { /* ignore */ }
         try { player?.stop() } catch (_: Exception) { /* ignore */ }
         try { sfxPlayer?.release() } catch (_: Exception) { /* ignore */ }
