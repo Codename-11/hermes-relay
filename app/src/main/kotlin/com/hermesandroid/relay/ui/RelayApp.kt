@@ -258,6 +258,10 @@ fun RelayApp() {
             bridgeMultiplexer = connectionViewModel.multiplexer,
             localBridgeDispatcher = connectionViewModel.bridgeCommandHandler::handleLocalCommand,
             // === END PHASE3-voice-intents-localdispatch ===
+            // 2026-04-17: persist the interaction-mode preference across
+            // app restarts. VoicePreferencesRepository is the same repo
+            // VoiceSettingsScreen reads/writes.
+            voicePreferences = com.hermesandroid.relay.data.VoicePreferencesRepository(mediaContext),
         )
     }
 

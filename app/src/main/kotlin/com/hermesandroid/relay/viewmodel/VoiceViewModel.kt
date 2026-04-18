@@ -45,6 +45,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.contentOrNull
 import java.io.File
 import java.util.Collections
+import java.util.concurrent.atomic.AtomicInteger
+import com.hermesandroid.relay.data.VoicePreferencesRepository
 
 /**
  * Where we are in the voice conversation cycle. Used to drive the UI
@@ -267,6 +269,29 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     /** Bounded channel queues sentences pending synthesis/playback. */
     private val ttsQueue = Channel<String>(Channel.UNLIMITED)
 
+    /**
+     * Sentences that have been [Channel.trySend]-enqueued to [ttsQueue] but
+     * whose synthesize round-trip has not yet completed. Incremented at each
+     * successful trySend; decremented in the synth worker's synthesize
+     * lambda's finally block (covering both success and failure paths, and
+     * covering the full "queued → being synthesized" window).
+     *
+     * Combined with [pendingTtsFiles] (synthesized-but-not-yet-played), this
+     * lets [maybeAutoResume] detect when the TTS pipeline is truly drained.
+     *
+     * **Why this gate exists.** The original v0.4.1 maybeAutoResume fired
+     * whenever [runTtsPlayWorker]'s `tryReceive` returned empty on the
+     * audioQueue — but the audioQueue goes transiently empty while a short
+     * final sentence is mid-synthesis (flushed to ttsQueue right before the
+     * observer cancels, synth takes ~200 ms on eleven_flash_v2_5). In
+     * Continuous mode, `startListening()` calls `player.stop()`, which
+     * clobbers the ExoPlayer queue before the freshly-synthesized final
+     * chunk can be enqueued for playback — producing Bailey's "last
+     * sentence not spoken" report on short emoji-ending replies
+     * (2026-04-17 on-device testing).
+     */
+    private val pendingInTtsQueue = AtomicInteger(0)
+
     /** Tracks which assistant-message IDs have already been consumed so
      *  we don't re-process older turns when the history list updates. */
     private var lastObservedMessageId: String? = null
@@ -476,6 +501,15 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         bargeInPreferences: BargeInPreferencesRepository? = null,
         vadEngineFactory: (() -> VadEngine)? = null,
         bargeInListenerFactory: ((VadEngine, () -> Int) -> BargeInListener)? = null,
+        // === 2026-04-17 fix: persist interactionMode across app restarts ===
+        // Optional so pre-fix call sites keep compiling. When non-null, the
+        // VM subscribes to the settings flow and mirrors `interactionMode`
+        // into `uiState` on every emission — so the user's stored "continuous"
+        // preference takes effect on the first voice-mode entry after a cold
+        // start, not only after they revisit Voice Settings. Without this the
+        // VM defaulted to [InteractionMode.TapToTalk] per [VoiceUiState] and
+        // the Continuous auto-resume branch never fired for saved-pref users.
+        voicePreferences: VoicePreferencesRepository? = null,
     ) {
         this.voiceClient = voiceClient
         this.chatViewModel = chatViewModel
@@ -507,6 +541,26 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             bargeInListenerFactory != null
         ) {
             Log.w(TAG, "barge-in collaborators only partially wired; disabling barge-in")
+        }
+
+        // 2026-04-17 fix: mirror VoicePreferences.interactionMode into
+        // uiState so the user's stored "continuous" / "hold" preference
+        // survives app restarts. Previously only the VoiceSettingsScreen
+        // push-path called setInteractionMode(), leaving fresh VMs stuck
+        // on TapToTalk until the user revisited Settings.
+        if (voicePreferences != null) {
+            viewModelScope.launch {
+                voicePreferences.settings.collect { settings ->
+                    val mode = when (settings.interactionMode.lowercase()) {
+                        "hold" -> InteractionMode.HoldToTalk
+                        "continuous" -> InteractionMode.Continuous
+                        else -> InteractionMode.TapToTalk
+                    }
+                    if (_uiState.value.interactionMode != mode) {
+                        _uiState.update { it.copy(interactionMode = mode) }
+                    }
+                }
+            }
         }
 
         // === PHASE3-voice-intents: voice→bridge intent routing ===
@@ -636,6 +690,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         while (true) {
             val r = ttsQueue.tryReceive()
             if (r.isFailure || r.isClosed) break
+            pendingInTtsQueue.decrementAndGet()
         }
         // V4 pipeline teardown (see interruptSpeaking for rationale).
         ttsConsumerJob?.cancel()
@@ -1209,15 +1264,27 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Enqueue a sentence for the synth worker. Returns true on success.
+     * Centralizes the [pendingInTtsQueue] increment so every producer
+     * participates in the pipeline-drained gate — see the field KDoc for
+     * the race this closes.
+     */
+    private fun enqueueSentenceForTts(sentence: String): Boolean {
+        val sent = ttsQueue.trySend(sentence)
+        if (sent.isSuccess) {
+            pendingInTtsQueue.incrementAndGet()
+            return true
+        }
+        Log.w(TAG, "TTS queue refused sentence: ${sent.exceptionOrNull()?.message}")
+        return false
+    }
+
     private fun drainSentences() {
         while (true) {
             val sentence = extractNextSentence(sentenceBuffer, streamComplete) ?: return
             if (sentence.isBlank()) continue
-            val sent = ttsQueue.trySend(sentence)
-            if (sent.isFailure) {
-                Log.w(TAG, "TTS queue refused sentence: ${sent.exceptionOrNull()?.message}")
-                return
-            }
+            if (!enqueueSentenceForTts(sentence)) return
         }
     }
 
@@ -1233,11 +1300,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         while (true) {
             val sentence = extractNextSentence(sentenceBuffer, streamComplete = true) ?: return
             if (sentence.isBlank()) continue
-            val sent = ttsQueue.trySend(sentence)
-            if (sent.isFailure) {
-                Log.w(TAG, "TTS queue refused sentence: ${sent.exceptionOrNull()?.message}")
-                return
-            }
+            if (!enqueueSentenceForTts(sentence)) return
         }
     }
 
@@ -1262,7 +1325,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         val trailing = sentenceBuffer.toString().trim()
         sentenceBuffer = StringBuilder()
         if (trailing.isNotEmpty()) {
-            ttsQueue.trySend(trailing)
+            enqueueSentenceForTts(trailing)
         }
     }
 
@@ -1346,22 +1409,29 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             sentences = ttsQueue,
             output = queue,
             synthesize = { sentence ->
-                val client = voiceClient
-                val result = if (client == null) {
-                    Result.failure(IllegalStateException("voiceClient not initialized"))
-                } else {
-                    client.synthesize(sentence)
+                try {
+                    val client = voiceClient
+                    val result = if (client == null) {
+                        Result.failure(IllegalStateException("voiceClient not initialized"))
+                    } else {
+                        client.synthesize(sentence)
+                    }
+                    // B4: track the chunk regardless of success so the resume
+                    // path can decide whether the text was spoken or not. Only
+                    // successful synthesis makes it into spokenChunks — a
+                    // failed chunk never reached the player, so replaying it
+                    // in a resume would double-surface the sentence while the
+                    // user's screen shows it skipped.
+                    if (result.isSuccess) {
+                        spokenChunks.add(sentence)
+                    }
+                    result
+                } finally {
+                    // Covers both success and failure so the Continuous-mode
+                    // auto-resume gate sees the pipeline as drained even when
+                    // a synth call throws. See pendingInTtsQueue KDoc.
+                    pendingInTtsQueue.decrementAndGet()
                 }
-                // B4: track the chunk regardless of success so the resume
-                // path can decide whether the text was spoken or not. Only
-                // successful synthesis makes it into spokenChunks — a
-                // failed chunk never reached the player, so replaying it
-                // in a resume would double-surface the sentence while the
-                // user's screen shows it skipped.
-                if (result.isSuccess) {
-                    spokenChunks.add(sentence)
-                }
-                result
             },
             pendingFiles = pendingTtsFiles,
             onSynthError = { err -> surfaceError(err, context = "synthesize") },
@@ -1450,6 +1520,19 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         val observerStopped = streamObserverJob?.isActive != true
         if (!observerStopped) return
         if (!_uiState.value.voiceMode) return
+        // Don't auto-resume while the synth pipeline still has pending
+        // work. The final short sentence of an assistant turn is flushed
+        // to ttsQueue right before the observer cancels; synth takes
+        // ~200 ms on eleven_flash_v2_5 + the file must then land in
+        // audioQueue and drain through ExoPlayer. Without this gate,
+        // Continuous-mode [startListening]'s `player.stop()` call at the
+        // top of the function races the last chunk and clobbers its
+        // playback — reproduced on 2026-04-17 as "final sentence not
+        // spoken when it ends with an emoji" (emoji strip left a short
+        // sentence that could only emit at stream-complete, which is
+        // exactly when this race fires).
+        if (pendingInTtsQueue.get() > 0 || pendingTtsFiles.isNotEmpty()) return
+
         if (_uiState.value.state == VoiceState.Speaking) {
             _uiState.update { it.copy(state = VoiceState.Idle, amplitude = 0f) }
         }
@@ -1691,11 +1774,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             // worker will re-synthesize (our cache isn't content-addressed)
             // and the play worker will pick them up in order.
             for (chunk in tail) {
-                val sent = ttsQueue.trySend(chunk)
-                if (sent.isFailure) {
-                    Log.w(TAG, "resume re-enqueue dropped chunk: ${sent.exceptionOrNull()?.message}")
-                    break
-                }
+                if (!enqueueSentenceForTts(chunk)) break
             }
             // Re-arm the barge-in listener for the resumed Speaking — the
             // play worker's onFileReady will also trigger this but a
@@ -1805,6 +1884,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             val r = ttsQueue.tryReceive()
             if (r.isSuccess) {
                 r.getOrNull()?.let { out.add(it) }
+                pendingInTtsQueue.decrementAndGet()
             } else {
                 break
             }
