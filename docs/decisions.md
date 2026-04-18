@@ -660,7 +660,7 @@ The `data` field tells the activity log and agent trace which tier succeeded, wh
 **References:**
 - `app/src/main/kotlin/.../data/ConnectionData.kt` — `Connection` + helpers
 - `app/src/main/kotlin/.../data/ConnectionStore.kt` — StateFlows + CRUD + migration
-- `app/src/main/kotlin/.../auth/AuthManager.kt` — `connectionId` ctor; `sessionLabels` (renamed from `profiles` to avoid collision with the connection concept)
+- `app/src/main/kotlin/.../auth/AuthManager.kt` — `connectionId` ctor. (The `sessionLabels` field mentioned in earlier drafts has been replaced by `agentProfiles: StateFlow<List<Profile>>` in §21.)
 - `app/src/main/kotlin/.../viewmodel/ConnectionViewModel.kt` — `switchConnection()` orchestration
 - `app/src/main/kotlin/.../ui/components/ConnectionSwitcherSheet.kt` — bottom-sheet switcher
 - `app/src/main/kotlin/.../ui/screens/ConnectionsSettingsScreen.kt` — CRUD screen
