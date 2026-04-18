@@ -109,6 +109,47 @@ Plan written to `docs/plans/2026-04-16-voice-quality-pass.md` covering 8 work un
 
 **Rebase note (2026-04-17).** This branch was rebased onto `main` at v0.5.0 (from earlier base `b811da1`). Conflicts resolved: a single-import collision in `VoiceViewModel.kt` (kept both `supervisorScope` + `contentOrNull`), DEVLOG + CHANGELOG prepends (combined both days' entries in reverse chronological order, this entry placed above the v0.4.1 bridge polish entry since VQP is the newer work on 2026-04-17), and a `docs/spec.md` auto-merge. No code logic changed during rebase.
 
+## 2026-04-18 — Dashboard plugin
+
+**Context.** The upstream Dashboard Plugin System landed on hermes-agent's `axiom` branch in three commits (`01214a7f` plugin system, `3f6c4346` theme, `247929b0` OAuth providers). The gateway now scans `~/.hermes/plugins/<name>/dashboard/manifest.json` at startup and exposes registered plugins as tabs in its web UI. Since `~/.hermes/plugins/hermes-relay` already points at our `plugin/` subtree (from `install.sh`), we can ship a relay-specific dashboard plugin by only adding a `plugin/dashboard/` subtree plus a few relay HTTP routes — no hermes-agent fork needed. The four deferred-audit items that only the relay knows about — paired-device state, bridge command history, push delivery (future), media-registry tokens — map cleanly onto four tabs of a single plugin.
+
+**Decision summary.**
+
+1. **Single plugin with internal shadcn `Tabs`**, not four plugins. Manifest allows one `tab.path` per plugin; four plugins would fragment the nav. Recorded as ADR 19 in `docs/decisions.md`.
+2. **Pre-built IIFE bundle committed to git.** Upstream's example plugin uses plain `React.createElement` (no build), but four non-trivial tabs are painful to maintain that way. Source lives under `plugin/dashboard/src/`, bundled with esbuild to a single ~16 KB IIFE at `plugin/dashboard/dist/index.js`. Dashboard never runs the build — operators get a ready-to-serve bundle.
+3. **Loopback-only for the new relay routes.** `/bridge/activity`, `/media/inspect`, `/relay/info` are gated the same way `/bridge/status` and `/pairing/register` already are. The plugin backend runs inside the gateway process (also localhost) and calls the relay at `http://127.0.0.1:8767/...` — no bearer minting. Also added a loopback-exempt branch on `/sessions` so the plugin proxy can list paired devices without one.
+4. **Dashboard backend is a thin proxy.** `plugin/dashboard/plugin_api.py` exposes five routes at `/api/plugins/hermes-relay/*` and forwards to the relay. No business logic in the plugin — relay stays source of truth.
+5. **Push Console is a real tab, stub data.** Keeps the four-tab nav layout correct for when FCM lands; swapping in real data is additive.
+
+**Implementation (Wave-by-wave).**
+
+- **Wave 1 (relay state plumbing).** `2212fbc — feat(relay): add MediaRegistry.list_all for dashboard inspector` added the lock-guarded snapshot method that strips absolute paths, returns basename-only `file_name` fields, and filters expired entries by default (+8 unit tests). `777a06a — feat(relay): add bridge command ring buffer for dashboard activity feed` added the `BridgeCommandRecord` dataclass + `deque(maxlen=100)` on `BridgeHandler`, wired append/update into `handle_command()` / `handle_response()`, and taught `get_recent()` to redact params keyed on `{password, token, secret, otp, bearer}` (+9 unit tests covering append, update, timeout path, redaction, ring-buffer eviction).
+- **Wave 2 (relay HTTP routes).** `4370806 — feat(relay): add /bridge/activity /media/inspect /relay/info for dashboard` added the three loopback-gated handlers in `plugin/relay/server.py` adjacent to `/bridge/status` (factored through a `_require_loopback()` helper), plus the tiny `handle_sessions_list` loopback-exempt branch so the dashboard proxy can list paired devices without a bearer. Route tests extend `test_bridge_activity.py` + `test_media_inspect.py` and a new `test_relay_info.py` covers the aggregate status shape.
+- **Wave 3 (dashboard plugin body).** `b51940c — feat(dashboard): add plugin_api.py proxy to relay HTTP` added the FastAPI router with five routes (`/overview`, `/sessions`, `/bridge-activity`, `/media`, `/push`), a shared `_proxy_get()` helper, and structured 502 translation on relay connect-error / timeout / 5xx so the UI can show "relay unreachable" (+10 unit tests in `plugin/dashboard/test_plugin_api.py`). `087149e — feat(dashboard): add React UI for four relay tabs` added the `plugin/dashboard/{src,dist}/` subtree — JSX sources under `src/` (index + four tab components + `lib/api.js` + `lib/formatters.js`), esbuild toolchain (`package.json` + `build.sh`), and the committed ~16 KB IIFE bundle at `dist/index.js` that registers as `window.__HERMES_PLUGINS__.register("hermes-relay", …)` via the SDK global.
+- **Wave 4 (manifest wiring).** `78c209e — feat(dashboard): add plugin manifest + plan file` added `plugin/dashboard/manifest.json` — `name: "hermes-relay"`, `label: "Relay"`, `icon: "Activity"` (from the 20-name Lucide whitelist), `tab.path: "/relay"`, `tab.position: "after:skills"`, `entry: "dist/index.js"`, `api: "plugin_api.py"`. Verified the existing `~/.hermes/plugins/hermes-relay` symlink resolves `dashboard/manifest.json` correctly.
+
+**Files touched (this session — Doc1 wave only).**
+
+- `CHANGELOG.md` — new `[Unreleased]` "Added — Dashboard plugin" bullet group
+- `DEVLOG.md` — this entry
+- `README.md` — one-line mention under Quick Start
+- `CLAUDE.md` — `plugin/dashboard/` added to Repository Layout; four Key Files rows under a new "Plugin — Dashboard" group
+- `docs/spec.md` — "Dashboard plugin" subsection appended to §10 Hermes Integration Points
+- `docs/decisions.md` — new ADR 19 "Dashboard plugin: single plugin with internal tabs + pre-built IIFE bundle"
+- `docs/relay-server.md` — three new rows in the HTTP Routes table + loopback-branch note on `/sessions`
+- `user-docs/features/dashboard.md` — new user-facing page
+- `user-docs/.vitepress/config.mts` — sidebar nav entry for dashboard.md
+
+**Deferred.**
+
+- **Push Console needs FCM.** The tab renders a static "FCM not configured" banner from `GET /api/plugins/hermes-relay/push`. Swapping in real data is additive — only `PushConsole.jsx` + `plugin_api.py::get_push` change. Tracked under the `deferred_items` memory entry.
+- **Session revoke button is a placeholder.** The Relay Management tab exposes "Revoke" buttons per paired device but they currently log to the console — the plugin proxy would need a new `DELETE /api/plugins/hermes-relay/sessions/{prefix}` route forwarded to the relay's existing `DELETE /sessions/{token_prefix}`. Blocked on deciding the auth story (loopback-only? dashboard session token?). Keeps the UI placement correct for when the proxy route lands.
+- **Session extend button** not yet built; would follow the same proxy pattern against `PATCH /sessions/{token_prefix}`.
+
+**Next session.** Bailey restarts `hermes-gateway` on the server, verifies `GET /api/dashboard/plugins` includes `hermes-relay`, loads the dashboard UI, and exercises all four tabs against a live paired phone. Screenshot the tabs so we can drop real images into `user-docs/features/dashboard.md` in place of the placeholder captions.
+
+**No blockers.**
+
 ---
 
 ## 2026-04-17 — v0.4.1 Bridge page polish pass

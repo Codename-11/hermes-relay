@@ -75,6 +75,14 @@ Hermes-Relay uses **feature branches + no-ff merges**, with version bumps
 gated to release-prep commits on `main`. `main` is always "last release +
 unreleased features," never mid-refactor.
 
+**Merging is decoupled from releasing.** Feature branches land on `main`
+continuously as they go green in CI — there is no "one feature per
+release" rule. The `[Unreleased]` section of `CHANGELOG.md` is the
+accumulator: every merged PR appends bullets there. A release is a
+separate act, taken when the accumulated state is worth shipping to
+users (see "When to cut a release" below). This keeps `main` shippable
+while avoiding ceremony per feature.
+
 ### Branch names
 
 | Prefix | When | Example |
@@ -246,6 +254,31 @@ If `HERMES_KEYSTORE_BASE64` is missing, CI release builds fall back to
 debug signing and print a warning in the workflow summary — those
 artifacts will not be accepted by Play Console.
 
+## When to cut a release
+
+Cut a release when **any of the following** is true:
+
+- The `[Unreleased]` section of `CHANGELOG.md` has enough user-facing
+  change that a version number is worth attaching.
+- A user-facing bug is fixed and you want affected users to pick it up
+  via `hermes-relay-update` or a Play Store auto-update.
+- A regulatory / policy deadline applies (new Play Console target SDK,
+  etc).
+- You've been sitting on unreleased work for more than a couple of
+  weeks and the delta-from-last-release is growing faster than it
+  should.
+
+**Don't** cut a release just because a feature landed. If one feature
+isn't enough to justify a version bump, wait — merge the next one, let
+it sit alongside in `[Unreleased]`, and ship them together. A release
+is a statement to users that "this is a thing worth updating to," so
+the threshold is intent-driven, not event-driven.
+
+If you want to dogfood accumulated `main` state without declaring GA,
+tag a **pre-release** (`vX.Y.Z-rc.N`). Users can opt in via
+`hermes-relay-update --branch rc/vX.Y.Z-rc.N` without being auto-pushed
+the unstable build.
+
 ## Release Process
 
 ### 1. Bump the version (atomic across all three sources)
@@ -270,15 +303,24 @@ three carrying the new version string.
 
 ### 2. Update release notes and changelog
 
+- `CHANGELOG.md` — promote the accumulated `[Unreleased]` block to a
+  versioned header. The block already exists: every feature PR has
+  been appending to it. All you do here is:
+  1. Change the `## [Unreleased]` header to `## [X.Y.Z] - YYYY-MM-DD`.
+  2. Insert a fresh empty `## [Unreleased]` header above it so the
+     next PR has a landing spot.
+  3. Skim the new versioned block and tighten / reorder if needed —
+     Keep-a-Changelog grouping (`Added` / `Changed` / `Fixed`) should
+     already be in place from the accumulator phase.
 - `RELEASE_NOTES.md` — body of the GitHub Release for this version
-  (rewritten each release; the workflow uses this as-is). Keep the
+  (rewritten each release; the workflow uses this as-is). This is the
+  operator-facing summary, not the CHANGELOG mirror. Keep the
   **Download** section near the top — it should spell out which file
   to grab by its `-sideload-release.apk` / `-googlePlay-release.aab`
   suffix (every artifact is version-tagged as
   `hermes-relay-<version>-<flavor>-<buildType>` via `archivesName`
   in `app/build.gradle.kts`) and link to the sideload guide.
   The v0.3.0 body is a good template.
-- `CHANGELOG.md` — cumulative history; append a new section.
 - `app/src/main/assets/whats_new.txt` — in-app "What's New" content
   shown in the settings/about screen. Update with the version number
   and a brief feature summary. Gets stale silently if forgotten

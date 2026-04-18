@@ -1,0 +1,14 @@
+{
+  "name": "hermes-relay-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Hermes-Relay dashboard plugin frontend (IIFE bundle). Loaded verbatim by the hermes-agent dashboard via the Plugin SDK global.",
+  "scripts": {
+    "build": "esbuild src/index.jsx --bundle --format=iife --target=es2020 --minify --outfile=dist/index.js --loader:.jsx=jsx --jsx=transform --jsx-factory=React.createElement --jsx-fragment=React.Fragment",
+    "watch": "esbuild src/index.jsx --bundle --format=iife --target=es2020 --outfile=dist/index.js --loader:.jsx=jsx --jsx=transform --jsx-factory=React.createElement --jsx-fragment=React.Fragment --watch"
+  },
+  "devDependencies": {
+    "esbuild": "^0.23.0",
+    "qrcode": "^1.5.4"
+  }
+}

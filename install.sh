@@ -61,6 +61,11 @@
 #                           Useful for testing feature branches before merging
 #                           to main, e.g. `hermes-relay-update --branch
 #                           feature/bridge-feature-expansion`.
+#   --dashboard-plugin=yes  Enable (default) the hermes-agent dashboard plugin.
+#   --dashboard-plugin=no   Disable it — useful on hosts that don't run the
+#                           hermes-agent dashboard or want a minimal relay
+#                           install. Toggle at any time by re-running with
+#                           the opposite flag.
 #   --help                  Print this header and exit.
 #
 # Overrides:
@@ -82,6 +87,7 @@ set -euo pipefail
 # pass-through-friendly for `hermes-relay-update --branch <name>` since
 # the shim forwards args via `bash -s --`.
 _BRANCH_FLAG=""
+_DASHBOARD_PLUGIN_FLAG=""  # "", "yes", or "no"
 while [ $# -gt 0 ]; do
     case "$1" in
         --branch)
@@ -96,8 +102,35 @@ while [ $# -gt 0 ]; do
             _BRANCH_FLAG="${1#--branch=}"
             shift
             ;;
+        --dashboard-plugin=*)
+            _val="${1#--dashboard-plugin=}"
+            case "$_val" in
+                yes|on|true|1) _DASHBOARD_PLUGIN_FLAG="yes" ;;
+                no|off|false|0) _DASHBOARD_PLUGIN_FLAG="no" ;;
+                *)
+                    echo "install.sh: --dashboard-plugin expects yes|no (got $_val)" >&2
+                    exit 2
+                    ;;
+            esac
+            shift
+            ;;
+        --dashboard-plugin)
+            if [ $# -lt 2 ]; then
+                echo "install.sh: --dashboard-plugin needs yes|no" >&2
+                exit 2
+            fi
+            case "$2" in
+                yes|on|true|1) _DASHBOARD_PLUGIN_FLAG="yes" ;;
+                no|off|false|0) _DASHBOARD_PLUGIN_FLAG="no" ;;
+                *)
+                    echo "install.sh: --dashboard-plugin expects yes|no (got $2)" >&2
+                    exit 2
+                    ;;
+            esac
+            shift 2
+            ;;
         -h|--help)
-            sed -n '3,66p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '3,70p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *)
@@ -115,6 +148,11 @@ REPO_URL="https://github.com/Codename-11/hermes-relay.git"
 # wins over the default ("main"). The env var is kept for backwards
 # compat with anyone scripting against the pre-flag interface.
 BRANCH="${_BRANCH_FLAG:-${HERMES_RELAY_BRANCH:-main}}"
+# Dashboard plugin: flag > env var > default ("yes"). Passing "no" stashes
+# the dashboard manifest to manifest.json.disabled so the hermes-agent
+# dashboard loader ignores the plugin entirely. Re-running with the
+# opposite flag flips it back without touching any other state.
+DASHBOARD_PLUGIN="${_DASHBOARD_PLUGIN_FLAG:-${HERMES_RELAY_DASHBOARD_PLUGIN:-yes}}"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 RELAY_HOME="${HERMES_RELAY_HOME:-$HERMES_HOME/hermes-relay}"
 VENV_PY="${HERMES_VENV_PY:-$HERMES_HOME/hermes-agent/venv/bin/python}"
@@ -205,7 +243,7 @@ banner() {
     printf "\n"
     printf "  ${C_BOLD}${C_CYAN}╭─────────────────────────────────────────╮${C_RESET}\n"
     printf "  ${C_BOLD}${C_CYAN}│${C_RESET}  ${C_BOLD}Hermes-Relay Installer${C_RESET}                 ${C_BOLD}${C_CYAN}│${C_RESET}\n"
-    printf "  ${C_BOLD}${C_CYAN}│${C_RESET}  ${C_DIM}Phase 3 — Bridge channel + status tool${C_RESET}  ${C_BOLD}${C_CYAN}│${C_RESET}\n"
+    printf "  ${C_BOLD}${C_CYAN}│${C_RESET}  ${C_DIM}Plugin + relay + bootstrap + skill${C_RESET}      ${C_BOLD}${C_CYAN}│${C_RESET}\n"
     printf "  ${C_BOLD}${C_CYAN}╰─────────────────────────────────────────╯${C_RESET}\n"
     printf "\n"
     printf "    ${C_DIM}%-12s${C_RESET} %s\n" "Repo:"     "$REPO_URL ${C_DIM}($BRANCH)${C_RESET}"
@@ -311,6 +349,70 @@ for stale in "$HERMES_HOME/plugins/hermes-android" "$HERMES_HOME/hermes-agent/pl
         ok "Removed stale $stale"
     fi
 done
+
+# Dashboard plugin toggle. The hermes-agent dashboard auto-discovers plugins
+# via `dashboard/manifest.json`. We flip visibility by renaming the manifest
+# file — no separate config lives anywhere else, and the same state is
+# observable by `ls plugin/dashboard/` so uninstall reasoning is trivial.
+DASHBOARD_MANIFEST_ACTIVE="$RELAY_HOME/plugin/dashboard/manifest.json"
+DASHBOARD_MANIFEST_DISABLED="$RELAY_HOME/plugin/dashboard/manifest.json.disabled"
+if [ -d "$RELAY_HOME/plugin/dashboard" ]; then
+    case "$DASHBOARD_PLUGIN" in
+        yes)
+            if [ ! -f "$DASHBOARD_MANIFEST_ACTIVE" ] && [ -f "$DASHBOARD_MANIFEST_DISABLED" ]; then
+                mv "$DASHBOARD_MANIFEST_DISABLED" "$DASHBOARD_MANIFEST_ACTIVE"
+            fi
+            if [ -f "$DASHBOARD_MANIFEST_ACTIVE" ]; then
+                ok "Dashboard plugin enabled — relay tab will appear in the hermes-agent dashboard"
+            else
+                info "  Dashboard plugin manifest missing — skipped (expected when installing an older branch)"
+            fi
+            ;;
+        no)
+            if [ -f "$DASHBOARD_MANIFEST_ACTIVE" ]; then
+                mv "$DASHBOARD_MANIFEST_ACTIVE" "$DASHBOARD_MANIFEST_DISABLED"
+            fi
+            ok "Dashboard plugin disabled — hermes-agent dashboard will not load the relay tab"
+            ;;
+    esac
+    # Best-effort rescan so the toggle takes effect without a dashboard
+    # restart. Silent if the dashboard isn't running, or binds somewhere
+    # we can't see from here.
+    #
+    # The dashboard may bind to 127.0.0.1, localhost, 0.0.0.0, or a
+    # specific LAN IP. On hosts with a systemd user unit we extract the
+    # actual --host / --port from the ExecStart line so we hit the right
+    # endpoint instead of guessing. Falls back to a small list of common
+    # bind addresses for installs that don't use systemd.
+    if command -v curl >/dev/null 2>&1; then
+        _dash_hosts=""
+        _dash_port=""
+        if command -v systemctl >/dev/null 2>&1; then
+            _exec_line="$(systemctl --user cat hermes-dashboard 2>/dev/null | grep -m1 '^ExecStart=' || true)"
+            if [ -n "$_exec_line" ]; then
+                _dash_hosts="$(echo "$_exec_line" | sed -nE 's/.*--host[[:space:]=]+([^[:space:]]+).*/\1/p')"
+                _dash_port="$(echo "$_exec_line" | sed -nE 's/.*--port[[:space:]=]+([0-9]+).*/\1/p')"
+            fi
+        fi
+        [ -z "$_dash_port" ] && _dash_port="9119"
+        # Always try loopback first; if the systemd unit advertises a
+        # specific bind host, try that second. Keep a couple of common
+        # fallbacks for non-systemd hosts.
+        _rescan_hit=""
+        for host in 127.0.0.1 localhost ${_dash_hosts:-} 0.0.0.0; do
+            [ -z "$host" ] && continue
+            for port in "$_dash_port" 9119 9100 9000; do
+                url="http://${host}:${port}/api/dashboard/plugins/rescan"
+                if curl -sf -m 2 -X GET "$url" >/dev/null 2>&1; then
+                    info "  Triggered dashboard rescan at ${host}:${port}"
+                    _rescan_hit=1
+                    break 2
+                fi
+            done
+        done
+        [ -z "$_rescan_hit" ] && info "  (dashboard not reachable — restart it if the toggle doesn't take effect)"
+    fi
+fi
 
 # ── 4/6  Register skills dir in Hermes config (external_dirs) ──────────────
 step 4 6 "Registering skills directory"

@@ -31,6 +31,84 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   — the FrozenList is still mutable at middleware-install time. 31/31
   tests in `test_command_middleware.py` pass.
 
+### Added — Dashboard plugin
+
+- **Hermes-agent dashboard plugin** at `plugin/dashboard/` — surfaces
+  relay state in the gateway's web UI via four tabs. **Relay
+  Management** lists paired devices + health + relay version;
+  **Bridge Activity** renders the in-memory ring buffer of recent
+  bridge commands (method / path / decision, with safety-rail
+  `executed` / `blocked` / `confirmed` / `timeout` / `error`
+  filters); **Push Console** ships as a stub with an
+  "FCM not configured" banner until FCM lands; **Media Inspector**
+  lists active `MediaRegistry` tokens with live TTL countdowns and
+  basename-only file names (absolute paths never leave the server).
+  Frontend is a pre-built React IIFE at `plugin/dashboard/dist/index.js`
+  (~16 KB) loaded verbatim by the dashboard shell; backend is a thin
+  FastAPI proxy at `plugin/dashboard/plugin_api.py` mounted at
+  `/api/plugins/hermes-relay/*`.
+- **Three new loopback-only relay routes** feeding the plugin —
+  `GET /bridge/activity` (ring buffer; `?limit=N`, max 500),
+  `GET /media/inspect` (token list; `?include_expired=true` to
+  include evicted entries), and `GET /relay/info` (aggregate
+  `{version, uptime_seconds, session_count, paired_device_count,
+  pending_commands, media_entry_count, health}`). Plus a
+  loopback-exempt branch on the existing `GET /sessions` so the
+  plugin proxy doesn't need to mint a bearer.
+- **`BridgeCommandRecord` ring buffer** on `BridgeHandler`
+  (`deque(maxlen=100)`) — records `request_id`, `method`, `path`,
+  redacted `params`, `sent_at`, `response_status`, `result_summary`,
+  `error`, and `decision`. Commit `777a06a` wires append/update into
+  `handle_command()` / `handle_response()` without changing external
+  behaviour; timeouts flip `decision=timeout`, phone-side safety
+  denials flip `blocked`. Params are redacted for keys in
+  `{password, token, secret, otp, bearer}`.
+- **`MediaRegistry.list_all(include_expired=False)`** — lock-guarded
+  snapshot method returning `{token, file_name, content_type, size,
+  created_at, expires_at, last_accessed, is_expired}` dicts sorted
+  newest-first. Absolute paths are never included. Commit `2212fbc`.
+- **Pairing workflow from the dashboard** — new `POST /pairing/mint`
+  relay route (loopback-only) generates a random 6-char A-Z/0-9 code,
+  registers it with the existing `PairingManager`, and returns the
+  signed QR payload built via `plugin.pair.build_payload`. The
+  dashboard backend exposes it at
+  `POST /api/plugins/hermes-relay/pairing`. A new **PairDialog** in
+  the Management tab renders the QR (via the `qrcode` npm lib bundled
+  into the IIFE), shows the code + expiry countdown, and lets the
+  operator **override Host / Port / TLS** in the QR payload — useful
+  for Traefik-fronted deploys where the phone needs
+  `wss://relay.example.com:443` even when the dashboard itself is
+  served at a different hostname. Settings persist per-browser in
+  localStorage.
+- **Functional session revocation** — loopback-exempt branch on
+  `DELETE /sessions/{token_prefix}` plus a proxy route at
+  `DELETE /api/plugins/hermes-relay/sessions/{prefix}`. The Revoke
+  button on the Management tab now confirms via native dialog, calls
+  the proxy, and auto-reloads the session list on success.
+
+### Added — Installer
+
+- **`--dashboard-plugin=yes|no`** flag on `install.sh` (default `yes`;
+  also via `HERMES_RELAY_DASHBOARD_PLUGIN` env var). Passing `no`
+  renames `plugin/dashboard/manifest.json` → `manifest.json.disabled`
+  so the hermes-agent dashboard loader skips the plugin entirely.
+  Re-running with the opposite flag flips it back — no config lives
+  anywhere else.
+- **Live dashboard rescan** in both `install.sh` and `uninstall.sh` —
+  parses `hermes-dashboard.service` ExecStart for `--host` / `--port`
+  and GETs `/api/dashboard/plugins/rescan`, falling back to loopback
+  and common ports. The relay tab appears/disappears without a
+  dashboard restart. Silent no-op when the dashboard isn't running.
+
+### Fixed
+
+- **Dashboard plugin UI** uses plain tab buttons instead of Radix
+  `<Tabs>`: Radix's `Tabs` container expects `TabsContent` children
+  (not exposed in the SDK whitelist) and its internal context blew
+  up at first render as `o is not a function` after minification.
+- **Install banner** no longer claims "Phase 3 — Bridge channel +
+  status tool" (stale since v0.2.x). Phase-agnostic copy now.
+
 ### Added — v0.4.1 Bridge page polish pass
 
 - **`UnattendedGlobalBanner`** — thin 28dp amber strip at the top of

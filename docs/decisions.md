@@ -621,6 +621,57 @@ The `data` field tells the activity log and agent trace which tier succeeded, wh
 
 ---
 
+### 19. Dashboard plugin: single plugin with internal tabs + pre-built IIFE bundle (2026-04-18)
+
+**Context:** The upstream Dashboard Plugin System landed on hermes-agent's `axiom` branch in three commits (`01214a7f` plugin system, `3f6c4346` theme, `247929b0` OAuth providers). The gateway now scans `~/.hermes/plugins/<name>/dashboard/manifest.json` at startup and exposes registered plugins as tabs in the web UI, with a frontend SDK exposed at `window.__HERMES_PLUGIN_SDK__` (React + shadcn subset + hooks) and a plugin-registration global at `window.__HERMES_PLUGINS__.register(name, Component)`. Several deferred items from the MVP audit (cron manager, skills browser, memory viewer) previously blocked on "needs relay extension" flip with this system — most belong in the upstream dashboard directly. The relay plugin only needs to surface the four items that **only the relay knows about**: paired-device state, bridge command history, push delivery (future), and active `MediaRegistry` tokens. The question was how to ship those four surfaces cleanly.
+
+**Decision:** Ship one plugin at `plugin/dashboard/` exposing a single tab `/relay` that hosts four internal sub-tabs (Relay Management, Bridge Activity, Push Console, Media Inspector), with the frontend authored in JSX under `src/`, bundled to a committed IIFE at `dist/index.js` via esbuild, and a thin FastAPI proxy at `plugin_api.py` forwarding to loopback-only relay HTTP routes.
+
+Four sub-decisions captured together:
+
+1. **Single plugin with internal `Tabs`, not four plugins.** The upstream manifest allows exactly one `tab.path` per plugin. Four plugins would fragment the dashboard nav (four "Relay — …" entries between Skills and whatever comes next), confuse operators ("where's paired-device state?"), and multiply the manifest / rescan surface for no UX gain. One plugin at `/relay` with an internal shadcn `Tabs` component keeps relay concerns grouped and gives us a single header (Auto-refresh toggle, health pill, version string) across all four sub-surfaces.
+
+2. **Pre-built IIFE bundle, committed to git.** The upstream example plugin (`plugins/example-dashboard/dashboard/`) uses plain `React.createElement` with no build step. That's readable for a one-tab proof of concept; for four non-trivial tabs with shared `lib/` helpers (sentence formatters, relative-time, byte-size, API wrappers) it's actively painful to maintain. Decision: author JSX under `plugin/dashboard/src/`, bundle with `esbuild` (target `es2020`, format `iife`, React coming from the SDK global — NOT bundled), minify, and commit the ~16 KB `dist/index.js` alongside the source. Operators who `git pull` get a ready-to-serve bundle; the dashboard `<script src>` loads it verbatim and never runs a build. `esbuild` is the only dev dep, listed in `plugin/dashboard/package.json`.
+
+3. **Loopback-only for the three new relay routes.** `/bridge/activity`, `/media/inspect`, `/relay/info` are gated with the same `_require_loopback()` helper pattern as `/bridge/status`, `/pairing/register`, and `/media/register` — any `request.remote` other than `127.0.0.1` / `::1` gets HTTP 403. The plugin backend runs inside the gateway process (itself bound to localhost) and calls the relay at `http://127.0.0.1:{HERMES_RELAY_PORT}/...` — no bearer minting, no new credentials, no new attack surface. We also added a loopback-exempt branch to the existing bearer-gated `/sessions` handler so the plugin can list paired devices without the relay needing to hand itself a token. Media paths are sanitized (basename-only) at the `MediaRegistry.list_all()` layer so a future decision to expose these routes externally wouldn't leak filesystem layout.
+
+4. **Dashboard backend is a thin proxy; relay is source of truth.** `plugin_api.py` exposes five routes at `/api/plugins/hermes-relay/{overview,sessions,bridge-activity,media,push}` and forwards to the relay over `httpx.AsyncClient` with a 5-second timeout. No business logic — the plugin never maintains its own state, never caches, never retries. Relay connect-error / timeout / 5xx translate to `HTTPException(502, detail=…)` carrying the relay address, so the UI can render a "relay unreachable at 127.0.0.1:8767" banner; 4xx passes through verbatim. The one exception is `/push` — since FCM isn't wired, this route is a static stub returning `{configured: false, reason: "FCM not yet wired; …"}` with no network call. Keeps the four-tab nav layout correct for when FCM lands; swapping in real data only touches `PushConsole.jsx` + `plugin_api.py::get_push`.
+
+**Consequences:**
+
+- **Zero upstream dependency.** We ship against the already-published `axiom` plugin-system contract (scanner + manifest shape + SDK globals) without needing to patch hermes-agent. If upstream changes the icon whitelist or the SDK surface, we adjust the manifest / `src/` and rebuild — no relay changes.
+- **Installer already covers discovery.** `install.sh` step 3 symlinks `~/.hermes/plugins/hermes-relay` → `<repo>/plugin`, so `~/.hermes/plugins/hermes-relay/dashboard/manifest.json` resolves automatically on any host that's already installed us. No new installer step; the plugin is live after the next `hermes-gateway` restart.
+- **One extra dev dep (`esbuild`).** Listed in `plugin/dashboard/package.json` under `devDependencies`. Not a runtime dep — the gateway never runs `npm install`. Developers who want to modify the frontend run `cd plugin/dashboard && npm install && npm run build`, which regenerates `dist/index.js`; CI doesn't run the build because the committed bundle is the shipped artifact.
+- **Committed build artifact policy.** `dist/index.js` is committed to git alongside the source. Unusual — most projects would `.gitignore` it — but required here because the dashboard scans live filesystem paths and has no build step of its own. The esbuild output is deterministic given the same source + minify flags, so PR review can diff the source without fighting the bundle; operators treat the bundle as read-only.
+- **Loopback-branch divergence on `/sessions`.** The bearer-gated `/sessions` path still returns `is_current: bool` (true for the caller's own bearer); the loopback branch returns the same session rows without `is_current` (no caller context). Documented in `docs/relay-server.md` and in the handler's docstring so future maintainers don't lose the divergence.
+- **Push Console UX before FCM.** The stub tab renders an "FCM not configured" banner + link to the deferred-items doc, which is honest but does occupy a nav slot for a non-working feature. Accepted trade-off: the alternative is shipping three tabs now and a four-tab reshuffle later, which churns muscle memory and breaks any `localStorage` tab-selection persistence.
+
+**Alternatives rejected:**
+
+- **Four separate plugins** (one per sub-tab). Rejected — fragments nav, multiplies manifest surface, no UX win.
+- **No build step; plain `React.createElement` in `dist/index.js` directly.** Readable for one tab; actively hostile for four tabs + shared helpers. Source unreviewable once it hits ~500 LOC.
+- **Bundle React into the IIFE.** Would bloat the bundle from ~16 KB to ~150 KB and introduce React-version drift risk vs. the dashboard shell's React. Using the SDK's `window.__HERMES_PLUGIN_SDK__.React` keeps us pinned to whatever the dashboard ships.
+- **Plugin mints its own "dashboard key" bearer via a new relay config field.** Would work but adds a new credential to manage (rotation, storage, revocation) for no security benefit over the existing loopback gate — both layers already require localhost access.
+- **Skills browser / cron manager / memory viewer as relay-plugin tabs.** Rejected — these belong in upstream dashboard plugins, not a relay plugin. The relay has no unique visibility into them; upstream knows everything we'd know.
+- **Hot-reload the Python `plugin_api.py` without a gateway restart.** Upstream supports hot-reload for the frontend bundle (`POST /api/dashboard/plugins/rescan`) but Python modules still need a full gateway restart. Accepted — the backend is a thin proxy that rarely changes.
+
+**References:**
+
+- `plugin/dashboard/manifest.json` — plugin manifest (name, label, icon, tab config, entry bundle, api module)
+- `plugin/dashboard/plugin_api.py` — FastAPI router; five proxy routes + structured 502 error translation
+- `plugin/dashboard/src/index.jsx` — React root registering via `window.__HERMES_PLUGINS__.register("hermes-relay", …)`
+- `plugin/dashboard/src/tabs/{RelayManagement,BridgeActivity,PushConsole,MediaInspector}.jsx` — four tab components
+- `plugin/dashboard/src/lib/{api,formatters}.js` — SDK `fetchJSON` wrappers + time/byte formatters
+- `plugin/dashboard/dist/index.js` — committed IIFE bundle (~16 KB minified), loaded verbatim by the dashboard shell
+- `plugin/dashboard/test_plugin_api.py` — 10 backend proxy tests
+- `plugin/relay/server.py` — `handle_bridge_activity`, `handle_media_inspect`, `handle_relay_info`, `_require_loopback()`, loopback branch on `handle_sessions_list`
+- `plugin/relay/channels/bridge.py` — `BridgeCommandRecord` dataclass + `recent_commands` deque + `get_recent()` (commit `777a06a`)
+- `plugin/relay/media.py` — `MediaRegistry.list_all()` (commit `2212fbc`)
+- `docs/spec.md` §10.1 Dashboard plugin — user-facing overview + route table
+- `docs/relay-server.md` HTTP Routes — wire-shape details for `/bridge/activity`, `/media/inspect`, `/relay/info`, `/sessions` loopback branch
+
+---
+
 ## Voice Mode — Architecture
 
 **Context:** We wanted real-time voice conversation with the Hermes agent — user speaks, agent listens, agent speaks back, orb reacts. Hermes-agent has six TTS providers and five STT providers fully implemented in `tools/tts_tool.py` and `tools/transcription_tools.py`, plus a CLI `voice_mode.py` that uses them for push-to-talk — but none of it is exposed via the WebAPI server at `:8642`. The phone has no way to call voice functions over HTTP.

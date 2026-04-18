@@ -776,6 +776,33 @@ Current versions as of v0.3.0. Source of truth is `gradle/libs.versions.toml` �
 | **Plugin system** | `register_tool()` via `ctx` for `android_*` tools |
 | **Gateway** | Chat channel goes through WebAPI, not directly to gateway |
 | **Memory/Skills** | Accessible through agent chat (no direct API needed for MVP) |
+| **Dashboard plugin** | Lives at `plugin/dashboard/`; see §10.1 below |
+
+### 10.1 Dashboard plugin
+
+Hermes-Relay ships a hermes-agent Dashboard Plugin (upstream `axiom` branch, commit `01214a7f`) that surfaces relay-specific state in the gateway's web UI. The plugin subtree at `plugin/dashboard/` is discovered automatically: the canonical `install.sh` symlinks `~/.hermes/plugins/hermes-relay` → `<repo>/plugin`, and the gateway scans `~/.hermes/plugins/<name>/dashboard/manifest.json` at startup. Manifest fields (`name: "hermes-relay"`, `label: "Relay"`, `icon: "Activity"` from the 20-name Lucide whitelist, `tab.path: "/relay"`, `tab.position: "after:skills"`) place the tab after Skills in the dashboard nav.
+
+**Four internal tabs** render inside the single `/relay` route via a shadcn `Tabs` component:
+
+| Tab | Data source | What it shows |
+|-----|-------------|---------------|
+| **Relay Management** | `/api/plugins/hermes-relay/overview` + `/sessions` | Relay version + uptime + health, paired-device list (token prefix, device name, last-seen, expires-at, per-channel grants), per-row Revoke button (placeholder pending proxy route). |
+| **Bridge Activity** | `/api/plugins/hermes-relay/bridge-activity` | Ring buffer of the most recent 100 bridge commands (`method`, `path`, redacted `params`, `decision`, `sent_at`, `response_status`, `error`). Filter chips: All / Executed / Blocked / Confirmed / Timeout / Error. Polls every 5s; pausable via header Auto-refresh toggle (persisted to `localStorage`). |
+| **Push Console** | `/api/plugins/hermes-relay/push` | Stub — returns `{configured: false, reason: "FCM not yet wired; …"}`. Renders an FCM-not-configured banner + link to the deferred-items doc. Real data ships when FCM is wired. |
+| **Media Inspector** | `/api/plugins/hermes-relay/media` | Active `MediaRegistry` tokens (basename-only file name — absolute paths never leave the server — plus `content_type`, `size`, `created_at`, `expires_at`, `last_accessed`). TTL countdown decrements in real time (`setInterval(1000)`, cleaned up on unmount). Polls every 15s. |
+
+**Three new loopback-gated relay routes** feed the plugin backend (plus a loopback-exempt branch on the existing `GET /sessions`). All are gated by a tiny `_require_loopback()` helper that rejects any `request.remote` other than `127.0.0.1` / `::1` with HTTP 403. Full wire-shape details in [`docs/relay-server.md`](relay-server.md#http-routes).
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/bridge/activity` | GET | Ring buffer of recent bridge commands; `?limit=N` (max 500, default 100). |
+| `/media/inspect` | GET | Active media tokens; `?include_expired=true` to include evicted entries (default false). |
+| `/relay/info` | GET | Aggregate status for the management tab: `{version, uptime_seconds, session_count, paired_device_count, pending_commands, media_entry_count, health}`. |
+| `/sessions` | GET | Loopback branch now returns the full session list without a bearer (for the dashboard proxy). Non-loopback callers still require the bearer and retain the `is_current` flag. |
+
+**Auth model.** The dashboard plugin's FastAPI router mounts under `/api/plugins/hermes-relay/*` inside the gateway process (itself bound to localhost). It forwards to the relay at `http://127.0.0.1:{HERMES_RELAY_PORT}` (default 8767). Both hops are loopback-only — no bearer is minted and no new credentials are introduced. Media paths are sanitized to basename-only in `MediaRegistry.list_all()` so even a future decision to expose these routes externally wouldn't leak filesystem layout.
+
+**Frontend.** Source under `plugin/dashboard/src/` (JSX + esbuild), committed pre-built IIFE at `plugin/dashboard/dist/index.js` (~16 KB minified). Uses the dashboard's `window.__HERMES_PLUGIN_SDK__` global for React + shadcn primitives + `fetchJSON()` — no external HTTP library, no bundled React. See ADR 19 in [`docs/decisions.md`](decisions.md) for the architectural rationale.
 
 ---
 
