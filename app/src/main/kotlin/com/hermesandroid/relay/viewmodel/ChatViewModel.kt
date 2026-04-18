@@ -586,6 +586,14 @@ class ChatViewModel : ViewModel() {
             AppAnalytics.onStreamComplete(lastInputTokens, lastOutputTokens)
             activeStream = null
 
+            // v0.4.1 polish: auto-return to Hermes-Relay if the bridge
+            // moved the foreground app during this run. No-op when the
+            // LLM already called `android_return_to_hermes` itself (in
+            // that case the tracker's internal flag was cleared by the
+            // /return_to_hermes dispatch's respond()). See BridgeRunTracker
+            // KDoc for the full contract.
+            com.hermesandroid.relay.bridge.BridgeRunTracker.notifyRunCompleted()
+
             // Sessions endpoint doesn't emit structured tool events during streaming —
             // tool calls are only available as JSON on the stored messages. Reload the
             // server-authoritative history to get proper message boundaries + tool_calls.
@@ -1120,6 +1128,20 @@ class ChatViewModel : ViewModel() {
             }.getOrNull()
         } else null
 
+        // --- v0.4.1 Unattended access + screen state ---
+        // Read UnattendedAccessManager's live StateFlows via direct import
+        // (unlike BridgeSafetyManager which we hit reflectively because its
+        // access is cross-cutting). Screen state comes from PowerManager —
+        // cheap, no IPC, always accurate.
+        val unattendedEnabled = com.hermesandroid.relay.bridge
+            .UnattendedAccessManager.enabled.value
+        val credentialLockDetected = com.hermesandroid.relay.bridge
+            .UnattendedAccessManager.credentialLockDetected.value
+        val screenOn = runCatching {
+            val pm = ctx.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+            pm?.isInteractive == true
+        }.getOrDefault(false)
+
         // --- Safety manager (Phase 3 BridgeSafetyManager.peek()) ---
         var blocklistCount: Int? = null
         var destructiveVerbCount: Int? = null
@@ -1156,6 +1178,9 @@ class ChatViewModel : ViewModel() {
             screenCaptureGranted = screenCaptureGranted,
             overlayGranted = overlayGranted,
             notificationsGranted = notificationsGranted,
+            unattendedEnabled = unattendedEnabled,
+            credentialLockDetected = credentialLockDetected,
+            screenOn = screenOn,
             currentApp = currentAppPkg,
             batteryPercent = batteryPercent,
             blocklistCount = blocklistCount,

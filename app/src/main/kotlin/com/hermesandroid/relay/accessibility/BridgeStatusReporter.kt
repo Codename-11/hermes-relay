@@ -10,6 +10,8 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import com.hermesandroid.relay.bridge.BridgeSafetyManager
+import com.hermesandroid.relay.bridge.UnattendedAccessManager
+import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.models.Envelope
 import kotlinx.coroutines.CoroutineScope
@@ -54,9 +56,19 @@ import kotlinx.serialization.json.put
  *     "destructive_verbs_count": 12,
  *     "auto_disable_minutes": 30,
  *     "auto_disable_at_ms": null
+ *   },
+ *   "unattended": {
+ *     "supported": true,
+ *     "enabled": false,
+ *     "credential_lock_detected": true
  *   }
  * }
  * ```
+ *
+ * `unattended.supported` is false on the googlePlay flavor — the Play
+ * APK has no wake-lock path — which lets the agent distinguish "user
+ * hasn't opted in" from "this build can't do unattended at all" without
+ * a separate probe.
  *
  * The legacy top-level keys (`screen_on`, `battery`, `current_app`,
  * `accessibility_enabled`, `ts`) are ALSO emitted for backwards
@@ -260,6 +272,25 @@ class BridgeStatusReporter(
                     } else {
                         put("auto_disable_at_ms", autoDisableAtMs)
                     }
+                })
+
+                // v0.4.1: unattended-access state so the agent can decide
+                // upfront whether commands will reach apps with the screen
+                // off (instead of finding out reactively via the
+                // keyguard_blocked error_code after a failed command).
+                // `supported` is false on googlePlay — that flavor has no
+                // wake-lock path and the user can't opt in even if they
+                // wanted to. `credential_lock_detected` reflects whether
+                // a PIN/pattern/biometric lock is currently configured;
+                // when both `enabled=true` and this is true, commands
+                // will wake the screen but stop at the lock screen.
+                put("unattended", buildJsonObject {
+                    put("supported", BuildFlavor.isSideload)
+                    put("enabled", UnattendedAccessManager.enabled.value)
+                    put(
+                        "credential_lock_detected",
+                        UnattendedAccessManager.credentialLockDetected.value,
+                    )
                 })
 
                 // ── Legacy top-level fields (backwards compat) ────────
