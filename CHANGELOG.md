@@ -109,6 +109,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Install banner** no longer claims "Phase 3 — Bridge channel +
   status tool" (stale since v0.2.x). Phase-agnostic copy now.
 
+### Added — Sideload in-app update check
+
+- **In-app update banner** on the `sideload` flavor. On cold start (at
+  most once every 6h) the app queries the GitHub `releases/latest`
+  endpoint and, if it's behind, shows a slim `UpdateBanner` at the
+  top of the scaffold with the current and latest versions. Tap
+  **Update** → opens the `-sideload-release.apk` asset URL directly in
+  the browser; Android's DownloadManager fetches it and hands it to
+  the OS installer. Tap the **X** to dismiss for this version — the
+  banner reappears automatically on the next release.
+- **"Updates" row in About → About** card — manual "Check" button
+  with the same plumbing. After a successful check shows either
+  "You're on the latest release" or "Update available — v0.x.y" with
+  a **Download** CTA. The row is hidden on the `googlePlay` flavor
+  (Play Store owns update delivery there).
+- **No new permissions** — the app never installs APKs itself; it
+  only opens the asset URL via `ACTION_VIEW`. The Android download +
+  install path is unchanged from what sideload users already use.
+- Files: `update/UpdateChecker.kt`, `UpdatePreferences.kt`,
+  `UpdateModels.kt`, `SemverCompare.kt`;
+  `viewmodel/UpdateViewModel.kt`;
+  `ui/components/UpdateBanner.kt`;
+  wire-up in `ui/RelayApp.kt` + `ui/screens/AboutScreen.kt`.
+
 ### Added — v0.4.1 Bridge page polish pass
 
 - **`UnattendedGlobalBanner`** — thin 28dp amber strip at the top of

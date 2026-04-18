@@ -53,6 +53,8 @@ Prefer not to wait for Google Play? Grab the signed APK directly:
 
 Full walkthrough, including signing-certificate fingerprint: [Sideload guide](https://codename-11.github.io/hermes-relay/guide/getting-started.html#sideload-apk).
 
+**Staying up to date (sideload):** the app checks GitHub for a newer release on cold start (at most once every 6 hours) and shows a dismissable banner when you're behind. Tapping **Update** opens the next APK in your browser so Android's Downloads notification hands it to the system installer — no second app required. You can also trigger a check manually under **Settings → About → Updates**. Google Play installs get auto-updates through the Play Store and don't show this banner.
+
 ### 2. Install the server plugin (one-liner)
 
 On the machine running your Hermes agent:
