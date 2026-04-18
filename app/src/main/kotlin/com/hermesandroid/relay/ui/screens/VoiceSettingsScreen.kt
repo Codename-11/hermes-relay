@@ -16,6 +16,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -26,6 +27,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -43,6 +47,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.hermesandroid.relay.data.BargeInSensitivity
 import com.hermesandroid.relay.data.VoicePreferencesRepository
 import com.hermesandroid.relay.data.VoiceSettings
 import com.hermesandroid.relay.network.RelayVoiceClient
@@ -51,6 +57,7 @@ import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.util.classifyError
 import com.hermesandroid.relay.viewmodel.InteractionMode
+import com.hermesandroid.relay.viewmodel.VoiceSettingsViewModel
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
 import kotlinx.coroutines.launch
 
@@ -59,9 +66,10 @@ import kotlinx.coroutines.launch
  *
  * Sections:
  *   1. Voice Mode       — interaction mode, silence threshold, auto-TTS
- *   2. Text-to-Speech   — provider label + voice (from GET /voice/config)
- *   3. Speech-to-Text   — provider label + language picker (stored, not wired)
- *   4. Test Voice       — one-shot synth + playback
+ *   2. Barge-in         — interrupt TTS by speaking; sensitivity + resume (V barge-in)
+ *   3. Text-to-Speech   — provider label + voice (from GET /voice/config)
+ *   4. Speech-to-Text   — provider label + language picker (stored, not wired)
+ *   5. Test Voice       — one-shot synth + playback
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -69,12 +77,16 @@ fun VoiceSettingsScreen(
     voiceViewModel: VoiceViewModel,
     voiceClient: RelayVoiceClient?,
     onBack: () -> Unit,
+    settingsViewModel: VoiceSettingsViewModel = viewModel(),
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
     val prefsRepo = remember { VoicePreferencesRepository(context) }
     val voiceSettings by prefsRepo.settings.collectAsState(initial = VoiceSettings())
+
+    val bargeInPrefs by settingsViewModel.bargeInPrefs.collectAsState()
+    val aecAvailable = settingsViewModel.aecAvailable
 
     var voiceConfig by remember { mutableStateOf<VoiceConfig?>(null) }
     var voiceConfigError by remember { mutableStateOf<String?>(null) }
@@ -212,6 +224,129 @@ fun VoiceSettingsScreen(
                         onCheckedChange = { enabled ->
                             scope.launch { prefsRepo.setAutoTts(enabled) }
                         },
+                    )
+                }
+            }
+
+            // --- Barge-in ---
+            // Wave 2 / unit B5 of the voice-barge-in plan. Default off. AEC
+            // probe at VM init drives the compatibility warning badge.
+            SectionCard(title = "Barge-in") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Interrupt when I speak", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            text = "Let me cut in by speaking, like a real conversation",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = bargeInPrefs.enabled,
+                        onCheckedChange = { settingsViewModel.setBargeInEnabled(it) },
+                    )
+                }
+
+                if (!aecAvailable) {
+                    // Badge sits directly below the master toggle so the
+                    // explanation stays adjacent to the control. We do NOT
+                    // disable the toggle — barge-in still works on AEC-less
+                    // devices, just more false-trigger-prone.
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Warning,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.size(8.dp))
+                        Text(
+                            text = "Your device may have limited echo cancellation. Barge-in quality will vary.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+
+                if (bargeInPrefs.enabled) {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                    Text(
+                        text = "Sensitivity",
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    Text(
+                        text = "Off disables detection without flipping the toggle above.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    val sensitivityOptions = listOf(
+                        BargeInSensitivity.Off,
+                        BargeInSensitivity.Low,
+                        BargeInSensitivity.Default,
+                        BargeInSensitivity.High,
+                    )
+                    val sensitivityLabels = listOf("Off", "Low", "Default", "High")
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        sensitivityOptions.forEachIndexed { index, option ->
+                            SegmentedButton(
+                                shape = SegmentedButtonDefaults.itemShape(
+                                    index = index,
+                                    count = sensitivityOptions.size,
+                                ),
+                                onClick = { settingsViewModel.setBargeInSensitivity(option) },
+                                selected = option == bargeInPrefs.sensitivity,
+                            ) {
+                                Text(
+                                    sensitivityLabels[index],
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Resume after interruption",
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                            Text(
+                                text = "Continue from the next sentence if you don't keep talking",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = bargeInPrefs.resumeAfterInterruption,
+                            onCheckedChange = {
+                                settingsViewModel.setResumeAfterInterruption(it)
+                            },
+                        )
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "Works best with headphones. On some phones the speaker may false-trigger.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }

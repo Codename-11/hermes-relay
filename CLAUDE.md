@@ -237,9 +237,10 @@ Curls every bridge HTTP route via `localhost:8767`. Catches the silent-drop regr
 1. **Edit locally** — Windows checkout. Both plugin (`plugin/`) and app (`app/`) live here.
 2. **Python syntax check** — `python -m py_compile plugin/<file>.py`. Full tests run on the server.
 3. **Kotlin changes** — do NOT run `gradle build`. Bailey builds via Android Studio's ▶ button. Never `adb install` from Claude.
-4. **Commit + push** — feature branch for anything >1-2 commits.
-5. **Pull + restart on server** — see Server Deployment below.
-6. **Test on phone** — Bailey builds from Studio, installs to Samsung device, pairs via `/hermes-relay-pair`.
+4. **Before pushing Kotlin changes** — run `./gradlew lint` locally. It's the exact task CI runs (see `.github/workflows/ci.yml` → `gradlew lint` fallback) and catches errors Android Studio's live inspections miss — e.g. `UnsafeOptInUsageError` with `kotlin.OptIn` vs `androidx.annotation.OptIn`, `FlowOperatorInvokedInComposition` (mapped flows inside Composables), Media3 `@UnstableApi` propagation. Lint is a hard blocker in CI: Build + Test show "skipping" until lint passes, and lint prints only the **first failure** before aborting — so CI iterations reveal errors one at a time while a single local lint run surfaces all of them.
+5. **Commit + push** — feature branch for anything >1-2 commits.
+6. **Pull + restart on server** — see Server Deployment below.
+7. **Test on phone** — Bailey builds from Studio, installs to Samsung device, pairs via `/hermes-relay-pair`.
 
 ### Server Deployment
 

@@ -289,6 +289,23 @@ class VoiceHandler:
                 status=400,
             )
 
+        # Strip markdown / tool annotations / URLs / emoji before TTS.
+        # See ``plugin/relay/tts_sanitizer.py`` for the rules; upstream's
+        # ``text_to_speech_tool`` does NOT run its own stripper so we
+        # have to do it here.
+        from .tts_sanitizer import sanitize_for_tts
+
+        sanitized = sanitize_for_tts(text)
+        if not sanitized:
+            return web.json_response(
+                {
+                    "success": False,
+                    "error": "'text' is empty after sanitization",
+                },
+                status=400,
+            )
+        text = sanitized
+
         try:
             from tools.tts_tool import text_to_speech_tool  # type: ignore
 

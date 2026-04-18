@@ -284,7 +284,7 @@ class TestMaybeInstallMiddleware(unittest.TestCase):
         original_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
 
         app = MagicMock()
-        app._middlewares = ()
+        app._middlewares = []
         adapter = MagicMock()
 
         try:

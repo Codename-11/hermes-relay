@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added — Voice silence auto-stop (2026-04-18)
+
+- **Silence-based auto-stop for Listening turns.** `VoiceViewModel.startListening()`
+  now arms a `silenceWatchdogJob` that polls `VoiceRecorder.amplitude` every
+  150 ms and calls `stopListening()` after the user's configured
+  `silenceThresholdMs` of continuous silence following at least one
+  above-floor frame. Uses the existing `RESUME_SILENCE_THRESHOLD = 0.08f`
+  floor (already tuned to reject mic hiss / room tone while catching
+  whispered speech). Cancelled on manual stop, `interruptSpeaking`, and
+  `onCleared`. Skipped in `InteractionMode.HoldToTalk` — the physical
+  release is the authoritative stop there. Closes the previously-dead
+  `VoiceSettings.silenceThresholdMs` preference, which was persisted
+  + exposed via a Settings slider but never consumed by any code path.
+
+### Fixed — Bootstrap crash when wrapping command middleware (2026-04-18)
+
+- **`hermes_relay_bootstrap/_command_middleware.py`** — `maybe_install_middleware()`
+  was replacing `app._middlewares` (an aiohttp `FrozenList`) with a plain
+  tuple via `(*existing, middleware)`. When `AppRunner.setup()` later
+  called `app._middlewares.freeze()`, tuples have no `.freeze()` method
+  and the gateway crashed on startup with `'tuple' object has no
+  attribute 'freeze'`. Switched to in-place `app._middlewares.append(middleware)`
+  — the FrozenList is still mutable at middleware-install time. 31/31
+  tests in `test_command_middleware.py` pass.
+
 ### Added — v0.4.1 Bridge page polish pass
 
 - **`UnattendedGlobalBanner`** — thin 28dp amber strip at the top of
@@ -182,6 +207,147 @@ sees the toggle, never installs the wake lock, and never invokes
 - **Implementation.** Each phone-local voice intent now records a structured `VoiceIntentTrace` (tool name, JSON args, success, JSON result envelope) on the post-dispatch chat-trace bubble it produces. `VoiceIntentSyncBuilder` walks the chat history before each `POST /v1/runs` / `POST /api/sessions/{id}/chat/stream` call and synthesizes OpenAI-format `assistant` (with `tool_calls`) + `tool` (with `tool_call_id`) message pairs from any unsynced traces. The synthesized array rides under the existing payload's new `messages` field — additive, ignored by older servers, picked up by anything OpenAI Chat Completions–shaped. Idempotency: traces flip to `syncedToServer=true` the moment the API client takes ownership of the request, so subsequent turns don't re-emit them.
 - **Zero server changes.** Frontend-only, no hermes-agent edits needed.
 - **Files.** `data/ChatMessage.kt` (new `voiceIntent: VoiceIntentTrace?` field), `voice/VoiceIntentSyncBuilder.kt` (pure-function builder + helpers), `network/HermesApiClient.kt` (optional `voiceIntentMessages` parameter on both stream methods), `viewmodel/ChatViewModel.kt` (build + sync + flag flip in `startStream`), `viewmodel/VoiceViewModel.kt` (extended dispatch callback wires the structured trace into the chat-trace bubble), `voice/VoiceBridgeIntentHandler.kt` (new `androidToolName` + `androidToolArgsJson` on `IntentResult.Handled`), sideload `VoiceBridgeIntentHandlerImpl.kt` populates them per intent, sideload + googlePlay `VoiceBridgeIntentFactory.kt` typealias updates. Tests in `test/voice/VoiceIntentSyncBuilderTest.kt` (12 cases — empty input, single success, failure with error_code, idempotency, chronological order, prefix gate, blank-args gate, call-id pairing, helpers) and `test/network/handlers/ChatHandlerTest.kt` (4 new cases for trace storage + `markVoiceIntentsSynced`).
+
+### Added — Barge-in (interrupt the agent)
+
+Voice mode can now be interrupted by speaking while the agent is
+replying — the same turn-taking pattern ChatGPT, Siri, and Google
+Assistant use. Stops the current TTS response the moment your voice
+is detected, flips to Listening, and hands the mic back to you
+without you needing to tap anything. If you then stay quiet for
+~600 ms, the agent resumes from the next sentence of the response
+you interrupted — so a quick breath or pause won't throw away its
+answer.
+
+- **Duplex audio + Silero VAD.** A new `BargeInListener` runs a
+  continuous `AudioRecord` (16 kHz mono PCM, `VOICE_COMMUNICATION`
+  source) alongside TTS playback, feeding 32 ms frames to a bundled
+  Silero voice-activity-detection model via `com.github.gkonovalov:
+  android-vad:silero`. `AcousticEchoCanceler` + `NoiseSuppressor` are
+  attached to the ExoPlayer audio session so the VAD doesn't trip on
+  our own TTS output. A second hysteresis layer on top of the library
+  (`2`–`3` consecutive speech frames depending on sensitivity) rejects
+  isolated false-positive frames.
+- **Two-stage ducking → cutoff.** A single raw speech frame fires a
+  `maybeSpeech` event → TTS volume ducks to 30 % as a soft
+  acknowledgement (user hears the shift, knows we heard something).
+  If hysteresis passes → hard `bargeInDetected` → `interruptSpeaking()`
+  fires (same path V4 wired for user-initiated interrupts in the
+  voice-quality-pass — cancels synth/play workers, deletes pending
+  cache files). If no follow-up detection within 500 ms, a watchdog
+  un-ducks so a single stray frame doesn't leave playback quieted.
+- **Resume-from-next-sentence.** `VoiceViewModel` tracks the list of
+  sentence chunks the play worker has spoken plus the index the user
+  interrupted at. After an interrupt, a 600 ms watchdog listens to
+  `VoiceRecorder.amplitude` — if the user keeps speaking past the
+  threshold, the new turn proceeds normally and the interrupted
+  response is dropped. If silence wins, remaining chunks re-enqueue
+  onto the TTS queue and playback resumes from the sentence after the
+  cut. Controlled by the "Resume after interruption" sub-toggle
+  (default on).
+- **Settings UI.** New "Barge-in" section in Voice Settings: master
+  toggle (default off), sensitivity segmented button (`Off / Low /
+  Default / High` — inverted from the library's `Mode` enum so higher
+  user-facing value = more sensitive), resume sub-toggle, and a
+  compatibility warning badge that shows on devices where
+  `AcousticEchoCanceler.isAvailable() == false` ("Your device may have
+  limited echo cancellation. Barge-in quality will vary.").
+  Preferences live in `BargeInPreferences` DataStore following the
+  existing `BridgeSafetyPreferences` shape.
+- **Shipped default-off.** AEC quality varies widely across Android
+  OEMs — Pixel is solid, many mid-tier and older devices aren't. The
+  feature ships disabled by default; users opt in from Voice Settings
+  and see the compatibility badge if their device has no AEC. A
+  `useExoPlayerVoice` flavor-safe architecture from the voice-quality-
+  pass already exposed `VoicePlayer.audioSessionId`, which is what
+  AEC binds against.
+- **Live settings reactivity.** Toggling the feature on or off
+  mid-conversation works without restarting voice mode; the
+  coordinator observes `BargeInPreferences.flow` and starts/stops the
+  listener on each emission.
+
+Tests: 7 new `VoiceViewModelBargeInTest` cases covering the
+interrupt path, resume-vs-keep-talking branches, the ducking
+watchdog, and live prefs-change reactivity. Plus unit tests for each
+new subsystem (VAD engine, duplex listener with `AudioFrameSource`
+seam for non-instrumented tests, ducking helpers, DataStore).
+
+### Changed — Voice output quality pass
+
+Addresses four symptom classes that surfaced in on-device voice testing
+after v0.4.0: voice output switching between crisp and muffled, volume
+drifting between sentences, audible pauses between chunks, and occasional
+jumbled-letter spell-outs when the agent emitted markdown, URLs, or
+tool-annotation tokens. Root-caused across five compounding layers and
+fixed end-to-end in a single agent-team session on
+`feature/voice-quality-pass`.
+
+- **Text sanitization, both ends.** A new `plugin/relay/tts_sanitizer`
+  module strips markdown (code fences, links, URLs, bold/italic, inline
+  code, headers, list markers, horizontal rules), Hermes tool-annotation
+  tokens (`` `💻 terminal` ``, `` `🔧 android_foo` ``, etc.), and a
+  conservative standalone-emoji set before `/voice/synthesize` hands
+  text to the upstream `text_to_speech_tool`. The same regex set is
+  mirrored client-side in `VoiceViewModel.sanitizeForTts` and applied
+  per delta before the sentenceBuffer sees the text, with multi-delta
+  code-fence deferral so unclosed fences don't leak orphaned backticks
+  to the chunker. Kills the "jumbled letters" symptom — ElevenLabs no
+  longer reads URLs character-by-character or speaks backtick+emoji
+  wrappers aloud.
+- **Coalescing chunker.** The old `MIN_SENTENCE_LEN=6` chunker emitted
+  every tiny acknowledgement (`"Sure."`, `"Okay."`) as its own TTS
+  call, guaranteeing audible inter-chunk variance. New
+  `MIN_COALESCE_LEN=40` + `MAX_BUFFER_LEN=400` secondary-break escape
+  merges short runs into one synthesize call, splits run-on sentences
+  at the last comma/semicolon/em-dash inside the 400-char window, and
+  preserves the `e.g.`/`U.S.` abbreviation lookahead. An 800 ms
+  silent-delta timer force-flushes buffered text so trailing fragments
+  on an abrupt stream-end don't strand in the buffer.
+- **Prefetch pipelining.** `VoiceViewModel.startTtsConsumer` was
+  previously a strictly serial `synthesize → play → awaitCompletion`
+  loop — every sentence boundary cost one full network round-trip. Now
+  split into two `supervisorScope`-rooted coroutines joined by a
+  bounded `Channel<File>(capacity=2)`: the synth worker runs up to one
+  sentence ahead of the play worker, so N+1's audio is already on disk
+  when N's playback finishes. Synth failures on N+1 no longer stall
+  N's playback. Cancellation paths (`stopVoice`,
+  `interruptSpeaking`, `exitVoiceMode`) cancel the scope and delete any
+  unplayed `voice_tts_<ts>.mp3` cache files; a `finally`-scoped
+  cleanup catches any late-arriving synth results that beat the cancel
+  signal.
+- **Gapless ExoPlayer playback.** `VoicePlayer` swapped from
+  recreating a `MediaPlayer` per file to a single persistent Media3
+  ExoPlayer + `addMediaItem` queue. Appending is non-blocking;
+  `awaitCompletion()` now returns when the queue is drained AND the
+  player is idle (documented semantic change). Kills the codec-reset
+  pop between sentences and composes naturally with the prefetcher —
+  the play worker appends without blocking the synth worker. Visualizer
+  attaches once against the ExoPlayer audio session (deferred to the
+  first `onIsPlayingChanged(true)` since some OEMs initialize the
+  session id lazily) and degrades gracefully if attach fails. Ships
+  behind a `FeatureFlags.useExoPlayerVoice` hook as a safety net; no
+  `MediaPlayer` fallback is currently wired.
+- **ElevenLabs model flipped to `eleven_flash_v2_5`.** Operator change
+  applied to `~/.hermes/config.yaml` on hermes-host ahead of the code
+  work. `eleven_multilingual_v2` is expressive but re-interprets
+  prosody per call — wrong model for a chunked pipeline.
+  `eleven_flash_v2_5` is the streaming-optimized model (~75 ms
+  per-request latency, lower per-call variance, designed exactly for
+  sentence-scale pipelines) and is net-cheaper per character. Voice id
+  unchanged. This single flip accounts for the bulk of the perceived
+  "clear↔muffled switching" reduction; the code units below reduce
+  what remained.
+
+Deferred: upstream PR exposing `VoiceSettings` (stability /
+similarity_boost / use_speaker_boost) in
+`hermes-agent/tools/tts_tool.py::_generate_elevenlabs`. Useful once
+merged — default `stability` is a hair too low for consistent chunked
+output — but not blocking; the flash model already solves most of what
+the settings would.
+
+Tests: 33 new relay sanitizer tests, 4 new client test files covering
+sanitization parity, chunking semantics, prefetch pipelining timing +
+cancellation cleanup, and ExoPlayer queue behavior.
 
 ## [0.4.0] - 2026-04-14
 

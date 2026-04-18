@@ -57,7 +57,7 @@ Change in **Settings → Voice → Interaction mode**. All three share the same 
 
 - Tap the mic to start recording.
 - Tap again to stop manually, or stay quiet for ~3 seconds and it'll auto-stop (threshold configurable in Voice Settings).
-- Tap while the agent is speaking to **interrupt** — the current TTS stops and a fresh recording starts.
+- Tap while the agent is speaking to **interrupt** — the current TTS stops and a fresh recording starts. If **Barge-in** is enabled (see below), you can also just start speaking — no tap needed.
 
 ### Hold-to-talk
 
@@ -88,6 +88,18 @@ Result: first audio starts within ~1 sentence of the agent starting to reply. Yo
 - **Interaction mode** — Tap / Hold / Continuous
 - **Silence threshold** — 1-10 seconds, default 3. Only applies in Tap-to-talk mode.
 - **Auto-TTS** — reserved for future: speak all agent responses even when not in voice mode. Currently a placeholder.
+
+### Barge-in
+
+New as of 2026-04-17. Lets you interrupt the agent by speaking while it's replying — the same turn-taking pattern ChatGPT and Siri use. **Default off** because echo-cancellation quality varies widely across Android phones; opt in once and the setting persists.
+
+- **Interrupt when I speak** — master toggle. Default off.
+- **Sensitivity** — `Off / Low / Default / High`. Higher values fire on quieter / shorter speech. Start with Default; drop to Low if your phone false-triggers on its own TTS, raise to High if you find yourself having to speak up.
+- **Resume after interruption** — default on. After you interrupt, if you then stay quiet for ~600 ms, the agent resumes reading from the next sentence of its response. A quick breath or "wait, actually…" that you decide not to finish won't throw away its answer. Turn off if you'd rather a hard cut every time.
+
+**Device compatibility.** If your phone doesn't support hardware echo cancellation (`AcousticEchoCanceler`), you'll see a warning badge next to the master toggle: *"Your device may have limited echo cancellation. Barge-in quality will vary."* You can still enable barge-in, but expect more false triggers from the phone's own speaker feeding back into the mic. **Using headphones fixes this entirely** — the mic never hears the TTS output, so VAD has nothing to confuse.
+
+**How it feels in practice.** As soon as you start speaking, the agent's voice briefly ducks in volume (about 30 %) — that's the app acknowledging "I think I heard something" before committing. If you keep speaking, it stops entirely within a fraction of a second and you're back in recording mode. If it was a false trigger (one stray frame of background noise), the volume pops back up to full after ~500 ms with no interruption.
 
 ### Text-to-Speech
 
