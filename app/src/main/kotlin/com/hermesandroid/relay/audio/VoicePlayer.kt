@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.core.net.toUri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -40,6 +41,7 @@ import kotlin.math.sqrt
  * @param context used for [ExoPlayer.Builder]. Application context is fine;
  *   the player holds no view references.
  */
+@OptIn(UnstableApi::class)
 class VoicePlayer(context: Context) {
 
     companion object {
