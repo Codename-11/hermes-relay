@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.sp
@@ -502,13 +503,19 @@ fun RelayApp() {
         // or during voice-mode full-screen takeover. Tapping opens the
         // switcher sheet declared below the Scaffold.
         val currentRoute = navBackStackEntry?.destination?.route
-        val profileChipVisible = !isOnboarding &&
-            !voiceUiState.voiceMode &&
-            currentRoute in bottomNavScreens.map { it.route }
         val profiles by connectionViewModel.profiles.collectAsState()
         val activeProfile by connectionViewModel.activeProfile.collectAsState()
         val activeProfileId by connectionViewModel.activeProfileId.collectAsState()
         var profileSheetVisible by remember { mutableStateOf(false) }
+        // Only surface the chip when there's something to switch between.
+        // With a single profile (the default after migration) the strip is
+        // just dead chrome above every screen — users reach it via Settings
+        // → Profiles → Add instead. Hidden during onboarding and voice-mode
+        // takeovers regardless.
+        val profileChipVisible = !isOnboarding &&
+            !voiceUiState.voiceMode &&
+            currentRoute in bottomNavScreens.map { it.route } &&
+            profiles.size >= 2
 
         Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -568,7 +575,12 @@ fun RelayApp() {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    // Background BEFORE statusBarsPadding so the surface
+                    // colour extends up under the status bar (otherwise
+                    // there's a dead rectangle of system-window behind the
+                    // time / wifi icons that doesn't match the app chrome).
                     .background(MaterialTheme.colorScheme.surface)
+                    .statusBarsPadding()
                     .padding(horizontal = 12.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
@@ -597,7 +609,12 @@ fun RelayApp() {
                 .fillMaxWidth()
                 .weight(1f)
                 .then(
-                    if (showUnattendedBanner) {
+                    // Any banner / chip sitting above the Scaffold that
+                    // pads itself for the status bar means child TopAppBars
+                    // would otherwise double-pad and render too far down.
+                    // Consume the inset here so the Scaffold tree treats
+                    // the top edge as already handled.
+                    if (showUnattendedBanner || profileChipVisible) {
                         Modifier.consumeWindowInsets(WindowInsets.statusBars)
                     } else {
                         Modifier
