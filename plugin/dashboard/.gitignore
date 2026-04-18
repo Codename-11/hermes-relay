@@ -1,0 +1,9 @@
+node_modules/
+
+# Un-ignore plugin build artefacts: the root .gitignore excludes these
+# broadly (Android build outputs / node packages), but the dashboard ships
+# its committed bundle + manifest here.
+!package.json
+!package-lock.json
+!dist/
+!dist/index.js
