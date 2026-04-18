@@ -163,7 +163,7 @@ class DataManager(
                     if (profilesField != null) {
                         JsonObject(withoutProfiles + ("connections" to profilesField))
                     } else {
-                        withoutProfiles
+                        JsonObject(withoutProfiles)
                     }
                 }
                 else -> obj
