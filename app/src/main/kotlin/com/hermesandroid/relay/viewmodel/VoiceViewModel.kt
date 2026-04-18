@@ -38,7 +38,9 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeoutOrNull
@@ -201,8 +203,20 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
          * perceptually-scaled; empirically a value of 0.08 excludes mic
          * hiss + room tone on Bailey's devices while still catching a
          * whispered continuation. Tune from telemetry if this bites.
+         *
+         * Reused by the Listening-turn silence auto-stop watchdog (2026-04-18)
+         * since the same amplitude curve drives both decisions.
          */
         internal const val RESUME_SILENCE_THRESHOLD: Float = 0.08f
+
+        /**
+         * Poll interval for the Listening-turn silence watchdog. The
+         * [VoiceRecorder.amplitude] poll itself runs at ~16 ms; checking
+         * every 150 ms is coarse enough to be cheap (a couple of reads per
+         * second) and fine enough that auto-stop lands within ~150 ms of
+         * the configured threshold crossing.
+         */
+        private const val SILENCE_WATCHDOG_POLL_MS: Long = 150L
 
         /**
          * Explicit allow-list of cancel utterances. Intentionally NOT
@@ -238,6 +252,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var recorder: VoiceRecorder? = null
     private var player: VoicePlayer? = null
     private var sfxPlayer: VoiceSfxPlayer? = null
+    // 2026-04-18: promoted to a field so the silence auto-stop watchdog can
+    // read `silenceThresholdMs` at the start of each Listening turn. The
+    // value is a live Flow, so the watchdog snapshots it on entry; changes
+    // mid-turn take effect on the next turn.
+    private var voicePreferences: VoicePreferencesRepository? = null
 
     // === PHASE3-voice-intents: voice→bridge intent routing ===
     // Bridge intent handler — the flavor-selected impl, set in initialize().
@@ -312,6 +331,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var ttsConsumerJob: Job? = null
     private var amplitudeBridgeJob: Job? = null
     private var currentTurnJob: Job? = null
+    // 2026-04-18: silence-based auto-stop watchdog. Runs for the duration
+    // of a Listening turn in TapToTalk / Continuous modes when the user has
+    // a non-zero `silenceThresholdMs` preference. HoldToTalk never starts
+    // this — the physical release is the authoritative stop signal.
+    private var silenceWatchdogJob: Job? = null
 
     /**
      * Debounced idle-flush job — re-armed on every incoming delta.
@@ -548,7 +572,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // survives app restarts. Previously only the VoiceSettingsScreen
         // push-path called setInteractionMode(), leaving fresh VMs stuck
         // on TapToTalk until the user revisited Settings.
+        //
+        // 2026-04-18: also store the repository on the VM so the silence
+        // auto-stop watchdog in startListening() can read the current
+        // `silenceThresholdMs` without re-plumbing it through the UI.
         if (voicePreferences != null) {
+            this.voicePreferences = voicePreferences
             viewModelScope.launch {
                 voicePreferences.settings.collect { settings ->
                     val mode = when (settings.interactionMode.lowercase()) {
@@ -755,6 +784,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     permissionDeniedCallout = null,
                 )
             }
+            // 2026-04-18: arm silence-based auto-stop. HoldToTalk skips
+            // this — the physical release is the authoritative stop.
+            if (_uiState.value.interactionMode != InteractionMode.HoldToTalk) {
+                startSilenceWatchdog()
+            }
         } catch (e: Exception) {
             Log.e(TAG, "startListening failed: ${e.message}")
             // SecurityException path becomes "Permission needed" via the classifier.
@@ -765,6 +799,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     fun stopListening() {
         val rec = recorder ?: return
         if (_uiState.value.state != VoiceState.Listening) return
+
+        // 2026-04-18: cancel the silence watchdog first so it can't race
+        // a concurrent stop from another path (barge-in, overlay X button).
+        silenceWatchdogJob?.cancel()
+        silenceWatchdogJob = null
 
         val file = try {
             rec.stopRecording()
@@ -777,6 +816,56 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         currentTurnJob?.cancel()
         currentTurnJob = viewModelScope.launch {
             processVoiceInput(file)
+        }
+    }
+
+    /**
+     * Silence-based auto-stop watchdog for the current Listening turn.
+     *
+     * Reads the user's [VoiceSettings.silenceThresholdMs] snapshot at the
+     * start of the turn (changes mid-turn take effect next turn) and polls
+     * [VoiceRecorder.amplitude] every [SILENCE_WATCHDOG_POLL_MS]. A frame
+     * is "silent" when the perceptual amplitude is below
+     * [RESUME_SILENCE_THRESHOLD] — the same floor the post-barge-in resume
+     * watchdog uses, already tuned to reject mic hiss and room tone on
+     * Bailey's devices while catching whispered speech.
+     *
+     * Grace window: auto-stop does NOT fire until we've seen at least one
+     * above-floor frame. If the user taps to start a turn and never
+     * speaks, we wait forever (or until a manual stop) rather than
+     * insta-closing the turn the moment recording begins.
+     *
+     * No-op when [voicePreferences] is unwired (pre-fix test call sites)
+     * or when the threshold is <= 0 (reserved for a future "Off" option).
+     */
+    private fun startSilenceWatchdog() {
+        val prefs = voicePreferences ?: return
+        silenceWatchdogJob?.cancel()
+        silenceWatchdogJob = viewModelScope.launch {
+            val thresholdMs = prefs.settings.firstOrNull()?.silenceThresholdMs
+                ?: VoicePreferencesRepository.DEFAULT_SILENCE_THRESHOLD_MS
+            if (thresholdMs <= 0L) return@launch
+
+            val rec = recorder ?: return@launch
+            var hasSpoken = false
+            var lastVoiceMs = System.currentTimeMillis()
+
+            while (isActive && _uiState.value.state == VoiceState.Listening) {
+                val amp = rec.amplitude.value
+                val now = System.currentTimeMillis()
+                if (amp > RESUME_SILENCE_THRESHOLD) {
+                    hasSpoken = true
+                    lastVoiceMs = now
+                } else if (hasSpoken && (now - lastVoiceMs) >= thresholdMs) {
+                    Log.d(TAG, "silence watchdog: ${thresholdMs}ms of silence after speech — auto-stop")
+                    // stopListening() is state-guarded (early-returns if
+                    // already out of Listening), so a concurrent manual
+                    // stop between here and dispatch is a safe no-op.
+                    stopListening()
+                    return@launch
+                }
+                delay(SILENCE_WATCHDOG_POLL_MS)
+            }
         }
     }
 
@@ -796,6 +885,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // bargeInDetected while the resume watchdog is deliberating.
         // stopBargeInListener is null-safe.
         stopBargeInListener()
+        // 2026-04-18: the silence watchdog only runs during Listening, but
+        // cancel defensively so a stale job from the prior turn can't
+        // fire stopListening() after we've already returned to Idle.
+        silenceWatchdogJob?.cancel()
+        silenceWatchdogJob = null
         // Drain queued sentences without closing the channel.
         while (true) {
             val r = ttsQueue.tryReceive()
@@ -1998,6 +2092,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         stopBargeInListener()
         duckingWatchdog?.cancel()
         resumeWatchdog?.cancel()
+        silenceWatchdogJob?.cancel()
+        silenceWatchdogJob = null
         try { recorder?.cancel() } catch (_: Exception) { /* ignore */ }
         try { player?.stop() } catch (_: Exception) { /* ignore */ }
         try { sfxPlayer?.release() } catch (_: Exception) { /* ignore */ }

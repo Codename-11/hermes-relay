@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added — Voice silence auto-stop (2026-04-18)
+
+- **Silence-based auto-stop for Listening turns.** `VoiceViewModel.startListening()`
+  now arms a `silenceWatchdogJob` that polls `VoiceRecorder.amplitude` every
+  150 ms and calls `stopListening()` after the user's configured
+  `silenceThresholdMs` of continuous silence following at least one
+  above-floor frame. Uses the existing `RESUME_SILENCE_THRESHOLD = 0.08f`
+  floor (already tuned to reject mic hiss / room tone while catching
+  whispered speech). Cancelled on manual stop, `interruptSpeaking`, and
+  `onCleared`. Skipped in `InteractionMode.HoldToTalk` — the physical
+  release is the authoritative stop there. Closes the previously-dead
+  `VoiceSettings.silenceThresholdMs` preference, which was persisted
+  + exposed via a Settings slider but never consumed by any code path.
+
+### Fixed — Bootstrap crash when wrapping command middleware (2026-04-18)
+
+- **`hermes_relay_bootstrap/_command_middleware.py`** — `maybe_install_middleware()`
+  was replacing `app._middlewares` (an aiohttp `FrozenList`) with a plain
+  tuple via `(*existing, middleware)`. When `AppRunner.setup()` later
+  called `app._middlewares.freeze()`, tuples have no `.freeze()` method
+  and the gateway crashed on startup with `'tuple' object has no
+  attribute 'freeze'`. Switched to in-place `app._middlewares.append(middleware)`
+  — the FrozenList is still mutable at middleware-install time. 31/31
+  tests in `test_command_middleware.py` pass.
+
 ### Added — v0.4.1 Bridge page polish pass
 
 - **`UnattendedGlobalBanner`** — thin 28dp amber strip at the top of

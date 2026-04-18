@@ -1,5 +1,29 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-18 — Silence auto-stop + bootstrap middleware fix
+
+**Context.** Bailey asked about STT / silence detection while reviewing the voice stack post-barge-in. Turned out the uplink mic path has no endpointing at all — `VoiceRecorder` uses `MediaRecorder` with `AudioSource.MIC` (no AEC/NS, no VAD), and `stopListening()` has exactly one caller: `ChatScreen.kt:1319` on mic release. The `VoicePreferences.silenceThresholdMs` preference was wired to a Settings slider and persisted to DataStore but **never consumed** by any code. Cosmetic setting. Worst case was Continuous mode: after TTS finishes, it re-arms the mic and waits forever for a manual stop — ambient noise gets included, user walks away, recording goes on indefinitely.
+
+**Decision.** Wire the existing preference. Cheapest of the four options I laid out (wire `silenceThresholdMs` → `AudioSource.VOICE_RECOGNITION` → second Silero on uplink → server-side VAD via `gpt-4o-transcribe`). The other three stay on the shelf; this one is self-contained in the ViewModel.
+
+**Implementation.**
+- Promoted `voicePreferences` to a VM field (previously captured only inside `initialize`'s closure).
+- Added `silenceWatchdogJob` + `startSilenceWatchdog()` — snapshots `silenceThresholdMs` at turn start, polls `VoiceRecorder.amplitude` every 150 ms, reuses `RESUME_SILENCE_THRESHOLD = 0.08f` as the silence floor (same floor the post-barge-in resume watchdog already uses — one tuning knob, not two). Grace window: auto-stop only fires after at least one above-floor frame, so "user taps mic, doesn't speak" never insta-closes the turn.
+- Skip in `HoldToTalk` — the physical release is the authoritative stop there, auto-stop on silence while the user is still holding would be surprising behavior.
+- Cancelled in `stopListening()`, `interruptSpeaking()`, and `onCleared()`.
+
+No UI change needed — the Settings slider and "Auto-stop listening after this much silence" copy already exist. The slider is now load-bearing instead of cosmetic.
+
+**Bootstrap crash (separate fix, same day).** Teammate debugging a different project hit `'tuple' object has no attribute 'freeze'` on gateway startup. Root cause in `hermes_relay_bootstrap/_command_middleware.py`: `maybe_install_middleware()` was doing `app._middlewares = (*existing, middleware)` — replacing the aiohttp `FrozenList` with a plain tuple. When `AppRunner.setup()` later called `_middlewares.freeze()`, tuples don't have that method and the gateway crashed. Switched to in-place `app._middlewares.append(middleware)` — the FrozenList is still mutable at middleware-install time (freeze happens later in setup). Also updated the test mock to use `[]` instead of `()` so it matches real aiohttp behavior. 31/31 tests pass.
+
+**Deferred (from the silence-detection discussion).**
+- Uplink `AudioSource.VOICE_RECOGNITION` — engages Android's built-in NS/AEC tuned for STT. Single-line change, needs a release to validate on the Samsung.
+- Second Silero on the uplink path — real VAD-based endpointing instead of raw-amplitude. Barge-in infra is already there to copy.
+- `gpt-4o-transcribe` / OpenAI Realtime — server-side endpointing + lower latency, but bigger pivot. Park until we hit real limits with the amplitude approach.
+- "Off" option on the silence slider — the current slider range is 1000–10000 ms with no way to disable. Future UI change if a user wants fully manual control (e.g., pause-to-think flows). Treating thresholdMs <= 0 as "off" is already supported in the watchdog for when that UI lands.
+
+**Next session.** Bailey rebuilds, smoke-tests Continuous + TapToTalk at the default 3s threshold. Validation: (1) natural pauses mid-utterance don't prematurely auto-stop at 1s/2s thresholds — if they do, tune the floor up or add a longer default; (2) the watchdog never fires when the user is manually holding for HoldToTalk; (3) ambient noise in a moderately-noisy room (TV, fan) doesn't prevent auto-stop because amp never drops below 0.08. If (3) bites, that's when `AudioSource.VOICE_RECOGNITION` becomes non-optional.
+
 ## 2026-04-17 — Voice barge-in (agent-team single-session, stacked on voice-quality-pass)
 
 **Motivation.** After the voice-quality-pass work (see entry below), Bailey noted that conversation mode still lagged ChatGPT / Claude app in a specific way: you can't interrupt the agent by speaking. You have to wait for the full response, or tap the mic to force a new turn — neither of which matches the "normal turn-taking" pattern users expect from modern voice UIs. The industry-standard recipe is duplex audio + VAD + AEC + hysteresis + optional resume-from-sentence-boundary. All five pieces implementable on Android if you accept that AEC quality varies across OEMs (the trap that kills most naive attempts).
