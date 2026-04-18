@@ -255,6 +255,18 @@ for path in "$PLUGIN_LINK" \
 done
 [ -z "$removed_any" ] && warn "No plugin symlinks were registered"
 
+# Best-effort hermes-agent dashboard rescan so the relay tab disappears
+# without requiring a dashboard restart. Silent if the dashboard isn't
+# running or is bound elsewhere — we don't care about the outcome.
+if command -v curl >/dev/null 2>&1; then
+    for port in 9119 9100 9000; do
+        if curl -sf -m 2 -X GET "http://127.0.0.1:${port}/api/dashboard/plugins/rescan" >/dev/null 2>&1; then
+            ok "Triggered dashboard rescan on :${port}"
+            break
+        fi
+    done
+fi
+
 # ── 2/6  Remove bootstrap .pth + pip package ───────────────────────────────
 info "[2/6] Removing bootstrap .pth + pip package..."
 
