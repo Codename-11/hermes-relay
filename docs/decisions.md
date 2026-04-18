@@ -619,6 +619,50 @@ The `data` field tells the activity log and agent trace which tier succeeded, wh
 - `app/src/main/kotlin/com/hermesandroid/relay/bridge/BridgeStatusOverlay.kt` — `BridgeStatusOverlayChip` amber variant (shipped with the initial v0.4.1 unattended work)
 - `docs/spec.md` §5 Bridge Tab — user-facing description
 
+### 19. Multi-Profile Connections — one app, many Hermes servers (2026-04-18)
+
+**Decision:** Formalize the implicit single-profile connection as a first-class `Profile` entity, with a `ProfileStore` that holds N profiles in DataStore and persists the active one. Switching profile is a heavy context swap: cancel in-flight SSE, disconnect relay WSS, rebuild `HermesApiClient`, update URL `StateFlow`s (which `RelayHttpClient`/`RelayVoiceClient` providers already re-read lazily), rebuild `AuthManager` against a profile-scoped `EncryptedSharedPreferences` file, reconnect, reprobe capabilities, reload sessions/personalities, restore per-profile last-active session.
+
+**Why:**
+- Users with multiple Hermes installs (home + work, dev + prod, multiple NAS hosts) want to switch targets without wiping pairing state or re-running onboarding.
+- "Profile" as upstream Hermes understands it is *a separate gateway instance* — there is no `/api/profiles` endpoint to enumerate. The honest model is "profile = connection" (baseUrl + bearer + pairing record). This also matches how Discord achieves multi-agent-in-one-channel: each "agent" is a distinct bot backed by its own gateway.
+- Personalities (Decision 8) are orthogonal and remain per-profile — each server exposes its own personality map via `/api/config`.
+
+**How:**
+- **Profile model:** UUID id, editable label (default = hostname), `apiServerUrl`, `relayUrl`, `tokenStoreKey` (EncryptedSharedPreferences file name), `pairedAt`, `lastActiveSessionId`, `transportHint`, `expiresAt`. Serialized as a JSON array in DataStore key `profiles_v1`; active profile in `active_profile_id`.
+- **Migration:** on first launch of the new version, `ProfileStore.migrateLegacyProfileIfNeeded()` seeds profile 0 with the existing `hermes_companion_auth_hw` file as its store — zero re-pair, zero token migration, fully transparent to the user.
+- **Auth layer:** `SessionTokenStore.tryCreate()` accepts a `prefsName` parameter; `AuthManager` gains a `profileId` constructor parameter and picks the store file via `Profile.buildTokenStoreKey(id)`. `CertPinStore` is unchanged — pins are already keyed by `host:port` and correctly shared across profiles targeting the same server.
+- **Network rebind:** `RelayHttpClient` and `RelayVoiceClient` take provider lambdas that read URL + token at call time, so updating the backing `MutableStateFlow`s is sufficient — no client recreation. `HermesApiClient` is recreated (private OkHttp pool + SSE factory), using the existing `rebuildApiClient()` path in `ConnectionViewModel`.
+- **UI:** top-bar profile chip → `ProfileSwitcherSheet` bottom sheet with radio list + "Manage profiles…" link. `Screen.ProfilesSettings` hosts card CRUD: rename (inline), re-pair (reuses `ConnectionWizard` with `profileId` nav arg), revoke, remove.
+- **Remove semantics:** `ProfileStore.removeProfile()` calls `context.deleteSharedPreferences(tokenStoreKey)` to wipe the profile's auth material. Cert pin survives in the global TOFU map keyed by host:port so re-adding the same server is still trusted.
+
+**Scope — what's per-profile vs. global:**
+
+| Per-profile | Global |
+|---|---|
+| API baseUrl + bearer | Theme, dev-mode toggles |
+| Sessions, messages, search | Bridge safety prefs (blocklist, destructive verbs, auto-disable) |
+| Personalities (`/api/config`) | Feature flags / DataStore overrides |
+| Skills, memory | Notification companion enabled/disabled |
+| Relay WSS endpoint + cert pin (shared by host) | Keystore itself (one keystore, many entries) |
+| Voice transcribe/synthesize endpoint | |
+| Bridge command target | |
+| Last-active session ID | |
+
+**Trade-off — Bridge safety prefs are global:** a blocklist entry added for server A also applies when connected to server B. Accepted for v1 because the safety model is phone-wide (one user, one device, same risk appetite). If users report the shared blocklist biting, split per-profile later — the store shape allows it without breaking compatibility.
+
+**Trade-off — "both agents in one channel" (Discord-style) deferred:** a unified chat view showing interleaved messages from two profiles is possible but semantically fraught: sessions, memory, and tool calls don't merge on the server side, so the unified view would be purely client-side theater. Deferred until there's a concrete use case; v1 users switch contexts with one tap and carry on.
+
+**Upstream opportunity:** a real `/api/profiles` endpoint that returns `[{id, name, endpoint, model}]` from a single config would let one hermes install expose multiple profiles without the user running multiple daemons. Filed alongside `/api/commands` as a future contribution in `docs/upstream-contributions.md`.
+
+**References:**
+- `app/src/main/kotlin/.../data/ProfileData.kt` — `Profile` + helpers
+- `app/src/main/kotlin/.../data/ProfileStore.kt` — StateFlows + CRUD + migration
+- `app/src/main/kotlin/.../auth/AuthManager.kt` — `profileId` ctor; `sessionLabels` (renamed from `profiles` to avoid collision with the new concept)
+- `app/src/main/kotlin/.../viewmodel/ConnectionViewModel.kt` — `switchProfile()` orchestration
+- `app/src/main/kotlin/.../ui/components/ProfileSwitcherSheet.kt` — bottom-sheet switcher
+- `app/src/main/kotlin/.../ui/screens/ProfilesSettingsScreen.kt` — CRUD screen
+
 ---
 
 ### 19. Dashboard plugin: single plugin with internal tabs + pre-built IIFE bundle (2026-04-18)
