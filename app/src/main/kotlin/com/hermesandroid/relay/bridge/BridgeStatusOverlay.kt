@@ -44,6 +44,17 @@ import java.util.concurrent.ConcurrentHashMap
  * in the gesture layer while the modal is a modal rectangle that
  * intercepts touches only when present.
  *
+ * # Foreground gating (v0.4.1 polish)
+ *
+ * Chip visibility is gated on the app being backgrounded — while
+ * Hermes-Relay is foregrounded, the in-app `UnattendedGlobalBanner`
+ * handles user visibility and this chip hides. The gating lives in
+ * [com.hermesandroid.relay.viewmodel.BridgeViewModel]'s chip collector,
+ * which combines the user preferences with
+ * [com.hermesandroid.relay.util.AppForegroundTracker.isForeground]
+ * before calling [setChipVisible]. The confirmation modal path is
+ * unaffected — destructive-verb prompts always need to show.
+ *
  * # Lifecycle plumbing for ComposeView
  *
  * `ComposeView` attached via `WindowManager` does not automatically get

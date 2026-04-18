@@ -27,6 +27,7 @@ import com.hermesandroid.relay.accessibility.MediaProjectionHolder
 // === PHASE3-bridge-ui-followup: screen capture consent flow ===
 import com.hermesandroid.relay.accessibility.ScreenCaptureRequester
 // === END PHASE3-bridge-ui-followup ===
+import com.hermesandroid.relay.util.AppForegroundTracker
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -192,6 +193,21 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     init {
         refreshPermissionStatus()
         refreshBridgeStatusFromSystem()
+
+        // Periodic 5s refresh of bridge status while the ViewModel is alive.
+        // currentApp / battery / screenOn are the only fields that change
+        // between screen-resume events; polling is cheap (all three are
+        // synchronous reads from PowerManager / BatteryManager / a11y
+        // singleton) and StateFlow equality suppresses no-op emissions.
+        // Without this, "Current app" stays stuck at whatever it was when
+        // the user last resumed the Bridge tab.
+        viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(5_000)
+                refreshBridgeStatusFromSystem()
+            }
+        }
+
         // === v0.4.1 mirror unattended toggle into the singleton ===
         // BridgeSafetySettings.unattendedAccessEnabled lives in DataStore
         // and is the source of truth, but the wake-lock acquire path
@@ -274,20 +290,30 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         // — because the unattended state is load-bearing safety
         // information that the user needs to know about at a glance
         // when they walk back to the phone.
+        //
+        // v0.4.1 polish: the chip is a *cross-app* indicator — it only
+        // earns its screen real estate when the user is NOT inside
+        // Hermes-Relay (where the in-app UnattendedGlobalBanner already
+        // covers the same signal on every tab). Gate on
+        // AppForegroundTracker.isForeground so chip + banner are never
+        // visible at the same time.
         viewModelScope.launch {
             val safety = BridgeSafetyManager.peek() ?: return@launch
             combine(
                 masterToggle,
                 safety.settings.map { it.statusOverlayEnabled }.distinctUntilChanged(),
                 safety.settings.map { it.unattendedAccessEnabled }.distinctUntilChanged(),
-            ) { master, overlayOn, unattendedOn ->
-                Triple(master, overlayOn, unattendedOn)
+                AppForegroundTracker.isForeground,
+            ) { master, overlayOn, unattendedOn, isForeground ->
+                ChipState(master, overlayOn, unattendedOn, isForeground)
             }
                 .distinctUntilChanged()
-                .collect { (master, overlayOn, unattendedOn) ->
-                    val shouldShow = master && (overlayOn || unattendedOn)
+                .collect { st ->
+                    val shouldShow = st.master &&
+                        (st.overlayOn || st.unattendedOn) &&
+                        !st.isForeground
                     BridgeStatusOverlay.peek()
-                        ?.setChipVisible(shouldShow, unattended = unattendedOn)
+                        ?.setChipVisible(shouldShow, unattended = st.unattendedOn)
                 }
         }
         // === END PHASE3-safety-rails ===
@@ -568,8 +594,13 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
     /**
      * Seed bridge status from what we can read without accessibility's runtime:
-     * screen state and battery level. current_app and accessibility_enabled
-     * are left as best-effort until accessibility wires the real flow.
+     * screen state and battery level. `currentApp` is populated from
+     * `HermesAccessibilityService.instance.currentApp`, which the service
+     * updates on every `TYPE_WINDOW_STATE_CHANGED` event — so we get the
+     * most recent foreground package whenever this method runs. When the
+     * accessibility service isn't bound (permission not granted, or the
+     * system just killed it), `currentApp` is null and the UI falls back
+     * to its "—" placeholder.
      */
     private fun refreshBridgeStatusFromSystem() {
         val ctx = getApplication<Application>()
@@ -581,7 +612,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
             deviceName = android.os.Build.MODEL ?: "Android device",
             batteryPercent = if (battery in 0..100) battery else null,
             screenOn = screenOn,
-            currentApp = null, // TODO(accessibility-handoff): comes from UsageStats / a11y events
+            currentApp = HermesAccessibilityService.instance?.currentApp,
             accessibilityEnabled = _permissionStatus.value.accessibilityServiceEnabled,
         )
     }
@@ -610,6 +641,20 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         return enabled.contains(ctx.packageName)
     }
 }
+
+/**
+ * Internal tuple for the chip-visibility combine — carries the four
+ * gating inputs (master toggle, user's status-overlay preference,
+ * unattended-access opt-in, app foreground signal) so
+ * `distinctUntilChanged` can dedupe on equality. Lives here rather
+ * than inline so the combine lambda stays readable.
+ */
+private data class ChipState(
+    val master: Boolean,
+    val overlayOn: Boolean,
+    val unattendedOn: Boolean,
+    val isForeground: Boolean,
+)
 
 /**
  * Snapshot of what the phone's bridge runtime is reporting — what the

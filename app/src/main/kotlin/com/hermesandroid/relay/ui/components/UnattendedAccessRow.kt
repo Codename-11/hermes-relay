@@ -17,6 +17,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -61,80 +62,92 @@ fun UnattendedAccessRow(
     onToggle: (Boolean) -> Unit,
     onWarningSeen: () -> Unit,
     modifier: Modifier = Modifier,
+    // v0.4.1 polish: the master toggle is the parent gate. When it's off
+    // unattended access can't do anything (the wake-lock acquire path
+    // short-circuits regardless of this flag's value), so the Switch
+    // should reflect that reality — otherwise users flip it and see no
+    // observable change, which reads as a broken control.
+    masterEnabled: Boolean = true,
 ) {
     var showWarning by remember { mutableStateOf(false) }
     var pendingEnableAfterWarning by remember { mutableStateOf(false) }
 
-    Column(
+    // "Effectively on" — the persisted preference AND the master gate.
+    // Drives the keyguard warning (no point showing it when master is
+    // off — the feature isn't active regardless of lock state).
+    val effectivelyOn = enabled && masterEnabled
+
+    Card(
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
     ) {
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant
-            ),
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Unattended Access",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Text(
-                            text = if (enabled) {
-                                "On — agent may wake the screen and act while " +
-                                    "you're away"
-                            } else {
-                                "Off — bridge actions only land when the screen " +
-                                    "is already on"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Switch(
-                        checked = enabled,
-                        onCheckedChange = { wantsOn ->
-                            if (wantsOn && !warningSeen) {
-                                // First enable → show the scary dialog and
-                                // defer the actual toggle write until the
-                                // user dismisses with "I understand".
-                                pendingEnableAfterWarning = true
-                                showWarning = true
-                            } else {
-                                onToggle(wantsOn)
-                            }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Unattended Access",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = when {
+                            !masterEnabled -> "Requires Agent Control — " +
+                                "enable the master switch above first."
+                            enabled -> "On — agent may wake the screen " +
+                                "and act while you're away."
+                            else -> "Off — bridge actions only land when " +
+                                "the screen is already on."
                         },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-
-                Text(
-                    text = "Acquires a screen-bright wake lock on each " +
-                        "incoming bridge command and asks the system to " +
-                        "dismiss the keyguard. Hard-bounded by the bridge " +
-                        "auto-disable timer.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                Switch(
+                    checked = enabled,
+                    enabled = masterEnabled,
+                    onCheckedChange = { wantsOn ->
+                        if (wantsOn && !warningSeen) {
+                            // First enable → show the scary dialog and
+                            // defer the actual toggle write until the
+                            // user dismisses with "I understand".
+                            pendingEnableAfterWarning = true
+                            showWarning = true
+                        } else {
+                            onToggle(wantsOn)
+                        }
+                    },
                 )
             }
-        }
 
-        // Persistent keyguard-detected chip. Only shown when unattended
-        // is ON and Android reports a credential lock — the structural
-        // limitation we cannot work around.
-        if (enabled && credentialLockDetected) {
-            KeyguardDetectedChip()
+            Text(
+                text = "Acquires a screen-bright wake lock on each " +
+                    "incoming bridge command and asks the system to " +
+                    "dismiss the keyguard. Hard-bounded by the bridge " +
+                    "auto-disable timer.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            // Keyguard warning is now an inline alert band inside the
+            // same card, instead of a second sibling card. Keeps the
+            // "one card per concern" principle — a credential-lock
+            // advisory belongs to the unattended feature, not to its
+            // own standalone surface. Only shown when the feature is
+            // effectively active (toggle on AND master on) so it
+            // doesn't nag users who have the feature disabled.
+            if (effectivelyOn && credentialLockDetected) {
+                KeyguardDetectedAlert()
+            }
         }
     }
 
@@ -161,48 +174,47 @@ fun UnattendedAccessRow(
 }
 
 /**
- * Persistent chip rendered below the unattended-access toggle when the
+ * Inline alert band rendered inside the unattended-access card when the
  * device has a credential lock (PIN / pattern / biometric) configured.
  * Communicates the structural limitation: Android will not let third-
  * party apps dismiss credential locks, so wake events will land the
  * screen on the lock screen rather than the agent's target UI.
+ *
+ * Uses a [Surface] instead of a [Card] so it doesn't compete with the
+ * parent card's elevation / shadow — it reads as "part of this card"
+ * rather than "another card under this card".
  */
 @Composable
-private fun KeyguardDetectedChip() {
-    Card(
+private fun KeyguardDetectedAlert() {
+    Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.errorContainer,
-        ),
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
     ) {
         Row(
-            modifier = Modifier.padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Icon(
                 imageVector = Icons.Filled.Lock,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onErrorContainer,
-                modifier = Modifier.size(24.dp),
+                modifier = Modifier.size(20.dp),
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Unattended ON — keyguard detected",
-                    style = MaterialTheme.typography.titleSmall,
+                    text = "Keyguard detected",
+                    style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onErrorContainer,
                 )
                 Text(
                     text = "The screen will wake but stop at the lock " +
-                        "screen. Android does not let third-party apps " +
-                        "dismiss PIN, pattern, or biometric locks. To " +
-                        "let the agent reach apps while you're away, set " +
-                        "your lock screen to None or Swipe in Settings > " +
-                        "Security.",
+                        "screen. Android won't let third-party apps " +
+                        "dismiss PIN / pattern / biometric locks. Set " +
+                        "your lock to None or Swipe in Settings > " +
+                        "Security to let the agent reach apps.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onErrorContainer,
                 )
             }
         }
@@ -257,9 +269,10 @@ private fun UnattendedScaryDialog(
                         "• On lock screens with no credential set (None " +
                         "or Swipe), the system is asked to dismiss the " +
                         "keyguard so the agent can reach app UIs.\n" +
-                        "• The persistent foreground-service notification " +
-                        "stays visible the entire time so you can see " +
-                        "the agent has control.",
+                        "• The 'Hermes has device control' notification — " +
+                        "posted by the master Agent Control switch, not " +
+                        "this toggle — stays visible so you can see the " +
+                        "bridge is running.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
@@ -356,5 +369,21 @@ private fun UnattendedAccessRowPreview_OnNoLock() {
             )
             Spacer(modifier = Modifier.height(12.dp))
         }
+    }
+}
+
+@Preview(showBackground = true, backgroundColor = 0xFF1A1A2E)
+@Composable
+private fun UnattendedAccessRowPreview_MasterOff() {
+    MaterialTheme {
+        UnattendedAccessRow(
+            enabled = false,
+            warningSeen = false,
+            credentialLockDetected = false,
+            onToggle = {},
+            onWarningSeen = {},
+            masterEnabled = false,
+            modifier = Modifier.padding(16.dp),
+        )
     }
 }

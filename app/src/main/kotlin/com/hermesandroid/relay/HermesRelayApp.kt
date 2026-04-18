@@ -7,6 +7,7 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import com.hermesandroid.relay.bridge.UnattendedAccessManager
 import com.hermesandroid.relay.data.AppAnalytics
 import com.hermesandroid.relay.power.WakeLockManager
+import com.hermesandroid.relay.util.AppForegroundTracker
 
 class HermesRelayApp : Application() {
 
@@ -40,6 +41,11 @@ class HermesRelayApp : Application() {
         // to run on both flavors. The googlePlay flavor never reaches
         // an enable path so the wake-lock is never built or acquired.
         UnattendedAccessManager.initialize(this)
+        // v0.4.1 polish — process-wide foreground/background signal
+        // used by BridgeViewModel to suppress the WindowManager chip
+        // while the user is inside Hermes-Relay (the in-app
+        // UnattendedGlobalBanner covers that case). Idempotent.
+        AppForegroundTracker.initialize()
     }
 
     companion object {

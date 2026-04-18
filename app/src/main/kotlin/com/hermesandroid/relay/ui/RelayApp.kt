@@ -11,10 +11,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.sp
@@ -60,7 +63,12 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.hermesandroid.relay.ui.components.MorphingSphere
+import com.hermesandroid.relay.ui.components.UnattendedGlobalBanner
 import com.hermesandroid.relay.ui.components.WhatsNewDialog
+import com.hermesandroid.relay.data.BridgePreferencesRepository
+import com.hermesandroid.relay.data.BridgeSafetyPreferencesRepository
+import com.hermesandroid.relay.data.BuildFlavor
+import kotlinx.coroutines.flow.map
 import com.hermesandroid.relay.util.HumanError
 import kotlinx.coroutines.delay
 import com.hermesandroid.relay.ui.onboarding.OnboardingScreen
@@ -384,9 +392,90 @@ fun RelayApp() {
         // error-collector LaunchedEffects without threading state downwards.
         val snackbarHostState = remember { SnackbarHostState() }
 
+        // === v0.4.1 polish: global unattended-access banner ===
+        // Rendered at the top of the scaffold on every tab when BOTH the
+        // master toggle is ON and unattended access is ON. The per-screen
+        // UnattendedAccessRow inside Bridge already surfaces this, but the
+        // user's typical workflow after enabling it is to leave the Bridge
+        // tab — we don't want them to forget about a screen-waking opt-in
+        // just because they're reading Chat history. Kept as a thin 28dp
+        // amber strip so its footprint doesn't eat scroll space.
+        //
+        // State is read directly from the two DataStore repos instead of
+        // going through BridgeViewModel. The VM is Bridge-tab-scoped; the
+        // banner lives at app-root scope. Reading the repos here avoids
+        // instantiating the entire BridgeViewModel (with its many side-
+        // effectful init blocks) just to peek at two StateFlows.
+        // Key the remembers off applicationContext (process-stable) instead
+        // of LocalContext.current (changes on rotation, dark-mode swap,
+        // locale change). Keying off a transient context would re-construct
+        // the repos — and their DataStore handles — on every config change.
+        val bridgeAppCtx = androidx.compose.ui.platform.LocalContext.current.applicationContext
+        val bridgePrefsRepo = remember(bridgeAppCtx) { BridgePreferencesRepository(bridgeAppCtx) }
+        val safetyPrefsRepo = remember(bridgeAppCtx) { BridgeSafetyPreferencesRepository(bridgeAppCtx) }
+        val masterEnabled by bridgePrefsRepo.settings
+            .map { it.masterEnabled }
+            .collectAsState(initial = false)
+        val unattendedEnabled by safetyPrefsRepo.settings
+            .map { it.unattendedAccessEnabled }
+            .collectAsState(initial = false)
+        // Sideload-only: googlePlay has no wake lock and the unattended
+        // flag never gets written there — gating here is defence in depth
+        // and makes the check cheap via R8 in release builds.
+        val showUnattendedBanner = BuildFlavor.isSideload &&
+            masterEnabled &&
+            unattendedEnabled &&
+            !isOnboarding &&
+            !voiceUiState.voiceMode
+        // === END v0.4.1 polish ===
+
         Box(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+        // The banner takes its own vertical space above the Scaffold so
+        // no screen's content is covered by it (unlike floating overlays
+        // that would need per-screen padding compensation). Use
+        // AnimatedVisibility to fade in/out on state transitions.
+        AnimatedVisibility(
+            visible = showUnattendedBanner,
+            enter = fadeIn(tween(200)),
+            exit = fadeOut(tween(200)),
+        ) {
+            UnattendedGlobalBanner(
+                onTap = {
+                    navController.navigate(Screen.Bridge.route) {
+                        popUpTo(navController.graph.findStartDestination().id) {
+                            saveState = true
+                        }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                },
+            )
+        }
         Scaffold(
-            modifier = Modifier.fillMaxSize(),
+            // weight(1f) instead of fillMaxSize(): Column arranges children
+            // top-down, so a fillMaxSize child would try to claim the full
+            // parent height and overflow past the banner. weight(1f) takes
+            // exactly the remaining main-axis space after the banner (which
+            // is 0 when the banner is hidden).
+            //
+            // consumeWindowInsets is conditional on banner visibility: the
+            // banner pads itself for WindowInsets.statusBars, and without
+            // this consume, child TopAppBars (e.g. ChatScreen's) also pad
+            // for status bars — yielding ~24dp of double-padding between
+            // the banner and the first row of screen content. When the
+            // banner is hidden we want the default behavior (TopAppBar
+            // self-pads below the status bar).
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .then(
+                    if (showUnattendedBanner) {
+                        Modifier.consumeWindowInsets(WindowInsets.statusBars)
+                    } else {
+                        Modifier
+                    }
+                ),
             contentWindowInsets = WindowInsets(0),
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
@@ -654,6 +743,7 @@ fun RelayApp() {
             }
             } // end CompositionLocalProvider
         }
+        } // end Column (wraps banner + Scaffold)
 
         // Sphere intro overlay — fades out after 1.5s to reveal main UI
         AnimatedVisibility(

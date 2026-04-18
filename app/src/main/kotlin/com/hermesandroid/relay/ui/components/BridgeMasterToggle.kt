@@ -2,6 +2,8 @@ package com.hermesandroid.relay.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -20,6 +22,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -58,19 +61,38 @@ fun BridgeMasterToggle(
     onToggle: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     label: String = "Agent Control",
+    // Called when the user taps the switch to enable but accessibility
+    // hasn't been granted yet. The default no-op keeps the v0.4 behaviour
+    // for callers that don't wire this up; BridgeScreen hooks a snackbar
+    // + settings-deep-link so users get visible feedback instead of a
+    // dead-feeling tap. See kdoc at the call site.
+    onAccessibilityNeeded: () -> Unit = {},
 ) {
     var showExplain by remember { mutableStateOf(false) }
 
-    // Subtitle text reflects the flavor context. Sideload: "agent can
-    // interact / control". googlePlay (label != "Agent Control"):
-    // "connected / disconnected" since the Play flavor is read-only.
-    val isSideloadLabel = label == "Agent Control"
+    // Subtitle is phrased around "master switch" so users understand
+    // this is the parent gate for everything on the page. Sub-features
+    // (unattended access, permissions, voice intents) all require this
+    // to be ON before they do anything — calling it out in plain text
+    // here prevents the "I toggled unattended but nothing happened"
+    // confusion pattern. Copy differs by flavor: sideload is the full
+    // agent-control story, googlePlay is the read-only "chat context"
+    // framing.
+    val isSideloadLabel = label.contains("Agent", ignoreCase = true)
     val subtitle = if (isSideloadLabel) {
-        if (enabled) "Active — agent can interact with this device"
-        else "Off — agent cannot control this device"
+        if (enabled) {
+            "Master switch — agent can read screen and act via the " +
+                "sub-features below."
+        } else {
+            "Master switch — off. All bridge features (unattended, " +
+                "commands, voice intents) are inactive."
+        }
     } else {
-        if (enabled) "Active — screen reading for chat context"
-        else "Off — bridge is not reading screen content"
+        if (enabled) {
+            "Master switch — bridge is providing screen content to chat."
+        } else {
+            "Master switch — off. Bridge is not reading screen content."
+        }
     }
 
     Card(
@@ -89,12 +111,11 @@ fun BridgeMasterToggle(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = label,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    // Title + MASTER pill flow together so the pill drops
+                    // below on narrow widths instead of squishing the title.
+                    // Same pattern + rationale as the "Optional" pill in
+                    // BridgePermissionChecklist (see its KDoc).
+                    MasterTitleRow(label = label)
                     Text(
                         text = subtitle,
                         style = MaterialTheme.typography.bodySmall,
@@ -110,8 +131,19 @@ fun BridgeMasterToggle(
                 }
                 Switch(
                     checked = enabled && accessibilityGranted,
-                    onCheckedChange = { onToggle(it) },
-                    enabled = accessibilityGranted || enabled,
+                    // Always interactive — a disabled Switch swallows taps
+                    // silently on Android, which made users feel like the
+                    // app was broken when accessibility wasn't granted yet.
+                    // We now route the blocked-enable path through
+                    // onAccessibilityNeeded so the caller can surface a
+                    // snackbar with an "Open Settings" action.
+                    onCheckedChange = { wantsOn ->
+                        if (wantsOn && !accessibilityGranted) {
+                            onAccessibilityNeeded()
+                        } else {
+                            onToggle(wantsOn)
+                        }
+                    },
                 )
             }
 
@@ -168,6 +200,14 @@ fun BridgeMasterToggle(
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
+                        "While this is on, a 'Hermes has device control' " +
+                            "notification stays in your notification shade — " +
+                            "that's tied to this master switch, not to any " +
+                            "sub-feature (like Unattended Access), and goes " +
+                            "away the moment you turn this off.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
                         "You can turn Agent Control off at any time from this " +
                             "screen or by disabling the service in Android " +
                             "Settings. All bridge commands are logged in the " +
@@ -179,6 +219,47 @@ fun BridgeMasterToggle(
             confirmButton = {
                 TextButton(onClick = { showExplain = false }) { Text("Got it") }
             }
+        )
+    }
+}
+
+/**
+ * Title row: the flavor-dependent label plus a compact "MASTER" pill so
+ * users read it as the parent gate on the page at a glance. FlowRow lets
+ * the pill drop below the label on narrow widths (matches the pattern
+ * used by the Optional pill in BridgePermissionChecklist).
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun MasterTitleRow(label: String) {
+    FlowRow(
+        verticalArrangement = Arrangement.Center,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.SemiBold,
+        )
+        MasterPill()
+    }
+}
+
+@Composable
+private fun MasterPill() {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.primaryContainer,
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+    ) {
+        Text(
+            text = "MASTER",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
         )
     }
 }

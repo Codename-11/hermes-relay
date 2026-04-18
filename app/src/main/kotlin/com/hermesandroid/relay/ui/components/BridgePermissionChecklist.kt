@@ -9,6 +9,8 @@ import com.hermesandroid.relay.data.BuildFlavor
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -320,14 +322,23 @@ private fun OptionalBadge() {
         color = MaterialTheme.colorScheme.secondaryContainer,
         contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
     ) {
+        // softWrap=false prevents the pill's label from self-wrapping to
+        // "Option / al" when the parent Row squeezes its available width
+        // (seen on longer titles like "Notification Listener" on portrait
+        // phone widths). Paired with FlowRow in PermissionRow so the whole
+        // badge drops to the next line cleanly when space is tight, instead
+        // of compressing awkwardly in-line.
         Text(
             text = "Optional",
             style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            softWrap = false,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
         )
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun PermissionRow(
     icon: ImageVector,
@@ -360,8 +371,13 @@ private fun PermissionRow(
             modifier = Modifier.size(22.dp),
         )
         Column(modifier = Modifier.weight(1f)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
+            // FlowRow lets the "Optional" pill drop to a new line as a whole
+            // unit when the title is long enough that the two can't share a
+            // line (e.g. "Notification Listener" on a narrow device). A plain
+            // Row would instead starve the badge of width and its inner Text
+            // would self-wrap, producing a visibly lumpy pill.
+            FlowRow(
+                verticalArrangement = Arrangement.Center,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(

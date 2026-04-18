@@ -1,11 +1,14 @@
 package com.hermesandroid.relay.ui.screens
 
+import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.app.ActivityCompat
 import com.hermesandroid.relay.data.BuildFlavor
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -25,6 +28,7 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -56,11 +60,11 @@ import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.components.BridgeActivityLog
 import com.hermesandroid.relay.ui.components.BridgeMasterToggle
 import com.hermesandroid.relay.ui.components.BridgePermissionChecklist
-import com.hermesandroid.relay.ui.components.BridgeStatusCard
 // === v0.4.1 unattended-access ===
 import com.hermesandroid.relay.ui.components.UnattendedAccessRow
 // === END v0.4.1 unattended-access ===
 import com.hermesandroid.relay.viewmodel.BridgeViewModel
+import kotlinx.coroutines.launch
 
 /**
  * Bridge tab — phase 3 Wave 1 rewrite (Agent bridge-ui, `bridge-screen-ui`).
@@ -113,38 +117,33 @@ fun BridgeScreen(
 
     val context = LocalContext.current
 
+    // Result callback used by every runtime-permission launcher on this screen.
+    // If the user has permanently denied the permission (two declines on
+    // Android 11+, or an explicit "Don't ask again"), the next launch() call
+    // returns false instantly without showing a dialog — leaving the user
+    // tapping the checklist row with no visible response. Detect that case via
+    // shouldShowRequestPermissionRationale and fall back to app-details
+    // Settings so the user always has a path to grant.
+    val onPermissionResult: (String, Boolean) -> Unit = { permission, granted ->
+        if (!granted) {
+            maybeOpenAppDetailsOnPermanentDenial(context, permission)
+        }
+        viewModel.onScreenResumed()
+    }
+
+    // Notification-permission launcher is still used by the master-toggle
+    // auto-request path below (onToggle → launches if API 33+ and not yet
+    // permitted). The six other runtime-permission launchers that used to
+    // live here (mic / camera / contacts / sms / phone / location) were
+    // removed — their only consumers were the checklist rows, which now
+    // go straight to Settings via openAppDetailsSettings() to give users
+    // a visible, reliable path instead of the silent-no-op that a
+    // permanently-denied permission would otherwise produce.
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { viewModel.onScreenResumed() }
-
-    // === v0.4.1 tiered checklist runtime-permission launchers =================
-    // One launcher per dangerous permission. The result callback re-runs the
-    // permission probe so the row's check flips immediately on grant.
-    // Microphone + Camera are declared on both flavors; the sideload-only
-    // permissions (contacts/sms/phone/location) only have any effect when the
-    // sideload manifest's <uses-permission> is in the merged manifest, but
-    // wiring the launcher unconditionally is harmless on googlePlay because
-    // the row that triggers it is hidden by the BuildFlavor.isSideload gate
-    // in BridgePermissionChecklist.
-    val microphonePermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { viewModel.onScreenResumed() }
-    val cameraPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { viewModel.onScreenResumed() }
-    val contactsPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { viewModel.onScreenResumed() }
-    val smsPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { viewModel.onScreenResumed() }
-    val phonePermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { viewModel.onScreenResumed() }
-    val locationPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { viewModel.onScreenResumed() }
-    // === END v0.4.1 ============================================================
+    ) { granted ->
+        onPermissionResult(android.Manifest.permission.POST_NOTIFICATIONS, granted)
+    }
 
     // === PHASE3-safety-rails: safety summary card ===
     // Pulls live safety settings + countdown off the process-wide
@@ -216,6 +215,9 @@ fun BridgeScreen(
             }
             // === END PHASE3-safety-rails-followup ===
 
+            // 1. Master toggle (with inline status rows — device, battery,
+            //    screen, current app). This is the parent gate for the page.
+            val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
             BridgeMasterToggle(
                 enabled = masterToggle,
                 status = bridgeStatus,
@@ -231,6 +233,29 @@ fun BridgeScreen(
                         )
                     }
                 },
+                // Feedback for the "user taps switch but accessibility is
+                // missing" dead-tap path. Before this wiring, Android's
+                // disabled Switch swallowed the tap silently and users had
+                // to notice the red helper text below the switch to know
+                // what was wrong. Now: show a snackbar, offer a direct
+                // jump into Android's Accessibility Settings page.
+                onAccessibilityNeeded = {
+                    coroutineScope.launch {
+                        val result = snackbarHost.showSnackbar(
+                            message = "Accessibility Service must be enabled first.",
+                            actionLabel = "Open Settings",
+                            duration = androidx.compose.material3.SnackbarDuration.Long,
+                        )
+                        if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+                            runCatching {
+                                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                                context.startActivity(intent)
+                            }
+                        }
+                    }
+                },
                 // googlePlay: the toggle is "Bridge Mode" (read-only screen
                 // reading). Sideload: "Agent Control" (full phone control).
                 // The label shapes user expectation + is what reviewers read.
@@ -240,30 +265,7 @@ fun BridgeScreen(
                     "Enable Bridge Mode",
             )
 
-            BridgeStatusCard(
-                status = bridgeStatus,
-                // TODO(accessibility-handoff): once accessibility exposes a `bridgeConnected`
-                // StateFlow from HermesAccessibilityService, drive this off
-                // that instead of the a11y-granted flag.
-                isConnected = permissionStatus.accessibilityServiceEnabled && masterToggle,
-            )
-
-            // === v0.4.1 unattended-access toggle ===
-            // Sideload only — googlePlay's accessibility config has no
-            // gesture dispatch, so a wake-the-screen-and-act-on-it toggle
-            // wouldn't do anything meaningful. The Play APK never sees
-            // this row and never installs the wake lock.
-            if (BuildFlavor.isSideload) {
-                UnattendedAccessRow(
-                    enabled = unattendedEnabled,
-                    warningSeen = unattendedWarningSeen,
-                    credentialLockDetected = credentialLockDetected,
-                    onToggle = { viewModel.setUnattendedAccessEnabled(it) },
-                    onWarningSeen = { viewModel.markUnattendedWarningSeen() },
-                )
-            }
-            // === END v0.4.1 unattended-access ===
-
+            // 2. Permissions — prerequisites come before advanced features.
             BridgePermissionChecklist(
                 status = permissionStatus,
                 // === PHASE3-safety-rails-followup: in-app permission Test handlers ===
@@ -276,55 +278,103 @@ fun BridgeScreen(
                 onTestNotificationListener = { viewModel.testNotificationListener() },
                 // === END PHASE3-bridge-ui-followup ===
                 onRequestNotifications = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    {
-                        notificationPermissionLauncher.launch(
-                            android.Manifest.permission.POST_NOTIFICATIONS
-                        )
-                    }
+                    // Same "tap always goes to Settings" treatment as the
+                    // other runtime-permission rows. The master-toggle
+                    // auto-request path (BridgeMasterToggle onToggle) still
+                    // uses the launcher directly since that's a programmatic
+                    // flow where a dialog is appropriate.
+                    { openAppDetailsSettings(context) }
                 } else null,
-                // === v0.4.1 tiered checklist runtime-permission requesters ====
-                onRequestMicrophone = {
-                    microphonePermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
-                },
-                onRequestCamera = {
-                    cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
-                },
-                onRequestContacts = {
-                    contactsPermissionLauncher.launch(android.Manifest.permission.READ_CONTACTS)
-                },
-                onRequestSms = {
-                    smsPermissionLauncher.launch(android.Manifest.permission.SEND_SMS)
-                },
-                onRequestPhone = {
-                    phonePermissionLauncher.launch(android.Manifest.permission.CALL_PHONE)
-                },
-                onRequestLocation = {
-                    locationPermissionLauncher.launch(android.Manifest.permission.ACCESS_FINE_LOCATION)
-                },
-                // === END v0.4.1 ====
+                // === v0.4.1 polish: runtime-permission row taps go to Settings ====
+                // Earlier iteration tried launcher.launch(permission) with a
+                // post-denial fallback to app-details Settings. That
+                // fallback depended on (context as? Activity) succeeding
+                // which quietly returned null in the Compose context chain
+                // — so taps after a permanent denial were a silent no-op.
+                // Simpler + matches user expectation: tap ALWAYS opens the
+                // app-details Settings page. Parity with Accessibility /
+                // Notification Listener / Overlay rows which also open
+                // Settings unconditionally. First-time grant is one extra
+                // tap vs. a system dialog — acceptable trade-off for
+                // "tap always does something visible".
+                onRequestMicrophone = { openAppDetailsSettings(context) },
+                onRequestCamera = { openAppDetailsSettings(context) },
+                onRequestContacts = { openAppDetailsSettings(context) },
+                onRequestSms = { openAppDetailsSettings(context) },
+                onRequestPhone = { openAppDetailsSettings(context) },
+                onRequestLocation = { openAppDetailsSettings(context) },
+                // === END v0.4.1 polish ====
             )
 
-            BridgeActivityLog(
-                entries = activityLog,
-                onClear = { viewModel.clearActivityLog() }
-            )
-
-            // === PHASE3-safety-rails: safety summary card ===
-            // Sideload only — googlePlay has no action routes so safety
-            // settings (destructive verbs, blocklist, auto-disable) are
-            // irrelevant. Showing them would confuse users and imply
-            // capabilities the Play APK doesn't have.
+            // 3. Advanced section — unattended access + safety. Sideload
+            //    only — these features don't exist on googlePlay (no wake
+            //    lock, no destructive-verb routes).
             if (BuildFlavor.isSideload) {
+                AdvancedSectionHeader()
+
+                // 4. Unattended access — a SUB-FEATURE of the master
+                //    toggle. Gated: Switch is non-interactive when the
+                //    master toggle is off so users can't flip it and
+                //    observe nothing happening (the acquire path
+                //    short-circuits when master is off anyway).
+                UnattendedAccessRow(
+                    enabled = unattendedEnabled,
+                    warningSeen = unattendedWarningSeen,
+                    credentialLockDetected = credentialLockDetected,
+                    onToggle = { viewModel.setUnattendedAccessEnabled(it) },
+                    onWarningSeen = { viewModel.markUnattendedWarningSeen() },
+                    masterEnabled = masterToggle,
+                )
+
+                // 5. Safety summary — auto-disable, destructive verbs,
+                //    blocklist. Belongs adjacent to unattended because
+                //    they share the "advanced / opt-in / sideload-only"
+                //    mental model.
                 BridgeSafetySummaryCard(
                     settings = safetySettings,
                     autoDisableAtMs = autoDisableAtMs,
                     onManage = onNavigateToBridgeSafety,
                 )
             }
-            // === END PHASE3-safety-rails ===
+
+            // 6. Activity log — goes last because it's a history view,
+            //    not configuration. Users scroll past the controls to
+            //    reach it, which is the right mental model.
+            BridgeActivityLog(
+                entries = activityLog,
+                onClear = { viewModel.clearActivityLog() }
+            )
 
             Spacer(modifier = Modifier.height(16.dp))
         }
+    }
+}
+
+/**
+ * Visual separator between the "required setup" stack (master toggle +
+ * permissions) and the "opt-in advanced features" stack (unattended
+ * access, safety rails, activity log). Keeps hierarchy explicit so
+ * users don't read unattended as a peer of the master toggle.
+ */
+@Composable
+private fun AdvancedSectionHeader() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            text = "Advanced",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
+        )
     }
 }
 
@@ -377,6 +427,69 @@ private fun OverlayPermissionNagCard(onTap: () -> Unit) {
             }
         }
     }
+}
+
+/**
+ * Walk up the ContextWrapper chain until we find an Activity, or null if
+ * none. `LocalContext.current` in a Compose-in-ComponentActivity setup
+ * often returns a ContextThemeWrapper (inserted by MaterialTheme or the
+ * edge-to-edge insets layer) rather than the Activity itself, so a plain
+ * `context as? Activity` cast silently returns null. This walks the
+ * baseContext chain so callers reliably get the Activity.
+ */
+private fun Context.findActivity(): Activity? {
+    var current: Context? = this
+    while (current is android.content.ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+    return null
+}
+
+/**
+ * Open the system "App info" page for our package. Users land directly
+ * on the page that lists our permissions with per-permission toggles. A
+ * runtime permission granted here has the same effect as accepting the
+ * corresponding system dialog, and is the only path to flip a
+ * permanently-denied permission back on.
+ *
+ * Wrapped in runCatching because some OEM skins have stripped or renamed
+ * the ACTION_APPLICATION_DETAILS_SETTINGS intent; we'd rather no-op than
+ * crash the Bridge screen.
+ */
+private fun openAppDetailsSettings(context: Context) {
+    runCatching {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.fromParts("package", context.packageName, null)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+    }
+}
+
+/**
+ * Post-callback fallback for launcher-driven permission requests: if the
+ * user has permanently denied [permission] (Android 11+ auto-deny after
+ * two refusals, or the pre-11 "Don't ask again" checkbox), the system
+ * permission dialog won't appear on the next launch() call — it just
+ * returns granted=false silently. Route them to Settings so the path
+ * forward is visible.
+ *
+ * Heuristic: shouldShowRequestPermissionRationale returns true ONLY when
+ * the user has declined at least once but is still eligible to see the
+ * dialog. It returns false on both (a) first-ever request and (b) permanent
+ * denial. Since this helper runs inside a launcher result callback,
+ * case (a) can't apply — the callback only fires after a request — so a
+ * false return here reliably means permanent denial.
+ *
+ * Uses [findActivity] to walk up the ContextWrapper chain — the earlier
+ * direct `context as? Activity` cast silently returned null inside
+ * Compose's themed context wrappers, making the fallback a no-op.
+ */
+private fun maybeOpenAppDetailsOnPermanentDenial(context: Context, permission: String) {
+    val activity = context.findActivity() ?: return
+    if (ActivityCompat.shouldShowRequestPermissionRationale(activity, permission)) return
+    openAppDetailsSettings(context)
 }
 
 @Preview(showBackground = true, backgroundColor = 0xFF1A1A2E)
