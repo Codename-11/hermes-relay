@@ -716,36 +716,54 @@ Four sub-decisions captured together:
 - `docs/spec.md` §10.1 Dashboard plugin — user-facing overview + route table
 - `docs/relay-server.md` HTTP Routes — wire-shape details for `/bridge/activity`, `/media/inspect`, `/relay/info`, `/sessions` loopback branch
 
-### 21. Agent Profile picker — model override per chat turn (2026-04-18)
+### 21. Agent Profile picker — directory-discovered overlay of model + SOUL (2026-04-18)
 
-**Decision:** Expose Hermes's in-config `profiles:` list (each `{name, model, description}`) as a top-bar picker in the Chat screen. When the user selects a profile, every subsequent chat turn on the active Connection includes `"model": "<profile-model>"` in the request body; the server routes that turn through the named model. Selection is ephemeral (null = "use server default") and clears on Connection switch.
+**Decision:** The relay auto-discovers upstream Hermes profiles by scanning `~/.hermes/profiles/*/` (plus a synthetic "default" entry for the root `~/.hermes/config.yaml`). Each discovered profile is advertised in the `auth.ok` payload as `{name, model, description, system_message}`. On chat send with a profile selected, the phone overrides the request's `model` field with the profile's model AND uses the profile's `SOUL.md` content (carried in `system_message`) as the request's `system_message`. Selection is ephemeral and clears on Connection switch.
 
-**Why:**
-- Our relay already advertises the list in the `auth.ok` payload (`plugin/relay/server.py:1716`, populated from `plugin/relay/config.py:_load_profiles`). The data is free — the phone just wasn't parsing it correctly (the old `AuthManager.sessionLabels` path cast entries as strings and swallowed the failure in a try/catch, so the field was always empty).
-- Upstream's `POST /v1/chat/completions` already honors the `model` field, so we can route per-turn without waiting on an upstream PR. That's option 3 from the exploratory discussion — no relay rework, no server changes, no `/api/profiles` endpoint required.
-- Three-layer model is now clean: **Connection** (§19 — which Hermes server) → **Profile** (this decision — which agent configuration on that server) → **Personality** (§8 — which system prompt for that agent).
+**Why this supersedes the original §21 design:**
+
+The first pass read from a fictional top-level `profiles:` / `agents:` list in `~/.hermes/config.yaml`. Upstream Hermes has **never** used that schema — profiles upstream are isolated directory instances at `~/.hermes/profiles/<name>/`, each with its own `config.yaml`, `.env`, `SOUL.md`, memory, sessions, skills, and (optionally) its own gateway daemon. The old path always returned an empty list on real installs, which is why nothing ever populated in the picker.
+
+Rather than invent our own schema, match upstream's layout. The relay scans the directory, reads each profile's config.yaml + SOUL.md, and reports what's really there.
+
+**Three-layer model (unchanged at the UI level):**
+- **Connection** (§19) — which Hermes server + gateway. One scan per server.
+- **Profile** (this decision) — which upstream-layout agent directory on that server. Overlays model + SOUL.
+- **Personality** (§8) — which system-prompt preset *within* the agent's config.
 
 **How:**
-- `data/ProfileData.kt` — `Profile(name, model, description)`, `@Serializable`.
-- `AuthManager._agentProfiles` + public `agentProfiles: StateFlow<List<Profile>>` — replaces the old `sessionLabels` field entirely. Parser at the auth.ok handler casts each entry to `JsonObject`, pulls `name` (required — entries without it are dropped), `model` (defaults `"unknown"`), `description` (defaults `""`). Malformed entries are skipped with a logcat warn rather than silently dropped.
-- `ConnectionViewModel.agentProfiles` (flatMapLatches over `_authManagerFlow`, same pattern as `authState`) + `selectedProfile: StateFlow<Profile?>` + `selectProfile(Profile?)`. `init { }` observes `connectionSwitchEvents` and clears `_selectedProfile.value = null` on each — Connection's profiles are server-specific, so carrying a selection across switches would dangle.
-- `HermesApiClient` — every public chat-stream method gains a nullable `modelOverride: String? = null` parameter. When non-null/non-blank, `"model": modelOverride` is injected at the top level of the request body; when null, the field is omitted and the server uses its default.
-- `ChatViewModel` — reads `selectedProfile` from ConnectionViewModel at send time and passes its `model` through to `HermesApiClient` as `modelOverride`.
-- `ui/components/ProfilePicker.kt` — small DropdownMenu chip that mirrors `PersonalityPicker.kt` styling; inserted in `ChatScreen`'s TopAppBar to the left of the personality chip. Chip hides entirely when `agentProfiles.isEmpty()`. Greyed-out + tap-disabled while a chat turn is mid-stream.
+
+Server side (`plugin/relay/config.py`, `plugin/relay/server.py`):
+- `_load_profiles` rewritten to walk `~/.hermes/profiles/*/`. For each profile: `name = dir.name`; `model = config.yaml/model.default || "unknown"`; `description = config.yaml/description || first non-blank line of SOUL.md || ""`; `system_message = SOUL.md content || null`. Plus a synthetic `"default"` entry from the root config.
+- New `RelayConfig.profile_discovery_enabled: bool = True`. Set to `false` in the relay's config to skip the scan and advertise an empty list — matches our configurability pattern of "opt-out defaults" for discovery features. Disabled state is logged at INFO on startup.
+- `auth.ok` payload shape: each entry is `{"name": str, "model": str, "description": str, "system_message": str | null}` (snake_case on the wire).
+
+Client side (`app/src/main/kotlin/.../data/ProfileData.kt`, `auth/AuthManager.kt`, `viewmodel/ChatViewModel.kt`):
+- `Profile(name, model, description, systemMessage: String? = null)`, `@SerialName("system_message")` for the last field.
+- `AuthManager.parseAgentProfiles` reads the new `system_message` field (null-safe, default null).
+- `ChatViewModel` send path: if `selectedProfile != null`, pass `modelOverride = profile.model` AND, when `profile.systemMessage?.isNotBlank() == true`, use `profile.systemMessage` as the `system_message` override. Profile's `system_message` WINS over the personality's system message when both are selected — the profile is a richer/newer concept, and picking both implies the user wants the profile's full persona.
+- `ConnectionViewModel.selectedProfile` and the reset-on-Connection-switch rule are unchanged from the earlier pass; `HermesApiClient.modelOverride` is unchanged.
 
 **Trade-offs / v1 scope:**
-- **Ephemeral only.** Selection doesn't persist across app restarts or VM recreation. Re-open the app and you're back on server-default. Persisting per-Connection would require extending the Connection data class with a `lastSelectedProfileName` field — the shape allows it, but adding the wiring wasn't the urgent piece. Filed as a follow-up.
-- **Chat-only.** Voice transcribe/synthesize and bridge commands don't honor the profile selection. Voice routes through `/voice/*` relay endpoints that don't carry a `model` field, and bridge has nothing to do with model choice. If voice should route through a profile, that's a separate decision — provider config is already per-server.
-- **Trusts the server's model string.** The phone doesn't validate that `profile.model` is one the server can actually serve. If the YAML is wrong the chat request fails with a server error surfaced via existing error UI. That's the right layer for the check — the phone shouldn't try to keep a model allowlist in sync.
+- **Overlay, not isolation.** Selecting a profile on the phone routes through the active Connection's gateway with the profile's model + SOUL applied. The profile's `.env` (different API keys), memory, sessions, skills, and cron jobs stay with the Connection's default gateway. For fully isolated profile state, run the profile's own gateway (`hermes -p <name> platform start api --port <other>`) and pair it as a **separate Connection**. The server-side docs for this live in `plugin/relay/config.py` + `user-docs/features/profiles.md`.
+- **SOUL.md size.** Some SOUL files are multi-KB (Mizu's is 8 KB). The full content ships as `system_message` on every chat turn. Upstream's personality path already ships a system prompt per turn, so this is consistent — but it's worth keeping SOUL.md concise.
+- **Ephemeral only.** Selection doesn't persist across app restarts. Re-opening the app lands on server-default. Persisting per-Connection is a ~30-line extension (add `lastSelectedProfileName` to the Connection data class) — filed as a follow-up.
+- **Chat-only.** Voice transcribe/synthesize and bridge commands don't honor the profile selection. Voice routes through `/voice/*` relay endpoints that don't carry `model` or `system_message`; bridge is unrelated to model choice.
+- **Config toggle.** `profile_discovery_enabled = false` lets a server op keep the phone picker empty (e.g. if the operator wants Connections-only semantics). Per our configurability pattern of "enable useful defaults, let the operator opt out."
+
+**Earlier (abandoned) design, for the record:**
+
+First attempt parsed a top-level `profiles:` / `agents:` list from one YAML. That schema does not exist upstream and always returned empty on real installs. The data class + picker + `modelOverride` wiring from that attempt are preserved; only the data source + the addition of `system_message` changed. See commits `0303a4f` (initial parse), `b9d2914` (build fix), and the R1/R2 pass that followed this decision rewrite.
 
 **References:**
 - `app/src/main/kotlin/.../data/ProfileData.kt` — the data class
-- `app/src/main/kotlin/.../auth/AuthManager.kt` — parse fix + `agentProfiles` flow
-- `app/src/main/kotlin/.../viewmodel/ConnectionViewModel.kt` — flow + selection
-- `app/src/main/kotlin/.../network/HermesApiClient.kt` — `modelOverride` parameter
+- `app/src/main/kotlin/.../auth/AuthManager.kt` — `parseAgentProfiles` companion
+- `app/src/main/kotlin/.../viewmodel/ChatViewModel.kt` — precedence rule
+- `app/src/main/kotlin/.../network/HermesApiClient.kt` — `modelOverride`
 - `app/src/main/kotlin/.../ui/components/ProfilePicker.kt` — chip + dropdown
-- `plugin/relay/config.py:_load_profiles` — upstream source of truth
-- `plugin/relay/server.py:1716` — auth.ok payload emission
+- `plugin/relay/config.py:_load_profiles` — directory-scan source of truth
+- `plugin/relay/server.py` — auth.ok payload emission (enriched shape)
+- Upstream doc: `~/.hermes/hermes-agent/website/docs/user-guide/profiles.md` (canonical profile-layout definition)
 
 ---
 

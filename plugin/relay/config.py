@@ -36,6 +36,14 @@ class RelayConfig:
     profiles: list[dict[str, Any]] = field(default_factory=list)
     terminal_shell: str | None = None
 
+    # Profile discovery — scan ``~/.hermes/profiles/*/`` for upstream-style
+    # isolated profile directories. When False, ``_load_profiles`` returns an
+    # empty list without touching the filesystem. Mirrors the existing
+    # env-var-driven toggle pattern used for the media knobs above
+    # (``RELAY_MEDIA_STRICT_SANDBOX`` etc.). Set
+    # ``RELAY_PROFILE_DISCOVERY_ENABLED=0`` to disable.
+    profile_discovery_enabled: bool = True
+
     # Media registry (inbound media for screenshot / attachment tools)
     media_max_size_mb: int = 100
     media_ttl_seconds: int = 86400
@@ -67,6 +75,13 @@ class RelayConfig:
             log_level=os.getenv("RELAY_LOG_LEVEL", cls.log_level),
             terminal_shell=os.getenv("RELAY_TERMINAL_SHELL") or None,
         )
+
+        # ── Profile discovery toggle ────────────────────────────────────
+        discovery = os.getenv("RELAY_PROFILE_DISCOVERY_ENABLED", "").strip().lower()
+        if discovery in ("0", "false", "no", "off"):
+            config.profile_discovery_enabled = False
+        elif discovery in ("1", "true", "yes", "on"):
+            config.profile_discovery_enabled = True
 
         # ── Media knobs ─────────────────────────────────────────────────
         media_max_size = os.getenv("RELAY_MEDIA_MAX_SIZE_MB")
@@ -112,45 +127,176 @@ class RelayConfig:
         if strict in ("1", "true", "yes", "on"):
             config.media_strict_sandbox = True
 
-        config.profiles = _load_profiles(config.hermes_config_path)
+        config.profiles = _load_profiles(
+            config.hermes_config_path,
+            enabled=config.profile_discovery_enabled,
+        )
         return config
 
 
-def _load_profiles(config_path: str) -> list[dict[str, Any]]:
-    """Load agent profiles from the Hermes config YAML.
+def _extract_description_from_soul(soul_text: str) -> str:
+    """Return the first non-blank line of a SOUL.md, stripped of leading
+    markdown heading markers and surrounding whitespace.
 
-    Returns a list of dicts with at least ``name`` and ``model`` keys.
-    Returns an empty list if the file doesn't exist or can't be parsed.
+    Returns an empty string if the file contains no textual content.
     """
-    resolved = Path(config_path).expanduser()
-    if not resolved.is_file():
-        logger.info("Hermes config not found at %s — no profiles loaded", resolved)
-        return []
+    for raw_line in soul_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        # Strip leading '#' characters (markdown headings) then whitespace.
+        cleaned = line.lstrip("#").strip()
+        if cleaned:
+            return cleaned
+    return ""
+
+
+def _read_profile_entry(
+    name: str,
+    config_yaml: Path,
+    soul_md: Path,
+) -> dict[str, Any] | None:
+    """Read a single profile directory into the wire-shape dict.
+
+    Returns ``None`` if ``config.yaml`` is missing or unreadable (caller
+    logs a warning and skips). ``SOUL.md`` is optional.
+    """
+    if not config_yaml.is_file():
+        logger.warning(
+            "Profile %r has no config.yaml at %s — skipping",
+            name,
+            config_yaml,
+        )
+        return None
 
     try:
-        with open(resolved, "r", encoding="utf-8") as fh:
+        with open(config_yaml, "r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh)
     except Exception:
-        logger.warning("Failed to read Hermes config at %s", resolved, exc_info=True)
-        return []
+        logger.warning(
+            "Profile %r: failed to parse %s — skipping",
+            name,
+            config_yaml,
+            exc_info=True,
+        )
+        return None
 
+    if data is None:
+        data = {}
     if not isinstance(data, dict):
-        return []
+        logger.warning(
+            "Profile %r: %s did not parse to a mapping — skipping",
+            name,
+            config_yaml,
+        )
+        return None
 
-    raw_profiles = data.get("profiles") or data.get("agents") or []
-    if not isinstance(raw_profiles, list):
-        return []
+    model_section = data.get("model")
+    if isinstance(model_section, dict):
+        model = model_section.get("default") or "unknown"
+    else:
+        model = "unknown"
+    if not isinstance(model, str):
+        model = str(model)
 
-    profiles: list[dict[str, Any]] = []
-    for entry in raw_profiles:
-        if isinstance(entry, dict) and "name" in entry:
-            profiles.append(
-                {
-                    "name": entry["name"],
-                    "model": entry.get("model", "unknown"),
-                    "description": entry.get("description", ""),
-                }
+    soul_text: str | None = None
+    if soul_md.is_file():
+        try:
+            soul_text = soul_md.read_text(encoding="utf-8").rstrip()
+        except Exception:
+            logger.warning(
+                "Profile %r: failed to read %s — treating as absent",
+                name,
+                soul_md,
+                exc_info=True,
             )
+            soul_text = None
 
-    logger.info("Loaded %d agent profile(s) from %s", len(profiles), resolved)
-    return profiles
+    description = data.get("description")
+    if not isinstance(description, str) or not description.strip():
+        if soul_text:
+            description = _extract_description_from_soul(soul_text)
+        else:
+            description = ""
+    else:
+        description = description.strip()
+
+    return {
+        "name": name,
+        "model": model,
+        "description": description,
+        "system_message": soul_text if soul_text else None,
+    }
+
+
+def _load_profiles(
+    config_path: str,
+    *,
+    enabled: bool = True,
+) -> list[dict[str, Any]]:
+    """Discover agent profiles from the Hermes ``~/.hermes/`` layout.
+
+    Upstream Hermes stores profiles as isolated directories under
+    ``~/.hermes/profiles/<name>/``, each with its own ``config.yaml``,
+    ``SOUL.md``, ``.env``, memory, and sessions. The root
+    ``~/.hermes/config.yaml`` is surfaced as a synthetic ``"default"``
+    profile so callers always see at least one entry when the host is
+    configured at all.
+
+    Each returned dict has the keys ``name``, ``model``, ``description``,
+    and ``system_message`` (snake_case — this is the wire shape consumed
+    by the Kotlin client via ``auth.ok``).
+
+    When ``enabled=False`` returns an empty list without scanning — this
+    honours the ``profile_discovery_enabled`` config toggle.
+    """
+    if not enabled:
+        logger.info("Profile discovery disabled via config — returning empty list")
+        return []
+
+    root_config = Path(config_path).expanduser()
+    hermes_dir = root_config.parent
+    profiles_dir = hermes_dir / "profiles"
+
+    results: list[dict[str, Any]] = []
+
+    # Synthetic "default" entry mapped to the root config.
+    if root_config.is_file():
+        default_entry = _read_profile_entry(
+            name="default",
+            config_yaml=root_config,
+            soul_md=hermes_dir / "SOUL.md",
+        )
+        if default_entry is not None:
+            results.append(default_entry)
+    else:
+        logger.info(
+            "Root Hermes config not found at %s — skipping default profile",
+            root_config,
+        )
+
+    # Directory-based profiles.
+    if profiles_dir.is_dir():
+        # Sort for deterministic ordering across filesystems.
+        for child in sorted(profiles_dir.iterdir()):
+            if not child.is_dir():
+                continue
+            entry = _read_profile_entry(
+                name=child.name,
+                config_yaml=child / "config.yaml",
+                soul_md=child / "SOUL.md",
+            )
+            if entry is not None:
+                results.append(entry)
+    else:
+        logger.debug(
+            "No profiles directory at %s — only default profile surfaced",
+            profiles_dir,
+        )
+
+    logger.info(
+        "Discovered %d profile(s) under %s",
+        len(results),
+        hermes_dir,
+    )
+    return results
