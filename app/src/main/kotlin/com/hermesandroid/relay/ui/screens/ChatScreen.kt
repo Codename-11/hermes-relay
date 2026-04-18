@@ -164,6 +164,13 @@ fun ChatScreen(
     connectionViewModel: ConnectionViewModel,
     voiceViewModel: VoiceViewModel,
     maxBubbleWidth: Dp = 300.dp,
+    // Deep-link nudge from Settings → Active Agent card: when `true`, the
+    // AgentInfoSheet auto-opens on first composition and [onAgentSheetArgConsumed]
+    // fires so the host can clear the nav arg (prevents re-open on tab
+    // switches or recomposition). Both default to no-op so existing call
+    // sites (previews, tests) don't need to plumb this.
+    openAgentSheetOnEntry: Boolean = false,
+    onAgentSheetArgConsumed: () -> Unit = {},
     // Sheet footer shortcut: jump out of chat into the full Connections CRUD
     // screen. Default no-op preserves existing test/preview call sites that
     // don't wire navigation.
@@ -293,6 +300,19 @@ fun ChatScreen(
     var inputText by remember { mutableStateOf("") }
     var showCommandPalette by remember { mutableStateOf(false) }
     var showAgentInfo by remember { mutableStateOf(false) }
+
+    // Settings → Active Agent deep-link: when the nav arg says "open the
+    // sheet", flip `showAgentInfo` on and call [onAgentSheetArgConsumed] so
+    // the host clears the arg. Keyed on [openAgentSheetOnEntry] so the
+    // effect re-fires if the user taps the Settings card, goes back, taps
+    // again — each navigation brings in a fresh `true` arg that this effect
+    // converts into a sheet open.
+    LaunchedEffect(openAgentSheetOnEntry) {
+        if (openAgentSheetOnEntry) {
+            showAgentInfo = true
+            onAgentSheetArgConsumed()
+        }
+    }
     val listState = rememberLazyListState()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()

@@ -135,7 +135,29 @@ sealed class Screen(
     val icon: ImageVector
 ) {
     data object Onboarding : Screen("onboarding", "Onboarding", Icons.Filled.Settings)
-    data object Chat : Screen("chat", "Chat", Icons.AutoMirrored.Filled.Chat)
+    // `openAgentSheet` — optional flag that tells ChatScreen to auto-open
+    // its consolidated AgentInfoSheet on first composition. Added so the
+    // Settings → Active Agent card can bounce the user straight to Chat
+    // with the sheet pre-opened (Connection / Profile / Personality
+    // editing lives inside the sheet). The arg is consumed once and then
+    // cleared from the back-stack entry's arguments so returning to the
+    // Chat tab later via bottom nav does NOT re-open the sheet.
+    //
+    // `route` stays the NavHost route template — matching the pattern used
+    // by Screen.Pair — while [route] (the function) builds concrete URIs.
+    // The bottom-nav selected-state hierarchy check keys off [route]
+    // (the template), so the template must match what's registered in the
+    // NavHost, and the NavigationBarItem click must navigate via [route]()
+    // so no unresolved `{openAgentSheet}` leaks into the destination.
+    data object Chat : Screen(
+        "chat?openAgentSheet={openAgentSheet}",
+        "Chat",
+        Icons.AutoMirrored.Filled.Chat,
+    ) {
+        const val ARG_OPEN_AGENT_SHEET: String = "openAgentSheet"
+        fun route(openAgentSheet: Boolean = false): String =
+            if (openAgentSheet) "chat?openAgentSheet=true" else "chat"
+    }
     data object Terminal : Screen("terminal", "Terminal", Icons.Filled.Code)
     data object Bridge : Screen("bridge", "Bridge", Icons.Filled.PhoneAndroid)
     data object Settings : Screen("settings", "Settings", Icons.Filled.Settings)
@@ -444,6 +466,8 @@ fun RelayApp() {
         }
         // === END PHASE3-safety-rails-followup ===
 
+        // startDestination uses the route TEMPLATE so it matches the
+        // composable registered below; optional args default to null/false.
         val startDestination = if (onboardingCompleted) Screen.Chat.route else Screen.Onboarding.route
 
         val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -680,7 +704,18 @@ fun RelayApp() {
                                     NavigationBarItemDefaults.colors()
                                 },
                                 onClick = {
-                                    navController.navigate(screen.route) {
+                                    // Chat's route is a template with an
+                                    // optional `?openAgentSheet` arg — always
+                                    // navigate to the concrete bare-"chat"
+                                    // URI from bottom nav so we don't leak
+                                    // the `{openAgentSheet}` placeholder into
+                                    // the destination and so tab-switching
+                                    // never re-opens the AgentInfoSheet.
+                                    val target = when (screen) {
+                                        is Screen.Chat -> Screen.Chat.route(openAgentSheet = false)
+                                        else -> screen.route
+                                    }
+                                    navController.navigate(target) {
                                         popUpTo(navController.graph.findStartDestination().id) {
                                             saveState = true
                                         }
@@ -720,13 +755,25 @@ fun RelayApp() {
                         connectionViewModel = connectionViewModel,
                         onComplete = {
                             connectionViewModel.completeOnboarding()
-                            navController.navigate(Screen.Chat.route) {
+                            // Concrete bare-"chat" URI — the Screen.Chat.route
+                            // field is the route TEMPLATE (contains
+                            // `{openAgentSheet}`) and must not be navigated
+                            // to directly; build the URI via Screen.Chat.route(...).
+                            navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
                                 popUpTo(Screen.Onboarding.route) { inclusive = true }
                             }
                         }
                     )
                 }
-                composable(Screen.Chat.route) {
+                composable(
+                    route = Screen.Chat.route,
+                    arguments = listOf(
+                        navArgument(Screen.Chat.ARG_OPEN_AGENT_SHEET) {
+                            type = NavType.BoolType
+                            defaultValue = false
+                        },
+                    ),
+                ) { backStackEntry ->
                     // Responsive bubble width based on screen width
                     val configuration = LocalConfiguration.current
                     val screenWidthDp = configuration.screenWidthDp.dp
@@ -736,11 +783,27 @@ fun RelayApp() {
                         else -> 300.dp                      // Compact (phone portrait)
                     }
 
+                    // Consume-once semantics: ChatScreen only treats the
+                    // flag as "open the sheet on entry" while it's still
+                    // `true` in the back-stack entry's arguments. After
+                    // firing, ChatScreen writes `false` back into the same
+                    // arguments bundle so recompositions (tab switches,
+                    // config changes, process resume) don't re-open the
+                    // sheet.
+                    val openAgentSheetArg = backStackEntry.arguments
+                        ?.getBoolean(Screen.Chat.ARG_OPEN_AGENT_SHEET, false) == true
+
                     ChatScreen(
                         chatViewModel = chatViewModel,
                         connectionViewModel = connectionViewModel,
                         voiceViewModel = voiceViewModel,
                         maxBubbleWidth = maxBubbleWidth,
+                        openAgentSheetOnEntry = openAgentSheetArg,
+                        onAgentSheetArgConsumed = {
+                            backStackEntry.arguments?.putBoolean(
+                                Screen.Chat.ARG_OPEN_AGENT_SHEET, false,
+                            )
+                        },
                         // AgentInfoSheet footer jumps straight into the full
                         // Connections CRUD screen — saves a detour through
                         // Settings → Connections.
@@ -776,6 +839,21 @@ fun RelayApp() {
                 composable(Screen.Settings.route) {
                     SettingsScreen(
                         connectionViewModel = connectionViewModel,
+                        chatViewModel = chatViewModel,
+                        // Tap on the Active Agent card: land on Chat with
+                        // the AgentInfoSheet auto-opened. launchSingleTop
+                        // avoids stacking duplicate Chat entries; popUpTo
+                        // Settings (inclusive=false) preserves Settings on
+                        // the back stack so pressing Back from Chat
+                        // returns to Settings rather than exiting.
+                        onNavigateToChatWithAgentSheet = {
+                            navController.navigate(
+                                Screen.Chat.route(openAgentSheet = true),
+                            ) {
+                                launchSingleTop = true
+                                popUpTo(Screen.Settings.route) { inclusive = false }
+                            }
+                        },
                         onNavigateToConnections = {
                             navController.navigate(Screen.ConnectionsSettings.route)
                         },
@@ -864,9 +942,17 @@ fun RelayApp() {
                 composable(Screen.ConnectionsSettings.route) {
                     val connectionsList by connectionViewModel.connections.collectAsState()
                     val activeId by connectionViewModel.activeConnectionId.collectAsState()
+                    val activeRelayUiState by connectionViewModel.relayUiState.collectAsState()
                     ConnectionsSettingsScreen(
                         connections = connectionsList,
                         activeConnectionId = activeId,
+                        activeRelayUiState = activeRelayUiState,
+                        onReconnectActive = {
+                            connectionViewModel.connectRelay()
+                            connectionSwitchScope.launch {
+                                snackbarHostState.showSnackbar("Reconnecting to relay…")
+                            }
+                        },
                         // Multi-connection: typed VM helpers (Worker B2)
                         // handle the full mutations — rename persists via
                         // ConnectionStore.updateConnection; revoke issues
