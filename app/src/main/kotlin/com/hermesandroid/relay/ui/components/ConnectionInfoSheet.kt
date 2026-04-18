@@ -14,9 +14,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
@@ -56,6 +58,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.auth.AuthState
+import com.hermesandroid.relay.data.AppAnalytics
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.network.ChatMode
@@ -609,6 +612,18 @@ fun AgentInfoSheet(
     // to BOTH sections (profile + personality) since they both feed startStream.
     val isStreaming by chatViewModel.isStreaming.collectAsState()
 
+    // Session context + analytics for the stats section. Session label
+    // derived by matching the currently-active session id against the
+    // cached sessions list (same pattern the old header dialog used
+    // before consolidation).
+    val messages by chatViewModel.messages.collectAsState()
+    val currentSessionId by chatViewModel.currentSessionId.collectAsState()
+    val sessions by chatViewModel.sessions.collectAsState()
+    val currentSession = remember(sessions, currentSessionId) {
+        sessions.firstOrNull { it.sessionId == currentSessionId }
+    }
+    val appStats by AppAnalytics.stats.collectAsState()
+
     val profileOverridesPersonality =
         selectedProfile?.systemMessage?.isNotBlank() == true
     var endpointsExpanded by remember { mutableStateOf(false) }
@@ -632,6 +647,11 @@ fun AgentInfoSheet(
     ) {
         Column(
             modifier = Modifier
+                // verticalScroll wraps content so long content (when the
+                // connection block expands its endpoints, or on smaller
+                // phones) is reachable. ModalBottomSheet itself does not
+                // scroll its children — without this the sheet clips.
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 16.dp)
                 .navigationBarsPadding(),
             verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -760,6 +780,44 @@ fun AgentInfoSheet(
                             },
                         )
                     }
+            }
+
+            HorizontalDivider()
+
+            // ---- Session + stats section ----
+            // Brings back the session/messages readout the old header
+            // AlertDialog used to show, plus adds current-session token
+            // counters pulled straight from AppAnalytics (no new flows
+            // needed — already being collected via ChatViewModel's
+            // stream lifecycle hooks).
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SectionLabel(title = "Session", hint = null)
+
+                val sessionLabel = currentSession?.let {
+                    it.title?.takeIf { t -> t.isNotBlank() }
+                        ?: it.sessionId.take(12)
+                } ?: "—"
+                InfoRow(label = "Name", value = sessionLabel)
+                InfoRow(label = "Messages", value = messages.size.toString())
+
+                // Token counters only — skip internal accumulator fields.
+                // Zero values are informative here ("no usage yet this
+                // session") so we don't hide them.
+                InfoRow(
+                    label = "Tokens",
+                    value = buildString {
+                        append(appStats.currentSessionTokensIn.toString())
+                        append(" in · ")
+                        append(appStats.currentSessionTokensOut.toString())
+                        append(" out")
+                    },
+                )
+                if (appStats.avgResponseTimeMs > 0L) {
+                    InfoRow(
+                        label = "Avg TTFT",
+                        value = "${appStats.avgResponseTimeMs} ms",
+                    )
+                }
             }
 
             HorizontalDivider()
