@@ -1068,6 +1068,40 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             .multiplexer = multiplexer
         // === END PHASE3-notif-listener-followup ===
 
+        // Multi-connection: stamp the active Connection with pairing metadata
+        // when AuthManager surfaces a fresh PairedSession. Closes the bug
+        // where Connections list showed "Not paired" even though the
+        // Settings card correctly said "Paired" — previously `markPaired`
+        // existed on the store but was never called after the
+        // Profile → Connection rename.
+        //
+        // Stamp only when `pairedAt` is still null so we don't churn
+        // DataStore writes on every auth reload. Re-pair flows explicitly
+        // clear `pairedAt` via the revoke path (see revokeConnection),
+        // so the next auth.ok will stamp again cleanly.
+        viewModelScope.launch {
+            combine(
+                connectionStore.activeConnectionId,
+                currentPairedSession,
+            ) { id, paired -> id to paired }
+                .distinctUntilChanged()
+                .collect { (connId, paired) ->
+                    if (connId == null || paired == null) return@collect
+                    val current = connectionStore.connections.value
+                        .firstOrNull { it.id == connId } ?: return@collect
+                    if (current.pairedAt != null) return@collect
+                    connectionStore.markPaired(
+                        connectionId = connId,
+                        pairedAtMillis = System.currentTimeMillis(),
+                        transportHint = paired.transportHint,
+                        // PairedSession.expiresAt is epoch seconds; the
+                        // store docs are explicit that it expects millis —
+                        // passing seconds would render as "Paired decades ago".
+                        expiresAtMillis = paired.expiresAt?.let { it * 1000L },
+                    )
+                }
+        }
+
         // Multi-connection: on cold boot, if no connections are persisted
         // yet, seed connection 0 from whatever URLs/session id the
         // pre-multi-connection install left in DataStore. Idempotent — a
@@ -1459,7 +1493,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     private suspend fun shutdownClientOffMain(client: HermesApiClient?) {
         if (client == null) return
         runCatching { withContext(Dispatchers.IO) { client.shutdown() } }
-            .onFailure { Log.w("ConnectionVM", "HermesApiClient.shutdown failed: ${it.message}") }
+            .onFailure {
+                android.util.Log.w(
+                    "ConnectionVM",
+                    "HermesApiClient.shutdown failed: ${it.message}",
+                )
+            }
     }
 
     // --- Relay methods ---

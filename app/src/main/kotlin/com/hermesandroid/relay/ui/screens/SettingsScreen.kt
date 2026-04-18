@@ -41,12 +41,14 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.FeatureFlags
@@ -102,10 +104,22 @@ fun SettingsScreen(
     val authState by connectionViewModel.authState.collectAsState()
     val apiUrl by connectionViewModel.apiServerUrl.collectAsState()
     val relayUrl by connectionViewModel.relayUrl.collectAsState()
+    val activeConnection by connectionViewModel.activeConnection.collectAsState()
     val devOptionsUnlocked by FeatureFlags.devOptionsUnlocked(context)
         .collectAsState(initial = FeatureFlags.isDevBuild)
     val relayFeatureEnabled by FeatureFlags.relayEnabled(context)
         .collectAsState(initial = FeatureFlags.isDevBuild)
+
+    // Kick a WSS reconnect when Settings first composes so the Active
+    // Connection card doesn't flash red/Disconnected on cold entry. Without
+    // this, the relay row rendered with whatever state ConnectionManager
+    // held after the last resume — which on fresh launch is often
+    // Disconnected since RelayApp's ON_RESUME fires before the tab even
+    // exists on screen. Matches ConnectionSettingsScreen's behavior so the
+    // two paths converge.
+    LaunchedEffect(Unit) {
+        connectionViewModel.reconnectIfStale()
+    }
 
     Scaffold(
         topBar = {
@@ -149,12 +163,25 @@ fun SettingsScreen(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Connection",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.weight(1f)
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Active Connection",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            // Connection label lands right under the title so
+                            // users with multiple saved connections can see at
+                            // a glance which one the status rows describe. Fall
+                            // back to "No connection" only when the store has
+                            // no active entry — normal startup seeds one.
+                            Text(
+                                text = activeConnection?.label ?: "No connection",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                             contentDescription = null,
@@ -176,16 +203,27 @@ fun SettingsScreen(
 
                     if (relayFeatureEnabled) {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+                        // Treat "Paired session, WSS briefly down" as
+                        // Connecting instead of Disconnected so the card
+                        // doesn't flash red between app launch and the
+                        // reconnectIfStale() LaunchedEffect above landing the
+                        // WSS handshake. The real Disconnected state still
+                        // renders red when authState is Unpaired/Failed.
+                        val pairedButRelayDown = authState is AuthState.Paired &&
+                            relayConnectionState == ConnectionState.Disconnected
                         ConnectionStatusRow(
                             label = "Relay",
                             isConnected = relayConnectionState == ConnectionState.Connected,
                             isConnecting = relayConnectionState == ConnectionState.Connecting ||
-                                relayConnectionState == ConnectionState.Reconnecting,
+                                relayConnectionState == ConnectionState.Reconnecting ||
+                                pairedButRelayDown,
                             isProbing = relayConnectionState == ConnectionState.Disconnected &&
+                                !pairedButRelayDown &&
                                 relayHealth == ConnectionViewModel.HealthStatus.Probing,
                             statusText = when {
                                 relayUrl.isBlank() -> "Not configured"
                                 relayConnectionState == ConnectionState.Connected -> relayUrl
+                                pairedButRelayDown -> "Reconnecting…"
                                 relayHealth == ConnectionViewModel.HealthStatus.Probing -> "Checking…"
                                 else -> "Disconnected"
                             }

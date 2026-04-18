@@ -592,6 +592,35 @@ private fun MethodTile(
     }
 }
 
+/**
+ * Returns an error message when [url] looks like a relay URL (ws/wss) in an
+ * API-server field, or null when the scheme is fine or the field is empty.
+ * The API server is HTTP/SSE; the relay is WSS — mixing them silently used
+ * to land in the Confirm preview as a mislabeled line.
+ */
+private fun apiUrlSchemeError(url: String): String? {
+    val trimmed = url.trim()
+    if (trimmed.isEmpty()) return null
+    return when {
+        trimmed.startsWith("ws://", ignoreCase = true) ||
+            trimmed.startsWith("wss://", ignoreCase = true) ->
+            "Looks like a relay URL — API server expects http:// or https://"
+        else -> null
+    }
+}
+
+/** Mirror of [apiUrlSchemeError] for the relay field. */
+private fun relayUrlSchemeError(url: String): String? {
+    val trimmed = url.trim()
+    if (trimmed.isEmpty()) return null
+    return when {
+        trimmed.startsWith("http://", ignoreCase = true) ||
+            trimmed.startsWith("https://", ignoreCase = true) ->
+            "Looks like an API URL — relay expects wss:// (or ws:// for local)"
+        else -> null
+    }
+}
+
 @Composable
 private fun ManualEntryStep(
     apiUrl: String,
@@ -605,7 +634,11 @@ private fun ManualEntryStep(
 ) {
     val trimmedCode = code.trim().uppercase()
     val codeValid = trimmedCode.length in 4..12 && trimmedCode.all { it.isLetterOrDigit() }
-    val canSubmit = codeValid && relayUrl.isNotBlank() && apiUrl.isNotBlank()
+    val apiError = apiUrlSchemeError(apiUrl)
+    val relayError = relayUrlSchemeError(relayUrl)
+    val canSubmit = codeValid &&
+        relayUrl.isNotBlank() && apiUrl.isNotBlank() &&
+        apiError == null && relayError == null
 
     Column(
         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -628,6 +661,10 @@ private fun ManualEntryStep(
             label = { Text("API server URL") },
             placeholder = { Text("http://your-server:8642") },
             singleLine = true,
+            isError = apiError != null,
+            supportingText = {
+                Text(apiError ?: "Hermes API — chat and sessions (default port 8642)")
+            },
             modifier = Modifier.fillMaxWidth(),
         )
 
@@ -637,6 +674,10 @@ private fun ManualEntryStep(
             label = { Text("Relay URL") },
             placeholder = { Text("wss://your-server:8767") },
             singleLine = true,
+            isError = relayError != null,
+            supportingText = {
+                Text(relayError ?: "Hermes Relay — bridge, voice, terminal (default port 8767)")
+            },
             modifier = Modifier.fillMaxWidth(),
         )
 
@@ -693,9 +734,11 @@ private fun ShowCodeStep(
 ) {
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
+    val apiError = apiUrlSchemeError(apiUrl)
+    val relayError = relayUrlSchemeError(relayUrl)
     val canConnect = pairingCode.isNotBlank() &&
-        relayUrl.isNotBlank() &&
-        apiUrl.isNotBlank()
+        relayUrl.isNotBlank() && apiUrl.isNotBlank() &&
+        apiError == null && relayError == null
 
     Column(
         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -718,6 +761,10 @@ private fun ShowCodeStep(
             label = { Text("API server URL") },
             placeholder = { Text("http://your-server:8642") },
             singleLine = true,
+            isError = apiError != null,
+            supportingText = {
+                Text(apiError ?: "Hermes API — chat and sessions (default port 8642)")
+            },
             modifier = Modifier.fillMaxWidth(),
         )
 
@@ -727,6 +774,10 @@ private fun ShowCodeStep(
             label = { Text("Relay URL") },
             placeholder = { Text("wss://your-server:8767") },
             singleLine = true,
+            isError = relayError != null,
+            supportingText = {
+                Text(relayError ?: "Hermes Relay — bridge, voice, terminal (default port 8767)")
+            },
             modifier = Modifier.fillMaxWidth(),
         )
 
@@ -895,9 +946,17 @@ private fun ConfirmStep(
                 modifier = Modifier.padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                LabeledLine("API server", payload.serverUrl)
+                LabeledLine(
+                    label = "API server",
+                    value = payload.serverUrl,
+                    hint = "chat & sessions",
+                )
                 if (relayUrl != null) {
-                    LabeledLine("Relay", relayUrl)
+                    LabeledLine(
+                        label = "Relay",
+                        value = relayUrl,
+                        hint = "bridge, voice, terminal",
+                    )
                 }
                 if (payload.relay?.grants?.isNotEmpty() == true) {
                     LabeledLine(
@@ -1072,13 +1131,22 @@ private fun VerifyStep(
 }
 
 @Composable
-private fun LabeledLine(label: String, value: String) {
+private fun LabeledLine(label: String, value: String, hint: String? = null) {
     Column {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (hint != null) {
+                Text(
+                    text = " · $hint",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         Text(
             text = value,
             style = MaterialTheme.typography.bodyMedium,
