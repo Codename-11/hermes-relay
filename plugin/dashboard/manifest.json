@@ -1,0 +1,14 @@
+{
+  "name": "hermes-relay",
+  "label": "Relay",
+  "description": "Paired devices, bridge activity, push, and media for hermes-relay",
+  "icon": "Activity",
+  "version": "0.1.0",
+  "tab": {
+    "path": "/relay",
+    "position": "after:skills"
+  },
+  "entry": "dist/index.js",
+  "css": null,
+  "api": "plugin_api.py"
+}
