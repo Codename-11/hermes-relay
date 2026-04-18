@@ -1,16 +1,16 @@
 # Profiles
 
-A **profile** in Hermes-Relay is an upstream-Hermes agent directory — an isolated Hermes instance on your server with its own config, model, and identity. When you pair with a server, the phone auto-discovers every profile on that server and exposes them in the chat top bar.
+A **profile** in Hermes-Relay is an upstream-Hermes agent directory — an isolated Hermes instance on your server with its own config, model, and identity. When you pair with a server, the phone auto-discovers every profile on that server and exposes them in the **agent sheet** — a bottom sheet that opens when you tap the agent name in the Chat top bar.
 
 ## The three layers
 
 | Layer | What it picks | Scope | Where it lives |
 |---|---|---|---|
-| **Connection** | Which Hermes server | One pairing per server | Top-of-screen chip (when you have ≥2 connections) |
-| **Profile** | Which agent *on that server* | Per chat turn, clears on Connection switch | Chat top-bar chip (left of Personality) |
-| **Personality** | Which system-prompt preset | Per chat turn | Chat top-bar chip (right of Profile) |
+| **Connection** | Which Hermes server | One pairing per server | Top-bar chip on the left (hidden with a single connection) |
+| **Profile** | Which agent *on that server* | Per chat turn, clears on Connection switch | Agent sheet — tap the agent name in the top bar |
+| **Personality** | Which system-prompt preset | Per chat turn | Agent sheet — same sheet, below Profile |
 
-Pick from left to right: the server, then the agent on that server, then the persona.
+Pick in order: the server (top bar), then the agent + persona (agent sheet). Switching either Profile or Personality shows a toast confirming the new selection.
 
 ## Where profiles come from
 
@@ -66,10 +66,11 @@ Then add that gateway as a separate **Connection** on the phone (pair with it li
 
 ## Picker behaviour
 
-- **Hidden when empty.** If the server has no `~/.hermes/profiles/*/` entries (and just the default root config), the picker chip doesn't render.
-- **"Default"** option at the top of the dropdown. Selecting it clears the override and uses the server's `config.yaml/model.default`.
+- **Hidden when empty.** If the server has no `~/.hermes/profiles/*/` entries (and just the default root config), the Profile section of the agent sheet doesn't render.
+- **"Default"** option at the top of the Profile list. Selecting it clears the override and uses the server's `config.yaml/model.default`.
 - **Disabled mid-stream.** You can't switch profile during an in-flight chat turn.
 - **Ephemeral.** Selection resets on app restart and on Connection switch. Persisting per-Connection is on the roadmap.
+- **Jump from Settings.** The "Active agent" card at the top of Settings summarizes the current Connection / Profile / Personality and navigates straight to Chat with the agent sheet pre-opened.
 
 ## Disabling discovery on the server
 

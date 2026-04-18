@@ -161,6 +161,14 @@ Phone (WSS)      → Relay Server (:8767)          [bridge, terminal]
 
 ### 8. Dynamic Personalities over Hardcoded Profiles
 
+> **Terminology note (2026-04-18):** The word "Profiles" in this decision's title predates the multi-server / multi-agent work landed in §19 and §21. Today's vocabulary:
+>
+> - **Connection** (§19) — a paired Hermes *server*. What earlier drafts sometimes called a "profile".
+> - **Profile** (§21) — an upstream-Hermes agent directory (`~/.hermes/profiles/<name>/`). Overlays model + SOUL on chat turns.
+> - **Personality** (this decision) — a system-prompt preset *within* one agent's config.
+>
+> This decision is unchanged; only the surrounding vocabulary shifted.
+
 **Decision:** Fetch personalities from `GET /api/config` → `config.agent.personalities` (name → system prompt map). Display active personality name on chat bubbles. Send selected personality's system prompt via `system_message` field.
 
 **Why:**

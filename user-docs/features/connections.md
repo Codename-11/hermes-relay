@@ -15,7 +15,7 @@ Connections do **not** share sessions, memory, or personalities. Each Hermes ser
 
 ## Switching connection
 
-Tap the connection chip in the top bar (next to the personality chip). A bottom sheet shows all your connections with a health indicator for each. Tap one to switch.
+Tap the connection chip in the top bar (left side, next to the agent name). A bottom sheet shows all your connections with a health indicator for each. Tap one to switch. The chip hides automatically if you only have one connection — nothing to switch between.
 
 On switch, the app:
 
@@ -41,10 +41,10 @@ Tap **Add connection** to create a new one. This launches the standard QR pairin
 ## How this differs from personalities and profiles
 
 - **Personality** = a system prompt preset *on* one agent. Switching a personality just changes what the agent behaves like on the next message. Memory, sessions, tools, and model are unchanged.
-- **Profile** = a named agent configuration (model + description) defined in the server's `~/.hermes/config.yaml`. Switching a profile picks a different agent *on the same server*. See [Profiles](./profiles.md).
+- **Profile** = an upstream-Hermes agent directory on the server (`~/.hermes/profiles/<name>/`). Selecting a profile overlays its model + `SOUL.md` for chat turns. See [Profiles](./profiles.md).
 - **Connection** = a whole different Hermes server. Switching a connection changes *everything* — the conversation history, the agent's memory, the personalities and profiles that are even available to pick from.
 
-The connection chip is to the left of the personality chip in the top bar, reflecting this hierarchy: pick the server first, then pick the profile/personality *on* that server.
+The Connection chip lives on the left of the Chat top bar. Profile and Personality selection both live in the **agent sheet** — tap the agent name in the middle of the top bar to open it. That order reflects the hierarchy: pick the server first, then pick the profile and personality *on* that server.
 
 ## Things that stay the same across connections
 

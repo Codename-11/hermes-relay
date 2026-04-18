@@ -206,6 +206,56 @@ Android 14 introduced a requirement that any FGS using `MediaProjection` must de
 
 ---
 
+## ADR-14: Multi-Connection Support — one app, many Hermes servers
+
+**Decision:** The app supports pairing with multiple Hermes servers as first-class **Connections**. A `ConnectionStore` persists all of them in DataStore along with the active one. Switching is a single top-bar tap: cancel in-flight SSE, disconnect relay WSS, rebind URL/token providers, rebuild `HermesApiClient`, reconnect, reprobe capabilities, reload sessions / personalities / profiles, restore the per-Connection last-active session.
+
+### Rationale
+
+- Users with multiple Hermes installs (home + work, dev + prod) want to switch targets without wiping pairing state or re-running onboarding.
+- A Connection is simply `baseUrl + bearer + pairing record` — there is no upstream `/api/connections` endpoint to enumerate, and none is needed.
+- Each Connection has its own sessions, memory, personalities, skills, and profiles. Theme, bridge safety preferences, and the TOFU cert-pin map stay global.
+
+### Migration
+
+On first launch of the new version the existing `hermes_companion_auth_hw` store seeds Connection 0 — zero re-pair, zero token migration, fully transparent to the user.
+
+### Trade-off
+
+Bridge safety preferences (blocklist, destructive verbs, auto-disable timer) are global across Connections. The safety model is phone-wide (one user, one device, same risk appetite). Splitting per-Connection is possible later without a schema break.
+
+See `docs/decisions.md` §19 for the full design, store shape, and scope table.
+
+---
+
+## ADR-15: Agent Profile picker — directory-discovered overlay of model + SOUL
+
+**Decision:** The relay auto-discovers upstream Hermes profiles by scanning `~/.hermes/profiles/*/` (plus a synthetic "default" entry for the root config) and advertises them in the `auth.ok` payload as `{name, model, description, system_message}`. On chat send with a profile selected, the phone overrides the request's `model` with the profile's model and uses the profile's `SOUL.md` as `system_message`. Selection is ephemeral and clears on Connection switch.
+
+### Rationale
+
+- Upstream Hermes has never had a top-level `profiles:` or `agents:` list in `config.yaml`. Profiles upstream are isolated directory instances at `~/.hermes/profiles/<name>/`, each with its own config, `.env`, `SOUL.md`, memory, sessions, and skills. The directory-scan matches upstream's actual layout.
+- Selection is **overlay-not-isolation** — the model + SOUL ride on top of the Connection's gateway. Memory, sessions, API keys, and skills stay with the Connection. For full isolation, run the profile's own gateway (`hermes -p mizu platform start api --port 8643`) and pair it as a **separate Connection**.
+- Gated by `RELAY_PROFILE_DISCOVERY_ENABLED=1` (default on). An operator can set it to `false` to keep the picker empty on Connections-only deployments.
+
+### Three-layer model
+
+- **Connection** (ADR-14) — which Hermes server + gateway.
+- **Profile** (this ADR) — which upstream-layout agent directory on that server.
+- **Personality** (server-side `config.agent.personalities`) — which system-prompt preset within the agent's config.
+
+Profile and Personality live in a single consolidated **agent sheet** opened from the Chat top bar. The profile's `system_message` wins over the personality's when both are selected — a profile is a richer identity concept.
+
+### Trade-offs
+
+- **Ephemeral only.** Selection doesn't persist across app restarts. Persisting per-Connection is a small extension, filed as a follow-up.
+- **SOUL.md size.** The full content ships as `system_message` on every chat turn. Keep SOUL files concise.
+- **Chat-only.** Voice transcribe/synthesize and bridge commands don't honor the profile selection — they route through endpoints that don't carry `model` or `system_message`.
+
+See `docs/decisions.md` §21 for the full design, including the abandoned earlier attempt at parsing a fictional top-level `profiles:` YAML key.
+
+---
+
 ## Deferrals
 
 | Feature | Reason | When |
@@ -214,3 +264,6 @@ Android 14 introduced a requirement that any FGS using `MediaProjection` must de
 | Multi-device | Single-device simplifies auth and state | Future |
 | File transfer | Terminal tools work as a workaround | Future |
 | Gateway adapter | WebAPI proxy works well, adapter is overengineering for now | If WebAPI becomes limiting |
+| True per-profile isolation via single Connection | Overlay model meets today's need; full isolation = separate Connections | If users request shared sessions/memory per-profile |
+| Persisted Profile selection per Connection | Ephemeral selection is fine for v1; add later if users ask | v0.7+ |
+| Gateway-running probe (hermes-desktop-style) | Simpler to let the user notice a dead server via the Connection health dot | v0.7+ |

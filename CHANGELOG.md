@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-04-18
+
+### Added
+
+- **Pair with multiple Hermes servers** and switch in one tap. A new Connection chip on the left of the Chat top bar opens a switcher sheet with a health indicator for each paired server — tap one to cancel in-flight chat, disconnect the old relay, rebind to the new server, and reload sessions + personalities + profiles. The chip is hidden automatically when you only have one Connection. Existing single-server installs migrate transparently on first launch of this version — zero re-pair, zero token migration. See `docs/decisions.md` §19.
+- **Connections management screen** at Settings → Connections. Each paired server is a card with inline rename, re-pair (reuses the QR onboarding flow), revoke, and remove. Add a new Connection from the same screen. Per-connection state kept separate: sessions, memory, personalities, skills, profiles, relay URL + cert pin, voice endpoints, last-active session. Theme, bridge safety preferences, and TOFU cert-pin map stay global.
+- **Agent Profiles** — the relay now auto-discovers upstream Hermes profiles by scanning `~/.hermes/profiles/*/` (plus a synthetic "default" for the root config) and advertises them in the `auth.ok` payload. On chat send with a profile selected, the phone overlays the request's `model` and `system_message` with the profile's `model.default` + `SOUL.md`. Selection is ephemeral and clears on Connection switch. Gated by `RELAY_PROFILE_DISCOVERY_ENABLED=1` (default on) — operators can set it to `false` to keep the picker empty. See `docs/decisions.md` §21.
+- **Consolidated agent sheet** on the Chat top bar. Tap the agent name in the middle of the top bar to open a scrollable bottom sheet holding Profile selection, Personality selection, and session info + analytics (message count, tokens in/out, avg TTFT). Replaces the separate top-bar chips from intermediate v0.5.x builds. Toast confirmations fire on Profile and Personality switches.
+- **"Active agent" card** at the top of Settings — summarizes the current Connection / Profile / Personality. Tap navigates to Chat with the agent sheet auto-opened via the `openAgentSheet` nav arg, giving Settings-originating users a one-tap path to change agent context.
+- **Three-layer agent model** formalized: Connection (server) → Profile (agent directory) → Personality (system-prompt preset). Documented in `docs/spec.md`, `docs/decisions.md` §8 / §19 / §21, and `user-docs/features/{connections,profiles,personalities}.md`.
+- **Pair wizard URL scheme cross-validation** — an inline hint fires when the API field is given a `wss://` URL (or any obviously-wrong scheme), so misplaced values surface before the pair attempt instead of after.
+- **Pair-stamp on the active Connection** — successful auth now stamps the active Connection's pairing metadata (paired-at, transport hint, expiry) in place, so a re-pair from Settings doesn't leave stale state on the card.
+
+### Changed
+
+- **Status-badge UX polish.** `ConnectionStatusBadge` top-aligns cleanly on multi-line rows (was vertically centered and drifted off-center when the label wrapped). The Settings screen now treats a paired Connection with a briefly-down relay as **Connecting** (amber) instead of **Disconnected** (red) — avoids scare-red during the few seconds around a relay restart.
+- **Top-bar chip layout.** `ProfilePicker.kt` and `PersonalityPicker.kt` as standalone top-bar chips are gone; their selection now lives inside the consolidated agent sheet.
+
+### Deferred
+
+- True per-profile isolation on a single Connection (memory + sessions + `.env` shared today; use separate Connections for full isolation).
+- Persisted Profile selection per Connection across app restarts.
+- Gateway-running probe (hermes-desktop-inspired) on the Connection health indicator.
+
+## [0.5.x] — Unreleased feature work
+
 ### Added — Voice silence auto-stop (2026-04-18)
 
 - **Silence-based auto-stop for Listening turns.** `VoiceViewModel.startListening()`
