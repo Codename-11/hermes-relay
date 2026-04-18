@@ -4,22 +4,28 @@ This package is loaded at Python interpreter startup via a `.pth` file in the
 hermes-agent venv's site-packages. It installs a `sys.meta_path` import hook
 that waits for `aiohttp.web` to be imported, then replaces `web.Application`
 with a thin subclass that detects when hermes-agent's `APIServerAdapter`
-attaches itself to a fresh app and injects extra `/api/sessions/*`,
-`/api/memory`, `/api/skills`, `/api/config`, and `/api/available-models`
-routes.
+attaches itself to a fresh app and:
 
-The point: a vanilla upstream hermes-agent install with no custom server-side
-patches still serves the management endpoints the Hermes-Relay Android app
-expects, as long as the hermes-relay plugin is installed in the same venv.
+1. **Injects extra routes** — `/api/sessions/*`, `/api/memory`, `/api/skills`,
+   `/api/config`, and `/api/available-models` — so a vanilla upstream
+   hermes-agent install serves the management endpoints the Hermes-Relay
+   Android app expects.
+
+2. **Installs slash-command middleware** — an aiohttp middleware that intercepts
+   `/v1/chat/completions` and `/v1/runs` to handle gateway slash commands
+   (`/help`, `/commands`, `/profile`, `/provider`) and return decline notices
+   for stateful commands (`/model`, `/new`, `/retry`, etc.), preventing the
+   LLM from hallucinating responses for them. This mirrors the upstream
+   Stage 1 preprocessor from `gateway/platforms/api_server_slash.py`.
+
 Chat streaming continues to use upstream's standard `/v1/runs` endpoint, which
-already emits structured tool events — that's why we don't need to inject any
-chat handlers.
+already emits structured tool events.
 
 This module is removed in its entirety once upstream PR
 https://github.com/NousResearch/hermes-agent/pull/8556 lands and reaches a
 released hermes-agent version. The bootstrap feature-detects on route paths
-and silently no-ops when the upstream-merged or fork-built endpoints are
-already present, so it stays harmless during the rollout window.
+and module presence and silently no-ops when the upstream-merged or fork-built
+endpoints are already present, so it stays harmless during the rollout window.
 """
 
 from __future__ import annotations

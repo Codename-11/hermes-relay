@@ -11,8 +11,11 @@ the adapter while the app is still being built (router not yet frozen).
 
 At that point, we feature-detect by route path and call `_register_routes()`
 to bind our handlers to the same router the gateway is in the middle of
-populating. The gateway then continues with its own route registrations and
-starts the server normally.
+populating. We also install the slash-command middleware that intercepts
+``/v1/chat/completions`` and ``/v1/runs`` to handle gateway commands like
+``/help``, ``/commands``, ``/profile``, and ``/provider`` without forwarding
+them to the LLM.  The gateway then continues with its own route registrations
+and starts the server normally.
 
 Failure modes are silent-but-logged: if anything in this chain breaks
 (unexpected upstream refactor, aiohttp version incompatibility, missing
@@ -147,6 +150,14 @@ def _apply_patch(web_module) -> None:
                     "hermes_relay_bootstrap: route injection failed: %s",
                     exc,
                 )
+            try:
+                _maybe_install_command_middleware(self, value)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.warning(
+                    "hermes_relay_bootstrap: command middleware "
+                    "installation failed: %s",
+                    exc,
+                )
 
     web_module.Application = _PatchedApplication
 
@@ -210,3 +221,35 @@ def _maybe_register_routes(app, adapter) -> None:
         "hermes-agent gateway",
         len(_INJECTED_PATHS),
     )
+
+
+def _maybe_install_command_middleware(app, adapter) -> None:
+    """Install the slash-command middleware on the app if not already present.
+
+    The middleware intercepts ``/v1/chat/completions`` and ``/v1/runs``
+    to handle gateway commands (``/help``, ``/commands``, ``/profile``,
+    ``/provider``) and return decline notices for stateful commands,
+    preventing the LLM from hallucinating responses for them.
+
+    If the upstream ``api_server_slash`` module already exists (meaning
+    the PR has been merged or the fork is deployed), the middleware is
+    skipped — the native handler handles interception.
+    """
+    try:
+        from . import _command_middleware
+    except Exception as exc:
+        logger.warning(
+            "hermes_relay_bootstrap: cannot import _command_middleware (%s); "
+            "skipping middleware installation.",
+            exc,
+        )
+        return
+
+    try:
+        _command_middleware.maybe_install_middleware(app, adapter)
+    except Exception as exc:
+        logger.warning(
+            "hermes_relay_bootstrap: maybe_install_middleware raised %s; "
+            "slash commands will fall through to the LLM.",
+            exc,
+        )

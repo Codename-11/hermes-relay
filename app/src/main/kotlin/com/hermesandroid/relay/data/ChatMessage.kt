@@ -40,7 +40,76 @@ data class ChatMessage(
     // Agent/personality name for display on assistant messages
     val agentName: String? = null,
     // File attachments (images, documents, etc.)
-    val attachments: List<Attachment> = emptyList()
+    val attachments: List<Attachment> = emptyList(),
+    /**
+     * Structured trace of a phone-local voice intent dispatch. Populated only
+     * for messages whose [id] starts with `voice-intent-` and that originated
+     * from the sideload voice classifier. Used by
+     * [com.hermesandroid.relay.voice.VoiceIntentSyncBuilder] to reconstruct
+     * OpenAI-format `assistant` + `tool` message pairs the next time chat
+     * sends a payload to the server, so the LLM sees prior voice actions in
+     * its session memory.
+     *
+     * Null on every other message — including server-loaded history, normal
+     * user messages, regular assistant turns, and tool-call cards rendered
+     * via [ToolCall].
+     *
+     * The sync builder treats messages with [voiceIntent] != null and
+     * [VoiceIntentTrace.syncedToServer] == false as the inputs to its
+     * synthesis pass; on a successful send we flip [VoiceIntentTrace.syncedToServer]
+     * to true via [com.hermesandroid.relay.network.handlers.ChatHandler.markVoiceIntentsSynced]
+     * so they're not re-sent on the next turn.
+     */
+    val voiceIntent: VoiceIntentTrace? = null
+)
+
+/**
+ * Structured details about a phone-local voice intent that was dispatched
+ * in-process via [com.hermesandroid.relay.network.handlers.BridgeCommandHandler.handleLocalCommand].
+ *
+ * Captured on a [ChatMessage] (id prefix `voice-intent-`) so the next chat
+ * payload can include synthetic OpenAI-format `assistant` + `tool` message
+ * pairs that bring the server-side LLM up to speed on what the user did via
+ * voice. Without this, follow-up text questions like "did that work?" hit
+ * the LLM with no prior context and get hallucinated answers.
+ *
+ * Why a single field instead of three booleans + nullable strings on
+ * [ChatMessage]: keeps the ChatMessage surface small and makes the "this is
+ * a voice-intent trace, treat it specially" check a single null-vs-non-null
+ * comparison rather than a multi-field rule that would drift over time.
+ *
+ * @property toolName The Hermes plugin tool name the intent maps to
+ *   (`android_open_app`, `android_send_sms`, etc.). Matches the names the
+ *   gateway-side LLM tools use when it calls the same actions itself. Must
+ *   start with `android_` to be a valid sync target — the builder uses this
+ *   prefix as a sanity gate when constructing the synthetic tool_call.
+ * @property argumentsJson Compact JSON object with the args the intent
+ *   resolved to, e.g. `{"app_name":"Chrome","package":"com.android.chrome"}`
+ *   for an Open App dispatch. Stored as a string so we can hand it straight
+ *   to the OpenAI `function.arguments` field, which is itself a JSON-encoded
+ *   string by spec. Must be valid JSON.
+ * @property success True if the local dispatch returned a 200-class status,
+ *   false on any other status (denial, permission missing, dispatcher
+ *   failure, etc.). Drives whether the synthetic `tool`-role response
+ *   includes an `error` field.
+ * @property resultJson Compact JSON object describing the dispatch outcome.
+ *   On success, typically `{"ok":true,...}` with any tool-specific fields
+ *   from [com.hermesandroid.relay.network.handlers.LocalDispatchResult.resultJson].
+ *   On failure, an error envelope including `ok:false`, `error`, optionally
+ *   `error_code`. Stored as a string and rendered verbatim into the
+ *   synthetic `tool`-role message's `content` field.
+ * @property syncedToServer Idempotency guard. Flipped to true by
+ *   [com.hermesandroid.relay.network.handlers.ChatHandler.markVoiceIntentsSynced]
+ *   the moment we hand the request payload to the API client. Once true,
+ *   the trace is excluded from future sync passes — the server-side
+ *   session has already absorbed it.
+ */
+data class VoiceIntentTrace(
+    val toolName: String,
+    val argumentsJson: String,
+    val success: Boolean,
+    val resultJson: String,
+    val syncedToServer: Boolean = false,
 )
 
 /**

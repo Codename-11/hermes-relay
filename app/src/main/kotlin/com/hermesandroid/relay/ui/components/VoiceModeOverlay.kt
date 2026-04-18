@@ -75,6 +75,7 @@ import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.util.HumanError
 import com.hermesandroid.relay.viewmodel.DestructiveCountdownState
 import com.hermesandroid.relay.viewmodel.InteractionMode
+import com.hermesandroid.relay.viewmodel.PermissionDeniedCallout
 import com.hermesandroid.relay.viewmodel.VoiceState
 import com.hermesandroid.relay.viewmodel.VoiceUiState
 import kotlinx.coroutines.flow.SharedFlow
@@ -114,6 +115,13 @@ fun VoiceModeOverlay(
     // is empty.
     transcriptMessages: List<ChatMessage> = emptyList(),
     // === END PHASE3-voice-mode-transcript ===
+    // === v0.4.1 JIT permission-denied chip ===
+    // Tapped when the user clicks the permission-denied chip. Default no-op
+    // so existing call sites keep compiling; the chip simply does nothing
+    // visible if not wired (the chip itself is also gated on
+    // `uiState.permissionDeniedCallout` being non-null).
+    onPermissionDeniedChipTap: (PermissionDeniedCallout) -> Unit = {},
+    // === END v0.4.1 ===
 ) {
     val surface = MaterialTheme.colorScheme.surface
     val haptic = LocalHapticFeedback.current
@@ -273,6 +281,21 @@ fun VoiceModeOverlay(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 32.dp),
+            )
+
+            // v0.4.1 JIT permission-denied chip. Shows up when the most
+            // recent voice intent dispatch failed because the user hasn't
+            // granted the matching runtime permission. Tap deep-links to
+            // Settings → Apps → Hermes Relay → Permissions for the package
+            // so the user can grant + retry without leaving voice mode by
+            // hand. Cleared on the next mic tap or after the user opens
+            // the chip.
+            PermissionDeniedChip(
+                callout = uiState.permissionDeniedCallout,
+                onTap = onPermissionDeniedChipTap,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 32.dp, vertical = 4.dp),
             )
 
             Spacer(Modifier.height(4.dp))
@@ -711,6 +734,71 @@ private fun DestructiveCountdownRow(
                 color = MaterialTheme.colorScheme.tertiary,
                 trackColor = MaterialTheme.colorScheme.surfaceVariant,
             )
+        }
+    }
+}
+
+/**
+ * v0.4.1 JIT permission-denied chip.
+ *
+ * Surfaced after a voice intent dispatch fails with `error_code ==
+ * "permission_denied"`. Tappable Surface that deep-links to Android's
+ * per-app permission page so the user can grant the missing perm without
+ * leaving voice mode by hand. Visual treatment is errorContainer-coloured
+ * so it stands out from the muted DestructiveCountdownRow above it.
+ *
+ * Hides itself with a fade transition the moment [callout] becomes null
+ * (next mic tap or after the user acts on the chip).
+ */
+@Composable
+private fun PermissionDeniedChip(
+    callout: PermissionDeniedCallout?,
+    onTap: (PermissionDeniedCallout) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var lastShown by remember { mutableStateOf<PermissionDeniedCallout?>(null) }
+    LaunchedEffect(callout) {
+        if (callout != null) lastShown = callout
+    }
+    AnimatedVisibility(
+        visible = callout != null,
+        enter = fadeIn(tween(150)),
+        exit = fadeOut(tween(200)),
+        modifier = modifier,
+    ) {
+        // Hold a non-null reference for the fade-out frames after the VM
+        // clears the state. Mirror the same trick DestructiveCountdownRow
+        // uses above so the chip body doesn't snap to empty mid-fade.
+        val current = callout ?: lastShown
+        if (current != null) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.errorContainer,
+                contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onTap(current) },
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = current.hint,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    }
+                    Text(
+                        text = "OPEN",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                }
+            }
         }
     }
 }

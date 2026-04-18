@@ -19,6 +19,18 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
+// === v0.4.1 voice-intent → server session sync ===
+// Helper that encodes an OpenAI tool_call `function.arguments` payload.
+// kotlinx.serialization's buildJsonObject().toString() emits compact JSON
+// without external newlines — exactly what the OpenAI spec wants for the
+// arguments field (which is itself a JSON-encoded string).
+//
+// Defined at file scope so the handler keeps the call sites short and the
+// JSON-encoding policy lives in one place.
+private fun toolArgs(builder: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit): String =
+    buildJsonObject(builder).toString()
+// === END v0.4.1 ===
+
 /**
  * === PHASE3-voice-intents (sideload flavor): real voice→bridge handler ===
  *
@@ -194,6 +206,11 @@ internal class RealVoiceBridgeIntentHandler(
                             "resolvedNumber" to normalized,
                             "body" to intent.body,
                         ),
+                        androidToolName = "android_send_sms",
+                        androidToolArgsJson = toolArgs {
+                            put("to", normalized)
+                            put("body", intent.body)
+                        },
                     )
                 } else {
                     when (val resolution = resolveContactPhone(intent.contact)) {
@@ -249,6 +266,12 @@ internal class RealVoiceBridgeIntentHandler(
                                     "resolvedNumber" to resolution.number,
                                     "body" to intent.body,
                                 ),
+                                androidToolName = "android_send_sms",
+                                androidToolArgsJson = toolArgs {
+                                    put("to", resolution.number)
+                                    put("body", intent.body)
+                                    put("contact", resolution.matchedName)
+                                },
                             )
                         }
                         is ContactResolution.ServiceMissing -> IntentResult.Handled(
@@ -329,6 +352,12 @@ internal class RealVoiceBridgeIntentHandler(
                                 "packageName" to resolution.packageName,
                                 "matchTier" to resolution.matchTier,
                             ),
+                            androidToolName = "android_open_app",
+                            androidToolArgsJson = toolArgs {
+                                put("app_name", intent.appName)
+                                put("package", resolution.packageName)
+                                put("label", resolution.label)
+                            },
                         )
                     }
                     is AppResolution.ServiceMissing -> IntentResult.Handled(
@@ -366,14 +395,20 @@ internal class RealVoiceBridgeIntentHandler(
             is VoiceIntent.Tap -> handleSafe(
                 label = "Tap",
                 envelope = buildTapEnvelope(intent),
+                androidToolName = "android_tap_text",
+                androidToolArgsJson = toolArgs { put("text", intent.target) },
             )
             VoiceIntent.Back -> handleSafe(
                 label = "Navigate back",
                 envelope = buildPressKeyEnvelope("back"),
+                androidToolName = "android_press_key",
+                androidToolArgsJson = toolArgs { put("key", "back") },
             )
             VoiceIntent.Home -> handleSafe(
                 label = "Home",
                 envelope = buildPressKeyEnvelope("home"),
+                androidToolName = "android_press_key",
+                androidToolArgsJson = toolArgs { put("key", "home") },
             )
         }
     }
@@ -398,6 +433,15 @@ internal class RealVoiceBridgeIntentHandler(
         spokenConfirmation: String,
         envelope: Envelope,
         details: Map<String, String> = emptyMap(),
+        // === v0.4.1 voice-intent → server session sync ===
+        // Hermes plugin tool name + JSON-encoded args this dispatch maps to.
+        // Forwarded into IntentResult.Handled so VoiceViewModel can stitch a
+        // structured VoiceIntentTrace onto the chat scroll's voice-intent
+        // bubble; VoiceIntentSyncBuilder then materializes a synthetic
+        // OpenAI tool_call from the trace on the next chat send.
+        androidToolName: String? = null,
+        androidToolArgsJson: String = "{}",
+        // === END v0.4.1 ===
     ): IntentResult.Handled {
         // Notify the UI BEFORE launching the countdown coroutine so the
         // progress animation starts in lockstep with the real delay. If
@@ -411,7 +455,9 @@ internal class RealVoiceBridgeIntentHandler(
                 Log.i(TAG, "$label: dispatched after confirmation window (status=${result.status})")
                 // Emit follow-up chat trace with the real outcome — "SMS
                 // sent" / "user denied" / "permission missing" etc.
-                onDispatchResult?.invoke(label, result)
+                // androidToolName + args propagate so VoiceViewModel can
+                // build a structured VoiceIntentTrace for v0.4.1 sync.
+                onDispatchResult?.invoke(label, result, androidToolName, androidToolArgsJson)
             } catch (_: kotlinx.coroutines.CancellationException) {
                 Log.i(TAG, "$label: cancelled before dispatch")
                 onDispatchResult?.invoke(
@@ -422,6 +468,8 @@ internal class RealVoiceBridgeIntentHandler(
                         errorCode = "cancelled",
                         resultJson = null,
                     ),
+                    androidToolName,
+                    androidToolArgsJson,
                 )
             }
         }
@@ -430,6 +478,8 @@ internal class RealVoiceBridgeIntentHandler(
             spokenConfirmation = spokenConfirmation,
             requiresConfirmation = true,
             details = details,
+            androidToolName = androidToolName,
+            androidToolArgsJson = androidToolArgsJson,
         )
     }
 
@@ -437,14 +487,18 @@ internal class RealVoiceBridgeIntentHandler(
         label: String,
         envelope: Envelope,
         details: Map<String, String> = emptyMap(),
+        androidToolName: String? = null,
+        androidToolArgsJson: String = "{}",
     ): IntentResult.Handled {
         val result = dispatch(envelope)
-        onDispatchResult?.invoke(label, result)
+        onDispatchResult?.invoke(label, result, androidToolName, androidToolArgsJson)
         return IntentResult.Handled(
             intentLabel = label,
             spokenConfirmation = null,
             requiresConfirmation = false,
             details = details,
+            androidToolName = androidToolName,
+            androidToolArgsJson = androidToolArgsJson,
         )
     }
 

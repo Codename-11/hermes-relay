@@ -44,6 +44,17 @@ import java.util.concurrent.ConcurrentHashMap
  * in the gesture layer while the modal is a modal rectangle that
  * intercepts touches only when present.
  *
+ * # Foreground gating (v0.4.1 polish)
+ *
+ * Chip visibility is gated on the app being backgrounded — while
+ * Hermes-Relay is foregrounded, the in-app `UnattendedGlobalBanner`
+ * handles user visibility and this chip hides. The gating lives in
+ * [com.hermesandroid.relay.viewmodel.BridgeViewModel]'s chip collector,
+ * which combines the user preferences with
+ * [com.hermesandroid.relay.util.AppForegroundTracker.isForeground]
+ * before calling [setChipVisible]. The confirmation modal path is
+ * unaffected — destructive-verb prompts always need to show.
+ *
  * # Lifecycle plumbing for ComposeView
  *
  * `ComposeView` attached via `WindowManager` does not automatically get
@@ -78,6 +89,7 @@ class BridgeStatusOverlay(context: Context) : ConfirmationOverlayHost {
         appContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
     private var chipView: View? = null
+    private var chipUnattended: Boolean = false
     private val activeConfirmations = ConcurrentHashMap<Long, View>()
 
     // ── Status chip ──────────────────────────────────────────────────────
@@ -86,18 +98,34 @@ class BridgeStatusOverlay(context: Context) : ConfirmationOverlayHost {
      * Show or hide the floating status chip. No-op if the overlay
      * permission hasn't been granted — [BridgeSafetySettingsScreen] is
      * responsible for walking the user through the grant flow.
+     *
+     * v0.4.1: when [unattended] is true the chip renders in an amber
+     * "Unattended ON" variant so the user (or anyone glancing at the
+     * device) can tell at a glance the agent is permitted to wake the
+     * screen and drive the device while no one is watching.
      */
     @SuppressLint("InflateParams")
-    fun setChipVisible(visible: Boolean) {
+    fun setChipVisible(visible: Boolean, unattended: Boolean = false) {
         if (!visible) {
             chipView?.let {
                 runCatching { wm.removeView(it) }
                     .onFailure { Log.w(TAG, "removeView(chip) failed", it) }
             }
             chipView = null
+            chipUnattended = false
             return
         }
-        if (chipView != null) return // already showing
+        // If the chip is already showing AND the unattended flag matches,
+        // nothing to do. If the flag differs we need to redraw, so tear
+        // down + rebuild — ComposeView arguments aren't reactive to
+        // external state mutation here, and the chip is a tiny view so
+        // the rebuild is cheap.
+        if (chipView != null && chipUnattended == unattended) return
+        if (chipView != null && chipUnattended != unattended) {
+            runCatching { wm.removeView(chipView) }
+                .onFailure { Log.w(TAG, "removeView(chip rebuild) failed", it) }
+            chipView = null
+        }
         if (!Settings.canDrawOverlays(appContext)) {
             Log.w(TAG, "setChipVisible: SYSTEM_ALERT_WINDOW not granted — skipping chip")
             return
@@ -105,7 +133,7 @@ class BridgeStatusOverlay(context: Context) : ConfirmationOverlayHost {
 
         val compose = ComposeView(appContext).apply {
             setContent {
-                MaterialTheme { BridgeStatusOverlayChip() }
+                MaterialTheme { BridgeStatusOverlayChip(unattended = unattended) }
             }
         }
         attachLifecycle(compose)
@@ -132,6 +160,7 @@ class BridgeStatusOverlay(context: Context) : ConfirmationOverlayHost {
             }
         compose.post { ComposeArrWorkaround.disableForViewTree(compose) }
         chipView = compose
+        chipUnattended = unattended
     }
 
     // ── Confirmation modal ───────────────────────────────────────────────

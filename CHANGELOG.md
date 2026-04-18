@@ -6,6 +6,183 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added — v0.4.1 Bridge page polish pass
+
+- **`UnattendedGlobalBanner`** — thin 28dp amber strip at the top of
+  `RelayApp`'s scaffold, visible on every tab when master + unattended
+  are both on (sideload only). Pulsing amber dot, copy "Unattended
+  access ON — agent can wake and drive this device", chevron →
+  navigates to the Bridge tab. Theme-aware colours (amber-on-dark in
+  dark mode, dark-amber-on-pale-amber in light). Pairs with the existing
+  `BridgeStatusOverlayChip` — banner handles the app-foregrounded case,
+  the overlay chip handles the app-backgrounded case.
+- **`PhoneSnapshot` agent-awareness fields** — `unattendedEnabled`,
+  `credentialLockDetected`, `screenOn`.
+  `PhoneStatusPromptBuilder.buildBridgeLine()` now appends explicit
+  guidance so the LLM knows upfront whether commands will land on the
+  device while the user is away, instead of finding out reactively via
+  `keyguard_blocked` error responses.
+- **`MASTER` pill** next to the master-toggle title, and leading
+  "Master switch —" subtitle copy, so the parent-gate role of the
+  toggle is legible without reading a wall of helper text.
+
+### Changed — v0.4.1 Bridge page polish pass
+
+- **Bridge tab card order** rewritten with a clear hierarchy: Master →
+  Permission Checklist → [Advanced divider] → Unattended Access → Safety
+  Summary → Activity Log. The previous standalone `BridgeStatusCard`
+  was dropped from the layout because its device / battery / screen /
+  current-app rows already render inline inside the master toggle card.
+  (The component file remains in-tree and is still unit-testable; it's
+  just not rendered by `BridgeScreen` any more.)
+- **Unattended Access gated on the master toggle.** The Switch inside
+  `UnattendedAccessRow` is now `enabled = masterEnabled` and the
+  subtitle reads "Requires Agent Control — enable the master switch
+  above first." when master is off. The standalone
+  `KeyguardDetectedChip` card was inlined as a `KeyguardDetectedAlert`
+  Surface band inside the Unattended Access card so the credential-lock
+  warning lives next to the thing that triggers it (same concern, one
+  card).
+- **Persistent-notification copy corrected.** The unattended one-time
+  scary dialog no longer implies the unattended toggle owns the
+  "Hermes has device control" notification — explicitly attributes it
+  to the master switch. The master-toggle info dialog gained a
+  matching paragraph naming the persistent notification.
+
+### Fixed — v0.4.1 Bridge page polish pass
+
+- **Master toggle silent no-op** when Accessibility Service isn't
+  granted. Tapping the disabled Switch used to do nothing (stock
+  Android disabled-switch behavior); now it surfaces a snackbar —
+  "Accessibility Service must be enabled first." — with an "Open
+  Settings" action that deep-links to
+  `Settings.ACTION_ACCESSIBILITY_SETTINGS`.
+- **Permission checklist Optional pill wrapped** on narrow titles
+  (e.g. "Notification Listener"). Switched the row layout to
+  `FlowRow` and forced `softWrap=false` on the pill's text so the
+  pill renders as a single unbroken element.
+- **Runtime-permission rows silently no-opped** after permanent denial.
+  Mic / Camera / Contacts / SMS / Phone / Location rows now fall back
+  to `Settings.ACTION_APPLICATION_DETAILS_SETTINGS` when the user has
+  selected "Don't ask again", taking the user straight to the app's
+  permission page instead of consuming the tap.
+
+### Added — v0.4.1 Bridge fast-follows (in progress)
+
+- **Tiered permission checklist** on the Bridge tab — the previously-flat
+  4-row layout is now four explicit sections (Core bridge, Notification
+  companion, Voice & camera, Sideload features). Each runtime dangerous
+  permission gets its own row with a `RequestPermission` launcher that
+  re-probes status on grant. Optional rows render an "Optional" Material 3
+  pill so users don't perceive them as urgent. Sideload-only rows
+  (Contacts, SMS, Phone, Location) are hidden on the googlePlay flavor
+  via the existing `BuildFlavor.isSideload` gate.
+- **JIT permission-denied surfacing** for the Tier C agent-tool wrappers
+  (`android_search_contacts`, `android_send_sms`, `android_call`,
+  `android_location`). When the phone reports a missing runtime permission,
+  the wrapper upgrades the bridge response to a structured envelope
+  carrying `code: "permission_denied"` + `permission:
+  "android.permission.READ_CONTACTS"` + a deterministic LLM-readable
+  explanation that names the exact Settings deep-link path. The LLM no
+  longer has to guess from a free-text error string why the tool failed.
+- **Voice-mode JIT chip** — when a voice intent dispatch returns
+  `permission_denied`, a tappable errorContainer-coloured chip surfaces
+  above the mic button with copy like "I need Contacts to Send SMS here.
+  Tap to open Settings." Tapping deep-links to
+  `Settings.ACTION_APPLICATION_DETAILS_SETTINGS` for the running
+  package's permission page. Cleared on tap or on the next mic tap.
+- **`ResolveResult` typed-union** in `plugin/tools/resolve_result.py` —
+  `Found(value)` / `NotFound(detail)` / `PermissionDenied(permission,
+  reason)` dataclass hierarchy with a `from_bridge_response` classifier.
+  Reads both the canonical wire keys (`code` / `permission`, v0.4.1) and
+  the legacy aliases (`error_code` / `required_permission`, pre-v0.4.1)
+  for forwards/backwards compatibility across the v0.4.x APK rollout.
+- **17 new Python unit tests** in `plugin/tests/test_resolve_result.py`.
+
+### Changed — v0.4.1 Bridge fast-follows (in progress)
+
+- **`BridgeCommandHandler.respondFromResult`** now emits the canonical
+  `code` + `permission` wire keys alongside the legacy `error_code` +
+  `required_permission` on permission-failure bridge responses. Existing
+  consumers that read the legacy keys keep working unchanged.
+- **`BridgePermissionStatus`** extended with `microphonePermitted`,
+  `cameraPermitted`, `contactsPermitted`, `smsPermitted`,
+  `phonePermitted`, `locationPermitted`. `refreshPermissionStatus()`
+  probes each on every `Lifecycle.Event.ON_RESUME`.
+
+### Added — v0.4.1 unattended access mode (sideload-only)
+
+Opt-in "Unattended Access" toggle on the Bridge tab that lets the
+agent wake the screen and dismiss the keyguard while the user is
+away from the phone. Sideload-only — the googlePlay flavor never
+sees the toggle, never installs the wake lock, and never invokes
+`requestDismissKeyguard`.
+
+- **`UnattendedAccessManager`** — sideload-only singleton holding
+  the screen-bright wake lock and orchestrating the `KeyguardManager.
+  requestDismissKeyguard` call. `acquireForAction()` is invoked from
+  the bridge command dispatcher pre-gate for any non-read-only route
+  and returns one of `Success` / `SuccessNoKeyguardChange` /
+  `KeyguardBlocked` / `Disabled`. The wake lock uses
+  `SCREEN_BRIGHT_WAKE_LOCK | ACQUIRE_CAUSES_WAKEUP | ON_AFTER_RELEASE`
+  with a 30 s hard timeout per acquire.
+- **One-time scary opt-in dialog** — fires the first time the user
+  flips the unattended toggle ON. Explains the security model
+  ("agent can drive your phone while you're away"), the credential-
+  lock limitation ("Android won't let us dismiss PIN / pattern /
+  biometric locks"), and the three disable paths (toggle off, auto-
+  disable timer expiry, relay disconnect). Latched via
+  `BridgeSafetySettings.unattendedWarningSeen` so it never re-appears
+  after dismissal.
+- **Persistent keyguard-detected chip** — when unattended is ON
+  and the device has `KeyguardManager.isDeviceSecure == true`, an
+  error-tinted Card on the Bridge tab warns the user that the
+  screen will wake but stop at the lock screen.
+- **Amber "Unattended ON" status-overlay chip** — when unattended
+  is on, the existing `BridgeStatusOverlayChip` switches from the
+  red-dot "Hermes active" variant to an amber-dot "Unattended ON"
+  variant so the user (or anyone glancing at the device) can tell
+  at a glance that the agent is permitted to wake the screen.
+  Forced visible whenever unattended is on, even if the user has
+  the regular status-overlay preference disabled.
+- **`keyguard_blocked` structured error** — when the wake fires
+  but the keyguard refuses to dismiss, the bridge dispatch short-
+  circuits with HTTP 423 and `error_code = "keyguard_blocked"`
+  before invoking the action. The LLM's tool wrapper sees the
+  classification and can tell the user to change their lock screen
+  to None / Swipe rather than blindly retrying. `ActionExecutor`
+  also classifies dispatch failures against the live keyguard
+  state via the new `classifyGestureFailure()` helper, so the
+  same `error_code` surfaces if a gesture fails on a locked
+  device with unattended OFF.
+- **Manifest:** `DISABLE_KEYGUARD` declared in
+  `app/src/sideload/AndroidManifest.xml`. WAKE_LOCK was already
+  declared in the main manifest for the bridge gesture wake-lock
+  scope and is reused.
+- **Lifecycle wiring:** `MainActivity.onResume` registers the host
+  activity for `requestDismissKeyguard`, `onPause` clears it.
+  Master-toggle-off and relay-disconnect both call
+  `UnattendedAccessManager.release()` so the screen-bright lock
+  drops immediately and the screen returns to its natural timeout.
+
+**Decisions documented during implementation, not re-litigated:**
+
+- No WiFi-disconnect failsafe — rejected because Tailscale / VPN
+  invalidates the "leaving WiFi = leaving LAN" assumption. Rely
+  on existing relay-disconnect detection plus auto-disable timer.
+- Default auto-disable timer stays as-is (30 minutes). No special
+  unattended-mode default.
+- Credential lock cannot be dismissed by third-party apps — surfaced
+  via the one-time warning dialog, the persistent chip, and the
+  `keyguard_blocked` error code rather than worked around.
+
+### Added — Voice intent → server session sync (v0.4.1 fast-follow)
+
+- **Voice actions now reach the server-side LLM's session memory.** Previously, phone-local voice intents (`open Chrome`, `text Sam saying hi`, etc.) ran in-process via `BridgeCommandHandler.handleLocalCommand` and appended local-only trace bubbles to the chat scroll. The Hermes API server's session never learned about them, so a follow-up text question like "did that work?" hit the LLM with no context and returned hallucinated answers (per Bailey's 2026-04-14 on-device repro).
+- **Implementation.** Each phone-local voice intent now records a structured `VoiceIntentTrace` (tool name, JSON args, success, JSON result envelope) on the post-dispatch chat-trace bubble it produces. `VoiceIntentSyncBuilder` walks the chat history before each `POST /v1/runs` / `POST /api/sessions/{id}/chat/stream` call and synthesizes OpenAI-format `assistant` (with `tool_calls`) + `tool` (with `tool_call_id`) message pairs from any unsynced traces. The synthesized array rides under the existing payload's new `messages` field — additive, ignored by older servers, picked up by anything OpenAI Chat Completions–shaped. Idempotency: traces flip to `syncedToServer=true` the moment the API client takes ownership of the request, so subsequent turns don't re-emit them.
+- **Zero server changes.** Frontend-only, no hermes-agent edits needed.
+- **Files.** `data/ChatMessage.kt` (new `voiceIntent: VoiceIntentTrace?` field), `voice/VoiceIntentSyncBuilder.kt` (pure-function builder + helpers), `network/HermesApiClient.kt` (optional `voiceIntentMessages` parameter on both stream methods), `viewmodel/ChatViewModel.kt` (build + sync + flag flip in `startStream`), `viewmodel/VoiceViewModel.kt` (extended dispatch callback wires the structured trace into the chat-trace bubble), `voice/VoiceBridgeIntentHandler.kt` (new `androidToolName` + `androidToolArgsJson` on `IntentResult.Handled`), sideload `VoiceBridgeIntentHandlerImpl.kt` populates them per intent, sideload + googlePlay `VoiceBridgeIntentFactory.kt` typealias updates. Tests in `test/voice/VoiceIntentSyncBuilderTest.kt` (12 cases — empty input, single success, failure with error_code, idempotency, chronological order, prefix gate, blank-args gate, call-id pairing, helpers) and `test/network/handlers/ChatHandlerTest.kt` (4 new cases for trace storage + `markVoiceIntentsSynced`).
+
 ## [0.4.0] - 2026-04-14
 
 ### Added — Bridge feature expansion (the big one)

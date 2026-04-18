@@ -66,6 +66,20 @@ data class PhoneSnapshot(
     /** True iff the notification listener companion is bound. */
     val notificationsGranted: Boolean = false,
 
+    // --- v0.4.1 unattended-access ---
+    // Exposed so the agent can reason about whether the phone will be
+    // receptive to commands when the user isn't looking at it. Without
+    // these fields the agent finds out only when a command returns
+    // `keyguard_blocked` — too late to avoid wasted round-trips and
+    // useless gestures on a dark screen.
+
+    /** True iff the user has opted into unattended access. */
+    val unattendedEnabled: Boolean = false,
+    /** True iff the device currently has a PIN / pattern / biometric lock set. */
+    val credentialLockDetected: Boolean = false,
+    /** True iff the phone's screen is currently on (interactive). */
+    val screenOn: Boolean = false,
+
     // --- Privacy-sensitive (only populated when user opted in) ---
     /** Foreground package name, e.g. "com.android.chrome". */
     val currentApp: String? = null,
@@ -142,7 +156,31 @@ private fun buildBridgeLine(snapshot: PhoneSnapshot): String {
     if (snapshot.notificationsGranted) perms += "notifications"
 
     val permsText = if (perms.isEmpty()) "no permissions granted yet" else "Permissions: ${perms.joinToString(", ")}"
-    return "Phone bridge: enabled. $permsText. " +
+
+    // v0.4.1 unattended-access line. Tells the agent proactively whether
+    // commands can reach apps when the user isn't actively on the phone.
+    // Without this, the agent finds out only AFTER a dispatched command
+    // returns `keyguard_blocked` or lands on a dark screen — this lets it
+    // decide upfront to defer ("I'll do it when you're next on your
+    // phone") or warn the user before issuing the command.
+    val unattendedText = when {
+        !snapshot.unattendedEnabled ->
+            "Unattended access: off — commands only land when the screen " +
+                "is already on. If the screen is off, ask the user to wake " +
+                "the phone before issuing bridge commands."
+        snapshot.credentialLockDetected ->
+            "Unattended access: on, but the device has a credential lock " +
+                "(PIN / pattern / biometric). The screen will wake on " +
+                "command, but Android won't let us dismiss the lock — " +
+                "commands will return `keyguard_blocked` and fail."
+        else ->
+            "Unattended access: on — the screen will wake on each " +
+                "command. Safe to send commands while the user is away."
+    }
+
+    val screenText = if (snapshot.screenOn) "Screen: on." else "Screen: off."
+
+    return "Phone bridge: enabled. $permsText. $screenText $unattendedText " +
         "For full phone status (current app, battery, blocklist), call the android_phone_status tool."
 }
 

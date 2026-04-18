@@ -9,11 +9,13 @@ import com.hermesandroid.relay.audio.VoicePlayer
 import com.hermesandroid.relay.audio.VoiceRecorder
 import com.hermesandroid.relay.audio.VoiceSfxPlayer
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.RelayVoiceClient
 import com.hermesandroid.relay.network.handlers.LocalDispatchResult
 import com.hermesandroid.relay.util.HumanError
 import com.hermesandroid.relay.util.classifyError
+import com.hermesandroid.relay.voice.VoiceIntentSyncBuilder
 // === PHASE3-voice-intents: voice→bridge intent routing ===
 import com.hermesandroid.relay.voice.IntentResult
 import com.hermesandroid.relay.voice.LocalBridgeDispatcher
@@ -31,6 +33,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.contentOrNull
 import java.io.File
 
 /**
@@ -73,6 +76,34 @@ data class VoiceUiState(
      * indicator in [com.hermesandroid.relay.ui.components.VoiceModeOverlay].
      */
     val destructiveCountdown: DestructiveCountdownState? = null,
+    /**
+     * v0.4.1 JIT permission-denied chip. Non-null when the most recent voice
+     * intent dispatch returned `errorCode == "permission_denied"`. Tap-target
+     * deep-links to `Settings.ACTION_APPLICATION_DETAILS_SETTINGS` for our
+     * package so the user can grant the missing permission without leaving
+     * voice mode by hand. Cleared when the user opens the chip OR enters a
+     * fresh turn (mic tap), whichever comes first.
+     */
+    val permissionDeniedCallout: PermissionDeniedCallout? = null,
+)
+
+/**
+ * Snapshot of a "we need a permission" hint surfaced after a voice intent
+ * fails with `error_code == "permission_denied"`. The overlay reads this
+ * to render a tappable chip that deep-links to the app's permission page.
+ *
+ * The [permission] field is the Android permission name (e.g.
+ * `android.permission.READ_CONTACTS`); [intentLabel] is the human-readable
+ * action label ("Send SMS", "Search contacts"); [hint] is a short
+ * imperative copy line shown in the chip body.
+ */
+data class PermissionDeniedCallout(
+    /** Android permission constant string. */
+    val permission: String,
+    /** Short action label, e.g. "Send SMS". */
+    val intentLabel: String,
+    /** Short imperative copy, e.g. "I need Contacts to look up Sam — tap to open Settings." */
+    val hint: String,
 )
 
 /**
@@ -263,16 +294,58 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         voiceBridgeIntentHandler = createVoiceBridgeIntentHandler(
             multiplexer = bridgeMultiplexer,
             localBridgeDispatcher = localBridgeDispatcher,
-            onDispatchResult = { label, result ->
-                // Chat trace (markdown bubble) — pre-existing.
-                chatViewModel.recordVoiceIntentResult(label, result)
+            onDispatchResult = { label, result, androidToolName, androidToolArgsJson ->
+                // === v0.4.1 voice-intent → server session sync ===
+                // Build a structured trace so VoiceIntentSyncBuilder can
+                // synthesize an OpenAI tool_call/response pair on the
+                // next chat send. We attach the trace to the post-
+                // dispatch result bubble (NOT the pre-dispatch trace
+                // bubble) because this is the moment we have the
+                // authoritative dispatch outcome — pre-dispatch was
+                // either pending (destructive intents in countdown) or
+                // not-yet-known when its bubble was created. Skipped
+                // when androidToolName is null (intent wasn't classifiable
+                // as a concrete `android_*` tool — e.g. local UI flows
+                // that exited via a structured "permission missing" or
+                // "not found" branch without dispatching anything).
+                val voiceTrace = if (androidToolName != null) {
+                    val resultJson = if (result.isSuccess) {
+                        VoiceIntentSyncBuilder.successResultJson(result.resultJson)
+                    } else {
+                        VoiceIntentSyncBuilder.failureResultJson(
+                            errorMessage = result.errorMessage,
+                            errorCode = result.errorCode,
+                        )
+                    }
+                    VoiceIntentTrace(
+                        toolName = androidToolName,
+                        argumentsJson = androidToolArgsJson,
+                        success = result.isSuccess,
+                        resultJson = resultJson,
+                    )
+                } else null
+                // === END v0.4.1 sync ===
+                // Chat trace (markdown bubble) — pre-existing. Trace
+                // attaches the structured payload above when present.
+                chatViewModel.recordVoiceIntentResult(label, result, voiceTrace)
                 // Spoken follow-up so the user hears the outcome without
                 // looking at the screen. Wave-2 voice mode was visually
                 // honest but audibly silent after dispatch — Bailey hit
                 // this 2026-04-15.
                 speakDispatchResult(label, result)
-                // Countdown (if any) is over — clear the on-screen progress.
-                _uiState.update { it.copy(destructiveCountdown = null) }
+                // v0.4.1 JIT permission-denied chip. When the dispatch
+                // failed because the user hasn't granted the matching
+                // runtime permission, surface a tappable hint above the
+                // mic button so they can fix it without leaving voice
+                // mode by hand. Cleared on the next mic tap (see
+                // [enterVoiceMode] / [onMicTap] paths).
+                val callout = buildPermissionDeniedCallout(label, result)
+                _uiState.update {
+                    it.copy(
+                        destructiveCountdown = null,
+                        permissionDeniedCallout = callout,
+                    )
+                }
             },
             onCountdownStart = { label, durationMs ->
                 _uiState.update {
@@ -359,7 +432,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         try {
             rec.startRecording()
             _uiState.update {
-                it.copy(state = VoiceState.Listening, error = null, responseText = "")
+                it.copy(
+                    state = VoiceState.Listening,
+                    error = null,
+                    responseText = "",
+                    // v0.4.1 — fresh turn, drop any stale JIT permission chip
+                    // from the previous dispatch.
+                    permissionDeniedCallout = null,
+                )
             }
         } catch (e: Exception) {
             Log.e(TAG, "startListening failed: ${e.message}")
@@ -598,15 +678,25 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     Log.i(TAG, "voice intent handled by bridge: ${result.intentLabel}")
 
                     // === PHASE3-voice-intents-chathistory ===
-                    // Append a local-only trace to chat history so the user
-                    // sees a record of what they said and what was done. Pre-
-                    // v0.4.0 the voice intent path returned silently here and
-                    // the chat scroll had zero record of voice utterances —
-                    // making follow-up questions feel like the chat had
-                    // "reset". The trace is local-only (does NOT reach the
-                    // server-side session) so the gateway-side LLM still won't
-                    // see prior voice actions in its session memory; that's a
-                    // v0.4.1 follow-up tracked in ROADMAP.md.
+                    // Append a local-only PRE-DISPATCH trace bubble to chat
+                    // history so the user sees a record of what they said
+                    // and what's about to happen. Pre-v0.4.0 the voice
+                    // intent path returned silently here and the chat
+                    // scroll had zero record of voice utterances — making
+                    // follow-up questions feel like the chat had "reset".
+                    //
+                    // v0.4.1 — server session sync: this pre-dispatch
+                    // bubble intentionally does NOT carry the structured
+                    // VoiceIntentTrace. The structured trace lives on the
+                    // POST-dispatch result bubble emitted from
+                    // `onDispatchResult` (see initialize() above) because
+                    // that's the moment we have the authoritative
+                    // dispatch outcome — pre-dispatch was either pending
+                    // (destructive intents during the 5s countdown) or
+                    // not-yet-known. VoiceIntentSyncBuilder reads the
+                    // post-dispatch trace on the next chat send and
+                    // synthesizes the OpenAI tool_call/response pair the
+                    // server-side LLM ingests.
                     val actionDescription = formatVoiceIntentTrace(result)
                     chatVm.recordVoiceIntent(
                         userText = userText,
@@ -968,6 +1058,65 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         ttsConsumerJob?.cancel()
         amplitudeBridgeJob?.cancel()
         currentTurnJob?.cancel()
+    }
+
+    /**
+     * v0.4.1 JIT permission-denied callout — convert a permission-denied
+     * dispatch outcome into a chip-ready [PermissionDeniedCallout], or
+     * return null if the result is not a permission denial.
+     *
+     * Reads the structured `permission` (canonical, v0.4.1) or
+     * `required_permission` (legacy) field off the result JSON to identify
+     * which Android permission was missing.
+     */
+    internal fun buildPermissionDeniedCallout(
+        label: String,
+        result: LocalDispatchResult,
+    ): PermissionDeniedCallout? {
+        if (result.errorCode != "permission_denied") return null
+        val json = result.resultJson ?: return null
+        val permission = (json["permission"] as? kotlinx.serialization.json.JsonPrimitive)
+            ?.contentOrNull
+            ?: (json["required_permission"] as? kotlinx.serialization.json.JsonPrimitive)
+                ?.contentOrNull
+            ?: return null
+        if (permission.isBlank()) return null
+        val friendly = friendlyPermissionName(permission)
+        val hint = "I need $friendly to $label here. Tap to open Settings."
+        return PermissionDeniedCallout(
+            permission = permission,
+            intentLabel = label,
+            hint = hint,
+        )
+    }
+
+    /**
+     * Map an Android permission constant to a user-readable noun used in
+     * the JIT callout copy. Falls back to the trailing dotted token if the
+     * permission isn't in the curated list — covers the common surface
+     * without forcing every new permission to update this map.
+     */
+    private fun friendlyPermissionName(permission: String): String = when (permission) {
+        "android.permission.READ_CONTACTS" -> "Contacts"
+        "android.permission.SEND_SMS" -> "SMS"
+        "android.permission.CALL_PHONE" -> "Phone"
+        "android.permission.ACCESS_FINE_LOCATION" -> "Location"
+        "android.permission.ACCESS_COARSE_LOCATION" -> "Location"
+        "android.permission.RECORD_AUDIO" -> "Microphone"
+        "android.permission.CAMERA" -> "Camera"
+        "android.permission.POST_NOTIFICATIONS" -> "Notifications"
+        else -> permission.substringAfterLast('.').replace('_', ' ').lowercase()
+            .replaceFirstChar { it.uppercase() }
+    }
+
+    /**
+     * Public clear-hook called by the overlay after the user taps the chip
+     * (so it dismisses immediately instead of lingering after they navigate
+     * away). Also called when the user starts a fresh voice turn so a stale
+     * callout from a prior turn doesn't haunt the new one.
+     */
+    fun clearPermissionDeniedCallout() {
+        _uiState.update { it.copy(permissionDeniedCallout = null) }
     }
 
     /**

@@ -1,5 +1,309 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-17 — v0.4.1 Bridge page polish pass
+
+**Motivation.** The Bridge tab had accreted cards without an information hierarchy — the master toggle, a separate status card, the permission checklist, unattended access, a standalone keyguard warning chip, and the safety summary all sat at the same visual weight, and tapping the master Switch when Accessibility wasn't granted was a silent no-op (stock Android disabled-switch behavior). Unattended Access lacked a master dependency, and once ON there was no in-app affordance while the user was on another tab. The LLM also had to learn reactively that commands wouldn't reach apps on a sleeping/locked device (via `keyguard_blocked` errors) instead of being told upfront.
+
+**What landed on `feature/v0.4.1-integration`:**
+
+- **Bridge card hierarchy rewrite.** New order: Master → Permission Checklist → [Advanced divider] → Unattended Access → Safety Summary → Activity Log. Master toggle copy now leads with "Master switch —" and carries a `MASTER` pill so its parent-gate role is legible at a glance. The old `BridgeStatusCard` was dropped from the layout (its status rows already live inside the master card); the component file stays in-tree for now.
+- **Master-toggle feedback fix.** Tapping the Switch when `HermesAccessibilityService` isn't granted now surfaces a snackbar ("Accessibility Service must be enabled first.") with an "Open Settings" action that deep-links to `ACTION_ACCESSIBILITY_SETTINGS`, instead of the previous silent-drop disabled-switch behavior. The master-toggle info dialog also gained a paragraph attributing the "Hermes has device control" persistent notification to the master switch.
+- **Unattended Access gated on master.** `UnattendedAccessRow`'s Switch is `enabled = masterEnabled` and shows "Requires Agent Control — enable the master switch above first." when master is off. The standalone `KeyguardDetectedChip` was inlined as a `KeyguardDetectedAlert` Surface band inside the Unattended Access card so the credential-lock warning lives next to the thing that triggers it. Unattended scary-dialog copy no longer implies the unattended toggle owns the persistent notification — attributes it correctly to the master switch.
+- **`UnattendedGlobalBanner` — in-app banner vs. system chip split.** New 28dp amber strip renders at the top of `RelayApp`'s scaffold on every tab when master + unattended are both on (sideload only). Theme-aware amber (amber-on-dark vs. dark-amber-on-pale in light mode), pulsing dot, "Unattended access ON — agent can wake and drive this device" copy, chevron → navigates to the Bridge tab. The existing WindowManager `BridgeStatusOverlayChip` continues to handle the backgrounded-app case (foreground-gating of the chip is in flight on a sibling branch). Net: banner when the user is IN Hermes-Relay, system chip when the app is backgrounded.
+- **Agent-awareness upgrades to `PhoneSnapshot`.** Three new fields: `unattendedEnabled`, `credentialLockDetected`, `screenOn`. `PhoneStatusPromptBuilder.buildBridgeLine()` appends explicit guidance so the LLM knows upfront whether commands will land while the user is away, instead of finding out reactively via `keyguard_blocked` responses.
+- **Bug fixes bundled in.** Permission checklist Optional pill no longer wraps mid-pill on narrow titles (switched to `FlowRow` + `softWrap=false`); runtime-permission rows (Mic, Camera, Contacts, SMS, Phone, Location) now fall back to `Settings.ACTION_APPLICATION_DETAILS_SETTINGS` when a permission has been permanently denied, instead of silently no-opping.
+
+**Next.** Bailey's on-device verification of the reordered layout, master-snackbar, global banner, and `PhoneSnapshot` fields on the Samsung S24 / Android 14 sideload build. After that, version bump to v0.4.1 release tag via `bash scripts/bump-version.sh 0.4.1` → push tag → CI.
+
+**No blockers.**
+
+---
+
+## 2026-04-16 — v0.4.1: Tiered permission checklist + JIT permission-denied surfacing
+
+**Motivation.** Two v0.4.x fast-follows from ROADMAP.md, scoped to ship together because they share the same UX axis ("the user understands which permission is missing and what to do about it"). Until now the Bridge tab's checklist was a flat 4-row layout that lumped optional and required perms together, and `android_search_contacts` / `android_send_sms` / `android_call` / `android_location` failures bubbled up as opaque error strings — the LLM had to pattern-match the phrasing to figure out it was a permission issue. Both surfaces now make the missing-permission state legible to humans AND to the agent.
+
+**What landed.**
+
+- **Tiered checklist UI** (`BridgePermissionChecklist.kt` rewrite). Four explicit sections — Core bridge (required), Notification companion (optional), Voice & camera (optional), Sideload features (optional, sideload-only). Each row uses a `rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission)` for runtime dangerous perms and the existing intent helpers for special perms (Accessibility, Notification Listener, Overlay, Screen Capture). Optional rows render a "Optional" Material 3 pill so users don't perceive them as urgent. Section headers use a primary-coloured label + caption + thin divider. Hides sideload-only sections on googlePlay via the existing `BuildFlavor.isSideload` gate.
+- **`BridgePermissionStatus` extended** with `microphonePermitted`, `cameraPermitted`, `contactsPermitted`, `smsPermitted`, `phonePermitted`, `locationPermitted`. `refreshPermissionStatus()` probes each via `ContextCompat.checkSelfPermission`. Re-runs on every `Lifecycle.Event.ON_RESUME` (existing pattern).
+- **Manifest verification.** All required `<uses-permission>` declarations were already in place: `RECORD_AUDIO` + `CAMERA` in `app/src/main/AndroidManifest.xml`, `READ_CONTACTS` + `SEND_SMS` + `CALL_PHONE` + `ACCESS_FINE_LOCATION` (+ `ACCESS_COARSE_LOCATION`) in `app/src/sideload/AndroidManifest.xml`. No manifest changes needed for this PR.
+- **`ResolveResult` typed-union shipped** in `plugin/tools/resolve_result.py` — `Found(value)` / `NotFound(detail)` / `PermissionDenied(permission, reason)` dataclasses with a `from_bridge_response(response, *, found_value=None)` constructor that classifies a bridge response as one of the three variants. Reads both canonical (`code` / `permission`, v0.4.1) and legacy (`error_code` / `required_permission`, pre-v0.4.1) wire-key spellings so the rollout is forwards/backwards compatible across mixed-version installs.
+- **Bridge response envelope extended** in `BridgeCommandHandler.kt::respondFromResult` to emit the canonical `code` + `permission` aliases ALONGSIDE the existing `error_code` + `required_permission` fields. `LocalDispatchResult` parsing also accepts either spelling. The phone now produces `{"ok": false, "error": "...", "code": "permission_denied", "permission": "android.permission.READ_CONTACTS", "error_code": "permission_denied", "required_permission": "android.permission.READ_CONTACTS"}`.
+- **Tier C agent-tool wrappers upgrade permission errors to JIT structured responses.** `android_location` / `android_search_contacts` / `android_send_sms` / `android_call` in `plugin/tools/android_tool.py` now run their bridge response through `_maybe_jit_permission_response` after the HTTP round-trip. On `code: permission_denied` the wrapper returns `{"ok": false, "error": "User has not granted Contacts permission (android.permission.READ_CONTACTS). They can enable it in Settings > Apps > Hermes Relay > Permissions. Tool: android_search_contacts.", "code": "permission_denied", "permission": "..."}` — deterministic LLM-readable copy with the exact Settings deep-link path embedded.
+- **Voice-mode JIT chip** in `VoiceModeOverlay.kt`. New `PermissionDeniedChip` composable surfaces above the mic button when the most recent voice intent dispatch returned `errorCode == "permission_denied"`. Tap deep-links to `Settings.ACTION_APPLICATION_DETAILS_SETTINGS` for `BuildConfig.APPLICATION_ID` (so both flavors land on their own package's permission page). `VoiceUiState.permissionDeniedCallout: PermissionDeniedCallout?` carries the chip state. `buildPermissionDeniedCallout(label, result)` reads the structured `permission` field off `result.resultJson` and builds a copy line ("I need Contacts to Search contacts here. Tap to open Settings."). Cleared on chip tap and on the next mic-tap (fresh turn).
+- **Voice TTS on permission_denied** was already in place from the 2026-04-15 voice fixes session — `speakDispatchResult` already says "Permission needed. {hint}" in this branch. The chip is purely additive.
+- **17 new Python tests** in `plugin/tests/test_resolve_result.py`. Covers the ResolveResult classifier, both canonical/legacy/mixed wire-key spellings, success passthrough, non-permission error passthrough, and JIT upgrades for all four Tier C wrappers. All 17 pass; existing 39 Tier-C tests still pass with no regressions.
+
+**Branch.** `feature/tiered-permissions` (forked from main, with `feature/bridge-notifications-permission` merged in first per the spec — that branch's POST_NOTIFICATIONS row sits inside the new Core-bridge tier without modification). Pushed to origin, PR-ready.
+
+**Files touched (summary).**
+
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/components/BridgePermissionChecklist.kt` (rewrite — tiered layout)
+- `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/BridgeViewModel.kt` (status fields + probes)
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/screens/BridgeScreen.kt` (6 new permission launchers, wired into checklist)
+- `app/src/main/kotlin/com/hermesandroid/relay/network/handlers/BridgeCommandHandler.kt` (canonical alias emission, dual-key parse)
+- `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/VoiceViewModel.kt` (PermissionDeniedCallout state, buildPermissionDeniedCallout, clearPermissionDeniedCallout)
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/components/VoiceModeOverlay.kt` (PermissionDeniedChip composable + signature param)
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/screens/ChatScreen.kt` (chip-tap callback wiring deep-link to Settings)
+- `plugin/tools/resolve_result.py` (NEW — typed-union dataclass hierarchy + classifier)
+- `plugin/tools/android_tool.py` (`_maybe_jit_permission_response` helper + 4 wrappers updated)
+- `plugin/tests/test_resolve_result.py` (NEW — 17 unit tests)
+- `ROADMAP.md`, `CHANGELOG.md`, `DEVLOG.md` (this entry)
+
+**Notable decisions.**
+
+1. **Did not introduce a server-side resolver layer.** The prompt suggested Python resolvers like `resolveContactPhone`, but the actual contact resolution lives in Kotlin (`ActionExecutor.searchContacts`). Implementing the spec verbatim — Python `ResolveResult` types — still gave value as the agent-tool wrapper's classifier of bridge responses, which is the layer that needed the structured permission-denied surfacing for the LLM. The Kotlin `ContactResolution` sealed-class equivalent already exists from 2026-04-15.
+2. **Both wire-key spellings emitted by the phone (canonical + legacy).** Forwards/backwards compatibility across the v0.4.x APK rollout window. Drop the legacy aliases after v0.5.0 once the 0.4.0 APKs are estimated to be off the field.
+3. **JIT chip uses errorContainer colour, not a notification-style banner.** Voice mode is a focused single-purpose modality; banner-treatment would compete with the destructive-countdown row. Chip is explicit and tappable but doesn't block the voice flow.
+4. **Optional rows use a neutral status tint when not granted.** Original layout used error-red for any not-granted row, which made optional perms feel urgent — the v0.4.1 layout treats neutral-grey + optional-pill as the "this is fine if you skip it" affordance.
+5. **Sideload-only rows hidden entirely on googlePlay** rather than rendered as disabled. Showing a permission row for a manifest entry that doesn't exist would confuse users and potentially flag review on the Play track.
+
+**Verification.**
+
+- `python -m unittest plugin.tests.test_resolve_result` — 17 tests pass.
+- `python -m unittest plugin.tests.test_android_call plugin.tests.test_android_send_sms plugin.tests.test_android_search_contacts plugin.tests.test_android_location` — 39 existing tests still pass.
+- `python -m py_compile plugin/tools/resolve_result.py plugin/tools/android_tool.py` — clean.
+- Kotlin code reviewed for type correctness and import resolution; no `gradle build` per project convention (Bailey builds from Studio).
+
+**Next session.** Bailey's on-device retest of the tiered checklist + JIT chip flow on Samsung S24 / Android 14 sideload APK. After that, version bump to v0.4.1 + cut release.
+
+---
+
+## 2026-04-15 — Bootstrap command middleware (slash-command hallucination fix)
+
+**Motivation.** When a user types `/help` or `/model` into the Android app's chat, the message reaches the LLM verbatim on vanilla upstream hermes-agent installs because `APIServerAdapter` doesn't connect to the `GatewayRouter`. The LLM hallucinates a plausible-sounding wrong reply. The upstream fix lives in `gateway/platforms/api_server_slash.py` (Stage 1 PR), but vanilla installs won't get it until that PR merges. This session implements the bootstrap-middleware sibling that ships the fix now.
+
+**What was built:**
+
+- **`hermes_relay_bootstrap/_command_middleware.py`** (~420 LOC) — aiohttp middleware that:
+  - Intercepts `POST /v1/chat/completions` and `POST /v1/runs` (zero-cost skip for all other paths)
+  - Runs auth check (`adapter._check_auth`) before any command logic
+  - Extracts the user message from each endpoint's body format
+  - Resolves against `hermes_cli.commands.resolve_command()` from the central command registry
+  - Stateless commands (`/help`, `/commands`, `/profile`, `/provider`) are dispatched locally using the same helpers as upstream
+  - Stateful commands (`/model`, `/new`, `/retry`, etc.) return a deterministic decline notice
+  - Unknown and CLI-only commands fall through to the LLM
+  - For `/v1/chat/completions`: returns synthetic SSE stream (role + content + finish + `[DONE]`) or JSON `chat.completion`
+  - For `/v1/runs`: injects `message.delta` + `run.completed` + sentinel into `adapter._run_streams` queue, returns `{"run_id": ..., "status": "started"}` with 202, so the events endpoint drains the queue normally
+  - Feature-detects: if `gateway.platforms.api_server_slash` exists (upstream PR landed), middleware is skipped
+  - Fail-open: any exception falls through to the original handler
+
+- **`hermes_relay_bootstrap/_patch.py`** — added `_maybe_install_command_middleware()` call in the `__setitem__` hook alongside the existing route injection, using the same timing window where `app._middlewares` is still mutable.
+
+- **`hermes_relay_bootstrap/__init__.py`** — updated docstring to document both injection layers (routes + middleware).
+
+- **`plugin/tests/test_command_middleware.py`** (31 tests) — unit tests for message extraction, command resolution, response builders, feature detection, plus full aiohttp integration tests via `TestClient`/`TestServer` covering both endpoints, streaming, auth rejection, and fall-through behavior.
+
+**Test results:** 31 new tests pass. Full existing suite (450 tests) still passes with no regressions.
+
+**Android client impact:** None. The synthetic responses match the exact shapes the client already parses (`chat.completion.chunk` for completions SSE, `message.delta`/`run.completed` for runs events).
+
+**Next:** Merge to main via PR, then deploy to server (`git pull && systemctl --user restart hermes-gateway`). Phone re-pair after restart.
+
+---
+
+## 2026-04-16 — v0.4.1 unattended access mode (sideload-only)
+
+**Motivation.** First v0.4.1 fast-follow off the ROADMAP. Bailey wants to
+walk away from the phone and let the agent finish whatever task is in
+flight without the screen having to stay manually awake. Without
+unattended access, every bridge action that lands on a sleeping screen
+silently no-ops because `dispatchGesture` runs against the dimmed UI.
+
+**Scope landed on `feature/unattended-access`:**
+
+- **`UnattendedAccessManager`** (new file under `bridge/`) — process
+  singleton holding the SCREEN_BRIGHT wake lock + orchestrating
+  `KeyguardManager.requestDismissKeyguard`. Hosts a `WakeOutcome` enum
+  (Success / SuccessNoKeyguardChange / KeyguardBlocked / Disabled) and
+  two StateFlows (`enabled`, `credentialLockDetected`). Initialized
+  once from `HermesRelayApp.onCreate`. The host Activity is registered
+  in `MainActivity.onResume` and cleared in `onPause` so we don't leak
+  it past the lifecycle.
+- **DataStore additions to `BridgeSafetyPreferences`** —
+  `unattendedAccessEnabled` (the user opt-in) and
+  `unattendedWarningSeen` (latch for the one-time scary dialog). Both
+  default false. Setters keep `KEY_SAFETY_INITIALIZED` in sync so
+  user-clear-blocklist semantics are preserved.
+- **`BridgeViewModel` exposure** — `unattendedEnabled`,
+  `unattendedWarningSeen`, `credentialLockDetected` StateFlows;
+  `setUnattendedAccessEnabled(boolean)` + `markUnattendedWarningSeen()`.
+  An init-time collector mirrors the persisted setting into
+  `UnattendedAccessManager.setEnabled()` so the dispatch fast-path can
+  read state synchronously without DataStore. `onScreenResumed` now
+  also re-probes the keyguard state.
+- **`UnattendedAccessRow` component** — Compose card with the toggle,
+  a one-time scary `AlertDialog` (security model + credential-lock
+  limitation + how to disable), and a persistent `Card` chip when the
+  device has a credential lock detected. Only rendered inside
+  `BridgeScreen` when `BuildFlavor.isSideload` is true.
+- **Bridge dispatch pre-gate** — `BridgeCommandHandler.dispatch` calls
+  `UnattendedAccessManager.acquireForAction()` after the safety-rails
+  pass and before the action `when` block, for any path NOT in the new
+  `READ_ONLY_PATHS` set. KeyguardBlocked outcome short-circuits with
+  HTTP 423 + `error_code = "keyguard_blocked"` + a `final = true`
+  flag so the LLM doesn't blindly retry against the lock screen.
+- **`classifyGestureFailure()`** — small helper on `ActionExecutor`
+  that wraps gesture-dispatch failure messages with a keyguard-aware
+  hint when the live keyguard state is locked. Tap / swipe / drag /
+  long_press failure paths use it. `BridgeCommandHandler.classifyBridgeError`
+  now routes "keyguard"-bearing strings to the `keyguard_blocked`
+  error_code so both pre-gate and gesture-failure paths converge on
+  the same structured response.
+- **`BridgeStatusOverlayChip` variant** — added an `unattended: Boolean`
+  parameter so the chip can render in an amber-dot "Unattended ON"
+  variant. `BridgeStatusOverlay.setChipVisible` gained an `unattended`
+  argument and a tear-down-and-rebuild path when the flag flips
+  between attached state. `BridgeViewModel`'s overlay-toggle collector
+  now combines master / overlayPref / unattendedEnabled and forces
+  the chip on whenever unattended is active even if the user disabled
+  the regular overlay preference.
+- **Lifecycle hardening** — Master-toggle-off and relay-disconnect
+  both call `UnattendedAccessManager.release()`. The persisted
+  `unattendedAccessEnabled` value is preserved across master toggle
+  cycles (the user's "I want unattended when bridge is on" preference
+  shouldn't be wiped by every disconnect).
+- **Manifest** — `DISABLE_KEYGUARD` declared in
+  `app/src/sideload/AndroidManifest.xml`. WAKE_LOCK already lives in
+  the main manifest for the existing PARTIAL_WAKE_LOCK gesture scope
+  and covers SCREEN_BRIGHT acquires too — no new top-level permission.
+
+**Tests landed.** `app/src/test/kotlin/com/hermesandroid/relay/bridge/
+UnattendedAccessManagerTest.kt` covers state transitions (enabled ↔
+disabled, credential lock detection from `isDeviceSecure`,
+`acquireForAction` outcomes for the four reachable cases without a
+real PowerManager: Disabled / SuccessNoKeyguardChange / Success /
+KeyguardBlocked) using MockK to stub `Context.getSystemService` and
+reflection to reset the singleton between tests. Also added
+`BridgeSafetySettingsTest.kt` to lock in the false-by-default contract
+on the two new preference fields.
+
+**Decisions documented (NOT re-litigated this session):**
+
+- No WiFi-disconnect failsafe. Tailscale / VPN invalidate the
+  "leaving WiFi = leaving LAN" assumption; relay-disconnect detection
+  + auto-disable timer cover the gap.
+- Default auto-disable timer stays at 30 minutes. No unattended-mode
+  override.
+- Credential lock limitation is structural — Android does not let
+  third-party apps dismiss PIN / pattern / biometric. Surface it via
+  the warning dialog + persistent chip + `keyguard_blocked` rather
+  than try to work around it.
+
+**Wake-lock flag note.** `SCREEN_BRIGHT_WAKE_LOCK` has been
+deprecated since API 17 in favor of `Window.FLAG_KEEP_SCREEN_ON` /
+`Activity.setTurnScreenOn(true)`. We accept the deprecation warning
+under explicit `@Suppress` annotations because the Activity-bound
+alternatives don't apply to a background bridge that doesn't own
+its own window — the bridge runs from a foreground service, gestures
+are dispatched via AccessibilityService, and the only "UI surface"
+we own off-Activity is the WindowManager overlay chip which can't
+drive screen wake-up. Same story for `requestDismissKeyguard` —
+it's API 26+ (our minSdk is 26 so always available) and reachable
+only when an Activity is registered, hence the
+`MainActivity.setHostActivity` plumbing.
+
+**Files touched:**
+
+- new: `app/src/main/kotlin/com/hermesandroid/relay/bridge/UnattendedAccessManager.kt`
+- new: `app/src/main/kotlin/com/hermesandroid/relay/ui/components/UnattendedAccessRow.kt`
+- new: `app/src/test/kotlin/com/hermesandroid/relay/bridge/UnattendedAccessManagerTest.kt`
+- new: `app/src/test/kotlin/com/hermesandroid/relay/data/BridgeSafetySettingsTest.kt`
+- mod: `app/src/main/kotlin/com/hermesandroid/relay/HermesRelayApp.kt`
+- mod: `app/src/main/kotlin/com/hermesandroid/relay/MainActivity.kt`
+- mod: `app/src/main/kotlin/com/hermesandroid/relay/data/BridgeSafetyPreferences.kt`
+- mod: `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/BridgeViewModel.kt`
+- mod: `app/src/main/kotlin/com/hermesandroid/relay/ui/screens/BridgeScreen.kt`
+- mod: `app/src/main/kotlin/com/hermesandroid/relay/bridge/BridgeStatusOverlay.kt`
+- mod: `app/src/main/kotlin/com/hermesandroid/relay/ui/components/DestructiveVerbConfirmDialog.kt` (chip variant)
+- mod: `app/src/main/kotlin/com/hermesandroid/relay/network/handlers/BridgeCommandHandler.kt`
+- mod: `app/src/main/kotlin/com/hermesandroid/relay/accessibility/ActionExecutor.kt`
+- mod: `app/src/sideload/AndroidManifest.xml`
+- mod: `ROADMAP.md` (marked v0.4.1 unattended access shipped)
+- mod: `CHANGELOG.md` (added unreleased section)
+
+**Next.** Bailey builds + installs from Android Studio + flips the
+toggle on a Samsung S24 with a PIN lock. Expected behaviours:
+(a) scary dialog appears on first toggle-on, (b) keyguard-detected
+chip stays visible while unattended is ON, (c) bridge actions return
+`keyguard_blocked` when fired against a locked screen, (d) toggling
+master off drops the wake lock immediately. After verification, cut
+v0.4.1 release tag.
+
+**Known residuals / follow-ups:**
+
+1. The `WakeOutcome.Success` path doesn't actually wait on the
+   `requestDismissKeyguard` callback — we predict success based on
+   `isDeviceSecure == false`. Predict-don't-wait is fine for
+   None / Swipe locks (which always succeed) but a Wave 2
+   refinement could plumb the callback for richer telemetry.
+2. The host-activity registration is single-Activity by design.
+   If a future MainActivity refactor introduces a second Activity
+   surface, the `setHostActivity(null)` call in onPause would
+   clobber the wrong reference. Document this constraint where it
+   matters.
+3. `READ_ONLY_PATHS` is hand-maintained — adding a new bridge route
+   requires updating both the dispatch `when` and the read-only
+   set. A linter rule or test-time enforcement would catch drift.
+
+---
+
+## 2026-04-16 — Voice intent → server session sync (v0.4.1)
+
+**Motivation.** Bailey's 2026-04-14 on-device repro: speak "open Chrome", phone opens Chrome (good), then type "did that work?" → LLM responds "I have no prior context for what you're asking about." Voice intents dispatch in-process via `BridgeCommandHandler.handleLocalCommand` (correct — voice actions are phone-local) and append a local-only trace bubble to chat (good UX), but the server-side Hermes session never absorbs the action so the gateway-side LLM has zero memory of it. Followups felt like the chat had "reset."
+
+**Approach.** Synthesize OpenAI-format `assistant` (with `tool_calls`) + `tool` (with `tool_call_id`) message pairs from unsynced voice-intent traces and pass them under a new optional `messages` field on the existing `/v1/runs` and `/api/sessions/{id}/chat/stream` payloads. LLMs are trained on this exact shape — they read it as natural conversation history, not a side-channel system-prompt note. Lower retry risk than a bracketed system-message prefix. Frontend-only — zero server changes.
+
+**Implementation summary.**
+
+- **`data/ChatMessage.kt`** — added `voiceIntent: VoiceIntentTrace?` field (default null). The new `VoiceIntentTrace` class captures `toolName` (must start `android_*`), `argumentsJson` (OpenAI tool-call args, JSON-encoded string), `success`, `resultJson` (full result envelope including `ok`/`error`/`error_code`), and `syncedToServer` flag. Default null so every existing `ChatMessage(...)` call site keeps compiling without touching this field.
+- **`voice/VoiceIntentSyncBuilder.kt`** (new file, ~170 LOC) — pure-function builder that walks chat history, filters to unsynced voice-intent traces, mints `call_voiceintent_<uuid>` IDs, and emits a JsonArray of synthetic `assistant` + `tool` message pairs in chronological order. `hasUnsynced()` short-circuits the empty-array allocation on the common-case turn. `successResultJson()` / `failureResultJson()` helpers normalize the tool-response payload shape so call sites don't hand-roll JSON. No Android dependencies — JVM-pure for cheap unit testing.
+- **`network/HermesApiClient.kt`** — `sendChatStream` and `sendRunStream` both gained an optional `voiceIntentMessages: JsonArray? = null` parameter. When non-empty, splices it under a top-level `messages` field on the request body. Additive, OpenAI-compat — older servers ignore unrecognised body fields.
+- **`viewmodel/ChatViewModel.kt`** — `startStream` snapshots history, calls `VoiceIntentSyncBuilder.buildSyntheticMessages`, threads the result into both API client paths, then calls `handler.markVoiceIntentsSynced()` after the API client takes ownership. Idempotent — already-synced traces are skipped. `recordVoiceIntent`/`recordVoiceIntentResult` signatures now accept an optional `voiceIntent: VoiceIntentTrace?` so VoiceViewModel can attach the structured payload.
+- **`network/handlers/ChatHandler.kt`** — `appendLocalVoiceIntentTrace` and `appendLocalVoiceIntentResult` now accept an optional `voiceIntent` parameter; new `markVoiceIntentsSynced()` method flips `syncedToServer=true` on every trace currently in state.
+- **`voice/VoiceBridgeIntentHandler.kt`** — `IntentResult.Handled` gained `androidToolName: String?` (defaults to null) and `androidToolArgsJson: String` (defaults to "{}"). Sideload classifier populates both per intent so `VoiceIntentSyncBuilder` can synthesize a structured tool_call.
+- **Sideload `VoiceBridgeIntentHandlerImpl.kt`** — every `tryHandle` branch now passes `androidToolName` + `androidToolArgsJson` to `handleSafe`/`handleDestructive`. The dispatch callbacks (`onDispatchResult`) carry these forward to VoiceViewModel. Maps `SendSms` → `android_send_sms`, `OpenApp` → `android_open_app`, `Tap` → `android_tap_text`, `Back`/`Home` → `android_press_key`. Args mirror what the gateway-side LLM tool wrappers in `plugin/tools/android_tool.py` would emit for the same actions, so the synthetic tool_call looks identical to the real one.
+- **`VoiceIntentResultCallback` typealias** — extended in BOTH `googlePlay/` and `sideload/` flavor source sets to `(intentLabel, result, androidToolName, androidToolArgsJson) -> Unit`. Play APK never invokes the callback (no destructive intents in the no-op handler) but typealias parity keeps `VoiceViewModel` compilable against either flavor with no `#if` gating.
+- **`viewmodel/VoiceViewModel.kt`** — extended dispatch callback wiring builds a `VoiceIntentTrace` from the post-dispatch outcome (using `LocalDispatchResult.isSuccess` + `resultJson` + `errorMessage` + `errorCode`) and threads it into `chatViewModel.recordVoiceIntentResult(label, result, voiceTrace)`. Trace attaches to the post-dispatch RESULT bubble (not the pre-dispatch action bubble) because that's the moment the dispatch outcome is authoritative — pre-dispatch was either pending (destructive countdown) or not-yet-known.
+
+**Tests.** `app/src/test/kotlin/com/hermesandroid/relay/voice/VoiceIntentSyncBuilderTest.kt` (12 cases):
+- empty history → empty output
+- no voice-intent messages in history → empty output
+- single success trace → exactly one assistant+tool pair, correct shape
+- failure trace → tool message content carries `ok:false` + `error` + `error_code`
+- already-synced traces are skipped
+- multiple traces preserve chronological order
+- non-`android_*` tool name is filtered (defence-in-depth)
+- blank args is filtered (defence-in-depth)
+- assistant `tool_calls[].id` and tool `tool_call_id` reference the same minted ID
+- `hasUnsynced` happy paths (empty / unsynced / all-synced)
+- `successResultJson` / `failureResultJson` helpers behave correctly
+
+`ChatHandlerTest.kt` gained 4 new cases for trace storage + `markVoiceIntentsSynced` flag flip + idempotency on already-synced traces + safety on plain non-trace messages.
+
+**Files touched** (10):
+- `app/src/main/kotlin/com/hermesandroid/relay/data/ChatMessage.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/voice/VoiceIntentSyncBuilder.kt` (new)
+- `app/src/main/kotlin/com/hermesandroid/relay/network/HermesApiClient.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/network/handlers/ChatHandler.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/ChatViewModel.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/VoiceViewModel.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/voice/VoiceBridgeIntentHandler.kt`
+- `app/src/sideload/kotlin/com/hermesandroid/relay/voice/VoiceBridgeIntentFactory.kt`
+- `app/src/sideload/kotlin/com/hermesandroid/relay/voice/VoiceBridgeIntentHandlerImpl.kt`
+- `app/src/googlePlay/kotlin/com/hermesandroid/relay/voice/VoiceBridgeIntentFactory.kt`
+- `app/src/test/kotlin/com/hermesandroid/relay/voice/VoiceIntentSyncBuilderTest.kt` (new)
+- `app/src/test/kotlin/com/hermesandroid/relay/network/handlers/ChatHandlerTest.kt`
+
+**Branch.** `feature/voice-session-sync`. Not merged. Pushed for review.
+
+**What's next.** On-device verification: send a voice intent ("open Chrome"), then type "did that work?" — the LLM should describe the action with grounded context instead of hallucinating. If the upstream gateway logs the synthetic `messages` array as additional context (visible in `journalctl --user -u hermes-gateway -f`), the wire integration is clean. If the gateway 400s on the new field name (e.g. wants `additional_messages` or `history`), we may need to peek at `gateway/platforms/api_server.py` upstream to confirm the exact field name. The CHANGELOG note about "additive — OpenAI-compat" reflects best-current-knowledge but isn't yet wire-verified.
+
+**Blockers.** None. Ships as a self-contained refactor.
+
+---
+
 ## 2026-04-15 — Voice → bridge → agent pipeline end-to-end fixes
 
 **Motivation.** Bailey's on-device voice SMS testing surfaced a stack of bugs that individually looked small but together blocked the voice → bridge → agent pipeline from working end-to-end. Over a single long session we diagnosed and fixed six distinct layers: voice classifier gaps, a safety-modal lifecycle bug, chat history clobbering, a plugin check_fn pointed at the wrong relay endpoint, missing LLM tool wrappers for the direct-dispatch phone actions, and two Android OEM-interaction issues (MediaProjection notification persistence + activity recreation on warm reopen). Landed across four commits on `feature/bridge-feature-expansion`.

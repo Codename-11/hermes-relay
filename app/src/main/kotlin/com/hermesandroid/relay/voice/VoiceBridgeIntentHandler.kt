@@ -112,6 +112,38 @@ sealed class IntentResult {
          * this field.
          */
         val details: Map<String, String> = emptyMap(),
+        /**
+         * The Hermes plugin tool name this intent maps to
+         * (`android_open_app`, `android_send_sms`, etc.) — populated by
+         * the sideload classifier so [com.hermesandroid.relay.voice.VoiceIntentSyncBuilder]
+         * can synthesize a server-side OpenAI `tool_call` for the LLM's
+         * session memory. Null when the intent isn't classifiable as a
+         * concrete `android_*` tool (e.g. local UI confirmations, the
+         * Play-flavor no-op handler).
+         *
+         * Must start with `android_` if non-null — the sync builder skips
+         * traces that don't match the prefix as a defence-in-depth
+         * sanity check. Required field for v0.4.1's session-sync feature
+         * but defaulted to null so existing call sites keep compiling.
+         */
+        val androidToolName: String? = null,
+        /**
+         * JSON-encoded arguments object the synthesized server-side tool
+         * call should advertise. Format mirrors what the gateway-side LLM
+         * tool-call wrappers in `plugin/tools/android_tool.py` would emit
+         * for the same action — e.g.
+         * `{"app_name":"Chrome","package":"com.android.chrome"}` for
+         * Open App, `{"to":"+15551234567","body":"hi"}` for Send SMS.
+         *
+         * Always a JSON object (string-encoded) when [androidToolName] is
+         * non-null. Defaulted to "{}" so the OpenAI `function.arguments`
+         * field is never empty. The receiver
+         * ([com.hermesandroid.relay.voice.VoiceIntentSyncBuilder.buildSyntheticMessages])
+         * passes this string through verbatim to the OpenAI
+         * `tool_calls[].function.arguments` field, which is itself spec'd
+         * as a JSON string.
+         */
+        val androidToolArgsJson: String = "{}",
     ) : IntentResult()
 
     /** The text is not a phone-control intent. Fall through to chat. */

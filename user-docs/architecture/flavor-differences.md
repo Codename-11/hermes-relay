@@ -117,8 +117,10 @@ Clipboard write (`POST /clipboard`) has its own secondary gate inside the `/clip
 | Display Over Apps row | Hidden | Visible (SYSTEM_ALERT_WINDOW) |
 | Overlay permission nag banner | Hidden | Visible when bridge enabled + overlay not granted |
 | Safety summary card | Hidden | Visible (blocklist, destructive verbs, auto-disable timer) |
+| Unattended Access card | Hidden | Visible (gated on master toggle; credential-lock warning inlined) |
+| Unattended global banner | Hidden | Visible on every tab when master + unattended are both on |
 
-The permission checklist always shows the Accessibility Service row and the Notification Listener row on both flavors. Only the Screen Capture and Display Over Apps rows are conditionally visible based on `BuildFlavor.isSideload`.
+The permission checklist always shows the Accessibility Service row and the Notification Listener row on both flavors. Only the Screen Capture and Display Over Apps rows are conditionally visible based on `BuildFlavor.isSideload`. The Sideload-features checklist section (Contacts / SMS / Phone / Location) is hidden on googlePlay entirely.
 
 ## Voice Intent Classifier
 

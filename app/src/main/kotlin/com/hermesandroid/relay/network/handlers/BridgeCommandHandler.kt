@@ -9,6 +9,9 @@ import com.hermesandroid.relay.accessibility.ScreenReader
 // === PHASE3-safety-rails: safety enforcement ===
 import com.hermesandroid.relay.bridge.BridgeSafetyManager
 // === END PHASE3-safety-rails ===
+// === v0.4.1 unattended-access wake/dismiss ===
+import com.hermesandroid.relay.bridge.UnattendedAccessManager
+// === END v0.4.1 unattended-access ===
 // === PHASE3-event-stream: B1 EventStore polling + toggle ===
 import com.hermesandroid.relay.event.EventStore
 import kotlinx.serialization.json.JsonArray
@@ -130,11 +133,100 @@ class BridgeCommandHandler(
     // always wires a BridgeSafetyManager instance and passes it in.
     private val safetyManager: BridgeSafetyManager? = null,
     // === END PHASE3-safety-rails ===
+    // === v0.4.1 polish: activity-log recording ===
+    // Optional sink for BridgeActivityEntry records — fired at respond()
+    // time with the final Success / Failed / Blocked status. ConnectionViewModel
+    // wires this to BridgePreferencesRepository.appendEntry so the Bridge
+    // tab's Activity Log shows everything the agent did. When null the
+    // handler no-ops (used by tests that don't care about the log).
+    private val onActivity: ((com.hermesandroid.relay.data.BridgeActivityEntry) -> Unit)? = null,
+    // === END v0.4.1 polish ===
 ) {
 
     companion object {
         private const val TAG = "BridgeCommandHandler"
+
+        /**
+         * v0.4.1: bridge routes that don't dispatch a gesture or modify
+         * UI state. Used by the unattended-access wake gate to skip the
+         * SCREEN_BRIGHT lock for tree-read / status / events / clipboard-
+         * read calls — there's no point waking the screen to dump the
+         * accessibility tree, and a screenshot uses MediaProjection
+         * which doesn't need the screen lit.
+         *
+         * Action routes (tap, type, swipe, scroll, drag, long_press,
+         * press_key, send_intent, broadcast, send_sms, call, open_app,
+         * media, clipboard write, navigate, macro) acquire the wake.
+         *
+         * Coupled to the route surface in the dispatch `when` block
+         * below. If a new read-only route is added, add it here too or
+         * the unattended-access feature will needlessly wake the screen
+         * for it.
+         */
+        private val READ_ONLY_PATHS: Set<String> = setOf(
+            "/ping",
+            "/current_app",
+            "/screen",
+            "/screen_hash",
+            "/diff_screen",
+            "/find_nodes",
+            "/describe_node",
+            "/events",
+            "/events/stream",
+            "/get_apps",
+            "/apps",
+            "/setup",
+            "/return_to_hermes",
+            "/screenshot",
+            "/location",
+            "/search_contacts",
+            "/wait",
+        )
     }
+
+    // === v0.4.1 polish: activity-log pending entries ===
+    // Paths suppressed from activity-log recording — they're high-frequency
+    // polls (/ping, /events) or trivial state reads (/current_app, /screen_hash)
+    // that would flood the log without showing the user anything useful.
+    // Everything else — including /screen / /screenshot / /tap / /type /
+    // /swipe / /open_app — gets logged so the user can audit what the
+    // agent did. Keep in sync with any new routes added to dispatch().
+    private val activityLogSuppressedPaths: Set<String> = setOf(
+        "/ping",
+        "/current_app",
+        "/screen_hash",
+        "/events",
+        "/events/stream",
+        "/setup",
+    )
+
+    // Paths that move Android's foreground app AWAY from Hermes-Relay.
+    // Tracked in respond() so `BridgeRunTracker` can auto-fire
+    // `/return_to_hermes` when the run.completed SSE event arrives, in
+    // case the LLM forgot to call the return tool itself.
+    //
+    // Intentionally narrow — only commands that are PRIMARILY about
+    // launching / switching to another app. /send_sms on sideload uses
+    // SmsManager and doesn't shift foreground; it does on googlePlay
+    // where the tool falls back to opening Messages, but that's already
+    // covered by android_send_sms's own `android_return_to_hermes`
+    // prompting in plugin/android_tool.py. Keep the allowlist minimal
+    // and extend only when a concrete need surfaces.
+    private val foregroundShiftingPaths: Set<String> = setOf(
+        "/open_app",
+        "/send_intent",
+    )
+
+    private data class PendingActivity(
+        val path: String,
+        val method: String,
+        val summary: String,
+        val timestampMs: Long,
+    )
+
+    private val pendingActivities =
+        java.util.concurrent.ConcurrentHashMap<String, PendingActivity>()
+    // === END v0.4.1 polish ===
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -277,7 +369,12 @@ class BridgeCommandHandler(
         val resultJson = sink.get()
         val capturedStatus = status.get().takeIf { it != 0 } ?: 200
         val errorMessage = resultJson?.get("error")?.jsonPrimitive?.contentOrNull
+        // v0.4.1 — accept both the canonical `code` and the legacy `error_code`
+        // when reading the structured classification back out of the captured
+        // payload. respondFromResult emits both, but consumers that only know
+        // about the canonical alias must still see the value.
         val errorCode = resultJson?.get("error_code")?.jsonPrimitive?.contentOrNull
+            ?: resultJson?.get("code")?.jsonPrimitive?.contentOrNull
         return LocalDispatchResult(
             status = capturedStatus,
             errorMessage = errorMessage,
@@ -292,6 +389,47 @@ class BridgeCommandHandler(
         method: String,
         body: JsonObject,
     ) {
+        // === v0.4.1 polish: keep auto-return idle timer alive ===
+        // Any non-polling bridge command during a run is evidence the
+        // agent is still working — reset BridgeRunTracker's idle timer
+        // so it doesn't fire a premature /return_to_hermes mid-run.
+        // Pure /ping probes are noise and would reset the timer
+        // spuriously, so we gate on the same suppressed-paths set used
+        // for the activity log. When no foreground-shifting command
+        // has fired yet, the tracker's onBridgeCommandActivity() is a
+        // no-op so this is cheap even for commands that don't care.
+        if (path !in activityLogSuppressedPaths) {
+            com.hermesandroid.relay.bridge.BridgeRunTracker.onBridgeCommandActivity()
+        }
+        // === END v0.4.1 polish ===
+
+        // === v0.4.1 polish: register activity-log pending entry ===
+        // Record BEFORE any early-return respond() call so even commands
+        // that bounce off safety rails (bridge_disabled, user_denied,
+        // blocklist) show up in the log as Blocked / Failed. The
+        // suppression set skips high-frequency polling paths so the log
+        // shows user-meaningful activity, not polling noise.
+        //
+        // We register for the union of (activity-log relevant) AND
+        // (BridgeRunTracker-relevant) paths. Foreground-shifting paths
+        // and /return_to_hermes must be tracked regardless of whether
+        // the activity-log sink is wired, because BridgeRunTracker
+        // drives the auto-return-to-Hermes mechanism which should work
+        // even in test contexts that don't wire onActivity.
+        val tracksRunState = path in foregroundShiftingPaths ||
+            path == "/return_to_hermes"
+        if ((onActivity != null && path !in activityLogSuppressedPaths) ||
+            tracksRunState
+        ) {
+            pendingActivities[requestId] = PendingActivity(
+                path = path,
+                method = pathToMethodName(path),
+                summary = summarizeBody(path, body),
+                timestampMs = System.currentTimeMillis(),
+            )
+        }
+        // === END v0.4.1 polish ===
+
         // /ping is the only command that works without the a11y service —
         // everything else needs the service to be connected.
         if (path == "/ping") {
@@ -461,6 +599,54 @@ class BridgeCommandHandler(
         // command. Safe to call even when no timer is currently armed.
         safetyManager?.rescheduleAutoDisable()
         // === END PHASE3-safety-rails ===
+
+        // === v0.4.1 unattended-access wake + keyguard dismiss ===
+        // When the user has opted in via the sideload-only "unattended
+        // access" toggle, acquire a SCREEN_BRIGHT wake lock + best-effort
+        // keyguard dismiss BEFORE dispatching the action. The acquire is
+        // a fast no-op when the user hasn't opted in (returns Disabled).
+        //
+        // Read-only routes that don't dispatch gestures (/screen, /ping,
+        // /current_app, /events, /events/stream, /apps, /get_apps,
+        // /clipboard GET) skip the wake — there's no point lighting up
+        // the screen to read tree state. Action routes get the wake.
+        //
+        // KeyguardBlocked outcome surfaces a structured `keyguard_blocked`
+        // error_code so the LLM can tell the user to disable their lock
+        // screen (or set it to None / Swipe) rather than blindly
+        // retrying taps that will hit the lock screen UI.
+        val isReadOnlyRoute = path in READ_ONLY_PATHS
+        if (!isReadOnlyRoute) {
+            val outcome = runCatching { UnattendedAccessManager.acquireForAction() }
+                .getOrDefault(UnattendedAccessManager.WakeOutcome.Disabled)
+            if (outcome == UnattendedAccessManager.WakeOutcome.KeyguardBlocked) {
+                respond(
+                    requestId, 423,
+                    buildJsonObject {
+                        put(
+                            "error",
+                            "Cannot dispatch '$path': the device's keyguard is " +
+                                "blocking access. The screen woke, but the user " +
+                                "has a credential lock (PIN, pattern, or biometric) " +
+                                "set, which Android does not let third-party apps " +
+                                "dismiss. To allow unattended access while the user " +
+                                "is away, the user must change their lock screen to " +
+                                "'None' or 'Swipe' in Settings > Security. This " +
+                                "action will not be retried automatically — report " +
+                                "the limitation to the user.",
+                        )
+                        put("error_code", "keyguard_blocked")
+                        put(
+                            "required_action",
+                            "User changes lock screen type to None or Swipe in Settings > Security",
+                        )
+                        put("final", true)
+                    }
+                )
+                return
+            }
+        }
+        // === END v0.4.1 unattended-access ===
 
         // === Google Play flavor route gate ===
         // The googlePlay build's AccessibilityService config declares a
@@ -1468,9 +1654,20 @@ class BridgeCommandHandler(
                 // responses + offer actionable next steps instead of relaying
                 // whatever phrasing the error string happens to use. Free
                 // text stays alongside for LLMs that prefer it.
+                //
+                // v0.4.1 — emit BOTH the legacy `error_code`/`required_permission`
+                // pair AND the canonical `code`/`permission` aliases. The Python
+                // agent-tool wrappers (plugin/tools/android_tool.py) and the
+                // Python ResolveResult parser (plugin/tools/resolve_result.py)
+                // accept either spelling so the rollout is forwards/backwards
+                // compatible across mixed-version installs.
                 classifyBridgeError(err)?.let { (code, perm) ->
                     put("error_code", code)
-                    if (perm != null) put("required_permission", perm)
+                    put("code", code)
+                    if (perm != null) {
+                        put("required_permission", perm)
+                        put("permission", perm)
+                    }
                 }
             }
         }
@@ -1652,6 +1849,13 @@ class BridgeCommandHandler(
                 "bridge_disabled" to null
             "sideload-only" in lower || "sideload only" in lower ->
                 "sideload_only" to null
+            // v0.4.1 unattended-access: ActionExecutor itself doesn't emit
+            // this string — the keyguard pre-gate above short-circuits with
+            // a structured response — but we wire the classifier so any
+            // future ActionExecutor path that returns a "keyguard"-shaped
+            // error still gets correctly tagged.
+            "keyguard" in lower ->
+                "keyguard_blocked" to null
             else -> null
         }
     }
@@ -1668,7 +1872,142 @@ class BridgeCommandHandler(
         }
     }
 
+    // === v0.4.1 polish: activity-log summarizers =============================
+    // Kept private + close to the dispatch/respond pipeline so the coupling
+    // is visible. If a new route is added with unusual args, extend
+    // summarizeBody() with a matching branch — otherwise it falls through
+    // to a generic "key=value, …" one-liner.
+
+    /** Strip leading slash and truncate — the Activity Log UI has limited width. */
+    private fun pathToMethodName(path: String): String {
+        val trimmed = path.removePrefix("/")
+        return if (trimmed.length > 24) trimmed.take(24) + "…" else trimmed
+    }
+
+    /**
+     * Build the single-line summary shown next to the method name in the
+     * Activity Log. Route-specific branches handle the common cases with
+     * natural-looking text ("tap (540, 1200)", "type \"hello world\"",
+     * "open_app com.android.chrome"); the fallback dumps the first few
+     * body keys as "k=v, …". Capped at 80 chars so long `text` bodies
+     * don't stretch the row.
+     */
+    private fun summarizeBody(path: String, body: JsonObject): String {
+        val raw: String = when (path) {
+            "/tap" -> {
+                val x = body["x"]?.jsonPrimitive?.content ?: "?"
+                val y = body["y"]?.jsonPrimitive?.content ?: "?"
+                "($x, $y)"
+            }
+            "/tap_text" -> body["text"]?.jsonPrimitive?.content?.let { "\"$it\"" } ?: ""
+            "/type" -> body["text"]?.jsonPrimitive?.content?.let { "\"$it\"" } ?: ""
+            "/swipe", "/scroll" -> {
+                val dir = body["direction"]?.jsonPrimitive?.content
+                val dist = body["distance"]?.jsonPrimitive?.content
+                listOfNotNull(dir, dist).joinToString(" ")
+            }
+            "/open_app" -> body["package"]?.jsonPrimitive?.content
+                ?: body["package_name"]?.jsonPrimitive?.content
+                ?: ""
+            "/press_key" -> body["key"]?.jsonPrimitive?.content ?: ""
+            "/send_sms" -> {
+                val to = body["number"]?.jsonPrimitive?.content ?: "?"
+                "→ $to"
+            }
+            "/call" -> body["number"]?.jsonPrimitive?.content?.let { "→ $it" } ?: ""
+            "/search_contacts" -> body["query"]?.jsonPrimitive?.content?.let { "\"$it\"" } ?: ""
+            "/screen", "/screenshot", "/return_to_hermes", "/get_apps",
+            "/location", "/wait" -> ""
+            else -> {
+                // Generic fallback: first 3 string-ish body values as "k=v"
+                body.entries.asSequence()
+                    .filter { it.value is kotlinx.serialization.json.JsonPrimitive }
+                    .take(3)
+                    .joinToString(", ") { "${it.key}=${it.value.toString().take(20)}" }
+            }
+        }
+        return if (raw.length > 80) raw.take(80) + "…" else raw
+    }
+
+    /**
+     * Extract a short human-readable result blurb for the Activity Log
+     * expanded-row view. On Success we favour a `summary` / `message` /
+     * `found` field if the route supplies one; on non-Success we surface
+     * the `error` text so the user can see why a command failed without
+     * having to dig through logs.
+     */
+    private fun extractResultText(
+        result: JsonObject,
+        status: com.hermesandroid.relay.data.BridgeActivityStatus,
+    ): String? {
+        if (status == com.hermesandroid.relay.data.BridgeActivityStatus.Success) {
+            val ok = result["summary"]?.jsonPrimitive?.content
+                ?: result["message"]?.jsonPrimitive?.content
+                ?: result["status"]?.jsonPrimitive?.content
+            return ok?.takeIf { it.isNotBlank() }?.let {
+                if (it.length > 140) it.take(140) + "…" else it
+            }
+        }
+        // Failed / Blocked: lead with error, fall back to error_code.
+        val err = result["error"]?.jsonPrimitive?.content
+            ?: result["error_code"]?.jsonPrimitive?.content
+        return err?.takeIf { it.isNotBlank() }?.let {
+            if (it.length > 140) it.take(140) + "…" else it
+        }
+    }
+    // === END v0.4.1 polish ===
+
     private suspend fun respond(requestId: String, status: Int, result: JsonObject) {
+        // === v0.4.1 polish: drain pending activity + emit log entry ===
+        // Runs BEFORE the multiplexer send so a dropped envelope doesn't
+        // also drop the log record. Fires exactly once per requestId
+        // (map.remove returns null on duplicate calls). Mapping: 200 →
+        // Success, 403 → Blocked (bridge_disabled / user_denied), any
+        // other non-200 → Failed.
+        //
+        // Also flags BridgeRunTracker when the successful command was
+        // a foreground-shifting one (/open_app, /send_intent) so that
+        // when ChatViewModel.onCompleteCb later calls
+        // BridgeRunTracker.notifyRunCompleted(), an auto-return to
+        // Hermes-Relay fires if the LLM forgot to call return_to_hermes.
+        pendingActivities.remove(requestId)?.let { pending ->
+            val sink = onActivity
+            if (sink != null) {
+                val activityStatus = when {
+                    status == 200 -> com.hermesandroid.relay.data.BridgeActivityStatus.Success
+                    status == 403 -> com.hermesandroid.relay.data.BridgeActivityStatus.Blocked
+                    else -> com.hermesandroid.relay.data.BridgeActivityStatus.Failed
+                }
+                val resultText = extractResultText(result, activityStatus)
+                sink(
+                    com.hermesandroid.relay.data.BridgeActivityEntry(
+                        id = requestId,
+                        timestampMs = pending.timestampMs,
+                        method = pending.method,
+                        summary = pending.summary,
+                        status = activityStatus,
+                        resultText = resultText,
+                    )
+                )
+            }
+            if (status == 200 && pending.path in foregroundShiftingPaths) {
+                com.hermesandroid.relay.bridge.BridgeRunTracker.markForegroundChanged()
+            }
+            if (status == 200 && pending.path == "/return_to_hermes") {
+                com.hermesandroid.relay.bridge.BridgeRunTracker.markReturnedToHermes()
+            }
+            // Reset the idle timer on respond too — the dispatch-time reset
+            // only gives 12s from command START, and a slow-executing
+            // command (screenshot, /screen on a big tree) could eat most
+            // of that window before the agent even sees the response. By
+            // also resetting here, the 12s window always starts fresh
+            // from when the agent got the latest information.
+            if (status == 200 && pending.path != "/return_to_hermes") {
+                com.hermesandroid.relay.bridge.BridgeRunTracker.onBridgeCommandActivity()
+            }
+        }
+        // === END v0.4.1 polish ===
+
         val envelope = Envelope(
             channel = "bridge",
             type = "bridge.response",

@@ -402,13 +402,19 @@ def android_call(number: str) -> str:
 
 
 def android_return_to_hermes() -> str:
-    """Bring the Hermes Relay app back to the foreground on the user's
-    phone. Call this as the FINAL step of any multi-app task (sending a
-    text, opening Maps, taking a screenshot from another app) so the user
-    sees your reply in-context without having to manually switch apps.
-    Do NOT call this mid-task — only when you're ready to hand control
-    back. Allowed even when Bridge master toggle is off, so you can
-    always wrap up cleanly."""
+    """REQUIRED FINAL STEP for any phone-control task that changed the
+    foreground app. Brings the Hermes Relay app on the user's phone back
+    to the foreground so they see your reply in-context without manually
+    switching apps back from Starbucks / Maps / Messages / Chrome.
+
+    Call this as your LAST tool call after any run that succeeded at
+    android_open_app / android_send_intent / android_call / android_send_sms
+    and is now wrapping up. Once per run at the end — not mid-task. A
+    safety net auto-fires this on run.completed if you forget, but that
+    produces a visible flicker; calling it explicitly is always cleaner.
+
+    Allowed even when Bridge master toggle is off, so you can always
+    wrap up cleanly."""
     try:
         data = _post("/return_to_hermes", {})
         return json.dumps(data)
@@ -667,10 +673,17 @@ _SCHEMAS = {
         "description": (
             "Launch an Android app by its package name. Use android_get_apps "
             "to find package names.\n\n"
-            "IMPORTANT: When your task is complete in the opened app, call "
-            "android_return_to_hermes as your FINAL step so the user sees "
-            "your reply in-context without manually switching back from the "
-            "other app. Also: before driving Messages / Phone / Contacts via "
+            "MANDATORY CLEANUP: Once this succeeds you OWE the user an "
+            "android_return_to_hermes call before your final natural-"
+            "language summary. Skipping it strands the user on the target "
+            "app and they have to manually swipe back to Hermes to see "
+            "your reply — the single most common UX complaint on bridge "
+            "runs. Call android_return_to_hermes as your LAST tool use of "
+            "the run, once, after you've finished whatever you came to "
+            "do inside the target app. A safety net auto-fires it on "
+            "run.completed if you forget, but that flickers visibly on "
+            "the user's screen; calling it yourself is always cleaner.\n\n"
+            "SHORTCUT TOOLS: before driving Messages / Phone / Contacts via "
             "UI automation (tap + read_screen + type), first consider "
             "android_send_sms / android_call / android_search_contacts — "
             "those dispatch directly and are faster + safer.\n\n"
@@ -943,7 +956,30 @@ _SCHEMAS = {
     },
     "android_return_to_hermes": {
         "name": "android_return_to_hermes",
-        "description": "Bring the Hermes Relay app on the phone back to the foreground. Call this as the FINAL step of any phone-control task that opened or brought focus to another app (Messages, Maps, Chrome, etc.) so the user sees your reply in-context without manually switching apps. Do NOT call mid-task — only when you're ready to hand control back. Allowed even when the Bridge master toggle is disabled.",
+        "description": (
+            "REQUIRED FINAL STEP for any phone-control task that changed "
+            "the foreground app. Brings the Hermes Relay app on the phone "
+            "back to the foreground so the user sees your reply in-context "
+            "without having to manually switch apps from Starbucks / Maps / "
+            "Messages / Chrome / wherever the agent left them.\n\n"
+            "WHEN TO CALL: if ANY of android_open_app, android_send_intent, "
+            "android_call, or android_send_sms succeeded earlier in this "
+            "turn AND you are not about to issue another phone-control "
+            "command, this MUST be your last tool call before the natural-"
+            "language summary. If you opened 3 apps across the run, you "
+            "still only call this ONCE at the very end.\n\n"
+            "WHEN NOT TO CALL: (a) mid-task while you're still navigating "
+            "or reading screens inside the target app — only after the "
+            "work is done; (b) if no foreground-changing command fired "
+            "(a pure read-only /screen + /tap sequence inside an already-"
+            "foregrounded app doesn't need a return); (c) right before "
+            "or after another android_open_app, since that would just "
+            "bounce back and forth. A safety net auto-fires this on "
+            "run.completed if you forget, but relying on that produces "
+            "a visible flicker — call it explicitly when appropriate.\n\n"
+            "Allowed even when the Bridge master toggle is disabled, so "
+            "you can always wrap up cleanly."
+        ),
         "parameters": {"type": "object", "properties": {}, "required": []},
     },
 }
