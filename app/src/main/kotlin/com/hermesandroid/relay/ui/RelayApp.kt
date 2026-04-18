@@ -64,6 +64,9 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.hermesandroid.relay.ui.components.MorphingSphere
 import com.hermesandroid.relay.ui.components.UnattendedGlobalBanner
+import com.hermesandroid.relay.ui.components.UpdateBanner
+import com.hermesandroid.relay.update.UpdateCheckResult
+import com.hermesandroid.relay.viewmodel.UpdateViewModel
 import com.hermesandroid.relay.ui.components.WhatsNewDialog
 import com.hermesandroid.relay.data.BridgePreferencesRepository
 import com.hermesandroid.relay.data.BridgeSafetyPreferencesRepository
@@ -169,6 +172,7 @@ fun RelayApp() {
     val chatViewModel: ChatViewModel = viewModel()
     val terminalViewModel: TerminalViewModel = viewModel()
     val voiceViewModel: VoiceViewModel = viewModel()
+    val updateViewModel: UpdateViewModel = viewModel()
 
     // One-time init: the terminal channel ViewModel registers with the shared
     // multiplexer and observes the relay connection state so it can attach/
@@ -461,6 +465,25 @@ fun RelayApp() {
                     }
                 },
             )
+        }
+
+        // Sideload-only update banner. UpdateViewModel short-circuits on
+        // googlePlay so this block is effectively dead on that flavor.
+        // bannerState hides the banner for versions the user has
+        // dismissed, re-appearing automatically on a newer release.
+        val updateBannerState by updateViewModel.bannerState.collectAsState()
+        val availableUpdate = (updateBannerState as? UpdateCheckResult.Available)?.update
+        AnimatedVisibility(
+            visible = availableUpdate != null && !isOnboarding,
+            enter = fadeIn(tween(200)),
+            exit = fadeOut(tween(200)),
+        ) {
+            availableUpdate?.let { upd ->
+                UpdateBanner(
+                    update = upd,
+                    onDismiss = { updateViewModel.dismiss(upd.latestVersion) },
+                )
+            }
         }
         Scaffold(
             // weight(1f) instead of fillMaxSize(): Column arranges children

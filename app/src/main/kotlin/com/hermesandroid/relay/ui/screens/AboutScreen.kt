@@ -58,7 +58,10 @@ import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.ui.components.WhatsNewDialog
 import com.hermesandroid.relay.ui.theme.gradientBorder
+import com.hermesandroid.relay.update.UpdateCheckResult
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import com.hermesandroid.relay.viewmodel.UpdateViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 
 /**
@@ -234,6 +237,62 @@ fun AboutScreen(
                         )
                     }
                     // === END PHASE3-flavor-split ===
+
+                    // Sideload-only: in-app update check. googlePlay builds
+                    // get updates through the Play Store, so we hide this
+                    // row on that track. UpdateViewModel also short-circuits
+                    // internally for belt-and-braces safety.
+                    if (BuildFlavor.isSideload) {
+                        HorizontalDivider()
+                        val updateVm: UpdateViewModel = viewModel()
+                        val state by updateVm.uiState.collectAsState()
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Updates",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                val subtitle = when (val s = state) {
+                                    UpdateCheckResult.Idle -> "Tap to check GitHub for a new release"
+                                    UpdateCheckResult.Checking -> "Checking…"
+                                    UpdateCheckResult.UpToDate -> "You're on the latest release"
+                                    is UpdateCheckResult.Available -> "Update available — v${s.update.latestVersion}"
+                                    is UpdateCheckResult.Error -> "Check failed: ${s.message}"
+                                }
+                                Text(
+                                    text = subtitle,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            TextButton(
+                                enabled = state !is UpdateCheckResult.Checking,
+                                onClick = {
+                                    when (val s = state) {
+                                        is UpdateCheckResult.Available -> {
+                                            val target = s.update.apkUrl ?: s.update.releasePageUrl
+                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(target))
+                                            context.startActivity(intent)
+                                        }
+                                        else -> updateVm.check()
+                                    }
+                                },
+                            ) {
+                                Text(
+                                    text = when (state) {
+                                        is UpdateCheckResult.Available -> "Download"
+                                        UpdateCheckResult.Checking -> "…"
+                                        else -> "Check"
+                                    }
+                                )
+                            }
+                        }
+                    }
 
                     HorizontalDivider()
 
