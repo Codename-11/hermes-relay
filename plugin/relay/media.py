@@ -312,6 +312,58 @@ class MediaRegistry:
         async with self._lock:
             return self._cleanup_locked()
 
+    async def list_all(
+        self, *, include_expired: bool = False
+    ) -> list[dict]:
+        """Return a sanitized snapshot of all registered entries.
+
+        Used by the dashboard's media-inspector tab. Each returned dict
+        contains the token, basename-only ``file_name``, ``content_type``,
+        ``size``, ``created_at``, ``expires_at``, ``last_accessed``, and the
+        derived ``is_expired`` flag. The absolute filesystem ``path`` is
+        **never** included — the basename is derived via
+        :func:`os.path.basename` so no directory layout leaks over the wire.
+
+        Parameters
+        ----------
+        include_expired:
+            When ``False`` (default), entries whose TTL has lapsed are
+            filtered out. When ``True``, they are included with
+            ``is_expired=True`` so the UI can visualize recently-expired
+            tokens before the next cleanup sweep removes them.
+
+        Returns
+        -------
+        list[dict]
+            Snapshot sorted newest-first by ``created_at`` (descending).
+        """
+        async with self._lock:
+            snapshot: list[dict] = []
+            for entry in self._entries.values():
+                is_expired = entry.is_expired
+                if is_expired and not include_expired:
+                    continue
+                # Prefer the caller-supplied file_name when present;
+                # otherwise derive a basename from the absolute path.
+                # Either way, run through os.path.basename so a value like
+                # "/abs/path/foo.png" in file_name collapses to "foo.png".
+                raw_name = entry.file_name or entry.path
+                file_name = os.path.basename(raw_name)
+                snapshot.append(
+                    {
+                        "token": entry.token,
+                        "file_name": file_name,
+                        "content_type": entry.content_type,
+                        "size": entry.size,
+                        "created_at": entry.created_at,
+                        "expires_at": entry.expires_at,
+                        "last_accessed": entry.last_accessed,
+                        "is_expired": is_expired,
+                    }
+                )
+            snapshot.sort(key=lambda item: item["created_at"], reverse=True)
+            return snapshot
+
     async def size(self) -> int:
         """Return the current number of registered entries."""
         async with self._lock:
