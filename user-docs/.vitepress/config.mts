@@ -79,6 +79,7 @@ export default defineConfig({
             { text: 'Profiles & Personalities', link: '/features/personalities' },
             { text: 'Token Tracking', link: '/features/tokens' },
             { text: 'Tool Progress', link: '/features/tools' },
+            { text: 'Dashboard Plugin', link: '/features/dashboard' },
           ],
         },
       ],

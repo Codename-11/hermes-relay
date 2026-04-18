@@ -83,7 +83,8 @@ hermes-android/
 │   ├── android_tool.py      # 18 android_* tool handlers
 │   ├── pair.py              # QR pairing implementation
 │   ├── relay/               # Canonical WSS relay (server.py, auth.py, channels/, media.py, voice.py)
-│   └── tools/               # android_navigate.py, android_notifications.py
+│   ├── tools/               # android_navigate.py, android_notifications.py
+│   └── dashboard/           # hermes-agent dashboard plugin — manifest, React UI, FastAPI proxy
 ├── relay_server/            ← Thin compat shim → plugin.relay (legacy entrypoint)
 ├── hermes_relay_bootstrap/  ← Runtime patch for vanilla upstream; removable after PR #8556
 ├── skills/devops/hermes-relay-pair/  ← /hermes-relay-pair slash command
@@ -190,6 +191,11 @@ hermes-android/
 | `install.sh` | Canonical installer — 6 steps; idempotent; drops `hermes-relay-update` shim |
 | `uninstall.sh` | Canonical uninstaller; reverses install.sh; never touches `.env` or `state.db` |
 | `hermes_relay_bootstrap/` | Runtime patch for vanilla upstream; no-op on fork/upstream-merged; remove after PR #8556 |
+| **Plugin — Dashboard** | |
+| `plugin/dashboard/manifest.json` | Declares tab, entry bundle, and FastAPI module for hermes-agent discovery |
+| `plugin/dashboard/plugin_api.py` | FastAPI router proxying 5 routes to relay over loopback |
+| `plugin/dashboard/src/index.jsx` | React root registering `hermes-relay` plugin with 4-tab shell |
+| `plugin/dashboard/dist/index.js` | Committed IIFE bundle loaded verbatim by dashboard |
 
 ## What NOT to Do
 
