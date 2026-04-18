@@ -311,8 +311,10 @@ fun RelayApp() {
         if (BuildFlavor.isSideload) {
             // VoiceViewModel.stop() isn't defined — use exitVoiceMode() which
             // is the closest semantic match (tears down the active turn and
-            // returns the UI to text mode). If/when Worker B or a later pass
-            // adds a proper stop(), swap this for vvm.stop().
+            // returns the UI to text mode). Worker B2 confirmed no stop()
+            // method exists as of the profile-switch pass, so this rename is
+            // intentional and kept as-is. If a proper stop() is added later,
+            // swap this for vvm.stop().
             connectionViewModel.registerVoiceStopCallback {
                 voiceViewModel.exitVoiceMode()
             }
@@ -831,32 +833,15 @@ fun RelayApp() {
                     ProfilesSettingsScreen(
                         profiles = profilesList,
                         activeProfileId = activeId,
-                        // Multi-profile: direct writes through profileStore —
-                        // ProfileStore is the documented single source of
-                        // truth; ConnectionViewModel doesn't expose typed
-                        // rename/revoke helpers and adding them is Worker B
-                        // territory (viewmodel orchestration).
-                        //
-                        // TODO(Worker B): expose
-                        //   renameProfile(id, label),
-                        //   revokeProfile(id) — wraps profileStore.updateProfile
-                        //     AND issues the /sessions/{prefix} DELETE against
-                        //     the relay so the server-side token is invalidated,
-                        //   removeProfile(id) — wraps the Revoke + a
-                        //     profileStore.removeProfile so the local token
-                        //     store gets deleted atomically.
-                        // until then we route rename directly through
-                        // profileStore, and revoke/remove through it too —
-                        // the server-side revoke is missing until Worker B
-                        // wires it.
+                        // Multi-profile: typed VM helpers (Worker B2) handle
+                        // the full mutations — rename persists via
+                        // ProfileStore.updateProfile; revoke issues the
+                        // server-side /sessions/{prefix} DELETE and clears
+                        // local auth; remove deletes the backing
+                        // EncryptedSharedPreferences via ProfileStore.
                         onRenameProfile = { id, newLabel ->
-                            val existing = profilesList.firstOrNull { it.id == id }
-                            if (existing != null) {
-                                profileSwitchScope.launch {
-                                    connectionViewModel.profileStore.updateProfile(
-                                        existing.copy(label = newLabel),
-                                    )
-                                }
+                            profileSwitchScope.launch {
+                                connectionViewModel.renameProfile(id, newLabel)
                             }
                         },
                         onRepairProfile = { id ->
@@ -869,26 +854,22 @@ fun RelayApp() {
                             navController.navigate(Screen.Pair.route(id))
                         },
                         onRevokeProfile = { id ->
-                            // TODO(Worker B): call the server-side revoke
-                            // endpoint here too. For now we just clear the
-                            // local paired-at stamp so the UI reflects an
-                            // unpaired state — the server still trusts the
-                            // token until its TTL expires.
-                            val existing = profilesList.firstOrNull { it.id == id }
-                            if (existing != null) {
-                                profileSwitchScope.launch {
-                                    connectionViewModel.profileStore.updateProfile(
-                                        existing.copy(
-                                            pairedAt = null,
-                                            expiresAt = null,
-                                        ),
+                            profileSwitchScope.launch {
+                                val result = connectionViewModel.revokeProfile(id)
+                                if (result.isFailure) {
+                                    // v1 constraint: revokeProfile only works
+                                    // on the active profile. Surface a snackbar
+                                    // so the user understands why nothing
+                                    // happened.
+                                    snackbarHostState.showSnackbar(
+                                        "Only the active profile can be revoked right now",
                                     )
                                 }
                             }
                         },
                         onRemoveProfile = { id ->
                             profileSwitchScope.launch {
-                                connectionViewModel.profileStore.removeProfile(id)
+                                connectionViewModel.removeProfile(id)
                             }
                         },
                         onAddProfile = {
@@ -914,28 +895,38 @@ fun RelayApp() {
                         onComplete = {
                             // Multi-profile: on successful pair,
                             //  - profileIdArg == null → new-profile add path.
-                            //    Worker B still needs to expose
-                            //    ConnectionViewModel.addProfileFromPairing()
-                            //    (or equivalent) that constructs a Profile
-                            //    from the currently-applied pairing payload
-                            //    + active URLs and calls ProfileStore.addProfile
-                            //    + ProfileStore.setActiveProfile. Until then
-                            //    the credentials still land in the active
-                            //    profile's token store (legacy single-profile
-                            //    semantics), and re-pair-into-current is what
-                            //    the user effectively gets.
-                            //  - profileIdArg != null → re-pair in place,
-                            //    which applyPairingPayload already does for
-                            //    whatever profile is currently active.
-                            //    Worker B: if we want strict per-profile
-                            //    re-pair targeting, add a switchProfile call
-                            //    before launching this route.
+                            //    Call addProfileFromPairing which creates a
+                            //    fresh Profile (with its own tokenStoreKey)
+                            //    and switches to it.
                             //
-                            // TODO(Worker B): expose addProfileFromPairing(
-                            //     label: String?, apiUrl: String, relayUrl: String
-                            // ): String (returns new profile id) so this
-                            // callback can branch on profileIdArg == null and
-                            // auto-switch to the new profile.
+                            //    **v1 pairing-token limitation:** the pair
+                            //    that just completed wrote its session token
+                            //    into the previously-active profile's token
+                            //    store — NOT the new profile's (because
+                            //    applyPairingPayload runs against the live
+                            //    authManager, which was still bound to the
+                            //    outgoing profile when the pair completed).
+                            //    The new profile therefore lands in an
+                            //    unpaired state and the user must re-pair
+                            //    it (scan a second QR while the new profile
+                            //    is active). A cleaner fix — targeting
+                            //    applyPairingPayload at a specific store
+                            //    BEFORE the pair runs — is a deferred
+                            //    follow-up.
+                            //  - profileIdArg != null → re-pair in place.
+                            //    applyPairingPayload already wrote to the
+                            //    active profile's auth store (the calling
+                            //    site switched to it before navigating), so
+                            //    there's nothing extra to do here.
+                            if (profileIdArg == null) {
+                                profileSwitchScope.launch {
+                                    connectionViewModel.addProfileFromPairing(
+                                        label = null,
+                                        apiServerUrl = connectionViewModel.apiServerUrl.value,
+                                        relayUrl = connectionViewModel.relayUrl.value,
+                                    )
+                                }
+                            }
                             navController.popBackStack()
                         },
                         onCancel = { navController.popBackStack() },

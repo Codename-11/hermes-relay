@@ -699,6 +699,150 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         profileSwitchCoordinator.registerVoiceStopCallback(callback)
     }
 
+    // --- Profile CRUD helpers (Worker B2) ---------------------------------
+    //
+    // These wrap [ProfileStore] so callers (currently RelayApp's
+    // ProfilesSettings + Pair routes) don't have to reach directly into the
+    // store for common mutations. Each method documents its scope and v1
+    // constraints.
+
+    /**
+     * Creates a new profile from completed pairing data, persists it via
+     * [ProfileStore], and switches the app to it. Returns the new profile id.
+     *
+     * Called from the Pair success handler when no existing `profileId` was
+     * passed (i.e. the "Add profile" FAB flow).
+     *
+     * **v1 pairing-token limitation:** this method is invoked AFTER
+     * [applyPairingPayload] has already run, which writes the freshly-minted
+     * session token into the **currently-active** profile's EncryptedSharedPreferences
+     * (via the active [authManager] instance). The new profile that this
+     * method creates has its own distinct [Profile.tokenStoreKey] and does
+     * NOT carry those credentials across. Consequence: immediately after
+     * "Add profile → scan QR → switch to new profile", the new profile is
+     * unpaired from the token store's perspective and the user must re-pair
+     * it (scan a second QR while the new profile is active).
+     *
+     * A cleaner fix would require targeting [applyPairingPayload] at a
+     * specific token store BEFORE the pair runs — that's a bigger refactor
+     * deferred to a follow-up. See the TODO at the top of RelayApp's Pair
+     * route for the user-facing journey.
+     */
+    suspend fun addProfileFromPairing(
+        label: String?,
+        apiServerUrl: String,
+        relayUrl: String,
+    ): String {
+        val id = java.util.UUID.randomUUID().toString()
+        val profile = Profile(
+            id = id,
+            label = label ?: Profile.extractDefaultLabel(apiServerUrl),
+            apiServerUrl = apiServerUrl,
+            relayUrl = relayUrl,
+            tokenStoreKey = Profile.buildTokenStoreKey(id),
+            pairedAt = null,
+            lastActiveSessionId = null,
+            transportHint = null,
+            expiresAt = null,
+        )
+        profileStore.addProfile(profile)
+        // Switch to the new profile so subsequent chat/bridge/voice traffic
+        // uses its (currently empty) token store. Per the KDoc above, the
+        // user will need to re-pair against this profile to populate it.
+        switchProfile(id)
+        return id
+    }
+
+    /**
+     * Updates the label on a stored profile. Persists via
+     * [ProfileStore.updateProfile]. Does not touch auth state; does not
+     * trigger a switch. No-op when the profile id is unknown.
+     */
+    suspend fun renameProfile(profileId: String, newLabel: String) {
+        val existing = profileStore.profiles.value.firstOrNull { it.id == profileId }
+            ?: return
+        profileStore.updateProfile(existing.copy(label = newLabel))
+    }
+
+    /**
+     * Revokes the profile's server-side session (`DELETE /sessions/{tokenPrefix}`)
+     * and clears the local auth material.
+     *
+     * **v1 constraint — active profile only:** if [profileId] does not match
+     * [activeProfileId] this returns [Result.failure] with a clear message
+     * and does nothing. Revoking an inactive profile would require loading
+     * its [com.hermesandroid.relay.auth.SessionTokenStore] out-of-band to
+     * read the bearer for the DELETE call, which is a bigger change — the
+     * current singleton [authManager] only reads the active profile's store.
+     * Deferred; documented as a follow-up.
+     *
+     * On success, marks the profile as unpaired (`pairedAt = null`,
+     * `expiresAt = null`, `transportHint = null`) via [ProfileStore] so the
+     * UI reflects it. Also disconnects the relay and wipes the local
+     * session token via [AuthManager.clearSession].
+     */
+    suspend fun revokeProfile(profileId: String): Result<Unit> {
+        if (profileId != activeProfileId.value) {
+            return Result.failure(
+                IllegalStateException(
+                    "revoke is limited to the active profile in v1",
+                ),
+            )
+        }
+        val existing = profileStore.profiles.value.firstOrNull { it.id == profileId }
+            ?: return Result.failure(
+                IllegalStateException("profile $profileId not found"),
+            )
+        // Token prefix = first 8 chars of the current session token.
+        // Matches the relay's `session.token[:8]` convention (see
+        // plugin/relay/server.py `token_prefix` sites).
+        val paired = authManager.currentPairedSession.value
+        if (paired != null) {
+            val prefix = paired.token.take(8)
+            val result = relayHttpClient.revokeSession(prefix)
+            if (result.isFailure) {
+                return Result.failure(
+                    result.exceptionOrNull()
+                        ?: IllegalStateException("revokeSession failed"),
+                )
+            }
+        }
+        // Clear local auth material + tear down the WSS so the reconnect
+        // loop doesn't keep re-authing with the just-revoked token.
+        clearSession()
+        profileStore.updateProfile(
+            existing.copy(
+                pairedAt = null,
+                expiresAt = null,
+                transportHint = null,
+            ),
+        )
+        return Result.success(Unit)
+    }
+
+    /**
+     * Removes a profile and its stored auth material. [ProfileStore] handles
+     * the [android.content.Context.deleteSharedPreferences] side effect for
+     * the profile's EncryptedSharedPreferences file.
+     *
+     * If the removed profile was active, this switches to another profile
+     * (if one exists) first so the app lands on a valid context; otherwise
+     * [activeProfileId] ends up null and the top bar renders "No profile"
+     * until the user adds one via Settings.
+     */
+    suspend fun removeProfile(profileId: String) {
+        val wasActive = profileId == activeProfileId.value
+        if (wasActive) {
+            val other = profileStore.profiles.value.firstOrNull { it.id != profileId }
+            if (other != null) {
+                switchProfile(other.id)
+            }
+            // If no other profile exists, ProfileStore.removeProfile will
+            // clear the active pointer on its own.
+        }
+        profileStore.removeProfile(profileId)
+    }
+
     init {
         // Wire multiplexer to connection manager (for relay/bridge/terminal)
         multiplexer.setSendCallback { envelope ->
