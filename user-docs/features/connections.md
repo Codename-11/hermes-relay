@@ -41,7 +41,7 @@ Tap **Add connection** to create a new one. This launches the standard QR pairin
 ## How this differs from personalities and profiles
 
 - **Personality** = a system prompt preset *on* one agent. Switching a personality just changes what the agent behaves like on the next message. Memory, sessions, tools, and model are unchanged.
-- **Profile** (coming in a follow-up release) = an agent profile defined in the server's config — a named combination of model + description + optional personality that Hermes exposes. Switching a profile picks a different agent *on the same server*.
+- **Profile** = a named agent configuration (model + description) defined in the server's `~/.hermes/config.yaml`. Switching a profile picks a different agent *on the same server*. See [Profiles](./profiles.md).
 - **Connection** = a whole different Hermes server. Switching a connection changes *everything* — the conversation history, the agent's memory, the personalities and profiles that are even available to pick from.
 
 The connection chip is to the left of the personality chip in the top bar, reflecting this hierarchy: pick the server first, then pick the profile/personality *on* that server.

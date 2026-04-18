@@ -77,6 +77,7 @@ export default defineConfig({
             { text: 'Markdown Rendering', link: '/features/markdown' },
             { text: 'Reasoning Display', link: '/features/reasoning' },
             { text: 'Connections', link: '/features/connections' },
+            { text: 'Profiles', link: '/features/profiles' },
             { text: 'Personalities', link: '/features/personalities' },
             { text: 'Token Tracking', link: '/features/tokens' },
             { text: 'Tool Progress', link: '/features/tools' },
