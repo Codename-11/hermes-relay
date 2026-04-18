@@ -118,7 +118,8 @@ hermes-android/
 - **Conventional Commits:** `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 - **Feature branches** as of 2026-04-13. Straight-to-main for single-file typos only.
 - **Merge style:** `git merge --no-ff` — no squash. Preserves per-commit trail for agent-team branches.
-- **Version bumps on `main` only.** Use `bash scripts/bump-version.sh <new-version>` to bump all three sources atomically (`gradle/libs.versions.toml`, `pyproject.toml`, `plugin/relay/__init__.py`).
+- **Merging ≠ releasing.** Feature branches land on `main` continuously as CI goes green; each PR appends to `[Unreleased]` in `CHANGELOG.md`. Releases are a separate act — cut when accumulated state is worth shipping, not per-feature. See `RELEASE.md` "When to cut a release."
+- **Version bumps on `main` only.** Use `bash scripts/bump-version.sh <new-version>` to bump all three sources atomically (`gradle/libs.versions.toml`, `pyproject.toml`, `plugin/relay/__init__.py`). Happens at release-prep, not per-feature.
 - **Branch protection** on `main` since 0.3.0 — PRs must pass CI; direct push blocked except `release: vX.Y.Z`.
 
 ### Testing
