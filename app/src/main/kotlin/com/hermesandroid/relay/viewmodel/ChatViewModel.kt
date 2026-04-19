@@ -213,6 +213,23 @@ class ChatViewModel : ViewModel() {
     val messages: StateFlow<List<ChatMessage>>
         get() = chatHandler?.messages ?: _emptyMessages
 
+    /**
+     * True while an SSE chat turn is in flight (between request-start and
+     * `run.completed` / `stream-end`). Consumed by the chat UI (Stop vs Send
+     * button, StreamingDots) AND by the agent/connection info sheet to gate
+     * mid-stream side-effects:
+     *
+     *   - [com.hermesandroid.relay.ui.components.ConnectionInfoSheet] — disables
+     *     the profile + personality pickers (`enabled = !isStreaming`) so a
+     *     radio tap during an in-flight turn can't race the already-dispatched
+     *     request. The sheet may also surface a short subtitle banner
+     *     ("Streaming — profile locked until response completes"); this
+     *     StateFlow is the authoritative source for that gate.
+     *
+     * Derived from [ChatHandler.isStreaming], so it flips true on every
+     * send path (runs, sessions, compat) and flips false on any terminal
+     * event (complete / error / cancel).
+     */
     val isStreaming: StateFlow<Boolean>
         get() = chatHandler?.isStreaming ?: _emptyStreaming
 
