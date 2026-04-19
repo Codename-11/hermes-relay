@@ -57,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.ui.components.ConnectionStatusRow
+import com.hermesandroid.relay.ui.components.ProfileInspectorCard
 import com.hermesandroid.relay.viewmodel.asBadgeState
 import com.hermesandroid.relay.viewmodel.statusText
 import com.hermesandroid.relay.ui.theme.gradientBorder
@@ -108,6 +109,13 @@ fun SettingsScreen(
     onNavigateToPairedDevices: () -> Unit,
     onNavigateToDeveloperSettings: () -> Unit,
     onNavigateToAbout: () -> Unit,
+    // Profile Inspector — opens the full-screen viewer showing Config,
+    // SOUL, Memory, and Skills for the currently-active profile. Called
+    // with the profile name so RelayApp can build the nav route. The
+    // card itself is disabled (half-alpha, no-op onClick) when no
+    // profile is selected yet — it stays visible so the feature is
+    // discoverable before a pair-and-pick happens.
+    onNavigateToProfileInspector: (profileName: String) -> Unit,
 ) {
     val context = LocalContext.current
     val isDarkTheme = isSystemInDarkTheme()
@@ -179,6 +187,18 @@ fun SettingsScreen(
                 ),
                 isCustomized = selectedProfile != null || selectedPersonality != "default",
                 onClick = onNavigateToChatWithAgentSheet,
+                isDarkTheme = isDarkTheme,
+            )
+
+            // ── Inspect Agent ──────────────────────────────────────────
+            // Opens the full-screen ProfileInspectorScreen for the
+            // currently-active profile. Kept directly under
+            // ActiveAgentCard so the pairing "active agent → inspect it"
+            // reads naturally from top to bottom. Disabled state is
+            // rendered by the card itself when selectedProfile is null.
+            ProfileInspectorCard(
+                activeProfile = selectedProfile,
+                onClick = { profileName -> onNavigateToProfileInspector(profileName) },
                 isDarkTheme = isDarkTheme,
             )
 

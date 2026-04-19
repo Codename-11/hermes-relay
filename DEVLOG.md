@@ -1,5 +1,31 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-18 — Profile Inspector UI (v0.7.0)
+
+**Branch:** `feature/profile-inspector-ui`. Kotlin-worker slice of the v0.7.0 Profile Inspector feature — Python worker runs in parallel and owns the `/soul` + `/memory` relay endpoints. Two feature commits + docs.
+
+**Shipped (Kotlin).**
+
+- **`RelayProfileInspectorClient` + wire models.** New read-only HTTP client for the four inspector endpoints (`/api/profiles/{name}/config`, `/skills`, `/soul`, `/memory`) mirroring `RelayHttpClient`'s constructor shape (OkHttp, lazy bearer-token provider, `ws://` → `http://` URL flip). All four fetch methods return `Result<T>` and hop to `Dispatchers.IO` before any network I/O — reinforcing the v0.6.0 post-mortem fix for `NetworkOnMainThreadException` in the voice client. Profile names are URL-encoded before being spliced into the path so names with spaces / non-ASCII characters don't blow up the route. Wire models (`ProfileConfigResponse`, `ProfileSkillsResponse`, `ProfileSoulResponse`, `ProfileMemoryResponse`) are `@Serializable` with snake_case → camelCase mapping via `@SerialName`. Optional wire fields (`truncated`, `readonly`, `enabled`) default to safe values so pre-v0.7.0 relays that omit them deserialize cleanly.
+- **`ProfileInspectorScreen` (4 tabs).** Config renders as a collapsible JSON tree (nested objects click to expand, monospace leaf values, 120-char truncation). SOUL is a scrollable monospace box with byte-size caption + truncation banner when the server flags the content as sliced; absent SOUL renders an empty-state with the expected path. Memory is a list of expandable cards per entry (filename + size in the header, content revealed on tap, per-entry truncation banner). Skills groups by category with a "(disabled)" label on skills where `enabled=false`. Top-bar Refresh icon fires `loadAll()`; each pane has its own inline Retry button on error state. PullToRefresh was skipped in favour of the explicit Refresh icon + per-section Retry — matches `PairedDevicesScreen`'s "still-experimental PullRefresh" note.
+- **`ProfileInspectorViewModel`.** Four independent `LoadState<T>` flows — one per section — so a slow `/memory` fetch never blocks the already-arrived `/config` tab. Lazy (no fetch until `loadAll()`) and stateful per-section (`refreshSection(InspectorSection.Config)` re-fetches just that tab). Profile name comes in via `SavedStateHandle` so a process-death restore inspects the same profile. The VM is keyed off the profile name in the nav backstack so entering a different profile produces a fresh VM rather than reusing stale state.
+- **`ProfileInspectorCard` in Settings.** Sits directly under `ActiveAgentCard` so the "active agent → inspect it" reads naturally top-to-bottom. When no profile is selected, the card renders at 50% alpha with "No active agent" and becomes a no-op — kept visible (not hidden) so the feature stays discoverable before a pair-and-pick happens.
+- **`Screen.ProfileInspector` nav destination.** Typed String path arg, registered via a tiny `ViewModelProvider.Factory` that pulls `SavedStateHandle` out of `CreationExtras` so nav args propagate into the VM constructor cleanly. Back navigation pops the destination and the VM is GC'd with it.
+
+**Key architectural decisions.**
+
+1. **Four independent load states, not one "screen state".** Each section's flow transitions Idle → Loading → Loaded/Error independently. One combined state would have meant the fastest-arriving tab gets blocked by the slowest — unnecessary UX cost given the 3 - 4 tabs the user flips between.
+2. **URL-encoded profile-name splice, not an OkHttp path segment.** We use `URLEncoder.encode(..., "UTF-8").replace("+", "%20")` before splicing into the literal path string, then build the `HttpUrl` from the full string. OkHttp's `addPathSegment` would re-encode and produce double-encoding for profile names with `%` already in them (pathological but possible). A single round of encoding is the safe choice.
+3. **ViewModel keyed on nav arg.** `viewModel(key = "profile-inspector-$name", ...)` means the same profile navigated to twice yields the same VM (back-stack reuse), but switching to profile B produces a fresh VM — avoids the "I opened inspector for axiom, changed profiles, reopened and saw axiom's data" class of bug.
+
+**Deferred.**
+
+- **Pull-to-refresh gesture.** Explicit Refresh button is enough for v0.7.0; if users ask for the gesture we'll revisit once Material3's `PullToRefreshBox` graduates out of experimental.
+- **Edit-in-place.** Inspector is strictly read-only by design. Editing is still "SSH to the server and `$EDITOR config.yaml`" territory. A "Copy to clipboard" affordance on each section is a possible follow-up if users ask for it.
+- **MockWebServer integration tests.** `testImplementation` doesn't include MockWebServer and the spec forbids adding deps for this slice — we covered wire-contract parsing + URL encoding + required-field enforcement via JVM-local tests, and the client's actual network path is exercised by the on-device relay smoke test.
+
+**Upstream dependency.** Soul and Memory endpoints land via the parallel Python worker on the same branch. The Kotlin side is fetch-and-render — if either endpoint returns a 5xx / 404 before the Python change merges, the relevant tab just shows a Retry error state and the rest of the inspector keeps working.
+
 ## 2026-04-18 — Profile metadata + read-only config API (v0.7.0 groundwork)
 
 **Branch:** `feature/profile-config-readonly`. Kotlin-worker slice of the v0.7.0 groundwork (Python-worker slice runs in parallel, owns the relay-side wire contract). Three feature commits + docs.
