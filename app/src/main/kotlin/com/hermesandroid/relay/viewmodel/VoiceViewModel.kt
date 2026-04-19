@@ -137,6 +137,45 @@ data class DestructiveCountdownState(
 )
 
 /**
+ * Rolling telemetry snapshot for the voice pipeline. Exposed by
+ * [VoiceViewModel.voiceStats] for the Stats-for-Nerds "Voice" section.
+ *
+ * All fields are session-scoped — they reset when the VM is recreated.
+ * The VM updates this via [update]-style copies on significant events
+ * (STT call, TTS call, barge-in, threshold change, state transition);
+ * high-frequency amplitude ticks do NOT update this so the StateFlow
+ * doesn't thrash recomposition.
+ */
+data class VoiceStats(
+    /** Last-heard transcript text (unbounded; UI truncates). */
+    val lastTranscript: String = "",
+    /** Most recent STT round-trip in ms (upload + decode). */
+    val lastSttLatencyMs: Long = 0L,
+    /** Cumulative STT bytes uploaded this session. */
+    val sttBytesUploaded: Long = 0L,
+    /** Number of STT calls completed this session. */
+    val sttCallCount: Int = 0,
+    /** Last-synthesized sentence (unbounded; UI truncates). */
+    val lastSynthesizedSentence: String = "",
+    /** Rolling window of TTS per-sentence latency (last 5). */
+    val recentTtsLatenciesMs: List<Long> = emptyList(),
+    /** Cumulative TTS bytes received this session. */
+    val ttsBytesReceived: Long = 0L,
+    /** Number of TTS calls completed this session. */
+    val ttsCallCount: Int = 0,
+    /** Count of barge-in hard-interrupts this session. */
+    val bargeInCount: Int = 0,
+    /** Currently configured silence-to-stop threshold in ms. */
+    val vadThresholdMs: Long = 0L,
+    /** Current interaction mode ("tap" / "hold" / "continuous"). */
+    val interactionMode: String = "tap",
+    /** Last player state tag ("idle" / "playing" / "paused"). */
+    val playerState: String = "idle",
+    /** Current TTS queue depth (pending + in-synth + in-play). */
+    val ttsQueueDepth: Int = 0,
+)
+
+/**
  * Orchestrates the voice-mode turn cycle:
  *
  *   Idle → Listening (record mic) → Transcribing (upload) → Thinking
@@ -272,6 +311,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(VoiceUiState())
     val uiState: StateFlow<VoiceUiState> = _uiState.asStateFlow()
+
+    // Rolling voice pipeline telemetry for StatsForNerds → Voice section.
+    // Updated on discrete lifecycle events (turn start/stop, STT call
+    // complete, TTS call complete, barge-in fire, threshold read, state
+    // transition) rather than on every amplitude tick so the StateFlow
+    // stays recomposition-cheap.
+    private val _voiceStats = MutableStateFlow(VoiceStats())
+    val voiceStats: StateFlow<VoiceStats> = _voiceStats.asStateFlow()
 
     // One-shot snackbar stream. DROP_OLDEST so a burst of errors during a
     // flaky turn doesn't back-pressure the producer — we only need to show
@@ -588,6 +635,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     if (_uiState.value.interactionMode != mode) {
                         _uiState.update { it.copy(interactionMode = mode) }
                     }
+                    // Mirror the user-facing settings into the voiceStats
+                    // snapshot so StatsForNerds → Voice reflects live values.
+                    _voiceStats.update {
+                        it.copy(
+                            vadThresholdMs = settings.silenceThresholdMs,
+                            interactionMode = settings.interactionMode,
+                        )
+                    }
                 }
             }
         }
@@ -676,6 +731,38 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
         startTtsConsumer()
         bridgeAmplitudeFlows()
+        startVoiceStatsStateMirror()
+    }
+
+    /**
+     * Mirror the coarse player state + queue depth into [voiceStats].
+     * Runs for the lifetime of the VM; cheap — maps over discrete
+     * VoiceState enum changes, not the per-frame amplitude stream.
+     */
+    private fun startVoiceStatsStateMirror() {
+        viewModelScope.launch {
+            // Map VoiceUiState.state → playerState label. We only care
+            // about Speaking (→ "playing"), Idle (→ "idle"), and anything
+            // else ("paused" / "busy"). Bucketed coarsely so the stats
+            // panel doesn't flicker.
+            _uiState.collect { ui ->
+                val label = when (ui.state) {
+                    VoiceState.Speaking -> "playing"
+                    VoiceState.Listening, VoiceState.Transcribing,
+                    VoiceState.Thinking -> "busy"
+                    VoiceState.Error -> "error"
+                    VoiceState.Idle -> "idle"
+                }
+                val depth = pendingInTtsQueue.get().coerceAtLeast(0)
+                _voiceStats.update {
+                    if (it.playerState == label && it.ttsQueueDepth == depth) {
+                        it
+                    } else {
+                        it.copy(playerState = label, ttsQueueDepth = depth)
+                    }
+                }
+            }
+        }
     }
 
     fun setInteractionMode(mode: InteractionMode) {
@@ -1030,7 +1117,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
         // Transcribe
         _uiState.update { it.copy(state = VoiceState.Transcribing) }
+        val sttStartedAtMs = System.currentTimeMillis()
+        val audioBytes = try { audioFile.length() } catch (_: Exception) { 0L }
         val transcribeResult = client.transcribe(audioFile)
+        val sttLatencyMs = System.currentTimeMillis() - sttStartedAtMs
         if (transcribeResult.isFailure) {
             val err = transcribeResult.exceptionOrNull()
             Log.w(TAG, "transcribe failed: ${err?.message}")
@@ -1041,6 +1131,15 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         if (userText.isBlank()) {
             setError("No speech detected")
             return
+        }
+        // Record successful STT in the voiceStats snapshot.
+        _voiceStats.update { s ->
+            s.copy(
+                lastTranscript = userText,
+                lastSttLatencyMs = sttLatencyMs,
+                sttBytesUploaded = s.sttBytesUploaded + audioBytes,
+                sttCallCount = s.sttCallCount + 1,
+            )
         }
 
         _uiState.update {
@@ -1503,6 +1602,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             sentences = ttsQueue,
             output = queue,
             synthesize = { sentence ->
+                val synthStartedAtMs = System.currentTimeMillis()
                 try {
                     val client = voiceClient
                     val result = if (client == null) {
@@ -1518,6 +1618,20 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     // user's screen shows it skipped.
                     if (result.isSuccess) {
                         spokenChunks.add(sentence)
+                        // Record successful TTS in the voiceStats snapshot.
+                        val latencyMs = System.currentTimeMillis() - synthStartedAtMs
+                        val fileBytes = try {
+                            result.getOrNull()?.length() ?: 0L
+                        } catch (_: Exception) { 0L }
+                        _voiceStats.update { s ->
+                            val nextLatencies = (s.recentTtsLatenciesMs + latencyMs).takeLast(5)
+                            s.copy(
+                                lastSynthesizedSentence = sentence,
+                                recentTtsLatenciesMs = nextLatencies,
+                                ttsBytesReceived = s.ttsBytesReceived + fileBytes,
+                                ttsCallCount = s.ttsCallCount + 1,
+                            )
+                        }
                     }
                     result
                 } finally {
@@ -1745,6 +1859,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     internal fun onBargeInDetected() {
         duckingWatchdog?.cancel(); duckingWatchdog = null
         lastInterruptedAtChunkIndex = _currentPlayingChunkIndex.value
+        _voiceStats.update { it.copy(bargeInCount = it.bargeInCount + 1) }
 
         // interruptSpeaking tears down the listener itself, so subsequent
         // bargeInDetected emissions are impossible until the next

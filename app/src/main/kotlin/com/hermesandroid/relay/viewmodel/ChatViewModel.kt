@@ -14,6 +14,7 @@ import com.hermesandroid.relay.data.MediaSettings
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.ToolCallEvent
 import com.hermesandroid.relay.network.HermesApiClient
 import com.hermesandroid.relay.network.RelayHttpClient
 import com.hermesandroid.relay.network.handlers.ChatHandler
@@ -74,6 +75,9 @@ class ChatViewModel : ViewModel() {
         // `send()` below for the construction site.
         // === END PHASE3-status ===
         const val MEDIA_TAP_TO_DOWNLOAD = "Tap to download"
+
+        /** Upper bound on the rolling tool-call history flow. */
+        const val TOOL_CALL_HISTORY_LIMIT = 10
     }
 
     /** Callback to persist session ID — set by RelayApp */
@@ -97,6 +101,25 @@ class ChatViewModel : ViewModel() {
     // --- Message queue ---
     private val _queuedMessages = MutableStateFlow<List<String>>(emptyList())
     val queuedMessages: StateFlow<List<String>> = _queuedMessages.asStateFlow()
+
+    /**
+     * Recent tool-call timeline for the Stats-for-Nerds + Timeline views.
+     *
+     * Derived from [ChatHandler.messages] once [initialize] runs. We keep
+     * the last [TOOL_CALL_HISTORY_LIMIT] tool calls across ALL assistant
+     * messages in the current session so the stats panel can show a
+     * stable rolling window even as the chat scrolls past older turns.
+     *
+     * Updated on every [messages] emission — each update is O(N * T) in
+     * messages × tool-calls-per-message, but T is small and the whole
+     * recomputation is cheap compared to the Compose recomposition pass
+     * that reads this flow anyway. No separate per-event dispatcher is
+     * needed.
+     */
+    private val _toolCallHistory =
+        MutableStateFlow<List<ToolCallEvent>>(emptyList())
+    val toolCallHistory: StateFlow<List<ToolCallEvent>> =
+        _toolCallHistory.asStateFlow()
 
     // --- Pending attachments ---
     private val _pendingAttachments = MutableStateFlow<List<Attachment>>(emptyList())
@@ -247,6 +270,35 @@ class ChatViewModel : ViewModel() {
         this.chatHandler = chatHandler
         fetchSkills()
         fetchPersonalities()
+        // Keep the tool-call history in sync with the active chat handler's
+        // messages. Subscribed on every initialize() call so a replaced
+        // handler (connection switch) picks up fresh events without leaking
+        // the previous connection's tail.
+        viewModelScope.launch {
+            chatHandler.messages.collect { msgs ->
+                val events = msgs
+                    .asSequence()
+                    .flatMap { msg -> msg.toolCalls.asSequence() }
+                    .map { tc ->
+                        ToolCallEvent(
+                            id = tc.id ?: "${tc.name}-${tc.startedAt}",
+                            name = tc.name,
+                            startedAtMs = tc.startedAt,
+                            completedAtMs = tc.completedAt,
+                            isComplete = tc.isComplete,
+                            success = tc.success,
+                            resultSummary = tc.result,
+                            errorSummary = tc.error,
+                        )
+                    }
+                    .toList()
+                    // Newest-first ordering for the UI — tool calls are
+                    // rare enough that re-sorting on every update is cheap.
+                    .sortedByDescending { it.completedAtMs ?: it.startedAtMs }
+                    .take(TOOL_CALL_HISTORY_LIMIT)
+                _toolCallHistory.value = events
+            }
+        }
     }
 
     /**

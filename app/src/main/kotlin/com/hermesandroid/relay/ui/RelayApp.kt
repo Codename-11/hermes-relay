@@ -1162,7 +1162,9 @@ fun RelayApp() {
                 composable(Screen.Analytics.route) {
                     AnalyticsScreen(
                         connectionViewModel = connectionViewModel,
-                        onBack = { navController.popBackStack() }
+                        onBack = { navController.popBackStack() },
+                        voiceViewModel = voiceViewModel,
+                        chatViewModel = chatViewModel,
                     )
                 }
                 composable(Screen.DeveloperSettings.route) {
