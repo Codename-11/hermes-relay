@@ -1847,6 +1847,103 @@ async def handle_profile_skills(request: web.Request) -> web.Response:
     )
 
 
+# ── Profile-scoped SOUL.md read endpoint ────────────────────────────────────
+#
+# Same auth + path-traversal model as ``/config`` and ``/skills`` above.
+# Feeds the phone's Profile Inspector viewer — READ ONLY. Content is
+# capped to a phone-safe size (200KB). The Inspector is a viewer, not a
+# diff tool — see docs/decisions.md §22.
+
+# Max bytes of SOUL.md content returned inline before truncation.
+_PROFILE_SOUL_MAX_BYTES = 200 * 1024
+
+
+def _read_profile_soul(soul_path: Path) -> tuple[str, bool, int]:
+    """Read ``SOUL.md`` with a 200KB inline cap.
+
+    Returns ``(content, truncated, size_bytes)`` where ``size_bytes`` is
+    the file's on-disk size (not the length of the returned string). May
+    raise ``OSError``/``UnicodeDecodeError`` — callers translate those
+    into HTTP 500 with ``error: "soul_read_failed"``.
+    """
+    size_bytes = soul_path.stat().st_size
+    with open(soul_path, "r", encoding="utf-8") as fh:
+        content = fh.read(_PROFILE_SOUL_MAX_BYTES + 1)
+    if len(content) > _PROFILE_SOUL_MAX_BYTES:
+        return content[:_PROFILE_SOUL_MAX_BYTES], True, size_bytes
+    return content, False, size_bytes
+
+
+async def handle_profile_soul(request: web.Request) -> web.Response:
+    """Return the raw ``SOUL.md`` for a named profile.
+
+    GET /api/profiles/{name}/soul
+      → 200 {"profile", "path", "content", "exists", "size_bytes", [truncated]}
+      → 401 missing/invalid bearer (remote callers only)
+      → 404 {"error": "profile_not_found", "profile": name}
+      → 500 {"error": "soul_read_failed", "detail": "..."}
+
+    Absent SOUL.md is NOT an error — returns 200 with ``exists: false``
+    and an empty string body. Content over 200KB is truncated with
+    ``truncated: true``.
+    """
+    is_loopback = request.remote in ("127.0.0.1", "::1")
+    if is_loopback:
+        server: RelayServer = request.app["server"]
+    else:
+        server, _session = _require_bearer_session(request)
+
+    name = request.match_info.get("name", "").strip()
+    if not name:
+        return web.json_response(
+            {"error": "profile_not_found", "profile": name}, status=404
+        )
+
+    home = _resolve_profile_home(server, name)
+    if home is None:
+        return web.json_response(
+            {"error": "profile_not_found", "profile": name}, status=404
+        )
+
+    soul_path = home / "SOUL.md"
+
+    if not soul_path.is_file():
+        return web.json_response(
+            {
+                "profile": name,
+                "path": str(soul_path),
+                "content": "",
+                "exists": False,
+                "size_bytes": 0,
+            }
+        )
+
+    try:
+        content, truncated, size_bytes = _read_profile_soul(soul_path)
+    except Exception as exc:
+        logger.warning(
+            "Profile SOUL read failed for %r at %s: %s",
+            name,
+            soul_path,
+            exc,
+        )
+        return web.json_response(
+            {"error": "soul_read_failed", "detail": str(exc)},
+            status=500,
+        )
+
+    payload: dict[str, Any] = {
+        "profile": name,
+        "path": str(soul_path),
+        "content": content,
+        "exists": True,
+        "size_bytes": size_bytes,
+    }
+    if truncated:
+        payload["truncated"] = True
+    return web.json_response(payload)
+
+
 # === PHASE3-notif-listener: notifications HTTP routes ===
 #
 # Bearer-auth'd HTTP read endpoint for the cached notification deque
@@ -2414,6 +2511,9 @@ def create_app(config: RelayConfig) -> web.Application:
     )
     app.router.add_get(
         "/api/profiles/{name}/skills", handle_profile_skills
+    )
+    app.router.add_get(
+        "/api/profiles/{name}/soul", handle_profile_soul
     )
     # === END PHASE3-notif-listener ===
 
