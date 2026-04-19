@@ -252,13 +252,40 @@ fun RelayApp() {
     // One-time init: the terminal channel ViewModel registers with the shared
     // multiplexer and observes the relay connection state so it can attach/
     // reattach automatically on network changes.
+    val terminalAppContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
     LaunchedEffect(Unit) {
         terminalViewModel.initialize(
             multiplexer = connectionViewModel.multiplexer,
             connectionState = connectionViewModel.relayConnectionState,
             authState = connectionViewModel.authState,
-            authManager = connectionViewModel.authManager
+            authManager = connectionViewModel.authManager,
+            tabNameStore = com.hermesandroid.relay.data.TerminalTabNameStore(terminalAppContext),
         )
+    }
+
+    // Cold-start relay kick.
+    //
+    // The ON_RESUME observer installed below in DisposableEffect misses the
+    // Activity's very first ON_RESUME because DisposableEffect attaches the
+    // observer AFTER the Activity has already resumed — LifecycleEventObserver
+    // does not fire state transitions retroactively, it only sees *future*
+    // events. That meant cold-start users had a disconnected relay UI until
+    // they navigated to Settings (whose own `LaunchedEffect(Unit)` fires
+    // `reconnectIfStale()` on entry) or backgrounded + foregrounded the app
+    // to trigger a fresh ON_RESUME.
+    //
+    // Watching authState here handles both branches: on cold start the
+    // persisted session rehydrates asynchronously from AuthManager and flips
+    // authState → Paired after DataStore + crypto init. That transition fires
+    // this LaunchedEffect, which kicks the WSS handshake regardless of which
+    // tab the user is looking at. reconnectIfStale() is cheap and
+    // self-guarding (paired && disconnected && hasUrl) so the second firing
+    // on any later Paired-refresh is a no-op.
+    val coldStartAuthState by connectionViewModel.authState.collectAsState()
+    LaunchedEffect(coldStartAuthState) {
+        if (coldStartAuthState is AuthState.Paired) {
+            connectionViewModel.reconnectIfStale()
+        }
     }
 
     // Lifecycle-aware revalidation. ON_RESUME (every time the app comes

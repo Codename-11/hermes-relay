@@ -47,7 +47,10 @@ fun ExtraKeysToolbar(
     onCtrlToggle: () -> Unit,
     onAltToggle: () -> Unit,
     onArrow: (SpecialKey) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onScrollUp: (() -> Unit)? = null,
+    onScrollDown: (() -> Unit)? = null,
+    onScrollToBottom: (() -> Unit)? = null,
 ) {
     val haptic = LocalHapticFeedback.current
     val containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
@@ -135,6 +138,51 @@ fun ExtraKeysToolbar(
                 onArrow(SpecialKey.ARROW_RIGHT)
             }
         )
+
+        // Scrollback controls — target xterm.js's viewport, NOT the remote
+        // PTY. Unlike the arrow keys above (which send ANSI escapes into the
+        // running shell), these just move the local scrollback window, so
+        // the user can look at older output without disturbing whatever the
+        // shell thinks the cursor position is.
+        if (onScrollUp != null || onScrollDown != null) {
+            Spacer(modifier = Modifier.width(4.dp))
+        }
+        onScrollUp?.let { scrollUp ->
+            ToolbarKey(
+                label = "\u21D1", // upwards double arrow — distinct from ARROW_UP
+                active = false,
+                weight = 1f,
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    scrollUp()
+                }
+            )
+        }
+        onScrollDown?.let { scrollDown ->
+            ToolbarKey(
+                label = "\u21D3", // downwards double arrow
+                active = false,
+                weight = 1f,
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    scrollDown()
+                }
+            )
+        }
+        // "Jump to bottom" — small and always present when any scroll
+        // callback is. Covers the case where the user has scrolled way up
+        // and wants to snap back without swiping endlessly.
+        onScrollToBottom?.let { scrollToBottom ->
+            ToolbarKey(
+                label = "\u21F2", // south-east double arrow; reads as "end"
+                active = false,
+                weight = 1f,
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    scrollToBottom()
+                }
+            )
+        }
     }
 }
 

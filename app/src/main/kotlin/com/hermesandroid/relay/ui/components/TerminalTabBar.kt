@@ -145,6 +145,21 @@ private fun TerminalTabChip(
             fontFamily = FontFamily.Monospace,
             style = MaterialTheme.typography.labelMedium,
         )
+        // Friendly display name if set — truncates hard at 12 chars so a
+        // long name can't blow up the tab strip. The number is always
+        // shown (above) so the tab stays identifiable even when the name
+        // is long enough to visibly ellipsize.
+        val friendly = tab.displayName
+        if (!friendly.isNullOrBlank()) {
+            Text(
+                text = friendly.take(12).let { s ->
+                    if (friendly.length > 12) "$s\u2026" else s
+                },
+                color = fg.copy(alpha = if (isActive) 0.95f else 0.75f),
+                fontWeight = FontWeight.Medium,
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
         // Show a small × on the active tab so users can close it without
         // discovering the long-press gesture. Hidden when canClose is false
         // (last remaining tab) or on background tabs to keep the strip
