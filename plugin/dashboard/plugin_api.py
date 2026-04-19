@@ -250,6 +250,13 @@ async def mint_pairing(body: dict[str, Any] = Body(default_factory=dict)) -> Any
                                   when absent and the caller has pinned
                                   one via ``PUT /remote-access/public-url``
                                   we fall back to that stored value.
+      - prefer: "lan"|"tailscale"|"public"|...
+                                  Promotes the named role to priority 0
+                                  with the rest renumbered in their
+                                  natural order. Warns (server-side
+                                  stderr) when the named role isn't in
+                                  the detected candidates and emits the
+                                  natural order instead.
 
     The returned ``qr_payload`` matches the schema in the Android app's
     ``QrPairingScanner.kt``: top-level host/port/key/tls configure the
@@ -258,6 +265,7 @@ async def mint_pairing(body: dict[str, Any] = Body(default_factory=dict)) -> Any
     """
     mode_raw = body.pop("mode", None)
     public_url_raw = body.pop("public_url", None)
+    prefer_raw = body.pop("prefer", None)
 
     if mode_raw is not None:
         mode = str(mode_raw).strip().lower()
@@ -294,6 +302,10 @@ async def mint_pairing(body: dict[str, Any] = Body(default_factory=dict)) -> Any
         api_port = int(body.get("port") or api_cfg.get("port") or 8642)
         api_tls = bool(body.get("tls") if body.get("tls") is not None else api_cfg.get("tls"))
 
+        prefer: Optional[str] = None
+        if isinstance(prefer_raw, str) and prefer_raw.strip():
+            prefer = prefer_raw.strip()
+
         try:
             endpoints = build_endpoint_candidates(
                 mode=mode,
@@ -304,6 +316,7 @@ async def mint_pairing(body: dict[str, Any] = Body(default_factory=dict)) -> Any
                 relay_port=relay_cfg["port"],
                 relay_tls=bool(relay_cfg.get("tls")),
                 public_url=effective_public_url,
+                prefer=prefer,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

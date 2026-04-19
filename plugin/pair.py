@@ -410,6 +410,7 @@ def build_endpoint_candidates(
     relay_port: int,
     relay_tls: bool,
     public_url: Optional[str] = None,
+    prefer: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     """Build the ordered ``endpoints`` array for a v3 QR payload.
 
@@ -420,6 +421,15 @@ def build_endpoint_candidates(
     could be detected (e.g. ``--mode tailscale`` on a host without
     Tailscale installed); callers should treat that as "stay on the
     single-endpoint v2 payload".
+
+    ``prefer`` (optional) names a role that should be promoted to
+    priority 0, with all other roles shifted down by one. Useful for
+    testing a specific path end-to-end ("force Tailscale even though
+    I'm on LAN") without re-ordering defaults globally. When the named
+    role is not present in the detected candidates a warning is printed
+    to stderr and the list is emitted in its natural order — callers
+    asking for something that isn't there should see it, not silently
+    get the default.
 
     Raises :class:`ValueError` if ``mode`` is unknown or ``mode=public``
     is requested without a ``public_url``.
@@ -485,6 +495,29 @@ def build_endpoint_candidates(
             raise ValueError(
                 "--mode public requires --public-url <url>"
             )
+
+    # Priority override — promote the named role to priority 0 and
+    # renumber the rest in their existing relative order. Role string
+    # matches are case-insensitive + whitespace-trimmed for
+    # operator-ergonomics, but the candidate's original ``role`` value
+    # is preserved verbatim because the HMAC canonical form requires it.
+    if prefer:
+        wanted = prefer.strip().lower()
+        idx = next(
+            (i for i, c in enumerate(candidates) if str(c.get("role", "")).lower() == wanted),
+            -1,
+        )
+        if idx < 0:
+            print(
+                f"  [warn] --prefer {prefer!r}: role not in candidates "
+                f"{[c.get('role') for c in candidates]}; emitting natural order",
+                file=sys.stderr,
+            )
+        elif idx > 0:
+            promoted = candidates.pop(idx)
+            candidates.insert(0, promoted)
+            for new_priority, c in enumerate(candidates):
+                c["priority"] = new_priority
 
     return candidates
 
@@ -1049,6 +1082,7 @@ def pair_command(args) -> None:
     # caller falls back to the single-endpoint payload).
     mode = (getattr(args, "mode", None) or "auto").strip().lower()
     public_url = getattr(args, "public_url", None)
+    prefer = getattr(args, "prefer", None)
     endpoints: list[dict] = []
     # Only emit endpoints when the relay is present — the phone needs a
     # relay URL per candidate to drive reconnect on network switch. If
@@ -1065,6 +1099,7 @@ def pair_command(args) -> None:
                 relay_port=_relay_cfg["port"],
                 relay_tls=bool(_relay_cfg.get("tls")),
                 public_url=public_url,
+                prefer=prefer,
             )
         except ValueError as exc:
             print(f"  [error] --mode/--public-url: {exc}", file=sys.stderr)
@@ -1181,6 +1216,19 @@ if __name__ == "__main__":
             "Public hostname for a reverse proxy / Cloudflare Tunnel "
             "(e.g. https://hermes.example.com). Added as a role=public "
             "endpoint candidate in the QR. Must be http:// or https://."
+        ),
+    )
+    parser.add_argument(
+        "--prefer",
+        dest="prefer",
+        default=None,
+        help=(
+            "Promote a named role to priority 0 (highest). Any open-vocab "
+            "role string accepted — commonly 'lan' / 'tailscale' / 'public'. "
+            "Role matching is case-insensitive. Example: "
+            "'--mode auto --prefer tailscale' emits all detected modes but "
+            "with Tailscale as the first-probed endpoint. Warns to stderr "
+            "if the named role isn't in the detected candidates."
         ),
     )
     pair_command(parser.parse_args())

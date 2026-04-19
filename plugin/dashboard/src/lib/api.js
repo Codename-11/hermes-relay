@@ -98,11 +98,14 @@ export function probeEndpoints(candidates) {
  *
  * ``mode`` is one of ``auto`` / ``lan`` / ``tailscale`` / ``public``.
  * ``publicUrl`` is optional except when ``mode === 'public'``.
+ * ``prefer`` (optional, open-vocab role string) promotes the named
+ * role to priority 0. Empty/null/undefined → no priority override.
  */
-export function mintPairingWithMode({ mode, publicUrl, ...rest } = {}) {
+export function mintPairingWithMode({ mode, publicUrl, prefer, ...rest } = {}) {
   const body = { ...rest };
   if (mode) body.mode = mode;
   if (publicUrl !== undefined) body.public_url = publicUrl;
+  if (prefer) body.prefer = prefer;
   return fetchJSON("/pairing", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

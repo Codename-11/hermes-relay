@@ -301,7 +301,7 @@ function PublicUrlCard({ initialUrl, onSaved }) {
   );
 }
 
-function EndpointPreviewCard({ endpoints, reachability, onProbe, onRegenerate, busy, qrPayload }) {
+function EndpointPreviewCard({ endpoints, reachability, onProbe, onRegenerate, busy, qrPayload, preferRole, onPreferChange }) {
   const canvasRef = useRef(null);
 
   useEffect(() => {
@@ -383,6 +383,22 @@ function EndpointPreviewCard({ endpoints, reachability, onProbe, onRegenerate, b
           </Button>
         </div>
 
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Label htmlFor="prefer-role" className="whitespace-nowrap">Prefer role:</Label>
+          <select
+            id="prefer-role"
+            className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+            value={preferRole || ""}
+            onChange={(e) => onPreferChange && onPreferChange(e.target.value || null)}
+          >
+            <option value="">(natural order — LAN → Tailscale → Public)</option>
+            <option value="lan">lan → priority 0</option>
+            <option value="tailscale">tailscale → priority 0</option>
+            <option value="public">public → priority 0</option>
+          </select>
+          <span className="whitespace-nowrap">Applies on the next "Regenerate QR".</span>
+        </div>
+
         {qrPayload ? (
           <div className="flex flex-col items-center gap-2 rounded-md border border-border bg-white p-3">
             <canvas ref={canvasRef} className="block" />
@@ -406,6 +422,7 @@ export default function RemoteAccess({ autoRefresh }) {
   const [mintResult, setMintResult] = useState(null);
   const [reachability, setReachability] = useState([]);
   const [publicUrl, setPublicUrl] = useState(null);
+  const [preferRole, setPreferRole] = useState(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -471,14 +488,17 @@ export default function RemoteAccess({ autoRefresh }) {
     setBusy("mint");
     setMintResult(null);
     try {
-      const data = await mintPairingWithMode({ mode: "auto" });
+      const data = await mintPairingWithMode({
+        mode: "auto",
+        prefer: preferRole || undefined,
+      });
       setMintResult(data || null);
     } catch (err) {
       setMintResult({ error: err && err.message ? err.message : String(err) });
     } finally {
       setBusy(null);
     }
-  }, []);
+  }, [preferRole]);
 
   const previewEndpoints = useMemo(() => {
     if (!mintResult || !mintResult.qr_payload) return [];
@@ -565,6 +585,8 @@ export default function RemoteAccess({ autoRefresh }) {
         onRegenerate={onRegenerate}
         busy={busy === "mint" || busy === "probe" ? busy : null}
         qrPayload={mintResult && mintResult.qr_payload ? mintResult.qr_payload : null}
+        preferRole={preferRole}
+        onPreferChange={setPreferRole}
       />
 
       {mintResult && mintResult.error ? (
