@@ -169,7 +169,16 @@ export default function RelayManagement({ autoRefresh }) {
                   const token = s.token || s.token_prefix || s.prefix || "";
                   const label = s.label || s.device_label || shortToken(token);
                   const lastSeen = s.last_seen || s.last_activity || s.last_seen_at;
-                  const grants = Array.isArray(s.grants) ? s.grants : s.grants ? [s.grants] : [];
+                  // The relay returns grants as a {channel: ttl_seconds} object,
+                  // not an array — wrapping that dict in a 1-element array then
+                  // rendering `{g}` inside a Badge tripped React error #31
+                  // ("objects are not valid as a React child"). Extract channel
+                  // names so each Badge child is a string.
+                  const grants = Array.isArray(s.grants)
+                    ? s.grants
+                    : s.grants && typeof s.grants === "object"
+                    ? Object.keys(s.grants)
+                    : [];
                   return (
                     <TableRow key={token || idx}>
                       <TableCell className="font-medium">{label}</TableCell>

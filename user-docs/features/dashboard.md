@@ -34,9 +34,35 @@ The landing tab. Shows:
 
 - **Relay version + uptime + health** — served by the relay's `/relay/info` endpoint. Green dot = reachable, red = `relay unreachable at 127.0.0.1:8767` (the gateway can't see your relay process; check `systemctl --user status hermes-relay`).
 - **Paired devices list** — one row per active session. Columns: device name (from the phone's `PairedDeviceInfo`), token prefix (first 8 chars — full tokens are never sent), created-at, last-seen, expires-at, per-channel grants (bridge / terminal / chat), transport hint (`wss` / `ws`).
-- **Revoke button** per row — placeholder pending the proxy route. Currently logs to the browser console; real revocation lands when the plugin grows a `DELETE /api/plugins/hermes-relay/sessions/{prefix}` proxy. Use `hermes-pair` on the server or the Android app's Paired Devices screen for real revokes in the meantime.
+- **Revoke button** per row — live. Click to pop a native browser confirm; on OK the button calls `DELETE /api/plugins/hermes-relay/sessions/{prefix}` which the plugin proxy forwards to the relay, and the list auto-reloads on success. Same effect as revoking from the Android app's Settings → Paired Devices or running `hermes-pair --revoke <prefix>` on the server.
+- **Pair new device** — button in the card header opens the [PairDialog](#pairing-a-new-device) described below.
 
 <!-- TODO: replace with real screenshot — dashboard Relay Management tab with a paired device row -->
+
+#### Pairing a new device
+
+The **Pair new device** button on the Relay Management tab is an alternative to `/hermes-relay-pair` and the `hermes-pair` CLI — same underlying pairing flow, just driven from a browser on your laptop instead of a chat or shell. Useful when you're already in the dashboard reviewing session state and want to onboard a phone without bouncing out to a terminal.
+
+**Click the button to open a PairDialog with:**
+
+- **The QR code** — freshly minted, signed, ready to scan from the Android app's onboarding or Settings → Connections → Add connection flow.
+- **The 6-character pairing code** — shown plain-text above the QR. Type this into the app's manual-entry path if your phone can't scan, or read it aloud if someone else is holding the phone.
+- **A 10-minute expiry countdown** — the code is one-shot and single-use. When it expires or after the phone claims it, close the dialog and click Pair new device again for a fresh code.
+- **A "reveal/hide" toggle on the QR** — defaults to hidden so bystanders in a shared screen can't silently scan it behind your back. Reveal explicitly when you're ready to scan.
+
+**The "Override host / port / TLS" section** is what most non-default deploys need. By default the relay fills the QR with its own LAN-visible address (`http://<LAN-IP>:8642` for the API server + `ws://<LAN-IP>:8767` for the relay), which is correct for a straight home-LAN install. You need to override when:
+
+- **Reverse proxy in front of the relay** — e.g. a Traefik-fronted `wss://relay.example.com:443`, where the dashboard itself sees `127.0.0.1:8767` but the phone needs to reach the public hostname. Set Host to `relay.example.com`, Port to `443`, TLS to `on`, and the minted QR carries those coordinates while the relay still registers the pairing code locally.
+- **Tailscale / Wireguard VPN** — phone and server are both on the tailnet but the dashboard is rendering on a different network interface. Override Host to the tailnet IP / MagicDNS name so the phone connects over the tunnel.
+- **Multi-homed server** — the relay auto-detection picks one IP but you want the phone on a different interface (e.g. a separate VLAN for IoT devices). Override to pin the address.
+
+**Override persistence.** The dashboard stores the last-used host/port/TLS values in `localStorage` per-browser, so returning to the Pair dialog in the same browser session pre-fills your overrides. Different browsers (or cleared storage) start with the relay's auto-detected defaults. The overrides are never persisted server-side — they only shape the next QR's payload.
+
+**What the minted QR contains.** Top-level `host`/`port`/`tls`/`key` describe the **Hermes API server** the phone hits for chat (defaults `:8642`, override fields labelled "API server"). The nested `relay` block carries the relay's WSS URL and the pairing code — always auto-derived from the relay's own bind config, never operator-editable, since the relay knows where phones need to connect. See `docs/spec.md` §3.3.1 for the full wire-format spec and `plugin/tests/test_pairing_mint_schema.py` for the regression guard that keeps the payload in sync with the Android parser.
+
+**If the minted QR "doesn't do anything" when scanned**, the most common cause is that the host-side API port in the override section points at the wrong service — e.g. you accidentally entered `8767` (the relay's port) in the API Host/Port fields, so the phone tries to reach the API at the relay's address. The relay validates that the URL parses but can't verify the port is actually an API gateway, so this mistake surfaces as a silent pair failure. Double-check that Host points at something serving `/v1/runs` / `/v1/chat/completions`, not your relay.
+
+<!-- TODO: replace with real screenshot — PairDialog with QR and override fields expanded -->
 
 ### Bridge Activity
 
@@ -98,7 +124,9 @@ For the full wire-shape of each route (query params, response schemas, redaction
 
 **Media Inspector shows tokens but files won't download.** That's a separate path — the inspector lists registered tokens but the actual download goes through `/media/{token}` (bearer-gated, via the phone). If the phone can't fetch a token, check the bearer's `media` grant and `RELAY_MEDIA_TTL_SECONDS` hasn't elapsed since registration.
 
-**Revoke button does nothing.** It's a placeholder — see the Deferred section on the plugin's DEVLOG entry. Use the Android app's **Settings → Paired Devices** or the `hermes-pair --revoke <prefix>` shim on the server until the proxy route lands.
+**Revoke button fails silently.** Revoke is live as of the dashboard plugin release — `DELETE /api/plugins/hermes-relay/sessions/{prefix}` is proxied to the relay. If the click confirm fires but the list doesn't update, open the browser devtools network tab and re-click: a 502 means the relay itself is unreachable (see the "Relay unreachable" item above), a 404 means the token prefix is already gone (the list auto-reloaded between the button render and your click), and a 403 means the proxy is seeing a non-loopback caller (hermes-agent's dashboard shouldn't ever hit this — check `journalctl --user -u hermes-gateway -f` for the origin).
+
+**Pair dialog mints a QR that won't pair.** Verify the host/port in the override panel: the top-level Host/Port are for the **Hermes API server** (default `:8642`), not the relay (`:8767`). If you entered the relay port in the override, the phone tries to reach the API at the relay's address and bails silently. Reset the overrides (clear the fields and click Pair new device again) and confirm the auto-detected defaults point at your actual API server.
 
 ## Security Notes
 

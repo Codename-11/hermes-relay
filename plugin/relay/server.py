@@ -32,6 +32,7 @@ import tempfile
 import time
 import uuid
 from typing import Any
+from urllib.parse import urlparse
 
 import aiohttp
 from aiohttp import web
@@ -272,18 +273,41 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
 
     Loopback-only. Used by the dashboard plugin's "pair new device" flow.
     Generates a random 6-char A-Z/0-9 code, registers it via the
-    PairingManager, then hands back the same signed JSON blob that
-    ``hermes pair`` would print so the caller can render it as a QR
-    image.
+    PairingManager, then hands back the same signed JSON blob the CLI
+    (`hermes-pair`) would print so the caller can render it as a QR.
+
+    The payload shape matches what the Android app parses in
+    ``QrPairingScanner.kt``: top-level ``host/port/key/tls`` describe the
+    direct-chat Hermes **API** server the phone will hit for chat; the
+    nested ``relay`` block describes the WSS relay connection:
+
+    ```json
+    {
+      "hermes": 2,
+      "host": "172.16.24.250", "port": 8642, "key": "<api-key>", "tls": false,
+      "relay": {"url": "ws://172.16.24.250:8767", "code": "ABC123",
+                "ttl_seconds": 604800, "transport_hint": "ws"}
+    }
+    ```
+
+    This mirrors ``pair.py``'s CLI ``build_payload(...)`` call. Before
+    2026-04-18 the endpoint put the minted code in top-level ``key`` and
+    emitted top-level ``port`` as the relay port, which broke scanning —
+    the phone treated the relay port as the API server address and the
+    relay block had no url/code for it to open a WSS against.
 
     POST /pairing/mint
-      body: {"host": "172.16.24.250", "port": 8767, "tls": false,
-             "ttl_seconds": <int optional>, "transport_hint": "wss"|"ws",
-             "grants": {...} optional}
-      → 200 {"code": "ABC123", "qr_payload": "{...}",
-             "expires_at": <unix ts>, "host": "...", "port": 8767,
-             "tls": false}
-      → 400 invalid JSON
+      body (all optional — fall back to RelayConfig defaults):
+        - host: "172.16.24.250"        API server host override (LAN IP)
+        - port: 8642                    API server port override
+        - tls: false                    API server TLS override
+        - api_key: "<token>"            API bearer token (goes in top-level
+                                        "key"; empty = open access)
+        - ttl_seconds: <int>            Session TTL
+        - transport_hint: "wss"|"ws"    Forwarded verbatim
+        - grants: {...}                 Channel TTL map
+      → 200 {ok, code, qr_payload, expires_at, host, port, tls, relay_url}
+      → 400 invalid JSON or API host can't be resolved
       → 403 non-loopback caller
     """
     _require_loopback(request)
@@ -299,21 +323,60 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         payload = {}
 
     server: RelayServer = request.app["server"]
-    host = str(payload.get("host") or server.config.host or "").strip()
-    if not host or host == "0.0.0.0":
+
+    from ..pair import build_payload, _relay_lan_base_url, _resolve_lan_ip
+
+    # ── API server info (top-level of the QR payload) ────────────────────
+    # Defaults come from ``RelayConfig.webapi_url`` (the Hermes API gateway
+    # URL the relay is fronting). The dashboard's "editable pair URL" UI
+    # overrides any of host/port/tls via the request body.
+    default_api_url = urlparse(server.config.webapi_url or "http://localhost:8642")
+    api_host_override = payload.get("host")
+    api_port_override = payload.get("port")
+    api_tls_override = payload.get("tls")
+
+    raw_api_host = str(
+        api_host_override
+        if api_host_override
+        else (default_api_url.hostname or "")
+    ).strip()
+    if not raw_api_host or raw_api_host == "0.0.0.0":
         return web.json_response(
-            {"ok": False, "error": "missing 'host' — relay binds to 0.0.0.0"},
+            {
+                "ok": False,
+                "error": "missing 'host' — API server address could not be resolved",
+            },
             status=400,
         )
-    port = int(payload.get("port") or server.config.port)
-    tls = bool(payload.get("tls", False))
+    api_host = _resolve_lan_ip(raw_api_host)
 
+    if api_port_override is not None:
+        try:
+            api_port = int(api_port_override)
+        except (TypeError, ValueError):
+            return web.json_response(
+                {"ok": False, "error": "'port' must be an integer"}, status=400
+            )
+    elif default_api_url.port is not None:
+        api_port = default_api_url.port
+    else:
+        api_port = 443 if default_api_url.scheme == "https" else 8642
+
+    if api_tls_override is not None:
+        api_tls = bool(api_tls_override)
+    else:
+        api_tls = default_api_url.scheme == "https"
+
+    api_key_raw = payload.get("api_key")
+    api_key = str(api_key_raw) if api_key_raw is not None else ""
+
+    # ── Pairing metadata ─────────────────────────────────────────────────
     ttl_seconds, grants, transport_hint, err = _parse_pairing_metadata(payload)
     if err is not None:
         return web.json_response({"ok": False, "error": err}, status=400)
 
+    # ── Mint the relay pairing code ──────────────────────────────────────
     alphabet = string.ascii_uppercase + string.digits
-    # Retry on the off-chance of a collision with an already-registered code.
     for _ in range(5):
         code = "".join(secrets.choice(alphabet) for _ in range(6))
         if server.pairing.register_code(
@@ -328,20 +391,31 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
             {"ok": False, "error": "could not mint a unique code"}, status=503
         )
 
-    from ..pair import build_payload
-
-    relay_block: dict[str, Any] | None = None
-    if ttl_seconds is not None or grants is not None or transport_hint is not None:
-        relay_block = {}
-        if ttl_seconds is not None:
-            relay_block["ttl_seconds"] = ttl_seconds
-        if grants is not None:
-            relay_block["grants"] = grants
-        if transport_hint is not None:
-            relay_block["transport_hint"] = transport_hint
+    # ── Relay block (nested in the QR payload) ───────────────────────────
+    # URL derives from the relay's own bind config — the relay knows where
+    # the phone should connect. Matches pair.py:746 exactly.
+    relay_tls = bool(server.config.ssl_cert)
+    relay_url = _relay_lan_base_url(
+        server.config.host, server.config.port, tls=relay_tls
+    )
+    relay_block: dict[str, Any] = {
+        "url": relay_url,
+        "code": code,
+    }
+    if ttl_seconds is not None:
+        relay_block["ttl_seconds"] = ttl_seconds
+    if grants is not None:
+        relay_block["grants"] = grants
+    if transport_hint is not None:
+        relay_block["transport_hint"] = transport_hint
 
     qr_payload = build_payload(
-        host=host, port=port, key=code, tls=tls, relay=relay_block, sign=True
+        host=api_host,
+        port=api_port,
+        key=api_key,
+        tls=api_tls,
+        relay=relay_block,
+        sign=True,
     )
 
     expires_at = int(time.time()) + (
@@ -349,17 +423,23 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
     )
 
     logger.info(
-        "Minted pairing code via /pairing/mint: %s (host=%s port=%d tls=%s)",
-        code, host, port, tls,
+        "Minted pairing code via /pairing/mint: %s "
+        "(api=%s://%s:%d relay=%s)",
+        code,
+        "https" if api_tls else "http",
+        api_host,
+        api_port,
+        relay_url,
     )
     return web.json_response({
         "ok": True,
         "code": code,
         "qr_payload": qr_payload,
         "expires_at": expires_at,
-        "host": host,
-        "port": port,
-        "tls": tls,
+        "host": api_host,
+        "port": api_port,
+        "tls": api_tls,
+        "relay_url": relay_url,
     })
 
 
