@@ -31,9 +31,28 @@ logger = logging.getLogger("hermes_relay.auth")
 
 # ── Rate-limit constants ─────────────────────────────────────────────────────
 
-_MAX_ATTEMPTS = 5
-_WINDOW_SECONDS = 60
-_BLOCK_SECONDS = 300  # 5 minutes
+# Session-token auth failures — strict. A bad bearer token is either an
+# attacker brute-forcing or a badly-broken client; either way a 5-minute
+# block after 5 failures is appropriate.
+_SESSION_MAX_ATTEMPTS = 5
+_SESSION_WINDOW_SECONDS = 60
+_SESSION_BLOCK_SECONDS = 300  # 5 minutes
+
+# Pairing-code auth failures — lenient. Legitimate users fumble 6-char
+# codes all the time (misread the QR, typed a 0 for O, etc.). Pair code
+# brute force is already bounded by the PairingManager TTL (10 minutes)
+# + alphabet (36^6 = ~2.2B) + single-use consumption, so we can afford
+# to be more forgiving here without opening a real attack surface.
+_PAIRING_MAX_ATTEMPTS = 10
+_PAIRING_WINDOW_SECONDS = 60
+_PAIRING_BLOCK_SECONDS = 120  # 2 minutes
+
+# Back-compat aliases (original names referenced no-longer-used but
+# kept for any third-party import that reached into the private module).
+_MAX_ATTEMPTS = _SESSION_MAX_ATTEMPTS
+_WINDOW_SECONDS = _SESSION_WINDOW_SECONDS
+_BLOCK_SECONDS = _SESSION_BLOCK_SECONDS
+
 _CLEANUP_INTERVAL = 120
 
 # ── TTL / grant defaults ─────────────────────────────────────────────────────
@@ -520,30 +539,141 @@ class SessionManager:
 # ── Rate limiter ─────────────────────────────────────────────────────────────
 
 
+@dataclass
+class RateLimitConfig:
+    """Configuration for a single rate-limit bucket.
+
+    * ``max_attempts`` — failures inside the sliding window that trigger
+      a block.
+    * ``window_seconds`` — sliding-window length over which failures
+      accumulate before being pruned.
+    * ``block_seconds`` — how long an IP stays banned after tripping
+      ``max_attempts`` within ``window_seconds``.
+    """
+
+    max_attempts: int
+    window_seconds: float
+    block_seconds: float
+
+
 class RateLimiter:
     """IP-based rate limiter for authentication attempts.
 
     Tracks failed attempts per IP within a sliding window. After
     ``max_attempts`` failures within ``window_seconds``, the IP is
     blocked for ``block_seconds``.
+
+    Pairing-code failures and session-token failures are tracked in
+    **separate buckets** — a user fumbling a 6-char pairing code should
+    get a looser threshold (default 10-in-60s → 2 min block) than a
+    misbehaving client hammering a bad session bearer (default 5-in-60s
+    → 5 min block).
+
+    Blocks themselves live in a **shared** dict keyed by IP: if the
+    pairing bucket bans you, the session bucket also rejects. This is
+    the conservative reading — "IP X is currently hostile" — and
+    simpler than per-bucket block state. Legit re-pairs clear both via
+    :meth:`clear_all_blocks` (called from the loopback pairing routes).
+
+    Backwards compat: the legacy positional constructor signature
+    ``RateLimiter(max_attempts, window_seconds, block_seconds)`` still
+    works and creates both buckets with the same config. The old
+    :meth:`record_failure` is kept as an alias for
+    :meth:`record_session_failure`.
     """
 
     def __init__(
         self,
-        max_attempts: int = _MAX_ATTEMPTS,
-        window_seconds: float = _WINDOW_SECONDS,
-        block_seconds: float = _BLOCK_SECONDS,
+        max_attempts: int | None = None,
+        window_seconds: float | None = None,
+        block_seconds: float | None = None,
+        *,
+        pairing_config: RateLimitConfig | None = None,
+        session_config: RateLimitConfig | None = None,
     ) -> None:
-        self.max_attempts = max_attempts
-        self.window_seconds = window_seconds
-        self.block_seconds = block_seconds
+        # Legacy positional constructor path — if the caller passed any
+        # of the three positional params, apply them to BOTH buckets
+        # (drop-in behavior preserved).
+        legacy_mode = (
+            max_attempts is not None
+            or window_seconds is not None
+            or block_seconds is not None
+        )
+        if legacy_mode:
+            legacy_max = (
+                max_attempts if max_attempts is not None else _SESSION_MAX_ATTEMPTS
+            )
+            legacy_win = (
+                window_seconds
+                if window_seconds is not None
+                else _SESSION_WINDOW_SECONDS
+            )
+            legacy_block = (
+                block_seconds
+                if block_seconds is not None
+                else _SESSION_BLOCK_SECONDS
+            )
+            legacy_cfg = RateLimitConfig(
+                max_attempts=legacy_max,
+                window_seconds=legacy_win,
+                block_seconds=legacy_block,
+            )
+            self._pairing_cfg = pairing_config or legacy_cfg
+            self._session_cfg = session_config or legacy_cfg
+        else:
+            self._pairing_cfg = pairing_config or RateLimitConfig(
+                max_attempts=_PAIRING_MAX_ATTEMPTS,
+                window_seconds=_PAIRING_WINDOW_SECONDS,
+                block_seconds=_PAIRING_BLOCK_SECONDS,
+            )
+            self._session_cfg = session_config or RateLimitConfig(
+                max_attempts=_SESSION_MAX_ATTEMPTS,
+                window_seconds=_SESSION_WINDOW_SECONDS,
+                block_seconds=_SESSION_BLOCK_SECONDS,
+            )
 
-        self._failures: dict[str, list[float]] = {}
+        # Two independent failure-count dicts, one per bucket.
+        self._pairing_failures: dict[str, list[float]] = {}
+        self._session_failures: dict[str, list[float]] = {}
+        # Shared block dict. Simpler to reason about; a ban is a ban.
         self._blocked: dict[str, float] = {}
         self._last_cleanup: float = 0.0
 
+        # Legacy attributes — some call sites (and tests) introspect
+        # these. Map them onto the session bucket for compatibility;
+        # session is the higher-trust bucket and the one the legacy
+        # positional constructor mirrored.
+        self.max_attempts = self._session_cfg.max_attempts
+        self.window_seconds = self._session_cfg.window_seconds
+        self.block_seconds = self._session_cfg.block_seconds
+
+    # ── Introspection ───────────────────────────────────────────────
+
+    @property
+    def pairing_config(self) -> RateLimitConfig:
+        return self._pairing_cfg
+
+    @property
+    def session_config(self) -> RateLimitConfig:
+        return self._session_cfg
+
+    @property
+    def _failures(self) -> dict[str, list[float]]:
+        """Back-compat alias used by tests that introspect combined
+        state. Returns a view-like dict: merges both bucket counts by IP
+        so assertions like ``self.assertIn("10.0.0.2", rl._failures)``
+        keep working for either code path."""
+        merged: dict[str, list[float]] = {}
+        for ip, ts in self._pairing_failures.items():
+            merged.setdefault(ip, []).extend(ts)
+        for ip, ts in self._session_failures.items():
+            merged.setdefault(ip, []).extend(ts)
+        return merged
+
+    # ── Block check ─────────────────────────────────────────────────
+
     def is_blocked(self, ip: str) -> bool:
-        """Return True if the IP is currently blocked."""
+        """Return True if the IP is currently blocked (by either bucket)."""
         self._maybe_cleanup()
         now = time.monotonic()
         until = self._blocked.get(ip)
@@ -553,29 +683,60 @@ class RateLimiter:
             del self._blocked[ip]
         return False
 
-    def record_failure(self, ip: str) -> None:
-        """Record a failed auth attempt. May trigger a block."""
+    # ── Failure recording ───────────────────────────────────────────
+
+    def _record_failure_in_bucket(
+        self,
+        ip: str,
+        failures: dict[str, list[float]],
+        cfg: RateLimitConfig,
+        bucket_name: str,
+    ) -> None:
         now = time.monotonic()
-        timestamps = self._failures.setdefault(ip, [])
+        timestamps = failures.setdefault(ip, [])
         timestamps.append(now)
 
         # Prune outside window
-        cutoff = now - self.window_seconds
-        self._failures[ip] = [t for t in timestamps if t > cutoff]
+        cutoff = now - cfg.window_seconds
+        failures[ip] = [t for t in timestamps if t > cutoff]
 
-        if len(self._failures[ip]) >= self.max_attempts:
-            self._blocked[ip] = now + self.block_seconds
-            self._failures.pop(ip, None)
+        if len(failures[ip]) >= cfg.max_attempts:
+            self._blocked[ip] = now + cfg.block_seconds
+            failures.pop(ip, None)
             logger.warning(
-                "IP %s blocked for %ds after %d failed auth attempts",
+                "IP %s blocked for %ds after %d failed %s auth attempts",
                 ip,
-                self.block_seconds,
-                self.max_attempts,
+                cfg.block_seconds,
+                cfg.max_attempts,
+                bucket_name,
             )
+
+    def record_pairing_failure(self, ip: str) -> None:
+        """Record a failed pairing-code auth attempt."""
+        self._record_failure_in_bucket(
+            ip, self._pairing_failures, self._pairing_cfg, "pairing"
+        )
+
+    def record_session_failure(self, ip: str) -> None:
+        """Record a failed session-token auth attempt."""
+        self._record_failure_in_bucket(
+            ip, self._session_failures, self._session_cfg, "session"
+        )
+
+    def record_failure(self, ip: str) -> None:
+        """Backwards-compat alias for :meth:`record_session_failure`.
+
+        The original, single-bucket RateLimiter collapsed all auth
+        failures into one counter. Call sites that haven't been updated
+        fall through to the session bucket — the stricter one — which
+        preserves the pre-split behavior for any forgotten path.
+        """
+        self.record_session_failure(ip)
 
     def record_success(self, ip: str) -> None:
         """Clear failure history for an IP after successful auth."""
-        self._failures.pop(ip, None)
+        self._pairing_failures.pop(ip, None)
+        self._session_failures.pop(ip, None)
 
     def clear_all_blocks(self) -> None:
         """Wipe all block state and pending failure counts across every IP.
@@ -588,9 +749,10 @@ class RateLimiter:
         clearing their own block.
         """
         n_blocks = len(self._blocked)
-        n_failures = len(self._failures)
+        n_failures = len(self._pairing_failures) + len(self._session_failures)
         self._blocked.clear()
-        self._failures.clear()
+        self._pairing_failures.clear()
+        self._session_failures.clear()
         if n_blocks or n_failures:
             logger.info(
                 "Cleared rate-limit state: %d blocks, %d pending failure counts",
@@ -609,15 +771,19 @@ class RateLimiter:
         for ip in expired:
             del self._blocked[ip]
 
-        # Stale failure windows
-        cutoff = now - self.window_seconds
-        stale: list[str] = []
-        for ip, timestamps in self._failures.items():
-            self._failures[ip] = [t for t in timestamps if t > cutoff]
-            if not self._failures[ip]:
-                stale.append(ip)
-        for ip in stale:
-            del self._failures[ip]
+        # Stale failure windows — both buckets, each with its own cfg.
+        for failures, cfg in (
+            (self._pairing_failures, self._pairing_cfg),
+            (self._session_failures, self._session_cfg),
+        ):
+            cutoff = now - cfg.window_seconds
+            stale: list[str] = []
+            for ip, timestamps in failures.items():
+                failures[ip] = [t for t in timestamps if t > cutoff]
+                if not failures[ip]:
+                    stale.append(ip)
+            for ip in stale:
+                del failures[ip]
 
 
 # Re-export a few symbols for callers that want to introspect the model.
@@ -627,6 +793,7 @@ __all__ = [
     "DEFAULT_BRIDGE_CAP",
     "PairingManager",
     "PairingMetadata",
+    "RateLimitConfig",
     "RateLimiter",
     "Session",
     "SessionManager",

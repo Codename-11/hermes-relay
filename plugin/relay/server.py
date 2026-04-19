@@ -2340,8 +2340,27 @@ async def _authenticate(
             )
             return session.token
 
-    # Both failed
-    server.rate_limiter.record_failure(remote_ip)
+    # Both failed. Route the failure to the appropriate bucket so
+    # legitimate-but-fumbled pairing attempts don't get penalized at the
+    # stricter session-token threshold. If the client sent a pairing
+    # code (attempting fresh pair), it's a pairing failure; if it sent
+    # a session token (reconnect attempt), it's a session failure. If
+    # the client sent both (unusual — phone testing its cached token
+    # then falling back to a QR), we count both buckets since both
+    # attempts genuinely failed.
+    recorded = False
+    if session_token_attempt:
+        server.rate_limiter.record_session_failure(remote_ip)
+        recorded = True
+    if pairing_code:
+        server.rate_limiter.record_pairing_failure(remote_ip)
+        recorded = True
+    if not recorded:
+        # Auth envelope with neither code nor token — treat as a
+        # session-bucket failure (stricter) since the client sent
+        # nothing at all to validate.
+        server.rate_limiter.record_session_failure(remote_ip)
+
     reason = "Invalid pairing code or session token"
     await _send_system(ws, "auth.fail", {"reason": reason})
     raise _AuthFailed(reason)
