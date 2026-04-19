@@ -31,7 +31,7 @@ Chat goes directly to the API server via HTTP/SSE. The API key (Bearer token) is
 | `POST /v1/responses` | OpenAI Responses API format | Structured `function_call` objects (non-streaming only) |
 | `GET /v1/models` | List available models | — |
 | `GET /health` | Health check | — |
-| `GET/POST/PATCH/DELETE /api/jobs/*` | Cron job management | — |
+| `GET/POST/PATCH/DELETE /api/jobs/*` | Cron job management (api_server surface) | — |
 
 **Non-standard endpoints (provided by fork OR by plugin bootstrap):**
 
@@ -48,11 +48,16 @@ These endpoints are not in stock upstream `gateway/platforms/api_server.py`. The
 | `GET /api/sessions/search` | Full-text message search | Fork OR bootstrap OR upstream-merged |
 | `POST /api/sessions/{id}/chat/stream` | Session-based SSE chat | Fork OR upstream-merged ONLY (NOT bootstrap) |
 | `GET /api/config`, `PATCH /api/config` | Personalities + model config | Fork OR bootstrap OR upstream-merged |
-| `GET /api/skills`, `/categories`, `/{name}` | Skill discovery | Fork OR bootstrap OR upstream-merged |
+| `GET /api/skills`, `/{name}` | Skill discovery (list + detail) | Fork OR bootstrap OR upstream-merged |
+| `PUT /api/skills/toggle` | Enable/disable installed skill | `hermes_cli/web_server.py` dashboard surface; mirrored into bootstrap |
 | `GET/POST/PATCH/DELETE /api/memory` | Memory CRUD | Fork OR bootstrap OR upstream-merged |
 | `GET /api/available-models` | Provider model list | Fork OR bootstrap OR upstream-merged |
 
 The Android client probes per-endpoint capability via `HermesApiClient.probeCapabilities()` (returns `ServerCapabilities`). When `streamingEndpoint = "auto"`, `ConnectionViewModel.resolveStreamingEndpoint()` picks `sessions` or `runs` based on the capability snapshot.
+
+**Dashboard web server (separate surface — loopback-only):**
+
+hermes-agent ships a second web server at `hermes_cli/web_server.py` that hosts the React admin dashboard at `hermes_cli/web_dist/`. It has its **own** `/api/*` routes that **do not live on `api_server.py`** — notably: `GET/PUT /api/config` (full tree), `GET /api/config/schema`, `GET /api/config/defaults`, `GET/PUT /api/config/raw` (YAML text), `GET/PUT/DELETE /api/env` + `POST /api/env/reveal`, `PUT /api/skills/toggle`, `/api/cron/jobs/*` (different shape from `/api/jobs/*`), `/api/providers/oauth/*`, `/api/dashboard/themes`, `/api/dashboard/plugins`, `/api/model/info`, `/api/logs`, `/api/analytics/usage`. Auth is a page-injected `window.__HERMES_SESSION_TOKEN__` — loopback-only, no external issuance. **Do not proxy this surface over the relay.** Phone consumes the narrower, fork/bootstrap `api_server.py` surface or relay-native profile-scoped endpoints.
 
 **Tool call rendering paths:**
 1. **Runs API** — Emits `tool.started`/`tool.completed` as real SSE events → `ToolProgressCard` in real-time.
