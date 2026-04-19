@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from dataclasses import dataclass, field
@@ -190,10 +191,15 @@ def _probe_gateway_running(profile_home: Path) -> bool:
         raw = pid_file.read_text(encoding="utf-8").strip()
         if not raw:
             return False
-        # The CLI writes a single integer; tolerate trailing newlines.
-        first_token = raw.split()[0]
-        pid = int(first_token)
-    except (OSError, ValueError):
+        # Upstream Hermes writes JSON — {"pid": N, "kind": "...", ...}.
+        # Older installs wrote a bare integer; tolerate both so the probe
+        # keeps working across the upgrade boundary.
+        try:
+            parsed = json.loads(raw)
+            pid = int(parsed["pid"]) if isinstance(parsed, dict) else int(parsed)
+        except (json.JSONDecodeError, KeyError, TypeError):
+            pid = int(raw.split()[0])
+    except (OSError, ValueError, IndexError):
         return False
     except Exception:  # pragma: no cover — defensive
         return False
