@@ -281,11 +281,17 @@ fun TerminalScreen(
             val tabNotStarted = activeTab != null && activeTab?.userStarted == false
             val showBlockingOverlay = !isConnected ||
                 ((activeTab?.attached == false) && (activeTab?.error != null))
+            // zIndex(2f) on both overlays lifts them above the active tab's
+            // WebView (zIndex 1f). Without this the stacked-WebView trick
+            // keeps the active PTY surface on top and the overlay is drawn
+            // but invisible — same-Box children without an explicit zIndex
+            // default to 0f and get occluded by the active WebView.
             when {
                 showBlockingOverlay -> TerminalOverlay(
                     isConnected = isConnected,
                     isConnecting = isConnecting,
-                    error = activeTab?.error
+                    error = activeTab?.error,
+                    modifier = Modifier.zIndex(2f),
                 )
                 tabNotStarted -> StartSessionOverlay(
                     sessionName = activeTab?.sessionName ?: "",
@@ -293,6 +299,7 @@ fun TerminalScreen(
                     onStart = {
                         activeTab?.let { terminalViewModel.startSession(it.tabId) }
                     },
+                    modifier = Modifier.zIndex(2f),
                 )
             }
         }
@@ -434,13 +441,14 @@ private fun StartSessionOverlay(
     sessionName: String,
     isReady: Boolean,
     onStart: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     // Centered, scroll-wrapped so tall phones in landscape + a future
     // session picker / hint text don't clip the primary action. The scroll
     // is a no-op on a normal-size screen; only kicks in when content
     // overflows.
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .background(TerminalBackground.copy(alpha = 0.94f))
             .verticalScroll(rememberScrollState()),
@@ -515,10 +523,11 @@ private fun StartSessionOverlay(
 private fun TerminalOverlay(
     isConnected: Boolean,
     isConnecting: Boolean,
-    error: String?
+    error: String?,
+    modifier: Modifier = Modifier,
 ) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .background(TerminalBackground.copy(alpha = 0.92f)),
         contentAlignment = Alignment.Center
