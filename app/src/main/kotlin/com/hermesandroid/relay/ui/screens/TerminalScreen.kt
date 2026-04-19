@@ -326,6 +326,29 @@ fun TerminalScreen(
             onArrow = { key ->
                 activeTab?.let { terminalViewModel.sendKey(it.tabId, key) }
             },
+            // Scroll callbacks bypass the ViewModel — they're pure JS calls
+            // against the active WebView, not envelopes to the relay.
+            // scrollTerminalLines(±n) moves n lines in xterm's scrollback;
+            // negative = toward older content, positive = newer, matching
+            // the touch-gesture path in index.html.
+            onScrollUp = {
+                webViewByTab[activeTabId]?.evaluateJavascript(
+                    "if (window.scrollTerminalLines) window.scrollTerminalLines(-10);",
+                    null,
+                )
+            },
+            onScrollDown = {
+                webViewByTab[activeTabId]?.evaluateJavascript(
+                    "if (window.scrollTerminalLines) window.scrollTerminalLines(10);",
+                    null,
+                )
+            },
+            onScrollToBottom = {
+                webViewByTab[activeTabId]?.evaluateJavascript(
+                    "if (window.scrollTerminalToBottom) window.scrollTerminalToBottom();",
+                    null,
+                )
+            },
             modifier = Modifier
                 .navigationBarsPadding()
                 .imePadding()
@@ -347,6 +370,7 @@ fun TerminalScreen(
                 onReattach = { terminalViewModel.reattach(tab.tabId) },
                 onCloseTab = { closeConfirmTabId = tab.tabId },
                 onKillTab = { terminalViewModel.killTab(tab.tabId) },
+                onRename = { name -> terminalViewModel.setTabName(tab.tabId, name) },
                 onDismiss = { showInfoSheet = false },
             )
         } else {

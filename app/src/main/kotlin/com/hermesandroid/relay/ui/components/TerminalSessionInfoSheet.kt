@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -21,13 +23,19 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -76,6 +84,7 @@ fun TerminalSessionInfoSheet(
     onReattach: () -> Unit,
     onCloseTab: () -> Unit,
     onKillTab: () -> Unit,
+    onRename: (String?) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -100,7 +109,11 @@ fun TerminalSessionInfoSheet(
             // wrong in a proportional font.
             Column {
                 Text(
-                    text = "Tab ${tab.tabId}",
+                    text = if (tab.displayName.isNullOrBlank()) {
+                        "Tab ${tab.tabId}"
+                    } else {
+                        "Tab ${tab.tabId} · ${tab.displayName}"
+                    },
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -111,6 +124,14 @@ fun TerminalSessionInfoSheet(
                     fontFamily = FontFamily.Monospace,
                 )
             }
+
+            // Inline rename — commits on IME Done or the small Save button,
+            // whichever is tapped first. Keeps the draft local so every
+            // keystroke doesn't hit DataStore; persistence is on commit only.
+            RenameRow(
+                currentName = tab.displayName.orEmpty(),
+                onCommit = { next -> onRename(next.ifBlank { null }) },
+            )
 
             // Connection status chips — attach state + tmux availability.
             FlowRow(
@@ -262,6 +283,37 @@ fun TerminalSessionInfoSheet(
             }
 
             Spacer(modifier = Modifier.height(8.dp))
+        }
+    }
+}
+
+@Composable
+private fun RenameRow(
+    currentName: String,
+    onCommit: (String) -> Unit,
+) {
+    var draft by remember(currentName) { mutableStateOf(currentName) }
+    val isDirty = draft.trim() != currentName.trim()
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        OutlinedTextField(
+            value = draft,
+            onValueChange = { draft = it.take(40) },
+            singleLine = true,
+            label = { Text("Name") },
+            placeholder = { Text("e.g. build, logs, claude") },
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { onCommit(draft) }),
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(
+            onClick = { onCommit(draft) },
+            enabled = isDirty,
+        ) {
+            Text(if (draft.isBlank() && currentName.isNotEmpty()) "Clear" else "Save")
         }
     }
 }

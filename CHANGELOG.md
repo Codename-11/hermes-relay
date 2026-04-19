@@ -10,10 +10,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Opt-in terminal sessions.** Fresh terminal tabs no longer auto-attach — each tab shows a centered **Start session** overlay and spawns the tmux-backed shell only after the user taps it. Tabs that have already been started still auto-reattach on reconnect. Removes the previous behavior of creating persistent server-side shells just by opening the Terminal tab.
 - **`terminal.kill` envelope** — hard-destroy a session. The relay runs `tmux kill-session -t <name>` out-of-band before tearing down the PTY so the background shell (and any running commands) die with it. Closing a tab now opens a confirmation dialog with explicit **Detach** (preserve tmux session) vs **Kill** (destroy it) choices; the session info sheet also gains an error-tinted **Kill session** button.
+- **Touch-scroll + scrollback buttons for the terminal.** A vertical swipe on the terminal surface now moves xterm.js's scrollback (with a 12 px deadzone so long-press-to-select still works); the extras toolbar gains ⇑ / ⇓ / ⇲ buttons for ten-line scroll up, ten-line scroll down, and jump-to-bottom. Scrollback depth is unchanged at 10 000 lines.
+- **Friendly names for terminal tabs.** The session info sheet now has an inline rename field that persists a cosmetic name (up to 40 chars) keyed on the wire-side `session_name`. Names survive app restart and re-pair; cleared on Kill but preserved on Detach. The tab chip renders `1 · build` when named.
 
 ### Changed
 
 - **Terminal session info sheet is vertically scrollable** — tall phones in landscape with the new Start / Reattach / Kill action rows no longer clip the Done button.
+
+### Fixed
+
+- **Stray terminal errors no longer poison the wrong tab.** Server-level error envelopes without a `session_name` (e.g. "Unknown terminal message type" from an older relay) previously fell through to the active tab and flashed an error overlay on whichever tab the user happened to be looking at. Errors without session scope now log only.
 
 ## [0.6.0] — 2026-04-18
 

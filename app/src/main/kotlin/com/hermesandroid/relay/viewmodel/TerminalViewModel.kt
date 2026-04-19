@@ -7,6 +7,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.hermesandroid.relay.auth.AuthManager
 import com.hermesandroid.relay.auth.AuthState
+import com.hermesandroid.relay.data.TerminalTabNameStore
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.ConnectionState
 import com.hermesandroid.relay.network.models.Envelope
@@ -111,6 +112,13 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
         val error: String? = null,
         val ctrlActive: Boolean = false,
         val altActive: Boolean = false,
+        /**
+         * Friendly name for the tab, set by the user. Cosmetic-only —
+         * never crosses the wire. Persisted via [TerminalTabNameStore]
+         * keyed on [sessionName] so the name sticks across app restart
+         * and reattach. Null when the user hasn't named this session.
+         */
+        val displayName: String? = null,
     )
 
     /**
@@ -149,6 +157,7 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
     private var connectionState: StateFlow<ConnectionState>? = null
     private var authState: StateFlow<AuthState>? = null
     private var authManager: AuthManager? = null
+    private var tabNameStore: TerminalTabNameStore? = null
 
     /**
      * Cached device id used to construct stable per-tab session names. Loaded
@@ -174,12 +183,30 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
         connectionState: StateFlow<ConnectionState>,
         authState: StateFlow<AuthState>,
         authManager: AuthManager? = null,
+        tabNameStore: TerminalTabNameStore? = null,
     ) {
         if (this.multiplexer != null) return
         this.multiplexer = multiplexer
         this.connectionState = connectionState
         this.authState = authState
         this.authManager = authManager
+        this.tabNameStore = tabNameStore
+
+        // Rebind persisted display names whenever the store changes. We
+        // collect for the life of the ViewModel so external edits (e.g.
+        // future batch-rename flows) propagate without special cases.
+        if (tabNameStore != null) {
+            viewModelScope.launch {
+                tabNameStore.namesFlow.collect { namesByWire ->
+                    _tabs.update { list ->
+                        list.map { tab ->
+                            val name = namesByWire[tab.sessionName]
+                            if (tab.displayName == name) tab else tab.copy(displayName = name)
+                        }
+                    }
+                }
+            }
+        }
 
         multiplexer.registerHandler("terminal") { envelope ->
             handleEnvelope(envelope)
@@ -344,6 +371,12 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
                 put("session_name", tab.sessionName)
             })
         }
+        // Kill destroys the underlying session — its friendly name should
+        // go with it. Detach (closeTab) deliberately leaves the name in
+        // place so re-opening the same slot restores it.
+        tabNameStore?.let { store ->
+            viewModelScope.launch { store.clearName(tab.sessionName) }
+        }
         pendingReady.remove(tabId)
         val remaining = current.filter { it.tabId != tabId }
         if (remaining.isEmpty()) {
@@ -364,6 +397,25 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
     fun selectTab(tabId: Int) {
         if (_tabs.value.any { it.tabId == tabId }) {
             _activeTabId.value = tabId
+        }
+    }
+
+    /**
+     * Set a friendly name for [tabId]. Passing null or a blank string
+     * clears the name (tab falls back to displaying its tab number).
+     *
+     * Persistence is fire-and-forget on viewModelScope — the store
+     * update is cheap and we surface the change to the UI immediately
+     * via the flow collector wired in [initialize], so we don't need
+     * to await the write.
+     */
+    fun setTabName(tabId: Int, name: String?) {
+        val tab = tabById(tabId) ?: return
+        val trimmed = name?.trim()?.takeIf { it.isNotEmpty() }
+        updateTab(tabId) { it.copy(displayName = trimmed) }
+        val store = tabNameStore ?: return
+        viewModelScope.launch {
+            store.setName(tab.sessionName, trimmed)
         }
     }
 
@@ -589,22 +641,42 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
                 val tab = targetTab ?: return
                 val reason = payload["reason"]?.asStringOrNull() ?: "detached"
                 Log.i(TAG, "Detached tab=${tab.tabId}: $reason")
+                // Both "client detach" and "client kill" are user-initiated
+                // shutdowns — not errors. The kill case is especially
+                // load-bearing here because killing the last tab reseeds a
+                // fresh tab at the same tabId (and therefore the same wire
+                // session_name), so the server's "client kill" detached
+                // envelope arrives AFTER the reseed and would otherwise
+                // stamp an error onto the brand-new tab the user is about
+                // to start.
+                val userInitiated = reason == "client detach" || reason == "client kill"
                 updateTab(tab.tabId) {
                     it.copy(
                         attached = false,
                         attaching = false,
                         pid = null,
-                        error = if (reason == "client detach") null else reason,
+                        error = if (userInitiated) null else reason,
                     )
                 }
             }
 
             "terminal.error" -> {
-                val tab = targetTab
                 val message = payload["message"]?.asStringOrNull() ?: "Unknown error"
-                Log.w(TAG, "Terminal error tab=${tab?.tabId}: $message")
+                // Only bind the error to a tab when the envelope explicitly
+                // addresses one via session_name. Server-level errors with no
+                // session scope (e.g. "Unknown terminal message type" from an
+                // old relay binary that doesn't know a new envelope type) used
+                // to fall through to the active tab and poison whichever tab
+                // the user happened to be looking at — producing error overlays
+                // on tabs they never interacted with. We log those instead.
+                val tab = sessionName?.let { name ->
+                    _tabs.value.firstOrNull { it.sessionName == name }
+                }
                 if (tab != null) {
+                    Log.w(TAG, "Terminal error tab=${tab.tabId}: $message")
                     updateTab(tab.tabId) { it.copy(attaching = false, error = message) }
+                } else {
+                    Log.w(TAG, "Terminal error (no session scope): $message")
                 }
             }
 
