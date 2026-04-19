@@ -6,134 +6,45 @@ on:
   pull_request_review_comment:
     types: [created]
   issues:
-    types: [opened, assigned, labeled]
+    types: [opened, assigned]
   pull_request_review:
     types: [submitted]
 
 jobs:
-  auth:
-    runs-on: ubuntu-latest
-    outputs:
-      authorized: ${{ steps.check.outputs.authorized }}
-    steps:
-      - name: Check collaborator status
-        id: check
-        uses: actions/github-script@v8
-        with:
-          script: |
-            if (context.eventName === 'issues' && ['opened', 'labeled'].includes(context.payload.action)) {
-              core.setOutput('authorized', 'true');
-              return;
-            }
-            const sender = context.payload.sender?.login;
-            if (!sender) { core.setOutput('authorized', 'false'); return; }
-            try {
-              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
-                owner: context.repo.owner, repo: context.repo.repo, username: sender,
-              });
-              const allowed = ['admin', 'write', 'maintain'].includes(data.permission);
-              core.setOutput('authorized', allowed ? 'true' : 'false');
-            } catch {
-              core.setOutput('authorized', 'false');
-            }
-
-  triage:
-    needs: auth
+  claude:
     if: |
-      needs.auth.outputs.authorized == 'true' && (
-        (github.event_name == 'issues' && github.event.action == 'labeled' && github.event.label.name == 'claude') ||
-        (github.event_name == 'issues' && github.event.action == 'opened')
-      )
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: read
-      issues: write
+      issues: read
       id-token: write
-      actions: read
+      actions: read # Required for Claude to read CI results on PRs
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - uses: anthropics/claude-code-action@v1
+
+      - name: Run Claude Code
+        id: claude
+        uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          prompt: |
-            Triage this GitHub issue. Analysis-only — do NOT write code or create PRs.
 
-            1. **Classify** — bug, feature request, question, or docs issue?
-            2. **Priority** — critical, high, medium, low based on impact.
-            3. **Affected area** — which module(s)? Check CLAUDE.md for architecture.
-               (ui/, network/, viewmodel/, auth/, data/, relay_server/, plugin/)
-            4. **Reproduction** — for bugs, is there enough info? Ask for device, Android version, steps.
-            5. **Suggested approach** — brief outline (files, strategy).
-            6. **Labels** — suggest appropriate labels.
+          # This is an optional setting that allows Claude to read CI results on PRs
+          additional_permissions: |
+            actions: read
 
-            Keep it concise and actionable.
-          claude_args: "--max-turns 5"
+          # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
+          # prompt: 'Update the pull request description to include a summary of changes.'
 
-  fix:
-    needs: auth
-    if: |
-      needs.auth.outputs.authorized == 'true' &&
-      github.event_name == 'issues' &&
-      github.event.action == 'labeled' &&
-      github.event.label.name == 'claude-fix'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-      issues: write
-      id-token: write
-      actions: read
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - uses: anthropics/claude-code-action@v1
-        with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          prompt: |
-            Implement a fix for this GitHub issue. Read CLAUDE.md for project conventions.
+          # Optional: Add claude_args to customize behavior and configuration
+          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
+          # or https://code.claude.com/docs/en/cli-reference for available options
+          # claude_args: '--allowed-tools Bash(gh pr *)'
 
-            1. Understand the issue — read relevant source files.
-            2. Implement the minimal fix.
-            3. Follow conventions: Kotlin + Jetpack Compose, kotlinx.serialization, Conventional Commits.
-            4. Run `./gradlew assembleDebug` and fix any errors.
-            5. Create a PR with Conventional Commits format title.
-
-            Do NOT over-engineer. Only change what is needed.
-          claude_args: "--max-turns 25"
-
-  chat:
-    needs: auth
-    if: |
-      needs.auth.outputs.authorized == 'true' && (
-        (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-        (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-        (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
-        (github.event_name == 'issues' && github.event.action == 'assigned' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
-      )
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-      issues: write
-      id-token: write
-      actions: read
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 1
-      - uses: anthropics/claude-code-action@v1
-        with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          prompt: |
-            Responding to a collaborator comment. Read CLAUDE.md for project context.
-
-            Default mode is analysis — investigate, explain, suggest. Do NOT write code
-            unless explicitly asked ("fix this", "implement", "create a PR").
-
-            If asked to fix: follow conventions (Kotlin, Compose, Conventional Commits),
-            run `./gradlew assembleDebug`, and create a PR.
-          claude_args: "--max-turns 15"
