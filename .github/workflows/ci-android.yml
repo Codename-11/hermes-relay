@@ -1,23 +1,40 @@
-# Hermes-Relay — CI Pipeline
+# Hermes-Relay — Android CI Pipeline
 #
-# Runs on every push to main and on pull requests targeting main.
+# Runs on pushes to main/dev and on PRs targeting main/dev, scoped to
+# Android-affecting paths so Python-only changes don't spin up the JVM.
+#
 # Pipeline: lint -> build + test (parallel) -> upload artifacts
-#
-# Android: Kotlin + Jetpack Compose (root Gradle project)
-# Python:  aiohttp relay server (relay_server/)
 
-name: CI
+name: CI — Android
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
+    paths:
+      - "app/**"
+      - "gradle/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle.properties"
+      - "gradlew"
+      - "gradlew.bat"
+      - ".github/workflows/ci-android.yml"
   pull_request:
-    branches: [main]
+    branches: [main, dev]
+    paths:
+      - "app/**"
+      - "gradle/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle.properties"
+      - "gradlew"
+      - "gradlew.bat"
+      - ".github/workflows/ci-android.yml"
 
-# Cancel in-progress runs for the same branch/PR, but let main finish
+# Cancel in-progress runs for the same branch/PR, but let main and dev finish
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: ci-android-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
 
 jobs:
   # ──────────────────────────────────────────────
@@ -114,35 +131,3 @@ jobs:
           name: test-reports
           path: app/build/reports/tests/
           retention-days: 7
-
-  # ──────────────────────────────────────────────
-  # Python Relay — syntax check + future tests
-  # ──────────────────────────────────────────────
-  relay-check:
-    name: Relay Check (Python)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: pip install -r relay_server/requirements.txt
-
-      - name: Syntax check (plugin.relay — canonical location)
-        run: |
-          python -m py_compile plugin/relay/server.py
-          python -m py_compile plugin/relay/channels/terminal.py
-          python -m py_compile plugin/relay/channels/chat.py
-          python -m py_compile plugin/relay/channels/bridge.py
-
-      - name: Syntax check (relay_server shim)
-        run: python -m py_compile relay_server/__init__.py relay_server/__main__.py
-
-      # TODO: Add pytest step when relay tests exist
-      # - name: Run tests
-      #   run: pytest plugin/relay/tests/
