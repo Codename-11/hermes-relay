@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MorphingSphere — browser preview</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --panel: rgba(20, 20, 20, 0.85);
+    --border: rgba(255, 255, 255, 0.08);
+    --text: rgba(255, 255, 255, 0.9);
+    --muted: rgba(255, 255, 255, 0.55);
+    --accent: #40eb8c;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    width: 100%; height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, sans-serif;
+    overflow: hidden;
+  }
+  #stage {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  canvas#sphere {
+    background: var(--bg);
+    display: block;
+  }
+  #panel {
+    position: fixed;
+    top: 16px; right: 16px;
+    width: 280px;
+    padding: 14px 16px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    font-size: 13px;
+    user-select: none;
+  }
+  #panel h2 {
+    margin: 0 0 10px 0;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .row {
+    display: flex; align-items: center; justify-content: space-between;
+    margin: 8px 0;
+    gap: 10px;
+  }
+  .row label {
+    flex: 0 0 auto;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .row .value {
+    min-width: 36px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+    color: var(--text);
+  }
+  input[type="range"] {
+    flex: 1;
+    accent-color: var(--accent);
+  }
+  select {
+    flex: 1;
+    background: #151515;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 6px;
+    font-size: 12px;
+  }
+  #fps {
+    position: fixed;
+    bottom: 12px; left: 12px;
+    font-size: 11px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+  #hint {
+    position: fixed;
+    bottom: 12px; right: 16px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  #hint code {
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    background: rgba(255,255,255,0.06);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+  button.mini {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 3px 7px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  button.mini:hover { color: var(--text); border-color: rgba(255,255,255,0.2); }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="sphere"></canvas>
+  </div>
+
+  <div id="panel">
+    <h2>MorphingSphere</h2>
+
+    <div class="row">
+      <label>State</label>
+      <select id="state">
+        <option>Idle</option>
+        <option>Thinking</option>
+        <option>Streaming</option>
+        <option>Listening</option>
+        <option>Speaking</option>
+        <option>Error</option>
+      </select>
+    </div>
+
+    <div class="row">
+      <label>Voice mode</label>
+      <input type="checkbox" id="voiceMode">
+    </div>
+
+    <div class="row">
+      <label>Voice amp</label>
+      <input type="range" id="voiceAmp" min="0" max="1" step="0.01" value="0">
+      <span class="value" id="voiceAmpVal">0.00</span>
+    </div>
+
+    <div class="row">
+      <label>Intensity</label>
+      <input type="range" id="intensity" min="0" max="1" step="0.01" value="0">
+      <span class="value" id="intensityVal">0.00</span>
+    </div>
+
+    <div class="row">
+      <label>Tool burst</label>
+      <input type="range" id="toolBurst" min="0" max="1" step="0.01" value="0">
+      <span class="value" id="toolBurstVal">0.00</span>
+    </div>
+
+    <div class="row">
+      <label><input type="checkbox" id="paused"> Pause</label>
+      <button class="mini" id="resetTime">reset t</button>
+    </div>
+
+    <div class="row" style="opacity: 0.6;">
+      <label>Cols × Rows</label>
+      <span class="value" style="min-width: auto;">58 × 34</span>
+    </div>
+  </div>
+
+  <div id="fps">— fps</div>
+  <div id="hint"><code>space</code> pause · <code>1-6</code> state</div>
+
+<script type="module">
+  import { SphereState, paramsFor, colorsFor, forEachSphereCell } from "./sphere.js";
+
+  // ── DOM wiring ─────────────────────────────────────────────────────
+  const canvas = document.getElementById("sphere");
+  const ctx = canvas.getContext("2d");
+  const stateSel = document.getElementById("state");
+  const voiceModeEl = document.getElementById("voiceMode");
+  const voiceAmpEl = document.getElementById("voiceAmp");
+  const voiceAmpVal = document.getElementById("voiceAmpVal");
+  const intensityEl = document.getElementById("intensity");
+  const intensityVal = document.getElementById("intensityVal");
+  const toolBurstEl = document.getElementById("toolBurst");
+  const toolBurstVal = document.getElementById("toolBurstVal");
+  const pausedEl = document.getElementById("paused");
+  const resetTimeBtn = document.getElementById("resetTime");
+  const fpsEl = document.getElementById("fps");
+
+  // Sync displayed values for sliders.
+  function bindSlider(el, display) {
+    const update = () => display.textContent = parseFloat(el.value).toFixed(2);
+    el.addEventListener("input", update);
+    update();
+  }
+  bindSlider(voiceAmpEl, voiceAmpVal);
+  bindSlider(intensityEl, intensityVal);
+  bindSlider(toolBurstEl, toolBurstVal);
+
+  // Keyboard shortcuts — space pauses, 1-6 pick state.
+  const stateKeys = ["Idle", "Thinking", "Streaming", "Listening", "Speaking", "Error"];
+  window.addEventListener("keydown", (e) => {
+    if (e.code === "Space") { pausedEl.checked = !pausedEl.checked; e.preventDefault(); }
+    const n = parseInt(e.key, 10);
+    if (n >= 1 && n <= 6) {
+      stateSel.value = stateKeys[n - 1];
+      stateSel.dispatchEvent(new Event("change"));
+    }
+  });
+
+  // ── Canvas sizing ──────────────────────────────────────────────────
+  const COLS = 58;
+  const ROWS = 34;
+  function resize() {
+    const dpr = window.devicePixelRatio || 1;
+    // Fit canvas into viewport while keeping 58:34 cell grid legible.
+    // Aspect chosen so cells are close to square for legible glyphs.
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    // Target grid aspect ~= COLS / (ROWS * 1.8) — chars are ~0.55 wide per em.
+    const targetAspect = COLS / (ROWS * 1.7);
+    let w = vw * 0.92;
+    let h = w / targetAspect;
+    if (h > vh * 0.92) {
+      h = vh * 0.92;
+      w = h * targetAspect;
+    }
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${h}px`;
+    canvas.width = Math.floor(w * dpr);
+    canvas.height = Math.floor(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  resize();
+  window.addEventListener("resize", resize);
+
+  // ── Animated state params (mirrors Compose animateFloatAsState) ────
+  // FastOutSlowInEasing ≈ cubic-bezier(0.4, 0, 0.2, 1).
+  const EASE_DURATION = 0.8; // seconds
+  const VOICE_SCALE_DURATION = 0.6;
+
+  function fastOutSlowIn(t) {
+    // Good enough approximation of Android's FastOutSlowInEasing.
+    // Cubic-bezier(0.4, 0.0, 0.2, 1.0) — closed-form approximation:
+    if (t <= 0) return 0;
+    if (t >= 1) return 1;
+    // Solve x=t for bezier and evaluate y — cheap Newton's iteration.
+    const cx = 3 * 0.4, bx = 3 * (0.2 - 0.4) - cx, ax = 1 - cx - bx;
+    const cy = 3 * 0.0, by = 3 * (1.0 - 0.0) - cy, ay = 1 - cy - by;
+    // Newton solve for u given t = axu³ + bxu² + cxu
+    let u = t;
+    for (let i = 0; i < 6; i++) {
+      const x = ((ax * u + bx) * u + cx) * u;
+      const dx = (3 * ax * u + 2 * bx) * u + cx;
+      if (Math.abs(dx) < 1e-6) break;
+      u -= (x - t) / dx;
+    }
+    return ((ay * u + by) * u + cy) * u;
+  }
+
+  // Tween helper: returns interpolated value given start/target/startTime/duration.
+  class Tween {
+    constructor(value) {
+      this.current = value;
+      this.target = value;
+      this.start = value;
+      this.startTime = 0;
+      this.duration = EASE_DURATION;
+    }
+    setTarget(v, nowSec, duration = EASE_DURATION) {
+      if (v === this.target) return;
+      this.start = this.current;
+      this.target = v;
+      this.startTime = nowSec;
+      this.duration = duration;
+    }
+    update(nowSec) {
+      if (this.duration <= 0) { this.current = this.target; return; }
+      const t = Math.min(1, (nowSec - this.startTime) / this.duration);
+      this.current = this.start + (this.target - this.start) * fastOutSlowIn(t);
+    }
+  }
+
+  const initial = paramsFor(SphereState.Idle);
+  const initialC = colorsFor(SphereState.Idle);
+  const tw = {
+    breatheSpeed: new Tween(initial.breatheSpeed),
+    breatheAmp: new Tween(initial.breatheAmp),
+    lightSpeedX: new Tween(initial.lightSpeedX),
+    lightSpeedY: new Tween(initial.lightSpeedY),
+    lightInfluence: new Tween(initial.lightInfluence),
+    coreTightness: new Tween(initial.coreTightness),
+    turbulenceAmp: new Tween(initial.turbulenceAmp),
+    rippleScale: new Tween(initial.rippleScale),
+    heartbeatSpeed: new Tween(initial.heartbeatSpeed),
+    radialFlowSpeed: new Tween(initial.radialFlowSpeed),
+    cr1: new Tween(initialC.r1), cg1: new Tween(initialC.g1), cb1: new Tween(initialC.b1),
+    cr2: new Tween(initialC.r2), cg2: new Tween(initialC.g2), cb2: new Tween(initialC.b2),
+    voiceRadiusScale: new Tween(1.0),
+  };
+
+  function retargetFor(state, nowSec) {
+    const p = paramsFor(state);
+    const c = colorsFor(state);
+    tw.breatheSpeed.setTarget(p.breatheSpeed, nowSec);
+    tw.breatheAmp.setTarget(p.breatheAmp, nowSec);
+    tw.lightSpeedX.setTarget(p.lightSpeedX, nowSec);
+    tw.lightSpeedY.setTarget(p.lightSpeedY, nowSec);
+    tw.lightInfluence.setTarget(p.lightInfluence, nowSec);
+    tw.coreTightness.setTarget(p.coreTightness, nowSec);
+    tw.turbulenceAmp.setTarget(p.turbulenceAmp, nowSec);
+    tw.rippleScale.setTarget(p.rippleScale, nowSec);
+    tw.heartbeatSpeed.setTarget(p.heartbeatSpeed, nowSec);
+    tw.radialFlowSpeed.setTarget(p.radialFlowSpeed, nowSec);
+    tw.cr1.setTarget(c.r1, nowSec); tw.cg1.setTarget(c.g1, nowSec); tw.cb1.setTarget(c.b1, nowSec);
+    tw.cr2.setTarget(c.r2, nowSec); tw.cg2.setTarget(c.g2, nowSec); tw.cb2.setTarget(c.b2, nowSec);
+  }
+
+  stateSel.addEventListener("change", () => retargetFor(stateSel.value, perfNowSec()));
+  voiceModeEl.addEventListener("change", () => {
+    tw.voiceRadiusScale.setTarget(voiceModeEl.checked ? 1.08 : 1.0, perfNowSec(), VOICE_SCALE_DURATION);
+  });
+  resetTimeBtn.addEventListener("click", () => { timeOrigin = performance.now(); });
+
+  function perfNowSec() { return performance.now() / 1000; }
+
+  // ── Animation loop ─────────────────────────────────────────────────
+  let timeOrigin = performance.now();
+  let pausedAccum = 0; // total paused ms
+  let pauseStart = null;
+  let lastFrame = performance.now();
+  let fpsAccum = 0, fpsCount = 0;
+
+  pausedEl.addEventListener("change", () => {
+    if (pausedEl.checked) pauseStart = performance.now();
+    else if (pauseStart !== null) {
+      pausedAccum += performance.now() - pauseStart;
+      pauseStart = null;
+    }
+  });
+
+  function animationTime() {
+    const now = pausedEl.checked ? (pauseStart ?? performance.now()) : performance.now();
+    return (now - timeOrigin - pausedAccum) / 1000;
+  }
+  function colorPhaseAt(elapsedSec) {
+    const cycle = (elapsedSec * 1000) % 8000;
+    return (cycle / 8000) * 6.2832;
+  }
+
+  function render() {
+    const nowMs = performance.now();
+    const dt = nowMs - lastFrame;
+    lastFrame = nowMs;
+    fpsAccum += dt;
+    fpsCount++;
+    if (fpsAccum >= 500) {
+      const fps = Math.round(1000 * fpsCount / fpsAccum);
+      fpsEl.textContent = `${fps} fps`;
+      fpsAccum = 0; fpsCount = 0;
+    }
+
+    const nowSec = perfNowSec();
+    for (const k in tw) tw[k].update(nowSec);
+
+    // ── Canvas layout (mirrors Compose Canvas block) ──
+    const canvasW = parseFloat(canvas.style.width);
+    const canvasH = parseFloat(canvas.style.height);
+    const cellW = canvasW / COLS;
+    const cellH = canvasH / ROWS;
+    const charSize = Math.min(cellW * 1.3, cellH * 1.1);
+    const charAspect = cellW / cellH;
+
+    ctx.clearRect(0, 0, canvasW, canvasH);
+    ctx.font = `${charSize}px ui-monospace, "JetBrains Mono", "Menlo", "Consolas", monospace`;
+    ctx.textBaseline = "alphabetic";
+
+    const state = stateSel.value;
+    const t = animationTime();
+    const frame = {
+      cols: COLS,
+      rows: ROWS,
+      charAspect,
+      state,
+      time: t,
+      colorPhase: colorPhaseAt(t),
+      breatheSpeed: tw.breatheSpeed.current,
+      breatheAmp: tw.breatheAmp.current,
+      lightSpeedX: tw.lightSpeedX.current,
+      lightSpeedY: tw.lightSpeedY.current,
+      lightInfluence: tw.lightInfluence.current,
+      coreTightness: tw.coreTightness.current,
+      turbulenceAmp: tw.turbulenceAmp.current,
+      rippleScale: tw.rippleScale.current,
+      heartbeatSpeed: tw.heartbeatSpeed.current,
+      radialFlowSpeed: tw.radialFlowSpeed.current,
+      cr1: tw.cr1.current, cg1: tw.cg1.current, cb1: tw.cb1.current,
+      cr2: tw.cr2.current, cg2: tw.cg2.current, cb2: tw.cb2.current,
+      intensity: parseFloat(intensityEl.value),
+      toolCallBurst: parseFloat(toolBurstEl.value),
+      voiceAmplitude: parseFloat(voiceAmpEl.value),
+      voiceMode: voiceModeEl.checked,
+      voiceRadiusScale: tw.voiceRadiusScale.current,
+    };
+
+    forEachSphereCell(frame, (col, row, ch, r, g, b, a) => {
+      // Same placement as Android: baseline at 80% of cell height; left edge at col*cellW.
+      const px = col * cellW;
+      const py = row * cellH + cellH * 0.8;
+      ctx.fillStyle = `rgba(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)},${a.toFixed(3)})`;
+      ctx.fillText(ch, px, py);
+    });
+
+    requestAnimationFrame(render);
+  }
+
+  render();
+</script>
+</body>
+</html>
