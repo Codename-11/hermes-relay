@@ -559,6 +559,15 @@ fun RelayApp() {
         // error-collector LaunchedEffects without threading state downwards.
         val snackbarHostState = remember { SnackbarHostState() }
 
+        // Relay-pushed `profiles.updated` announcements. AuthManager
+        // filters out idempotent pushes (same names + same count), so
+        // this only fires when the profile list actually changed.
+        LaunchedEffect(connectionViewModel) {
+            connectionViewModel.profilesUpdatedEvents.collect {
+                snackbarHostState.showSnackbar("Profiles updated")
+            }
+        }
+
         // === v0.4.1 polish: global unattended-access banner ===
         // Rendered at the top of the scaffold on every tab when BOTH the
         // master toggle is ON and unattended access is ON. The per-screen

@@ -82,6 +82,13 @@ class ChannelMultiplexer {
             // flavor or by the master enable toggle in the UI).
             "bridge" -> handlers["bridge"]?.onMessage(envelope)
             // === END PHASE3-accessibility ===
+            // Pairing channel — host-originated pushes that concern the
+            // paired session itself (e.g. `profiles.updated` when the
+            // server rescans its ~/.hermes/profiles tree). Routed to
+            // whatever handler registered for "pairing"; AuthManager
+            // picks it up so the existing agentProfiles flow updates
+            // without requiring a re-pair round-trip.
+            "pairing" -> handlers["pairing"]?.onMessage(envelope)
             else -> {
                 // Unknown channel — ignore
             }
