@@ -775,6 +775,50 @@ First attempt parsed a top-level `profiles:` / `agents:` list from one YAML. Tha
 
 ---
 
+### 22. Profile-scoped read-only config + skills API (2026-04-18)
+
+**Decision:** Add two relay-native HTTP routes — `GET /api/profiles/{name}/config` and `GET /api/profiles/{name}/skills` — that read `<profile_home>/config.yaml` and walk `<profile_home>/skills/<category>/<name>/SKILL.md` respectively. Both are read-only, use the existing loopback-or-bearer auth pattern (matching `/notifications/recent`), and resolve `name` via the same `default → ~/.hermes` / otherwise → `~/.hermes/profiles/<name>` helper used by `_load_profiles`. For `PUT /api/skills/toggle` (the upstream toggle shape the phone's capability probe checks), the bootstrap registers a stubbed handler that always returns **501 Not Implemented** with a structured `{"error": "skill_toggle_not_implemented", ...}` body.
+
+**Why relay-native, not a dashboard proxy:**
+
+The hermes-agent dashboard exposes `/api/config` and `/api/skills` via `hermes_cli/web_server.py` — a separate loopback-only web server from the chat API at `:8642`. Two problems if we proxied through the dashboard:
+1. **No profile scoping.** The dashboard's `/api/config` operates on the active profile only; there's no way to read another profile's config without switching first. Our relay already has the layout knowledge (`_load_profiles` scans the tree); duplicating that as "switch profile, read, switch back" is fragile and racy.
+2. **Secrets leakage risk.** `config.yaml` never holds credentials (those live in `~/.hermes/.env` + `~/.hermes/auth.json`), but proxying a general-purpose config endpoint invites future callers to pick up sensitive fields. A purpose-built read route keeps the attack surface small and the shape explicit — the response is `{profile, path, config, readonly: true}`, with the `readonly` flag part of the contract so clients can't silently assume write support.
+
+Both endpoints trust the same boundary as every other phone-facing relay route: bearer-auth for remote callers, loopback for in-process dashboard proxy calls. `.env` and `auth.json` are **never** read or returned by these routes.
+
+**Why read-only in v0.7:**
+
+Write support would require an `active_profile` routing layer on the relay — picking which profile's config to mutate, flushing caches, notifying any running gateway daemon for that profile. hermes-desktop handles this by shelling out to `hermes profile use <name>` + `hermes config set ...`, which bakes the lifecycle into the CLI. Doing the equivalent from the relay means either (a) shelling out (new subprocess surface, env handling, error classification) or (b) reimplementing the write path in Python (duplicates upstream logic, risks drift). Neither belongs in this pass. The `readonly: true` field in the response is a deliberate contract — callers that probe it can hide edit UI cleanly when (eventually) a v0.8 server drops the flag.
+
+**Why 501 on `PUT /api/skills/toggle` instead of omitting the route:**
+
+`tools.skills_tool` (the upstream module the bootstrap already imports for `skills_list` / `skill_view`) has no clean enable/disable hook — that logic lives on `hermes_cli.web_server.py`, which the relay doesn't proxy. Three options:
+1. Don't register the route → 404 → Android capability probe can't tell "toggle not implemented" from "wrong URL / server too old."
+2. Register with full behavior → requires either shelling to the CLI or duplicating upstream persistence. Same objections as write-path above, worse because skill toggle state is per-profile and upstream persists it in a JSON sidecar whose shape we don't want to pin.
+3. Register a 501 stub with a stable structured body → capability probe sees the route, reads `error: "skill_toggle_not_implemented"`, renders the toggle UI as disabled with a tooltip. Client logic stays a simple switch on error code; no magic version sniffing.
+
+We pick (3). When upstream PR #8556 or a follow-up exposes a real toggle on `api_server.py`, we flip the stub to call through — the Kotlin client sees the 501 disappear and the toggle unlocks.
+
+**Trade-offs:**
+- **Profile scoping is a directory lookup, not an active-profile check.** The request says "read profile X"; we do not require X to be the currently-active profile for the dashboard or for any gateway daemon. This matches the read-only intent — the phone picker shows every profile's shape, even ones no gateway is running against.
+- **Skill `enabled: true` is hardcoded.** We don't track disabled state server-side yet; the field is part of the response only so the shape aligns with upstream's eventual toggle response. Keep it stable so the Kotlin model doesn't need reshuffling when toggles land.
+- **No pagination on skills.** A profile with thousands of skills would get a fat response, but that's well outside current usage (the populous profiles on our server carry 20-40 skills). Revisit if this stops being true.
+- **Path-traversal guard is light.** Profile name is rejected if it contains `/`, `\\`, `.`, or `..`. That's enough for the `profiles/<name>/` join we do, and matches how `_load_profiles` already trusts `iterdir()` results — names that arrive over the wire get the extra check.
+
+**Why not just surface `_load_profiles`'s new `gateway_running` / `has_soul` / `skill_count` everywhere?**
+
+Those fields (added in the same commit series — see `auth.ok` profile shape) are intentionally summary-only. The picker uses them to render status; the detail screen pulls the full config + skill list via the new endpoints. Splitting summary (cheap, piggybacks on existing `auth.ok`) from detail (expensive enough to warrant on-demand HTTP) keeps pairing snappy even for servers with many skills per profile.
+
+**References:**
+- `plugin/relay/server.py` — `handle_profile_config`, `handle_profile_skills`, `_resolve_profile_home`
+- `plugin/relay/config.py:_load_profiles` — summary-field source (§21)
+- `hermes_relay_bootstrap/_handlers.py:toggle_skill` — 501 stub
+- `docs/spec.md` §6.1 — HTTP routes table rows
+- `TEMP-hermes-desktop-analysis.md` (session scratch, soon deleted) — `hermes-desktop` patterns we cross-referenced for the read/write split and credential-pool separation
+
+---
+
 ## Voice Mode — Architecture
 
 **Context:** We wanted real-time voice conversation with the Hermes agent — user speaks, agent listens, agent speaks back, orb reacts. Hermes-agent has six TTS providers and five STT providers fully implemented in `tools/tts_tool.py` and `tools/transcription_tools.py`, plus a CLI `voice_mode.py` that uses them for push-to-talk — but none of it is exposed via the WebAPI server at `:8642`. The phone has no way to call voice functions over HTTP.

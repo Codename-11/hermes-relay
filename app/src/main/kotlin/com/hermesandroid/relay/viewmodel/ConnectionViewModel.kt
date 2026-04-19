@@ -20,6 +20,7 @@ import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.ConnectionStore
 import com.hermesandroid.relay.data.ConnectionValidation
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.ProfileSelectionStore
 import com.hermesandroid.relay.data.relayDataStore
 import com.hermesandroid.relay.util.TailscaleDetector
 import com.hermesandroid.relay.network.ChannelMultiplexer
@@ -363,25 +364,51 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     /**
      * User's current profile pick for the chat send pipeline. `null` means
      * "no explicit pick — let the server fall back to its configured
-     * default profile." Reset to `null` on every connection switch (see
-     * [init]) because profiles are advertised per-server and a selection
-     * made against connection A has no defined meaning on connection B.
+     * default profile."
      *
-     * Worker C (ChatViewModel + ChatScreen) is the sole mutator via
-     * [selectProfile] and the sole reader — this class just owns the
-     * StateFlow and the reset lifecycle.
+     * **v0.7.0: persisted per-connection** via [profileSelectionStore].
+     * Hydrated on init (for the active connection) and on every
+     * [switchConnection] (loads the destination connection's persisted
+     * selection). Written through on [selectProfile]. Cleared on
+     * [removeConnection] after the switch completes.
+     *
+     * Resolution from persisted `profileName: String?` → `Profile?` happens
+     * against [agentProfiles] at hydrate time; if the persisted name no
+     * longer exists in the server-advertised list (profile was removed on
+     * the server), the resolution yields null.
      */
     private val _selectedProfile = MutableStateFlow<Profile?>(null)
     val selectedProfile: StateFlow<Profile?> = _selectedProfile.asStateFlow()
 
     /**
-     * Set (or clear, with `null`) the active profile pick. See
-     * [selectedProfile] for scope + reset semantics. Pure write — no
-     * network traffic, no persistence.
+     * DataStore-backed persistence for [_selectedProfile] keyed by
+     * connection id. See [ProfileSelectionStore] for the schema. Separate
+     * from [connectionStore] so the selection survives (and can be
+     * cleared) independently of other connection fields.
+     */
+    private val profileSelectionStore: ProfileSelectionStore =
+        ProfileSelectionStore(application)
+
+    /**
+     * Set (or clear, with `null`) the active profile pick. Writes through
+     * to [profileSelectionStore] for the currently-active connection so
+     * the selection survives process death and connection switches.
      */
     fun selectProfile(profile: Profile?) {
         _selectedProfile.value = profile
+        val connectionId = activeConnectionId.value ?: return
+        viewModelScope.launch {
+            profileSelectionStore.setSelectedProfile(connectionId, profile?.name)
+        }
     }
+
+    /**
+     * Resolve a persisted profile `name` against the current
+     * [agentProfiles] list. Returns null when the profile no longer
+     * exists — the server may have removed or renamed it between runs.
+     */
+    private fun resolveProfileByName(name: String?): Profile? =
+        name?.let { n -> agentProfiles.value.firstOrNull { it.name == n } }
 
     // --- Paired devices list (GET /sessions) -------------------------------
     //
@@ -968,6 +995,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             // will clear the active pointer on its own.
         }
         connectionStore.removeConnection(connectionId)
+        // Clear the persisted profile selection for the removed connection
+        // AFTER the switch-away above has finished. Ordering matters: if
+        // we cleared first, any in-flight hydration from the just-swapped
+        // AuthManager could race with the delete. Safe because
+        // ProfileSelectionStore is a separate DataStore file from
+        // ConnectionStore's EncryptedSharedPrefs.
+        profileSelectionStore.clear(connectionId)
     }
 
     init {
@@ -1302,15 +1336,51 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             }
         }
 
-        // Reset the profile pick on every connection switch. Profiles are
-        // advertised per-server in `auth.ok`, so carrying a selection
-        // across a switch would dangle — connection B might not have (or
-        // might have a different) profile by that name, and the chat send
-        // pipeline would quietly ask the new server for a profile it
-        // doesn't recognize.
+        // Hydrate the persisted profile pick on every connection switch.
+        // The pick is per-connection: connection B may have its own
+        // separate last-selected profile from connection A, and neither
+        // should leak across. ProfileSelectionStore stores profile NAMES;
+        // the Profile object itself lives in agentProfiles which is
+        // repopulated by AuthManager on the post-switch reconnect, so we
+        // clear first (so a stale A selection never dangles) then let the
+        // agentProfiles collector below resolve the persisted name once
+        // the new server's list arrives.
         viewModelScope.launch {
-            connectionSwitchEvents.collect {
+            connectionSwitchEvents.collect { newConnectionId ->
                 _selectedProfile.value = null
+                val persistedName = profileSelectionStore
+                    .selectedProfileFlow(newConnectionId)
+                    .first()
+                // If the new connection has agentProfiles already (rare —
+                // usually the reconnect hasn't landed auth.ok yet), resolve
+                // immediately. Otherwise the collector below handles it
+                // when the list populates.
+                resolveProfileByName(persistedName)?.let { resolved ->
+                    _selectedProfile.value = resolved
+                }
+            }
+        }
+
+        // When agentProfiles updates (post auth.ok on boot or after a
+        // switch), try to resolve any persisted selection for the active
+        // connection. This covers the common case where the persisted
+        // name was loaded before the server's profile list arrived.
+        // Guarded: if the user has already picked something manually we
+        // don't clobber it — only promote from null-with-persisted-name
+        // to the resolved Profile.
+        viewModelScope.launch {
+            agentProfiles.collect { list ->
+                if (_selectedProfile.value != null) return@collect
+                val cid = activeConnectionId.value ?: return@collect
+                val persistedName = profileSelectionStore
+                    .selectedProfileFlow(cid)
+                    .first()
+                val resolved = persistedName?.let { n ->
+                    list.firstOrNull { it.name == n }
+                }
+                if (resolved != null) {
+                    _selectedProfile.value = resolved
+                }
             }
         }
     }

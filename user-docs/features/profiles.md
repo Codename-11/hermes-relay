@@ -69,8 +69,20 @@ Then add that gateway as a separate **Connection** on the phone (pair with it li
 - **Hidden when empty.** If the server has no `~/.hermes/profiles/*/` entries (and just the default root config), the Profile section of the agent sheet doesn't render.
 - **"Default"** option at the top of the Profile list. Selecting it clears the override and uses the server's `config.yaml/model.default`.
 - **Disabled mid-stream.** You can't switch profile during an in-flight chat turn.
-- **Ephemeral.** Selection resets on app restart and on Connection switch. Persisting per-Connection is on the roadmap.
+- **Persisted per Connection (v0.7.0).** Your pick survives app restart and follows the Connection it was made on — switching to Connection B brings up B's last-selected profile (or its default if never set), switching back to A restores A's selection. Removing a Connection also clears its remembered pick.
 - **Jump from Settings.** The "Active agent" card at the top of Settings summarizes the current Connection / Profile / Personality and navigates straight to Chat with the agent sheet pre-opened.
+
+## Runtime metadata (v0.7.0)
+
+Each profile row in the agent sheet now shows what the relay observes about the profile on disk and at runtime:
+
+- **Status dot (green vs grey).** A 6 dp dot rendered next to the profile name. Green when the relay has recently probed the profile's gateway and got a response; grey when the probe is idle, stale, or the gateway isn't running. Gateway-off profiles **stay selectable** — the probe is best-effort and can be wrong across a server restart, so we hint (50% alpha row) rather than disable.
+- **"N skills" chip.** Shown when `skill_count > 0`. Counts the skills visible inside the profile directory's skills root. Hidden when zero. Useful for picking "the profile that has the scheduling skill" at a glance.
+- **"SOUL" badge.** Shown when the profile has a non-empty `SOUL.md` on disk. Decoupled from whether the system-message content actually loaded — a SOUL badge means "the file exists and isn't empty", an active SOUL in chat means the server actually served the content.
+
+When a profile with a non-empty SOUL is active AND you pick a non-default personality, the agent sheet adds an inline "Profile SOUL overrides personality while active" caption under the personality section, mirroring the existing note under the profile section. Both are kept so the precedence rule is visible from either side of the sheet.
+
+All three indicators are optional on the wire — if you're paired with a pre-v0.7.0 relay that doesn't report them, the dot renders grey, the chips stay hidden, and the badge doesn't appear. Nothing else changes.
 
 ## Disabling discovery on the server
 

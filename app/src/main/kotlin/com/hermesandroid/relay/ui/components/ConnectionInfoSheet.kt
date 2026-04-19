@@ -691,12 +691,52 @@ fun AgentInfoSheet(
                     )
 
                     agentProfiles.forEach { profile ->
+                        // v0.7.0 runtime metadata indicators:
+                        //   - leadingDotColor: green for gateway_running,
+                        //     grey otherwise. Best-effort probe — a wrong
+                        //     dot doesn't disable the row.
+                        //   - SOUL badge: primary-container, shown only
+                        //     when has_soul.
+                        //   - Skills chip: surface-variant, shown only
+                        //     when skill_count > 0.
+                        // Gateway-off profiles remain selectable (the probe
+                        // can be stale) but render at 50% alpha as a hint.
+                        val dotColor = if (profile.gatewayRunning) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                        }
+                        val gatewayAlpha = if (profile.gatewayRunning) 1f else 0.5f
+                        val soulBg = MaterialTheme.colorScheme.primaryContainer
+                        val soulFg = MaterialTheme.colorScheme.onPrimaryContainer
+                        val skillsBg = MaterialTheme.colorScheme.surfaceVariant
+                        val skillsFg = MaterialTheme.colorScheme.onSurfaceVariant
                         ProfileRadioRow(
                             primary = profile.name.replaceFirstChar { it.uppercase() },
                             secondary = profile.model,
                             tertiary = profile.description.takeIf { it.isNotBlank() },
                             selected = selectedProfile?.name == profile.name,
                             enabled = !isStreaming,
+                            contentAlpha = gatewayAlpha,
+                            leadingDotColor = dotColor,
+                            secondaryTrailing = if (profile.hasSoul || profile.skillCount > 0) {
+                                {
+                                    if (profile.skillCount > 0) {
+                                        ProfileMetadataBadge(
+                                            text = "${profile.skillCount} skills",
+                                            background = skillsBg,
+                                            contentColor = skillsFg,
+                                        )
+                                    }
+                                    if (profile.hasSoul) {
+                                        ProfileMetadataBadge(
+                                            text = "SOUL",
+                                            background = soulBg,
+                                            contentColor = soulFg,
+                                        )
+                                    }
+                                }
+                            } else null,
                             onSelect = {
                                 if (selectedProfile?.name != profile.name) {
                                     connectionViewModel.selectProfile(profile)
@@ -780,6 +820,21 @@ fun AgentInfoSheet(
                             },
                         )
                     }
+
+                // When a profile SOUL is active AND the user has picked a
+                // non-default personality, make the precedence explicit
+                // here at the point the confusion would otherwise land.
+                // The mirror caption in the Profile section tells the same
+                // story from the other direction — both are kept because a
+                // user scanning either section should see the constraint.
+                if (profileOverridesPersonality && selectedPersonality != "default") {
+                    Text(
+                        text = "Profile SOUL overrides personality while active.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp, start = 4.dp),
+                    )
+                }
             }
 
             HorizontalDivider()
@@ -976,8 +1031,26 @@ private fun ProfileRadioRow(
     selected: Boolean,
     enabled: Boolean,
     onSelect: () -> Unit,
+    /**
+     * Extra alpha multiplier applied to the whole row on top of the
+     * disabled-state dimming. Used by the Profile section to hint that a
+     * gateway-off profile is selectable-but-probably-stale (50%). 1f is
+     * neutral.
+     */
+    contentAlpha: Float = 1f,
+    /**
+     * Optional status dot rendered between the RadioButton and the text
+     * column. 6 dp circle; hide by leaving null.
+     */
+    leadingDotColor: Color? = null,
+    /**
+     * Optional trailing chip/badge row rendered next to the [secondary]
+     * line (same baseline as the model-name text for the Profile section
+     * entries). Slot-based so each call site composes its own badges.
+     */
+    secondaryTrailing: (@Composable () -> Unit)? = null,
 ) {
-    val rowAlpha = if (enabled) 1f else 0.5f
+    val rowAlpha = (if (enabled) 1f else 0.5f) * contentAlpha
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -997,18 +1070,37 @@ private fun ProfileRadioRow(
             onClick = null,
             enabled = enabled,
         )
+        if (leadingDotColor != null) {
+            Spacer(modifier = Modifier.size(8.dp))
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(leadingDotColor),
+            )
+        }
         Spacer(modifier = Modifier.size(8.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = primary,
                 style = MaterialTheme.typography.bodyLarge,
             )
-            if (secondary != null) {
-                Text(
-                    text = secondary,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            if (secondary != null || secondaryTrailing != null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (secondary != null) {
+                        Text(
+                            text = secondary,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (secondaryTrailing != null) {
+                        secondaryTrailing()
+                    }
+                }
             }
             if (tertiary != null) {
                 Text(
@@ -1026,6 +1118,28 @@ private fun ProfileRadioRow(
             )
         }
     }
+}
+
+/**
+ * Tiny pill rendered inline with a profile row's secondary line. Used for
+ * "N skills" and "SOUL" indicators. Kept compact and visually subordinate
+ * to the model name — ~labelSmall, rounded to the max, padding trimmed.
+ */
+@Composable
+private fun ProfileMetadataBadge(
+    text: String,
+    background: Color,
+    contentColor: Color,
+) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        color = contentColor,
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(background)
+            .padding(horizontal = 6.dp, vertical = 1.dp),
+    )
 }
 
 @Composable
