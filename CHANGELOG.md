@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Multi-endpoint pairing QR** (ADR 24). A single pairing now carries an ordered list of endpoint candidates (`lan` / `tailscale` / `public` / operator-defined) so the same phone works seamlessly across LAN, Tailscale, and a public reverse-proxy URL. The phone picks the highest-priority reachable candidate at connect time and re-probes reachability on every `ConnectivityManager` network change with a 30s per-candidate cache. Strict-priority semantics — reachability only breaks ties among equal priorities, never promotes a lower priority over a higher one. New `plugin/pair.py` CLI flags `--mode {auto,lan,tailscale,public}` (default auto) and `--public-url <url>` drive candidate emission. See [`docs/remote-access.md`](docs/remote-access.md).
+- **First-class Tailscale helper** (ADR 25). New `plugin/relay/tailscale.py` + `hermes-relay-tailscale` CLI shim fronts the loopback-bound relay with `tailscale serve --bg --https=<port>` so the port is reachable over the tailnet with managed TLS + ACL-based identity. Safe to call unconditionally — no-ops with structured-dict failure when the `tailscale` binary is absent. `install.sh` gains an optional step [7/7] offering Tailscale enablement; skipped silently when the binary is missing, when `TS_DECLINE=1`, or under non-interactive shells without `TS_AUTO=1`. Auto-retires when upstream PR [#9295](https://github.com/NousResearch/hermes-agent/pull/9295) merges.
+- **Remote Access dashboard tab** (in the dashboard plugin). Operators can enable/disable the Tailscale helper, mint multi-endpoint pairing QRs, and inspect which endpoint modes are currently active — all from the hermes-agent web UI.
+- **Reachability probe + network-change re-probe** in the Android client. `ConnectionManager.resolveBestEndpoint()` does `HEAD /health` against each API candidate with a 2s timeout + 30s cache; `NetworkCallback.onAvailable` / `onLost` triggers a re-probe. `RelayUiState` gains `activeEndpointRole` so the UI can render which endpoint (LAN / Tailscale / Public) is currently serving.
 - **Opt-in terminal sessions.** Fresh terminal tabs no longer auto-attach — each tab shows a centered **Start session** overlay and spawns the tmux-backed shell only after the user taps it. Tabs that have already been started still auto-reattach on reconnect. Removes the previous behavior of creating persistent server-side shells just by opening the Terminal tab.
 - **`terminal.kill` envelope** — hard-destroy a session. The relay runs `tmux kill-session -t <name>` out-of-band before tearing down the PTY so the background shell (and any running commands) die with it. Closing a tab now opens a confirmation dialog with explicit **Detach** (preserve tmux session) vs **Kill** (destroy it) choices; the session info sheet also gains an error-tinted **Kill session** button.
 - **Touch-scroll + scrollback buttons for the terminal.** A vertical swipe on the terminal surface now moves xterm.js's scrollback (with a 12 px deadzone so long-press-to-select still works); the extras toolbar gains ⇑ / ⇓ / ⇲ buttons for ten-line scroll up, ten-line scroll down, and jump-to-bottom. Scrollback depth is unchanged at 10 000 lines.
@@ -15,7 +19,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- **Pairing QR now carries the `hermes: 3` schema when endpoints are emitted.** `plugin/pair.py` → `build_payload(endpoints=...)` bumps the version only when the `endpoints` array is present; pairs without endpoint candidates continue to emit `hermes: 2`. `canonicalize()` in `plugin/relay/qr_sign.py` preserves array order and role strings verbatim (no case/whitespace normalization) so HMAC signatures round-trip across Python / Kotlin.
+- **Paired Devices screen renders per-endpoint rows.** Each paired device now shows one row per `(device, endpoint)` pair, with a styled chip per role (LAN / Tailscale / Public / Custom VPN). Settings and Paired Devices both read from the new `PairingPreferences` per-device endpoint store.
 - **Terminal session info sheet is vertically scrollable** — tall phones in landscape with the new Start / Reattach / Kill action rows no longer clip the Done button.
+
+### Backward compatible
+
+- **Old v1 / v2 QRs keep parsing unchanged.** The Android parser's `ignoreUnknownKeys = true` plus the nullable `endpoints` field means pre-v3 QRs work on new phones (the phone synthesizes a single priority-0 `role: lan` candidate from the top-level fields, promoted to `role: tailscale` when the host matches `100.64.0.0/10` / `.ts.net`), and v3 QRs work on v0.6.x and earlier clients (they ignore `endpoints` and use the top-level fields). No forced re-pair for existing installs.
 
 ### Fixed
 

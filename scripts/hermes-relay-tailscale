@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Hermes-Relay Tailscale helper shim — routes to
+# `python -m plugin.relay.tailscale_cli` inside the hermes-agent venv
+# where the hermes-relay plugin is installed.
+#
+# Mirrors the hermes-pair shim pattern. install.sh drops a copy of this
+# script at ~/.local/bin/hermes-relay-tailscale; this committed copy
+# serves as the source of truth + a reference for the shape of the shim.
+#
+# Usage:
+#   hermes-relay-tailscale status             # JSON/human-readable state
+#   hermes-relay-tailscale enable [--port N]  # publish over the tailnet
+#   hermes-relay-tailscale disable [--port N] # remove the publication
+#
+# Override the venv python path with $HERMES_VENV_PY if needed.
+
+set -eu
+
+HERMES_VENV_PY="${HERMES_VENV_PY:-$HOME/.hermes/hermes-agent/venv/bin/python}"
+if [ ! -x "$HERMES_VENV_PY" ]; then
+    echo "hermes-relay-tailscale: cannot find hermes venv python at $HERMES_VENV_PY" >&2
+    echo "hermes-relay-tailscale: set HERMES_VENV_PY or reinstall hermes-agent" >&2
+    exit 1
+fi
+exec "$HERMES_VENV_PY" -m plugin.relay.tailscale_cli "$@"

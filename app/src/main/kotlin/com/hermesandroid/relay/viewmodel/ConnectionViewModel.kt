@@ -28,6 +28,7 @@ import com.hermesandroid.relay.network.ConnectivityObserver
 import com.hermesandroid.relay.network.ChatMode
 import com.hermesandroid.relay.network.ConnectionManager
 import com.hermesandroid.relay.network.ConnectionState
+import com.hermesandroid.relay.network.EndpointResolver
 import com.hermesandroid.relay.network.HermesApiClient
 import com.hermesandroid.relay.network.ServerCapabilities
 import com.hermesandroid.relay.network.RelayHttpClient
@@ -46,8 +47,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.shareIn
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.combine
@@ -55,6 +57,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
@@ -182,10 +185,29 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // ConnectionManager. CertPinStore is process-wide (not per-connection)
     // so holding a reference to the legacy AuthManager's pin store is
     // still correct after a swap.
+    // OkHttp used by [endpointResolver] for HEAD /health probes. Keep it
+    // distinct from the relay HTTP client (long read timeout for media
+    // downloads) so probe timeouts stay tight and don't pick up a 2-minute
+    // stream inheritance from the shared pool. See ADR 24.
+    private val endpointProbeClient: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(2, TimeUnit.SECONDS)
+        .readTimeout(2, TimeUnit.SECONDS)
+        .writeTimeout(2, TimeUnit.SECONDS)
+        .callTimeout(2, TimeUnit.SECONDS)
+        .build()
+
+    private val endpointResolver = EndpointResolver(httpClient = endpointProbeClient)
+
     private val connectionManager = ConnectionManager(
         multiplexer,
         authManager.certPinStore,
-        reconnectGate = { authManager.hasPairContext }
+        reconnectGate = { authManager.hasPairContext },
+        context = application,
+        endpointResolver = endpointResolver,
+        // Pull the active device id through AuthManager — it's the same id
+        // PairingPreferences keys the endpoint list on. Nullable wrapper
+        // because AuthManager.getOrCreateDeviceId() is suspending.
+        deviceIdProvider = { runCatching { authManager.getOrCreateDeviceId() }.getOrNull() },
     )
 
     // Data management — ConnectionStore flows through so exportSettings()
@@ -253,6 +275,48 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // Stale. See [RelayUiState] kdoc for the full rationale.
     private val _relayUiState = MutableStateFlow<RelayUiState>(RelayUiState.NotConfigured)
     val relayUiState: StateFlow<RelayUiState> = _relayUiState.asStateFlow()
+
+    /**
+     * ADR 24 — [relayUiState] bundled with the currently-active endpoint
+     * role so connection chips can render "Connected · Tailscale" etc.
+     * New screens should prefer [relayRowState] over [relayUiState] when
+     * they want to surface the transport role; existing `== RelayUiState.X`
+     * comparisons keep working off [relayUiState].
+     */
+    val relayRowState: StateFlow<RelayRowState> = combine(
+        _relayUiState,
+        connectionManager.activeEndpoint,
+    ) { phase, endpoint ->
+        RelayRowState(phase = phase, activeEndpointRole = endpoint?.role)
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.Eagerly,
+        RelayRowState(phase = RelayUiState.NotConfigured, activeEndpointRole = null),
+    )
+
+    /** Currently-active endpoint, for the Endpoints card. */
+    val activeEndpoint = connectionManager.activeEndpoint
+
+    /**
+     * Signal stream for `profiles.updated` pushes — emits when the
+     * server's in-memory profile list has changed in a way the user
+     * should know about (a different set of names or a different
+     * count). The UI layer collects this flow to show a brief
+     * "Profiles updated" snackbar.
+     *
+     * Sourced from [AuthManager.profilesUpdatedEvents] so the filter
+     * logic ("actually changed") is centralised there rather than
+     * duplicated per-subscriber.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val profilesUpdatedEvents: kotlinx.coroutines.flow.SharedFlow<Unit> =
+        _authManagerFlow
+            .flatMapLatest { it.profilesUpdatedEvents }
+            .shareIn(
+                scope = viewModelScope,
+                started = SharingStarted.Eagerly,
+                replay = 0,
+            )
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val authState: StateFlow<AuthState> = _authManagerFlow
@@ -1369,26 +1433,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Guarded: if the user has already picked something manually we
         // don't clobber it — only promote from null-with-persisted-name
         // to the resolved Profile.
-        //
-        // Also handles the inverse: when a `profiles.updated` push
-        // removes the currently-selected profile server-side (user
-        // deleted it via the dashboard), we clear the selection so
-        // the UI falls back to "Server default" rather than keeping
-        // a stale pick that no longer exists on the wire.
         viewModelScope.launch {
             agentProfiles.collect { list ->
-                val currentSelection = _selectedProfile.value
-                if (currentSelection != null) {
-                    // Selection exists — confirm it's still in the list.
-                    if (list.none { it.name == currentSelection.name }) {
-                        _selectedProfile.value = null
-                        val cid = activeConnectionId.value
-                        if (cid != null) {
-                            profileSelectionStore.setSelectedProfile(cid, null)
-                        }
-                    }
-                    return@collect
-                }
+                if (_selectedProfile.value != null) return@collect
                 val cid = activeConnectionId.value ?: return@collect
                 val persistedName = profileSelectionStore
                     .selectedProfileFlow(cid)
@@ -1402,27 +1449,6 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             }
         }
     }
-
-    /**
-     * Signal stream for `profiles.updated` pushes — emits when the
-     * server's in-memory profile list has changed in a way the user
-     * should know about (a different set of names or a different
-     * count). The UI layer collects this flow to show a brief
-     * "Profiles updated" snackbar.
-     *
-     * Sourced from [AuthManager.profilesUpdatedEvents] so the filter
-     * logic ("actually changed") is centralised there rather than
-     * duplicated per-subscriber.
-     */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val profilesUpdatedEvents: kotlinx.coroutines.flow.SharedFlow<Unit> =
-        _authManagerFlow
-            .flatMapLatest { it.profilesUpdatedEvents }
-            .shareIn(
-                scope = viewModelScope,
-                started = SharingStarted.Eagerly,
-                replay = 0,
-            )
 
     // --- Revalidation ----------------------------------------------------
     //
@@ -1543,6 +1569,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             authManager.setPendingGrants(relay.grants)
         }
         authManager.setPendingTtlSeconds(ttlSeconds)
+        // ADR 24 — stage the endpoint-candidate list so AuthManager persists
+        // it under the paired device's id once `auth.ok` lands. `endpoints`
+        // is always non-null + non-empty coming out of `parseHermesPairingQr`
+        // (v1/v2 QRs get a synthesized priority-0 candidate); we pass
+        // through whatever v3 emitted verbatim.
+        authManager.setPendingEndpoints(payload.endpoints)
 
         viewModelScope.launch {
             // API side — always present in any QR.
@@ -1713,6 +1745,60 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     fun disconnectRelay() {
         connectionManager.disconnect()
+    }
+
+    // --- ADR 24 — multi-endpoint exposure ------------------------------------
+
+    /**
+     * Observe the per-device endpoint-candidate list. Emits an empty list
+     * for freshly-upgraded installs (no `endpoints` persisted yet) or for
+     * pre-ADR-24 v1/v2 QRs whose synthesizer produced a single candidate
+     * — in which case the UI renders a one-row card.
+     *
+     * The device id is looked up via [AuthManager.getOrCreateDeviceId] so
+     * the flow hot-rebinds when the active connection swaps.
+     */
+    fun observeDeviceEndpoints(): kotlinx.coroutines.flow.Flow<List<com.hermesandroid.relay.data.EndpointCandidate>> {
+        return kotlinx.coroutines.flow.flow {
+            val deviceId = runCatching { authManager.getOrCreateDeviceId() }.getOrNull()
+            if (deviceId == null) {
+                emit(emptyList())
+                return@flow
+            }
+            emitAll(
+                PairingPreferences.getDeviceEndpoints(getApplication(), deviceId)
+            )
+        }
+    }
+
+    /**
+     * Pin [role] as the preferred endpoint until the next disconnect. Calls
+     * [ConnectionManager.setManualRoleOverride] and kicks [probeNow] so the
+     * swap takes effect immediately if the override is reachable. Passing
+     * `null` clears the override.
+     */
+    fun setPreferredEndpointRole(role: String?) {
+        connectionManager.setManualRoleOverride(role)
+        probeNow()
+    }
+
+    fun getPreferredEndpointRole(): String? = connectionManager.getManualRoleOverride()
+
+    /** User-triggered re-probe — Endpoints card's "Probe now" row action. */
+    fun probeNow() {
+        connectionManager.probeAndReconnect()
+    }
+
+    /**
+     * Fetch the TOFU SPKI pin stored for this endpoint's host:port, if any.
+     * Used by the Endpoints card's "View pin" row action. Returns null when
+     * no pin has been recorded (not-yet-TOFU'd host) or when the cert store
+     * is unavailable.
+     */
+    suspend fun lookupEndpointPin(candidate: com.hermesandroid.relay.data.EndpointCandidate): String? {
+        val hostPort = "${candidate.api.host.lowercase()}:${candidate.api.port}"
+        val pins = PairingPreferences.getTofuPins(getApplication())
+        return pins[hostPort]
     }
 
     /**

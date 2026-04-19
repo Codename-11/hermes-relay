@@ -3,6 +3,7 @@ package com.hermesandroid.relay.auth
 import android.content.Context
 import android.util.Log
 import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.PairingPreferences
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.network.ChannelMultiplexer
@@ -302,6 +303,19 @@ class AuthManager(
     private var pendingGrants: Map<String, Long>? = null
 
     /**
+     * Optional endpoint-candidate list from the pairing QR (ADR 24, v3+).
+     * Persisted via [PairingPreferences.setDeviceEndpoints] once the server
+     * confirms the pair in `auth.ok` so the reachability probe + network-aware
+     * switch (Kt-Probe) can read them on subsequent connects.
+     *
+     * `null` means "no endpoint list to persist on this pair" — either a v1/v2
+     * QR hit the legacy path without going through [setPendingEndpoints], or
+     * we're in a session-token refresh where the endpoint list doesn't change.
+     * Either way, we leave the previously-persisted list untouched.
+     */
+    private var pendingEndpoints: List<EndpointCandidate>? = null
+
+    /**
      * Server-advertised agent profiles from the `auth.ok` payload's
      * `profiles` field. Each entry corresponds to a named agent config in
      * the server's `~/.hermes/config.yaml` (see Hermes's `_load_profiles`).
@@ -455,6 +469,21 @@ class AuthManager(
 
     fun setPendingGrants(grants: Map<String, Long>?) {
         pendingGrants = grants
+    }
+
+    /**
+     * Stage the endpoint-candidate list parsed from the pairing QR (ADR 24).
+     * Consumed in [handleAuthOk] — after the server confirms the pair we
+     * persist the list under the current device id via
+     * [PairingPreferences.setDeviceEndpoints].
+     *
+     * Safe to call with `null` or an empty list — either clears any staged
+     * value without persisting. Pair-code re-sends from an existing
+     * [AuthState.Paired] state never reach this setter, so session-token
+     * refreshes don't clobber the persisted list.
+     */
+    fun setPendingEndpoints(endpoints: List<EndpointCandidate>?) {
+        pendingEndpoints = endpoints?.takeIf { it.isNotEmpty() }
     }
 
     /**
@@ -730,11 +759,44 @@ class AuthManager(
                     _currentPairedSession.value = paired
                     persistPairedSession(paired)
 
-                    // Pending TTL/grants are consumed — the server has
-                    // either honored or overridden them and the next
+                    // ADR 24 — persist the pairing's endpoint-candidate list
+                    // so the reachability probe + network-aware switch
+                    // (Kt-Probe) can load it on subsequent connects without
+                    // re-scanning the original QR. Keyed by the stable
+                    // device id so multiple paired devices coexist cleanly.
+                    //
+                    // Leave the previously-persisted list untouched when
+                    // nothing was staged (session-token refresh path, or
+                    // a legacy caller that didn't set endpoints).
+                    pendingEndpoints?.let { endpoints ->
+                        try {
+                            val deviceId = getDeviceId()
+                            PairingPreferences.setDeviceEndpoints(
+                                context,
+                                deviceId,
+                                endpoints,
+                            )
+                            Log.i(
+                                TAG,
+                                "handleAuthOk: persisted ${endpoints.size} endpoint(s) for device=$deviceId " +
+                                    "roles=${endpoints.map { it.role }}"
+                            )
+                        } catch (e: Exception) {
+                            Log.w(
+                                TAG,
+                                "handleAuthOk: endpoint persistence failed — continuing without; " +
+                                    "reachability probe will fall back to the single active endpoint. " +
+                                    "reason=${e.message}"
+                            )
+                        }
+                    }
+
+                    // Pending TTL/grants/endpoints are consumed — the server
+                    // has either honored or overridden them and the next
                     // auth round-trip should not resend stale values.
                     pendingTtlSeconds = null
                     pendingGrants = null
+                    pendingEndpoints = null
                 }
 
                 val profilesArray = payload["profiles"]?.jsonArray

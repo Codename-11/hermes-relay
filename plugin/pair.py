@@ -4,9 +4,27 @@ Replaces the standalone bash script `skills/hermes-pairing-qr/hermes-pair`.
 Exposed as the `hermes pair` CLI sub-command via plugin/cli.py.
 
 The payload format matches what QrPairingScanner.kt in the Android app expects.
-v2 (current) adds optional TTL / per-channel grants / transport hint /
-HMAC signature. v1 is still emitted when no v2-only field is present so
-old phones can still parse the QR::
+v2 added optional TTL / per-channel grants / transport hint / HMAC signature.
+v3 (ADR 24) adds an optional ordered ``endpoints`` array for multi-network
+operators (LAN + Tailscale + public reverse-proxy in a single QR). v1/v2
+remain valid — phones synthesize a priority-0 candidate from the top-level
+fields when ``endpoints`` is absent, and the pair CLI only bumps the
+version bit when it's actually emitting endpoints::
+
+    v3 (multi-endpoint — ADR 24):
+    {
+      "hermes": 3,
+      "host": "<ip>", "port": <port>, "key": "<token>", "tls": <bool>,
+      "relay": { ... same as v2 ... },
+      "endpoints": [
+        { "role": "lan", "priority": 0,
+          "api":   {"host": "<ip>", "port": <port>, "tls": <bool>},
+          "relay": {"url": "ws://<ip>:<port>", "transport_hint": "ws"} },
+        { "role": "tailscale", "priority": 1, "api": {...}, "relay": {...} },
+        { "role": "public",    "priority": 2, "api": {...}, "relay": {...} }
+      ],
+      "sig": "<base64-hmac-sha256>"
+    }
 
     v2 (extended):
     {
@@ -30,10 +48,11 @@ old phones can still parse the QR::
     }
 
 Top-level fields configure the direct-chat Hermes API server (port 8642 by
-default). The optional ``relay`` block configures the Hermes-Relay WSS
-connection used by the terminal and bridge channels — present only when a
-local relay is running and we were able to pre-register a pairing code with
-it via ``POST /pairing/register``.
+default) and mirror the priority-0 endpoint candidate for backward compat.
+The optional ``relay`` block configures the Hermes-Relay WSS connection
+used by the terminal and bridge channels — present only when a local
+relay is running and we were able to pre-register a pairing code with it
+via ``POST /pairing/register``.
 """
 
 from __future__ import annotations
@@ -49,7 +68,8 @@ import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+from urllib.parse import urlparse
 
 from plugin.relay.qr_sign import load_or_create_secret, sign_payload
 
@@ -168,6 +188,7 @@ def build_payload(
     tls: bool,
     relay: Optional[dict] = None,
     sign: bool = True,
+    endpoints: Optional[list[dict]] = None,
 ) -> str:
     """Build compact JSON payload matching HermesPairingPayload.kt format.
 
@@ -176,10 +197,28 @@ def build_payload(
     is present the top-level ``hermes`` field is bumped to ``2``; otherwise
     it stays at ``1`` so old phones can still parse.
 
+    If ``endpoints`` is provided and non-empty it's embedded as a top-level
+    ``"endpoints"`` array and the version bumps to ``3`` (ADR 24 —
+    multi-endpoint pairing payload). List order is preserved verbatim
+    through canonicalization + signing so strict priority semantics
+    survive the HMAC. Callers are responsible for sorting by
+    ``priority`` before passing the list in; ``build_endpoint_candidates``
+    does this for the CLI path.
+
+    The top-level ``host`` / ``port`` / ``key`` / ``tls`` / ``relay``
+    fields are always emitted and should mirror the priority-0 candidate
+    for backward compat — phones on v1 / v2 parsers synthesize a single
+    candidate from those fields and ignore ``endpoints``.
+
     If ``sign`` is true the payload is signed with the host-local QR
     secret and the base64 HMAC is added as a top-level ``sig`` field.
     """
-    version = 2 if _relay_has_v2_fields(relay) else 1
+    if endpoints:
+        version = 3
+    elif _relay_has_v2_fields(relay):
+        version = 2
+    else:
+        version = 1
     payload: dict = {
         "hermes": version,
         "host": host,
@@ -189,6 +228,8 @@ def build_payload(
     }
     if relay is not None:
         payload["relay"] = relay
+    if endpoints:
+        payload["endpoints"] = endpoints
 
     if sign:
         try:
@@ -205,6 +246,247 @@ def build_payload(
             )
 
     return json.dumps(payload, separators=(",", ":"))
+
+
+# ── Endpoint candidate discovery (ADR 24) ────────────────────────────────────
+
+
+_VALID_MODES = ("auto", "lan", "tailscale", "public")
+
+
+def _lan_endpoint(
+    api_host: str,
+    api_port: int,
+    api_tls: bool,
+    relay_host: str,
+    relay_port: int,
+    relay_tls: bool,
+    priority: int = 0,
+) -> dict[str, Any]:
+    """Build a ``role: lan`` endpoint candidate using the LAN-resolved host.
+
+    Reuses the same :func:`_resolve_lan_ip` helper the single-endpoint
+    flow uses, so a bind-all / loopback host surfaces as a routable LAN
+    IP in the candidate.
+    """
+    lan_host = _resolve_lan_ip(api_host)
+    relay_lan_host = _resolve_lan_ip(relay_host)
+    relay_scheme = "wss" if relay_tls else "ws"
+    return {
+        "role": "lan",
+        "priority": priority,
+        "api": {"host": lan_host, "port": api_port, "tls": api_tls},
+        "relay": {
+            "url": f"{relay_scheme}://{relay_lan_host}:{relay_port}",
+            "transport_hint": relay_scheme,
+        },
+    }
+
+
+def _tailscale_status() -> Optional[dict[str, Any]]:
+    """Probe the optional Tailscale helper. Returns None on any failure.
+
+    The helper at ``plugin.relay.tailscale`` is owned by a sibling track
+    (ADR 25). We import it lazily and treat both ``ImportError`` and any
+    runtime exception as "no Tailscale endpoint available" so this code
+    works today on a vanilla install where the helper hasn't landed
+    yet. When the helper is present and returns a usable ``.ts.net``
+    hostname we surface it as a ``role: tailscale`` candidate.
+    """
+    try:
+        from plugin.relay import tailscale  # type: ignore
+    except ImportError:
+        return None
+    try:
+        status = tailscale.status()
+    except Exception:
+        return None
+    if not isinstance(status, dict):
+        return None
+    return status
+
+
+def _tailscale_endpoint(
+    status: dict[str, Any],
+    api_port: int,
+    relay_port: int,
+    priority: int,
+) -> Optional[dict[str, Any]]:
+    """Materialize a ``role: tailscale`` candidate from a helper status dict.
+
+    The helper contract (ADR 25) hands back something shaped roughly
+    like ``{"hostname": "hermes.tail-scale.ts.net", "https": True}``.
+    We're defensive about shape — if the hostname is missing or doesn't
+    look like a Tailscale magic-DNS record we skip the candidate rather
+    than emit a broken one. Tailscale's ``serve --https`` terminates TLS
+    so the api side is https by default; the relay is reached over wss
+    on the same hostname.
+    """
+    hostname = status.get("hostname") or status.get("dns_name") or status.get("host")
+    if not isinstance(hostname, str) or not hostname.strip():
+        return None
+    hostname = hostname.strip().rstrip(".")
+    if not hostname.endswith(".ts.net"):
+        # Could be ipv4/ipv6 CGNAT-only; that's still a valid Tailscale
+        # endpoint but we only auto-detect .ts.net magic-DNS to avoid
+        # accidentally emitting a candidate pointing at a non-routable
+        # raw address. Operators wanting the ip path can pass a custom
+        # endpoint via the dashboard's /pairing/mint body.
+        return None
+    # Tailscale serve defaults to https; the helper can override via
+    # `tls: False` if the operator set up plain http (uncommon).
+    tls = bool(status.get("tls", True))
+    scheme = "wss" if tls else "ws"
+    return {
+        "role": "tailscale",
+        "priority": priority,
+        "api": {"host": hostname, "port": api_port, "tls": tls},
+        "relay": {
+            "url": f"{scheme}://{hostname}:{relay_port}",
+            "transport_hint": scheme,
+        },
+    }
+
+
+def _public_endpoint(
+    public_url: str,
+    relay_port: int,
+    priority: int,
+) -> dict[str, Any]:
+    """Parse ``--public-url`` into a ``role: public`` candidate.
+
+    Infers api host/port/tls from the URL. When the URL scheme is
+    ``https`` and no port is present we default to 443 (the common
+    reverse-proxy / Cloudflare Tunnel case). The relay URL mirrors the
+    same host/scheme at the configured ``relay_port``; operators behind
+    a path-rewriting proxy can override later via the dashboard
+    ``/pairing/mint`` body.
+
+    Raises :class:`ValueError` when ``public_url`` is empty or its
+    scheme isn't ``http`` / ``https``.
+    """
+    if not public_url:
+        raise ValueError("public_url is required for role=public")
+    parsed = urlparse(public_url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(
+            f"--public-url must be http:// or https:// (got {public_url!r})"
+        )
+    host = parsed.hostname
+    if not host:
+        raise ValueError(f"--public-url has no host: {public_url!r}")
+    tls = parsed.scheme == "https"
+    api_port = parsed.port if parsed.port is not None else (443 if tls else 80)
+    relay_scheme = "wss" if tls else "ws"
+    # If the operator passed a relay-explicit URL (path present beyond
+    # "/"), preserve it verbatim — path-rewriting proxies depend on it.
+    relay_url: str
+    path = parsed.path or ""
+    if path and path != "/":
+        relay_url = f"{relay_scheme}://{host}{path}"
+    else:
+        # No path → assume the relay is on the same host at its usual
+        # port. TLS-terminating reverse proxies that forward WSS on
+        # :443 are typical; the operator can override via --public-url
+        # with an explicit path if the proxy rewrites.
+        relay_url = f"{relay_scheme}://{host}:{relay_port}"
+    return {
+        "role": "public",
+        "priority": priority,
+        "api": {"host": host, "port": api_port, "tls": tls},
+        "relay": {
+            "url": relay_url,
+            "transport_hint": relay_scheme,
+        },
+    }
+
+
+def build_endpoint_candidates(
+    mode: str,
+    api_host: str,
+    api_port: int,
+    api_tls: bool,
+    relay_host: str,
+    relay_port: int,
+    relay_tls: bool,
+    public_url: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    """Build the ordered ``endpoints`` array for a v3 QR payload.
+
+    ``mode`` is one of ``auto`` / ``lan`` / ``tailscale`` / ``public``
+    (see ADR 24). Priority is strictly increasing by role, starting at
+    0 for LAN and going up — matching DNS SRV semantics (lower number
+    = higher priority). An empty list is returned when no candidates
+    could be detected (e.g. ``--mode tailscale`` on a host without
+    Tailscale installed); callers should treat that as "stay on the
+    single-endpoint v2 payload".
+
+    Raises :class:`ValueError` if ``mode`` is unknown or ``mode=public``
+    is requested without a ``public_url``.
+    """
+    if mode not in _VALID_MODES:
+        raise ValueError(
+            f"invalid --mode {mode!r}; expected one of {_VALID_MODES}"
+        )
+    candidates: list[dict[str, Any]] = []
+    next_priority = 0
+
+    def _emit(candidate: Optional[dict[str, Any]]) -> None:
+        nonlocal next_priority
+        if candidate is None:
+            return
+        # Respect the priority we assigned above; _lan_endpoint /
+        # _tailscale_endpoint / _public_endpoint honor it.
+        candidates.append(candidate)
+        next_priority += 1
+
+    want_lan = mode in ("auto", "lan")
+    want_tailscale = mode in ("auto", "tailscale")
+    want_public = mode in ("auto", "public")
+
+    if want_lan:
+        _emit(
+            _lan_endpoint(
+                api_host,
+                api_port,
+                api_tls,
+                relay_host,
+                relay_port,
+                relay_tls,
+                priority=next_priority,
+            )
+        )
+
+    if want_tailscale:
+        status = _tailscale_status()
+        if status is not None:
+            _emit(
+                _tailscale_endpoint(
+                    status,
+                    api_port=api_port,
+                    relay_port=relay_port,
+                    priority=next_priority,
+                )
+            )
+        elif mode == "tailscale":
+            # Explicit mode but no helper / no hostname — fail soft
+            # rather than emit a half-formed QR. Caller falls back
+            # to the single-endpoint path and logs.
+            pass
+
+    if want_public:
+        if public_url:
+            _emit(
+                _public_endpoint(
+                    public_url, relay_port=relay_port, priority=next_priority
+                )
+            )
+        elif mode == "public":
+            raise ValueError(
+                "--mode public requires --public-url <url>"
+            )
+
+    return candidates
 
 
 # ── TTL / grants parsing ─────────────────────────────────────────────────────
@@ -759,7 +1041,38 @@ def pair_command(args) -> None:
                     "rejected — QR will configure chat only.\n"
                 )
 
-    payload = build_payload(host, port, key, tls, relay=relay_block)
+    # ── Multi-endpoint detection (ADR 24) ────────────────────────────────
+    # Build an ``endpoints`` array whenever the operator asked for multi-
+    # network support (non-default mode OR --public-url). ``mode=auto``
+    # silently probes LAN + Tailscale + (if passed) --public-url; explicit
+    # modes emit just that role (or empty list on detection failure —
+    # caller falls back to the single-endpoint payload).
+    mode = (getattr(args, "mode", None) or "auto").strip().lower()
+    public_url = getattr(args, "public_url", None)
+    endpoints: list[dict] = []
+    # Only emit endpoints when the relay is present — the phone needs a
+    # relay URL per candidate to drive reconnect on network switch. If
+    # the operator ran with --no-relay we stay on single-endpoint.
+    if relay_block is not None:
+        _relay_cfg = read_relay_config()
+        try:
+            endpoints = build_endpoint_candidates(
+                mode=mode,
+                api_host=host,
+                api_port=port,
+                api_tls=tls,
+                relay_host=_relay_cfg["host"],
+                relay_port=_relay_cfg["port"],
+                relay_tls=bool(_relay_cfg.get("tls")),
+                public_url=public_url,
+            )
+        except ValueError as exc:
+            print(f"  [error] --mode/--public-url: {exc}", file=sys.stderr)
+            sys.exit(2)
+
+    payload = build_payload(
+        host, port, key, tls, relay=relay_block, endpoints=endpoints or None
+    )
 
     # Always show text block — works in any terminal including Hermes TUI
     print(render_text_block(host, port, key, tls, relay=relay_block))
@@ -845,6 +1158,29 @@ if __name__ == "__main__":
             "Override the transport hint stored alongside the session "
             "(only meaningful with --register-code). Defaults to 'wss' "
             "when RELAY_SSL_CERT is set, otherwise 'ws'."
+        ),
+    )
+    parser.add_argument(
+        "--mode",
+        dest="mode",
+        default="auto",
+        choices=list(_VALID_MODES),
+        help=(
+            "Endpoint discovery mode (ADR 24). 'auto' (default) probes "
+            "LAN + Tailscale + --public-url (when passed) and emits an "
+            "ordered ``endpoints`` array in the QR. 'lan' / 'tailscale' "
+            "/ 'public' emit just that role. 'public' requires "
+            "--public-url."
+        ),
+    )
+    parser.add_argument(
+        "--public-url",
+        dest="public_url",
+        default=None,
+        help=(
+            "Public hostname for a reverse proxy / Cloudflare Tunnel "
+            "(e.g. https://hermes.example.com). Added as a role=public "
+            "endpoint candidate in the QR. Must be http:// or https://."
         ),
     )
     pair_command(parser.parse_args())

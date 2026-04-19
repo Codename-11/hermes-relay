@@ -106,6 +106,98 @@ class PairingMintSchemaTests(AioHTTPTestCase):
         qr = json.loads(result["qr_payload"])
         self.assertEqual(qr["hermes"], 2)
 
+    async def test_mint_without_endpoints_stays_v2_shape(self) -> None:
+        """Regression: mint bodies without ``endpoints`` must not bump to v3.
+
+        Preserves backward compat so phones parsing v2 (pre-ADR 24)
+        don't see an unexpected version bump whenever the dashboard
+        hits /pairing/mint without explicitly opting into multi-endpoint.
+        """
+        result = await self._mint({"ttl_seconds": 3600})
+        qr = json.loads(result["qr_payload"])
+        self.assertEqual(qr["hermes"], 2)
+        self.assertNotIn("endpoints", qr)
+        self.assertNotIn("endpoints", result)
+
+    async def test_mint_with_endpoints_round_trips_verbatim(self) -> None:
+        """ADR 24: mint echoes ``endpoints`` array byte-for-byte.
+
+        The server must not reorder, normalize, or drop any entries —
+        the phone needs list order preserved for strict priority
+        semantics, and role strings must round-trip for the HMAC to
+        verify.
+        """
+        endpoints = [
+            {
+                "role": "lan",
+                "priority": 0,
+                "api": {"host": "192.168.1.100", "port": 8642, "tls": False},
+                "relay": {
+                    "url": "ws://192.168.1.100:8767",
+                    "transport_hint": "ws",
+                },
+            },
+            {
+                "role": "tailscale",
+                "priority": 1,
+                "api": {"host": "hermes.tail-scale.ts.net", "port": 8642, "tls": True},
+                "relay": {
+                    "url": "wss://hermes.tail-scale.ts.net:8767",
+                    "transport_hint": "wss",
+                },
+            },
+        ]
+        result = await self._mint({"endpoints": endpoints})
+        qr = json.loads(result["qr_payload"])
+
+        self.assertEqual(qr["hermes"], 3, "endpoints present → version 3")
+        self.assertIn("endpoints", qr)
+        self.assertEqual(qr["endpoints"], endpoints)
+        # Mint body also mirrors it for the dashboard round-trip.
+        self.assertEqual(result.get("endpoints"), endpoints)
+
+    async def test_mint_with_endpoints_signature_verifies(self) -> None:
+        """ADR 24: the HMAC over a v3 payload must verify unchanged."""
+        from plugin.relay.qr_sign import load_or_create_secret, verify_payload
+
+        endpoints = [
+            {
+                "role": "lan",
+                "priority": 0,
+                "api": {"host": "192.168.1.100", "port": 8642, "tls": False},
+                "relay": {
+                    "url": "ws://192.168.1.100:8767",
+                    "transport_hint": "ws",
+                },
+            },
+            {
+                "role": "public",
+                "priority": 1,
+                "api": {"host": "hermes.example.com", "port": 443, "tls": True},
+                "relay": {
+                    "url": "wss://hermes.example.com/relay",
+                    "transport_hint": "wss",
+                },
+            },
+        ]
+        result = await self._mint({"endpoints": endpoints})
+        qr = json.loads(result["qr_payload"])
+
+        self.assertIn("sig", qr)
+        secret = load_or_create_secret()
+        self.assertTrue(
+            verify_payload(qr, qr["sig"], secret),
+            "v3 payload with endpoints must verify against host QR secret",
+        )
+
+    async def test_mint_rejects_non_array_endpoints(self) -> None:
+        resp = await self.client.post(
+            "/pairing/mint", json={"endpoints": {"role": "lan"}}
+        )
+        self.assertEqual(resp.status, 400)
+        body = await resp.json()
+        self.assertIn("endpoints", body["error"])
+
     async def test_unresolvable_api_host_returns_400(self) -> None:
         """If webapi_url is 0.0.0.0 and no override, we must 400."""
         # Rebuild the app with a broken default so the error branch fires.

@@ -126,6 +126,7 @@ fun SettingsScreen(
     val apiUrl by connectionViewModel.apiServerUrl.collectAsState()
     val relayUrl by connectionViewModel.relayUrl.collectAsState()
     val relayUiState by connectionViewModel.relayUiState.collectAsState()
+    val relayRowState by connectionViewModel.relayRowState.collectAsState()
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
     // Active Agent card inputs — personality + profile drive the title,
     // ring-accent, and subtitle. Kept next to the other top-level
@@ -278,8 +279,11 @@ fun SettingsScreen(
                         // show "Connected" via a different label.
                         ConnectionStatusRow(
                             label = "Relay",
-                            state = relayUiState.asBadgeState(),
-                            statusText = relayUiState.statusText(connectedLabel = relayUrl),
+                            state = relayRowState.asBadgeState(),
+                            // RelayRowState.statusText appends " · <Role>" when
+                            // the ADR 24 resolver has picked an endpoint, so
+                            // the chip reads "Connected · Tailscale" etc.
+                            statusText = relayRowState.statusText(connectedLabel = relayUrl),
                         )
                         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
                         ConnectionStatusRow(

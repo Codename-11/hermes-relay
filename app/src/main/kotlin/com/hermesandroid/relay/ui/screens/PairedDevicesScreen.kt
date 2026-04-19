@@ -58,6 +58,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.auth.PairedDeviceInfo
+import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.ui.components.SessionTtlPickerDialog
 import com.hermesandroid.relay.ui.components.TransportSecurityBadge
 import com.hermesandroid.relay.ui.components.TransportSecuritySize
@@ -90,6 +92,12 @@ fun PairedDevicesScreen(
     val loading by connectionViewModel.pairedDevicesLoading.collectAsState()
     val loadError by connectionViewModel.pairedDevicesError.collectAsState()
     val currentPairedSession by connectionViewModel.currentPairedSession.collectAsState()
+    // ADR 24 — per-endpoint sub-rows for the current device. Other devices
+    // don't expose their endpoint list to us (the store is phone-local),
+    // so we only render sub-rows under the row that matches this phone.
+    val myEndpoints by connectionViewModel.observeDeviceEndpoints()
+        .collectAsState(initial = emptyList())
+    val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
@@ -157,6 +165,8 @@ fun PairedDevicesScreen(
                         pendingChannelRevoke = device to channel
                     },
                     // === END PER-CHANNEL-REVOKE ===
+                    myEndpoints = myEndpoints,
+                    activeEndpoint = activeEndpoint,
                 )
             }
         }
@@ -412,20 +422,29 @@ private fun DeviceList(
     // === PER-CHANNEL-REVOKE: per-chip revoke callback ===
     onRevokeChannel: (PairedDeviceInfo, String) -> Unit,
     // === END PER-CHANNEL-REVOKE ===
+    myEndpoints: List<EndpointCandidate>,
+    activeEndpoint: EndpointCandidate?,
 ) {
     LazyColumn(
         contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         items(devices, key = { it.tokenPrefix }) { device ->
+            val isCurrent = device.isCurrent ||
+                (currentToken?.startsWith(device.tokenPrefix) == true)
             DeviceCard(
                 device = device,
-                isCurrent = device.isCurrent || (currentToken?.startsWith(device.tokenPrefix) == true),
+                isCurrent = isCurrent,
                 onRevoke = { onRevoke(device) },
                 onExtend = { onExtend(device) },
                 // === PER-CHANNEL-REVOKE: forward to card ===
                 onRevokeChannel = { channel -> onRevokeChannel(device, channel) },
                 // === END PER-CHANNEL-REVOKE ===
+                // ADR 24 — endpoints only render under the current-device
+                // row because the store is phone-local. Other devices get
+                // the unchanged single-row treatment.
+                endpoints = if (isCurrent) myEndpoints else emptyList(),
+                activeEndpoint = activeEndpoint.takeIf { isCurrent },
             )
         }
     }
@@ -441,6 +460,8 @@ private fun DeviceCard(
     // === PER-CHANNEL-REVOKE: per-chip revoke callback ===
     onRevokeChannel: (String) -> Unit,
     // === END PER-CHANNEL-REVOKE ===
+    endpoints: List<EndpointCandidate> = emptyList(),
+    activeEndpoint: EndpointCandidate? = null,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -493,6 +514,16 @@ private fun DeviceCard(
                     // fall back to the generic "LAN/dev" label when insecure.
                     reason = if (transportSecure) null else "lan_only",
                     size = TransportSecuritySize.Row
+                )
+            }
+
+            // ADR 24 — per-endpoint sub-rows for this device. Only populated
+            // for the current device; other devices render with endpoints
+            // empty so the unchanged single-row treatment still applies.
+            if (endpoints.isNotEmpty()) {
+                EndpointsSubList(
+                    endpoints = endpoints,
+                    activeEndpoint = activeEndpoint,
                 )
             }
 
@@ -700,6 +731,71 @@ private fun formatEpoch(epochSeconds: Long): String {
         DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(epochSeconds * 1000L))
     } catch (_: Exception) {
         "—"
+    }
+}
+
+/**
+ * ADR 24 — one visual row per (device, endpoint). Rendered only for the
+ * current device since the phone-local DataStore doesn't hold endpoints
+ * for other peers. Revoke stays at the device level (kills the session
+ * token, which wipes every endpoint row at once).
+ */
+@Composable
+private fun EndpointsSubList(
+    endpoints: List<EndpointCandidate>,
+    activeEndpoint: EndpointCandidate?,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            text = "Endpoints",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        for (candidate in endpoints) {
+            val isActive = activeEndpoint != null &&
+                activeEndpoint.role.equals(candidate.role, ignoreCase = true) &&
+                activeEndpoint.api.host.equals(candidate.api.host, ignoreCase = true) &&
+                activeEndpoint.api.port == candidate.api.port
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(
+                        if (isActive) {
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                        } else {
+                            Color.Transparent
+                        },
+                    )
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = candidate.displayLabel(),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (isActive) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                )
+                Text(
+                    text = "${candidate.api.host}:${candidate.api.port}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.weight(1f),
+                )
+                if (isActive) {
+                    Text(
+                        text = "active",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+        }
     }
 }
 

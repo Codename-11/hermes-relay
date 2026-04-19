@@ -1,28 +1,29 @@
 # Hermes-Relay — Dev Log
 
-## 2026-04-19 — Chat/voice polish + Stats + Timeline (v0.7.0)
+## 2026-04-19 — Multi-endpoint pairing + first-class Tailscale (ADR 24 + 25)
 
-**Branch:** `feature/profile-ux-v2`. Kotlin-worker slice covering the chat header, voice overlay dedup, StatsForNerds expansion, and the new Timeline view. Server worker + inspector worker run in parallel on the same branch.
+**Branches:** Wave 1 + Wave 2 landed on `dev`. ADRs 24 and 25 written and committed. Docs pass (this entry) closes the work out.
 
-**Shipped (Kotlin).**
+**Shipped.**
 
-- **Chat header reflects the selected profile.** The ChatScreen TopAppBar now prefers the user's explicit profile pick (or the server-advertised `default` profile) over the bare connection label. Avatar cross-fades when the effective agent changes; subtitle shows `model · personality` with the profile's model trumping `/api/config`'s `serverModelName`. Falls back through connection label → "Hermes".
-- **ConnectionInfoSheet gate documented.** The sheet already reads `ChatViewModel.isStreaming` and disables the profile + personality radio rows during an in-flight turn. Added a KDoc spelling out this contract so the Inspector worker (who owns the sheet) can hang a subtitle banner on it later without ambiguity.
-- **Voice overlay double-entry bug fixed.** VoiceModeOverlay used to render three sources of truth: `uiState.transcribedText` (a top "YOU" chip), `uiState.responseText` (a `StreamingResponseRow`), AND `transcriptMessages` (the scrolling chat-history list). During a voice turn ChatViewModel committed the user's send AND streamed the assistant reply into its own message flow — so every turn appeared twice on screen. Consolidated to a single source (`transcriptMessages`); the last streaming assistant message still updates in real time through ChatViewModel's StateFlow. New androidTest (`VoiceModeOverlayTranscriptTest`) pins the invariant.
-- **Voice section in StatsForNerds.** Last-heard transcript (80 char cap), STT latency/bytes/count, last-synthesized sentence, rolling TTS latency avg (last 5)/bytes/count, barge-in events, VAD threshold (ms), interaction mode, queue depth, player state. Sources from a new `VoiceViewModel.voiceStats: StateFlow<VoiceStats>` updated on discrete events (not per-amplitude tick) so recomposition stays cheap.
-- **Tool Calls section in StatsForNerds.** Last 10 invocations with relative start time, duration, status dot, and truncated result. Sources from a new `ChatViewModel.toolCallHistory: StateFlow<List<ToolCallEvent>>` derived from the existing `ChatHandler.messages` flow — no new event plumbing needed.
-- **Timeline view.** New `TimelineView` composable below StatsForNerds renders a time-ordered activity feed. Events color-coded by kind (chat blue, tool orange, voice purple, profile green, connection grey), bucketed into 5s windows (collapsed rows show a `+N` badge), tap-to-expand for details. Capped at 200 events (~30 minutes of heavy use) with a 320dp scroll container. `buildTimelineEvents` is package-private + pure so future tests can verify derivation without the UI.
+- **ADR 24 — Multi-endpoint pairing.** `plugin/pair.py` now emits an ordered `endpoints` array (`lan` / `tailscale` / `public` / operator-defined roles) in a new `hermes: 3` QR schema; `hermes: 2` stays the default when no endpoints are present. New CLI flags `--mode {auto,lan,tailscale,public}` and `--public-url <url>` drive candidate emission; `--mode auto` autodetects LAN IP + Tailscale status and composes them with an optional public URL. `plugin/relay/qr_sign.py` canonical form preserves array order and role strings verbatim — HMAC round-trip test pins this against future refactors. `plugin/relay/server.py` `handle_pairing_mint` / `handle_pairing_register` accept the optional `endpoints` body field. Phone side: new `data/Endpoint.kt` (`EndpointCandidate` / `ApiEndpoint` / `RelayEndpoint` / `displayLabel()`), `data/PairingPreferences.kt` per-device endpoint store, `ui/components/QrPairingScanner.kt` parses the new field with a v1/v2 synthesizer for back-compat, `auth/AuthManager.kt` persists the endpoint list on `auth.ok`, and `viewmodel/ConnectionViewModel.kt` stages endpoints at pair time. Wave 2 Kt-Probe added `ConnectionManager.resolveBestEndpoint()` + `NetworkCallback` re-probing and `RelayUiState.activeEndpointRole`.
+- **ADR 25 — First-class Tailscale helper.** New `plugin/relay/tailscale.py` with `status()` / `enable(port)` / `disable(port)` / `canonical_upstream_present()` — all shell out to the `tailscale` CLI with short timeouts, return structured dicts, never raise. New `plugin/relay/tailscale_cli.py` argparse wrapper + `scripts/hermes-relay-tailscale` shell shim mirroring the `hermes-pair` pattern. `install.sh` gains optional step [7/7] offering Tailscale enablement; honours `TS_DECLINE=1` / `TS_AUTO=1`.
+- **Dashboard Remote Access tab (Wave 2 Dashboard-R4).** `plugin/dashboard/plugin_api.py` + React UI + committed `dist/index.js` — operator can enable/disable the helper, mint multi-endpoint QRs, and inspect which modes are active without dropping to a shell.
+- **Docs pass.** New `docs/remote-access.md` (263 lines) — decision matrix + per-mode setup recipes + troubleshooting. Updated `docs/security.md` with a "Remote connectivity" subsection + top-of-list Tailscale recommendation. Updated `docs/relay-server.md` with `TS_AUTO` / `TS_DECLINE` env vars, the dashboard plugin proxy-route table, and a Tailscale-helper subsection. Updated `docs/spec.md` §3.3 + §3.3.1 for v3 QR schema + endpoints array. Updated `README.md` "What's new" with the one-line connect-from-anywhere pitch. Updated `CHANGELOG.md` `[Unreleased]` with Added / Changed / Backward compatible subsections. Updated `CLAUDE.md` Key Files + Integration Points (hygiene pass only).
 
-**Key architectural decisions.**
+**Key architectural decisions (restated from the ADRs).**
 
-1. **Single-source transcript in voice overlay.** Picking `transcriptMessages` (i.e. chat history) as THE source kills the double-entry with zero protocol changes and makes voice mode's transcript automatically consistent with the Chat tab's. Live-stream visibility is preserved because ChatViewModel updates the last assistant message in place as tokens arrive.
-2. **voiceStats updates on events, not on amplitude ticks.** Amplitude is a 60 Hz signal — mirroring it into StateFlow would thrash every consumer's recomposition. The stats snapshot only refreshes on discrete lifecycle boundaries (STT call complete, TTS call complete, barge-in fire, settings change, coarse state transition) which the Stats panel cares about.
-3. **toolCallHistory derived, not event-plumbed.** The ChatHandler already maintains `messages` with live `toolCalls` per message. A `viewModelScope.launch { messages.collect { ... } }` in `ChatViewModel.initialize` recomputes the last-10 window on every update — cheap because T (tools per message) is small, and we avoid adding a second event channel.
+1. **Strict priority, not reachability-weighted.** Priority 0 wins when reachable; reachability is a tiebreaker among equal priorities, never a promoter across priority boundaries. Matches DNS SRV semantics — nothing new to debate, and keeps operator intent authoritative.
+2. **Open-string `role`, not a closed enum.** `wireguard`, `zerotier`, `netbird-eu`, etc. render as generic "Custom VPN (<role>)" without a release. HMAC canonicalization preserves the exact emitted string.
+3. **Tailscale helper auto-retires on upstream merge.** `canonical_upstream_present()` probes `hermes gateway run --help | grep tailscale`; once PR #9295 lands, the helper prints a log line pointing at the canonical flag and exits 0. Same removal pattern as `hermes_relay_bootstrap/` after PR #8556.
+4. **No second crypto layer.** The operator already owns both endpoints and the transport (Tailscale / Caddy / WireGuard / Cloudflare Tunnel) is TLS-terminated by the operator's chosen path. Adding Noise / libsignal over WSS would add complexity without defending any threat in the trust model.
 
-**Deferred.**
+**What's next.**
 
-- **Chat message / profile switch / connection event timeline sources.** The timeline supports these kinds but only tool-call + voice-turn sources are wired in v1. A future pass can add a tiny ring buffer on `ConnectionViewModel` for switch/connect events and on `ChatViewModel` for message commits.
-- **Settings-sheet "streaming locked" banner.** The Inspector worker owns `ConnectionInfoSheet` and can add the banner on top of the now-documented `isStreaming` hook.
+- Monitor upstream PR #9295 for merge. When it lands, verify `canonical_upstream_present()` detection works on a vanilla hermes-agent install, update the helper to print the retirement log line, and schedule the helper's removal PR (one file + the install.sh step + the shim).
+- Bailey's Studio build + `./gradlew lint` pass before the multi-endpoint work gets pushed from Kotlin side. No Python blockers.
+
+**Blockers.** None. Awaiting Bailey's lint + build pass on the Kotlin changes before the feature branches merge into `dev`.
 
 ## 2026-04-18 — Profile Inspector UI (v0.7.0)
 

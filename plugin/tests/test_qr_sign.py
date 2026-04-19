@@ -51,6 +51,98 @@ class CanonicalizeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             canonicalize({"ttl": math.inf})
 
+    def test_array_order_preserved(self) -> None:
+        """ADR 24 — list order MUST be preserved through canonicalization.
+
+        ``priority`` encodes operator intent and the phone resolves
+        endpoints in emitted order. If canonicalize sorted arrays or
+        the JSON encoder reordered them, two different preference
+        orders would sign identically, which would be a correctness
+        bug in the contract (and in practice would let a tampered QR
+        silently reorder priorities without breaking the HMAC).
+        """
+        forward = {
+            "endpoints": [
+                {"role": "lan", "priority": 0},
+                {"role": "tailscale", "priority": 1},
+                {"role": "public", "priority": 2},
+            ]
+        }
+        reverse = {
+            "endpoints": [
+                {"role": "public", "priority": 2},
+                {"role": "tailscale", "priority": 1},
+                {"role": "lan", "priority": 0},
+            ]
+        }
+        self.assertNotEqual(
+            canonicalize(forward),
+            canonicalize(reverse),
+            "array order must be preserved — reversed list must canonicalize differently",
+        )
+        # Explicitly assert position of first/last role in output bytes.
+        fwd_bytes = canonicalize(forward)
+        self.assertLess(
+            fwd_bytes.index(b'"lan"'),
+            fwd_bytes.index(b'"public"'),
+            "lan must appear before public in the canonical bytes",
+        )
+
+    def test_role_strings_round_trip_verbatim(self) -> None:
+        """ADR 24 — role strings must round-trip byte-for-byte through sign/verify.
+
+        Exercises mixed case (``lan`` / ``LAN``), operator-defined
+        roles with hyphens (``wireguard-eu``), and non-ASCII labels
+        (Cyrillic ``тест``). All four must verify successfully against
+        the signature that was produced from the same payload.
+        """
+        secret = b"z" * 32
+        for role in ("lan", "LAN", "wireguard-eu", "тест"):
+            with self.subTest(role=role):
+                payload = {
+                    "hermes": 3,
+                    "endpoints": [
+                        {
+                            "role": role,
+                            "priority": 0,
+                            "api": {"host": "h", "port": 1, "tls": False},
+                            "relay": {"url": "ws://h:1", "transport_hint": "ws"},
+                        }
+                    ],
+                }
+                sig = sign_payload(payload, secret)
+                self.assertTrue(
+                    verify_payload(payload, sig, secret),
+                    f"role {role!r} should round-trip through sign/verify",
+                )
+
+    def test_role_case_changes_signature(self) -> None:
+        """ADR 24 — role strings are NOT lowercased.
+
+        Signing ``{"role": "LAN"}`` and ``{"role": "lan"}`` must yield
+        different signatures. Proves no silent case-folding is happening
+        anywhere in the canonical path.
+        """
+        secret = b"w" * 32
+        lower = {
+            "hermes": 3,
+            "endpoints": [{"role": "lan", "priority": 0}],
+        }
+        upper = {
+            "hermes": 3,
+            "endpoints": [{"role": "LAN", "priority": 0}],
+        }
+        sig_lower = sign_payload(lower, secret)
+        sig_upper = sign_payload(upper, secret)
+        self.assertNotEqual(
+            sig_lower,
+            sig_upper,
+            "mixed-case role must produce a distinct HMAC signature",
+        )
+        # Cross-verify fails in both directions.
+        self.assertFalse(verify_payload(lower, sig_upper, secret))
+        self.assertFalse(verify_payload(upper, sig_lower, secret))
+
 
 class SignVerifyTests(unittest.TestCase):
     def setUp(self) -> None:

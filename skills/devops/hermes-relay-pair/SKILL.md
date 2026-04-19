@@ -56,6 +56,8 @@ Do NOT use this skill to start or install the relay server itself — that is a 
    - `--no-qr` — text only, no QR at all. Use when the agent is running in a non-TTY context and QR output would be wasted.
    - `--no-relay` — skip relay pre-pairing, render API-only QR. Use if the relay is intentionally offline.
    - `--host <ip>` / `--port <n>` — override the API server host or port when config auto-detection picks the wrong values.
+   - `--mode {auto,lan,tailscale,public}` — endpoint discovery mode (ADR 24). Default `auto` probes LAN + Tailscale (if the helper is installed) + `--public-url` (if passed) and bakes them into the QR as an ordered candidate list so the phone switches networks automatically. `lan` / `tailscale` / `public` emit just that role. Example: `python -m plugin.pair --mode auto --public-url https://hermes.example.com`.
+   - `--public-url <url>` — public hostname for a reverse proxy / Cloudflare Tunnel. Must be `http://` or `https://`. Added as a `role=public` endpoint candidate. Example: `python -m plugin.pair --public-url https://hermes.example.com`.
    - `--register-code <code>` — **manual fallback**. Skip QR rendering entirely and just pre-register a 6-char code the user is reading off the phone screen. See "Manual fallback" below.
 
 4. **Show the output verbatim.** `plugin.pair` prints, in order:

@@ -50,3 +50,62 @@ export function revokeSession(tokenPrefix) {
     method: "DELETE",
   });
 }
+
+// ── Remote Access tab ──────────────────────────────────────────────────────
+
+export function getRemoteAccessStatus() {
+  return fetchJSON("/remote-access/status");
+}
+
+export function enableTailscale(port) {
+  return fetchJSON("/remote-access/tailscale/enable", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(port !== undefined ? { port } : {}),
+  });
+}
+
+export function disableTailscale(port) {
+  return fetchJSON("/remote-access/tailscale/disable", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(port !== undefined ? { port } : {}),
+  });
+}
+
+export function getPublicUrl() {
+  return fetchJSON("/remote-access/public-url");
+}
+
+export function putPublicUrl(url) {
+  return fetchJSON("/remote-access/public-url", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url: url == null ? null : String(url) }),
+  });
+}
+
+export function probeEndpoints(candidates) {
+  return fetchJSON("/remote-access/probe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ candidates: Array.isArray(candidates) ? candidates : [] }),
+  });
+}
+
+/**
+ * Mint a pairing QR with a specific endpoint mode (ADR 24).
+ *
+ * ``mode`` is one of ``auto`` / ``lan`` / ``tailscale`` / ``public``.
+ * ``publicUrl`` is optional except when ``mode === 'public'``.
+ */
+export function mintPairingWithMode({ mode, publicUrl, ...rest } = {}) {
+  const body = { ...rest };
+  if (mode) body.mode = mode;
+  if (publicUrl !== undefined) body.public_url = publicUrl;
+  return fetchJSON("/pairing", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
