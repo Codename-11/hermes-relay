@@ -464,7 +464,7 @@ internal object DataManagerTestHelper {
                             withoutProfiles + ("connections" to profilesField),
                         )
                     } else {
-                        withoutProfiles
+                        kotlinx.serialization.json.JsonObject(withoutProfiles)
                     }
                 }
                 else -> obj
