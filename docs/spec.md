@@ -4,7 +4,7 @@
 
 **Status:** v0.3.0 shipped to Play Store internal testing + sideload track. Phase 0, Phase 1, Phase 2 (terminal preview), Phase 3 (bridge channel), Phase 4 (security hardening per ADR 15), and Phase 5 (polish + CI/CD) are partially-or-fully shipped. Phase V (voice mode) shipped 2026-04-12. v0.4 bridge feature expansion in progress on `feature/bridge-feature-expansion` — see `docs/plans/2026-04-13-bridge-feature-expansion.md`.  
 **Repo:** [Codename-11/hermes-relay](https://github.com/Codename-11/hermes-relay)  
-**Updated:** 2026-04-13
+**Updated:** 2026-04-18
 
 ---
 
@@ -249,6 +249,7 @@ Implementation references:
 - Phone-side parser: `app/src/main/kotlin/.../ui/components/QrPairingScanner.kt` → `HermesPairingPayload` / `RelayPairing`
 - Phone-side TTL picker: `app/src/main/kotlin/.../ui/components/SessionTtlPickerDialog.kt`
 - Relay registration endpoint: `plugin/relay/server.py` → `handle_pairing_register` (see §6 for details)
+- Dashboard pairing endpoint: `plugin/relay/server.py` → `handle_pairing_mint` mints a fresh code and returns a signed payload in this exact shape; regression-tested against the Android parser in `plugin/tests/test_pairing_mint_schema.py`. The endpoint is loopback-only and surfaced to the dashboard via `plugin/dashboard/plugin_api.py` at `POST /api/plugins/hermes-relay/pairing`.
 
 ### 3.4 Security
 

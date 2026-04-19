@@ -165,11 +165,21 @@ async def _proxy(
 async def mint_pairing(body: dict[str, Any] = Body(default_factory=dict)) -> Any:
     """Mint a fresh pairing code + return a signed QR payload.
 
-    Body (all fields optional except host):
-      - host: "172.16.24.250" (required — the phone-reachable address)
-      - port: 8767
-      - tls: false
-      - ttl_seconds, grants, transport_hint: forwarded to the pairing manager
+    Body (all fields optional — relay fills them from its config):
+      - host: "172.16.24.250"     API server host the phone will hit
+                                  (defaults to RelayConfig.webapi_url host,
+                                  resolved to a LAN-routable IP)
+      - port: 8642                API server port
+      - tls: false                API server TLS
+      - api_key: "<token>"        Optional API bearer token
+      - ttl_seconds: <int>        Session TTL
+      - grants: {...}             Per-channel TTL map
+      - transport_hint: "wss"|"ws"
+
+    The returned ``qr_payload`` matches the schema in the Android app's
+    ``QrPairingScanner.kt``: top-level host/port/key/tls configure the
+    Hermes API server, and the nested ``relay`` block (which the relay
+    fills in with its own URL + the minted pairing code) configures WSS.
     """
     return await _proxy("POST", "/pairing/mint", json=body)
 

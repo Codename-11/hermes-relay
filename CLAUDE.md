@@ -177,7 +177,7 @@ hermes-android/
 | `notifications/HermesNotificationCompanion.kt` | NotificationListenerService; cold-start buffer (50); forwards via ChannelMultiplexer |
 | `util/RelayErrorClassifier.kt` | `classifyError(Throwable, context) → HumanError`; used by Voice/Chat/Connection |
 | **Relay — Server** | |
-| `plugin/relay/server.py` | Canonical relay — WSS + HTTP routes; bridge, media, voice, session, pairing handlers |
+| `plugin/relay/server.py` | Canonical relay — WSS + HTTP routes; bridge, media, voice, session, pairing handlers. `handle_pairing_mint` mirrors `pair.py:762` — top-level = API server, `relay.{url,code}` nested |
 | `plugin/relay/auth.py` | PairingManager, SessionManager, RateLimiter; `math.inf` for never-expire |
 | `plugin/relay/channels/bridge.py` | Bridge handler — `handle_command()` mints request_id, awaits response, 30s timeout |
 | `plugin/relay/channels/notifications.py` | Bounded deque (100) of notification metadata; in-memory only |
@@ -194,7 +194,7 @@ hermes-android/
 | `hermes_relay_bootstrap/` | Runtime patch for vanilla upstream; no-op on fork/upstream-merged; remove after PR #8556 |
 | **Plugin — Dashboard** | |
 | `plugin/dashboard/manifest.json` | Declares tab, entry bundle, and FastAPI module for hermes-agent discovery |
-| `plugin/dashboard/plugin_api.py` | FastAPI router proxying 5 routes to relay over loopback |
+| `plugin/dashboard/plugin_api.py` | FastAPI router proxying 5 routes to relay over loopback; `/pairing` body = API-server overrides (host/port/tls/api_key), relay URL auto-derived |
 | `plugin/dashboard/src/index.jsx` | React root registering `hermes-relay` plugin with 4-tab shell |
 | `plugin/dashboard/dist/index.js` | Committed IIFE bundle loaded verbatim by dashboard |
 
