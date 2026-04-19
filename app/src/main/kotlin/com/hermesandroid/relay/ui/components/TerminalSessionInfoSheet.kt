@@ -12,7 +12,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -69,8 +72,10 @@ fun TerminalSessionInfoSheet(
     tab: TerminalViewModel.TabState,
     pairedSession: PairedSession?,
     canCloseTab: Boolean,
+    onStart: () -> Unit,
     onReattach: () -> Unit,
     onCloseTab: () -> Unit,
+    onKillTab: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -80,9 +85,13 @@ fun TerminalSessionInfoSheet(
         sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
+        // Vertical scroll guards against small screens — between per-tab
+        // metadata, session chips, grants, and the action rows this column
+        // can outrun the sheet's default half-screen height.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -114,6 +123,7 @@ fun TerminalSessionInfoSheet(
                         tab.attached -> "Attached"
                         tab.attaching -> "Attaching…"
                         tab.error != null -> "Error"
+                        !tab.userStarted -> "Not started"
                         else -> "Detached"
                     },
                     isPositive = tab.attached,
@@ -180,19 +190,34 @@ fun TerminalSessionInfoSheet(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Action row.
+            // Primary action row — Start / Reattach is contextual on tab state.
+            // Un-started tabs get "Start session" (spawns the shell on the
+            // relay). Already-started tabs get "Reattach" (rebinds the PTY
+            // stream — safe to call while attached too).
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                OutlinedButton(
-                    onClick = {
-                        onReattach()
-                        onDismiss()
-                    },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text("Reattach")
+                if (!tab.userStarted) {
+                    OutlinedButton(
+                        onClick = {
+                            onStart()
+                            onDismiss()
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Start session")
+                    }
+                } else {
+                    OutlinedButton(
+                        onClick = {
+                            onReattach()
+                            onDismiss()
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Reattach")
+                    }
                 }
                 OutlinedButton(
                     onClick = {
@@ -203,6 +228,27 @@ fun TerminalSessionInfoSheet(
                     modifier = Modifier.weight(1f),
                 ) {
                     Text("Close tab")
+                }
+            }
+
+            // Destructive action — separate row, error-tinted, so users
+            // don't misfire on the soft "Close tab" (which preserves the
+            // tmux session). Kill tears down the tmux server-side, so the
+            // shell and any running commands die. Visible whenever the tab
+            // has actually been started; a never-started tab has nothing
+            // to kill.
+            if (tab.userStarted) {
+                OutlinedButton(
+                    onClick = {
+                        onKillTab()
+                        onDismiss()
+                    },
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Kill session")
                 }
             }
 

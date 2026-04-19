@@ -83,9 +83,24 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
      *           reconnects so the server's tmux-backed handler re-attaches
      *           the same shell.
      */
+    /**
+     * Per-tab terminal state.
+     *
+     * @property userStarted flips true the first time the user taps "Start
+     *           session" on this tab (or calls [startSession] from anywhere).
+     *           While false, the tab exists in the UI but no `terminal.attach`
+     *           has been sent — the tmux-backed shell isn't created. This is
+     *           the opt-in gate that replaces the previous auto-attach
+     *           behaviour: we no longer spawn persistent shells on the server
+     *           just because the user opened the Terminal tab.
+     *
+     *           Once true, the tab participates in the auth-gate replay: if
+     *           the wire drops and re-rises, we re-attach automatically.
+     */
     data class TabState(
         val tabId: Int,
         val sessionName: String,
+        val userStarted: Boolean = false,
         val attached: Boolean = false,
         val attaching: Boolean = false,
         val cols: Int = 80,
@@ -280,12 +295,19 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
     }
 
     /**
-     * Close a tab. Sends a server-side detach so the relay can shut down the
-     * underlying PTY (or, with tmux wrapping, kill or detach the tmux session
-     * — that's an `agent-tmux` policy decision). If the closed tab was active,
-     * we move focus to the next available tab.
+     * Close a tab, preserving the underlying tmux session on the server.
      *
-     * Closing the last tab is a no-op — there's always at least one tab.
+     * Sends `terminal.detach` so the relay releases the PTY but leaves the
+     * tmux-hosted shell alive — the next [startSession] with the same
+     * [TabState.sessionName] re-enters the same running shell. This is the
+     * "soft" close: the user is done with the tab on *this* device but might
+     * come back later (same device, another device).
+     *
+     * For destructive cleanup — kill the tmux session, stop any running
+     * commands, free the shell — use [killTab] instead.
+     *
+     * Closing the last tab is a no-op — there's always at least one tab
+     * slot visible in the UI.
      */
     fun closeTab(tabId: Int) {
         val current = _tabs.value
@@ -302,7 +324,41 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
         if (_activeTabId.value == tabId) {
             _activeTabId.value = remaining.first().tabId
         }
-        Log.i(TAG, "closeTab: id=$tabId remaining=${remaining.map { it.tabId }}")
+        Log.i(TAG, "closeTab (detach): id=$tabId remaining=${remaining.map { it.tabId }}")
+    }
+
+    /**
+     * Destructively close a tab — sends `terminal.kill` so the relay tears
+     * down the tmux session and the background shell dies with it. Use this
+     * when the user wants a clean slate, not a detach-for-later.
+     *
+     * If the tab was never started ([TabState.userStarted] == false), this
+     * degrades to removing the tab from the UI without touching the wire —
+     * there's nothing to kill.
+     */
+    fun killTab(tabId: Int) {
+        val current = _tabs.value
+        val tab = current.firstOrNull { it.tabId == tabId } ?: return
+        if (tab.userStarted) {
+            sendEnvelope("terminal.kill", buildJsonObject {
+                put("session_name", tab.sessionName)
+            })
+        }
+        pendingReady.remove(tabId)
+        val remaining = current.filter { it.tabId != tabId }
+        if (remaining.isEmpty()) {
+            // Never drop to zero tabs — replace with a fresh, un-started slot
+            // at the same id so the UI always has something to render.
+            _tabs.value = listOf(makeTab(tab.tabId))
+            _activeTabId.value = tab.tabId
+            Log.i(TAG, "killTab: id=$tabId (last tab, reseeded)")
+            return
+        }
+        _tabs.value = remaining
+        if (_activeTabId.value == tabId) {
+            _activeTabId.value = remaining.first().tabId
+        }
+        Log.i(TAG, "killTab: id=$tabId remaining=${remaining.map { it.tabId }}")
     }
 
     fun selectTab(tabId: Int) {
@@ -322,14 +378,43 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
 
     // ── Called by TerminalWebView's JS bridge ────────────────────────────
 
-    /** WebView booted and knows its container size in cells. Time to attach. */
+    /**
+     * WebView booted and knows its container size in cells. We record the
+     * dimensions but do NOT attach yet — the user must explicitly tap
+     * "Start session" (which calls [startSession]) before we spawn a shell
+     * on the relay. This is the opt-in gate: fresh tabs no longer create
+     * persistent tmux sessions just by existing.
+     *
+     * If the tab was previously started in this process (e.g. the user
+     * tapped Start, then the WS dropped and the WebView re-laid out), we
+     * replay the attach immediately through [pendingReady] + the auth gate.
+     */
     fun onTerminalReady(tabId: Int, cols: Int, rows: Int) {
         Log.i(TAG, "onTerminalReady tab=$tabId cols=$cols rows=$rows")
         updateTab(tabId) { it.copy(cols = cols, rows = rows) }
+        val tab = tabById(tabId) ?: return
+        if (!tab.userStarted) return
         if (isReadyForChannelMessages()) {
             sendAttach(tabId, cols, rows)
         } else {
             pendingReady[tabId] = cols to rows
+        }
+    }
+
+    /**
+     * User-initiated attach for [tabId]. Flips [TabState.userStarted] to true
+     * and kicks off the attach path. Subsequent reconnects re-attach
+     * automatically via the auth-gate replay.
+     */
+    fun startSession(tabId: Int) {
+        val tab = tabById(tabId) ?: return
+        if (tab.userStarted && (tab.attached || tab.attaching)) return
+        Log.i(TAG, "startSession tab=$tabId session=${tab.sessionName}")
+        updateTab(tabId) { it.copy(userStarted = true, error = null) }
+        if (isReadyForChannelMessages()) {
+            sendAttach(tabId, tab.cols, tab.rows)
+        } else {
+            pendingReady[tabId] = tab.cols to tab.rows
         }
     }
 

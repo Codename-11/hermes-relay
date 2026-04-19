@@ -15,17 +15,24 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -96,6 +103,11 @@ fun TerminalScreen(
 
     var showSearch by remember { mutableStateOf(false) }
     var showInfoSheet by remember { mutableStateOf(false) }
+    // When non-null, a kill-vs-detach confirmation dialog is open for this
+    // tab id. Set by the tab-strip × button and the title-bar close gesture
+    // so the user has to pick explicitly between preserving the tmux session
+    // (Detach) or tearing it down (Kill).
+    var closeConfirmTabId by remember { mutableStateOf<Int?>(null) }
 
     Column(
         modifier = Modifier
@@ -164,7 +176,13 @@ fun TerminalScreen(
                     onClick = {
                         activeTab?.let { terminalViewModel.reattach(it.tabId) }
                     },
-                    enabled = isConnected && (activeTab?.attaching != true)
+                    // Refresh is only meaningful for a tab that has actually
+                    // been started — re-attaching a never-started tab would
+                    // spawn a shell without flipping userStarted, leaving the
+                    // UI confused about whether the Start overlay should show.
+                    enabled = isConnected &&
+                        (activeTab?.attaching != true) &&
+                        (activeTab?.userStarted == true)
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Refresh,
@@ -184,7 +202,7 @@ fun TerminalScreen(
             tabs = tabs,
             activeTabId = activeTabId,
             onSelectTab = { terminalViewModel.selectTab(it) },
-            onCloseTab = { terminalViewModel.closeTab(it) },
+            onCloseTab = { closeConfirmTabId = it },
             onNewTab = { terminalViewModel.openNewTab() },
         )
         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
@@ -252,13 +270,29 @@ fun TerminalScreen(
                 )
             }
 
-            val showOverlay = !isConnected ||
+            // Overlay priority (highest first):
+            //   1. Relay disconnected — blocks everything until the wire is back
+            //   2. Tab error — surfaces the last server-side failure
+            //   3. Not-started — shows the Start overlay; this is the opt-in
+            //      gate that replaces auto-attach. The user has to explicitly
+            //      spawn the tmux-backed shell.
+            // When the tab is attached and healthy, no overlay — the WebView
+            // shows through.
+            val tabNotStarted = activeTab != null && activeTab?.userStarted == false
+            val showBlockingOverlay = !isConnected ||
                 ((activeTab?.attached == false) && (activeTab?.error != null))
-            if (showOverlay) {
-                TerminalOverlay(
+            when {
+                showBlockingOverlay -> TerminalOverlay(
                     isConnected = isConnected,
                     isConnecting = isConnecting,
                     error = activeTab?.error
+                )
+                tabNotStarted -> StartSessionOverlay(
+                    sessionName = activeTab?.sessionName ?: "",
+                    isReady = isConnected,
+                    onStart = {
+                        activeTab?.let { terminalViewModel.startSession(it.tabId) }
+                    },
                 )
             }
         }
@@ -302,14 +336,177 @@ fun TerminalScreen(
                 tab = tab,
                 pairedSession = pairedSession,
                 canCloseTab = tabs.size > 1,
+                onStart = { terminalViewModel.startSession(tab.tabId) },
                 onReattach = { terminalViewModel.reattach(tab.tabId) },
-                onCloseTab = { terminalViewModel.closeTab(tab.tabId) },
+                onCloseTab = { closeConfirmTabId = tab.tabId },
+                onKillTab = { terminalViewModel.killTab(tab.tabId) },
                 onDismiss = { showInfoSheet = false },
             )
         } else {
             // Defensive — shouldn't happen because the title is only tappable
             // once tabs exist, but if it does we just close.
             showInfoSheet = false
+        }
+    }
+
+    closeConfirmTabId?.let { tabId ->
+        val tab = tabs.firstOrNull { it.tabId == tabId }
+        if (tab == null) {
+            closeConfirmTabId = null
+        } else {
+            CloseTabConfirmDialog(
+                tab = tab,
+                onDetach = {
+                    terminalViewModel.closeTab(tabId)
+                    closeConfirmTabId = null
+                },
+                onKill = {
+                    terminalViewModel.killTab(tabId)
+                    closeConfirmTabId = null
+                },
+                onDismiss = { closeConfirmTabId = null },
+            )
+        }
+    }
+}
+
+/**
+ * Confirmation dialog for closing a tab — the user must pick between
+ * preserving the tmux session (Detach) or tearing it down (Kill).
+ *
+ * Never-started tabs skip the "Detach" path entirely; there's no server
+ * state to preserve, so both buttons collapse to a single "Close tab" that
+ * calls the kill path (which no-ops on the wire for un-started tabs).
+ */
+@Composable
+private fun CloseTabConfirmDialog(
+    tab: TerminalViewModel.TabState,
+    onDetach: () -> Unit,
+    onKill: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val everStarted = tab.userStarted
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Close tab ${tab.tabId}?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (everStarted) {
+                    Text(
+                        "Detach keeps the shell running on the relay — scrollback, " +
+                            "running commands, and working directory all survive. " +
+                            "Kill destroys the tmux session; any running commands die.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                } else {
+                    Text(
+                        "This tab hasn't started a session yet, so there's nothing " +
+                            "to preserve on the relay. Close the tab?",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            if (everStarted) {
+                TextButton(
+                    onClick = onKill,
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error,
+                    ),
+                ) { Text("Kill") }
+            } else {
+                TextButton(onClick = onKill) { Text("Close") }
+            }
+        },
+        dismissButton = {
+            if (everStarted) {
+                TextButton(onClick = onDetach) { Text("Detach") }
+            } else {
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        },
+    )
+}
+
+@Composable
+private fun StartSessionOverlay(
+    sessionName: String,
+    isReady: Boolean,
+    onStart: () -> Unit,
+) {
+    // Centered, scroll-wrapped so tall phones in landscape + a future
+    // session picker / hint text don't clip the primary action. The scroll
+    // is a no-op on a normal-size screen; only kicks in when content
+    // overflows.
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(TerminalBackground.copy(alpha = 0.94f))
+            .verticalScroll(rememberScrollState()),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.padding(horizontal = 32.dp, vertical = 48.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(64.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Terminal,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(32.dp),
+                )
+            }
+
+            Text(
+                text = "No session",
+                style = MaterialTheme.typography.titleLarge,
+                color = Color.White.copy(alpha = 0.92f),
+            )
+            Text(
+                text = "Start a shell to create a tmux-backed session on the relay. " +
+                    "The session persists across reconnects until you kill it.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.White.copy(alpha = 0.65f),
+                textAlign = TextAlign.Center,
+            )
+            if (sessionName.isNotEmpty()) {
+                Text(
+                    text = sessionName,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.45f),
+                    fontFamily = FontFamily.Monospace,
+                    textAlign = TextAlign.Center,
+                )
+            }
+            Spacer(modifier = Modifier.size(4.dp))
+            Button(
+                onClick = onStart,
+                enabled = isReady,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.PlayArrow,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Start session")
+            }
+            if (!isReady) {
+                Text(
+                    text = "Waiting for relay…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.5f),
+                )
+            }
         }
     }
 }

@@ -8,7 +8,8 @@ Protocol (incoming on channel="terminal"):
     terminal.attach   { session_name?, shell?, cols, rows }
     terminal.input    { session_name?, data }         # raw UTF-8 bytes
     terminal.resize   { session_name?, cols, rows }
-    terminal.detach   { session_name? }
+    terminal.detach   { session_name? }               # preserves tmux session
+    terminal.kill     { session_name? }               # destroys tmux session
     terminal.list     {}
 
 Protocol (outgoing):
@@ -157,6 +158,8 @@ class TerminalHandler:
                 await self._handle_resize(ws, payload)
             elif msg_type == "terminal.detach":
                 await self._handle_detach(ws, payload)
+            elif msg_type == "terminal.kill":
+                await self._handle_kill(ws, payload)
             elif msg_type == "terminal.list":
                 await self._handle_list(ws, msg_id)
             else:
@@ -515,6 +518,44 @@ class TerminalHandler:
             session,
             reason="client detach",
             preserve_shell=self.tmux_available,
+        )
+
+    async def _handle_kill(
+        self,
+        ws: web.WebSocketResponse,
+        payload: dict[str, Any],
+    ) -> None:
+        """Hard-destroy a session — unlike detach, the underlying shell dies.
+
+        With tmux, we invoke ``tmux kill-session -t <name>`` out-of-band so
+        the tmux server tears down its background bash child; without that
+        the shell would survive the PTY close. For bare-shell mode the PTY
+        close already does the right thing via ``_close_session`` with
+        ``preserve_shell=False``.
+        """
+        session = self._lookup(ws, payload.get("session_name"))
+        if session is None:
+            return
+        if self.tmux_available and self._tmux_path:
+            tmux_name = _tmux_session_name(session.name)
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    self._tmux_path,
+                    "kill-session",
+                    "-t",
+                    tmux_name,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await proc.wait()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "tmux kill-session failed for %s: %s", tmux_name, exc
+                )
+        await self._close_session(
+            session,
+            reason="client kill",
+            preserve_shell=False,
         )
 
     async def _handle_list(

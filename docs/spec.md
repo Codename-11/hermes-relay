@@ -147,7 +147,8 @@ PTY streaming — raw terminal I/O.
 | `terminal.input` | App → Server | `{ data }` (raw keystrokes) |
 | `terminal.output` | Server → App | `{ data }` (raw ANSI output) |
 | `terminal.resize` | App → Server | `{ cols, rows }` |
-| `terminal.detach` | App → Server | `{}` |
+| `terminal.detach` | App → Server | `{ session_name? }` — preserves tmux session |
+| `terminal.kill` | App → Server | `{ session_name? }` — destroys tmux session and kills the shell |
 
 #### Channel: `bridge`
 Phone control — mirrors upstream relay protocol.

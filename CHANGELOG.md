@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Opt-in terminal sessions.** Fresh terminal tabs no longer auto-attach — each tab shows a centered **Start session** overlay and spawns the tmux-backed shell only after the user taps it. Tabs that have already been started still auto-reattach on reconnect. Removes the previous behavior of creating persistent server-side shells just by opening the Terminal tab.
+- **`terminal.kill` envelope** — hard-destroy a session. The relay runs `tmux kill-session -t <name>` out-of-band before tearing down the PTY so the background shell (and any running commands) die with it. Closing a tab now opens a confirmation dialog with explicit **Detach** (preserve tmux session) vs **Kill** (destroy it) choices; the session info sheet also gains an error-tinted **Kill session** button.
+
+### Changed
+
+- **Terminal session info sheet is vertically scrollable** — tall phones in landscape with the new Start / Reattach / Kill action rows no longer clip the Done button.
+
 ## [0.6.0] — 2026-04-18
 
 ### Added

@@ -201,7 +201,8 @@ All messages use typed envelopes over a single WebSocket connection at `/ws`:
 | `terminal.input` | App --> Server | `{ data }` |
 | `terminal.output` | Server --> App | `{ data }` |
 | `terminal.resize` | App --> Server | `{ cols, rows }` |
-| `terminal.detach` | App --> Server | `{}` |
+| `terminal.detach` | App --> Server | `{ session_name? }` — preserves tmux session |
+| `terminal.kill` | App --> Server | `{ session_name? }` — destroys tmux session |
 
 ### Bridge (Phase 3)
 
