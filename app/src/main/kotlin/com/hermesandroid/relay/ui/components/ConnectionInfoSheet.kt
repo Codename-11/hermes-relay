@@ -692,21 +692,19 @@ fun AgentInfoSheet(
 
                     agentProfiles.forEach { profile ->
                         // v0.7.0 runtime metadata indicators:
-                        //   - leadingDotColor: green for gateway_running,
-                        //     grey otherwise. Best-effort probe — a wrong
-                        //     dot doesn't disable the row.
-                        //   - SOUL badge: primary-container, shown only
-                        //     when has_soul.
-                        //   - Skills chip: surface-variant, shown only
-                        //     when skill_count > 0.
-                        // Gateway-off profiles remain selectable (the probe
-                        // can be stale) but render at 50% alpha as a hint.
+                        //   - leadingDotColor: green when this profile's
+                        //     gateway is the live one, grey otherwise.
+                        //   - SOUL badge: primary-container when has_soul.
+                        //   - Skills chip: surface-variant when skill_count > 0.
+                        // Upstream Hermes runs one gateway at a time, so
+                        // non-active profiles correctly report off — that's
+                        // informational, not disabling. Every row stays at
+                        // full alpha; the dot alone communicates status.
                         val dotColor = if (profile.gatewayRunning) {
                             MaterialTheme.colorScheme.primary
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
                         }
-                        val gatewayAlpha = if (profile.gatewayRunning) 1f else 0.5f
                         val soulBg = MaterialTheme.colorScheme.primaryContainer
                         val soulFg = MaterialTheme.colorScheme.onPrimaryContainer
                         val skillsBg = MaterialTheme.colorScheme.surfaceVariant
@@ -717,7 +715,7 @@ fun AgentInfoSheet(
                             tertiary = profile.description.takeIf { it.isNotBlank() },
                             selected = selectedProfile?.name == profile.name,
                             enabled = !isStreaming,
-                            contentAlpha = gatewayAlpha,
+                            contentAlpha = 1f,
                             leadingDotColor = dotColor,
                             secondaryTrailing = if (profile.hasSoul || profile.skillCount > 0) {
                                 {

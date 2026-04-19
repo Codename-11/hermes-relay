@@ -233,6 +233,27 @@ class ProfileDiscoveryTests(unittest.TestCase):
         entry = next(p for p in out if p["name"] == "no-pid")
         self.assertFalse(entry["gateway_running"])
 
+    def test_gateway_running_parses_upstream_json_pid_file(self) -> None:
+        """Upstream Hermes writes ``gateway.pid`` as JSON
+        (``{"pid": N, "kind": "hermes-gateway", ...}``). The probe must
+        read the ``pid`` field, not attempt to int() the whole blob."""
+        self._write_root_config()
+        pdir = self._write_profile(
+            "json-pid",
+            config_body="model:\n  default: x\n",
+            soul=None,
+        )
+        payload = (
+            '{"pid": ' + str(os.getpid()) +
+            ', "kind": "hermes-gateway", "argv": ["main.py"], '
+            '"start_time": 12345}'
+        )
+        (pdir / "gateway.pid").write_text(payload, encoding="utf-8")
+
+        out = self._load()
+        entry = next(p for p in out if p["name"] == "json-pid")
+        self.assertTrue(entry["gateway_running"])
+
     def test_gateway_running_false_for_stale_pid(self) -> None:
         """A ``gateway.pid`` file containing a PID that doesn't exist
         (we use ``os.getpid() + 999_999`` — outside any plausible live

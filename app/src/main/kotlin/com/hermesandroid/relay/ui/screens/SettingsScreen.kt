@@ -131,6 +131,7 @@ fun SettingsScreen(
     // ring-accent, and subtitle. Kept next to the other top-level
     // collectAsState calls so the data-gather stays in one block.
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
+    val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
     val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
     val devOptionsUnlocked by FeatureFlags.devOptionsUnlocked(context)
@@ -192,12 +193,16 @@ fun SettingsScreen(
 
             // ── Inspect Agent ──────────────────────────────────────────
             // Opens the full-screen ProfileInspectorScreen for the
-            // currently-active profile. Kept directly under
-            // ActiveAgentCard so the pairing "active agent → inspect it"
-            // reads naturally from top to bottom. Disabled state is
-            // rendered by the card itself when selectedProfile is null.
+            // currently-active profile. When no explicit override is
+            // selected (server-configured model), fall back to the
+            // `default` profile — the relay always advertises one, and
+            // it IS the effective agent. Still falls back to disabled
+            // when no profiles have loaded yet (unpaired / pre-auth).
+            val inspectorTarget = selectedProfile
+                ?: agentProfiles.firstOrNull { it.name == "default" }
+                ?: agentProfiles.firstOrNull()
             ProfileInspectorCard(
-                activeProfile = selectedProfile,
+                activeProfile = inspectorTarget,
                 onClick = { profileName -> onNavigateToProfileInspector(profileName) },
                 isDarkTheme = isDarkTheme,
             )
