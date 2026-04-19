@@ -2389,18 +2389,150 @@ def _notify_profiles_changed(
 ) -> None:
     """Hook called after a profile write lands on disk.
 
-    Stubbed in this commit — the full broadcast machinery is added in
-    the follow-up ``feat(relay): push profiles.updated envelope...``
-    commit. Keeping the call site here freezes the write-path
-    signature so that follow-up is a small broadcast-only patch.
+    Re-runs profile discovery, compares against the cached snapshot
+    stored on the server, and if the shape differs broadcasts a
+    ``pairing/profiles.updated`` envelope to every authenticated
+    client. Whole-array diff — we don't bother per-profile — simpler
+    than per-field and the response size is identical either way.
     """
-    logger.debug(
-        "profiles-changed hook fired (reason=%s profile=%s filename=%s) — "
-        "broadcast wired in the profiles.updated commit",
+    # Lazy import to avoid a module-level circular (_load_profiles
+    # lives in .config which already imports from .auth).
+    from .config import _load_profiles
+
+    try:
+        fresh_profiles = _load_profiles(
+            server.config.hermes_config_path,
+            enabled=server.config.profile_discovery_enabled,
+        )
+    except Exception:
+        logger.warning(
+            "profiles-changed hook: _load_profiles raised (reason=%s profile=%s)",
+            reason,
+            profile,
+            exc_info=True,
+        )
+        return
+
+    previous = server.config.profiles
+    if fresh_profiles == previous:
+        logger.debug(
+            "profiles-changed hook: no diff after reason=%s profile=%s filename=%s",
+            reason,
+            profile,
+            filename,
+        )
+        return
+
+    server.config.profiles = fresh_profiles
+    logger.info(
+        "profiles-changed hook: reshape detected (reason=%s profile=%s) — "
+        "broadcasting profiles.updated to %d client(s)",
         reason,
         profile,
-        filename,
+        len(server._clients),
     )
+    # Fire-and-forget the broadcast — keep the write-path handler
+    # non-async-blocking. Create_task on the running loop; if there's
+    # no loop (called from a sync context, e.g. the rescan task that
+    # IS in an async context will still work), fall back to logging.
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.debug(
+            "profiles-changed hook: no running loop — "
+            "skipping broadcast (will be picked up on next rescan)"
+        )
+        return
+    loop.create_task(
+        _broadcast_profiles_updated(server, fresh_profiles),
+        name="profiles-updated-broadcast",
+    )
+
+
+async def _broadcast_profiles_updated(
+    server: "RelayServer",
+    profiles: list[dict[str, Any]],
+) -> None:
+    """Send a ``pairing/profiles.updated`` envelope to every client.
+
+    Wire contract:
+    ``{"channel": "pairing", "type": "profiles.updated",
+       "id": <uuid>, "payload": {"profiles": [...]}}``
+
+    Clients update their local cache on receipt; no ack expected. We
+    iterate over a snapshot of ``_clients`` so disconnects mid-send
+    don't blow up the loop.
+    """
+    blob = json.dumps(
+        {
+            "channel": "pairing",
+            "type": "profiles.updated",
+            "id": str(uuid.uuid4()),
+            "payload": {"profiles": profiles},
+        }
+    )
+    for ws in list(server._clients):
+        if ws.closed:
+            continue
+        try:
+            await ws.send_str(blob)
+        except ConnectionResetError:
+            # Client dropped during send — disconnect cleanup will
+            # remove it from _clients on the next WS read tick.
+            continue
+        except Exception:
+            logger.debug(
+                "profiles.updated broadcast: send failed for one ws",
+                exc_info=True,
+            )
+
+
+# Interval for the background profile-rescan task. Low enough that
+# an operator tweaking config.yaml / dropping a skills/ dir sees the
+# phone reflect it quickly; high enough that the filesystem walk
+# stays cheap. 30 seconds matches the coordinator spec.
+_PROFILE_RESCAN_INTERVAL_SECONDS = 30.0
+
+
+async def _profile_rescan_loop(app: web.Application) -> None:
+    """Background task that rescans the profile tree every
+    ``_PROFILE_RESCAN_INTERVAL_SECONDS`` and broadcasts
+    ``profiles.updated`` whenever the array differs from the
+    cached snapshot.
+
+    Fires-and-forgets per iteration so a slow filesystem scan doesn't
+    queue up duplicate rescans. Cancellation-safe — shutdown clears
+    the task via aiohttp's on_cleanup hook.
+    """
+    from .config import _load_profiles
+
+    server: RelayServer = app["server"]
+    try:
+        while True:
+            await asyncio.sleep(_PROFILE_RESCAN_INTERVAL_SECONDS)
+            try:
+                fresh = _load_profiles(
+                    server.config.hermes_config_path,
+                    enabled=server.config.profile_discovery_enabled,
+                )
+            except Exception:
+                logger.warning(
+                    "profile rescan: _load_profiles raised — skipping cycle",
+                    exc_info=True,
+                )
+                continue
+            if fresh == server.config.profiles:
+                continue
+            server.config.profiles = fresh
+            logger.info(
+                "profile rescan: reshape detected — "
+                "broadcasting profiles.updated to %d client(s)",
+                len(server._clients),
+            )
+            await _broadcast_profiles_updated(server, fresh)
+    except asyncio.CancelledError:
+        logger.info("profile rescan loop cancelled")
+        raise
 
 
 # === PHASE3-notif-listener: notifications HTTP routes ===
@@ -3014,10 +3146,36 @@ def create_app(config: RelayConfig) -> web.Application:
     )
     # === END PHASE3-notif-listener ===
 
+    # Background profile-rescan task — catches filesystem-level
+    # changes (operator edits config.yaml, drops a new SKILL.md, etc.)
+    # that bypass the write endpoints. Registered as on_startup /
+    # on_cleanup so the task lives exactly as long as the aiohttp app.
+    app.on_startup.append(_on_app_startup)
+    app.on_cleanup.append(_on_app_cleanup)
+
     # Cleanup on shutdown
     app.on_shutdown.append(_on_app_shutdown)
 
     return app
+
+
+async def _on_app_startup(app: web.Application) -> None:
+    """Launch background tasks that live for the app lifetime."""
+    task = asyncio.create_task(
+        _profile_rescan_loop(app), name="profile-rescan-loop"
+    )
+    app["_profile_rescan_task"] = task
+
+
+async def _on_app_cleanup(app: web.Application) -> None:
+    """Cancel background tasks cleanly."""
+    task = app.get("_profile_rescan_task")
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
 
 
 async def _on_app_shutdown(app: web.Application) -> None:
