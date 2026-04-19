@@ -2,11 +2,13 @@ package com.hermesandroid.relay.auth
 
 import com.hermesandroid.relay.data.Profile
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -192,5 +194,101 @@ class AuthManagerProfilesParseTest {
 
         assertEquals(1, parsed.size)
         assertNull(parsed[0].systemMessage)
+    }
+
+    // --- v0.7.0 runtime metadata: gateway_running / has_soul / skill_count -
+
+    @Test
+    fun parsesRuntimeMetadataWhenPresent() {
+        // Happy path — a fully-populated v0.7.0 server response.
+        val profilesArray = buildJsonArray {
+            add(buildJsonObject {
+                put("name", "mizu")
+                put("model", "anthropic/claude-opus-4")
+                put("description", "Axiom-Labs Public Ops")
+                put("system_message", "You are Mizu.")
+                put("gateway_running", true)
+                put("has_soul", true)
+                put("skill_count", 12)
+            })
+        }
+
+        val parsed = AuthManager.parseAgentProfiles(profilesArray)
+
+        assertEquals(1, parsed.size)
+        assertTrue(parsed[0].gatewayRunning)
+        assertTrue(parsed[0].hasSoul)
+        assertEquals(12, parsed[0].skillCount)
+    }
+
+    @Test
+    fun defaultsRuntimeMetadataWhenKeysMissing() {
+        // Older (pre-v0.7.0) relays won't send any of the three runtime
+        // metadata keys. Parser must default gateway_running=false,
+        // has_soul=false, skill_count=0 — backward-compat contract.
+        val profilesArray = buildJsonArray {
+            add(buildJsonObject {
+                put("name", "legacy")
+                put("model", "claude-opus-4-6")
+                put("description", "Pre-v0.7 server")
+            })
+        }
+
+        val parsed = AuthManager.parseAgentProfiles(profilesArray)
+
+        assertEquals(1, parsed.size)
+        assertFalse(parsed[0].gatewayRunning)
+        assertFalse(parsed[0].hasSoul)
+        assertEquals(0, parsed[0].skillCount)
+    }
+
+    @Test
+    fun fallsBackToDefaultsOnMalformedRuntimeMetadata() {
+        // Survivable garbage — booleans expressed as strings, skill_count
+        // as a string. Must NOT throw; must fall through to safe defaults
+        // so one misbehaving field can't poison the whole profile.
+        val profilesArray = buildJsonArray {
+            add(buildJsonObject {
+                put("name", "malformed")
+                put("model", "m1")
+                put("gateway_running", JsonPrimitive("yes-please"))
+                put("has_soul", JsonPrimitive("nope"))
+                put("skill_count", JsonPrimitive("twelve"))
+            })
+        }
+
+        val parsed = AuthManager.parseAgentProfiles(profilesArray)
+
+        assertEquals(1, parsed.size)
+        // String "yes-please" is not a JSON-native bool, booleanOrNull → null → false.
+        assertFalse(parsed[0].gatewayRunning)
+        assertFalse(parsed[0].hasSoul)
+        // "twelve" doesn't parse as Int, intOrNull → null → 0.
+        assertEquals(0, parsed[0].skillCount)
+        // Rest of the profile still usable.
+        assertEquals("malformed", parsed[0].name)
+        assertEquals("m1", parsed[0].model)
+    }
+
+    @Test
+    fun fallsBackToDefaultsOnNullRuntimeMetadata() {
+        // Explicit JSON null for any of the three fields — a server bug
+        // but not a fatal one. Parser must treat it as absent.
+        val profilesArray = buildJsonArray {
+            add(buildJsonObject {
+                put("name", "nulls")
+                put("model", "m1")
+                put("gateway_running", JsonNull)
+                put("has_soul", JsonNull)
+                put("skill_count", JsonNull)
+            })
+        }
+
+        val parsed = AuthManager.parseAgentProfiles(profilesArray)
+
+        assertEquals(1, parsed.size)
+        assertFalse(parsed[0].gatewayRunning)
+        assertFalse(parsed[0].hasSoul)
+        assertEquals(0, parsed[0].skillCount)
     }
 }

@@ -23,6 +23,22 @@ import kotlinx.serialization.Serializable
  *
  * Wire shape uses snake_case (`system_message`), this class uses camelCase
  * (`systemMessage`) — translated via [SerialName].
+ *
+ * **v0.7.0 runtime metadata.** Three optional fields — [gatewayRunning],
+ * [hasSoul], [skillCount] — describe what the relay observes about each
+ * profile directory at discovery time:
+ *  - [gatewayRunning] is a read-only probe (best-effort; can be stale or
+ *    wrong if the relay's last probe missed a restart). Drives the green/
+ *    grey status dot in the agent sheet.
+ *  - [hasSoul] is true when the profile directory has a non-empty
+ *    `SOUL.md` on disk. Decoupled from `systemMessage != null` so a SOUL
+ *    that fails to load (permissions, I/O) still reports its presence.
+ *  - [skillCount] is the count of skills visible under the profile
+ *    directory — drives the "N skills" chip.
+ *
+ * All three default to safe zero-values and are optional on the wire, so
+ * older relays without the fields deserialize cleanly as
+ * `gatewayRunning = false, hasSoul = false, skillCount = 0`.
  */
 @Serializable
 data class Profile(
@@ -31,4 +47,10 @@ data class Profile(
     val description: String = "",
     @SerialName("system_message")
     val systemMessage: String? = null,
+    @SerialName("gateway_running")
+    val gatewayRunning: Boolean = false,
+    @SerialName("has_soul")
+    val hasSoul: Boolean = false,
+    @SerialName("skill_count")
+    val skillCount: Int = 0,
 )

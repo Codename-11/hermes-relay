@@ -21,8 +21,10 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -111,6 +113,10 @@ class AuthManager(
          *    disk — fall back to the personality/default system prompt at
          *    send time". Kept separate from an empty string so ChatViewModel
          *    can cleanly detect "no override" via `systemMessage?.isNotBlank()`.
+         *  - `gateway_running`, `has_soul`, `skill_count` (v0.7.0 runtime
+         *    metadata) are optional on the wire. Missing / malformed values
+         *    fall back to `false` / `false` / `0` so older relays stay
+         *    compatible and bad server data can't crash the pairing handshake.
          */
         fun parseAgentProfiles(array: JsonArray): List<Profile> {
             return array.mapNotNull { entry ->
@@ -122,11 +128,20 @@ class AuthManager(
                 val description = obj["description"]?.jsonPrimitive?.contentOrNull
                     ?: ""
                 val systemMessage = obj["system_message"]?.jsonPrimitive?.contentOrNull
+                val gatewayRunning = obj["gateway_running"]
+                    ?.jsonPrimitive?.booleanOrNull ?: false
+                val hasSoul = obj["has_soul"]
+                    ?.jsonPrimitive?.booleanOrNull ?: false
+                val skillCount = obj["skill_count"]
+                    ?.jsonPrimitive?.intOrNull ?: 0
                 Profile(
                     name = name,
                     model = model,
                     description = description,
                     systemMessage = systemMessage,
+                    gatewayRunning = gatewayRunning,
+                    hasSoul = hasSoul,
+                    skillCount = skillCount,
                 )
             }
         }

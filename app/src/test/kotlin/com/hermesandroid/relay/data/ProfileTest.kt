@@ -2,6 +2,7 @@ package com.hermesandroid.relay.data
 
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -131,6 +132,68 @@ class ProfileTest {
             "expected snake_case system_message in encoded form, got: $encoded",
             encoded.contains("\"system_message\""),
         )
+
+        val decoded = json.decodeFromString(Profile.serializer(), encoded)
+        assertEquals(original, decoded)
+    }
+
+    @Test
+    fun deserializesV7RuntimeMetadata() {
+        // v0.7.0 runtime metadata (gateway_running / has_soul / skill_count)
+        // round-trips from the wire into the data class.
+        val payload = """
+            {
+                "name": "mizu",
+                "model": "anthropic/claude-opus-4",
+                "description": "",
+                "gateway_running": true,
+                "has_soul": true,
+                "skill_count": 12
+            }
+        """.trimIndent()
+
+        val profile = json.decodeFromString(Profile.serializer(), payload)
+
+        assertTrue(profile.gatewayRunning)
+        assertTrue(profile.hasSoul)
+        assertEquals(12, profile.skillCount)
+    }
+
+    @Test
+    fun runtimeMetadataDefaultsWhenKeysMissing() {
+        // Pre-v0.7 servers don't emit the new keys. Must default to false
+        // / false / 0 so the agent sheet renders a sensible "no indicator"
+        // state instead of throwing.
+        val payload = """
+            {
+                "name": "legacy",
+                "model": "m1",
+                "description": ""
+            }
+        """.trimIndent()
+
+        val profile = json.decodeFromString(Profile.serializer(), payload)
+
+        assertFalse(profile.gatewayRunning)
+        assertFalse(profile.hasSoul)
+        assertEquals(0, profile.skillCount)
+    }
+
+    @Test
+    fun roundTripsRuntimeMetadataWithSnakeCaseKeys() {
+        val original = Profile(
+            name = "mizu",
+            model = "anthropic/claude-opus-4",
+            description = "",
+            gatewayRunning = true,
+            hasSoul = true,
+            skillCount = 12,
+        )
+
+        val encoded = json.encodeToString(Profile.serializer(), original)
+        assertTrue(encoded.contains("\"gateway_running\""))
+        assertTrue(encoded.contains("\"has_soul\""))
+        assertTrue(encoded.contains("\"skill_count\""))
 
         val decoded = json.decodeFromString(Profile.serializer(), encoded)
         assertEquals(original, decoded)
