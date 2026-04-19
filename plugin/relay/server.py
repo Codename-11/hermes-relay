@@ -1847,15 +1847,17 @@ async def handle_profile_skills(request: web.Request) -> web.Response:
     )
 
 
-# ── Profile-scoped SOUL.md read endpoint ────────────────────────────────────
+# ── Profile-scoped SOUL.md + memory read endpoints ──────────────────────────
 #
 # Same auth + path-traversal model as ``/config`` and ``/skills`` above.
-# Feeds the phone's Profile Inspector viewer — READ ONLY. Content is
-# capped to a phone-safe size (200KB). The Inspector is a viewer, not a
-# diff tool — see docs/decisions.md §22.
+# These feed the phone's Profile Inspector viewer — READ ONLY. Content is
+# capped to phone-safe sizes (SOUL: 200KB, each memory file: 50KB). The
+# Inspector is a viewer, not a diff tool — see docs/decisions.md §22.
 
 # Max bytes of SOUL.md content returned inline before truncation.
 _PROFILE_SOUL_MAX_BYTES = 200 * 1024
+# Max bytes per memory file returned inline before truncation.
+_PROFILE_MEMORY_MAX_BYTES = 50 * 1024
 
 
 def _read_profile_soul(soul_path: Path) -> tuple[str, bool, int]:
@@ -1942,6 +1944,106 @@ async def handle_profile_soul(request: web.Request) -> web.Response:
     if truncated:
         payload["truncated"] = True
     return web.json_response(payload)
+
+
+async def handle_profile_memory(request: web.Request) -> web.Response:
+    """Return the memory files under ``<profile_home>/memories/``.
+
+    GET /api/profiles/{name}/memory
+      → 200 {"profile", "memories_dir", "entries": [...], "total"}
+      → 401 missing/invalid bearer (remote callers only)
+      → 404 {"error": "profile_not_found", "profile": name}
+
+    Only the top-level ``*.md`` files are listed — we intentionally do
+    NOT recurse. Per upstream (``hermes_cli/profiles.py``) MEMORY.md and
+    USER.md are the canonical files; anything else the user dropped in
+    the directory also surfaces. MEMORY.md and USER.md sort first (in
+    that order); the rest are alphabetical. Each file's content is
+    capped at 50KB; larger files set ``truncated: true``.
+
+    An absent memories dir is NOT an error — returns an empty list.
+    """
+    is_loopback = request.remote in ("127.0.0.1", "::1")
+    if is_loopback:
+        server: RelayServer = request.app["server"]
+    else:
+        server, _session = _require_bearer_session(request)
+
+    name = request.match_info.get("name", "").strip()
+    if not name:
+        return web.json_response(
+            {"error": "profile_not_found", "profile": name}, status=404
+        )
+
+    home = _resolve_profile_home(server, name)
+    if home is None:
+        return web.json_response(
+            {"error": "profile_not_found", "profile": name}, status=404
+        )
+
+    memories_dir = home / "memories"
+    entries: list[dict[str, Any]] = []
+
+    if memories_dir.is_dir():
+        try:
+            md_files = [
+                p
+                for p in memories_dir.iterdir()
+                if p.is_file() and p.suffix == ".md"
+            ]
+        except OSError:
+            md_files = []
+
+        # MEMORY.md first, then USER.md, then the rest alphabetical by
+        # filename (case-insensitive for predictable ordering on macOS).
+        priority = {"MEMORY.md": 0, "USER.md": 1}
+
+        def _sort_key(path: Path) -> tuple[int, str]:
+            return (priority.get(path.name, 2), path.name.lower())
+
+        md_files.sort(key=_sort_key)
+
+        for md_path in md_files:
+            try:
+                size_bytes = md_path.stat().st_size
+            except OSError:
+                continue
+            try:
+                with open(md_path, "r", encoding="utf-8") as fh:
+                    raw = fh.read(_PROFILE_MEMORY_MAX_BYTES + 1)
+            except Exception as exc:
+                logger.warning(
+                    "Profile memory read failed for %r at %s: %s",
+                    name,
+                    md_path,
+                    exc,
+                )
+                continue
+
+            truncated = len(raw) > _PROFILE_MEMORY_MAX_BYTES
+            if truncated:
+                raw = raw[:_PROFILE_MEMORY_MAX_BYTES]
+
+            stem = md_path.stem  # "MEMORY.md" → "MEMORY"
+            entries.append(
+                {
+                    "name": stem,
+                    "filename": md_path.name,
+                    "path": str(md_path),
+                    "content": raw,
+                    "size_bytes": size_bytes,
+                    "truncated": truncated,
+                }
+            )
+
+    return web.json_response(
+        {
+            "profile": name,
+            "memories_dir": str(memories_dir),
+            "entries": entries,
+            "total": len(entries),
+        }
+    )
 
 
 # === PHASE3-notif-listener: notifications HTTP routes ===
@@ -2514,6 +2616,9 @@ def create_app(config: RelayConfig) -> web.Application:
     )
     app.router.add_get(
         "/api/profiles/{name}/soul", handle_profile_soul
+    )
+    app.router.add_get(
+        "/api/profiles/{name}/memory", handle_profile_memory
     )
     # === END PHASE3-notif-listener ===
 
