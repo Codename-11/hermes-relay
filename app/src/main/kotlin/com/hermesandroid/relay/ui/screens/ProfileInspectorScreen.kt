@@ -98,6 +98,14 @@ fun ProfileInspectorScreen(
     viewModel: ProfileInspectorViewModel,
     profileModel: String?,
     onBack: () -> Unit,
+    /**
+     * Which tab to open on entry. One of "config" | "soul" | "memory"
+     * | "skills". Defaults to "config" — matches the pre-deep-link
+     * behaviour for all existing callers that don't pass a section.
+     * Set from the nav-graph `section` query arg (see
+     * [com.hermesandroid.relay.ui.Screen.ProfileInspector.route]).
+     */
+    initialSection: String = "config",
 ) {
     val profileName = viewModel.profileName
 
@@ -149,7 +157,18 @@ fun ProfileInspectorScreen(
             InspectorTab("Skills", InspectorSection.Skills),
         )
     }
-    var selectedTab by remember { mutableStateOf(0) }
+    // Resolve the incoming deep-link section arg to a tab index. An
+    // unknown / unrecognized section value falls back to Config (0).
+    val initialTabIndex = remember(initialSection) {
+        when (initialSection.lowercase()) {
+            "config" -> 0
+            "soul" -> 1
+            "memory" -> 2
+            "skills" -> 3
+            else -> 0
+        }
+    }
+    var selectedTab by remember(initialTabIndex) { mutableStateOf(initialTabIndex) }
 
     Scaffold(
         topBar = {

@@ -211,19 +211,41 @@ sealed class Screen(
     // in the NavHost with a typed `StringType` arg, and the concrete
     // URI is built by `route(profileName)`.
     data object ProfileInspector : Screen(
-        "settings/profile_inspector/{profileName}",
+        "settings/profile_inspector/{profileName}?section={section}",
         "Profile Inspector",
         Icons.Filled.Settings,
     ) {
         const val ARG_PROFILE_NAME: String = "profileName"
-        fun route(profileName: String): String {
-            // Percent-encode the profile name before splicing it into the
-            // path — profile names are typically ASCII identifiers but
-            // nothing structurally forbids spaces or non-ASCII, and an
-            // unescaped `/` in the name would blow up the route parser.
+        const val ARG_SECTION: String = "section"
+
+        /** Tab sections accepted by the `section` query arg. */
+        const val SECTION_CONFIG: String = "config"
+        const val SECTION_SOUL: String = "soul"
+        const val SECTION_MEMORY: String = "memory"
+        const val SECTION_SKILLS: String = "skills"
+
+        /**
+         * Build a concrete nav URI for the Profile Inspector.
+         *
+         * @param profileName the profile to inspect (required).
+         * @param section     which tab to land on. One of
+         *                    [SECTION_CONFIG] / [SECTION_SOUL] /
+         *                    [SECTION_MEMORY] / [SECTION_SKILLS].
+         *                    Defaults to [SECTION_CONFIG] so callers
+         *                    that don't care about the tab — the
+         *                    common "Inspect" card entry — land on
+         *                    Config, matching the pre-deep-link
+         *                    behaviour.
+         *
+         * Backwards compat: the route template still accepts a
+         * call without `?section=` because the query arg has a
+         * default value in the navArgument declaration. Old
+         * deep-links without the arg resolve to Config.
+         */
+        fun route(profileName: String, section: String = SECTION_CONFIG): String {
             val encoded = java.net.URLEncoder.encode(profileName, "UTF-8")
                 .replace("+", "%20")
-            return "settings/profile_inspector/$encoded"
+            return "settings/profile_inspector/$encoded?section=$section"
         }
     }
 }
@@ -1194,6 +1216,14 @@ fun RelayApp() {
                         navArgument(Screen.ProfileInspector.ARG_PROFILE_NAME) {
                             type = NavType.StringType
                         },
+                        // Optional `section` query arg — which tab to
+                        // land on. Defaults to "config" so existing
+                        // deep-links without the arg keep their
+                        // pre-deep-link behaviour.
+                        navArgument(Screen.ProfileInspector.ARG_SECTION) {
+                            type = NavType.StringType
+                            defaultValue = Screen.ProfileInspector.SECTION_CONFIG
+                        },
                     ),
                 ) { backStackEntry ->
                     // Build the VM with the shared inspector client and
@@ -1210,6 +1240,9 @@ fun RelayApp() {
                     val profileNameArg = backStackEntry.arguments
                         ?.getString(Screen.ProfileInspector.ARG_PROFILE_NAME)
                         .orEmpty()
+                    val sectionArg = backStackEntry.arguments
+                        ?.getString(Screen.ProfileInspector.ARG_SECTION)
+                        ?: Screen.ProfileInspector.SECTION_CONFIG
                     val inspectorViewModel: ProfileInspectorViewModel = viewModel(
                         viewModelStoreOwner = backStackEntry,
                         key = "profile-inspector-$profileNameArg",
@@ -1249,6 +1282,7 @@ fun RelayApp() {
                     ProfileInspectorScreen(
                         viewModel = inspectorViewModel,
                         profileModel = modelLabel,
+                        initialSection = sectionArg,
                         onBack = { navController.popBackStack() },
                     )
                 }
