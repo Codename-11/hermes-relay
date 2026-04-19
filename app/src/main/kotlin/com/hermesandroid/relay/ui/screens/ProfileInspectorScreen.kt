@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -21,7 +22,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Refresh
@@ -29,15 +33,19 @@ import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
@@ -59,6 +67,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.data.ProfileMemoryEntry
 import com.hermesandroid.relay.data.ProfileSkillEntry
+import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.viewmodel.InspectorSection
 import com.hermesandroid.relay.viewmodel.LoadState
 import com.hermesandroid.relay.viewmodel.ProfileInspectorViewModel
@@ -103,6 +112,21 @@ fun ProfileInspectorScreen(
     LaunchedEffect(profileName) {
         if (profileName.isNotBlank()) {
             viewModel.loadAll()
+        }
+    }
+
+    // Surface edit-save events (success + error) through the global
+    // snackbar host. Keeps the pane composables free of snackbar
+    // plumbing — all save outcomes funnel through one sink.
+    val snackbarHost = LocalSnackbarHost.current
+    LaunchedEffect(viewModel) {
+        viewModel.editEvents.collect { event ->
+            when (event) {
+                is ProfileInspectorViewModel.EditEvent.Saved ->
+                    snackbarHost.showSnackbar(event.message)
+                is ProfileInspectorViewModel.EditEvent.Error ->
+                    snackbarHost.showSnackbar(event.message)
+            }
         }
     }
 
@@ -182,10 +206,30 @@ fun ProfileInspectorScreen(
                         onRetry = { viewModel.refreshSection(InspectorSection.Soul) },
                         rawView = viewModel.soulRawView.collectAsState().value,
                         onToggleRawView = { viewModel.toggleSoulRawView() },
+                        editing = viewModel.soulEditing.collectAsState().value,
+                        draft = viewModel.soulDraft.collectAsState().value,
+                        saving = viewModel.soulSaving.collectAsState().value,
+                        onBeginEdit = { viewModel.beginSoulEdit() },
+                        onDraftChange = { viewModel.updateSoulDraft(it) },
+                        onSave = { viewModel.saveSoulEdit() },
+                        onCancelEdit = { viewModel.cancelSoulEdit() },
                     )
                     InspectorSection.Memory -> MemoryPane(
                         state = memoryState,
                         onRetry = { viewModel.refreshSection(InspectorSection.Memory) },
+                        editingFilename = viewModel.memoryEditingFilename.collectAsState().value,
+                        draft = viewModel.memoryDraft.collectAsState().value,
+                        saving = viewModel.memorySaving.collectAsState().value,
+                        onBeginEdit = { entry ->
+                            viewModel.beginMemoryEdit(entry.filename, entry.content)
+                        },
+                        onDraftChange = { viewModel.updateMemoryDraft(it) },
+                        onSave = { viewModel.saveMemoryEdit() },
+                        onCancelEdit = { viewModel.cancelMemoryEdit() },
+                        onNewEntry = { filename ->
+                            viewModel.beginMemoryEdit(filename, "")
+                        },
+                        validateFilename = { viewModel.validateMemoryFilename(it) },
                     )
                     InspectorSection.Skills -> SkillsPane(
                         state = skillsState,
@@ -461,59 +505,49 @@ private fun SoulPane(
     onRetry: () -> Unit,
     rawView: Boolean,
     onToggleRawView: () -> Unit,
+    editing: Boolean,
+    draft: String,
+    saving: Boolean,
+    onBeginEdit: () -> Unit,
+    onDraftChange: (String) -> Unit,
+    onSave: () -> Unit,
+    onCancelEdit: () -> Unit,
 ) {
     PaneShell(state = state, onRetry = onRetry) { response ->
-        if (!response.exists) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 16.dp, vertical = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    text = "No SOUL.md for this profile",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Text(
-                    text = "Expected at:",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = response.path,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            if (response.exists && response.truncated) {
+                TruncatedBanner()
             }
-        } else {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+
+            // Pane header row — path + size on the left, action icons on
+            // the right. In view-mode we show the render-mode toggle and
+            // a pencil; in edit-mode, only the pencil is swapped for a
+            // close-X so the user has a clear "abort" affordance.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Top,
             ) {
-                if (response.truncated) {
-                    TruncatedBanner()
-                }
-                // Pane header row — path caption on the left, render-mode
-                // toggle on the right. The toggle icon flips between the
-                // code (raw) glyph and the text-fields (rendered) glyph,
-                // so the icon in the button represents the *target* mode
-                // the user would switch to, matching iconography the chat
-                // bubbles use when showing a raw-source view.
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Top,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        PathCaption(label = "SOUL file", path = response.path)
+                Column(modifier = Modifier.weight(1f)) {
+                    PathCaption(
+                        label = if (response.exists) "SOUL file" else "SOUL file (not created)",
+                        path = response.path,
+                    )
+                    if (response.exists) {
                         Text(
                             text = "${response.sizeBytes} bytes",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                }
+                if (!editing) {
+                    // Raw-view toggle only makes sense outside edit mode
+                    // — the editor is always monospace source.
                     IconButton(onClick = onToggleRawView) {
                         Icon(
                             imageVector = if (rawView) {
@@ -528,8 +562,61 @@ private fun SoulPane(
                             },
                         )
                     }
+                    IconButton(onClick = onBeginEdit) {
+                        Icon(
+                            imageVector = Icons.Filled.Edit,
+                            contentDescription = "Edit SOUL",
+                        )
+                    }
+                } else {
+                    IconButton(
+                        onClick = onCancelEdit,
+                        enabled = !saving,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Cancel edit",
+                        )
+                    }
                 }
-                Spacer(modifier = Modifier.height(4.dp))
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+
+            if (editing) {
+                MonospaceEditor(
+                    content = draft,
+                    onContentChange = onDraftChange,
+                    enabled = !saving,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                )
+                EditorBottomBar(
+                    saving = saving,
+                    canSave = true,
+                    onSave = onSave,
+                    onCancel = onCancelEdit,
+                )
+            } else if (!response.exists) {
+                // Empty state — profile has no SOUL.md. Offer to create
+                // one via the same edit flow.
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "No SOUL.md for this profile",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        text = "Tap the pencil icon above to create one.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } else {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -573,6 +660,116 @@ private fun SoulPane(
     }
 }
 
+/**
+ * Monospace editor with a line-numbered gutter on the left. No heavy
+ * CodeMirror wrapper — just a [BasicTextField] in a Row next to a
+ * computed gutter column.
+ *
+ * Line numbers recompute on every content change. For typical SOUL /
+ * memory sizes (a few KB at most) this is trivial; if we ever host
+ * truly large files we'd swap to a virtualized editor.
+ */
+@Composable
+private fun MonospaceEditor(
+    content: String,
+    onContentChange: (String) -> Unit,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    // Scroll state shared by both gutter and editor so line numbers
+    // stay aligned with their rows during vertical scroll.
+    val scroll = rememberScrollState()
+    val lines = remember(content) { content.count { it == '\n' } + 1 }
+    Row(
+        modifier = modifier
+            .background(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(8.dp),
+            )
+            .padding(8.dp),
+    ) {
+        // Line-number gutter — rendered via a single joined Text so
+        // the per-line positions match the editor's natural wrapping.
+        // A BasicTextField does not wrap newlines, so each \n in the
+        // content starts a new visible line, keeping the 1:1 mapping.
+        val gutter = remember(lines) {
+            (1..lines).joinToString("\n") { it.toString() }
+        }
+        Text(
+            text = gutter,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .padding(end = 8.dp)
+                .verticalScroll(scroll),
+        )
+        HorizontalDivider(
+            modifier = Modifier
+                .fillMaxWidth(fraction = 0.01f),
+            thickness = 1.dp,
+            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
+        )
+        androidx.compose.foundation.text.BasicTextField(
+            value = content,
+            onValueChange = { if (enabled) onContentChange(it) },
+            textStyle = MaterialTheme.typography.bodySmall.copy(
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurface,
+            ),
+            enabled = enabled,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .verticalScroll(scroll)
+                .padding(start = 8.dp),
+            cursorBrush = androidx.compose.ui.graphics.SolidColor(
+                MaterialTheme.colorScheme.primary,
+            ),
+        )
+    }
+}
+
+@Composable
+private fun EditorBottomBar(
+    saving: Boolean,
+    canSave: Boolean,
+    onSave: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        OutlinedButton(
+            onClick = onCancel,
+            enabled = !saving,
+            modifier = Modifier.weight(1f),
+        ) {
+            Text("Cancel")
+        }
+        FilledTonalButton(
+            onClick = onSave,
+            enabled = !saving && canSave,
+            modifier = Modifier.weight(1f),
+        ) {
+            if (saving) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Saving…")
+            } else {
+                Text("Save")
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------
 // Memory pane — expandable cards per entry.
 // ---------------------------------------------------------------
@@ -581,58 +778,222 @@ private fun SoulPane(
 private fun MemoryPane(
     state: LoadState<com.hermesandroid.relay.data.ProfileMemoryResponse>,
     onRetry: () -> Unit,
+    editingFilename: String?,
+    draft: String,
+    saving: Boolean,
+    onBeginEdit: (ProfileMemoryEntry) -> Unit,
+    onDraftChange: (String) -> Unit,
+    onSave: () -> Unit,
+    onCancelEdit: () -> Unit,
+    onNewEntry: (String) -> Unit,
+    validateFilename: (String) -> String?,
 ) {
     PaneShell(state = state, onRetry = onRetry) { response ->
-        if (response.entries.isEmpty()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 16.dp, vertical = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    text = "No memory entries for this profile",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Text(
-                    text = "Memories directory:",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = response.memoriesDir,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-            }
-        } else {
+        Column(modifier = Modifier.fillMaxSize()) {
             // Expansion state by filename — kept in a mutableStateMap so
             // the list recomposition doesn't drop open-cards when other
             // state updates.
             val expanded = remember { mutableStateMapOf<String, Boolean>() }
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                    horizontal = 16.dp,
-                    vertical = 12.dp,
-                ),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(
-                    items = response.entries,
-                    key = { it.filename },
-                ) { entry ->
-                    val isOpen = expanded[entry.filename] == true
-                    MemoryEntryCard(
-                        entry = entry,
-                        expanded = isOpen,
-                        onToggle = { expanded[entry.filename] = !isOpen },
+
+            // "New entry" dialog — shown when the user taps the FAB-like
+            // button at the bottom of the pane. Local state (not hoisted
+            // to the VM) because the dialog's content is ephemeral input
+            // that becomes an edit session once accepted.
+            var showNewDialog by remember { mutableStateOf(false) }
+
+            // When the user created a new (not-yet-persisted) entry via
+            // the "+ New entry" dialog, its filename is in
+            // [editingFilename] but has no matching ProfileMemoryEntry
+            // in [response.entries]. Synthesize a placeholder card at
+            // the top of the list so the editor has somewhere to render.
+            val newEntryFilename = editingFilename?.takeIf { name ->
+                response.entries.none { it.filename == name }
+            }
+
+            if (response.entries.isEmpty() && editingFilename == null) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(horizontal = 16.dp, vertical = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "No memory entries for this profile",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        text = "Memories directory:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = response.memoriesDir,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurface,
                     )
                 }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                        horizontal = 16.dp,
+                        vertical = 12.dp,
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    // Synthetic "new entry" card — rendered first when
+                    // the user is editing a filename not yet in the
+                    // persisted list. Sizes/paths are empty until the
+                    // save round-trip completes and the pane reloads.
+                    if (newEntryFilename != null) {
+                        item(key = "__new__:$newEntryFilename") {
+                            val placeholder = ProfileMemoryEntry(
+                                name = newEntryFilename.removeSuffix(".md"),
+                                filename = newEntryFilename,
+                                path = "(pending save)",
+                                content = "",
+                                sizeBytes = 0L,
+                                truncated = false,
+                            )
+                            MemoryEntryCard(
+                                entry = placeholder,
+                                expanded = true,
+                                onToggle = { },
+                                editing = true,
+                                draft = draft,
+                                saving = saving,
+                                onBeginEdit = { },
+                                onDraftChange = onDraftChange,
+                                onSave = onSave,
+                                onCancelEdit = onCancelEdit,
+                            )
+                        }
+                    }
+                    items(
+                        items = response.entries,
+                        key = { it.filename },
+                    ) { entry ->
+                        val isOpen = expanded[entry.filename] == true
+                        val isEditing = editingFilename == entry.filename
+                        MemoryEntryCard(
+                            entry = entry,
+                            expanded = isOpen || isEditing,
+                            onToggle = { expanded[entry.filename] = !isOpen },
+                            editing = isEditing,
+                            draft = draft,
+                            saving = saving,
+                            onBeginEdit = { onBeginEdit(entry) },
+                            onDraftChange = onDraftChange,
+                            onSave = onSave,
+                            onCancelEdit = onCancelEdit,
+                        )
+                    }
+                }
+            }
+
+            // Bottom "+ New entry" button — rendered whether the list is
+            // empty or populated. Disabled while an edit is already in
+            // flight so we don't stack drafts.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+            ) {
+                OutlinedButton(
+                    onClick = { showNewDialog = true },
+                    enabled = editingFilename == null,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Add,
+                        contentDescription = null,
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("New entry")
+                }
+            }
+
+            if (showNewDialog) {
+                NewMemoryEntryDialog(
+                    existingFilenames = response.entries.map { it.filename },
+                    validateFilename = validateFilename,
+                    onCreate = { filename ->
+                        showNewDialog = false
+                        onNewEntry(filename)
+                    },
+                    onDismiss = { showNewDialog = false },
+                )
             }
         }
     }
+}
+
+/**
+ * Filename-prompt dialog for creating a new memory entry. Validates
+ * against [validateFilename] (the VM-exposed rule set: must end in
+ * `.md`, no slashes, no `..`, no leading `.`) plus a collision check
+ * against [existingFilenames]. The current implementation rejects
+ * collisions — editing an existing entry goes through the per-card
+ * pencil affordance, not this dialog.
+ */
+@Composable
+private fun NewMemoryEntryDialog(
+    existingFilenames: List<String>,
+    validateFilename: (String) -> String?,
+    onCreate: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var filename by remember { mutableStateOf("") }
+    val error = remember(filename, existingFilenames) {
+        if (filename.isBlank()) null
+        else validateFilename(filename)
+            ?: if (filename in existingFilenames) "A file with that name already exists" else null
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("New memory entry") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "Filename must end in .md",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = filename,
+                    onValueChange = { filename = it },
+                    placeholder = { Text("notes.md") },
+                    isError = error != null && filename.isNotBlank(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (error != null && filename.isNotBlank()) {
+                    Text(
+                        text = error,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onCreate(filename.trim()) },
+                enabled = filename.isNotBlank() && error == null,
+            ) {
+                Text("Create")
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        },
+    )
 }
 
 @Composable
@@ -640,6 +1001,13 @@ private fun MemoryEntryCard(
     entry: ProfileMemoryEntry,
     expanded: Boolean,
     onToggle: () -> Unit,
+    editing: Boolean,
+    draft: String,
+    saving: Boolean,
+    onBeginEdit: () -> Unit,
+    onDraftChange: (String) -> Unit,
+    onSave: () -> Unit,
+    onCancelEdit: () -> Unit,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -650,11 +1018,12 @@ private fun MemoryEntryCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onToggle)
                 .padding(horizontal = 14.dp, vertical = 12.dp),
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = !editing, onClick = onToggle),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
@@ -669,21 +1038,40 @@ private fun MemoryEntryCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Icon(
-                    imageVector = if (expanded) {
-                        Icons.Filled.ExpandLess
-                    } else {
-                        Icons.Filled.ExpandMore
-                    },
-                    contentDescription = if (expanded) "Collapse" else "Expand",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                if (!editing) {
+                    IconButton(onClick = onBeginEdit) {
+                        Icon(
+                            imageVector = Icons.Filled.Edit,
+                            contentDescription = "Edit entry",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Icon(
+                        imageVector = if (expanded) {
+                            Icons.Filled.ExpandLess
+                        } else {
+                            Icons.Filled.ExpandMore
+                        },
+                        contentDescription = if (expanded) "Collapse" else "Expand",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    IconButton(
+                        onClick = onCancelEdit,
+                        enabled = !saving,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Cancel edit",
+                        )
+                    }
+                }
             }
             if (expanded) {
                 Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
                 Spacer(modifier = Modifier.height(8.dp))
-                if (entry.truncated) {
+                if (!editing && entry.truncated) {
                     TruncatedBanner()
                     Spacer(modifier = Modifier.height(6.dp))
                 }
@@ -694,25 +1082,42 @@ private fun MemoryEntryCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(modifier = Modifier.height(4.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 360.dp)
-                        .background(
-                            color = MaterialTheme.colorScheme.surface,
-                            shape = RoundedCornerShape(6.dp),
-                        )
-                        .padding(8.dp),
-                ) {
-                    Text(
-                        text = entry.content.ifBlank { "(empty)" },
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurface,
+                if (editing) {
+                    MonospaceEditor(
+                        content = draft,
+                        onContentChange = onDraftChange,
+                        enabled = !saving,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .verticalScroll(rememberScrollState()),
+                            .heightIn(min = 180.dp, max = 420.dp),
                     )
+                    EditorBottomBar(
+                        saving = saving,
+                        canSave = true,
+                        onSave = onSave,
+                        onCancel = onCancelEdit,
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 360.dp)
+                            .background(
+                                color = MaterialTheme.colorScheme.surface,
+                                shape = RoundedCornerShape(6.dp),
+                            )
+                            .padding(8.dp),
+                    ) {
+                        Text(
+                            text = entry.content.ifBlank { "(empty)" },
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState()),
+                        )
+                    }
                 }
             }
         }

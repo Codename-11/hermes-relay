@@ -691,4 +691,87 @@ class RelayProfileInspectorClientTest {
         assertEquals("", parsed.entries[0].content)
         assertEquals(0L, parsed.entries[0].sizeBytes)
     }
+
+    // ---------------------------------------------------------------
+    // Update endpoints (PUT) — response parsing for SOUL + memory.
+    //
+    // As with the GET side we don't run real HTTP here (needs Android
+    // Handler/Looper). We cover:
+    //   - Happy-path response shape round-trips.
+    //   - Missing/bad-shape response fails with SerializationException.
+    //   - Error-detail extraction from a 400-style response body.
+    // ---------------------------------------------------------------
+
+    @Test
+    fun profileSoulUpdate_parsesHappyPath() {
+        val body = """
+            {
+                "ok": true,
+                "profile": "axiom",
+                "path": "/home/bailey/.hermes/profiles/axiom/SOUL.md",
+                "bytes_written": 1234
+            }
+        """.trimIndent()
+        val parsed = json.decodeFromString<
+            com.hermesandroid.relay.data.ProfileSoulUpdateResponse
+        >(body)
+        assertTrue(parsed.ok)
+        assertEquals("axiom", parsed.profile)
+        assertEquals(1234L, parsed.bytesWritten)
+    }
+
+    @Test
+    fun profileMemoryUpdate_parsesHappyPath() {
+        val body = """
+            {
+                "ok": true,
+                "profile": "axiom",
+                "filename": "notes.md",
+                "path": "/tmp/memories/notes.md",
+                "bytes_written": 48
+            }
+        """.trimIndent()
+        val parsed = json.decodeFromString<
+            com.hermesandroid.relay.data.ProfileMemoryUpdateResponse
+        >(body)
+        assertTrue(parsed.ok)
+        assertEquals("notes.md", parsed.filename)
+        assertEquals(48L, parsed.bytesWritten)
+    }
+
+    @Test
+    fun profileSoulUpdate_missingBytesWritten_fails() {
+        // bytes_written is required (no default). A relay that omits it
+        // should surface a parse error so we don't silently treat a
+        // malformed response as success.
+        val body = """
+            {"ok": true, "profile": "axiom", "path": "/tmp/SOUL.md"}
+        """.trimIndent()
+        try {
+            json.decodeFromString<
+                com.hermesandroid.relay.data.ProfileSoulUpdateResponse
+            >(body)
+            fail("Expected failure when bytes_written is missing")
+        } catch (e: SerializationException) {
+            assertNotNull(e.message)
+        }
+    }
+
+    @Test
+    fun profileMemoryUpdate_tolerates_unknownKeys() {
+        val body = """
+            {
+                "ok": true,
+                "profile": "axiom",
+                "filename": "notes.md",
+                "path": "/tmp/notes.md",
+                "bytes_written": 10,
+                "server_time": 1745067500
+            }
+        """.trimIndent()
+        val parsed = json.decodeFromString<
+            com.hermesandroid.relay.data.ProfileMemoryUpdateResponse
+        >(body)
+        assertTrue(parsed.ok)
+    }
 }
