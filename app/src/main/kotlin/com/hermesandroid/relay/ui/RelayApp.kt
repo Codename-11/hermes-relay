@@ -58,6 +58,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.ui.theme.purpleGlow
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -97,13 +98,16 @@ import com.hermesandroid.relay.ui.screens.DeveloperSettingsScreen
 import com.hermesandroid.relay.ui.screens.MediaSettingsScreen
 import com.hermesandroid.relay.ui.screens.PairedDevicesScreen
 import com.hermesandroid.relay.ui.screens.ConnectionsSettingsScreen
+import com.hermesandroid.relay.ui.screens.ProfileInspectorScreen
 import com.hermesandroid.relay.ui.screens.SettingsScreen
 import com.hermesandroid.relay.ui.screens.TerminalScreen
 import com.hermesandroid.relay.ui.screens.NotificationCompanionSettingsScreen
 import com.hermesandroid.relay.ui.screens.VoiceSettingsScreen
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
+import com.hermesandroid.relay.network.RelayProfileInspectorClient
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import com.hermesandroid.relay.viewmodel.ProfileInspectorViewModel
 import com.hermesandroid.relay.viewmodel.TerminalViewModel
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
 import com.hermesandroid.relay.audio.VoicePlayer
@@ -199,6 +203,29 @@ sealed class Screen(
     data object Analytics : Screen("settings/analytics", "Analytics", Icons.Filled.Settings)
     data object DeveloperSettings : Screen("settings/developer", "Developer", Icons.Filled.Settings)
     data object About : Screen("settings/about", "About", Icons.Filled.Settings)
+
+    // Profile Inspector — full-screen read-only viewer with 4 tabs
+    // (Config / SOUL / Memory / Skills) for a single profile. The
+    // `profileName` path segment survives process death via Android's
+    // SavedStateHandle arg propagation; the route template is registered
+    // in the NavHost with a typed `StringType` arg, and the concrete
+    // URI is built by `route(profileName)`.
+    data object ProfileInspector : Screen(
+        "settings/profile_inspector/{profileName}",
+        "Profile Inspector",
+        Icons.Filled.Settings,
+    ) {
+        const val ARG_PROFILE_NAME: String = "profileName"
+        fun route(profileName: String): String {
+            // Percent-encode the profile name before splicing it into the
+            // path — profile names are typically ASCII identifiers but
+            // nothing structurally forbids spaces or non-ASCII, and an
+            // unescaped `/` in the name would blow up the route parser.
+            val encoded = java.net.URLEncoder.encode(profileName, "UTF-8")
+                .replace("+", "%20")
+            return "settings/profile_inspector/$encoded"
+        }
+    }
 }
 
 private val bottomNavScreens = listOf(
@@ -269,6 +296,23 @@ fun RelayApp() {
             context = mediaContext,
             okHttpClient = okhttp3.OkHttpClient.Builder()
                 .readTimeout(2, java.util.concurrent.TimeUnit.MINUTES)
+                .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                .build(),
+            relayUrlProvider = { connectionViewModel.relayUrl.value },
+            sessionTokenProvider = {
+                (connectionViewModel.authState.value as? AuthState.Paired)?.token
+            },
+        )
+    }
+
+    // Profile Inspector client. Shares the same lazy relay URL + bearer
+    // token providers as the voice client so any rotation/re-pair is
+    // automatically picked up on the next fetch. Process-stable via
+    // remember {} so the OkHttpClient isn't rebuilt on recomposition.
+    val profileInspectorClient = remember {
+        RelayProfileInspectorClient(
+            okHttpClient = okhttp3.OkHttpClient.Builder()
+                .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
                 .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                 .build(),
             relayUrlProvider = { connectionViewModel.relayUrl.value },
@@ -891,7 +935,12 @@ fun RelayApp() {
                         },
                         onNavigateToAbout = {
                             navController.navigate(Screen.About.route)
-                        }
+                        },
+                        onNavigateToProfileInspector = { profileName ->
+                            navController.navigate(
+                                Screen.ProfileInspector.route(profileName),
+                            )
+                        },
                     )
                 }
                 composable(Screen.VoiceSettings.route) {
@@ -1099,6 +1148,70 @@ fun RelayApp() {
                     AboutScreen(
                         connectionViewModel = connectionViewModel,
                         onBack = { navController.popBackStack() }
+                    )
+                }
+                composable(
+                    route = Screen.ProfileInspector.route,
+                    arguments = listOf(
+                        navArgument(Screen.ProfileInspector.ARG_PROFILE_NAME) {
+                            type = NavType.StringType
+                        },
+                    ),
+                ) { backStackEntry ->
+                    // Build the VM with the shared inspector client and
+                    // the nav-back-stack's SavedStateHandle. A small
+                    // factory keeps the VM scoped to this destination —
+                    // leaving the screen (popBackStack) destroys it, so
+                    // entering a different profile later gets a fresh
+                    // VM rather than reusing stale state.
+                    //
+                    // Keyed on the profile-name arg so navigating from
+                    // profile A → profile B (unlikely in v1 but possible
+                    // via deep link) yields a fresh VM rather than
+                    // reusing the A VM with A's loaded state.
+                    val profileNameArg = backStackEntry.arguments
+                        ?.getString(Screen.ProfileInspector.ARG_PROFILE_NAME)
+                        .orEmpty()
+                    val inspectorViewModel: ProfileInspectorViewModel = viewModel(
+                        viewModelStoreOwner = backStackEntry,
+                        key = "profile-inspector-$profileNameArg",
+                        factory = object : androidx.lifecycle.ViewModelProvider.Factory {
+                            @Suppress("UNCHECKED_CAST")
+                            override fun <T : androidx.lifecycle.ViewModel> create(
+                                modelClass: Class<T>,
+                                extras: androidx.lifecycle.viewmodel.CreationExtras,
+                            ): T {
+                                // createSavedStateHandle() pulls the
+                                // typed nav args out of extras — the
+                                // backStackEntry is the SavedStateRegistry
+                                // owner here, so the resulting
+                                // SavedStateHandle contains our
+                                // `profileName` arg automatically.
+                                val ssh = extras.createSavedStateHandle()
+                                return ProfileInspectorViewModel(
+                                    client = profileInspectorClient,
+                                    savedStateHandle = ssh,
+                                ) as T
+                            }
+                        },
+                    )
+
+                    // Pull the model label off the current activeProfile
+                    // for the top-bar subtitle — read-only snapshot,
+                    // falls back to null when the selected profile
+                    // doesn't happen to match the one we're inspecting
+                    // (shouldn't normally happen since the entry is
+                    // keyed off the same Profile).
+                    val selectedProfile by connectionViewModel
+                        .selectedProfile.collectAsState()
+                    val modelLabel = selectedProfile
+                        ?.takeIf { it.name == profileNameArg }
+                        ?.model
+
+                    ProfileInspectorScreen(
+                        viewModel = inspectorViewModel,
+                        profileModel = modelLabel,
+                        onBack = { navController.popBackStack() },
                     )
                 }
             }
