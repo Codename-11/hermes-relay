@@ -83,6 +83,27 @@ class ProfileInspectorViewModel(
     val skillsState: StateFlow<LoadState<ProfileSkillsResponse>> =
         _skillsState.asStateFlow()
 
+    // -----------------------------------------------------------------
+    // UI view-state flags — session-scoped (no DataStore). All of these
+    // are kept on the VM rather than inside the Composable so they
+    // survive process-death restore via SavedStateHandle plumbing and
+    // — more importantly — recomposition-bound state hoists cleanly
+    // into a single source of truth per pane.
+    // -----------------------------------------------------------------
+
+    /**
+     * SOUL pane render mode. Defaults to rendered markdown — raw source
+     * is an explicit opt-in toggle in the top-right of the pane. Kept
+     * session-scoped because "Bailey wants raw this time" is a transient
+     * preference, not something worth persisting across app restarts.
+     */
+    private val _soulRawView = MutableStateFlow(false)
+    val soulRawView: StateFlow<Boolean> = _soulRawView.asStateFlow()
+
+    fun toggleSoulRawView() {
+        _soulRawView.value = !_soulRawView.value
+    }
+
     /**
      * Kick off all four fetches in parallel. Safe to call more than once
      * — re-invoking replaces the load state from scratch (reverts any

@@ -20,9 +20,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -175,6 +177,8 @@ fun ProfileInspectorScreen(
                     InspectorSection.Soul -> SoulPane(
                         state = soulState,
                         onRetry = { viewModel.refreshSection(InspectorSection.Soul) },
+                        rawView = viewModel.soulRawView.collectAsState().value,
+                        onToggleRawView = { viewModel.toggleSoulRawView() },
                     )
                     InspectorSection.Memory -> MemoryPane(
                         state = memoryState,
@@ -353,6 +357,8 @@ private fun renderJsonValue(value: JsonElement): String {
 private fun SoulPane(
     state: LoadState<com.hermesandroid.relay.data.ProfileSoulResponse>,
     onRetry: () -> Unit,
+    rawView: Boolean,
+    onToggleRawView: () -> Unit,
 ) {
     PaneShell(state = state, onRetry = onRetry) { response ->
         if (!response.exists) {
@@ -388,12 +394,39 @@ private fun SoulPane(
                 if (response.truncated) {
                     TruncatedBanner()
                 }
-                PathCaption(label = "SOUL file", path = response.path)
-                Text(
-                    text = "${response.sizeBytes} bytes",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                // Pane header row — path caption on the left, render-mode
+                // toggle on the right. The toggle icon flips between the
+                // code (raw) glyph and the text-fields (rendered) glyph,
+                // so the icon in the button represents the *target* mode
+                // the user would switch to, matching iconography the chat
+                // bubbles use when showing a raw-source view.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        PathCaption(label = "SOUL file", path = response.path)
+                        Text(
+                            text = "${response.sizeBytes} bytes",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    IconButton(onClick = onToggleRawView) {
+                        Icon(
+                            imageVector = if (rawView) {
+                                Icons.Filled.TextFields
+                            } else {
+                                Icons.Filled.Code
+                            },
+                            contentDescription = if (rawView) {
+                                "Show rendered markdown"
+                            } else {
+                                "Show raw source"
+                            },
+                        )
+                    }
+                }
                 Spacer(modifier = Modifier.height(4.dp))
                 Box(
                     modifier = Modifier
@@ -405,15 +438,33 @@ private fun SoulPane(
                         )
                         .padding(12.dp),
                 ) {
-                    Text(
-                        text = response.content,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .verticalScroll(rememberScrollState()),
-                    )
+                    if (rawView) {
+                        Text(
+                            text = response.content,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState()),
+                        )
+                    } else {
+                        // Rendered markdown — same library the chat bubbles
+                        // use (mikepenz multiplatform-markdown-renderer m3),
+                        // wrapped in our project-local [MarkdownContent]
+                        // composable so code blocks get the same highlight
+                        // + copy-button treatment chat does.
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState()),
+                        ) {
+                            com.hermesandroid.relay.ui.components.MarkdownContent(
+                                content = response.content,
+                                textColor = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                    }
                 }
             }
         }
