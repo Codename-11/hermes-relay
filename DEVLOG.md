@@ -1,5 +1,40 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-18 — v0.6.0: Multi-Connection + Agent Profiles
+
+**Branch:** `feature/multi-profile-connections`. Landing as v0.6.0. Two orthogonal pieces of work that compose into a three-layer agent model (Connection → Profile → Personality), plus a top-bar + Settings UX consolidation.
+
+**Shipped.**
+
+- **Multi-Connection (`docs/decisions.md` §19).** Renamed the original internal "profile" concept to **Connection** — a paired Hermes *server*. `ConnectionStore` persists N connections in DataStore with the active one, migration seeds connection 0 from the existing `hermes_companion_auth_hw` store (zero re-pair, transparent to the user), `SessionTokenStore` takes a `prefsName` parameter so each Connection gets its own `EncryptedSharedPreferences` file, `AuthManager` gains a `connectionId` ctor. Switch is a heavy context swap: cancel in-flight SSE, disconnect relay WSS, rebind provider StateFlows (`RelayHttpClient` / `RelayVoiceClient` re-read lazily), rebuild `HermesApiClient`, reconnect, reprobe capabilities, reload sessions + personalities + profiles, restore per-Connection last-active session. Top-bar Connection chip + `ConnectionSwitcherSheet` for switching; Settings → Connections for CRUD (rename, re-pair via `ConnectionWizard`, revoke, remove). Per-connection scope: sessions, memory, personalities, skills, profiles, relay cert pin, voice endpoints, last-active session. Global scope: theme, bridge safety prefs, TOFU cert-pin map, notification companion state.
+- **Agent Profiles (`docs/decisions.md` §21).** Directory-scan + overlay. Relay walks `~/.hermes/profiles/*/`, reads each profile's `config.yaml` + `SOUL.md`, and advertises the list in `auth.ok` as `{name, model, description, system_message}` (plus a synthetic "default" entry for the root config). Phone sends `model` override + `system_message` from `SOUL.md` on chat turns when a profile is selected. Gated by `RELAY_PROFILE_DISCOVERY_ENABLED=1` (default on). Shipped as `overlay-not-isolation`: memory, sessions, `.env`, skills, and cron jobs still ride the Connection's default gateway. For full isolation, run the profile's own gateway on its own port and pair as a separate Connection.
+- **Consolidated agent sheet.** Deleted standalone `ProfilePicker.kt` and `PersonalityPicker.kt` top-bar chips in favor of a single bottom sheet opened from the top-bar agent name. Sheet holds Profile list, Personality list, and session info + analytics (message count, tokens in/out, avg TTFT). Scrollable. Toast confirmations on switch. Reclaims top-bar real estate and reduces the visual layer count (one tap instead of two chips).
+- **Settings "Active agent" card** — top-of-Settings summary of the current Connection / Profile / Personality with a `openAgentSheet` nav arg that navigates to Chat and auto-opens the sheet. Closes the "how do I change my agent" discoverability gap for Settings-originating users.
+- **Polish pass (7031115).** Pair wizard URL-scheme cross-validation (inline hint when API field has `wss://`); pair-stamp of the active Connection's metadata on successful auth (no stale state after re-pair); `ConnectionStatusBadge` top-aligns on multi-line rows; Settings treats paired + briefly-disconnected Connection as **Connecting** (amber) rather than **Disconnected** (red).
+
+**Key architectural decisions.**
+
+1. **Directory-scan for profiles.** First pass parsed a fictional top-level `profiles:` / `agents:` list in `config.yaml`. Upstream has never used that shape — profiles upstream are isolated directory instances at `~/.hermes/profiles/<name>/`, each with its own config, `.env`, `SOUL.md`, memory, sessions, and (optionally) its own gateway daemon. Old path always returned empty on real installs. Rewrite: walk `~/.hermes/profiles/*/`, read config + SOUL, report what's really there. See the "Earlier (abandoned) design" paragraph in `docs/decisions.md` §21 and commits `0303a4f` / `b9d2914` / `ec7559c`.
+2. **Overlay-not-isolation for v1.** A profile overrides `model` + `system_message`; everything else (memory, sessions, skills, API keys) rides the Connection's gateway. Rationale: a real per-profile isolation layer is "run the profile's gateway as its own service and pair it as a separate Connection" — we already have the plumbing for that via Multi-Connection. Building a second isolation layer inside one gateway would double the attack surface for no UX win.
+3. **Three-layer model = Connection → Profile → Personality.** Connection picks the server. Profile picks the agent directory on that server. Personality picks a system-prompt preset within the agent's config. Hierarchy flows top to bottom; picking a Connection resets Profile (Profile is ephemeral and server-scoped). `docs/decisions.md` §8 now carries a terminology-note block making this explicit, since the §8 title still says "Profiles" in the legacy sense.
+4. **Kept scope intentionally small for v0.6.0.** No per-Connection Profile persistence, no gateway-running probe, no mode where one Connection hosts multiple profile-gateways behind one pairing. Those are §21 follow-ups (see Deferred).
+
+**Deferred to v0.7+.**
+
+- **True per-profile isolation via separate Connections.** Doc how `hermes -p <name> platform start api --port 8643` + pair-as-new-Connection achieves this today, in user-docs.
+- **Persisted profile selection per Connection.** Currently resets on app restart and Connection switch. ~30-line extension: add `lastSelectedProfileName` to the `Connection` data class and restore on switch.
+- **Gateway-running probe** (hermes-desktop-inspired). Would let the Connection health indicator distinguish "server unreachable" from "paired, awake, responding" without waiting for a first request to fail. Low-priority; the existing probe behavior is adequate for v0.6.0.
+
+**Docs pass.**
+
+- `CHANGELOG.md` — new `[0.6.0]` section above the existing (v0.5.x-work-in-progress) entries.
+- `docs/spec.md` — Chat top-bar section rewritten around the three-chip reality; `auth.ok` `profiles[]` field documented.
+- `docs/decisions.md` — §8 gained a terminology-note block pointing forward to §19 and §21.
+- `user-docs/features/connections.md`, `profiles.md`, `personalities.md` — top-bar chip references updated to the agent sheet. `index.md` feature grid picked up Connections + Profiles rows.
+- `user-docs/guide/chat.md` — Personalities section expanded into "Agent Sheet — Profile + Personality" + Connection Chip subsection. `getting-started.md` gained a "Multiple Hermes servers" tip pointing at `features/connections.md`.
+- `user-docs/architecture/decisions.md` — new ADR-14 (Multi-Connection) + ADR-15 (Agent Profile picker) mirroring `docs/decisions.md`.
+- `README.md` — new "What's new in v0.6.0" block above the feature list; added a feature bullet for multi-Connection + profiles.
+
 ## 2026-04-18 — Dashboard pairing: `/pairing/mint` schema rework + grants render fix
 
 **Context.** Bailey hit a silent pairing failure scanning QRs minted by the dashboard's "Pair new device" flow. Logcat showed the app attempting pairing with `serverUrl=http://172.16.24.250:8767` (relay's port, not API's) and an empty `relay` block (`relayUrl=` and `code=` both blank), causing `applyServerIssuedCodeAndReset` to bail with "empty code, returning early — authState NOT reset" and the WSS never handshook.

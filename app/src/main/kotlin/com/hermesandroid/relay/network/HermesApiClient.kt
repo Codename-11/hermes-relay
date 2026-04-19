@@ -355,6 +355,16 @@ class HermesApiClient(
 
     // --- Chat streaming via /api/sessions/{id}/chat/stream ---
 
+    /**
+     * Stream chat via the sessions endpoint.
+     *
+     * @param modelOverride When non-null and non-blank, injects `"model":
+     *   "<value>"` at the top level of the session-chat request body,
+     *   asking the server to use that model for this turn. When null or
+     *   blank the `model` field is omitted entirely and the server falls
+     *   back to its session default. Used by the agent-profile picker so
+     *   an explicit user choice wins over implicit session/server defaults.
+     */
     fun sendChatStream(
         sessionId: String,
         message: String,
@@ -390,12 +400,21 @@ class HermesApiClient(
         onTurnComplete: () -> Unit,
         onComplete: () -> Unit,
         onUsage: (UsageInfo?) -> Unit,
-        onError: (String) -> Unit
+        onError: (String) -> Unit,
+        modelOverride: String? = null
     ): EventSource {
         val requestPayload = buildJsonObject {
             put("message", message)
             if (!systemMessage.isNullOrBlank()) {
                 put("system_message", systemMessage)
+            }
+            if (!modelOverride.isNullOrBlank()) {
+                // Agent-profile model override — top-level `model` mirrors
+                // the OpenAI Chat Completions shape and is what the
+                // upstream sessions handler looks at when deciding which
+                // model to route the turn through.
+                put("model", modelOverride)
+                Log.d(TAG, "sendChatStream: modelOverride=$modelOverride (profile pick)")
             }
             if (!attachments.isNullOrEmpty()) {
                 putJsonArray("attachments") {
@@ -612,6 +631,20 @@ class HermesApiClient(
 
     // --- Run streaming via /v1/runs ---
 
+    /**
+     * Stream a run via `/v1/runs`.
+     *
+     * @param model Caller's default model selection (nullable). When
+     *   [modelOverride] is null/blank this is used as the `model` field,
+     *   or `"default"` if both are null — preserving the pre-profile
+     *   behaviour exactly.
+     * @param modelOverride When non-null and non-blank, wins over [model]
+     *   and is injected as the top-level `"model"` field in the run
+     *   request body. Used by the agent-profile picker so an explicit
+     *   user-selected profile model takes precedence over any implicit
+     *   caller default. When null/blank this parameter is ignored and
+     *   [model] drives selection as before.
+     */
     fun sendRunStream(
         message: String,
         model: String? = null,
@@ -629,10 +662,22 @@ class HermesApiClient(
         onTurnComplete: () -> Unit,
         onComplete: () -> Unit,
         onUsage: (UsageInfo?) -> Unit,
-        onError: (String) -> Unit
+        onError: (String) -> Unit,
+        modelOverride: String? = null
     ): EventSource {
+        // Resolution: modelOverride (profile pick) > model (caller default) > "default".
+        // Blank strings are treated as null so callers can't accidentally
+        // ship `"model": ""` over the wire.
+        val resolvedModel = when {
+            !modelOverride.isNullOrBlank() -> modelOverride
+            !model.isNullOrBlank() -> model
+            else -> "default"
+        }
+        if (!modelOverride.isNullOrBlank()) {
+            Log.d(TAG, "sendRunStream: modelOverride=$modelOverride (profile pick, was model=$model)")
+        }
         val requestPayload = buildJsonObject {
-            put("model", model ?: "default")
+            put("model", resolvedModel)
             put("input", message)
             put("stream", true)
             if (!systemMessage.isNullOrBlank()) {

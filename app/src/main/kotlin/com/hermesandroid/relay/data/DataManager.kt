@@ -13,6 +13,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
 
 /**
@@ -21,7 +23,17 @@ import java.io.File
  * Backup format is a JSON file containing settings and connection info.
  * Tokens are NOT included in backups for security.
  */
-class DataManager(private val context: Context) {
+class DataManager(
+    private val context: Context,
+    /**
+     * Multi-connection: the [ConnectionStore] singleton whose snapshot gets
+     * written into [AppBackup.connections] on export. Nullable for
+     * legacy/compat call sites that construct a [DataManager] without
+     * connection support; a null store just means "export an empty
+     * connections list" (equivalent to v2 behavior).
+     */
+    private val connectionStore: ConnectionStore? = null,
+) {
 
     companion object {
         private const val TAG = "DataManager"
@@ -41,39 +53,69 @@ class DataManager(private val context: Context) {
     /**
      * Backup data model -- only non-sensitive settings.
      * Tokens and device IDs are never included.
+     *
+     * **Schema history:**
+     *  - v1: `serverUrl` only (single endpoint, pre-API-split).
+     *  - v2: adds `apiServerUrl` + `relayUrl`; `profiles: List<String>` held
+     *    server-issued session labels from `auth.ok` (never actually populated
+     *    on export — the field was vestigial).
+     *  - v3 (2026-04-18): `profiles: List<Profile>` — carried the new
+     *    multi-connection definitions under the then-current "Profile" name.
+     *  - v4 (2026-04-18): `connections: List<Connection>` — same shape as v3
+     *    under the renamed concept. v3 imports get their `profiles` field
+     *    re-mapped to `connections` (see [importSettings]). v1/v2 imports
+     *    get `connections = emptyList()` since the old string list was not
+     *    structurally compatible.
      */
     @Serializable
     data class AppBackup(
-        val version: Int = 2,
+        val version: Int = 4,
         val serverUrl: String? = null, // legacy (v1 compat)
         val apiServerUrl: String? = null,
         val relayUrl: String? = null,
         val theme: String = "auto",
         val onboardingCompleted: Boolean = false,
-        val profiles: List<String> = emptyList(),
+        val connections: List<Connection> = emptyList(),
         val exportedAt: Long = System.currentTimeMillis()
     )
 
     /**
      * Export app settings to a JSON string.
      * Does NOT include session tokens or device IDs (security).
+     *
+     * The `sessionLabels` parameter is a legacy dead parameter — it was
+     * previously sourced from `AuthManager.sessionLabels`, a field removed
+     * in Pass 2 of the multi-connection rollout (2026-04-18) when it was
+     * replaced by the structured `agentProfiles: StateFlow<List<Profile>>`.
+     * Kept only for call-site signature stability; not written to the
+     * backup. The backup's [AppBackup.connections] comes from the
+     * injected [connectionStore] snapshot. Callers should pass
+     * `emptyList()`. Will be removed in a later pass.
      */
     suspend fun exportSettings(
         serverUrl: String?,
         theme: String,
         onboardingCompleted: Boolean,
-        profiles: List<String>,
+        @Suppress("UNUSED_PARAMETER") sessionLabels: List<String>,
         apiServerUrl: String? = null,
         relayUrl: String? = null
     ): String {
+        val connectionsSnapshot = connectionStore?.connections?.value
+        if (connectionStore == null) {
+            Log.w(
+                TAG,
+                "exportSettings: no ConnectionStore wired — writing empty connections list " +
+                    "(caller constructed DataManager without the multi-connection ctor arg)",
+            )
+        }
         val backup = AppBackup(
-            version = 2,
+            version = 4,
             serverUrl = serverUrl, // legacy compat
             apiServerUrl = apiServerUrl,
             relayUrl = relayUrl,
             theme = theme,
             onboardingCompleted = onboardingCompleted,
-            profiles = profiles,
+            connections = connectionsSnapshot ?: emptyList(),
             exportedAt = System.currentTimeMillis()
         )
         return json.encodeToString(backup)
@@ -82,10 +124,51 @@ class DataManager(private val context: Context) {
     /**
      * Import settings from a JSON string.
      * Returns the parsed backup, or null if invalid.
+     *
+     * For v1/v2 backups we deliberately drop the old `profiles: List<String>`
+     * field on its own, since kotlinx.serialization's `ignoreUnknownKeys`
+     * would throw if it found the old scalar-string entries where it now
+     * expects [Connection] objects. We pre-parse as a [JsonElement] and
+     * rebuild the object with `connections = []` on older schema versions.
+     *
+     * For v3 backups, the old `profiles: List<Profile>` field is re-mapped
+     * to `connections: List<Connection>` — same wire shape, just renamed.
      */
     fun importSettings(jsonString: String): AppBackup? {
         return try {
-            json.decodeFromString<AppBackup>(jsonString)
+            val element = json.parseToJsonElement(jsonString)
+            val obj = element as? JsonObject ?: return null
+            val version = obj["version"]?.let {
+                (it as? JsonPrimitive)?.content?.toIntOrNull()
+            } ?: 4
+            val normalized = when {
+                version < 3 -> {
+                    // Strip the incompatible v1/v2 `profiles` field so the
+                    // serializer doesn't try to decode List<String> into
+                    // List<Connection>. The feature never populated the list
+                    // in export anyway, so no user data is lost.
+                    Log.d(
+                        TAG,
+                        "importSettings: dropping legacy v$version profiles field " +
+                            "(schema was vestigial)",
+                    )
+                    JsonObject(obj - "profiles")
+                }
+                version == 3 -> {
+                    // v3 used `profiles: List<Profile>` with the same wire
+                    // shape as v4's `connections: List<Connection>`. Swap
+                    // the key name and decode as v4.
+                    val profilesField = obj["profiles"]
+                    val withoutProfiles = obj - "profiles"
+                    if (profilesField != null) {
+                        JsonObject(withoutProfiles + ("connections" to profilesField))
+                    } else {
+                        JsonObject(withoutProfiles)
+                    }
+                }
+                else -> obj
+            }
+            json.decodeFromJsonElement(AppBackup.serializer(), normalized)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse backup JSON", e)
             null

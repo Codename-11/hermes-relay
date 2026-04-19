@@ -2,7 +2,9 @@ package com.hermesandroid.relay.auth
 
 import android.content.Context
 import android.util.Log
+import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.PairingPreferences
+import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.models.Envelope
 import kotlinx.coroutines.CoroutineScope
@@ -15,6 +17,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -57,7 +60,18 @@ sealed class AuthState {
 class AuthManager(
     private val context: Context,
     private val multiplexer: ChannelMultiplexer,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    /**
+     * Multi-connection: the id of the [com.hermesandroid.relay.data.Connection]
+     * this AuthManager is bound to. Drives which EncryptedSharedPreferences
+     * file the underlying [SessionTokenStore] reads/writes.
+     *
+     * Defaults to [CONNECTION_ID_LEGACY] so the pre-multi-connection call site
+     * in `ConnectionViewModel` still compiles. Worker B removes the default
+     * and passes a real connection id when they wire the active connection
+     * through.
+     */
+    private val connectionId: String = CONNECTION_ID_LEGACY,
 ) : ChannelMultiplexer.ChannelHandler {
 
     companion object {
@@ -68,6 +82,54 @@ class AuthManager(
         private const val KEY_PAIRED_META = "paired_session_meta_json"
         private const val PAIRING_CODE_LENGTH = 6
         private val PAIRING_CODE_CHARS = ('A'..'Z') + ('0'..'9')
+
+        /**
+         * Sentinel [connectionId] meaning "bind this AuthManager to the legacy
+         * single-connection EncryptedSharedPreferences file
+         * ([Connection.LEGACY_TOKEN_STORE_KEY])". Used as the default ctor arg
+         * so existing call sites don't need to change until Worker B threads
+         * a real connection id through.
+         */
+        const val CONNECTION_ID_LEGACY: String = "legacy"
+
+        /**
+         * Parse the `profiles` array from an `auth.ok` payload into a list of
+         * [Profile] entries. Extracted out of [handleAuthOk] so it's
+         * exercisable from a pure JVM unit test without constructing an
+         * Android [Context] / [kotlinx.coroutines.CoroutineScope].
+         *
+         * Defensive rules, in order:
+         *  - Non-[JsonObject] entries (stray strings, numbers) are dropped.
+         *  - An entry missing `name` is dropped — the picker has no label
+         *    to render for it.
+         *  - `model` defaults to `"unknown"` so a profile without a model
+         *    still renders as a selectable chip (server misconfiguration,
+         *    but we don't want to silently drop the only profile).
+         *  - `description` defaults to `""`.
+         *  - `system_message` is passed through as-is, including JSON `null`.
+         *    A null or missing value means "this profile has no SOUL.md on
+         *    disk — fall back to the personality/default system prompt at
+         *    send time". Kept separate from an empty string so ChatViewModel
+         *    can cleanly detect "no override" via `systemMessage?.isNotBlank()`.
+         */
+        fun parseAgentProfiles(array: JsonArray): List<Profile> {
+            return array.mapNotNull { entry ->
+                val obj = entry as? JsonObject ?: return@mapNotNull null
+                val name = obj["name"]?.jsonPrimitive?.contentOrNull
+                    ?: return@mapNotNull null
+                val model = obj["model"]?.jsonPrimitive?.contentOrNull
+                    ?: "unknown"
+                val description = obj["description"]?.jsonPrimitive?.contentOrNull
+                    ?: ""
+                val systemMessage = obj["system_message"]?.jsonPrimitive?.contentOrNull
+                Profile(
+                    name = name,
+                    model = model,
+                    description = description,
+                    systemMessage = systemMessage,
+                )
+            }
+        }
     }
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -92,8 +154,19 @@ class AuthManager(
         return storeMutex.withLock {
             _store?.let { return it }
             withContext(Dispatchers.IO) {
+                // Multi-connection: pick the EncryptedSharedPreferences
+                // filename based on the bound connection. The legacy sentinel
+                // keeps the pre-multi-connection install on its original file
+                // so the existing paired device keeps working with no
+                // migration.
+                val prefsName = if (connectionId == CONNECTION_ID_LEGACY) {
+                    Connection.LEGACY_TOKEN_STORE_KEY
+                } else {
+                    Connection.buildTokenStoreKey(connectionId)
+                }
                 val picked: SessionTokenStore =
-                    KeystoreTokenStore.tryCreate(context) ?: LegacyEncryptedPrefsTokenStore(context)
+                    KeystoreTokenStore.tryCreate(context, prefsName)
+                        ?: LegacyEncryptedPrefsTokenStore(context, prefsName)
                 migrateFromLegacyIfNeeded(picked)
                 _store = picked
                 picked
@@ -109,6 +182,11 @@ class AuthManager(
      */
     private fun migrateFromLegacyIfNeeded(picked: SessionTokenStore) {
         if (picked is LegacyEncryptedPrefsTokenStore) return
+        // Multi-connection: only the legacy connection inherits from the pre-
+        // multi-connection `hermes_companion_auth` file. A freshly-minted
+        // per-connection store must NOT be seeded from the legacy file or
+        // we'd copy connection 0's token into every new connection.
+        if (connectionId != CONNECTION_ID_LEGACY) return
         val legacy = try {
             LegacyEncryptedPrefsTokenStore(context)
         } catch (_: Exception) {
@@ -207,8 +285,24 @@ class AuthManager(
      */
     private var pendingGrants: Map<String, Long>? = null
 
-    private val _profiles = MutableStateFlow<List<String>>(emptyList())
-    val profiles: StateFlow<List<String>> = _profiles.asStateFlow()
+    /**
+     * Server-advertised agent profiles from the `auth.ok` payload's
+     * `profiles` field. Each entry corresponds to a named agent config in
+     * the server's `~/.hermes/config.yaml` (see Hermes's `_load_profiles`).
+     *
+     * This replaces the old `_sessionLabels` field (2026-04-18, Pass 2).
+     * The previous code parsed each entry as a raw [String] via
+     * `it.jsonPrimitive.content`, which blew up silently on the real
+     * object-shaped payload the server actually sends — so the list was
+     * always empty in practice. [parseAgentProfiles] is the structured
+     * replacement.
+     *
+     * Exposed via [com.hermesandroid.relay.viewmodel.ConnectionViewModel.agentProfiles]
+     * to the profile picker UI. Empty when unpaired or when the server
+     * returned no `profiles` entry.
+     */
+    private val _agentProfiles = MutableStateFlow<List<Profile>>(emptyList())
+    val agentProfiles: StateFlow<List<Profile>> = _agentProfiles.asStateFlow()
 
     /**
      * Whether an API key is currently stored. Updated reactively by
@@ -574,10 +668,13 @@ class AuthManager(
 
                 val profilesArray = payload["profiles"]?.jsonArray
                 if (profilesArray != null) {
-                    _profiles.value = profilesArray.map { it.jsonPrimitive.content }
+                    _agentProfiles.value = parseAgentProfiles(profilesArray)
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                // Replaces a silent `e.printStackTrace()` — that stack-trace-only
+                // handler is exactly why the broken `_sessionLabels` parser
+                // (stringifying object entries) sat undetected for so long.
+                Log.w(TAG, "auth.ok parse failed: ${e.message}", e)
             }
         }
     }

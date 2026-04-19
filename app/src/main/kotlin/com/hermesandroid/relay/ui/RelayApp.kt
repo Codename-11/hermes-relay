@@ -9,6 +9,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.sp
@@ -44,6 +46,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.lifecycle.Lifecycle
@@ -58,11 +61,15 @@ import com.hermesandroid.relay.ui.theme.purpleGlow
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.hermesandroid.relay.ui.components.MorphingSphere
+import com.hermesandroid.relay.ui.components.ConnectionChip
+import com.hermesandroid.relay.ui.components.ConnectionSwitcherSheet
 import com.hermesandroid.relay.ui.components.UnattendedGlobalBanner
 import com.hermesandroid.relay.ui.components.UpdateBanner
 import com.hermesandroid.relay.update.UpdateCheckResult
@@ -72,6 +79,7 @@ import com.hermesandroid.relay.data.BridgePreferencesRepository
 import com.hermesandroid.relay.data.BridgeSafetyPreferencesRepository
 import com.hermesandroid.relay.data.BuildFlavor
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import com.hermesandroid.relay.util.HumanError
 import kotlinx.coroutines.delay
 import com.hermesandroid.relay.ui.onboarding.OnboardingScreen
@@ -88,6 +96,7 @@ import com.hermesandroid.relay.ui.screens.ConnectionSettingsScreen
 import com.hermesandroid.relay.ui.screens.DeveloperSettingsScreen
 import com.hermesandroid.relay.ui.screens.MediaSettingsScreen
 import com.hermesandroid.relay.ui.screens.PairedDevicesScreen
+import com.hermesandroid.relay.ui.screens.ConnectionsSettingsScreen
 import com.hermesandroid.relay.ui.screens.SettingsScreen
 import com.hermesandroid.relay.ui.screens.TerminalScreen
 import com.hermesandroid.relay.ui.screens.NotificationCompanionSettingsScreen
@@ -126,7 +135,29 @@ sealed class Screen(
     val icon: ImageVector
 ) {
     data object Onboarding : Screen("onboarding", "Onboarding", Icons.Filled.Settings)
-    data object Chat : Screen("chat", "Chat", Icons.AutoMirrored.Filled.Chat)
+    // `openAgentSheet` — optional flag that tells ChatScreen to auto-open
+    // its consolidated AgentInfoSheet on first composition. Added so the
+    // Settings → Active Agent card can bounce the user straight to Chat
+    // with the sheet pre-opened (Connection / Profile / Personality
+    // editing lives inside the sheet). The arg is consumed once and then
+    // cleared from the back-stack entry's arguments so returning to the
+    // Chat tab later via bottom nav does NOT re-open the sheet.
+    //
+    // `route` stays the NavHost route template — matching the pattern used
+    // by Screen.Pair — while [route] (the function) builds concrete URIs.
+    // The bottom-nav selected-state hierarchy check keys off [route]
+    // (the template), so the template must match what's registered in the
+    // NavHost, and the NavigationBarItem click must navigate via [route]()
+    // so no unresolved `{openAgentSheet}` leaks into the destination.
+    data object Chat : Screen(
+        "chat?openAgentSheet={openAgentSheet}",
+        "Chat",
+        Icons.AutoMirrored.Filled.Chat,
+    ) {
+        const val ARG_OPEN_AGENT_SHEET: String = "openAgentSheet"
+        fun route(openAgentSheet: Boolean = false): String =
+            if (openAgentSheet) "chat?openAgentSheet=true" else "chat"
+    }
     data object Terminal : Screen("terminal", "Terminal", Icons.Filled.Code)
     data object Bridge : Screen("bridge", "Bridge", Icons.Filled.PhoneAndroid)
     data object Settings : Screen("settings", "Settings", Icons.Filled.Settings)
@@ -138,7 +169,18 @@ sealed class Screen(
     // launch so the chooser + Confirm + Verify steps + the camera viewport
     // get a real fullscreen surface (the Dialog wasn't actually filling the
     // window — Settings cards were leaking through behind it).
-    data object Pair : Screen("pair", "Pair", Icons.Filled.Settings)
+    //
+    // Multi-connection: accepts an optional `connectionId` query arg so
+    // the ConnectionsSettings "Re-pair" button can target a specific
+    // connection. When null, the flow creates a new connection on success
+    // (handoff: Worker B still needs
+    // `ConnectionViewModel.addConnectionFromPairing(...)` for that).
+    data object Pair : Screen("pair?connectionId={connectionId}", "Pair", Icons.Filled.Settings) {
+        const val ARG_CONNECTION_ID: String = "connectionId"
+        fun route(connectionId: String? = null): String =
+            if (connectionId == null) "pair" else "pair?connectionId=$connectionId"
+    }
+    data object ConnectionsSettings : Screen("settings/connections", "Connections", Icons.Filled.Settings)
     data object VoiceSettings : Screen("voice_settings", "Voice", Icons.Filled.Settings)
     // === PHASE3-notif-listener-followup ===
     data object NotificationCompanionSettings :
@@ -173,6 +215,12 @@ fun RelayApp() {
     val terminalViewModel: TerminalViewModel = viewModel()
     val voiceViewModel: VoiceViewModel = viewModel()
     val updateViewModel: UpdateViewModel = viewModel()
+
+    // Composition-scoped coroutine scope for firing connection-store suspend
+    // writes off of UI click handlers (rename/revoke/remove) —
+    // ConnectionStore's mutations are all suspend fns and we don't want to
+    // block the main dispatcher from inside the composable body.
+    val connectionSwitchScope = rememberCoroutineScope()
 
     // One-time init: the terminal channel ViewModel registers with the shared
     // multiplexer and observes the relay connection state so it can attach/
@@ -269,6 +317,35 @@ fun RelayApp() {
         )
     }
 
+    // Multi-connection: wire ChatViewModel / VoiceViewModel into the
+    // connection switch coordinator. Registered once per composition — the
+    // coordinator stores these as callbacks and fires them in order when
+    // switchConnection() is invoked so in-flight streams don't keep
+    // scribbling into the outgoing connection's state after the swap.
+    //
+    // Voice callback is gated on sideload: googlePlay still builds the
+    // VoiceViewModel (it's wired unconditionally above) but voice mode is a
+    // sideload-only feature, so there's no live turn to stop on stock
+    // googlePlay builds. The stop-callback is harmless either way; the gate
+    // mirrors the flavor check on the global unattended banner below.
+    LaunchedEffect(Unit) {
+        connectionViewModel.registerStreamCancelCallback {
+            chatViewModel.cancelStream()
+        }
+        if (BuildFlavor.isSideload) {
+            // VoiceViewModel.stop() isn't defined — use exitVoiceMode() which
+            // is the closest semantic match (tears down the active turn and
+            // returns the UI to text mode). Worker B2 confirmed no stop()
+            // method exists as of the connection-switch pass, so this rename
+            // is intentional and kept as-is. If a proper stop() is added
+            // later, swap this for vvm.stop().
+            connectionViewModel.registerVoiceStopCallback {
+                voiceViewModel.exitVoiceMode()
+            }
+        }
+        chatViewModel.observeConnectionSwitches(connectionViewModel.connectionSwitchEvents)
+    }
+
     LaunchedEffect(apiClient) {
         apiClient?.let { client ->
             chatViewModel.initialize(client, connectionViewModel.chatHandler)
@@ -282,6 +359,15 @@ fun RelayApp() {
                 mediaSettingsRepo = connectionViewModel.mediaSettingsRepo,
                 mediaCacheWriter = connectionViewModel.mediaCacheWriter
             )
+
+            // Agent-profile pick provider (Pass 2). Lambda reads the latest
+            // StateFlow value on every send, so ChatViewModel never needs a
+            // direct reference to ConnectionViewModel. Safe to rewire on
+            // every API-client swap — the lambda captures the long-lived
+            // VM, not the (per-connection) apiClient.
+            chatViewModel.setSelectedProfileProvider {
+                connectionViewModel.selectedProfile.value
+            }
 
             // Wire session persistence callback
             chatViewModel.onSessionChanged = { sessionId ->
@@ -380,6 +466,8 @@ fun RelayApp() {
         }
         // === END PHASE3-safety-rails-followup ===
 
+        // startDestination uses the route TEMPLATE so it matches the
+        // composable registered below; optional args default to null/false.
         val startDestination = if (onboardingCompleted) Screen.Chat.route else Screen.Onboarding.route
 
         val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -443,6 +531,26 @@ fun RelayApp() {
             !voiceUiState.voiceMode
         // === END v0.4.1 polish ===
 
+        // Multi-connection: top-bar ConnectionChip state. Visible on the
+        // four primary tabs (Chat / Terminal / Bridge / Settings) per
+        // decisions.md §19 — connection first, personality second. Hidden
+        // while onboarding or during voice-mode full-screen takeover.
+        // Tapping opens the switcher sheet declared below the Scaffold.
+        val currentRoute = navBackStackEntry?.destination?.route
+        val connections by connectionViewModel.connections.collectAsState()
+        val activeConnection by connectionViewModel.activeConnection.collectAsState()
+        val activeConnectionId by connectionViewModel.activeConnectionId.collectAsState()
+        var connectionSheetVisible by remember { mutableStateOf(false) }
+        // Only surface the chip when there's something to switch between.
+        // With a single connection (the default after migration) the strip
+        // is just dead chrome above every screen — users reach it via
+        // Settings → Connections → Add instead. Hidden during onboarding
+        // and voice-mode takeovers regardless.
+        val connectionChipVisible = !isOnboarding &&
+            !voiceUiState.voiceMode &&
+            currentRoute in bottomNavScreens.map { it.route } &&
+            connections.size >= 2
+
         Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
         // The banner takes its own vertical space above the Scaffold so
@@ -485,6 +593,39 @@ fun RelayApp() {
                 )
             }
         }
+
+        // Multi-connection: app-wide connection chip. Rendered above the
+        // Scaffold (outside the per-screen TopAppBars) so it's visible on
+        // every primary tab without having to edit Chat / Terminal /
+        // Bridge / Settings screens individually — all four screens own
+        // their own TopAppBar, and doubling up by stuffing the chip inside
+        // each one would be a much bigger surface-area change. Aligned to
+        // the end so it reads like a header action rather than a primary
+        // title.
+        AnimatedVisibility(
+            visible = connectionChipVisible,
+            enter = fadeIn(tween(200)),
+            exit = fadeOut(tween(200)),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    // Background BEFORE statusBarsPadding so the surface
+                    // colour extends up under the status bar (otherwise
+                    // there's a dead rectangle of system-window behind the
+                    // time / wifi icons that doesn't match the app chrome).
+                    .background(MaterialTheme.colorScheme.surface)
+                    .statusBarsPadding()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ConnectionChip(
+                    label = activeConnection?.label ?: "No connection",
+                    onClick = { connectionSheetVisible = true },
+                )
+            }
+        }
         Scaffold(
             // weight(1f) instead of fillMaxSize(): Column arranges children
             // top-down, so a fillMaxSize child would try to claim the full
@@ -503,7 +644,12 @@ fun RelayApp() {
                 .fillMaxWidth()
                 .weight(1f)
                 .then(
-                    if (showUnattendedBanner) {
+                    // Any banner / chip sitting above the Scaffold that
+                    // pads itself for the status bar means child TopAppBars
+                    // would otherwise double-pad and render too far down.
+                    // Consume the inset here so the Scaffold tree treats
+                    // the top edge as already handled.
+                    if (showUnattendedBanner || connectionChipVisible) {
                         Modifier.consumeWindowInsets(WindowInsets.statusBars)
                     } else {
                         Modifier
@@ -558,7 +704,18 @@ fun RelayApp() {
                                     NavigationBarItemDefaults.colors()
                                 },
                                 onClick = {
-                                    navController.navigate(screen.route) {
+                                    // Chat's route is a template with an
+                                    // optional `?openAgentSheet` arg — always
+                                    // navigate to the concrete bare-"chat"
+                                    // URI from bottom nav so we don't leak
+                                    // the `{openAgentSheet}` placeholder into
+                                    // the destination and so tab-switching
+                                    // never re-opens the AgentInfoSheet.
+                                    val target = when (screen) {
+                                        is Screen.Chat -> Screen.Chat.route(openAgentSheet = false)
+                                        else -> screen.route
+                                    }
+                                    navController.navigate(target) {
                                         popUpTo(navController.graph.findStartDestination().id) {
                                             saveState = true
                                         }
@@ -598,13 +755,25 @@ fun RelayApp() {
                         connectionViewModel = connectionViewModel,
                         onComplete = {
                             connectionViewModel.completeOnboarding()
-                            navController.navigate(Screen.Chat.route) {
+                            // Concrete bare-"chat" URI — the Screen.Chat.route
+                            // field is the route TEMPLATE (contains
+                            // `{openAgentSheet}`) and must not be navigated
+                            // to directly; build the URI via Screen.Chat.route(...).
+                            navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
                                 popUpTo(Screen.Onboarding.route) { inclusive = true }
                             }
                         }
                     )
                 }
-                composable(Screen.Chat.route) {
+                composable(
+                    route = Screen.Chat.route,
+                    arguments = listOf(
+                        navArgument(Screen.Chat.ARG_OPEN_AGENT_SHEET) {
+                            type = NavType.BoolType
+                            defaultValue = false
+                        },
+                    ),
+                ) { backStackEntry ->
                     // Responsive bubble width based on screen width
                     val configuration = LocalConfiguration.current
                     val screenWidthDp = configuration.screenWidthDp.dp
@@ -614,11 +783,33 @@ fun RelayApp() {
                         else -> 300.dp                      // Compact (phone portrait)
                     }
 
+                    // Consume-once semantics: ChatScreen only treats the
+                    // flag as "open the sheet on entry" while it's still
+                    // `true` in the back-stack entry's arguments. After
+                    // firing, ChatScreen writes `false` back into the same
+                    // arguments bundle so recompositions (tab switches,
+                    // config changes, process resume) don't re-open the
+                    // sheet.
+                    val openAgentSheetArg = backStackEntry.arguments
+                        ?.getBoolean(Screen.Chat.ARG_OPEN_AGENT_SHEET, false) == true
+
                     ChatScreen(
                         chatViewModel = chatViewModel,
                         connectionViewModel = connectionViewModel,
                         voiceViewModel = voiceViewModel,
-                        maxBubbleWidth = maxBubbleWidth
+                        maxBubbleWidth = maxBubbleWidth,
+                        openAgentSheetOnEntry = openAgentSheetArg,
+                        onAgentSheetArgConsumed = {
+                            backStackEntry.arguments?.putBoolean(
+                                Screen.Chat.ARG_OPEN_AGENT_SHEET, false,
+                            )
+                        },
+                        // AgentInfoSheet footer jumps straight into the full
+                        // Connections CRUD screen — saves a detour through
+                        // Settings → Connections.
+                        onNavigateToConnections = {
+                            navController.navigate(Screen.ConnectionsSettings.route)
+                        },
                     )
                 }
                 composable(Screen.Terminal.route) {
@@ -648,6 +839,24 @@ fun RelayApp() {
                 composable(Screen.Settings.route) {
                     SettingsScreen(
                         connectionViewModel = connectionViewModel,
+                        chatViewModel = chatViewModel,
+                        // Tap on the Active Agent card: land on Chat with
+                        // the AgentInfoSheet auto-opened. launchSingleTop
+                        // avoids stacking duplicate Chat entries; popUpTo
+                        // Settings (inclusive=false) preserves Settings on
+                        // the back stack so pressing Back from Chat
+                        // returns to Settings rather than exiting.
+                        onNavigateToChatWithAgentSheet = {
+                            navController.navigate(
+                                Screen.Chat.route(openAgentSheet = true),
+                            ) {
+                                launchSingleTop = true
+                                popUpTo(Screen.Settings.route) { inclusive = false }
+                            }
+                        },
+                        onNavigateToConnections = {
+                            navController.navigate(Screen.ConnectionsSettings.route)
+                        },
                         onNavigateToConnectionSettings = {
                             navController.navigate(Screen.ConnectionSettings.route)
                         },
@@ -726,15 +935,134 @@ fun RelayApp() {
                             navController.navigate(Screen.PairedDevices.route)
                         },
                         onNavigateToPair = {
-                            navController.navigate(Screen.Pair.route)
+                            navController.navigate(Screen.Pair.route(null))
                         }
                     )
                 }
-                composable(Screen.Pair.route) {
+                composable(Screen.ConnectionsSettings.route) {
+                    val connectionsList by connectionViewModel.connections.collectAsState()
+                    val activeId by connectionViewModel.activeConnectionId.collectAsState()
+                    val activeRelayUiState by connectionViewModel.relayUiState.collectAsState()
+                    ConnectionsSettingsScreen(
+                        connections = connectionsList,
+                        activeConnectionId = activeId,
+                        activeRelayUiState = activeRelayUiState,
+                        onReconnectActive = {
+                            connectionViewModel.connectRelay()
+                            connectionSwitchScope.launch {
+                                snackbarHostState.showSnackbar("Reconnecting to relay…")
+                            }
+                        },
+                        // Multi-connection: typed VM helpers (Worker B2)
+                        // handle the full mutations — rename persists via
+                        // ConnectionStore.updateConnection; revoke issues
+                        // the server-side /sessions/{prefix} DELETE and
+                        // clears local auth; remove deletes the backing
+                        // EncryptedSharedPreferences via ConnectionStore.
+                        onRenameConnection = { id, newLabel ->
+                            connectionSwitchScope.launch {
+                                connectionViewModel.renameConnection(id, newLabel)
+                                    .onFailure { err ->
+                                        snackbarHostState.showSnackbar(
+                                            err.message ?: "Rename failed",
+                                        )
+                                    }
+                            }
+                        },
+                        onRepairConnection = { id ->
+                            // Re-pair targets the connection via the nav
+                            // arg — PairScreen onComplete reads it to
+                            // decide between new-connection add and
+                            // in-place re-pair. We still need
+                            // switchConnection here so the pairing-payload
+                            // apply lands on the right connection's auth
+                            // store.
+                            connectionViewModel.switchConnection(id)
+                            navController.navigate(Screen.Pair.route(id))
+                        },
+                        onRevokeConnection = { id ->
+                            connectionSwitchScope.launch {
+                                val result = connectionViewModel.revokeConnection(id)
+                                if (result.isFailure) {
+                                    // v1 constraint: revokeConnection only
+                                    // works on the active connection.
+                                    // Surface a snackbar so the user
+                                    // understands why nothing happened.
+                                    snackbarHostState.showSnackbar(
+                                        "Only the active connection can be revoked right now",
+                                    )
+                                }
+                            }
+                        },
+                        onRemoveConnection = { id ->
+                            connectionSwitchScope.launch {
+                                connectionViewModel.removeConnection(id)
+                            }
+                        },
+                        onAddConnection = {
+                            navController.navigate(Screen.Pair.route(null))
+                        },
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+                composable(
+                    route = Screen.Pair.route,
+                    arguments = listOf(
+                        navArgument(Screen.Pair.ARG_CONNECTION_ID) {
+                            type = NavType.StringType
+                            nullable = true
+                            defaultValue = null
+                        },
+                    ),
+                ) { backStackEntry ->
+                    val connectionIdArg = backStackEntry.arguments
+                        ?.getString(Screen.Pair.ARG_CONNECTION_ID)
                     com.hermesandroid.relay.ui.screens.PairScreen(
                         connectionViewModel = connectionViewModel,
-                        onComplete = { navController.popBackStack() },
-                        onCancel = { navController.popBackStack() }
+                        onComplete = {
+                            // Multi-connection: on successful pair,
+                            //  - connectionIdArg == null → new-connection
+                            //    add path. Call addConnectionFromPairing
+                            //    which creates a fresh Connection (with
+                            //    its own tokenStoreKey) and switches to it.
+                            //
+                            //    **v1 pairing-token limitation:** the pair
+                            //    that just completed wrote its session token
+                            //    into the previously-active connection's
+                            //    token store — NOT the new connection's
+                            //    (because applyPairingPayload runs against
+                            //    the live authManager, which was still
+                            //    bound to the outgoing connection when the
+                            //    pair completed). The new connection
+                            //    therefore lands in an unpaired state and
+                            //    the user must re-pair it (scan a second
+                            //    QR while the new connection is active). A
+                            //    cleaner fix — targeting
+                            //    applyPairingPayload at a specific store
+                            //    BEFORE the pair runs — is a deferred
+                            //    follow-up.
+                            //  - connectionIdArg != null → re-pair in place.
+                            //    applyPairingPayload already wrote to the
+                            //    active connection's auth store (the
+                            //    calling site switched to it before
+                            //    navigating), so there's nothing extra to
+                            //    do here.
+                            if (connectionIdArg == null) {
+                                connectionSwitchScope.launch {
+                                    connectionViewModel.addConnectionFromPairing(
+                                        label = null,
+                                        apiServerUrl = connectionViewModel.apiServerUrl.value,
+                                        relayUrl = connectionViewModel.relayUrl.value,
+                                    ).onFailure { err ->
+                                        snackbarHostState.showSnackbar(
+                                            err.message ?: "Could not save connection",
+                                        )
+                                    }
+                                }
+                            }
+                            navController.popBackStack()
+                        },
+                        onCancel = { navController.popBackStack() },
                     )
                 }
                 composable(Screen.ChatSettings.route) {
@@ -777,6 +1105,24 @@ fun RelayApp() {
             } // end CompositionLocalProvider
         }
         } // end Column (wraps banner + Scaffold)
+
+        // Multi-connection: connection switcher sheet. Hoisted to Box
+        // scope so the sheet floats over whatever screen is active —
+        // ModalBottomSheet renders as a popup, so the placement in the
+        // composition tree only affects state ownership, not visual
+        // stacking.
+        if (connectionSheetVisible) {
+            ConnectionSwitcherSheet(
+                connections = connections,
+                activeConnectionId = activeConnectionId,
+                onSelectConnection = { id -> connectionViewModel.switchConnection(id) },
+                onManageConnections = {
+                    connectionSheetVisible = false
+                    navController.navigate(Screen.ConnectionsSettings.route)
+                },
+                onDismiss = { connectionSheetVisible = false },
+            )
+        }
 
         // Sphere intro overlay — fades out after 1.5s to reveal main UI
         AnimatedVisibility(

@@ -6,38 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
-### Fixed — Pairing QR schema from dashboard (2026-04-18)
+## [0.6.0] — 2026-04-18
 
-- **`POST /pairing/mint` emits the correct wire format.** Dashboard-minted QRs
-  were unscannable — the relay endpoint put the freshly-minted pairing code in
-  top-level `key` and defaulted the top-level port to the relay's own `8767`
-  (its `server.config.port`) instead of the Hermes API server's `8642`. The
-  Android scanner reads top-level `host:port` as the **API** server URL and
-  expects the minted code inside `relay.code`, so phones saw
-  `serverUrl=http://host:8767` (wrong port, no API reachable) and an empty
-  `relay` block — `applyServerIssuedCodeAndReset` bailed on the empty code
-  and the WSS never handshook. Silent fail. The `hermes-pair` CLI and
-  `/hermes-relay-pair` skill were unaffected because they go through
-  `pair.py`'s CLI path which builds the payload correctly; only the dashboard's
-  "Pair new device" flow hit the bug. `handle_pairing_mint` now mirrors
-  `pair.py:762` — top-level `host/port/key/tls` default from
-  `RelayConfig.webapi_url` (resolved to a LAN-routable IP via
-  `_resolve_lan_ip`) with `host`/`port`/`tls`/`api_key` body overrides, and
-  the `relay` block carries `url` from `_relay_lan_base_url(server.config.host,
-  server.config.port, ...)` plus the minted `code`. Shape now matches
-  `docs/spec.md` §3.3.1 and `QrPairingScanner.kt`. Regression test at
-  `plugin/tests/test_pairing_mint_schema.py` (8 cases) pins the payload shape
-  against what the Android parser expects so the two sides can't drift
-  silently again.
-- **Dashboard Relay Management tab no longer crashes on paired-session list.**
-  `RelayManagement.jsx:172` wrapped a dict-shaped `s.grants`
-  (`{chat, terminal, bridge}`) in a 1-element array and rendered each entry as
-  a React child, tripping minified React error #31 ("objects are not valid as
-  a React child"). Now uses `Object.keys(s.grants)` when the value is
-  dict-shaped so Badge children are always strings; existing array path
-  preserved for future callers. Rebuilt bundle at
-  `plugin/dashboard/dist/index.js` — the hermes-agent dashboard loads that
-  file verbatim so source changes require a rebuild.
+### Added
+
+- **Pair with multiple Hermes servers** and switch in one tap. A new Connection chip on the left of the Chat top bar opens a switcher sheet with a health indicator for each paired server — tap one to cancel in-flight chat, disconnect the old relay, rebind to the new server, and reload sessions + personalities + profiles. The chip is hidden automatically when you only have one Connection. Existing single-server installs migrate transparently on first launch of this version — zero re-pair, zero token migration. See `docs/decisions.md` §19.
+- **Connections management screen** at Settings → Connections. Each paired server is a card with inline rename, re-pair (reuses the QR onboarding flow), revoke, and remove. Add a new Connection from the same screen. Per-connection state kept separate: sessions, memory, personalities, skills, profiles, relay URL + cert pin, voice endpoints, last-active session. Theme, bridge safety preferences, and TOFU cert-pin map stay global.
+- **Agent Profiles** — the relay now auto-discovers upstream Hermes profiles by scanning `~/.hermes/profiles/*/` (plus a synthetic "default" for the root config) and advertises them in the `auth.ok` payload. On chat send with a profile selected, the phone overlays the request's `model` and `system_message` with the profile's `model.default` + `SOUL.md`. Selection is ephemeral and clears on Connection switch. Gated by `RELAY_PROFILE_DISCOVERY_ENABLED=1` (default on) — operators can set it to `false` to keep the picker empty. See `docs/decisions.md` §21.
+- **Consolidated agent sheet** on the Chat top bar. Tap the agent name in the middle of the top bar to open a scrollable bottom sheet holding Profile selection, Personality selection, and session info + analytics (message count, tokens in/out, avg TTFT). Replaces the separate top-bar chips from intermediate v0.5.x builds. Toast confirmations fire on Profile and Personality switches.
+- **"Active agent" card** at the top of Settings — summarizes the current Connection / Profile / Personality. Tap navigates to Chat with the agent sheet auto-opened via the `openAgentSheet` nav arg, giving Settings-originating users a one-tap path to change agent context.
+- **Three-layer agent model** formalized: Connection (server) → Profile (agent directory) → Personality (system-prompt preset). Documented in `docs/spec.md`, `docs/decisions.md` §8 / §19 / §21, and `user-docs/features/{connections,profiles,personalities}.md`.
+- **Pair wizard URL scheme cross-validation** — an inline hint fires when the API field is given a `wss://` URL (or any obviously-wrong scheme), so misplaced values surface before the pair attempt instead of after.
+- **Pair-stamp on the active Connection** — successful auth now stamps the active Connection's pairing metadata (paired-at, transport hint, expiry) in place, so a re-pair from Settings doesn't leave stale state on the card.
+- **Live WSS state on the active Connection row** in the Connections list — the active card now reflects Connected / Reconnecting… / Stale in real time instead of a static "Paired N minutes ago" timestamp. A Stale state also surfaces an inline **Reconnect** action button (promoted above Rename) tinted to signal "attention."
+- **Reconnect taps get explicit feedback.** Every Stale-recovery affordance (the Relay row, the Reconnect button in Connection Settings, and the new Reconnect action in the Connections list) now shows a snackbar / toast "Reconnecting to relay…" so users know the tap registered even during the sub-second before the row flips to Connecting.
+
+### Changed
+
+- **Unified relay status across screens.** `SettingsScreen`, `ConnectionSettingsScreen`, and the Connections list used to resolve relay status independently (each with its own ad-hoc stale / auto-reconnect / probing combinator), which let them disagree on what state the relay was in — e.g. the Settings card said **Disconnected** red while the Connection sub-screen said **Reconnecting…** amber for the same moment. State resolution now lives on `ConnectionViewModel.relayUiState: StateFlow<RelayUiState>` with five well-defined cases (`NotConfigured` / `Connected` / `Connecting` / `Stale` / `Disconnected`) and a 5 s grace window before a Paired-but-Disconnected pose is promoted to `Stale` — every screen maps the single source of truth onto the existing `ConnectionStatusRow` API.
+- **Settings "Connection" card → "Active Connection".** Title renamed, and the current Connection's label now renders as the card subtitle so installs with multiple servers can see at a glance which one the status rows describe. Fresh `reconnectIfStale()` tick on first compose so the Relay row doesn't flash red before the lifecycle observer's resume path lands.
+- **Status-badge UX polish.** `ConnectionStatusBadge` top-aligns cleanly on multi-line rows (was vertically centered and drifted off-center when the label wrapped). The Settings screen now treats a paired Connection with a briefly-down relay as **Connecting** (amber) instead of **Disconnected** (red) — avoids scare-red during the few seconds around a relay restart.
+- **Top-bar chip layout.** `ProfilePicker.kt` and `PersonalityPicker.kt` as standalone top-bar chips are gone; their selection now lives inside the consolidated agent sheet.
+
+### Fixed
+
+- **`POST /pairing/mint` emits the correct wire format.** Dashboard-minted QRs were unscannable — the relay endpoint put the freshly-minted pairing code in top-level `key` and defaulted the top-level port to the relay's own `8767` (its `server.config.port`) instead of the Hermes API server's `8642`. The Android scanner reads top-level `host:port` as the **API** server URL and expects the minted code inside `relay.code`, so phones saw `serverUrl=http://host:8767` (wrong port, no API reachable) and an empty `relay` block — `applyServerIssuedCodeAndReset` bailed on the empty code and the WSS never handshook. Silent fail. The `hermes-pair` CLI and `/hermes-relay-pair` skill were unaffected because they go through `pair.py`'s CLI path which builds the payload correctly; only the dashboard's "Pair new device" flow hit the bug. `handle_pairing_mint` now mirrors `pair.py:762` — top-level `host/port/key/tls` default from `RelayConfig.webapi_url` (resolved to a LAN-routable IP via `_resolve_lan_ip`) with `host`/`port`/`tls`/`api_key` body overrides, and the `relay` block carries `url` from `_relay_lan_base_url(server.config.host, server.config.port, ...)` plus the minted `code`. Shape now matches `docs/spec.md` §3.3.1 and `QrPairingScanner.kt`. Regression test at `plugin/tests/test_pairing_mint_schema.py` (8 cases) pins the payload shape against what the Android parser expects so the two sides can't drift silently again.
+- **Dashboard Relay Management tab no longer crashes on paired-session list.** `RelayManagement.jsx:172` wrapped a dict-shaped `s.grants` (`{chat, terminal, bridge}`) in a 1-element array and rendered each entry as a React child, tripping minified React error #31 ("objects are not valid as a React child"). Now uses `Object.keys(s.grants)` when the value is dict-shaped so Badge children are always strings; existing array path preserved for future callers. Rebuilt bundle at `plugin/dashboard/dist/index.js` — the hermes-agent dashboard loads that file verbatim so source changes require a rebuild.
+
+### Deferred
+
+- True per-profile isolation on a single Connection (memory + sessions + `.env` shared today; use separate Connections for full isolation).
+- Persisted Profile selection per Connection across app restarts.
+- Gateway-running probe (hermes-desktop-inspired) on the Connection health indicator.
+
+## [0.5.x] — Unreleased feature work
 
 ### Added — Voice silence auto-stop (2026-04-18)
 

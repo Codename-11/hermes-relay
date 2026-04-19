@@ -1790,6 +1790,10 @@ def _build_auth_ok_payload(
     def _norm(ts: float) -> float | None:
         return None if math.isinf(ts) else ts
 
+    # ``profiles`` is the result of ``_load_profiles()`` — a list of
+    # snake_case dicts with ``name``, ``model``, ``description``, and
+    # ``system_message`` (which may be ``None``). The Kotlin client
+    # deserializes into PairedDeviceInfo.profiles.
     return {
         "session_token": session.token,
         "server_version": __version__,
@@ -2277,7 +2281,10 @@ def main() -> None:
         config.hermes_config_path = args.config
         # Reload profiles with the new path
         from .config import _load_profiles
-        config.profiles = _load_profiles(config.hermes_config_path)
+        config.profiles = _load_profiles(
+            config.hermes_config_path,
+            enabled=config.profile_discovery_enabled,
+        )
     if args.webapi_url is not None:
         config.webapi_url = args.webapi_url
     if args.log_level is not None:
@@ -2332,6 +2339,10 @@ def main() -> None:
         config.port,
     )
     logger.info("WebAPI target: %s", config.webapi_url)
+    logger.info(
+        "Profile discovery: %s",
+        "enabled" if config.profile_discovery_enabled else "disabled",
+    )
     logger.info(
         "Profiles loaded: %s",
         ", ".join(p["name"] for p in config.profiles) if config.profiles else "(none)",

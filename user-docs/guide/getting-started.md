@@ -167,6 +167,10 @@ The app also runs a **Trust On First Use** (TOFU) cert pinning check on `wss://`
 
 **Settings → Connection → Paired Devices** lists every device currently paired with the relay — device name, transport badge, session expiry, per-channel grant chips, and a **Revoke** button per row. Revoking the current device wipes local state and redirects to the pair flow. Any paired device can revoke any other; for single-operator setups this is intentional (so you can manage everything from one phone), multi-user deployments will need a role model later.
 
+::: tip Multiple Hermes servers
+The app supports pairing with more than one Hermes server (home + work, dev + prod, etc.) and switching with a single tap. Once you've paired the first server, open **Settings → Connections** to add a second — it launches the same QR flow. A Connection chip appears on the left of the Chat top bar as soon as you have two or more, letting you switch without re-pairing. See [Connections](/features/connections) for the full model.
+:::
+
 ::: warning Security
 The QR contains credentials — your API key if one is set, and the relay pairing code if a relay block was embedded. The pairing QR is now also signed with HMAC-SHA256 using a host-local secret (auto-created at `~/.hermes/hermes-relay-qr-secret`, mode 0o600). Don't screenshot or share it. The relay code is one-shot and expires in 10 minutes, but the API key is long-lived.
 :::

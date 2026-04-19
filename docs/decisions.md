@@ -161,6 +161,14 @@ Phone (WSS)      → Relay Server (:8767)          [bridge, terminal]
 
 ### 8. Dynamic Personalities over Hardcoded Profiles
 
+> **Terminology note (2026-04-18):** The word "Profiles" in this decision's title predates the multi-server / multi-agent work landed in §19 and §21. Today's vocabulary:
+>
+> - **Connection** (§19) — a paired Hermes *server*. What earlier drafts sometimes called a "profile".
+> - **Profile** (§21) — an upstream-Hermes agent directory (`~/.hermes/profiles/<name>/`). Overlays model + SOUL on chat turns.
+> - **Personality** (this decision) — a system-prompt preset *within* one agent's config.
+>
+> This decision is unchanged; only the surrounding vocabulary shifted.
+
 **Decision:** Fetch personalities from `GET /api/config` → `config.agent.personalities` (name → system prompt map). Display active personality name on chat bubbles. Send selected personality's system prompt via `system_message` field.
 
 **Why:**
@@ -619,9 +627,55 @@ The `data` field tells the activity log and agent trace which tier succeeded, wh
 - `app/src/main/kotlin/com/hermesandroid/relay/bridge/BridgeStatusOverlay.kt` — `BridgeStatusOverlayChip` amber variant (shipped with the initial v0.4.1 unattended work)
 - `docs/spec.md` §5 Bridge Tab — user-facing description
 
+### 19. Multi-Connection Support — one app, many Hermes servers (2026-04-18)
+
+> **Terminology note (2026-04-18):** earlier drafts of this design called these "profiles" — that's been renamed to "Connection" to avoid collision with Hermes's in-config agent profiles concept (agent.profiles in config.yaml defines name + model + description for each agent personality). A follow-up pass will introduce the agent-profile layer on top of the connection layer described here.
+
+**Decision:** Formalize the implicit single-server connection as a first-class `Connection` entity, with a `ConnectionStore` that holds N connections in DataStore and persists the active one. Switching connection is a heavy context swap: cancel in-flight SSE, disconnect relay WSS, rebuild `HermesApiClient`, update URL `StateFlow`s (which `RelayHttpClient`/`RelayVoiceClient` providers already re-read lazily), rebuild `AuthManager` against a connection-scoped `EncryptedSharedPreferences` file, reconnect, reprobe capabilities, reload sessions/personalities, restore per-connection last-active session.
+
+**Why:**
+- Users with multiple Hermes installs (home + work, dev + prod, multiple NAS hosts) want to switch targets without wiping pairing state or re-running onboarding.
+- A "connection" in this app's terminology is *a separate gateway instance* — there is no `/api/connections` endpoint to enumerate. The honest model is "connection = baseUrl + bearer + pairing record". This also matches how Discord achieves multi-agent-in-one-channel: each "agent" is a distinct bot backed by its own gateway.
+- Personalities (Decision 8) are orthogonal and remain per-connection — each server exposes its own personality map via `/api/config`.
+
+**How:**
+- **Connection model:** UUID id, editable label (default = hostname), `apiServerUrl`, `relayUrl`, `tokenStoreKey` (EncryptedSharedPreferences file name), `pairedAt`, `lastActiveSessionId`, `transportHint`, `expiresAt`. Serialized as a JSON array in DataStore key `connections_v1`; active connection in `active_connection_id`.
+- **Migration:** on first launch of the new version, `ConnectionStore.migrateLegacyConnectionIfNeeded()` seeds connection 0 with the existing `hermes_companion_auth_hw` file as its store — zero re-pair, zero token migration, fully transparent to the user. Additionally, the DataStore key rename (`profiles_v1` → `connections_v1`, `active_profile_id` → `active_connection_id`) migrates in-place on first launch after the rename pass.
+- **Auth layer:** `SessionTokenStore.tryCreate()` accepts a `prefsName` parameter; `AuthManager` gains a `connectionId` constructor parameter and picks the store file via `Connection.buildTokenStoreKey(id)`. `CertPinStore` is unchanged — pins are already keyed by `host:port` and correctly shared across connections targeting the same server.
+- **Network rebind:** `RelayHttpClient` and `RelayVoiceClient` take provider lambdas that read URL + token at call time, so updating the backing `MutableStateFlow`s is sufficient — no client recreation. `HermesApiClient` is recreated (private OkHttp pool + SSE factory), using the existing `rebuildApiClient()` path in `ConnectionViewModel`.
+- **UI:** top-bar connection chip → `ConnectionSwitcherSheet` bottom sheet with radio list + "Manage connections…" link. `Screen.ConnectionsSettings` hosts card CRUD: rename (inline), re-pair (reuses `ConnectionWizard` with `connectionId` nav arg), revoke, remove.
+- **Remove semantics:** `ConnectionStore.removeConnection()` calls `context.deleteSharedPreferences(tokenStoreKey)` to wipe the connection's auth material. Cert pin survives in the global TOFU map keyed by host:port so re-adding the same server is still trusted.
+
+**Scope — what's per-connection vs. global:**
+
+| Per-connection | Global |
+|---|---|
+| API baseUrl + bearer | Theme, dev-mode toggles |
+| Sessions, messages, search | Bridge safety prefs (blocklist, destructive verbs, auto-disable) |
+| Personalities (`/api/config`) | Feature flags / DataStore overrides |
+| Skills, memory | Notification companion enabled/disabled |
+| Relay WSS endpoint + cert pin (shared by host) | Keystore itself (one keystore, many entries) |
+| Voice transcribe/synthesize endpoint | |
+| Bridge command target | |
+| Last-active session ID | |
+
+**Trade-off — Bridge safety prefs are global:** a blocklist entry added for server A also applies when connected to server B. Accepted for v1 because the safety model is phone-wide (one user, one device, same risk appetite). If users report the shared blocklist biting, split per-connection later — the store shape allows it without breaking compatibility.
+
+**Trade-off — "both agents in one channel" (Discord-style) deferred:** a unified chat view showing interleaved messages from two connections is possible but semantically fraught: sessions, memory, and tool calls don't merge on the server side, so the unified view would be purely client-side theater. Deferred until there's a concrete use case; v1 users switch contexts with one tap and carry on.
+
+**Upstream opportunity:** a real `/api/profiles` endpoint that returns `[{id, name, endpoint, model}]` from a single config would let one hermes install expose multiple agent profiles without the user running multiple daemons. That's the upcoming Pass 2 work on top of this connection layer — note that upstream's concept ("agent profile") is different from the multi-server concept this decision records ("connection"). Filed alongside `/api/commands` as a future contribution in `docs/upstream-contributions.md`.
+
+**References:**
+- `app/src/main/kotlin/.../data/ConnectionData.kt` — `Connection` + helpers
+- `app/src/main/kotlin/.../data/ConnectionStore.kt` — StateFlows + CRUD + migration
+- `app/src/main/kotlin/.../auth/AuthManager.kt` — `connectionId` ctor. (The `sessionLabels` field mentioned in earlier drafts has been replaced by `agentProfiles: StateFlow<List<Profile>>` in §21.)
+- `app/src/main/kotlin/.../viewmodel/ConnectionViewModel.kt` — `switchConnection()` orchestration
+- `app/src/main/kotlin/.../ui/components/ConnectionSwitcherSheet.kt` — bottom-sheet switcher
+- `app/src/main/kotlin/.../ui/screens/ConnectionsSettingsScreen.kt` — CRUD screen
+
 ---
 
-### 19. Dashboard plugin: single plugin with internal tabs + pre-built IIFE bundle (2026-04-18)
+### 20. Dashboard plugin: single plugin with internal tabs + pre-built IIFE bundle (2026-04-18)
 
 **Context:** The upstream Dashboard Plugin System landed on hermes-agent's `axiom` branch in three commits (`01214a7f` plugin system, `3f6c4346` theme, `247929b0` OAuth providers). The gateway now scans `~/.hermes/plugins/<name>/dashboard/manifest.json` at startup and exposes registered plugins as tabs in the web UI, with a frontend SDK exposed at `window.__HERMES_PLUGIN_SDK__` (React + shadcn subset + hooks) and a plugin-registration global at `window.__HERMES_PLUGINS__.register(name, Component)`. Several deferred items from the MVP audit (cron manager, skills browser, memory viewer) previously blocked on "needs relay extension" flip with this system — most belong in the upstream dashboard directly. The relay plugin only needs to surface the four items that **only the relay knows about**: paired-device state, bridge command history, push delivery (future), and active `MediaRegistry` tokens. The question was how to ship those four surfaces cleanly.
 
@@ -669,6 +723,55 @@ Four sub-decisions captured together:
 - `plugin/relay/media.py` — `MediaRegistry.list_all()` (commit `2212fbc`)
 - `docs/spec.md` §10.1 Dashboard plugin — user-facing overview + route table
 - `docs/relay-server.md` HTTP Routes — wire-shape details for `/bridge/activity`, `/media/inspect`, `/relay/info`, `/sessions` loopback branch
+
+### 21. Agent Profile picker — directory-discovered overlay of model + SOUL (2026-04-18)
+
+**Decision:** The relay auto-discovers upstream Hermes profiles by scanning `~/.hermes/profiles/*/` (plus a synthetic "default" entry for the root `~/.hermes/config.yaml`). Each discovered profile is advertised in the `auth.ok` payload as `{name, model, description, system_message}`. On chat send with a profile selected, the phone overrides the request's `model` field with the profile's model AND uses the profile's `SOUL.md` content (carried in `system_message`) as the request's `system_message`. Selection is ephemeral and clears on Connection switch.
+
+**Why this supersedes the original §21 design:**
+
+The first pass read from a fictional top-level `profiles:` / `agents:` list in `~/.hermes/config.yaml`. Upstream Hermes has **never** used that schema — profiles upstream are isolated directory instances at `~/.hermes/profiles/<name>/`, each with its own `config.yaml`, `.env`, `SOUL.md`, memory, sessions, skills, and (optionally) its own gateway daemon. The old path always returned an empty list on real installs, which is why nothing ever populated in the picker.
+
+Rather than invent our own schema, match upstream's layout. The relay scans the directory, reads each profile's config.yaml + SOUL.md, and reports what's really there.
+
+**Three-layer model (unchanged at the UI level):**
+- **Connection** (§19) — which Hermes server + gateway. One scan per server.
+- **Profile** (this decision) — which upstream-layout agent directory on that server. Overlays model + SOUL.
+- **Personality** (§8) — which system-prompt preset *within* the agent's config.
+
+**How:**
+
+Server side (`plugin/relay/config.py`, `plugin/relay/server.py`):
+- `_load_profiles` rewritten to walk `~/.hermes/profiles/*/`. For each profile: `name = dir.name`; `model = config.yaml/model.default || "unknown"`; `description = config.yaml/description || first non-blank line of SOUL.md || ""`; `system_message = SOUL.md content || null`. Plus a synthetic `"default"` entry from the root config.
+- New `RelayConfig.profile_discovery_enabled: bool = True`. Set to `false` in the relay's config to skip the scan and advertise an empty list — matches our configurability pattern of "opt-out defaults" for discovery features. Disabled state is logged at INFO on startup.
+- `auth.ok` payload shape: each entry is `{"name": str, "model": str, "description": str, "system_message": str | null}` (snake_case on the wire).
+
+Client side (`app/src/main/kotlin/.../data/ProfileData.kt`, `auth/AuthManager.kt`, `viewmodel/ChatViewModel.kt`):
+- `Profile(name, model, description, systemMessage: String? = null)`, `@SerialName("system_message")` for the last field.
+- `AuthManager.parseAgentProfiles` reads the new `system_message` field (null-safe, default null).
+- `ChatViewModel` send path: if `selectedProfile != null`, pass `modelOverride = profile.model` AND, when `profile.systemMessage?.isNotBlank() == true`, use `profile.systemMessage` as the `system_message` override. Profile's `system_message` WINS over the personality's system message when both are selected — the profile is a richer/newer concept, and picking both implies the user wants the profile's full persona.
+- `ConnectionViewModel.selectedProfile` and the reset-on-Connection-switch rule are unchanged from the earlier pass; `HermesApiClient.modelOverride` is unchanged.
+
+**Trade-offs / v1 scope:**
+- **Overlay, not isolation.** Selecting a profile on the phone routes through the active Connection's gateway with the profile's model + SOUL applied. The profile's `.env` (different API keys), memory, sessions, skills, and cron jobs stay with the Connection's default gateway. For fully isolated profile state, run the profile's own gateway (`hermes -p <name> platform start api --port <other>`) and pair it as a **separate Connection**. The server-side docs for this live in `plugin/relay/config.py` + `user-docs/features/profiles.md`.
+- **SOUL.md size.** Some SOUL files are multi-KB (Mizu's is 8 KB). The full content ships as `system_message` on every chat turn. Upstream's personality path already ships a system prompt per turn, so this is consistent — but it's worth keeping SOUL.md concise.
+- **Ephemeral only.** Selection doesn't persist across app restarts. Re-opening the app lands on server-default. Persisting per-Connection is a ~30-line extension (add `lastSelectedProfileName` to the Connection data class) — filed as a follow-up.
+- **Chat-only.** Voice transcribe/synthesize and bridge commands don't honor the profile selection. Voice routes through `/voice/*` relay endpoints that don't carry `model` or `system_message`; bridge is unrelated to model choice.
+- **Config toggle.** `profile_discovery_enabled = false` lets a server op keep the phone picker empty (e.g. if the operator wants Connections-only semantics). Per our configurability pattern of "enable useful defaults, let the operator opt out."
+
+**Earlier (abandoned) design, for the record:**
+
+First attempt parsed a top-level `profiles:` / `agents:` list from one YAML. That schema does not exist upstream and always returned empty on real installs. The data class + picker + `modelOverride` wiring from that attempt are preserved; only the data source + the addition of `system_message` changed. See commits `0303a4f` (initial parse), `b9d2914` (build fix), and the R1/R2 pass that followed this decision rewrite.
+
+**References:**
+- `app/src/main/kotlin/.../data/ProfileData.kt` — the data class
+- `app/src/main/kotlin/.../auth/AuthManager.kt` — `parseAgentProfiles` companion
+- `app/src/main/kotlin/.../viewmodel/ChatViewModel.kt` — precedence rule
+- `app/src/main/kotlin/.../network/HermesApiClient.kt` — `modelOverride`
+- `app/src/main/kotlin/.../ui/components/ProfilePicker.kt` — chip + dropdown
+- `plugin/relay/config.py:_load_profiles` — directory-scan source of truth
+- `plugin/relay/server.py` — auth.ok payload emission (enriched shape)
+- Upstream doc: `~/.hermes/hermes-agent/website/docs/user-guide/profiles.md` (canonical profile-layout definition)
 
 ---
 
