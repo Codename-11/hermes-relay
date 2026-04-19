@@ -424,6 +424,14 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         int(ttl_seconds) if ttl_seconds and ttl_seconds > 0 else 60
     )
 
+    # Same rationale as /pairing/register and /pairing/approve — a phone
+    # self-banned on the rate limiter (e.g. reconnect-loop after a relay
+    # restart invalidated its session token) must not be left unpairable
+    # just because the minting path is different. Any loopback-originated
+    # mint implies operator intent to pair, so wiping the block table is
+    # safe and matches the other two pairing entry points.
+    server.rate_limiter.clear_all_blocks()
+
     logger.info(
         "Minted pairing code via /pairing/mint: %s "
         "(api=%s://%s:%d relay=%s)",
