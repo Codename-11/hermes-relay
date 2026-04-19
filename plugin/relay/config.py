@@ -45,6 +45,18 @@ class RelayConfig:
     # ``RELAY_PROFILE_DISCOVERY_ENABLED=0`` to disable.
     profile_discovery_enabled: bool = True
 
+    # Absolute path to the SessionManager persistence file. When ``None``
+    # (the default — the convention tests rely on), SessionManager runs
+    # fully in-memory and restarting the relay wipes paired devices.
+    # ``RelayConfig.from_env`` sets this to
+    # ``<hermes_config_path.parent>/hermes-relay-sessions.json`` so the
+    # real deployment keeps sessions across restarts automatically.
+    # Override with ``RELAY_SESSIONS_FILE=/abs/path`` (set to empty
+    # string to force in-memory mode even in production — rare, useful
+    # for stateless-container deployments that rely on an external
+    # secret-manager side-channel).
+    session_persistence_path: str | None = None
+
     # Media registry (inbound media for screenshot / attachment tools)
     media_max_size_mb: int = 100
     media_ttl_seconds: int = 86400
@@ -132,6 +144,23 @@ class RelayConfig:
             config.hermes_config_path,
             enabled=config.profile_discovery_enabled,
         )
+
+        # ── Session persistence file ────────────────────────────────────
+        # When ``from_env`` builds the config (i.e. a real relay startup
+        # via ``python -m plugin.relay``), default to the canonical
+        # location alongside ``config.yaml``. ``RELAY_SESSIONS_FILE``
+        # overrides; empty-string forces in-memory mode.
+        raw_sessions_file = os.getenv("RELAY_SESSIONS_FILE")
+        if raw_sessions_file is None:
+            config.session_persistence_path = str(
+                Path(config.hermes_config_path).expanduser().parent
+                / "hermes-relay-sessions.json"
+            )
+        elif raw_sessions_file.strip() == "":
+            config.session_persistence_path = None
+        else:
+            config.session_persistence_path = raw_sessions_file
+
         return config
 
 

@@ -13,16 +13,28 @@ v0.3.0 adds:
   * ``RateLimiter.clear_all_blocks`` so a successful loopback pair can wipe
     any stale block state (a phone re-pairing after a relay restart should
     not be penalized for auth failures against the prior token).
+
+v0.7.0 adds:
+  * File-backed :class:`SessionManager` persistence. Sessions serialize
+    to ``$HERMES_HOME/hermes-relay-sessions.json`` (mode 0o600, atomic
+    write via tmp + ``os.replace``). Re-loaded on startup; expired
+    entries are dropped at load time. Phone re-pair is no longer
+    required after a relay restart.
+  * Split pairing vs session rate-limit buckets (see :class:`RateLimitConfig`).
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import math
+import os
 import secrets
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from .config import PAIRING_ALPHABET, PAIRING_CODE_LENGTH
@@ -325,11 +337,289 @@ class PairingManager:
 # ── Session manager ──────────────────────────────────────────────────────────
 
 
-class SessionManager:
-    """Manages long-lived session tokens for authenticated devices."""
+DEFAULT_SESSIONS_FILENAME = "hermes-relay-sessions.json"
+_SESSIONS_FILE_VERSION = 1
 
-    def __init__(self) -> None:
+
+def default_sessions_path() -> Path:
+    """Canonical on-disk location for the serialized SessionManager state.
+
+    Mirrors :mod:`plugin.relay.qr_sign` — respects ``$HERMES_HOME`` if
+    set, falls back to ``~/.hermes``. Callers may override via the
+    ``persistence_path`` constructor arg on :class:`SessionManager`.
+    """
+    home = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
+    return home / DEFAULT_SESSIONS_FILENAME
+
+
+def _session_to_json(session: Session) -> dict[str, Any]:
+    """Serialize a :class:`Session` to JSON-safe primitives.
+
+    ``math.inf`` (never-expire) becomes the string ``"never"`` on disk so
+    json.dumps doesn't reject it — the load path turns that back into
+    ``math.inf``.
+    """
+    def _norm(v: float) -> Any:
+        if math.isinf(v) and v > 0:
+            return "never"
+        return v
+
+    return {
+        "token": session.token,
+        "device_name": session.device_name,
+        "device_id": session.device_id,
+        "created_at": session.created_at,
+        "last_seen": session.last_seen,
+        "expires_at": _norm(session.expires_at),
+        "grants": {k: _norm(v) for k, v in session.grants.items()},
+        "transport_hint": session.transport_hint,
+        "first_seen": session.first_seen,
+    }
+
+
+def _session_from_json(payload: dict[str, Any]) -> Session | None:
+    """Reconstruct a :class:`Session` from on-disk JSON, or ``None`` if
+    the payload is malformed. The load path treats corrupt entries as
+    non-fatal — they're skipped individually rather than bringing the
+    whole relay down on a single bad record.
+    """
+    try:
+        token = str(payload["token"])
+        device_name = str(payload.get("device_name", ""))
+        device_id = str(payload.get("device_id", ""))
+        created_at = float(payload.get("created_at", time.time()))
+        last_seen = float(payload.get("last_seen", created_at))
+        raw_expires = payload.get("expires_at", 0.0)
+        if raw_expires == "never":
+            expires_at: float = math.inf
+        else:
+            expires_at = float(raw_expires)
+        raw_grants = payload.get("grants") or {}
+        grants: dict[str, float] = {}
+        if isinstance(raw_grants, dict):
+            for channel, value in raw_grants.items():
+                if not isinstance(channel, str):
+                    continue
+                if value == "never":
+                    grants[channel] = math.inf
+                elif isinstance(value, (int, float)) and not isinstance(value, bool):
+                    grants[channel] = float(value)
+        transport_hint = str(payload.get("transport_hint", "unknown"))
+        first_seen = float(payload.get("first_seen", created_at))
+    except (KeyError, TypeError, ValueError):
+        return None
+
+    return Session(
+        token=token,
+        device_name=device_name,
+        device_id=device_id,
+        created_at=created_at,
+        last_seen=last_seen,
+        expires_at=expires_at,
+        grants=grants,
+        transport_hint=transport_hint,
+        first_seen=first_seen,
+    )
+
+
+class SessionManager:
+    """Manages long-lived session tokens for authenticated devices.
+
+    When a ``persistence_path`` is supplied, sessions serialize to that
+    file so they survive relay restarts — the phone no longer needs to
+    re-pair every time the daemon bounces. :class:`RelayServer` anchors
+    the path to the Hermes config directory
+    (``<hermes_config_path.parent>/hermes-relay-sessions.json``).
+
+    File layout:
+      * JSON object ``{"version": 1, "sessions": [...]}``.
+      * Mode 0o600 (owner read/write only), matching ``auth.json``.
+      * Atomic write via tempfile + ``os.replace()``.
+
+    Load happens once at ``__init__``; expired sessions are dropped
+    silently at load time. Every mutation (``create_session``,
+    ``revoke_session``, ``update_session``) triggers a save.
+
+    Default: no persistence. This keeps test/unit instances ephemeral
+    by default so they never touch the operator's real session file.
+    :func:`default_sessions_path` returns the canonical location for
+    callers that want it.
+    """
+
+    def __init__(
+        self,
+        persistence_path: Path | str | None = None,
+    ) -> None:
+        """
+        Parameters
+        ----------
+        persistence_path:
+            Where to read/write session state. ``None`` (default)
+            keeps SessionManager fully in-memory. Callers that want
+            the canonical location should pass
+            ``default_sessions_path()`` explicitly.
+        """
+        if persistence_path is None:
+            self._persistence_path: Path | None = None
+        else:
+            self._persistence_path = Path(persistence_path)
+
         self._sessions: dict[str, Session] = {}
+        if self._persistence_path is not None:
+            self._load_from_disk()
+
+    # ── Persistence ─────────────────────────────────────────────────
+
+    def _load_from_disk(self) -> None:
+        """Populate ``self._sessions`` from the persistence file.
+
+        Non-fatal on any failure: corrupt file → logged warning +
+        empty in-memory state. Individual malformed records are
+        skipped; surviving records are kept.
+
+        Expired sessions (``is_expired``) are silently dropped so the
+        phone sees a clean list after relay restart.
+        """
+        path = self._persistence_path
+        if path is None or not path.is_file():
+            return
+
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            logger.warning(
+                "SessionManager: failed to read %s: %s — starting empty",
+                path,
+                exc,
+            )
+            return
+
+        try:
+            data = json.loads(raw) if raw.strip() else {}
+        except json.JSONDecodeError as exc:
+            logger.warning(
+                "SessionManager: failed to parse %s: %s — starting empty",
+                path,
+                exc,
+            )
+            return
+
+        if not isinstance(data, dict):
+            logger.warning(
+                "SessionManager: %s did not parse to an object — starting empty",
+                path,
+            )
+            return
+
+        sessions_blob = data.get("sessions")
+        if not isinstance(sessions_blob, list):
+            logger.info(
+                "SessionManager: %s has no 'sessions' array — starting empty",
+                path,
+            )
+            return
+
+        loaded = 0
+        skipped_expired = 0
+        skipped_invalid = 0
+        for entry in sessions_blob:
+            if not isinstance(entry, dict):
+                skipped_invalid += 1
+                continue
+            session = _session_from_json(entry)
+            if session is None:
+                skipped_invalid += 1
+                continue
+            if session.is_expired:
+                skipped_expired += 1
+                continue
+            self._sessions[session.token] = session
+            loaded += 1
+
+        logger.info(
+            "SessionManager: loaded %d session(s) from %s "
+            "(skipped %d expired, %d invalid)",
+            loaded,
+            path,
+            skipped_expired,
+            skipped_invalid,
+        )
+
+    def _save_to_disk(self) -> None:
+        """Serialize the in-memory session table to the persistence file.
+
+        * Atomic: write to a sibling tempfile, then ``os.replace()``.
+        * 0o600 on creation (umask dance mirrors qr_sign).
+        * Never raises — persistence is advisory. A failed save logs a
+          warning and leaves the caller's in-memory state untouched.
+        """
+        path = self._persistence_path
+        if path is None:
+            return
+
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            logger.warning(
+                "SessionManager: cannot ensure directory %s: %s",
+                path.parent,
+                exc,
+            )
+            return
+
+        payload = {
+            "version": _SESSIONS_FILE_VERSION,
+            "sessions": [
+                _session_to_json(s) for s in self._sessions.values()
+            ],
+        }
+
+        try:
+            blob = json.dumps(payload, indent=2)
+        except (TypeError, ValueError) as exc:  # pragma: no cover — defensive
+            logger.warning(
+                "SessionManager: failed to serialize sessions: %s", exc
+            )
+            return
+
+        # Atomic write: tempfile in same directory, fsync, rename.
+        old_umask = os.umask(0o077)
+        tmp_path: Path | None = None
+        try:
+            fd, tmp_name = tempfile.mkstemp(
+                prefix=".hermes-relay-sessions-",
+                suffix=".tmp",
+                dir=str(path.parent),
+            )
+            tmp_path = Path(tmp_name)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    fh.write(blob)
+                    fh.flush()
+                    try:
+                        os.fsync(fh.fileno())
+                    except OSError:
+                        pass
+                try:
+                    os.chmod(tmp_path, 0o600)
+                except OSError:
+                    pass
+                os.replace(tmp_path, path)
+                tmp_path = None
+            finally:
+                if tmp_path is not None and tmp_path.exists():
+                    try:
+                        tmp_path.unlink()
+                    except OSError:
+                        pass
+        except OSError as exc:
+            logger.warning(
+                "SessionManager: failed to write %s: %s", path, exc
+            )
+        finally:
+            os.umask(old_umask)
+
+    # ── Public API ──────────────────────────────────────────────────
 
     def create_session(
         self,
@@ -389,6 +679,7 @@ class SessionManager:
             ),
             transport_hint,
         )
+        self._save_to_disk()
         return session
 
     def get_session(self, token: str) -> Session | None:
@@ -400,6 +691,10 @@ class SessionManager:
         if session.is_expired:
             del self._sessions[token]
             logger.info("Session %s expired", token[:8])
+            # Expired drop — persist so the on-disk state stops holding
+            # a zombie record. last_seen-only updates (below) don't
+            # trigger a save to avoid disk thrash on every heartbeat.
+            self._save_to_disk()
             return None
         # Defensive: synthesize default grants for sessions created by an
         # older code path that predated the grants refactor. In-memory
@@ -433,6 +728,7 @@ class SessionManager:
         session = self._sessions.pop(token, None)
         if session is not None:
             logger.info("Revoked session for %s", session.device_name)
+            self._save_to_disk()
             return True
         return False
 
@@ -522,6 +818,7 @@ class SessionManager:
             "never" if math.isinf(session.expires_at) else session.expires_at,
             session.grants,
         )
+        self._save_to_disk()
         return session
 
     def active_count(self) -> int:
@@ -534,6 +831,9 @@ class SessionManager:
         expired = [k for k, v in self._sessions.items() if v.is_expired]
         for k in expired:
             del self._sessions[k]
+        if expired:
+            # Expired drops mean the on-disk state is now stale; persist.
+            self._save_to_disk()
 
 
 # ── Rate limiter ─────────────────────────────────────────────────────────────
@@ -788,6 +1088,7 @@ class RateLimiter:
 
 # Re-export a few symbols for callers that want to introspect the model.
 __all__ = [
+    "DEFAULT_SESSIONS_FILENAME",
     "DEFAULT_TTL_SECONDS",
     "DEFAULT_TERMINAL_CAP",
     "DEFAULT_BRIDGE_CAP",
@@ -797,4 +1098,5 @@ __all__ = [
     "RateLimiter",
     "Session",
     "SessionManager",
+    "default_sessions_path",
 ]

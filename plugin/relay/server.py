@@ -67,9 +67,16 @@ class RelayServer:
         self.config = config
         self.start_time: float = time.monotonic()
 
-        # Auth
+        # Auth — SessionManager persistence is opt-in via
+        # ``config.session_persistence_path``. ``RelayConfig.from_env``
+        # sets it to ``<hermes_config_path.parent>/hermes-relay-sessions.json``
+        # for real startups; tests constructing ``RelayConfig()``
+        # directly get None (in-memory only), preserving the previous
+        # test isolation guarantees.
         self.pairing = PairingManager()
-        self.sessions = SessionManager()
+        self.sessions = SessionManager(
+            persistence_path=config.session_persistence_path,
+        )
         self.rate_limiter = RateLimiter()
 
         # Media registry — inbound media from tools (screenshots, etc.)
