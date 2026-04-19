@@ -27,6 +27,7 @@ import mimetypes
 import os
 import signal
 import ssl
+import stat
 import sys
 import tempfile
 import time
@@ -67,9 +68,16 @@ class RelayServer:
         self.config = config
         self.start_time: float = time.monotonic()
 
-        # Auth
+        # Auth — SessionManager persistence is opt-in via
+        # ``config.session_persistence_path``. ``RelayConfig.from_env``
+        # sets it to ``<hermes_config_path.parent>/hermes-relay-sessions.json``
+        # for real startups; tests constructing ``RelayConfig()``
+        # directly get None (in-memory only), preserving the previous
+        # test isolation guarantees.
         self.pairing = PairingManager()
-        self.sessions = SessionManager()
+        self.sessions = SessionManager(
+            persistence_path=config.session_persistence_path,
+        )
         self.rate_limiter = RateLimiter()
 
         # Media registry — inbound media from tools (screenshots, etc.)
@@ -2087,6 +2095,479 @@ async def handle_profile_memory(request: web.Request) -> web.Response:
     )
 
 
+# ── Profile-scoped SOUL.md + memory write endpoints ──────────────────────────
+#
+# Symmetric to the GET endpoints above — same loopback-or-bearer auth,
+# same ``_resolve_profile_home`` path resolver, same
+# ``profile_not_found`` 404 shape. Wire contracts:
+#
+#   PUT /api/profiles/{name}/soul
+#     Body: {"content": "..."}
+#     → 200 {"ok": true, "profile", "path", "bytes_written"}
+#     → 404 {"error": "profile_not_found", "profile": name}
+#     → 413 {"error": "payload_too_large", "limit_bytes": 1048576}
+#
+#   PUT /api/profiles/{name}/memory/{filename}
+#     Body: {"content": "..."}
+#     → 200 {"ok": true, "profile", "filename", "path", "bytes_written"}
+#     → 400 {"error": "invalid_filename", "detail": "..."}
+#     → 404 {"error": "profile_not_found", "profile": name}
+#     → 413 {"error": "payload_too_large", "limit_bytes": 1048576}
+#
+# Atomic write pattern: write to ``<name>.tmp``, ``os.replace()`` into
+# place. Preserves the original file's POSIX mode when present — the
+# operator's existing choice wins over any default we might impose
+# (SOUL files are typically world-readable in a home directory).
+
+# Max bytes we accept for a single SOUL.md or memory-file write.
+_PROFILE_WRITE_MAX_BYTES = 1 * 1024 * 1024  # 1 MB
+
+
+def _extract_write_content(body: Any) -> tuple[str | None, web.Response | None]:
+    """Pull the ``content`` field out of a PUT body with shared
+    validation.
+
+    Returns ``(content, None)`` on success or ``(None, error_response)``
+    on validation failure — the caller ``return``s the response
+    unchanged. Separated from the handlers so both share identical
+    wire shapes.
+    """
+    if not isinstance(body, dict):
+        return None, web.json_response(
+            {"error": "invalid_body", "detail": "body must be a JSON object"},
+            status=400,
+        )
+    content = body.get("content")
+    if content is None:
+        return None, web.json_response(
+            {"error": "invalid_body", "detail": "missing 'content' field"},
+            status=400,
+        )
+    if not isinstance(content, str):
+        return None, web.json_response(
+            {"error": "invalid_body", "detail": "'content' must be a string"},
+            status=400,
+        )
+    # Size gate — measured in UTF-8 bytes since that's what lands on
+    # disk. ``len(content)`` alone underestimates for non-ASCII.
+    encoded_size = len(content.encode("utf-8"))
+    if encoded_size > _PROFILE_WRITE_MAX_BYTES:
+        return None, web.json_response(
+            {
+                "error": "payload_too_large",
+                "limit_bytes": _PROFILE_WRITE_MAX_BYTES,
+                "received_bytes": encoded_size,
+            },
+            status=413,
+        )
+    return content, None
+
+
+def _atomic_write_text(target: Path, content: str) -> int:
+    """Write ``content`` to ``target`` atomically, preserving the
+    existing file's POSIX mode when present. Returns the bytes
+    written.
+
+    Implementation: write to a sibling ``<name>.tmp`` file, fsync,
+    ``os.replace()``. Raises :class:`OSError` on IO failure — callers
+    decide how to surface that (typically 500).
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    # Preserve mode of existing file if present.
+    preserve_mode: int | None = None
+    if target.exists():
+        try:
+            preserve_mode = stat.S_IMODE(target.stat().st_mode)
+        except OSError:
+            preserve_mode = None
+
+    tmp_path = target.with_name(target.name + ".tmp")
+    data = content.encode("utf-8")
+
+    with open(tmp_path, "wb") as fh:
+        fh.write(data)
+        fh.flush()
+        try:
+            os.fsync(fh.fileno())
+        except OSError:
+            pass
+
+    if preserve_mode is not None:
+        try:
+            os.chmod(tmp_path, preserve_mode)
+        except OSError:
+            pass
+
+    os.replace(tmp_path, target)
+    return len(data)
+
+
+async def handle_profile_soul_put(request: web.Request) -> web.Response:
+    """Write ``SOUL.md`` for a named profile.
+
+    PUT /api/profiles/{name}/soul
+      Body: {"content": "..."}
+      → 200 {"ok": true, "profile", "path", "bytes_written"}
+      → 400 invalid body (missing / wrong-type content)
+      → 401 missing/invalid bearer (remote callers only)
+      → 404 {"error": "profile_not_found", "profile": name}
+      → 413 {"error": "payload_too_large", "limit_bytes": 1048576}
+      → 500 {"error": "soul_write_failed", "detail": "..."}
+
+    Atomic: writes ``SOUL.md.tmp``, replaces on success. Preserves the
+    existing SOUL.md's mode when present.
+    """
+    is_loopback = request.remote in ("127.0.0.1", "::1")
+    if is_loopback:
+        server: RelayServer = request.app["server"]
+    else:
+        server, _session = _require_bearer_session(request)
+
+    name = request.match_info.get("name", "").strip()
+    if not name:
+        return web.json_response(
+            {"error": "profile_not_found", "profile": name}, status=404
+        )
+
+    home = _resolve_profile_home(server, name)
+    if home is None:
+        return web.json_response(
+            {"error": "profile_not_found", "profile": name}, status=404
+        )
+
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return web.json_response(
+            {"error": "invalid_body", "detail": "invalid JSON"}, status=400
+        )
+
+    content, err = _extract_write_content(body)
+    if err is not None:
+        return err
+    assert content is not None  # narrow for type checker
+
+    soul_path = home / "SOUL.md"
+    try:
+        bytes_written = _atomic_write_text(soul_path, content)
+    except OSError as exc:
+        logger.warning(
+            "Profile SOUL write failed for %r at %s: %s",
+            name,
+            soul_path,
+            exc,
+        )
+        return web.json_response(
+            {"error": "soul_write_failed", "detail": str(exc)},
+            status=500,
+        )
+
+    logger.info(
+        "Profile SOUL write: profile=%s bytes=%d path=%s",
+        name,
+        bytes_written,
+        soul_path,
+    )
+    # Profile metadata may have shifted (description falls back to
+    # SOUL.md's first line if config.yaml lacks one). Broadcast wiring
+    # lands in the follow-up ``feat(relay): push profiles.updated...``
+    # commit; the hook below is a stub so the write-path signature
+    # freezes now.
+    _notify_profiles_changed(server, reason="soul_written", profile=name)
+    return web.json_response(
+        {
+            "ok": True,
+            "profile": name,
+            "path": str(soul_path),
+            "bytes_written": bytes_written,
+        }
+    )
+
+
+def _validate_memory_filename(filename: str) -> str | None:
+    """Return ``None`` if ``filename`` is safe; otherwise a human-
+    readable detail message for the 400 response body.
+
+    Rules:
+      * must end with ``.md`` (case-sensitive — matches upstream
+        MEMORY.md / USER.md / anything.md convention)
+      * must not contain ``/`` ``\\`` or ``..``
+      * must not start with ``.`` (even ``.MEMORY.md`` is rejected —
+        we only allow ``.`` as the separator before ``md``)
+      * must not be empty
+      * must not be the literal name ``SOUL.md`` (that has its own
+        endpoint — avoid stomping via memory path)
+      * charset limited to ascii letters, digits, and ``._-`` for
+        predictable behavior on case-insensitive filesystems.
+    """
+    if not filename:
+        return "filename is empty"
+    if "/" in filename or "\\" in filename:
+        return "filename must not contain path separators"
+    if ".." in filename:
+        return "filename must not contain '..'"
+    if filename.startswith("."):
+        return "filename must not start with '.'"
+    if not filename.endswith(".md"):
+        return "filename must end with '.md'"
+    if filename == "SOUL.md":
+        return "use the /soul endpoint to write SOUL.md"
+    for ch in filename:
+        if not (ch.isalnum() or ch in "._-"):
+            return f"filename contains disallowed character {ch!r}"
+    return None
+
+
+async def handle_profile_memory_put(request: web.Request) -> web.Response:
+    """Write a memory file under ``<profile>/memories/`` for a named profile.
+
+    PUT /api/profiles/{name}/memory/{filename}
+      Body: {"content": "..."}
+      → 200 {"ok": true, "profile", "filename", "path", "bytes_written"}
+      → 400 invalid filename or invalid body
+      → 401 missing/invalid bearer (remote callers only)
+      → 404 {"error": "profile_not_found", "profile": name}
+      → 413 {"error": "payload_too_large", "limit_bytes": 1048576}
+      → 500 {"error": "memory_write_failed", "detail": "..."}
+
+    Creates ``memories/`` if absent. Atomic write mirrors the SOUL
+    path. Filename validation rejects path traversal, leading dot,
+    and non-.md extensions.
+    """
+    is_loopback = request.remote in ("127.0.0.1", "::1")
+    if is_loopback:
+        server: RelayServer = request.app["server"]
+    else:
+        server, _session = _require_bearer_session(request)
+
+    name = request.match_info.get("name", "").strip()
+    if not name:
+        return web.json_response(
+            {"error": "profile_not_found", "profile": name}, status=404
+        )
+
+    home = _resolve_profile_home(server, name)
+    if home is None:
+        return web.json_response(
+            {"error": "profile_not_found", "profile": name}, status=404
+        )
+
+    filename = request.match_info.get("filename", "")
+    detail = _validate_memory_filename(filename)
+    if detail is not None:
+        return web.json_response(
+            {"error": "invalid_filename", "detail": detail},
+            status=400,
+        )
+
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return web.json_response(
+            {"error": "invalid_body", "detail": "invalid JSON"}, status=400
+        )
+
+    content, err = _extract_write_content(body)
+    if err is not None:
+        return err
+    assert content is not None
+
+    memory_path = home / "memories" / filename
+    try:
+        bytes_written = _atomic_write_text(memory_path, content)
+    except OSError as exc:
+        logger.warning(
+            "Profile memory write failed for %r/%s at %s: %s",
+            name,
+            filename,
+            memory_path,
+            exc,
+        )
+        return web.json_response(
+            {"error": "memory_write_failed", "detail": str(exc)},
+            status=500,
+        )
+
+    logger.info(
+        "Profile memory write: profile=%s filename=%s bytes=%d path=%s",
+        name,
+        filename,
+        bytes_written,
+        memory_path,
+    )
+    _notify_profiles_changed(
+        server,
+        reason="memory_written",
+        profile=name,
+        filename=filename,
+    )
+    return web.json_response(
+        {
+            "ok": True,
+            "profile": name,
+            "filename": filename,
+            "path": str(memory_path),
+            "bytes_written": bytes_written,
+        }
+    )
+
+
+def _notify_profiles_changed(
+    server: "RelayServer",
+    *,
+    reason: str,
+    profile: str | None = None,
+    filename: str | None = None,
+) -> None:
+    """Hook called after a profile write lands on disk.
+
+    Re-runs profile discovery, compares against the cached snapshot
+    stored on the server, and if the shape differs broadcasts a
+    ``pairing/profiles.updated`` envelope to every authenticated
+    client. Whole-array diff — we don't bother per-profile — simpler
+    than per-field and the response size is identical either way.
+    """
+    # Lazy import to avoid a module-level circular (_load_profiles
+    # lives in .config which already imports from .auth).
+    from .config import _load_profiles
+
+    try:
+        fresh_profiles = _load_profiles(
+            server.config.hermes_config_path,
+            enabled=server.config.profile_discovery_enabled,
+        )
+    except Exception:
+        logger.warning(
+            "profiles-changed hook: _load_profiles raised (reason=%s profile=%s)",
+            reason,
+            profile,
+            exc_info=True,
+        )
+        return
+
+    previous = server.config.profiles
+    if fresh_profiles == previous:
+        logger.debug(
+            "profiles-changed hook: no diff after reason=%s profile=%s filename=%s",
+            reason,
+            profile,
+            filename,
+        )
+        return
+
+    server.config.profiles = fresh_profiles
+    logger.info(
+        "profiles-changed hook: reshape detected (reason=%s profile=%s) — "
+        "broadcasting profiles.updated to %d client(s)",
+        reason,
+        profile,
+        len(server._clients),
+    )
+    # Fire-and-forget the broadcast — keep the write-path handler
+    # non-async-blocking. Create_task on the running loop; if there's
+    # no loop (called from a sync context, e.g. the rescan task that
+    # IS in an async context will still work), fall back to logging.
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.debug(
+            "profiles-changed hook: no running loop — "
+            "skipping broadcast (will be picked up on next rescan)"
+        )
+        return
+    loop.create_task(
+        _broadcast_profiles_updated(server, fresh_profiles),
+        name="profiles-updated-broadcast",
+    )
+
+
+async def _broadcast_profiles_updated(
+    server: "RelayServer",
+    profiles: list[dict[str, Any]],
+) -> None:
+    """Send a ``pairing/profiles.updated`` envelope to every client.
+
+    Wire contract:
+    ``{"channel": "pairing", "type": "profiles.updated",
+       "id": <uuid>, "payload": {"profiles": [...]}}``
+
+    Clients update their local cache on receipt; no ack expected. We
+    iterate over a snapshot of ``_clients`` so disconnects mid-send
+    don't blow up the loop.
+    """
+    blob = json.dumps(
+        {
+            "channel": "pairing",
+            "type": "profiles.updated",
+            "id": str(uuid.uuid4()),
+            "payload": {"profiles": profiles},
+        }
+    )
+    for ws in list(server._clients):
+        if ws.closed:
+            continue
+        try:
+            await ws.send_str(blob)
+        except ConnectionResetError:
+            # Client dropped during send — disconnect cleanup will
+            # remove it from _clients on the next WS read tick.
+            continue
+        except Exception:
+            logger.debug(
+                "profiles.updated broadcast: send failed for one ws",
+                exc_info=True,
+            )
+
+
+# Interval for the background profile-rescan task. Low enough that
+# an operator tweaking config.yaml / dropping a skills/ dir sees the
+# phone reflect it quickly; high enough that the filesystem walk
+# stays cheap. 30 seconds matches the coordinator spec.
+_PROFILE_RESCAN_INTERVAL_SECONDS = 30.0
+
+
+async def _profile_rescan_loop(app: web.Application) -> None:
+    """Background task that rescans the profile tree every
+    ``_PROFILE_RESCAN_INTERVAL_SECONDS`` and broadcasts
+    ``profiles.updated`` whenever the array differs from the
+    cached snapshot.
+
+    Fires-and-forgets per iteration so a slow filesystem scan doesn't
+    queue up duplicate rescans. Cancellation-safe — shutdown clears
+    the task via aiohttp's on_cleanup hook.
+    """
+    from .config import _load_profiles
+
+    server: RelayServer = app["server"]
+    try:
+        while True:
+            await asyncio.sleep(_PROFILE_RESCAN_INTERVAL_SECONDS)
+            try:
+                fresh = _load_profiles(
+                    server.config.hermes_config_path,
+                    enabled=server.config.profile_discovery_enabled,
+                )
+            except Exception:
+                logger.warning(
+                    "profile rescan: _load_profiles raised — skipping cycle",
+                    exc_info=True,
+                )
+                continue
+            if fresh == server.config.profiles:
+                continue
+            server.config.profiles = fresh
+            logger.info(
+                "profile rescan: reshape detected — "
+                "broadcasting profiles.updated to %d client(s)",
+                len(server._clients),
+            )
+            await _broadcast_profiles_updated(server, fresh)
+    except asyncio.CancelledError:
+        logger.info("profile rescan loop cancelled")
+        raise
+
+
 # === PHASE3-notif-listener: notifications HTTP routes ===
 #
 # Bearer-auth'd HTTP read endpoint for the cached notification deque
@@ -2373,8 +2854,27 @@ async def _authenticate(
             )
             return session.token
 
-    # Both failed
-    server.rate_limiter.record_failure(remote_ip)
+    # Both failed. Route the failure to the appropriate bucket so
+    # legitimate-but-fumbled pairing attempts don't get penalized at the
+    # stricter session-token threshold. If the client sent a pairing
+    # code (attempting fresh pair), it's a pairing failure; if it sent
+    # a session token (reconnect attempt), it's a session failure. If
+    # the client sent both (unusual — phone testing its cached token
+    # then falling back to a QR), we count both buckets since both
+    # attempts genuinely failed.
+    recorded = False
+    if session_token_attempt:
+        server.rate_limiter.record_session_failure(remote_ip)
+        recorded = True
+    if pairing_code:
+        server.rate_limiter.record_pairing_failure(remote_ip)
+        recorded = True
+    if not recorded:
+        # Auth envelope with neither code nor token — treat as a
+        # session-bucket failure (stricter) since the client sent
+        # nothing at all to validate.
+        server.rate_limiter.record_session_failure(remote_ip)
+
     reason = "Invalid pairing code or session token"
     await _send_system(ws, "auth.fail", {"reason": reason})
     raise _AuthFailed(reason)
@@ -2542,7 +3042,15 @@ async def _on_disconnect(
 
 def create_app(config: RelayConfig) -> web.Application:
     """Create and configure the aiohttp application."""
-    app = web.Application()
+    # aiohttp's default client_max_size (1 MiB) would short-circuit
+    # phone uploads at the aiohttp layer, returning a plain-text 413
+    # before our handlers can produce the structured JSON error
+    # bodies the phone expects. Bump to 2 MiB so our 1 MB ``content``
+    # gate is the real gate — plus a little slack for JSON envelope
+    # overhead (``{"content": "..."}``). The voice/media upload
+    # routes have their own per-route streaming/offloading which is
+    # unaffected by this setting.
+    app = web.Application(client_max_size=2 * 1024 * 1024)
 
     server = RelayServer(config)
     app["server"] = server
@@ -2661,12 +3169,46 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_get(
         "/api/profiles/{name}/memory", handle_profile_memory
     )
+    # Profile-scoped SOUL + memory WRITE endpoints (§22 addendum).
+    app.router.add_put(
+        "/api/profiles/{name}/soul", handle_profile_soul_put
+    )
+    app.router.add_put(
+        "/api/profiles/{name}/memory/{filename}",
+        handle_profile_memory_put,
+    )
     # === END PHASE3-notif-listener ===
+
+    # Background profile-rescan task — catches filesystem-level
+    # changes (operator edits config.yaml, drops a new SKILL.md, etc.)
+    # that bypass the write endpoints. Registered as on_startup /
+    # on_cleanup so the task lives exactly as long as the aiohttp app.
+    app.on_startup.append(_on_app_startup)
+    app.on_cleanup.append(_on_app_cleanup)
 
     # Cleanup on shutdown
     app.on_shutdown.append(_on_app_shutdown)
 
     return app
+
+
+async def _on_app_startup(app: web.Application) -> None:
+    """Launch background tasks that live for the app lifetime."""
+    task = asyncio.create_task(
+        _profile_rescan_loop(app), name="profile-rescan-loop"
+    )
+    app["_profile_rescan_task"] = task
+
+
+async def _on_app_cleanup(app: web.Application) -> None:
+    """Cancel background tasks cleanly."""
+    task = app.get("_profile_rescan_task")
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
 
 
 async def _on_app_shutdown(app: web.Application) -> None:
