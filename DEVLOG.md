@@ -1,5 +1,28 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-18 — Profile metadata + read-only config API (v0.7.0 groundwork)
+
+**Branch:** `feature/profile-config-readonly`. Kotlin-worker slice of the v0.7.0 groundwork (Python-worker slice runs in parallel, owns the relay-side wire contract). Three feature commits + docs.
+
+**Shipped (Kotlin).**
+
+- **Extended `Profile` data class.** Added three optional fields — `gatewayRunning: Boolean`, `hasSoul: Boolean`, `skillCount: Int` — mapped via `@SerialName` to the snake_case wire keys (`gateway_running`, `has_soul`, `skill_count`) the relay will emit in `auth.ok` profiles entries. All three default to safe zero-values so pre-v0.7 relays deserialize cleanly. `AuthManager.parseAgentProfiles` reads them with `booleanOrNull` / `intOrNull` fallbacks — malformed values fall through to defaults rather than crashing the pairing handshake.
+- **Runtime-metadata indicators in the agent sheet.** Each Profile row in `AgentInfoSheet` now carries a 6 dp status dot (green when gateway_running, grey otherwise), an optional "N skills" chip (hidden when skill_count == 0), and an optional "SOUL" badge (primary-container, hidden when has_soul is false). Gateway-off profiles stay selectable at 50% alpha — the probe is best-effort, and a stale dot shouldn't lock a user out. `ProfileRadioRow` grew three optional params (`contentAlpha`, `leadingDotColor`, `secondaryTrailing` slot) without changing the Default/personality-row call sites. Also added an inline "Profile SOUL overrides personality while active" caption under the personality section when a profile-with-SOUL + non-default personality are both selected, mirroring the existing caption in the Profile section.
+- **Persisted `selectedProfile` per Connection.** New `ProfileSelectionStore` — its own DataStore (`profile_selections`) keyed by connectionId — lets each Connection remember its last-picked profile across app restart. `ConnectionViewModel.selectProfile` writes through. Connection switch clears `_selectedProfile` first (so a stale A pick never dangles on B) then loads B's persisted name and resolves it against `agentProfiles` once the post-switch `auth.ok` repopulates the list. `removeConnection` calls `store.clear(connectionId)` after the switch-away to avoid racing the unmounted store.
+
+**Key architectural decisions.**
+
+1. **Name-based persistence, not Profile-object persistence.** The persisted value is the profile `name: String`, resolved at read time against the server's fresh `agentProfiles` list. Profiles can be renamed, removed, or re-modelled on the server between app launches; persisting a full `Profile` snapshot risks silently using a stale model override. Resolution-at-read yields null when the name no longer exists, and the UI falls through to the Default row.
+2. **Dedicated DataStore.** `profile_selections` is separate from `relay_settings` so clearing or migrating one doesn't threaten the other. A new per-connection key prefix (`selected_profile_<id>`) lets us clear-per-connection cleanly on removal.
+3. **Gateway-off profiles remain selectable.** Spec explicitly allows the user to pick a profile whose gateway probe is grey. Rationale: the probe is best-effort, can miss a recent restart, and hard-disabling a row based on a stale probe would confuse users who just ran `hermes profile use` and haven't restarted the relay.
+
+**Deferred.**
+
+- **Migration of any old "ephemeral" pick into the new store.** N/A — the prior behaviour was to always reset on restart, so there's nothing to migrate from. First boot on v0.7.0 starts clean; next `selectProfile` call writes through.
+- **UI for inspecting the gateway-running timestamp.** Useful for debugging stale probes but noise for the common path. Track in a future dashboard pass if it's actually asked about.
+
+**Upstream dependency.** The three new profile fields are optional on the wire and fall back to defaults, so this PR is safe to land ahead of the Python-worker relay change. Pairing against a pre-v0.7 relay continues to work — the phone just renders every dot grey and hides every badge.
+
 ## 2026-04-18 — v0.6.0: Multi-Connection + Agent Profiles
 
 **Branch:** `feature/multi-profile-connections`. Landing as v0.6.0. Two orthogonal pieces of work that compose into a three-layer agent model (Connection → Profile → Personality), plus a top-bar + Settings UX consolidation.
