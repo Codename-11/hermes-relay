@@ -25,6 +25,18 @@
 
 **Blockers.** None. Awaiting Bailey's lint + build pass on the Kotlin changes before the feature branches merge into `dev`.
 
+### Same-day follow-up — `--prefer` priority override + regression fix
+
+Two commits landed on `dev` after the initial ADR 24 + 25 bundle:
+
+- **`feat(pairing): --prefer priority override on all pair surfaces` (`e914810`).** Adds explicit "promote this role to priority 0" control so operators can force a specific endpoint path without re-ordering defaults globally. Surfaces: CLI `hermes-pair --prefer tailscale`, the `/hermes-relay-pair` skill (SKILL.md updated), and a dropdown below the Endpoint Preview card on the dashboard's Remote Access tab. Open-vocab role string; case-insensitive matching; unknown role emits a stderr warning and keeps natural order. 6 new `BuildEndpointCandidatesPreferTests` cover the happy paths and edge cases. Dashboard bundle rebuilt to 61.3 KB.
+
+- **`fix(relay): restore profile PUT handlers clobbered by ADR 24 commit` (`ee653d4`).** The ADR 24 bundle (`fae8ccd`) had an Edit that replaced a wider chunk of `plugin/relay/server.py` than intended while adding the endpoints passthrough to `handle_pairing_mint` / `handle_pairing_register` — collaterally deleting ~479 lines of `handle_profile_soul_put` / `handle_profile_memory_put` + `_extract_write_content`. CI — Relay went from 2 pre-existing failures (`test_profile_discovery`, unrelated) → 27 on the bundle push → back down to the same 2 after the fix. Restored by resetting `server.py` to the pre-ADR-24 state (`47667bd`) and re-applying only the intended ~30-line endpoints passthrough. Full suite: 673 pass / 6 skipped locally. Same bug class as the `AuthManager.profilesUpdatedEvents` collateral wipe caught mid-deploy — worth a note in any future "agent-assisted refactor" guidance: tight `old_string` anchors + verify-by-compile after every agent's work.
+
+- **Server deploy** (`~/.hermes/hermes-relay/` on `dev`, PID restarted for `hermes-relay` + `hermes-gateway` + `hermes-dashboard`) verified at each step: `{"status": "ok"}` health, `tailscale.status()` returning the live `docker-server.tail6f460.ts.net` / `100.71.8.56`, and `POST /api/plugins/hermes-relay/pairing {"mode":"auto","prefer":"tailscale"}` returning `[(0, 'tailscale'), (1, 'lan')]` over the wire. Pre-existing `test_profile_discovery` failures on Linux CI runners (Windows-local passes) are a separate Bailey in-progress item — not introduced by this work.
+
+- **Docs sync pass.** `docs/remote-access.md` → added "Promoting a role to priority 0 — `--prefer`" subsection under Combining modes. `user-docs/features/connections.md` → new "Multi-endpoint pairing" section (end-user facing). `user-docs/guide/getting-started.md` → new "Connecting from Anywhere (Tailscale, VPN, Public URL)" section between Relay Server and Verify Connection. `CHANGELOG.md` `[Unreleased]` gains `--prefer` under Added + the PUT-handler restore under Fixed.
+
 ## 2026-04-18 — Profile Inspector UI (v0.7.0)
 
 **Branch:** `feature/profile-inspector-ui`. Kotlin-worker slice of the v0.7.0 Profile Inspector feature — Python worker runs in parallel and owns the `/soul` + `/memory` relay endpoints. Two feature commits + docs.

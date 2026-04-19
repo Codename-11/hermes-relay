@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **`terminal.kill` envelope** — hard-destroy a session. The relay runs `tmux kill-session -t <name>` out-of-band before tearing down the PTY so the background shell (and any running commands) die with it. Closing a tab now opens a confirmation dialog with explicit **Detach** (preserve tmux session) vs **Kill** (destroy it) choices; the session info sheet also gains an error-tinted **Kill session** button.
 - **Touch-scroll + scrollback buttons for the terminal.** A vertical swipe on the terminal surface now moves xterm.js's scrollback (with a 12 px deadzone so long-press-to-select still works); the extras toolbar gains ⇑ / ⇓ / ⇲ buttons for ten-line scroll up, ten-line scroll down, and jump-to-bottom. Scrollback depth is unchanged at 10 000 lines.
 - **Friendly names for terminal tabs.** The session info sheet now has an inline rename field that persists a cosmetic name (up to 40 chars) keyed on the wire-side `session_name`. Names survive app restart and re-pair; cleared on Kill but preserved on Detach. The tab chip renders `1 · build` when named.
+- **`--prefer <role>` priority override** on every pair surface (`hermes-pair --prefer tailscale`, the `/hermes-relay-pair` skill, and the dashboard Remote Access tab's "Prefer role" dropdown). Open-vocab role string — promotes the named role to priority 0 with the rest renumbered in natural order. Unknown role emits a stderr warning and keeps the natural order. Case-insensitive matching; role string preserved verbatim for HMAC round-trip.
 
 ### Changed
 
@@ -29,6 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Profile `PUT` endpoints restored.** The ADR 24 commit collaterally deleted ~479 lines of `handle_profile_soul_put` / `handle_profile_memory_put` while adding multi-endpoint passthrough to the pairing handlers. `PUT /api/profiles/{name}/soul` and `PUT /api/profiles/{name}/memory/{filename}` are back at their canonical positions; atomic-write semantics and loopback-or-bearer auth unchanged.
 - **Stray terminal errors no longer poison the wrong tab.** Server-level error envelopes without a `session_name` (e.g. "Unknown terminal message type" from an older relay) previously fell through to the active tab and flashed an error overlay on whichever tab the user happened to be looking at. Errors without session scope now log only.
 
 ## [0.6.0] — 2026-04-18

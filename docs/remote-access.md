@@ -185,6 +185,41 @@ Force-override from the pair command: `--mode lan` (LAN only),
 candidate in the QR — e.g. pairing a phone that should never fall back
 to LAN because it's not on your home network.
 
+### Promoting a role to priority 0 — `--prefer`
+
+Added 2026-04-19. `--prefer <role>` (open vocab — commonly `lan` /
+`tailscale` / `public`, but any role string works) promotes the named
+role to priority 0 with the rest renumbered in their natural order. The
+QR still embeds all detected candidates; only the probe order changes.
+
+```bash
+# All three modes detected, but Tailscale probed first
+hermes-pair --mode auto --public-url https://hermes.example.com --prefer tailscale
+```
+
+Result: `[(0, tailscale), (1, lan), (2, public)]` — phone tries the
+tailnet first, falls back to LAN if Tailscale is unreachable, then to
+the public URL.
+
+**Matching is case-insensitive** but the emitted `role` string is
+preserved verbatim (HMAC canonicalization requires the wire form to
+round-trip unchanged). **Unknown role** → stderr warning + natural
+order. **Role already at priority 0** → no-op.
+
+Works identically from three surfaces:
+
+- **CLI:** `hermes-pair --prefer tailscale`
+- **Skill:** `/hermes-relay-pair` documented in
+  [`skills/devops/hermes-relay-pair/SKILL.md`](../skills/devops/hermes-relay-pair/SKILL.md)
+- **Dashboard:** Remote Access tab → Endpoint preview card →
+  **Prefer role** dropdown → Regenerate QR
+
+On the phone side, the per-session equivalent is Settings → Connection
+→ Endpoints card → row menu → "Prefer this endpoint." Server-side
+`--prefer` sets the *baseline* order in the QR; phone-side override is
+*per-session* and survives network changes as long as the pinned role
+stays reachable.
+
 ## Migrating from single-URL pairing
 
 Operators with phones already paired on v0.6.x or earlier: **nothing
