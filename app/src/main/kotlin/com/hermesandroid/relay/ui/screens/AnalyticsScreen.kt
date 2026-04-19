@@ -22,6 +22,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.ui.components.StatsForNerds
+import com.hermesandroid.relay.ui.components.TimelineView
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
@@ -82,6 +83,16 @@ fun AnalyticsScreen(
                 voiceStats = voiceStats,
                 toolCalls = toolCalls,
             )
+
+            // Timeline — renders below the stats card when a voice VM or
+            // chat VM is wired. Sources from the same flows so the two
+            // panels stay in sync without a separate event plumbing.
+            if (voiceViewModel != null || chatViewModel != null) {
+                TimelineView(
+                    voiceStats = voiceStats,
+                    toolCalls = toolCalls,
+                )
+            }
         }
     }
 }
