@@ -1,5 +1,29 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-19 — Chat/voice polish + Stats + Timeline (v0.7.0)
+
+**Branch:** `feature/profile-ux-v2`. Kotlin-worker slice covering the chat header, voice overlay dedup, StatsForNerds expansion, and the new Timeline view. Server worker + inspector worker run in parallel on the same branch.
+
+**Shipped (Kotlin).**
+
+- **Chat header reflects the selected profile.** The ChatScreen TopAppBar now prefers the user's explicit profile pick (or the server-advertised `default` profile) over the bare connection label. Avatar cross-fades when the effective agent changes; subtitle shows `model · personality` with the profile's model trumping `/api/config`'s `serverModelName`. Falls back through connection label → "Hermes".
+- **ConnectionInfoSheet gate documented.** The sheet already reads `ChatViewModel.isStreaming` and disables the profile + personality radio rows during an in-flight turn. Added a KDoc spelling out this contract so the Inspector worker (who owns the sheet) can hang a subtitle banner on it later without ambiguity.
+- **Voice overlay double-entry bug fixed.** VoiceModeOverlay used to render three sources of truth: `uiState.transcribedText` (a top "YOU" chip), `uiState.responseText` (a `StreamingResponseRow`), AND `transcriptMessages` (the scrolling chat-history list). During a voice turn ChatViewModel committed the user's send AND streamed the assistant reply into its own message flow — so every turn appeared twice on screen. Consolidated to a single source (`transcriptMessages`); the last streaming assistant message still updates in real time through ChatViewModel's StateFlow. New androidTest (`VoiceModeOverlayTranscriptTest`) pins the invariant.
+- **Voice section in StatsForNerds.** Last-heard transcript (80 char cap), STT latency/bytes/count, last-synthesized sentence, rolling TTS latency avg (last 5)/bytes/count, barge-in events, VAD threshold (ms), interaction mode, queue depth, player state. Sources from a new `VoiceViewModel.voiceStats: StateFlow<VoiceStats>` updated on discrete events (not per-amplitude tick) so recomposition stays cheap.
+- **Tool Calls section in StatsForNerds.** Last 10 invocations with relative start time, duration, status dot, and truncated result. Sources from a new `ChatViewModel.toolCallHistory: StateFlow<List<ToolCallEvent>>` derived from the existing `ChatHandler.messages` flow — no new event plumbing needed.
+- **Timeline view.** New `TimelineView` composable below StatsForNerds renders a time-ordered activity feed. Events color-coded by kind (chat blue, tool orange, voice purple, profile green, connection grey), bucketed into 5s windows (collapsed rows show a `+N` badge), tap-to-expand for details. Capped at 200 events (~30 minutes of heavy use) with a 320dp scroll container. `buildTimelineEvents` is package-private + pure so future tests can verify derivation without the UI.
+
+**Key architectural decisions.**
+
+1. **Single-source transcript in voice overlay.** Picking `transcriptMessages` (i.e. chat history) as THE source kills the double-entry with zero protocol changes and makes voice mode's transcript automatically consistent with the Chat tab's. Live-stream visibility is preserved because ChatViewModel updates the last assistant message in place as tokens arrive.
+2. **voiceStats updates on events, not on amplitude ticks.** Amplitude is a 60 Hz signal — mirroring it into StateFlow would thrash every consumer's recomposition. The stats snapshot only refreshes on discrete lifecycle boundaries (STT call complete, TTS call complete, barge-in fire, settings change, coarse state transition) which the Stats panel cares about.
+3. **toolCallHistory derived, not event-plumbed.** The ChatHandler already maintains `messages` with live `toolCalls` per message. A `viewModelScope.launch { messages.collect { ... } }` in `ChatViewModel.initialize` recomputes the last-10 window on every update — cheap because T (tools per message) is small, and we avoid adding a second event channel.
+
+**Deferred.**
+
+- **Chat message / profile switch / connection event timeline sources.** The timeline supports these kinds but only tool-call + voice-turn sources are wired in v1. A future pass can add a tiny ring buffer on `ConnectionViewModel` for switch/connect events and on `ChatViewModel` for message commits.
+- **Settings-sheet "streaming locked" banner.** The Inspector worker owns `ConnectionInfoSheet` and can add the banner on top of the now-documented `isStreaming` hook.
+
 ## 2026-04-18 — Profile Inspector UI (v0.7.0)
 
 **Branch:** `feature/profile-inspector-ui`. Kotlin-worker slice of the v0.7.0 Profile Inspector feature — Python worker runs in parallel and owns the `/soul` + `/memory` relay endpoints. Two feature commits + docs.
