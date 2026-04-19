@@ -36,6 +36,7 @@ When you change the algorithm:
 1. Edit `MorphingSphereCore.kt` (the source of truth)
 2. Mirror the same change in `sphere.js`
 3. Reload the browser to verify
+4. Run the parity harness to confirm (see below)
 
 This keeps Android + browser visually consistent. The only deliberate
 differences are:
@@ -47,3 +48,27 @@ differences are:
   match Kotlin's `Int` overflow semantics exactly.
 - **`.mod(n)`** — Kotlin's floored-positive modulo vs JS `%` sign-preserving;
   the port handles this in the data ring code.
+- **Numerical precision** — Kotlin runs on `Float` (32-bit), JS on `Number`
+  (64-bit double). Color and alpha values can drift at the 3rd decimal in
+  compound expressions. Sub-perceptible, but the `full` checksum will pick
+  it up; use the `struct` checksum for the hard parity gate.
+
+## Parity harness
+
+Two sides, same fixtures, same FNV-1a tuple hash — matching `struct`
+checksums prove the algorithm renders the same `(row, col, char)` grid on
+both platforms.
+
+```bash
+# JS side (from repo root):
+node preview/web/parity-check.mjs --checksum-only
+
+# Kotlin side (from repo root):
+./gradlew :app:testGooglePlayDebugUnitTest \
+  --tests "*MorphingSphereCoreParityTest*" -i
+```
+
+Both runs print per-fixture `struct=...` and `full=...` digests plus zone
+histograms. Diff the two outputs — if `struct` matches across all 8
+fixtures you're in algorithmic parity. `full` drift on voice-modulated
+fixtures is expected Float-vs-Double precision noise.
