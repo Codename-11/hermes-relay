@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed — MorphingSphere: pure-core extraction + parity-verified browser preview (2026-04-19)
+
+- **Split `MorphingSphere.kt` into `MorphingSphereCore.kt` (pure algorithm) + Compose renderer.**
+  The algorithm core uses only `kotlin.math` — no Android, no Compose, no `Paint`. Declared
+  the single source of truth for the sphere going forward. The `@Composable MorphingSphere`
+  public API is unchanged (same params, same defaults); call sites in `VoiceModeOverlay` and
+  the chat empty state need no updates. Renderer also swapped legacy `android.graphics.Paint`
+  + `Typeface` + `nativeCanvas.drawText` for Compose's `rememberTextMeasurer()` + `drawText`.
+- **Added `preview/web/` — zero-dep browser harness.** `sphere.js` is a line-for-line JS
+  mirror of `MorphingSphereCore.kt` (`Math.imul` + `|0` for Kotlin `Int` overflow, floored
+  modulo for `.mod()`, `Math.trunc` for `.toInt()`). Live `index.html` with panel controls
+  for state / voice / layout (cols, rows, fill%, aspect, char size) + a `phone 9:16` preset
+  matching Compose `@Preview(widthDp=360, heightDp=640)`. Serve via
+  `python3 -m http.server --directory preview/web`.
+- **Added runtime parity harness.** `preview/web/parity-check.mjs` + JVM
+  `MorphingSphereCoreParityTest` render the 8 Compose `@Preview` fixtures on both sides and
+  emit FNV-1a 32-bit checksums. 8/8 structural checksums match (`(row, col, char)` tuples
+  are identical across platforms); 8/8 zone histograms match; 6/8 full checksums match —
+  Listening and Speaking (low-amp) drift at the 3rd decimal of color/alpha due to Float
+  (Kotlin) vs Double (JS) precision in compound expressions, sub-perceptible.
+- **Reusable surface unlocked.** The pure core is now droppable into a terminal TUI (Hermes
+  CLI), the codename-11.dev user site (via `sphere.js` directly), or Compose Desktop.
+
 ### Added — Voice silence auto-stop (2026-04-18)
 
 - **Silence-based auto-stop for Listening turns.** `VoiceViewModel.startListening()`

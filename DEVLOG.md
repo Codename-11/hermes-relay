@@ -1,5 +1,31 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-19 — MorphingSphere: pure-core extraction + browser preview + runtime parity proof
+
+**Context.** The sphere had grown into a 494-line Compose file with Android `Paint` + `Typeface` + `nativeCanvas.drawText` wired into the same function that did the math. That made it impossible to iterate on the algorithm without building to a device — and blocked any future port to a non-Android surface (user site, Hermes TUI, Compose Desktop). Branch `claude/ui-dev-preview-exploration-vKvzr` split the file into a pure algorithm + a Compose renderer and added a zero-dep browser harness; this session added the parity proof.
+
+**Layout — three artifacts, one seam.**
+- `MorphingSphereCore.kt` (new, 412 lines) — `kotlin.math` only. Owns `SphereState`, `SphereParams`, `SphereColors`, `SphereFrame`, `SphereCell`, `paramsFor()`, `colorsFor()`, `forEachSphereCell()`. No Android, no Compose, no `Paint`.
+- `MorphingSphere.kt` (494 → ~45 lines of renderer + `@Preview` decorators) — Compose Canvas binding. Swapped legacy `Paint` + `Typeface` + `nativeCanvas.drawText` for `rememberTextMeasurer()` + Compose `drawText`. Owns animation state (`animateFloatAsState`, `rememberInfiniteTransition`) and feeds a `SphereFrame` into the core per tick.
+- `preview/web/sphere.js` — line-for-line JS mirror of `MorphingSphereCore.kt`. `Math.imul` + `|0` to match Kotlin's `Int` overflow in the hash, `((x % n) + n) % n` for Kotlin's floored-positive `.mod()`, `Math.trunc` for `.toInt()` truncation-toward-zero.
+
+**Browser harness.** `preview/web/index.html` — live HTML+canvas, `python3 -m http.server --directory preview/web`, no build step. Panel exposes State / Voice mode / Voice amp / Intensity / Tool burst / Pause / reset t, plus a Layout section (Cols, Rows, Fill %, Aspect, Char size) added this session with a `phone 9:16` preset that pins canvas aspect to 0.5625 to match Compose `@Preview(widthDp=360, heightDp=640)`. Hitting `1`..`6` cycles state; `Space` pauses.
+
+**Runtime parity proof.** Line-by-line code audit was first, but proving parity needs evidence, not inspection. Added:
+- `preview/web/parity-check.mjs` — Node harness running sphere.js at the 8 Compose `@Preview` fixtures (Idle/Thinking/Streaming/Error/Compact/Listening/Speaking-low/Speaking-peak), emitting two FNV-1a 32-bit checksums per fixture. `struct` hashes only `(row, col, charCode)` — discrete, robust to Float/Double precision drift. `full` hashes the same plus color/alpha rounded to 3 decimals.
+- `app/src/test/kotlin/com/hermesandroid/relay/ui/components/MorphingSphereCoreParityTest.kt` — JVM unit test (no Android deps, runs on `testGooglePlayDebugUnitTest`), mirrors the JS harness exactly: same 8 fixtures, same FNV-1a impl via Kotlin `UInt`, same `%.3f` formatting via `Locale.ROOT`, same tuple layout.
+
+**Result.** 8 / 8 structural checksums match. 8 / 8 zone histograms match (inside/glow/ring counts identical). 6 / 8 full checksums match — Listening and Speaking-low drift on color/alpha at the 3rd decimal, which is expected Float (Kotlin) vs Double (JS) mantissa precision in compound expressions like `(colR + lightBoost + warmth).coerceIn(0, 1)`. Speaking-peak avoids the drift because `amp=0.95` puts `lerp()` results near the endpoints where Float mantissa has room.
+
+**Decision.** `MorphingSphereCore` is declared the single source of truth going forward. The Compose `MorphingSphere` composable keeps its public API (same params, same defaults) so call sites — `VoiceModeOverlay`, the chat empty state — need no changes. Future edits to the algorithm go in `MorphingSphereCore.kt`, mirror into `sphere.js`, and `MorphingSphereCoreParityTest` catches drift between sides.
+
+**Reusable surface.** The core is now droppable into:
+- A terminal TUI (Hermes CLI) — swap Compose `drawText` for ANSI-colored `print`, keep everything else.
+- The user site (codename-11.dev) — reuse `sphere.js` directly with an HTML `<canvas>` host.
+- Compose Desktop — reuse `MorphingSphere.kt` unchanged once the host project adds the `ui/components` dir to its source set.
+
+**Worktree gotcha.** `git worktree add` doesn't copy `.gitignore`d files. `local.properties` (SDK path + keystore creds) has to be recreated in any new worktree before gradle tasks run. For the parity test a minimal `sdk.dir=...` is enough — signing creds stay in the main checkout.
+
 ## 2026-04-18 — v0.5.1 release prep: lint iterations + VoicePlayerTest deferred
 
 **PR #31** (`feature/voice-quality-pass` → `main`, v0.5.1 candidate) — CI iteration, no app-behavior changes beyond the preceding v0.5.1 feature commits.
