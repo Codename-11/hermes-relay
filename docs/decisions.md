@@ -817,6 +817,8 @@ Those fields (added in the same commit series — see `auth.ok` profile shape) a
 - `docs/spec.md` §6.1 — HTTP routes table rows
 - `TEMP-hermes-desktop-analysis.md` (session scratch, soon deleted) — `hermes-desktop` patterns we cross-referenced for the read/write split and credential-pool separation
 
+**Scope addendum (2026-04-18):** Followed up with two more profile-scoped read routes — `GET /api/profiles/{name}/soul` and `GET /api/profiles/{name}/memory` — to feed the phone Profile Inspector's four-section layout (config / SOUL / memory / skills). Both reuse `_resolve_profile_home`, the loopback-or-bearer gate, and the `profile_not_found` 404 shape from the original two endpoints. Content is capped inline at **200KB for SOUL.md** and **50KB per memory file**; larger bodies flag `truncated: true` and clients see the on-disk `size_bytes` so they know real dimensions without fetching the full body. The caps exist because the Inspector is a viewer, not a diff or edit tool — phone-safe wire sizes matter more than lossless fidelity, and anyone who needs a full dump has the dashboard. Memory listing is intentionally non-recursive (one `iterdir` pass, no `rglob`) so subdirectories under `memories/` — used by some users for archival snapshots — don't spam the response. `MEMORY.md` and `USER.md` (per upstream `hermes_cli/profiles.py`) sort first; the rest are alphabetical, so the ordering is stable across filesystems. Absent SOUL.md returns 200 with `exists: false`; absent `memories/` returns 200 with an empty `entries` array — both let the Inspector render the section rather than mask "no content yet" as a transport failure.
+
 ---
 
 ## Voice Mode — Architecture
