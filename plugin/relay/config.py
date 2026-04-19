@@ -151,15 +151,85 @@ def _extract_description_from_soul(soul_text: str) -> str:
     return ""
 
 
+def _pid_is_alive(pid: int) -> bool:
+    """Return True if ``pid`` refers to a live process on this host.
+
+    Uses the POSIX ``os.kill(pid, 0)`` "probe" pattern — signal 0 performs
+    the permission/existence check without delivering a real signal. On
+    Windows, ``os.kill`` with signal 0 on CPython is implemented via
+    ``OpenProcess`` and returns success for live PIDs, ``OSError`` with
+    ``EINVAL``/``ESRCH``/``EPERM``-ish errno for dead or inaccessible
+    ones. We treat any ``OSError`` as "not running" — we prefer
+    false-negatives here (the gateway will simply be flagged offline) to
+    false-positives that would claim a dead daemon is live.
+    """
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    except Exception:  # pragma: no cover — defensive
+        return False
+    return True
+
+
+def _probe_gateway_running(profile_home: Path) -> bool:
+    """Check the per-profile ``gateway.pid`` file and probe liveness.
+
+    The upstream Hermes CLI writes its daemon PID to ``<profile>/gateway.pid``
+    on ``hermes platform start``. Reading that file + ``os.kill(pid, 0)``
+    tells the phone whether the profile's API gateway is actually listening
+    right now. Returns ``False`` on any filesystem or parse error — the
+    feature is advisory, not load-bearing.
+    """
+    pid_file = profile_home / "gateway.pid"
+    try:
+        if not pid_file.is_file():
+            return False
+        raw = pid_file.read_text(encoding="utf-8").strip()
+        if not raw:
+            return False
+        # The CLI writes a single integer; tolerate trailing newlines.
+        first_token = raw.split()[0]
+        pid = int(first_token)
+    except (OSError, ValueError):
+        return False
+    except Exception:  # pragma: no cover — defensive
+        return False
+    return _pid_is_alive(pid)
+
+
+def _count_profile_skills(profile_home: Path) -> int:
+    """Count ``SKILL.md`` files under ``<profile>/skills/`` recursively.
+
+    Returns 0 if the skills directory doesn't exist or is unreadable.
+    """
+    skills_dir = profile_home / "skills"
+    if not skills_dir.is_dir():
+        return 0
+    try:
+        return sum(1 for _ in skills_dir.rglob("SKILL.md"))
+    except OSError:
+        return 0
+    except Exception:  # pragma: no cover — defensive
+        return 0
+
+
 def _read_profile_entry(
     name: str,
     config_yaml: Path,
     soul_md: Path,
+    *,
+    profile_home: Path,
 ) -> dict[str, Any] | None:
     """Read a single profile directory into the wire-shape dict.
 
     Returns ``None`` if ``config.yaml`` is missing or unreadable (caller
-    logs a warning and skips). ``SOUL.md`` is optional.
+    logs a warning and skips). ``SOUL.md`` is optional. ``profile_home``
+    is the directory used for the liveness/has-soul/skill-count probes —
+    for directory-based profiles this is the profile directory itself;
+    for the synthetic ``default`` profile this is ``~/.hermes``.
     """
     if not config_yaml.is_file():
         logger.warning(
@@ -226,6 +296,9 @@ def _read_profile_entry(
         "model": model,
         "description": description,
         "system_message": soul_text if soul_text else None,
+        "gateway_running": _probe_gateway_running(profile_home),
+        "has_soul": soul_md.is_file(),
+        "skill_count": _count_profile_skills(profile_home),
     }
 
 
@@ -266,6 +339,7 @@ def _load_profiles(
             name="default",
             config_yaml=root_config,
             soul_md=hermes_dir / "SOUL.md",
+            profile_home=hermes_dir,
         )
         if default_entry is not None:
             results.append(default_entry)
@@ -285,6 +359,7 @@ def _load_profiles(
                 name=child.name,
                 config_yaml=child / "config.yaml",
                 soul_md=child / "SOUL.md",
+                profile_home=child,
             )
             if entry is not None:
                 results.append(entry)

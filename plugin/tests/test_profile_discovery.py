@@ -8,6 +8,7 @@ layout in a tempdir and assert the discovery output shape.
 from __future__ import annotations
 
 import logging
+import os
 import tempfile
 import textwrap
 import unittest
@@ -200,6 +201,109 @@ class ProfileDiscoveryTests(unittest.TestCase):
         out = self._load()
         entry = next(p for p in out if p["name"] == "no-model")
         self.assertEqual(entry["model"], "unknown")
+
+    # ── enrichment: gateway_running / has_soul / skill_count ────────────
+
+    def test_gateway_running_true_when_pid_file_points_at_live_process(
+        self,
+    ) -> None:
+        """A profile whose ``gateway.pid`` points at this test process
+        reports ``gateway_running=True``. We use the test runner's own
+        PID — guaranteed to be alive while the assertion runs."""
+        self._write_root_config()
+        pdir = self._write_profile(
+            "live",
+            config_body="model:\n  default: x\n",
+            soul=None,
+        )
+        (pdir / "gateway.pid").write_text(str(os.getpid()), encoding="utf-8")
+
+        out = self._load()
+        entry = next(p for p in out if p["name"] == "live")
+        self.assertTrue(entry["gateway_running"])
+
+    def test_gateway_running_false_when_pid_file_absent(self) -> None:
+        self._write_root_config()
+        self._write_profile(
+            "no-pid",
+            config_body="model:\n  default: x\n",
+            soul=None,
+        )
+        out = self._load()
+        entry = next(p for p in out if p["name"] == "no-pid")
+        self.assertFalse(entry["gateway_running"])
+
+    def test_gateway_running_false_for_stale_pid(self) -> None:
+        """A ``gateway.pid`` file containing a PID that doesn't exist
+        (we use ``os.getpid() + 999_999`` — outside any plausible live
+        range on the test host) reports ``gateway_running=False`` instead
+        of raising."""
+        self._write_root_config()
+        pdir = self._write_profile(
+            "stale",
+            config_body="model:\n  default: x\n",
+            soul=None,
+        )
+        stale_pid = os.getpid() + 999_999
+        (pdir / "gateway.pid").write_text(str(stale_pid), encoding="utf-8")
+
+        out = self._load()
+        entry = next(p for p in out if p["name"] == "stale")
+        self.assertFalse(entry["gateway_running"])
+
+    def test_has_soul_reflects_soul_md_existence(self) -> None:
+        self._write_root_config()
+        self._write_profile(
+            "with-soul",
+            config_body="model:\n  default: x\n",
+            soul="# Soulful\n",
+        )
+        self._write_profile(
+            "no-soul",
+            config_body="model:\n  default: x\n",
+            soul=None,
+        )
+        out = self._load()
+        with_soul = next(p for p in out if p["name"] == "with-soul")
+        no_soul = next(p for p in out if p["name"] == "no-soul")
+        self.assertTrue(with_soul["has_soul"])
+        self.assertFalse(no_soul["has_soul"])
+
+    def test_skill_count_walks_nested_skill_md_files(self) -> None:
+        """``skill_count`` is the number of ``SKILL.md`` files under
+        ``<profile>/skills/`` regardless of nesting depth."""
+        self._write_root_config()
+        pdir = self._write_profile(
+            "skilled",
+            config_body="model:\n  default: x\n",
+            soul=None,
+        )
+        # Lay out three SKILL.md files at varying depths.
+        for rel in (
+            "skills/devops/pair/SKILL.md",
+            "skills/research/crawl/SKILL.md",
+            "skills/writing/style/SKILL.md",
+        ):
+            target = pdir / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("# skill\n", encoding="utf-8")
+        # A non-SKILL file must not count.
+        (pdir / "skills" / "README.md").write_text("noise\n", encoding="utf-8")
+
+        out = self._load()
+        entry = next(p for p in out if p["name"] == "skilled")
+        self.assertEqual(entry["skill_count"], 3)
+
+    def test_skill_count_zero_without_skills_dir(self) -> None:
+        self._write_root_config()
+        self._write_profile(
+            "skillless",
+            config_body="model:\n  default: x\n",
+            soul=None,
+        )
+        out = self._load()
+        entry = next(p for p in out if p["name"] == "skillless")
+        self.assertEqual(entry["skill_count"], 0)
 
 
 if __name__ == "__main__":
