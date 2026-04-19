@@ -94,6 +94,12 @@ class ConnectionManager(
     private var serverUrl: String? = null
     private var reconnectAttempt = 0
     private var shouldReconnect = true
+    // Last HTTP status seen during WSS upgrade, captured in onFailure.
+    // Used by scheduleReconnect() to pick an appropriate backoff — notably
+    // a much longer one when the server is rate-limiting us (HTTP 429) so
+    // we don't re-fill the ban bucket and brick our own auth window.
+    @Volatile
+    private var lastUpgradeResponseCode: Int? = null
 
     private val _connectionState = MutableStateFlow(ConnectionState.Disconnected)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
@@ -110,6 +116,12 @@ class ConnectionManager(
         private const val TAG = "ConnectionManager"
         private const val MAX_BACKOFF_MS = 30_000L
         private const val BASE_BACKOFF_MS = 1_000L
+        // Matches plugin.relay.auth._BLOCK_SECONDS (5 min). If we see 429
+        // on the WSS upgrade, we're IP-banned server-side — retrying at
+        // our normal 1-30s cadence re-fills the ban bucket and keeps us
+        // banned forever. Waiting at least as long as the server's block
+        // duration lets the ban expire naturally.
+        private const val RATE_LIMIT_BACKOFF_MS = 300_000L
     }
 
     fun setInsecureMode(enabled: Boolean) {
@@ -208,6 +220,7 @@ class ConnectionManager(
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 reconnectAttempt = 0
+                lastUpgradeResponseCode = null
                 _connectionState.value = ConnectionState.Connected
                 Log.i(TAG, "onOpen: WSS handshake complete ($url)")
 
@@ -252,7 +265,9 @@ class ConnectionManager(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                Log.w(TAG, "onFailure: ${t.javaClass.simpleName}: ${t.message} (responseCode=${response?.code})")
+                val code = response?.code
+                Log.w(TAG, "onFailure: ${t.javaClass.simpleName}: ${t.message} (responseCode=$code)")
+                lastUpgradeResponseCode = code
                 _connectionState.value = ConnectionState.Disconnected
                 scheduleReconnect()
             }
@@ -276,8 +291,17 @@ class ConnectionManager(
         val url = serverUrl ?: return
         reconnectAttempt++
 
-        val backoffMs = (BASE_BACKOFF_MS * (1L shl minOf(reconnectAttempt - 1, 4)))
-            .coerceAtMost(MAX_BACKOFF_MS)
+        // Server-issued 429 means we're IP-banned — keep retrying at our
+        // normal exponential cadence and we'll re-fill the ban bucket on
+        // every attempt, extending the ban indefinitely. Wait out the
+        // server's full block window instead.
+        val backoffMs = if (lastUpgradeResponseCode == 429) {
+            Log.i(TAG, "scheduleReconnect: rate-limited (429) — backing off ${RATE_LIMIT_BACKOFF_MS}ms")
+            RATE_LIMIT_BACKOFF_MS
+        } else {
+            (BASE_BACKOFF_MS * (1L shl minOf(reconnectAttempt - 1, 4)))
+                .coerceAtMost(MAX_BACKOFF_MS)
+        }
 
         scope.launch {
             delay(backoffMs)
