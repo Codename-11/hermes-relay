@@ -92,6 +92,7 @@ import com.hermesandroid.relay.network.ConnectivityObserver
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.fadeIn
@@ -243,6 +244,12 @@ fun ChatScreen(
     // and is consumed by the AgentInfoSheet for the Profile section. The list
     // of available profiles itself now lives entirely inside the sheet.
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
+    // Server-advertised profile catalog — used to locate the "default" profile
+    // so the header can render its description/model when no explicit pick
+    // has been made (the /api/config fallback is more useful than the bare
+    // connection label).
+    val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
+    val activeConnection by connectionViewModel.activeConnection.collectAsState()
     val serverModelName by chatViewModel.serverModelName.collectAsState()
     val networkStatus by connectionViewModel.networkStatus.collectAsState()
     val showThinking by connectionViewModel.showThinking.collectAsState()
@@ -584,14 +591,48 @@ fun ChatScreen(
         }
     }
 
-    // Agent display name — used in header and info dialog
-    val agentDisplayName = remember(selectedPersonality, defaultPersonality) {
-        val name = if (selectedPersonality == "default" && defaultPersonality.isNotBlank()) {
-            defaultPersonality
-        } else {
-            selectedPersonality
+    // Effective profile — the one the header should reflect. Priority:
+    //   1. explicit user pick (selectedProfile)
+    //   2. server-advertised profile named "default"
+    //   3. null (fall back to personality-derived name)
+    //
+    // Computed as a derived state so the header cross-fades when the user
+    // picks a new profile OR when the server's profile catalog finishes
+    // loading and a "default" entry shows up.
+    val effectiveProfile by remember(selectedProfile, agentProfiles) {
+        derivedStateOf {
+            selectedProfile
+                ?: agentProfiles.firstOrNull { it.name.equals("default", ignoreCase = true) }
         }
-        name.replaceFirstChar { it.uppercase() }
+    }
+
+    // Agent display name — used in header and info dialog.
+    //
+    // Precedence mirrors the messaging-app pattern: show the profile's
+    // human-readable description (e.g. "Victor") if present, then the
+    // profile's slug name, then the personality, then the connection label,
+    // then the literal "Hermes" fallback.
+    val agentDisplayName = remember(effectiveProfile, selectedPersonality, defaultPersonality, activeConnection) {
+        val profile = effectiveProfile
+        val fromProfile = when {
+            profile == null -> null
+            profile.description.isNotBlank() -> profile.description
+            profile.name.isNotBlank() -> profile.name.replaceFirstChar { it.uppercase() }
+            else -> null
+        }
+        fromProfile ?: run {
+            val personalityName = if (selectedPersonality == "default" && defaultPersonality.isNotBlank()) {
+                defaultPersonality
+            } else {
+                selectedPersonality
+            }
+            when {
+                personalityName.isNotBlank() && personalityName != "default" ->
+                    personalityName.replaceFirstChar { it.uppercase() }
+                !activeConnection?.label.isNullOrBlank() -> activeConnection!!.label
+                else -> ""
+            }
+        }
     }
 
     ModalNavigationDrawer(
@@ -660,6 +701,10 @@ fun ChatScreen(
                     // `model · personality` so the user sees both dimensions
                     // at once. Before the server config lands (or while
                     // disconnected) we fall back to the connection status.
+                    //
+                    // Model priority: profile.model (explicit or default
+                    // profile pick) trumps /api/config's `serverModelName`.
+                    // The profile picker is the more specific intent.
                     val personalityLabel = when {
                         selectedPersonality != "default" ->
                             selectedPersonality.replaceFirstChar { it.uppercase() }
@@ -667,10 +712,13 @@ fun ChatScreen(
                             defaultPersonality.replaceFirstChar { it.uppercase() }
                         else -> "Default"
                     }
+                    val modelName = effectiveProfile?.model
+                        ?.takeIf { it.isNotBlank() }
+                        ?: serverModelName
                     val subtitleText = when {
                         !apiReachable -> statusText
-                        serverModelName.isNotBlank() ->
-                            "$serverModelName \u00B7 $personalityLabel"
+                        modelName.isNotBlank() ->
+                            "$modelName \u00B7 $personalityLabel"
                         else -> personalityLabel
                     }
                     val subtitleColor = if (apiReachable) {
@@ -712,14 +760,27 @@ fun ChatScreen(
                                     shape = CircleShape,
                                     color = MaterialTheme.colorScheme.primary
                                 ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Text(
-                                            text = if (agentDisplayName.isNotBlank()) {
-                                                agentDisplayName.first().uppercase()
-                                            } else "H",
-                                            style = MaterialTheme.typography.titleSmall,
-                                            color = MaterialTheme.colorScheme.onPrimary
-                                        )
+                                    // Cross-fade the letter when the
+                                    // effective agent (profile or personality)
+                                    // changes so the avatar feels alive on a
+                                    // profile switch instead of snapping.
+                                    val avatarLetter = if (agentDisplayName.isNotBlank()) {
+                                        agentDisplayName.first().uppercase()
+                                    } else "H"
+                                    AnimatedContent(
+                                        targetState = avatarLetter,
+                                        transitionSpec = {
+                                            fadeIn(tween(220)) togetherWith fadeOut(tween(220))
+                                        },
+                                        label = "chatAvatarLetter",
+                                    ) { letter ->
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Text(
+                                                text = letter,
+                                                style = MaterialTheme.typography.titleSmall,
+                                                color = MaterialTheme.colorScheme.onPrimary
+                                            )
+                                        }
                                     }
                                 }
                             }

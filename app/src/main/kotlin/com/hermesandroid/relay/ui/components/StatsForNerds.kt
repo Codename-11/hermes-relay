@@ -43,13 +43,24 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hermesandroid.relay.data.AppAnalytics
 import com.hermesandroid.relay.data.AppStats
+import com.hermesandroid.relay.data.ToolCallEvent
+import com.hermesandroid.relay.viewmodel.VoiceStats
 
 // Brand gradient colors
 private val GradientStart = Color(0xFF9B6BF0)
 private val GradientEnd = Color(0xFF6B35E8)
 
 @Composable
-fun StatsForNerds() {
+fun StatsForNerds(
+    // Optional: voice pipeline telemetry snapshot. Pass
+    // `voiceViewModel.voiceStats.collectAsState().value` from the caller.
+    // Null means "voice section hidden" (e.g. on legacy call sites that
+    // don't wire a voice VM).
+    voiceStats: VoiceStats? = null,
+    // Optional: rolling tool-call history from
+    // `chatViewModel.toolCallHistory`. Null/empty hides the section.
+    toolCalls: List<ToolCallEvent> = emptyList(),
+) {
     val appStats by AppAnalytics.stats.collectAsState()
     var expanded by rememberSaveable { mutableStateOf(false) }
     var showResetDialog by rememberSaveable { mutableStateOf(false) }
@@ -144,6 +155,16 @@ fun StatsForNerds() {
 
                     // -- Stream Stats --
                     StreamStatsSection(appStats)
+
+                    if (voiceStats != null) {
+                        HorizontalDivider()
+                        VoiceSection(voiceStats)
+                    }
+
+                    if (toolCalls.isNotEmpty()) {
+                        HorizontalDivider()
+                        ToolCallsSection(toolCalls)
+                    }
                 }
             }
         }
@@ -609,6 +630,196 @@ private fun StreamCounter(label: String, count: Int, color: Color) {
     }
 }
 
+// --- Voice ---
+
+@Composable
+private fun VoiceSection(stats: VoiceStats) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = "Voice",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontWeight = FontWeight.SemiBold,
+        )
+
+        // STT subsection
+        Text(
+            text = "STT",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        KeyValueRow(
+            label = "Last transcript",
+            value = truncate(stats.lastTranscript.ifBlank { "—" }, 80),
+        )
+        KeyValueRow(
+            label = "Latency",
+            value = if (stats.sttCallCount == 0) "—" else formatMsWithSeconds(stats.lastSttLatencyMs),
+        )
+        KeyValueRow(
+            label = "Uploaded",
+            value = formatByteCount(stats.sttBytesUploaded),
+        )
+        KeyValueRow(
+            label = "Calls",
+            value = "${stats.sttCallCount}",
+        )
+
+        // TTS subsection
+        Text(
+            text = "TTS",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        KeyValueRow(
+            label = "Last sentence",
+            value = truncate(stats.lastSynthesizedSentence.ifBlank { "—" }, 80),
+        )
+        val avgTtsLatency = if (stats.recentTtsLatenciesMs.isNotEmpty()) {
+            stats.recentTtsLatenciesMs.sum() / stats.recentTtsLatenciesMs.size
+        } else 0L
+        KeyValueRow(
+            label = "Avg latency (last ${stats.recentTtsLatenciesMs.size.coerceAtLeast(0)})",
+            value = if (stats.recentTtsLatenciesMs.isEmpty()) "—" else formatMsWithSeconds(avgTtsLatency),
+        )
+        KeyValueRow(
+            label = "Received",
+            value = formatByteCount(stats.ttsBytesReceived),
+        )
+        KeyValueRow(
+            label = "Calls",
+            value = "${stats.ttsCallCount}",
+        )
+
+        // Barge-in + playback subsection
+        Text(
+            text = "Barge-in / Playback",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        KeyValueRow(
+            label = "Barge-in events",
+            value = "${stats.bargeInCount}",
+        )
+        KeyValueRow(
+            label = "VAD threshold",
+            value = if (stats.vadThresholdMs <= 0) "—" else "${stats.vadThresholdMs} ms",
+        )
+        KeyValueRow(
+            label = "Mode",
+            value = stats.interactionMode,
+        )
+        KeyValueRow(
+            label = "Queue depth",
+            value = "${stats.ttsQueueDepth}",
+        )
+        KeyValueRow(
+            label = "Player",
+            value = stats.playerState,
+        )
+    }
+}
+
+// --- Tool Calls ---
+
+@Composable
+private fun ToolCallsSection(events: List<ToolCallEvent>) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = "Tool Calls",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontWeight = FontWeight.SemiBold,
+        )
+        val now = System.currentTimeMillis()
+        events.forEach { event ->
+            ToolCallRow(event = event, nowMs = now)
+        }
+    }
+}
+
+@Composable
+private fun ToolCallRow(event: ToolCallEvent, nowMs: Long) {
+    val statusColor = when {
+        !event.isComplete -> MaterialTheme.colorScheme.tertiary
+        event.success == true -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.error
+    }
+    val statusLabel = when {
+        !event.isComplete -> "running"
+        event.success == true -> "ok"
+        else -> "failed"
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = event.name,
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = statusLabel,
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+                color = statusColor,
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text = relativeTime(event.startedAtMs, nowMs),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = event.durationMs?.let { formatMsWithSeconds(it) } ?: "—",
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        val summary = event.resultSummary ?: event.errorSummary
+        if (!summary.isNullOrBlank()) {
+            Text(
+                text = truncate(summary, 40),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontFamily = FontFamily.Monospace,
+            )
+        }
+    }
+}
+
+// --- Small reusable row ---
+
+@Composable
+private fun KeyValueRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(start = 8.dp),
+        )
+    }
+}
+
 // --- Formatting helpers ---
 
 private fun formatTokenCount(tokens: Long): String = when {
@@ -627,4 +838,29 @@ private fun formatDuration(ms: Long): String = when {
 private fun formatMsWithSeconds(ms: Long): String = when {
     ms >= 1_000 -> "${ms}ms (${"%.1f".format(ms / 1000.0)}s)"
     else -> "${ms}ms"
+}
+
+/** Byte count formatter: "512 B", "3.2 KB", "4.1 MB". */
+private fun formatByteCount(bytes: Long): String = when {
+    bytes <= 0L -> "—"
+    bytes < 1024 -> "$bytes B"
+    bytes < 1024L * 1024L -> "${"%.1f".format(bytes / 1024.0)} KB"
+    else -> "${"%.1f".format(bytes / (1024.0 * 1024.0))} MB"
+}
+
+/** Truncate [text] to [limit] chars, appending an ellipsis if cut. */
+private fun truncate(text: String, limit: Int): String =
+    if (text.length <= limit) text else "${text.take(limit - 1)}…"
+
+/** Relative timestamp like "just now" / "3s ago" / "2m ago" / "1h ago". */
+private fun relativeTime(eventMs: Long, nowMs: Long): String {
+    val deltaMs = (nowMs - eventMs).coerceAtLeast(0L)
+    val seconds = deltaMs / 1000
+    return when {
+        seconds < 2 -> "just now"
+        seconds < 60 -> "${seconds}s ago"
+        seconds < 3600 -> "${seconds / 60}m ago"
+        seconds < 86400 -> "${seconds / 3600}h ago"
+        else -> "${seconds / 86400}d ago"
+    }
 }

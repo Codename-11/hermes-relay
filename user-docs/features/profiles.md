@@ -86,16 +86,35 @@ All three indicators are optional on the wire — if you're paired with a pre-v0
 
 ### Profile Inspector
 
-From the **Settings** tab, tap the **Inspect Agent** card (directly under Active Agent) to open a full-screen, read-only viewer for the currently-selected profile. Four tabs:
+From the **Settings** tab, tap the **Inspect Agent** card (directly under Active Agent) to open a full-screen viewer for the currently-selected profile. Four tabs:
 
 - **Config** — the profile's `config.yaml` rendered as a collapsible JSON tree. Nested objects collapse by default; tap to expand. Values render in monospace. The file path is shown at the top as a caption so you can `cd` to it from a shell if you want to edit.
-- **SOUL** — the profile's `SOUL.md` content in a monospace, vertically scrollable panel with its byte size. When a profile has no `SOUL.md`, the tab shows an empty state with the expected path.
-- **Memory** — one card per file under the profile's `memories/` directory (non-recursive). Each card shows the filename and byte size; tap to expand and see its content. `MEMORY.md` sorts first, then `USER.md`, then the rest alphabetical.
-- **Skills** — every skill visible to the profile, grouped by category. Disabled skills render with a "(disabled)" label so you can tell the difference between "not present" and "present but switched off".
+  - **Secrets are masked by default.** Any value whose key name contains `key`, `token`, `secret`, `password`, or `credential` (case-insensitive) renders as `abcd...wxyz` for values ≥12 chars or `********` for shorter ones. Tap the eye icon next to the value to reveal it for that row. Reveal state is session-scoped — leaving the screen wipes it. Numbers and booleans are never masked.
+- **SOUL** — the profile's `SOUL.md` rendered as markdown. The `</>` toggle in the top-right of the pane flips between rendered and raw monospace source. Byte size + file path show above the content.
+- **Memory** — one card per file under the profile's `memories/` directory (non-recursive). Each card shows the filename and byte size; tap to expand and see its content.
+- **Skills** — every skill visible to the profile, grouped by category. Each row has a Switch for enabling/disabling the skill.
 
-Very large files (SOUL or a memory entry) are truncated server-side; when that happens the tab shows a banner noting only the first slice is visible. The Inspector is strictly read-only — editing a profile is still "SSH to the server" territory. Use the Refresh icon in the top bar to re-fetch every tab, or tap Retry inside a tab's error state to refetch just that one.
+#### Editing (v0.7.1+)
 
-The card is visible on the Settings tab whether or not a profile is currently active; when there's no active profile, the card renders at half opacity with "No active agent" and does nothing when tapped.
+Both **SOUL** and **Memory** panes now support in-app edits. Tap the pencil icon in the pane (or card) header to enter edit mode — content renders in a monospace editor with a line-numbered gutter. Bottom bar has **Save** and **Cancel**; Save PUTs to the relay, reloads the pane with the fresh content, and surfaces a brief "Saved" snackbar. Save failures keep you in edit mode so you can retry.
+
+For memory entries, the **+ New entry** button at the bottom of the Memory tab opens a filename prompt (must end in `.md`, no slashes, no leading `.`) and drops you into an empty editor. A filename that collides with an existing entry is rejected; edit the existing entry via its per-card pencil instead.
+
+#### Skill toggles
+
+The **Switch** next to each skill PUTs to `/api/skills/toggle` when tapped. Relays that haven't shipped the real implementation yet return 501; the app shows a "Skill toggle not yet supported on this server" snackbar, reverts the Switch visually, and ghosts out every row's toggle for the rest of the session with an "Enable/disable requires a newer server" caption under the list.
+
+Very large files (SOUL or a memory entry) are still truncated server-side; when that happens the tab shows a banner noting only the first slice is visible — the editor refuses to open on truncated content so you don't accidentally overwrite the tail. Use the Refresh icon in the top bar to re-fetch every tab, or Retry inside a tab's error state to refetch just that one.
+
+#### Picker naming
+
+The Profile picker in the **Agent sheet** (Chat top-bar → tap the agent name) uses these conventions:
+
+- **Server default** — the no-override row at the top. Clears any active profile pick and lets the server use its `config.yaml/model.default`. Renamed from "Default" in v0.7.1 so a profile literally named `default` doesn't collide with this row.
+- Actual profiles show their description as the primary label when present (readable names like "Victor" rather than directory names), with the profile key as a tertiary caption. A "• Running" or "• Idle" text label accompanies the existing green/grey status dot, and screen readers announce "Gateway running" / "Gateway idle" on the dot itself.
+- When the server emits a `profiles.updated` push (profile added, renamed, or removed on the server side), the app applies the new list immediately and shows a brief "Profiles updated" snackbar. A profile you had selected that the server then removes falls back to Server default automatically.
+
+The Settings card is visible whether or not a profile is currently active; when there's no active profile, the card renders at half opacity with "No active agent" and does nothing when tapped.
 
 ## Disabling discovery on the server
 

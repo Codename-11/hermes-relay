@@ -46,6 +46,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
@@ -1368,9 +1369,26 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Guarded: if the user has already picked something manually we
         // don't clobber it — only promote from null-with-persisted-name
         // to the resolved Profile.
+        //
+        // Also handles the inverse: when a `profiles.updated` push
+        // removes the currently-selected profile server-side (user
+        // deleted it via the dashboard), we clear the selection so
+        // the UI falls back to "Server default" rather than keeping
+        // a stale pick that no longer exists on the wire.
         viewModelScope.launch {
             agentProfiles.collect { list ->
-                if (_selectedProfile.value != null) return@collect
+                val currentSelection = _selectedProfile.value
+                if (currentSelection != null) {
+                    // Selection exists — confirm it's still in the list.
+                    if (list.none { it.name == currentSelection.name }) {
+                        _selectedProfile.value = null
+                        val cid = activeConnectionId.value
+                        if (cid != null) {
+                            profileSelectionStore.setSelectedProfile(cid, null)
+                        }
+                    }
+                    return@collect
+                }
                 val cid = activeConnectionId.value ?: return@collect
                 val persistedName = profileSelectionStore
                     .selectedProfileFlow(cid)
@@ -1384,6 +1402,27 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             }
         }
     }
+
+    /**
+     * Signal stream for `profiles.updated` pushes — emits when the
+     * server's in-memory profile list has changed in a way the user
+     * should know about (a different set of names or a different
+     * count). The UI layer collects this flow to show a brief
+     * "Profiles updated" snackbar.
+     *
+     * Sourced from [AuthManager.profilesUpdatedEvents] so the filter
+     * logic ("actually changed") is centralised there rather than
+     * duplicated per-subscriber.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val profilesUpdatedEvents: kotlinx.coroutines.flow.SharedFlow<Unit> =
+        _authManagerFlow
+            .flatMapLatest { it.profilesUpdatedEvents }
+            .shareIn(
+                scope = viewModelScope,
+                started = SharingStarted.Eagerly,
+                replay = 0,
+            )
 
     // --- Revalidation ----------------------------------------------------
     //

@@ -105,3 +105,34 @@ data class ProfileMemoryResponse(
     val entries: List<ProfileMemoryEntry>,
     val total: Int,
 )
+
+/**
+ * Response for `PUT /api/profiles/{name}/soul`. Server echoes back the
+ * profile name, on-disk path, and bytes written so the UI can
+ * optimistically confirm the write without an immediate re-fetch.
+ */
+@Serializable
+data class ProfileSoulUpdateResponse(
+    val ok: Boolean,
+    val profile: String,
+    val path: String,
+    @SerialName("bytes_written")
+    val bytesWritten: Long,
+)
+
+/**
+ * Response for `PUT /api/profiles/{name}/memory/{filename}`. Same shape
+ * as [ProfileSoulUpdateResponse] plus the filename so a client can
+ * confirm which entry it just wrote (relevant when creating a new file
+ * — the request echo proves the server stored it under the requested
+ * name rather than silently rewriting a collision).
+ */
+@Serializable
+data class ProfileMemoryUpdateResponse(
+    val ok: Boolean,
+    val profile: String,
+    val filename: String,
+    val path: String,
+    @SerialName("bytes_written")
+    val bytesWritten: Long,
+)

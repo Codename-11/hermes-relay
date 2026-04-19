@@ -45,6 +45,18 @@ class RelayConfig:
     # ``RELAY_PROFILE_DISCOVERY_ENABLED=0`` to disable.
     profile_discovery_enabled: bool = True
 
+    # Absolute path to the SessionManager persistence file. When ``None``
+    # (the default — the convention tests rely on), SessionManager runs
+    # fully in-memory and restarting the relay wipes paired devices.
+    # ``RelayConfig.from_env`` sets this to
+    # ``<hermes_config_path.parent>/hermes-relay-sessions.json`` so the
+    # real deployment keeps sessions across restarts automatically.
+    # Override with ``RELAY_SESSIONS_FILE=/abs/path`` (set to empty
+    # string to force in-memory mode even in production — rare, useful
+    # for stateless-container deployments that rely on an external
+    # secret-manager side-channel).
+    session_persistence_path: str | None = None
+
     # Media registry (inbound media for screenshot / attachment tools)
     media_max_size_mb: int = 100
     media_ttl_seconds: int = 86400
@@ -132,6 +144,23 @@ class RelayConfig:
             config.hermes_config_path,
             enabled=config.profile_discovery_enabled,
         )
+
+        # ── Session persistence file ────────────────────────────────────
+        # When ``from_env`` builds the config (i.e. a real relay startup
+        # via ``python -m plugin.relay``), default to the canonical
+        # location alongside ``config.yaml``. ``RELAY_SESSIONS_FILE``
+        # overrides; empty-string forces in-memory mode.
+        raw_sessions_file = os.getenv("RELAY_SESSIONS_FILE")
+        if raw_sessions_file is None:
+            config.session_persistence_path = str(
+                Path(config.hermes_config_path).expanduser().parent
+                / "hermes-relay-sessions.json"
+            )
+        elif raw_sessions_file.strip() == "":
+            config.session_persistence_path = None
+        else:
+            config.session_persistence_path = raw_sessions_file
+
         return config
 
 
@@ -175,14 +204,104 @@ def _pid_is_alive(pid: int) -> bool:
     return True
 
 
+def _read_proc_start_time(pid: int) -> int | None:
+    """Return field 22 of ``/proc/<pid>/stat`` (process start time in clock
+    ticks since system boot), or ``None`` if the file cannot be read or
+    parsed. Returns ``None`` on non-Linux hosts where ``/proc`` does not
+    exist — callers then skip the start-time comparison.
+
+    Field 22 is the stable "starttime" field from ``man 5 proc``. The
+    second stat field — ``comm`` — may contain spaces/parens, so we parse
+    by finding the last ``)`` and tokenizing the tail.
+    """
+    proc_stat = Path(f"/proc/{pid}/stat")
+    try:
+        raw = proc_stat.read_text(encoding="utf-8", errors="replace")
+    except (OSError, FileNotFoundError):
+        return None
+    # Skip past "pid (comm) " — comm may contain spaces or parens, so
+    # locate the final ")" and tokenize everything after it.
+    paren = raw.rfind(")")
+    if paren < 0:
+        return None
+    tail = raw[paren + 1 :].split()
+    # After the closing paren, field 3 is "state" and field 22 is
+    # "starttime". Zero-indexed in ``tail`` that's tail[0]=state,
+    # tail[19]=starttime.
+    if len(tail) < 20:
+        return None
+    try:
+        return int(tail[19])
+    except (TypeError, ValueError):
+        return None
+
+
+def _pid_matches_hermes(pid: int) -> bool:
+    """Check ``/proc/<pid>/comm`` + ``/proc/<pid>/cmdline`` for a
+    ``hermes``/``gateway`` token. Used as a secondary filter so a
+    recycled PID belonging to some other daemon doesn't falsely report
+    gateway_running.
+
+    Returns ``True`` when either source mentions the expected identity,
+    or when ``/proc`` is unavailable (Windows/macOS — we can't prove the
+    mismatch, so we don't downgrade the signal). Returns ``False`` only
+    when we successfully read a cmdline/comm that definitely is NOT
+    hermes-related.
+    """
+    comm_path = Path(f"/proc/{pid}/comm")
+    cmdline_path = Path(f"/proc/{pid}/cmdline")
+
+    # If neither file is accessible (e.g. non-Linux dev host) we fall
+    # back to "assume it matches" — the primary liveness check is the
+    # start_time comparison.
+    comm_readable = False
+    try:
+        comm_text = comm_path.read_text(encoding="utf-8", errors="replace").strip()
+        comm_readable = True
+    except (OSError, FileNotFoundError):
+        comm_text = ""
+
+    cmdline_readable = False
+    try:
+        cmdline_bytes = cmdline_path.read_bytes()
+        cmdline_text = cmdline_bytes.replace(b"\0", b" ").decode(
+            "utf-8", errors="replace"
+        )
+        cmdline_readable = True
+    except (OSError, FileNotFoundError):
+        cmdline_text = ""
+
+    if not comm_readable and not cmdline_readable:
+        # No /proc — platform can't help us, don't penalize.
+        return True
+
+    haystack = f"{comm_text}\n{cmdline_text}".lower()
+    return "hermes" in haystack or "gateway" in haystack
+
+
 def _probe_gateway_running(profile_home: Path) -> bool:
     """Check the per-profile ``gateway.pid`` file and probe liveness.
 
     The upstream Hermes CLI writes its daemon PID to ``<profile>/gateway.pid``
-    on ``hermes platform start``. Reading that file + ``os.kill(pid, 0)``
-    tells the phone whether the profile's API gateway is actually listening
-    right now. Returns ``False`` on any filesystem or parse error — the
-    feature is advisory, not load-bearing.
+    on ``hermes platform start``. Upstream writes JSON with shape
+    ``{"pid": N, "start_time": T, "kind": "hermes-gateway", "argv": [...]}``;
+    older installs wrote a bare integer — we tolerate both.
+
+    Beyond "PID exists" (cheap but vulnerable to PID reuse), we also:
+
+    * Compare ``start_time`` from the pid file against field 22 of
+      ``/proc/<pid>/stat`` on Linux. A reused PID belonging to a
+      different process will have a later start-time and we return
+      ``False``.
+    * Verify ``/proc/<pid>/comm`` or ``/proc/<pid>/cmdline`` mentions
+      ``hermes`` or ``gateway``. A PID pointing at (say) ``init`` or
+      ``sshd`` reports ``False``.
+
+    On platforms without ``/proc`` (Windows/macOS dev hosts) these
+    secondary checks degrade to "don't penalize" — the primary
+    ``os.kill(pid, 0)`` probe still runs. Returns ``False`` on any
+    filesystem or parse error — the feature is advisory, not
+    load-bearing.
     """
     pid_file = profile_home / "gateway.pid"
     try:
@@ -191,19 +310,57 @@ def _probe_gateway_running(profile_home: Path) -> bool:
         raw = pid_file.read_text(encoding="utf-8").strip()
         if not raw:
             return False
-        # Upstream Hermes writes JSON — {"pid": N, "kind": "...", ...}.
-        # Older installs wrote a bare integer; tolerate both so the probe
-        # keeps working across the upgrade boundary.
+        # Upstream Hermes writes JSON — {"pid": N, "start_time": T, ...}.
+        # Older installs wrote a bare integer; tolerate both.
+        claimed_start_time: int | None = None
         try:
             parsed = json.loads(raw)
-            pid = int(parsed["pid"]) if isinstance(parsed, dict) else int(parsed)
+            if isinstance(parsed, dict):
+                pid = int(parsed["pid"])
+                st = parsed.get("start_time")
+                if isinstance(st, (int, float)) and not isinstance(st, bool):
+                    claimed_start_time = int(st)
+            else:
+                pid = int(parsed)
         except (json.JSONDecodeError, KeyError, TypeError):
             pid = int(raw.split()[0])
     except (OSError, ValueError, IndexError):
         return False
     except Exception:  # pragma: no cover — defensive
         return False
-    return _pid_is_alive(pid)
+
+    if not _pid_is_alive(pid):
+        return False
+
+    # Start-time cross-check (Linux only — no /proc means None and we
+    # skip this gate, trusting os.kill alone).
+    if claimed_start_time is not None:
+        actual_start_time = _read_proc_start_time(pid)
+        if actual_start_time is not None and actual_start_time != claimed_start_time:
+            logger.info(
+                "gateway.pid at %s claims pid=%d start_time=%d but "
+                "/proc reports start_time=%d — stale/reused PID, "
+                "treating as not running",
+                pid_file,
+                pid,
+                claimed_start_time,
+                actual_start_time,
+            )
+            return False
+
+    # Identity cross-check. On non-Linux this always returns True; on
+    # Linux a PID pointing at e.g. init or sshd trips False.
+    if not _pid_matches_hermes(pid):
+        logger.info(
+            "gateway.pid at %s points at pid=%d but /proc/comm + "
+            "/proc/cmdline contain neither 'hermes' nor 'gateway' — "
+            "treating as not running",
+            pid_file,
+            pid,
+        )
+        return False
+
+    return True
 
 
 def _count_profile_skills(profile_home: Path) -> int:

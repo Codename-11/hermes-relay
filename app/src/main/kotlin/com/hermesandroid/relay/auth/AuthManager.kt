@@ -11,6 +11,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -330,6 +331,12 @@ class AuthManager(
     init {
         // Register as system channel handler for auth messages
         multiplexer.registerHandler("system", this)
+        // Also listen on the "pairing" channel for server-initiated
+        // pushes — currently just profiles.updated (v0.7.1+ relay).
+        // Routed through the same onMessage dispatcher which switches
+        // by envelope type so adding new pairing.* events later is a
+        // one-line change in [onMessage].
+        multiplexer.registerHandler("pairing", this)
 
         // Check for existing session token off main thread
         scope.launch {
@@ -573,8 +580,57 @@ class AuthManager(
         when (envelope.type) {
             "auth.ok" -> handleAuthOk(envelope)
             "auth.fail" -> handleAuthFail(envelope)
+            // `profiles.updated` push — sent by the v0.7.1+ relay on
+            // the "pairing" channel whenever its in-memory profile
+            // snapshot changes (file-watcher, SIGHUP, or a manual
+            // /api/profiles/refresh). The array shape mirrors the
+            // `profiles` field of auth.ok, so we parse with the exact
+            // same [parseAgentProfiles] helper.
+            "profiles.updated" -> handleProfilesUpdated(envelope)
         }
     }
+
+    /**
+     * Consumer for the pairing-channel `profiles.updated` envelope.
+     * Re-uses [parseAgentProfiles] because the wire shape of the
+     * `profiles` array exactly matches the auth.ok embedded form —
+     * the whole point of the push is that the app keeps a single
+     * parser regardless of which entry point the list arrives on.
+     *
+     * Emits a one-shot [profilesUpdatedEvents] event so the UI layer
+     * can show a brief "Profiles updated" snackbar. The event is only
+     * fired when the list actually changed (different names or count)
+     * — an idempotent push that matches the cached state is silent.
+     */
+    private fun handleProfilesUpdated(envelope: Envelope) {
+        val array = envelope.profiles ?: run {
+            Log.w(TAG, "handleProfilesUpdated: envelope has no `profiles` array")
+            return
+        }
+        val parsed = parseAgentProfiles(array)
+        val prev = _agentProfiles.value
+        _agentProfiles.value = parsed
+
+        // Did anything meaningful change? We treat "same names" as
+        // "nothing to announce" — the dashboard can emit these pushes
+        // liberally and we don't want to spam the user with toasts.
+        val prevNames = prev.map { it.name }.toSet()
+        val nextNames = parsed.map { it.name }.toSet()
+        if (prevNames != nextNames || prev.size != parsed.size) {
+            _profilesUpdatedEvents.tryEmit(Unit)
+        }
+    }
+
+    /**
+     * One-shot signal emitted every time a `profiles.updated` envelope
+     * materially changes the profile list. UI collects it via
+     * [com.hermesandroid.relay.viewmodel.ConnectionViewModel.profilesUpdatedEvents]
+     * to show a transient snackbar.
+     */
+    private val _profilesUpdatedEvents =
+        kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 4)
+    val profilesUpdatedEvents: kotlinx.coroutines.flow.SharedFlow<Unit> =
+        _profilesUpdatedEvents.asSharedFlow()
 
     fun regeneratePairingCode() {
         _pairingCode.value = generatePairingCode()
