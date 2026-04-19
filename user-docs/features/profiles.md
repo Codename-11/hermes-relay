@@ -84,6 +84,19 @@ When a profile with a non-empty SOUL is active AND you pick a non-default person
 
 All three indicators are optional on the wire — if you're paired with a pre-v0.7.0 relay that doesn't report them, the dot renders grey, the chips stay hidden, and the badge doesn't appear. Nothing else changes.
 
+### Profile Inspector
+
+From the **Settings** tab, tap the **Inspect Agent** card (directly under Active Agent) to open a full-screen, read-only viewer for the currently-selected profile. Four tabs:
+
+- **Config** — the profile's `config.yaml` rendered as a collapsible JSON tree. Nested objects collapse by default; tap to expand. Values render in monospace. The file path is shown at the top as a caption so you can `cd` to it from a shell if you want to edit.
+- **SOUL** — the profile's `SOUL.md` content in a monospace, vertically scrollable panel with its byte size. When a profile has no `SOUL.md`, the tab shows an empty state with the expected path.
+- **Memory** — one card per file under the profile's `memories/` directory (non-recursive). Each card shows the filename and byte size; tap to expand and see its content. `MEMORY.md` sorts first, then `USER.md`, then the rest alphabetical.
+- **Skills** — every skill visible to the profile, grouped by category. Disabled skills render with a "(disabled)" label so you can tell the difference between "not present" and "present but switched off".
+
+Very large files (SOUL or a memory entry) are truncated server-side; when that happens the tab shows a banner noting only the first slice is visible. The Inspector is strictly read-only — editing a profile is still "SSH to the server" territory. Use the Refresh icon in the top bar to re-fetch every tab, or tap Retry inside a tab's error state to refetch just that one.
+
+The card is visible on the Settings tab whether or not a profile is currently active; when there's no active profile, the card renders at half opacity with "No active agent" and does nothing when tapped.
+
 ## Disabling discovery on the server
 
 If you want Connections-only semantics (for example, a minimal deployment where every profile is its own Connection), set this in the relay's config:
