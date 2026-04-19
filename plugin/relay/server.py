@@ -35,7 +35,9 @@ from typing import Any
 from urllib.parse import urlparse
 
 import aiohttp
+import yaml
 from aiohttp import web
+from pathlib import Path
 
 from . import __version__
 from .auth import (
@@ -1616,6 +1618,235 @@ async def handle_relay_info(request: web.Request) -> web.Response:
     )
 
 
+# ── Profile-scoped read-only config + skills ────────────────────────────────
+#
+# Loopback-or-bearer gated (same pattern as /notifications/recent). The
+# dashboard plugin proxies these over 127.0.0.1; the paired phone hits
+# them with its relay session bearer. Both surfaces reach the same data
+# with profile scoping applied server-side — no client-side directory
+# walking, no secret leakage (SOUL.md is intentionally emitted as
+# system_message via auth.ok; these endpoints focus on config + skill
+# metadata).
+#
+# READ ONLY for now — profile writes require an active_profile routing
+# layer we haven't built yet. See docs/decisions.md §22.
+
+
+def _resolve_profile_home(server: "RelayServer", name: str) -> Path | None:
+    """Return the on-disk home directory for a profile name.
+
+    ``"default"`` maps to the parent of ``hermes_config_path`` (i.e.
+    ``~/.hermes``). Every other name maps to
+    ``<hermes_dir>/profiles/<name>``. Returns ``None`` if the target
+    directory does not exist — callers surface this as a 404.
+    """
+    root_config = Path(server.config.hermes_config_path).expanduser()
+    hermes_dir = root_config.parent
+
+    if name == "default":
+        home = hermes_dir
+    else:
+        # Reject path traversal: profile name must be a plain directory
+        # token, no separators, no "..".
+        if not name or "/" in name or "\\" in name or name in (".", ".."):
+            return None
+        home = hermes_dir / "profiles" / name
+
+    return home if home.is_dir() else None
+
+
+def _parse_skill_frontmatter(text: str) -> dict[str, Any]:
+    """Best-effort parse of the leading ``---`` YAML frontmatter block.
+
+    Mirrors the shape used by upstream Hermes skills and our own
+    ``skills/`` tree. Returns ``{}`` on any parse failure or when no
+    frontmatter is present. We never raise — skill listing must tolerate
+    hand-written SKILL.md files.
+    """
+    if not text.startswith("---"):
+        return {}
+    # Split on the first pair of --- lines.
+    try:
+        _, rest = text.split("---", 1)
+        body, _ = rest.split("\n---", 1)
+    except ValueError:
+        return {}
+    try:
+        data = yaml.safe_load(body)
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+async def handle_profile_config(request: web.Request) -> web.Response:
+    """Return the parsed ``config.yaml`` for a named profile.
+
+    GET /api/profiles/{name}/config
+      → 200 {"profile", "path", "config": {...}, "readonly": true}
+      → 401 missing/invalid bearer (remote callers only)
+      → 404 profile dir missing or no config.yaml
+      → 500 yaml parse error
+
+    Loopback callers may skip bearer auth (matches
+    ``/notifications/recent``); remote callers must present a valid
+    relay session token.
+    """
+    is_loopback = request.remote in ("127.0.0.1", "::1")
+    if is_loopback:
+        server: RelayServer = request.app["server"]
+    else:
+        server, _session = _require_bearer_session(request)
+
+    name = request.match_info.get("name", "").strip()
+    if not name:
+        return web.json_response(
+            {"ok": False, "error": "missing profile name"}, status=400
+        )
+
+    home = _resolve_profile_home(server, name)
+    if home is None:
+        return web.json_response(
+            {"ok": False, "error": "profile not found", "profile": name},
+            status=404,
+        )
+
+    config_path = home / "config.yaml"
+    if not config_path.is_file():
+        return web.json_response(
+            {
+                "ok": False,
+                "error": "config.yaml not found for profile",
+                "profile": name,
+            },
+            status=404,
+        )
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as fh:
+            parsed = yaml.safe_load(fh)
+    except Exception as exc:
+        logger.warning(
+            "Profile config read failed for %r at %s: %s",
+            name,
+            config_path,
+            exc,
+        )
+        return web.json_response(
+            {
+                "ok": False,
+                "error": "failed to parse config.yaml",
+                "profile": name,
+                "detail": str(exc),
+            },
+            status=500,
+        )
+
+    if parsed is None:
+        parsed = {}
+
+    return web.json_response(
+        {
+            "profile": name,
+            "path": str(config_path),
+            "config": parsed,
+            "readonly": True,
+        }
+    )
+
+
+async def handle_profile_skills(request: web.Request) -> web.Response:
+    """Enumerate skills under a profile's ``skills/<category>/<name>/SKILL.md``.
+
+    GET /api/profiles/{name}/skills
+      → 200 {"profile", "skills": [...], "total": N}
+      → 401 missing/invalid bearer (remote callers only)
+      → 404 profile dir missing
+
+    Each skill entry:
+      {name, category, description, path, enabled: true}
+
+    ``name``/``description`` come from YAML frontmatter when present,
+    falling back to the directory basename and an empty string. Skills
+    always report ``enabled: true`` — disabled-skill tracking is an
+    upstream concern (see ``PUT /api/skills/toggle`` in the bootstrap,
+    which is 501 today).
+    """
+    is_loopback = request.remote in ("127.0.0.1", "::1")
+    if is_loopback:
+        server: RelayServer = request.app["server"]
+    else:
+        server, _session = _require_bearer_session(request)
+
+    name = request.match_info.get("name", "").strip()
+    if not name:
+        return web.json_response(
+            {"ok": False, "error": "missing profile name"}, status=400
+        )
+
+    home = _resolve_profile_home(server, name)
+    if home is None:
+        return web.json_response(
+            {"ok": False, "error": "profile not found", "profile": name},
+            status=404,
+        )
+
+    skills_dir = home / "skills"
+    skills: list[dict[str, Any]] = []
+
+    if skills_dir.is_dir():
+        try:
+            skill_files = sorted(skills_dir.rglob("SKILL.md"))
+        except OSError:
+            skill_files = []
+
+        for skill_md in skill_files:
+            try:
+                rel = skill_md.relative_to(skills_dir)
+            except ValueError:
+                continue
+            parts = rel.parts
+            if len(parts) < 2:
+                # Skip files that live directly in skills/ — we require a
+                # category directory.
+                continue
+            category = parts[0]
+            skill_name = parts[-2]
+
+            description = ""
+            fm: dict[str, Any] = {}
+            try:
+                fm = _parse_skill_frontmatter(
+                    skill_md.read_text(encoding="utf-8")
+                )
+            except Exception:
+                fm = {}
+
+            fm_name = fm.get("name")
+            if isinstance(fm_name, str) and fm_name.strip():
+                skill_name = fm_name.strip()
+            fm_desc = fm.get("description")
+            if isinstance(fm_desc, str):
+                description = fm_desc.strip()
+
+            skills.append(
+                {
+                    "name": skill_name,
+                    "category": category,
+                    "description": description,
+                    "path": str(skill_md),
+                    "enabled": True,
+                }
+            )
+
+    return web.json_response(
+        {
+            "profile": name,
+            "skills": skills,
+            "total": len(skills),
+        }
+    )
+
+
 # === PHASE3-notif-listener: notifications HTTP routes ===
 #
 # Bearer-auth'd HTTP read endpoint for the cached notification deque
@@ -2176,6 +2407,14 @@ def create_app(config: RelayConfig) -> web.Application:
 
     # === PHASE3-notif-listener: notifications HTTP routes ===
     app.router.add_get("/notifications/recent", handle_notifications_recent)
+
+    # Profile-scoped read-only config + skills (§22).
+    app.router.add_get(
+        "/api/profiles/{name}/config", handle_profile_config
+    )
+    app.router.add_get(
+        "/api/profiles/{name}/skills", handle_profile_skills
+    )
     # === END PHASE3-notif-listener ===
 
     # Cleanup on shutdown
