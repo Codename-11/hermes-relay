@@ -92,16 +92,16 @@ After the plugin is in place, restart hermes and verify pairing with `hermes-pai
 
 We follow [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`.
 
-Feature branches are the house style — `feature/<name>`, `fix/<name>`, `docs/<name>`, `chore/<name>` — merged into `main` via `--no-ff` merge commits so the per-branch history stays visible in `git log --graph`. Straight-to-`main` is reserved for single-file typo fixes.
+**Branching model (as of 2026-04-19): `main` + `dev`.** Feature branches — `feature/<name>`, `fix/<name>`, `docs/<name>`, `chore/<name>` — branch off `dev` and merge back into `dev` via `--no-ff` PRs. `main` is released state only; it receives release merges from `dev` and nothing else. There is no straight-to-main exemption — even single-file typos go through `dev`.
 
-Release-prep commits (version bump + tag) are allowed to push directly to `main` via a branch-protection carve-out — see [RELEASE.md](RELEASE.md) for the full release process.
+Release-prep commits (version bump, changelog promotion) land on `dev` first, then a `release: vX.Y.Z` PR merges `dev` → `main` with `--no-ff`. The tag is cut from `main` after the merge. See [RELEASE.md](RELEASE.md) for the full release process.
 
 ## Testing
 
 - **Android unit tests:** `scripts/dev.bat test` (runs JUnit + MockK + Compose testing)
 - **Python tests:** `python -m unittest plugin.tests.test_<name>` from the repo root with the hermes-agent venv active. `pytest` works too but the pre-existing `conftest.py` imports a module that isn't always installed — `unittest` avoids that entirely.
 
-CI (`.github/workflows/ci.yml`) runs lint, Android build, Android unit tests, and a Python relay syntax check on every push.
+CI is split into two path-filtered workflows: `.github/workflows/ci-android.yml` (lint + build + test on app/Gradle changes) and `.github/workflows/ci-relay.yml` (syntax check + unittest discover on plugin/Python changes). Both run on pushes to `main` and `dev` and on PRs targeting either.
 
 ## Questions?
 

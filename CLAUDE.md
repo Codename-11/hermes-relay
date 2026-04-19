@@ -121,16 +121,17 @@ hermes-android/
 
 ### Git
 - **Conventional Commits:** `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
-- **Feature branches** as of 2026-04-13. Straight-to-main for single-file typos only.
-- **Merge style:** `git merge --no-ff` — no squash. Preserves per-commit trail for agent-team branches.
-- **Merging ≠ releasing.** Feature branches land on `main` continuously as CI goes green; each PR appends to `[Unreleased]` in `CHANGELOG.md`. Releases are a separate act — cut when accumulated state is worth shipping, not per-feature. See `RELEASE.md` "When to cut a release."
-- **Version bumps on `main` only.** Use `bash scripts/bump-version.sh <new-version>` to bump all three sources atomically (`gradle/libs.versions.toml`, `pyproject.toml`, `plugin/relay/__init__.py`). Happens at release-prep, not per-feature.
-- **Branch protection** on `main` since 0.3.0 — PRs must pass CI; direct push blocked except `release: vX.Y.Z`.
+- **Branching model (as of 2026-04-19):** `main` + `dev`. Feature branches target `dev`, not `main`. `main` receives only release merges (and tags). No straight-to-main exemption — even single-file typos go through `dev`.
+- **Merge style:** `git merge --no-ff` — no squash. Preserves per-commit trail for agent-team branches on every merge in the chain (feature → dev → main).
+- **Merging ≠ releasing.** Feature branches land on `dev` continuously as CI goes green; each PR appends to `[Unreleased]` in `CHANGELOG.md` on `dev`. Releases are a separate act — cut when accumulated state is worth shipping, not per-feature. See `RELEASE.md` "When to cut a release."
+- **Version bumps happen on `dev`, then release-merge to `main`.** Use `bash scripts/bump-version.sh <new-version>` to bump all three sources atomically (`gradle/libs.versions.toml`, `pyproject.toml`, `plugin/relay/__init__.py`). The `release: vX.Y.Z` commit lives on `dev`, then a release PR merges `dev` → `main` with `--no-ff`, then the tag is cut from `main`.
+- **Server tracks `dev` for staging.** The hermes-host deployment pulls `dev` so merged features are exercised before they reach a tag. Released state lives on tags cut from `main`.
+- **Branch protection** on `main` — direct push blocked; only release-merge PRs from `dev` land here. `dev` also requires CI to pass on PRs but accepts feature-branch merges freely.
 
 ### Testing
 - **Android:** JUnit + Compose testing for UI, MockK for mocks
 - **Python:** `python -m unittest plugin.tests.test_<name>` — avoid bare `pytest` (conftest imports `responses` which may not be installed in the venv)
-- **CI runs on every push** — build must pass before merge
+- **CI is split by path:** `.github/workflows/ci-android.yml` runs on app/Gradle changes; `.github/workflows/ci-relay.yml` runs on plugin/Python changes. Both trigger on pushes to `main` and `dev` and on PRs targeting either. Build + tests must pass before merge to `dev`; release-merge to `main` requires the same.
 
 ## Key Files
 
@@ -251,7 +252,7 @@ Curls every bridge HTTP route via `localhost:8767`. Catches the silent-drop regr
 2. **Python syntax check** — `python -m py_compile plugin/<file>.py`. Full tests run on the server.
 3. **Kotlin changes** — do NOT run `gradle build`. Bailey builds via Android Studio's ▶ button. Never `adb install` from Claude.
 4. **Before pushing Kotlin changes** — run `./gradlew lint` locally. It's the exact task CI runs (see `.github/workflows/ci.yml` → `gradlew lint` fallback) and catches errors Android Studio's live inspections miss — e.g. `UnsafeOptInUsageError` with `kotlin.OptIn` vs `androidx.annotation.OptIn`, `FlowOperatorInvokedInComposition` (mapped flows inside Composables), Media3 `@UnstableApi` propagation. Lint is a hard blocker in CI: Build + Test show "skipping" until lint passes, and lint prints only the **first failure** before aborting — so CI iterations reveal errors one at a time while a single local lint run surfaces all of them.
-5. **Commit + push** — feature branch for anything >1-2 commits.
+5. **Commit + push** — feature branch off `dev`, merged back to `dev` via PR. `main` is reserved for release merges.
 6. **Pull + restart on server** — see Server Deployment below.
 7. **Test on phone** — Bailey builds from Studio, installs to Samsung device, pairs via `/hermes-relay-pair`.
 

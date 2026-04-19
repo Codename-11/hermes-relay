@@ -903,3 +903,56 @@ The plan called for adding a `// VOICE HOOK` callback to `ChatViewModel` so `Voi
 - `app/src/main/kotlin/.../ui/components/VoiceModeOverlay.kt` — full-screen overlay, VoiceState→SphereState mapping, three interaction modes
 - `app/src/main/kotlin/.../ui/components/MorphingSphere.kt` — Listening/Speaking states, `voiceAmplitude`/`voiceMode` params, @Preview functions for iteration
 - Obsidian plan: `3. System/Projects/Hermes-Relay/Plans/Voice Mode.md`
+
+### 23. Branch policy: `main` + `dev` (2026-04-19)
+
+**Evolution of the earlier "Feature branches" policy (2026-04-13):** the
+original rule was "feature branches merge into `main` continuously, `main`
+is always shippable." That worked while the project was small but produced
+two operational frictions as it grew:
+
+1. **Staging had no home.** The server pulled `main` for dogfood, so any
+   feature that passed CI was immediately exercised against real pairing /
+   bridge / voice state. When a merged-but-rough feature hit a bug on the
+   server, rolling back meant reverting a merge commit on the shippable
+   branch, which fought the "main is always shippable" invariant.
+2. **Release cadence and merge cadence were entangled.** Cutting a release
+   meant version-bumping on `main`, which required a branch-protection
+   carve-out (`release: vX.Y.Z` direct pushes) because atomic bump + tag
+   couldn't round-trip through a PR without racing another merge.
+
+**New policy:**
+- `main` = **released state only**. Every commit corresponds to a tag or
+  a release-merge from `dev`.
+- `dev` = **integration branch**. Feature branches target `dev`; the
+  `[Unreleased]` CHANGELOG section lives there.
+- Server pulls `dev` for staging. Users and `hermes-relay-update` track
+  `main` and tags.
+- Releases are opened as PRs from `dev` into `main`, merged `--no-ff`,
+  then tagged from `main`. No direct-push carve-out is needed — the
+  release PR is just a normal PR.
+
+**Trade-offs accepted:**
+- **Hotfix sync step.** When a hotfix lands on `main` from a tag
+  (bypassing `dev`), you have to merge `main` back into `dev` so the next
+  release doesn't collide on `appVersionCode`. Documented in RELEASE.md
+  hotfix recipe.
+- **Two branches to keep up to date.** Feature-branch authors need to
+  remember that the base is `dev`, not `main`. Mitigated by branch
+  protection on both and by CI running on both.
+- **Server tracks pre-release state.** Post-policy the server pulls
+  `dev`, so the real shift is that the Play Store / sideload-update
+  audience now trails `dev` by a release cadence, not a merge cadence.
+
+**CI impact:** the same workflow files trigger on both branches via
+path-filtered triggers (`ci-android.yml` / `ci-relay.yml` after the
+2026-04-19 split). `docs.yml` stays `main`-only — docs publish represents
+shipped state, not integration state. `release.yml` is tag-triggered and
+branch-agnostic, unchanged.
+
+**References:**
+- `CLAUDE.md` — "Git" section + "Testing / CI is split by path" note
+- `RELEASE.md` — "Branching policy" + Release Process step 4 + Hotfix recipe
+- `CONTRIBUTING.md` — "Commit Conventions"
+- `.github/workflows/ci-android.yml`, `.github/workflows/ci-relay.yml`
+- `scripts/bump-version.sh` — prints the dev → main release flow

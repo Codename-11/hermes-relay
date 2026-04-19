@@ -71,17 +71,27 @@ you the next steps. It deliberately does NOT commit, tag, or touch
 
 ## Branching policy
 
-Hermes-Relay uses **feature branches + no-ff merges**, with version bumps
-gated to release-prep commits on `main`. `main` is always "last release +
-unreleased features," never mid-refactor.
+> **Updated 2026-04-19:** moved from `main`-only to `main + dev`. See
+> `docs/decisions.md` §23 for the rationale.
 
-**Merging is decoupled from releasing.** Feature branches land on `main`
+Hermes-Relay uses **`main` + `dev` with feature branches and no-ff
+merges**. `main` is **released state only** — every commit on `main`
+corresponds to a shipped version or a release-merge of `dev`. Day-to-day
+integration happens on `dev`.
+
+**Merging is decoupled from releasing.** Feature branches land on `dev`
 continuously as they go green in CI — there is no "one feature per
-release" rule. The `[Unreleased]` section of `CHANGELOG.md` is the
-accumulator: every merged PR appends bullets there. A release is a
-separate act, taken when the accumulated state is worth shipping to
-users (see "When to cut a release" below). This keeps `main` shippable
-while avoiding ceremony per feature.
+release" rule. The `[Unreleased]` section of `CHANGELOG.md` on `dev` is
+the accumulator: every merged PR appends bullets there. A release is a
+separate act, taken when the accumulated state on `dev` is worth shipping
+(see "When to cut a release" below). Cutting a release means opening a
+`release: vX.Y.Z` PR from `dev` into `main`, merging it `--no-ff`, then
+tagging `main`.
+
+**Server tracks `dev` for staging.** The hermes-host deployment pulls
+`dev` so merged features get exercised against real data before they
+reach a tag. Users (Play Store, sideload, `hermes-relay-update`) only
+see state that lives on `main` and on release tags.
 
 ### Branch names
 
@@ -92,14 +102,17 @@ while avoiding ceremony per feature.
 | `docs/<name>` | Docs-only changes larger than a typo | `docs/sideload-guide` |
 | `chore/<name>` | Cleanup / refactor / tooling | `chore/sync-version-sources` |
 
-Straight-to-main is still OK for **single-file typo fixes** and **tiny
-one-liner tweaks**. Judgment call — if in doubt, branch.
+All of the above branch off `dev` and merge back to `dev`. There is no
+straight-to-main exemption — even single-file typos go through a feature
+branch and PR into `dev`.
 
 ### Merge style: `--no-ff`
 
 Always merge with `git merge --no-ff <branch>` (or the "Create a merge
-commit" option in the GitHub PR UI). This preserves the branch context
-as a visible merge commit in `git log --graph`, which is valuable when:
+commit" option in the GitHub PR UI). This applies at every level —
+feature → `dev`, and `dev` → `main` for release merges. `--no-ff`
+preserves the branch context as a visible merge commit in
+`git log --graph`, which is valuable when:
 
 - An agent team pushed several commits to a branch — the per-commit trail
   is useful for "which agent did what"
@@ -109,31 +122,31 @@ as a visible merge commit in `git log --graph`, which is valuable when:
 
 Squash merges lose that detail and are **not** the house style.
 
-### Version bumps happen at release-prep, NOT on feature branches
+### Version bumps happen at release-prep on `dev`, NOT on feature branches
 
 Feature branches **never** touch `gradle/libs.versions.toml`,
 `pyproject.toml`, or `plugin/relay/__init__.py`. If two feature branches
 both bumped the version, they'd collide on `appVersionCode` (which must
 be monotonic) and you'd hit a merge conflict for no good reason.
 
-The version-bump commit lives on `main`, created via
-`scripts/bump-version.sh`, immediately before `git tag`. It's a dedicated
-commit with the message `release: vX.Y.Z` that also lands the CHANGELOG
-and RELEASE_NOTES updates.
+The version-bump commit lives on `dev`, created via
+`scripts/bump-version.sh`, as the last commit of the release-prep work.
+It's a dedicated commit with the message `release: vX.Y.Z` that also
+lands the CHANGELOG and RELEASE_NOTES updates. A release PR then merges
+`dev` → `main` with `--no-ff`, and the `v<version>` tag is cut from the
+resulting `main` tip.
 
-### Branch protection on `main`
+### Branch protection
 
-Light branch protection is enabled on `main` to enforce the above:
+Light branch protection is enabled:
 
-- Direct pushes blocked (must go through PR)
-- PR must pass CI (build + unit tests) before merge
-- Force push and branch deletion blocked
-- Signed commits + review approval NOT required (solo-dev overhead)
-
-Release-prep commits (`release: vX.Y.Z`) are an exception — they're the
-one time direct push is allowed via a short-lived bypass, because they
-include the version bump + tag push in one transaction. Everything else
-goes through a PR.
+- **`main`** — direct pushes blocked; only release PRs from `dev` merge
+  here. PR must pass CI (Android + Relay) before merge. Force push and
+  branch deletion blocked.
+- **`dev`** — direct pushes blocked for non-trivial work; feature
+  branches PR in. PR must pass CI. Force push and branch deletion
+  blocked.
+- Signed commits + review approval NOT required (solo-dev overhead).
 
 ## One-time Setup
 
@@ -350,19 +363,27 @@ prefixed `hermes-relay-<version>-` via `archivesName` in
 Optional device smoke test: `scripts\dev.bat release` then
 `adb install -r app\build\outputs\apk\sideload\release\hermes-relay-*-sideload-release.apk`.
 
-### 4. Commit and tag
+### 4. Commit on `dev`, merge to `main`, tag from `main`
 
-The release-prep commit is one of the few allowed direct-to-main pushes
-(see Branching Policy above — branch protection exempts the
-`release: vX.Y.Z` pattern because tagging + bumping must be atomic):
+The release-prep commit lands on `dev` first. Then a release PR merges
+`dev` → `main` with `--no-ff`, and the `v<version>` tag is cut from the
+resulting merge commit on `main`:
 
 ```bash
+# From a clean dev checkout:
+git checkout dev
+git pull --ff-only origin dev
+
 git add gradle/libs.versions.toml pyproject.toml plugin/relay/__init__.py \
         RELEASE_NOTES.md CHANGELOG.md \
         app/src/main/assets/whats_new.txt docs/play-store-listing.md
 git commit -m "release: v0.3.0"
-git push origin main
+git push origin dev
 
+# Open the release PR (dev -> main) and merge with --no-ff.
+# After merge, tag from the new main tip:
+git checkout main
+git pull --ff-only origin main
 git tag v0.3.0
 git push origin v0.3.0
 ```
@@ -469,16 +490,23 @@ On every push of a tag matching `v*`, `.github/workflows/release.yml`:
 ## Hotfix Recipe
 
 When production has a bug and you need to ship a fix without picking up
-unrelated `main` changes:
+unreleased work from `dev`:
 
-1. `git checkout -b fix/short-name v0.1.0` — branch from the released tag.
+1. `git checkout -b fix/short-name v0.1.0` — branch from the released
+   tag (not from `main` or `dev`).
 2. Apply the fix, add a test, commit.
 3. Bump `appVersionName` and `appVersionCode` in
-   `gradle/libs.versions.toml`.
+   `gradle/libs.versions.toml` (and the other two version sources via
+   `scripts/bump-version.sh`).
 4. Update `RELEASE_NOTES.md` and `CHANGELOG.md`.
-5. `git tag v0.1.1 && git push origin v0.1.1` — CI builds and publishes.
-6. Upload to Play Console as normal.
-7. Merge the hotfix branch back into `main` so the fix isn't lost.
+5. Open a PR from `fix/short-name` into `main`, merge with `--no-ff`.
+6. `git tag v0.1.1` from the new `main` tip and `git push origin v0.1.1`
+   — CI builds and publishes.
+7. Upload to Play Console as normal.
+8. Merge `main` back into `dev` (`git checkout dev && git merge --no-ff main`)
+   so `dev` picks up the hotfix and the version bumps. Without this,
+   `dev`'s `appVersionCode` lags behind `main` and the next release
+   bump collides.
 
 ## Troubleshooting
 
