@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,6 +26,8 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -237,9 +240,22 @@ private fun ConfigPane(
  * key-value row with monospace values. Depth adds left indentation so
  * the hierarchy is visually obvious without drawing explicit connector
  * lines.
+ *
+ * [revealed] is a shared map of fully-qualified paths (e.g.
+ * `providers.openai.api_key`) to their current reveal state. Tree is a
+ * recursive composable, so a single map threaded from [ConfigPane]
+ * keeps the session-scoped reveal state out of the VM (it's strictly
+ * transient — wipes on leaving the screen) and outside any nested
+ * JsonObject's remember { } scope.
  */
 @Composable
-private fun JsonObjectTree(obj: JsonObject, depth: Int) {
+private fun JsonObjectTree(
+    obj: JsonObject,
+    depth: Int,
+    pathPrefix: String = "",
+    revealed: androidx.compose.runtime.snapshots.SnapshotStateMap<String, Boolean> =
+        remember { mutableStateMapOf() },
+) {
     // Per-key expanded state — collapsed by default so big configs don't
     // blow up the initial screen. Users tap to drill in.
     val expanded = remember(obj) { mutableStateMapOf<String, Boolean>() }
@@ -247,6 +263,7 @@ private fun JsonObjectTree(obj: JsonObject, depth: Int) {
 
     Column(modifier = Modifier.fillMaxWidth()) {
         for ((key, value) in obj.entries) {
+            val childPath = if (pathPrefix.isEmpty()) key else "$pathPrefix.$key"
             when (value) {
                 is JsonObject -> {
                     val isOpen = expanded[key] == true
@@ -281,7 +298,12 @@ private fun JsonObjectTree(obj: JsonObject, depth: Int) {
                         )
                     }
                     if (isOpen) {
-                        JsonObjectTree(obj = value, depth = depth + 1)
+                        JsonObjectTree(
+                            obj = value,
+                            depth = depth + 1,
+                            pathPrefix = childPath,
+                            revealed = revealed,
+                        )
                     }
                 }
 
@@ -307,10 +329,21 @@ private fun JsonObjectTree(obj: JsonObject, depth: Int) {
                 }
 
                 is JsonPrimitive, JsonNull -> {
+                    // Masking applies only to string primitives whose key
+                    // name matches the secret regex. Numbers, booleans, and
+                    // nulls render verbatim — there's no API key pretending
+                    // to be an int. The mask is applied inside renderMaskedValue
+                    // so the raw string never reaches the text buffer until
+                    // the user actively taps the eye icon.
+                    val isSecret = value is JsonPrimitive &&
+                        value.isString &&
+                        isSecretKey(key)
+                    val isRevealed = isSecret && revealed[childPath] == true
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(start = indent, top = 4.dp, bottom = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
                             text = "$key:",
@@ -319,15 +352,84 @@ private fun JsonObjectTree(obj: JsonObject, depth: Int) {
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = renderJsonValue(value),
+                            text = if (isSecret) {
+                                renderMaskedValue(
+                                    value as JsonPrimitive,
+                                    reveal = isRevealed,
+                                )
+                            } else {
+                                renderJsonValue(value)
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             fontFamily = FontFamily.Monospace,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f, fill = false),
                         )
+                        if (isSecret) {
+                            IconButton(
+                                onClick = {
+                                    revealed[childPath] = !isRevealed
+                                },
+                                modifier = Modifier.size(28.dp),
+                            ) {
+                                Icon(
+                                    imageVector = if (isRevealed) {
+                                        Icons.Filled.VisibilityOff
+                                    } else {
+                                        Icons.Filled.Visibility
+                                    },
+                                    contentDescription = if (isRevealed) {
+                                        "Hide value"
+                                    } else {
+                                        "Reveal value"
+                                    },
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+/**
+ * Key-name heuristic for masking sensitive config values. Matches anything
+ * containing (case-insensitive) "key", "token", "secret", "password", or
+ * "credential" — same sentinel vocabulary the upstream Hermes config
+ * loader uses for its own `_redact_secrets` sweep.
+ *
+ * False positives like "keymap" or "keyframes" are acceptable — a spurious
+ * mask is always safer than a leak, and the user can still reveal
+ * with a tap.
+ */
+private val SECRET_KEY_REGEX = Regex(
+    "(?i).*(key|token|secret|password|credential).*"
+)
+
+private fun isSecretKey(key: String): Boolean = SECRET_KEY_REGEX.matches(key)
+
+/**
+ * Mask a string primitive while still leaving enough shape for the user
+ * to confirm "what key is set". Short values (< 12 chars) render as a
+ * full `"********"` mask so we don't leak prefix/suffix for tokens that
+ * would be trivially guessable in-full.
+ *
+ * 12 chars is the threshold because most real provider keys are well
+ * above that (sk-ant-* runs ~100, OpenAI ~50, etc.) — anything shorter
+ * is probably a placeholder or a tiny shared secret where even 8 chars
+ * of prefix/suffix reveal too much.
+ */
+private fun renderMaskedValue(primitive: JsonPrimitive, reveal: Boolean): String {
+    val raw = primitive.content
+    if (reveal) return "\"$raw\""
+    val trimmed = raw
+    return if (trimmed.length < 12) {
+        "\"********\""
+    } else {
+        "\"${trimmed.take(4)}...${trimmed.takeLast(4)}\""
     }
 }
 
