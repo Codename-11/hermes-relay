@@ -27,6 +27,7 @@ import mimetypes
 import os
 import signal
 import ssl
+import stat
 import sys
 import tempfile
 import time
@@ -2061,6 +2062,347 @@ async def handle_profile_memory(request: web.Request) -> web.Response:
     )
 
 
+# ── Profile-scoped SOUL.md + memory write endpoints ──────────────────────────
+#
+# Symmetric to the GET endpoints above — same loopback-or-bearer auth,
+# same ``_resolve_profile_home`` path resolver, same
+# ``profile_not_found`` 404 shape. Wire contracts:
+#
+#   PUT /api/profiles/{name}/soul
+#     Body: {"content": "..."}
+#     → 200 {"ok": true, "profile", "path", "bytes_written"}
+#     → 404 {"error": "profile_not_found", "profile": name}
+#     → 413 {"error": "payload_too_large", "limit_bytes": 1048576}
+#
+#   PUT /api/profiles/{name}/memory/{filename}
+#     Body: {"content": "..."}
+#     → 200 {"ok": true, "profile", "filename", "path", "bytes_written"}
+#     → 400 {"error": "invalid_filename", "detail": "..."}
+#     → 404 {"error": "profile_not_found", "profile": name}
+#     → 413 {"error": "payload_too_large", "limit_bytes": 1048576}
+#
+# Atomic write pattern: write to ``<name>.tmp``, ``os.replace()`` into
+# place. Preserves the original file's POSIX mode when present — the
+# operator's existing choice wins over any default we might impose
+# (SOUL files are typically world-readable in a home directory).
+
+# Max bytes we accept for a single SOUL.md or memory-file write.
+_PROFILE_WRITE_MAX_BYTES = 1 * 1024 * 1024  # 1 MB
+
+
+def _extract_write_content(body: Any) -> tuple[str | None, web.Response | None]:
+    """Pull the ``content`` field out of a PUT body with shared
+    validation.
+
+    Returns ``(content, None)`` on success or ``(None, error_response)``
+    on validation failure — the caller ``return``s the response
+    unchanged. Separated from the handlers so both share identical
+    wire shapes.
+    """
+    if not isinstance(body, dict):
+        return None, web.json_response(
+            {"error": "invalid_body", "detail": "body must be a JSON object"},
+            status=400,
+        )
+    content = body.get("content")
+    if content is None:
+        return None, web.json_response(
+            {"error": "invalid_body", "detail": "missing 'content' field"},
+            status=400,
+        )
+    if not isinstance(content, str):
+        return None, web.json_response(
+            {"error": "invalid_body", "detail": "'content' must be a string"},
+            status=400,
+        )
+    # Size gate — measured in UTF-8 bytes since that's what lands on
+    # disk. ``len(content)`` alone underestimates for non-ASCII.
+    encoded_size = len(content.encode("utf-8"))
+    if encoded_size > _PROFILE_WRITE_MAX_BYTES:
+        return None, web.json_response(
+            {
+                "error": "payload_too_large",
+                "limit_bytes": _PROFILE_WRITE_MAX_BYTES,
+                "received_bytes": encoded_size,
+            },
+            status=413,
+        )
+    return content, None
+
+
+def _atomic_write_text(target: Path, content: str) -> int:
+    """Write ``content`` to ``target`` atomically, preserving the
+    existing file's POSIX mode when present. Returns the bytes
+    written.
+
+    Implementation: write to a sibling ``<name>.tmp`` file, fsync,
+    ``os.replace()``. Raises :class:`OSError` on IO failure — callers
+    decide how to surface that (typically 500).
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    # Preserve mode of existing file if present.
+    preserve_mode: int | None = None
+    if target.exists():
+        try:
+            preserve_mode = stat.S_IMODE(target.stat().st_mode)
+        except OSError:
+            preserve_mode = None
+
+    tmp_path = target.with_name(target.name + ".tmp")
+    data = content.encode("utf-8")
+
+    with open(tmp_path, "wb") as fh:
+        fh.write(data)
+        fh.flush()
+        try:
+            os.fsync(fh.fileno())
+        except OSError:
+            pass
+
+    if preserve_mode is not None:
+        try:
+            os.chmod(tmp_path, preserve_mode)
+        except OSError:
+            pass
+
+    os.replace(tmp_path, target)
+    return len(data)
+
+
+async def handle_profile_soul_put(request: web.Request) -> web.Response:
+    """Write ``SOUL.md`` for a named profile.
+
+    PUT /api/profiles/{name}/soul
+      Body: {"content": "..."}
+      → 200 {"ok": true, "profile", "path", "bytes_written"}
+      → 400 invalid body (missing / wrong-type content)
+      → 401 missing/invalid bearer (remote callers only)
+      → 404 {"error": "profile_not_found", "profile": name}
+      → 413 {"error": "payload_too_large", "limit_bytes": 1048576}
+      → 500 {"error": "soul_write_failed", "detail": "..."}
+
+    Atomic: writes ``SOUL.md.tmp``, replaces on success. Preserves the
+    existing SOUL.md's mode when present.
+    """
+    is_loopback = request.remote in ("127.0.0.1", "::1")
+    if is_loopback:
+        server: RelayServer = request.app["server"]
+    else:
+        server, _session = _require_bearer_session(request)
+
+    name = request.match_info.get("name", "").strip()
+    if not name:
+        return web.json_response(
+            {"error": "profile_not_found", "profile": name}, status=404
+        )
+
+    home = _resolve_profile_home(server, name)
+    if home is None:
+        return web.json_response(
+            {"error": "profile_not_found", "profile": name}, status=404
+        )
+
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return web.json_response(
+            {"error": "invalid_body", "detail": "invalid JSON"}, status=400
+        )
+
+    content, err = _extract_write_content(body)
+    if err is not None:
+        return err
+    assert content is not None  # narrow for type checker
+
+    soul_path = home / "SOUL.md"
+    try:
+        bytes_written = _atomic_write_text(soul_path, content)
+    except OSError as exc:
+        logger.warning(
+            "Profile SOUL write failed for %r at %s: %s",
+            name,
+            soul_path,
+            exc,
+        )
+        return web.json_response(
+            {"error": "soul_write_failed", "detail": str(exc)},
+            status=500,
+        )
+
+    logger.info(
+        "Profile SOUL write: profile=%s bytes=%d path=%s",
+        name,
+        bytes_written,
+        soul_path,
+    )
+    # Profile metadata may have shifted (description falls back to
+    # SOUL.md's first line if config.yaml lacks one). Broadcast wiring
+    # lands in the follow-up ``feat(relay): push profiles.updated...``
+    # commit; the hook below is a stub so the write-path signature
+    # freezes now.
+    _notify_profiles_changed(server, reason="soul_written", profile=name)
+    return web.json_response(
+        {
+            "ok": True,
+            "profile": name,
+            "path": str(soul_path),
+            "bytes_written": bytes_written,
+        }
+    )
+
+
+def _validate_memory_filename(filename: str) -> str | None:
+    """Return ``None`` if ``filename`` is safe; otherwise a human-
+    readable detail message for the 400 response body.
+
+    Rules:
+      * must end with ``.md`` (case-sensitive — matches upstream
+        MEMORY.md / USER.md / anything.md convention)
+      * must not contain ``/`` ``\\`` or ``..``
+      * must not start with ``.`` (even ``.MEMORY.md`` is rejected —
+        we only allow ``.`` as the separator before ``md``)
+      * must not be empty
+      * must not be the literal name ``SOUL.md`` (that has its own
+        endpoint — avoid stomping via memory path)
+      * charset limited to ascii letters, digits, and ``._-`` for
+        predictable behavior on case-insensitive filesystems.
+    """
+    if not filename:
+        return "filename is empty"
+    if "/" in filename or "\\" in filename:
+        return "filename must not contain path separators"
+    if ".." in filename:
+        return "filename must not contain '..'"
+    if filename.startswith("."):
+        return "filename must not start with '.'"
+    if not filename.endswith(".md"):
+        return "filename must end with '.md'"
+    if filename == "SOUL.md":
+        return "use the /soul endpoint to write SOUL.md"
+    for ch in filename:
+        if not (ch.isalnum() or ch in "._-"):
+            return f"filename contains disallowed character {ch!r}"
+    return None
+
+
+async def handle_profile_memory_put(request: web.Request) -> web.Response:
+    """Write a memory file under ``<profile>/memories/`` for a named profile.
+
+    PUT /api/profiles/{name}/memory/{filename}
+      Body: {"content": "..."}
+      → 200 {"ok": true, "profile", "filename", "path", "bytes_written"}
+      → 400 invalid filename or invalid body
+      → 401 missing/invalid bearer (remote callers only)
+      → 404 {"error": "profile_not_found", "profile": name}
+      → 413 {"error": "payload_too_large", "limit_bytes": 1048576}
+      → 500 {"error": "memory_write_failed", "detail": "..."}
+
+    Creates ``memories/`` if absent. Atomic write mirrors the SOUL
+    path. Filename validation rejects path traversal, leading dot,
+    and non-.md extensions.
+    """
+    is_loopback = request.remote in ("127.0.0.1", "::1")
+    if is_loopback:
+        server: RelayServer = request.app["server"]
+    else:
+        server, _session = _require_bearer_session(request)
+
+    name = request.match_info.get("name", "").strip()
+    if not name:
+        return web.json_response(
+            {"error": "profile_not_found", "profile": name}, status=404
+        )
+
+    home = _resolve_profile_home(server, name)
+    if home is None:
+        return web.json_response(
+            {"error": "profile_not_found", "profile": name}, status=404
+        )
+
+    filename = request.match_info.get("filename", "")
+    detail = _validate_memory_filename(filename)
+    if detail is not None:
+        return web.json_response(
+            {"error": "invalid_filename", "detail": detail},
+            status=400,
+        )
+
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return web.json_response(
+            {"error": "invalid_body", "detail": "invalid JSON"}, status=400
+        )
+
+    content, err = _extract_write_content(body)
+    if err is not None:
+        return err
+    assert content is not None
+
+    memory_path = home / "memories" / filename
+    try:
+        bytes_written = _atomic_write_text(memory_path, content)
+    except OSError as exc:
+        logger.warning(
+            "Profile memory write failed for %r/%s at %s: %s",
+            name,
+            filename,
+            memory_path,
+            exc,
+        )
+        return web.json_response(
+            {"error": "memory_write_failed", "detail": str(exc)},
+            status=500,
+        )
+
+    logger.info(
+        "Profile memory write: profile=%s filename=%s bytes=%d path=%s",
+        name,
+        filename,
+        bytes_written,
+        memory_path,
+    )
+    _notify_profiles_changed(
+        server,
+        reason="memory_written",
+        profile=name,
+        filename=filename,
+    )
+    return web.json_response(
+        {
+            "ok": True,
+            "profile": name,
+            "filename": filename,
+            "path": str(memory_path),
+            "bytes_written": bytes_written,
+        }
+    )
+
+
+def _notify_profiles_changed(
+    server: "RelayServer",
+    *,
+    reason: str,
+    profile: str | None = None,
+    filename: str | None = None,
+) -> None:
+    """Hook called after a profile write lands on disk.
+
+    Stubbed in this commit — the full broadcast machinery is added in
+    the follow-up ``feat(relay): push profiles.updated envelope...``
+    commit. Keeping the call site here freezes the write-path
+    signature so that follow-up is a small broadcast-only patch.
+    """
+    logger.debug(
+        "profiles-changed hook fired (reason=%s profile=%s filename=%s) — "
+        "broadcast wired in the profiles.updated commit",
+        reason,
+        profile,
+        filename,
+    )
+
+
 # === PHASE3-notif-listener: notifications HTTP routes ===
 #
 # Bearer-auth'd HTTP read endpoint for the cached notification deque
@@ -2535,7 +2877,15 @@ async def _on_disconnect(
 
 def create_app(config: RelayConfig) -> web.Application:
     """Create and configure the aiohttp application."""
-    app = web.Application()
+    # aiohttp's default client_max_size (1 MiB) would short-circuit
+    # phone uploads at the aiohttp layer, returning a plain-text 413
+    # before our handlers can produce the structured JSON error
+    # bodies the phone expects. Bump to 2 MiB so our 1 MB ``content``
+    # gate is the real gate — plus a little slack for JSON envelope
+    # overhead (``{"content": "..."}``). The voice/media upload
+    # routes have their own per-route streaming/offloading which is
+    # unaffected by this setting.
+    app = web.Application(client_max_size=2 * 1024 * 1024)
 
     server = RelayServer(config)
     app["server"] = server
@@ -2653,6 +3003,14 @@ def create_app(config: RelayConfig) -> web.Application:
     )
     app.router.add_get(
         "/api/profiles/{name}/memory", handle_profile_memory
+    )
+    # Profile-scoped SOUL + memory WRITE endpoints (§22 addendum).
+    app.router.add_put(
+        "/api/profiles/{name}/soul", handle_profile_soul_put
+    )
+    app.router.add_put(
+        "/api/profiles/{name}/memory/{filename}",
+        handle_profile_memory_put,
     )
     # === END PHASE3-notif-listener ===
 
