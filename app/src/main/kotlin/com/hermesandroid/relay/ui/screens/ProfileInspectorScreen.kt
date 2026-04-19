@@ -130,6 +130,17 @@ fun ProfileInspectorScreen(
         }
     }
 
+    // Skill-toggle capability probe — fire once on screen open so the
+    // Skills tab can render its Switches in the correct state before
+    // the user even gets there. Keyed on profileName so a fresh
+    // profile triggers a fresh probe (relay capability is server-wide
+    // so the answer shouldn't change, but we're defensive).
+    LaunchedEffect(profileName) {
+        if (profileName.isNotBlank()) {
+            viewModel.probeSkillToggleSupport()
+        }
+    }
+
     val tabs = remember {
         listOf(
             InspectorTab("Config", InspectorSection.Config),
@@ -234,6 +245,10 @@ fun ProfileInspectorScreen(
                     InspectorSection.Skills -> SkillsPane(
                         state = skillsState,
                         onRetry = { viewModel.refreshSection(InspectorSection.Skills) },
+                        toggleSupported = viewModel.skillToggleSupported.collectAsState().value,
+                        onToggleSkill = { name, enabled ->
+                            viewModel.toggleSkill(name, enabled)
+                        },
                     )
                 }
             }
@@ -1132,6 +1147,8 @@ private fun MemoryEntryCard(
 private fun SkillsPane(
     state: LoadState<com.hermesandroid.relay.data.ProfileSkillsResponse>,
     onRetry: () -> Unit,
+    toggleSupported: Boolean?,
+    onToggleSkill: (String, Boolean) -> Unit,
 ) {
     PaneShell(state = state, onRetry = onRetry) { response ->
         if (response.skills.isEmpty()) {
@@ -1171,7 +1188,26 @@ private fun SkillsPane(
                     items = grouped,
                     key = { pair -> pair.first },
                 ) { pair ->
-                    SkillCategorySection(category = pair.first, skills = pair.second)
+                    SkillCategorySection(
+                        category = pair.first,
+                        skills = pair.second,
+                        toggleSupported = toggleSupported,
+                        onToggleSkill = onToggleSkill,
+                    )
+                }
+                if (toggleSupported == false) {
+                    // Bottom-of-list caption when the probe confirmed
+                    // the endpoint isn't available server-side. Kept
+                    // out of each card so the message is shown once
+                    // rather than N times.
+                    item(key = "__toggle_unsupported_caption__") {
+                        Text(
+                            text = "Enable/disable requires a newer server.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
                 }
             }
         }
@@ -1179,7 +1215,12 @@ private fun SkillsPane(
 }
 
 @Composable
-private fun SkillCategorySection(category: String, skills: List<ProfileSkillEntry>) {
+private fun SkillCategorySection(
+    category: String,
+    skills: List<ProfileSkillEntry>,
+    toggleSupported: Boolean?,
+    onToggleSkill: (String, Boolean) -> Unit,
+) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -1197,7 +1238,11 @@ private fun SkillCategorySection(category: String, skills: List<ProfileSkillEntr
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 skills.forEachIndexed { index, skill ->
-                    SkillRow(skill = skill)
+                    SkillRow(
+                        skill = skill,
+                        toggleSupported = toggleSupported,
+                        onToggleSkill = onToggleSkill,
+                    )
                     if (index != skills.lastIndex) {
                         HorizontalDivider(
                             color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f),
@@ -1210,12 +1255,28 @@ private fun SkillCategorySection(category: String, skills: List<ProfileSkillEntr
 }
 
 @Composable
-private fun SkillRow(skill: ProfileSkillEntry) {
+private fun SkillRow(
+    skill: ProfileSkillEntry,
+    toggleSupported: Boolean?,
+    onToggleSkill: (String, Boolean) -> Unit,
+) {
+    // Optimistic local toggle state. The VM's emitted events revert us
+    // on failure; on success the next `/skills` refetch will overwrite
+    // this with the server's canonical value. Keyed on (skill, enabled)
+    // so a fresh fetch resets the local pick.
+    var localEnabled by remember(skill.name, skill.enabled) {
+        mutableStateOf(skill.enabled)
+    }
+    // 501-known-unsupported → ghost the switch entirely.
+    // null (probe hasn't completed) → leave tappable but the PUT will
+    // ask authoritatively.
+    val switchEnabled = toggleSupported != false
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.Top,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1224,7 +1285,7 @@ private fun SkillRow(skill: ProfileSkillEntry) {
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.SemiBold,
                 )
-                if (!skill.enabled) {
+                if (!localEnabled) {
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "(disabled)",
@@ -1240,6 +1301,29 @@ private fun SkillRow(skill: ProfileSkillEntry) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+        }
+        androidx.compose.material3.Switch(
+            checked = localEnabled,
+            enabled = switchEnabled,
+            onCheckedChange = { new ->
+                // Optimistic flip; VM revert on 501 will come back via
+                // the snackbar error event. We don't have a direct
+                // "revert visually" hook here without VM-state feedback,
+                // so we key off the revealed `toggleSupported` value
+                // the next recomposition sees — when the VM updates
+                // the flag to false post-call, we reset the switch to
+                // the prior state on the next pass.
+                localEnabled = new
+                onToggleSkill(skill.name, new)
+            },
+        )
+    }
+    // Revert visual state if the probe flipped to unsupported AFTER the
+    // user tapped. Compose effect keyed on toggleSupported + the skill's
+    // server-reported enabled flag.
+    LaunchedEffect(toggleSupported, skill.enabled) {
+        if (toggleSupported == false && localEnabled != skill.enabled) {
+            localEnabled = skill.enabled
         }
     }
 }

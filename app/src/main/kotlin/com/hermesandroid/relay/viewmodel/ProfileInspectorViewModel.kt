@@ -250,6 +250,70 @@ class ProfileInspectorViewModel(
         }
     }
 
+    // -----------------------------------------------------------------
+    // Skill toggle — server stubs this out as HTTP 501 today. We expose
+    // the probe result so the Skills pane can disable the Switch until
+    // the relay implements the endpoint, and we emit the 501 response
+    // as an EditEvent.Error on optimistic tap so the UI can revert
+    // the Switch visual state.
+    // -----------------------------------------------------------------
+
+    /**
+     * Capability flag. `null` = probe hasn't run yet (Switch renders
+     * enabled-but-pending); `true` = server claimed support on the
+     * capability probe; `false` = 501 / 404 / 405 — definitively not
+     * supported, Switch renders ghosted.
+     */
+    private val _skillToggleSupported = MutableStateFlow<Boolean?>(null)
+    val skillToggleSupported: StateFlow<Boolean?> = _skillToggleSupported.asStateFlow()
+
+    /**
+     * One-shot capability probe. Fires at screen-open time from the
+     * Composable; idempotent — extra calls during the screen's lifetime
+     * reprobe but leave a positive result in place on failure.
+     */
+    fun probeSkillToggleSupport() {
+        viewModelScope.launch {
+            val supported = client.probeSkillToggleSupported()
+            _skillToggleSupported.value = supported
+        }
+    }
+
+    /**
+     * Optimistic toggle — UI flips the switch immediately, then we PUT.
+     * On a 501 we emit an error event so the screen can revert the
+     * local visual state and cache "not supported" so subsequent taps
+     * are short-circuited.
+     */
+    fun toggleSkill(skillName: String, enabled: Boolean) {
+        viewModelScope.launch {
+            val result = client.updateSkillToggle(skillName, enabled)
+            result.fold(
+                onSuccess = { outcome ->
+                    when (outcome) {
+                        is RelayProfileInspectorClient.SkillToggleResult.Ok ->
+                            _editEvents.tryEmit(
+                                EditEvent.Saved(
+                                    if (enabled) "Enabled $skillName" else "Disabled $skillName"
+                                )
+                            )
+                        is RelayProfileInspectorClient.SkillToggleResult.NotImplemented -> {
+                            _skillToggleSupported.value = false
+                            _editEvents.tryEmit(
+                                EditEvent.Error("Skill toggle not yet supported on this server")
+                            )
+                        }
+                    }
+                },
+                onFailure = { err ->
+                    _editEvents.tryEmit(
+                        EditEvent.Error(err.message ?: "Skill toggle failed")
+                    )
+                },
+            )
+        }
+    }
+
     /**
      * Local filename sanity for new/updated memory entries. Mirrors
      * the rules the server worker enforces:

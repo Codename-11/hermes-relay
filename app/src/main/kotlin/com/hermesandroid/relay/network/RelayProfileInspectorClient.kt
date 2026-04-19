@@ -262,6 +262,152 @@ class RelayProfileInspectorClient(
     }
 
     /**
+     * `PUT /api/skills/toggle` with body `{"name": "...", "enabled": true/false}`.
+     *
+     * Current relay stubs this out — returns 501 with
+     * `{"error": "skill_toggle_not_implemented", "detail": "..."}`. The
+     * UI uses the distinctive 501 to show a "not supported on this
+     * server" snackbar and ghost out the toggle. When the real
+     * implementation lands server-side, this method needs no change.
+     */
+    suspend fun updateSkillToggle(
+        skillName: String,
+        enabled: Boolean,
+    ): Result<SkillToggleResult> = withContext(Dispatchers.IO) {
+        val relayUrl = relayUrlProvider()?.trim().orEmpty()
+        if (relayUrl.isEmpty()) {
+            return@withContext Result.failure(
+                IllegalStateException("Relay URL not configured")
+            )
+        }
+        val sessionToken = sessionTokenProvider()
+        if (sessionToken.isNullOrBlank()) {
+            return@withContext Result.failure(
+                IllegalStateException("Relay not paired — session token missing")
+            )
+        }
+
+        val httpBase = relayUrl
+            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
+            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
+            .trimEnd('/')
+
+        val url = try {
+            "$httpBase/api/skills/toggle".toHttpUrl()
+        } catch (e: IllegalArgumentException) {
+            return@withContext Result.failure(
+                IOException("Invalid relay URL: ${e.message}")
+            )
+        }
+
+        val payload = buildJsonObject {
+            put("name", skillName)
+            put("enabled", enabled)
+        }
+        val bodyJson = json.encodeToString(
+            kotlinx.serialization.json.JsonObject.serializer(),
+            payload,
+        )
+
+        val request = Request.Builder()
+            .url(url)
+            .put(bodyJson.toRequestBody(JSON_MEDIA_TYPE))
+            .header("Authorization", "Bearer $sessionToken")
+            .header("Accept", "application/json")
+            .build()
+
+        try {
+            okHttpClient.newCall(request).execute().use { response ->
+                when (response.code) {
+                    in 200..299 -> Result.success(SkillToggleResult.Ok)
+                    501 -> Result.success(SkillToggleResult.NotImplemented)
+                    401, 403 -> Result.failure(
+                        IOException("Unauthorized — re-pair with the relay")
+                    )
+                    else -> Result.failure(
+                        IOException("Relay returned HTTP ${response.code}")
+                    )
+                }
+            }
+        } catch (e: IOException) {
+            Log.w(TAG, "skill toggle failed for $skillName: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Capability probe for the skill-toggle endpoint — HEAD / OPTIONS
+     * would be the ideal choice but we need to know specifically if the
+     * server responds 501 vs 200, which is only visible on PUT. We
+     * send a no-op PUT with `enabled = true` against a placeholder
+     * skill name that the server treats as a probe ping — relays that
+     * implement the endpoint accept it; stubbed relays return 501.
+     *
+     * In practice we don't want this probe to have side effects, so we
+     * use the HTTP OPTIONS verb instead and treat a 501 response as
+     * "not implemented" and any 2xx as "supported". The relay serves
+     * OPTIONS via aiohttp's CORS handling by default.
+     */
+    suspend fun probeSkillToggleSupported(): Boolean = withContext(Dispatchers.IO) {
+        val relayUrl = relayUrlProvider()?.trim().orEmpty()
+        if (relayUrl.isEmpty()) return@withContext false
+        val sessionToken = sessionTokenProvider() ?: return@withContext false
+
+        val httpBase = relayUrl
+            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
+            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
+            .trimEnd('/')
+
+        val url = try {
+            "$httpBase/api/skills/toggle".toHttpUrl()
+        } catch (_: IllegalArgumentException) {
+            return@withContext false
+        }
+
+        // OPTIONS probe. Relays that don't mount the handler return 404
+        // or the default 405 method-not-allowed; stubbed-implementation
+        // relays return 501 from the PUT handler but allow OPTIONS.
+        // A 2xx/3xx OPTIONS does NOT confirm PUT works (the server
+        // might still 501 on the real call), so a successful OPTIONS
+        // here means "worth trying". A 501 response on OPTIONS (rare)
+        // is definitive "not supported".
+        val request = Request.Builder()
+            .url(url)
+            .method("OPTIONS", null)
+            .header("Authorization", "Bearer $sessionToken")
+            .build()
+
+        try {
+            okHttpClient.newCall(request).execute().use { response ->
+                when (response.code) {
+                    501 -> false
+                    404, 405 -> false
+                    // 401/403 — we don't know; default to true (don't
+                    // ghost the toggle over an auth problem, let the
+                    // PUT fail and snackbar through the normal path).
+                    401, 403 -> true
+                    else -> response.isSuccessful
+                }
+            }
+        } catch (_: IOException) {
+            // Network / offline — assume supported; PUT will surface
+            // the real failure.
+            true
+        }
+    }
+
+    /**
+     * Result of a skill-toggle PUT. Kept as a small sealed class so
+     * the caller can distinguish "server accepted it" from "server
+     * answered 501 — not implemented yet" without inventing magic
+     * error strings.
+     */
+    sealed class SkillToggleResult {
+        data object Ok : SkillToggleResult()
+        data object NotImplemented : SkillToggleResult()
+    }
+
+    /**
      * Best-effort pull of a `detail` or `error` string out of a relay
      * 400 body. Falls back to the first 120 chars of the payload when
      * the response isn't JSON-shaped.
