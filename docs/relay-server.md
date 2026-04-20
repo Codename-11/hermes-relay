@@ -124,6 +124,8 @@ All settings can be configured via environment variables. These override CLI def
 | `RELAY_MEDIA_TTL_SECONDS` | `86400` | How long a registered media entry stays valid before the registry evicts it. Matches the within-a-day scrollback use case — see ADR 14. |
 | `RELAY_MEDIA_LRU_CAP` | `500` | Maximum in-memory entries in the media registry. Oldest is evicted on register-overflow. |
 | `RELAY_MEDIA_ALLOWED_ROOTS` | — | Additional sandbox roots for `POST /media/register` (colon/`os.pathsep`-separated absolute paths). Extends the auto-derived defaults (`tempfile.gettempdir()` + `HERMES_WORKSPACE` or `~/.hermes/workspace/`), not replaces them. |
+| `TS_AUTO` | `0` | **Install-time only** — read by `install.sh` step [7/7]. When set to `1`, the installer runs `hermes-relay-tailscale enable` non-interactively after detecting the `tailscale` binary. Useful for scripted installs. See `docs/remote-access.md`. |
+| `TS_DECLINE` | `0` | **Install-time only** — read by `install.sh` step [7/7]. When set to `1`, the installer skips the Tailscale-enablement prompt even if the binary is present. Documented here for grep-ability; the relay process itself never reads this. |
 
 ## TLS / Production
 
@@ -136,7 +138,11 @@ export RELAY_SSL_KEY=/etc/letsencrypt/live/yourdomain/privkey.pem
 python -m relay_server
 ```
 
-Or use a reverse proxy (nginx/Caddy) to terminate TLS in front of the relay.
+Or use a reverse proxy (nginx/Caddy) to terminate TLS in front of the relay. Full decision matrix (Tailscale / Caddy / Cloudflare Tunnel / WireGuard / plaintext-over-VPN) with setup recipes lives in [`docs/remote-access.md`](remote-access.md).
+
+## Tailscale helper
+
+`hermes-relay-tailscale` is a thin CLI wrapper (installed at `~/.local/bin/` by `install.sh`) that fronts the loopback-bound relay with `tailscale serve` so the port is reachable over the tailnet with Tailscale-managed TLS + ACL-based identity. Subcommands: `hermes-relay-tailscale enable [--port N] [--no-https]` / `disable [--port N]` / `status`; each takes `--json` for scripting. All commands are safe to call when Tailscale is not installed — they return a structured failure instead of raising. The helper auto-retires once upstream PR [#9295](https://github.com/NousResearch/hermes-agent/pull/9295) merges (`canonical_upstream_present()` detects `hermes gateway run --tailscale`). See [`docs/remote-access.md`](remote-access.md) for the operator-facing flow and ADR 25 for the rationale.
 
 ## Authentication
 
@@ -171,6 +177,22 @@ See [`docs/spec.md` §3.3](spec.md) for the full auth flow and the QR wire forma
 | `/media/inspect` | GET | **Loopback only.** Returns `{"media": [ {token, file_name, content_type, size, created_at, expires_at, last_accessed, is_expired}, ... ]}` — `MediaRegistry.list_all()` snapshot, newest first. Absolute file paths are **never** included — only `file_name` (basename). Query param: `?include_expired=true` includes evicted entries (default false, hides them). 403 for non-loopback callers. Consumed by the dashboard plugin's Media Inspector tab. |
 | `/relay/info` | GET | **Loopback only.** Aggregate status for the dashboard plugin's Relay Management tab — one call instead of three. Returns `{"version": "0.5.0", "uptime_seconds": 12345, "session_count": 1, "paired_device_count": 1, "pending_commands": 0, "media_entry_count": 7, "health": "ok"}`. 403 for non-loopback callers. |
 
+### Dashboard plugin proxy routes
+
+The hermes-agent dashboard plugin at `plugin/dashboard/` exposes a FastAPI router mounted at `/api/plugins/hermes-relay/*` on the gateway's web server. Each route is a loopback-only pass-through to the corresponding relay HTTP route above, so the relay remains the source of truth. Implementation lives in `plugin/dashboard/plugin_api.py`.
+
+| Dashboard route | Forwards to relay | Purpose |
+|-----------------|-------------------|---------|
+| `GET /api/plugins/hermes-relay/overview` | `GET /relay/info` | Aggregate status for the Relay Management tab |
+| `GET /api/plugins/hermes-relay/sessions` | `GET /sessions` (loopback branch) | Paired-device list for the Paired Devices tab |
+| `DELETE /api/plugins/hermes-relay/sessions/{token_prefix}` | `DELETE /sessions/{token_prefix}` | Revoke a paired device from the dashboard |
+| `POST /api/plugins/hermes-relay/pairing` | `POST /pairing/mint` | Mint a fresh pairing code + return a signed QR payload |
+| `GET /api/plugins/hermes-relay/bridge-activity` | `GET /bridge/activity?limit=N` | Recent bridge commands ring buffer for the Bridge Activity tab |
+| `GET /api/plugins/hermes-relay/media` | `GET /media/inspect?include_expired=<bool>` | Active `MediaRegistry` tokens for the Media Inspector tab |
+| `GET /api/plugins/hermes-relay/push` | — (static stub) | Push console placeholder until FCM is wired |
+
+Errors: relay connect-error / timeout / 5xx → `502 Bad Gateway` with a human-readable `detail` pointing at `127.0.0.1:{RELAY_PORT}`. Relay 4xx passes through verbatim.
+
 ## Health Check
 
 ```bash
@@ -201,7 +223,8 @@ All messages use typed envelopes over a single WebSocket connection at `/ws`:
 | `terminal.input` | App --> Server | `{ data }` |
 | `terminal.output` | Server --> App | `{ data }` |
 | `terminal.resize` | App --> Server | `{ cols, rows }` |
-| `terminal.detach` | App --> Server | `{}` |
+| `terminal.detach` | App --> Server | `{ session_name? }` — preserves tmux session |
+| `terminal.kill` | App --> Server | `{ session_name? }` — destroys tmux session |
 
 ### Bridge (Phase 3)
 

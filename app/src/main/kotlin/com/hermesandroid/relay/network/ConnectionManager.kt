@@ -1,7 +1,14 @@
 package com.hermesandroid.relay.network
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.util.Log
 import com.hermesandroid.relay.auth.CertPinStore
+import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.data.PairingPreferences
 import com.hermesandroid.relay.network.models.Envelope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -10,7 +17,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.CertificatePinner
@@ -59,7 +68,29 @@ class ConnectionManager(
      * Defaults to always-allow for tests and legacy call sites. Production
      * wiring passes the AuthManager gate from [ConnectionViewModel].
      */
-    private val reconnectGate: () -> Boolean = { true }
+    private val reconnectGate: () -> Boolean = { true },
+    /**
+     * Application context used to register the [ConnectivityManager
+     * .NetworkCallback] that drives ADR 24's network-aware re-resolution.
+     * Nullable for legacy call sites / tests — when null, the callback is
+     * never registered and the manager degrades to single-URL behavior.
+     */
+    private val context: Context? = null,
+    /**
+     * ADR 24 multi-endpoint resolver. When provided alongside [context] and
+     * a non-null [deviceIdProvider], every call to [connect] first consults
+     * the resolver before opening the WSS; on network changes the resolver
+     * is re-run and we hot-swap to the new winner. When null the manager
+     * uses the caller-supplied URL verbatim (pre-ADR-24 behavior).
+     */
+    private val endpointResolver: EndpointResolver? = null,
+    /**
+     * Suspending supplier for the active device id. Used to key into
+     * [PairingPreferences.getDeviceEndpoints] during resolution. `null`
+     * disables multi-endpoint resolution even when [endpointResolver] is
+     * non-null — the manager falls back to the single-URL path.
+     */
+    private val deviceIdProvider: (suspend () -> String?)? = null,
 ) {
     private val supervisorJob = SupervisorJob()
     private val scope = CoroutineScope(supervisorJob + Dispatchers.IO)
@@ -94,6 +125,12 @@ class ConnectionManager(
     private var serverUrl: String? = null
     private var reconnectAttempt = 0
     private var shouldReconnect = true
+    // Last HTTP status seen during WSS upgrade, captured in onFailure.
+    // Used by scheduleReconnect() to pick an appropriate backoff — notably
+    // a much longer one when the server is rate-limiting us (HTTP 429) so
+    // we don't re-fill the ban bucket and brick our own auth window.
+    @Volatile
+    private var lastUpgradeResponseCode: Int? = null
 
     private val _connectionState = MutableStateFlow(ConnectionState.Disconnected)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
@@ -106,10 +143,39 @@ class ConnectionManager(
     private val _isInsecureConnection = MutableStateFlow(false)
     val isInsecureConnection: StateFlow<Boolean> = _isInsecureConnection.asStateFlow()
 
+    // ADR 24 — currently-active endpoint candidate. Null when the manager is
+    // running in legacy single-URL mode (no resolver wired, no candidates in
+    // DataStore, or resolve() returned null and we fell back to the caller's
+    // URL). Surfaced through [activeEndpoint] for the UI status chip + the
+    // Endpoints card in Settings.
+    private val _activeEndpoint = MutableStateFlow<EndpointCandidate?>(null)
+    val activeEndpoint: StateFlow<EndpointCandidate?> = _activeEndpoint.asStateFlow()
+
+    /**
+     * Manual role override. When non-null, the resolver's output is replaced
+     * with whichever candidate in the stored list matches this role (case-
+     * insensitive) — provided it's reachable. Reachability still gates: a
+     * user-preferred endpoint that doesn't respond to HEAD /health falls
+     * back through the normal priority chain.
+     *
+     * Cleared on [disconnect] per ADR 24's "clears on disconnect" semantics
+     * from the UI card.
+     */
+    @Volatile
+    private var manualRoleOverride: String? = null
+
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
     companion object {
         private const val TAG = "ConnectionManager"
         private const val MAX_BACKOFF_MS = 30_000L
         private const val BASE_BACKOFF_MS = 1_000L
+        // Matches plugin.relay.auth._BLOCK_SECONDS (5 min). If we see 429
+        // on the WSS upgrade, we're IP-banned server-side — retrying at
+        // our normal 1-30s cadence re-fills the ban bucket and keeps us
+        // banned forever. Waiting at least as long as the server's block
+        // duration lets the ban expire naturally.
+        private const val RATE_LIMIT_BACKOFF_MS = 300_000L
     }
 
     fun setInsecureMode(enabled: Boolean) {
@@ -120,6 +186,38 @@ class ConnectionManager(
     }
 
     fun connect(url: String) {
+        // Register the network callback on the first connect attempt. We
+        // only do this once per manager lifetime; [shutdown] tears it down.
+        ensureNetworkCallbackRegistered()
+
+        // ADR 24: if we have a resolver + device id, try the multi-endpoint
+        // path first. Fall back to the caller-supplied URL whenever the
+        // resolver returns nothing — preserving pre-ADR-24 single-URL
+        // behavior for freshly-upgraded installs and for v1/v2 QRs where
+        // the synthesized list just collapses to the same URL anyway.
+        scope.launch {
+            val resolved = resolveBestEndpointSafe()
+            val targetUrl = resolved?.relay?.url ?: url
+            if (resolved != null) {
+                _activeEndpoint.value = resolved
+                Log.i(TAG, "connect: resolver picked role=${resolved.role} " +
+                    "relay=${resolved.relay.url} (fallback would have been $url)")
+            } else {
+                _activeEndpoint.value = null
+                Log.d(TAG, "connect: no resolver winner — using supplied url $url")
+            }
+            connectToUrlOnMainPath(targetUrl)
+        }
+    }
+
+    /**
+     * Same as [connect] but bypasses the resolver — used by the network-
+     * change callback when we've already picked a winner and just want to
+     * reopen the socket against that URL. Keeping this separate prevents
+     * the callback from re-running the resolve loop inside another
+     * resolve loop.
+     */
+    private fun connectToUrlOnMainPath(url: String) {
         val isInsecure = url.startsWith("ws://") && !url.startsWith("wss://")
         if (isInsecure && !_insecureMode.value) {
             Log.e(TAG, "Blocked ws:// connection — insecure mode is disabled. Use wss:// or enable insecure mode in Settings.")
@@ -147,6 +245,151 @@ class ConnectionManager(
         doConnect(normalized)
     }
 
+    // ----- ADR 24 — multi-endpoint resolution --------------------------------
+
+    /**
+     * Load the device's stored [EndpointCandidate] list and hand it to
+     * [EndpointResolver.resolve]. Returns `null` when any precondition is
+     * missing (no resolver wired, no context, no device id, empty list) OR
+     * when no candidate was reachable — caller then falls back to the
+     * legacy single-URL path.
+     *
+     * Wraps the DataStore read in a 1-second timeout; if DataStore stalls
+     * for any reason we don't block the connect loop forever.
+     */
+    suspend fun resolveBestEndpoint(): EndpointCandidate? = resolveBestEndpointSafe()
+
+    private suspend fun resolveBestEndpointSafe(): EndpointCandidate? {
+        val resolver = endpointResolver ?: return null
+        val ctx = context ?: return null
+        val devicePull = deviceIdProvider ?: return null
+
+        val deviceId = try {
+            withTimeoutOrNull(1_000L) { devicePull() }
+        } catch (_: Exception) {
+            null
+        } ?: return null
+
+        val endpoints: List<EndpointCandidate> = try {
+            withTimeoutOrNull(1_000L) {
+                PairingPreferences.getDeviceEndpoints(ctx, deviceId).first()
+            }
+        } catch (_: Exception) {
+            null
+        } ?: emptyList()
+
+        if (endpoints.isEmpty()) return null
+
+        // Manual override: if the user pinned a role in the Endpoints card,
+        // try that one first; fall through to the strict-priority algorithm
+        // if it isn't reachable.
+        manualRoleOverride?.let { preferredRole ->
+            val preferred = endpoints.firstOrNull {
+                it.role.equals(preferredRole, ignoreCase = true)
+            }
+            if (preferred != null) {
+                // Single-element list still respects the 2s probe gate.
+                val winner = resolver.resolve(listOf(preferred))
+                if (winner != null) return winner
+                Log.i(TAG, "manualRoleOverride=$preferredRole not reachable — " +
+                    "falling through to strict-priority resolve")
+            }
+        }
+
+        return resolver.resolve(endpoints)
+    }
+
+    /**
+     * User-triggered re-probe. Forces a fresh resolve + reconnect regardless
+     * of cache state. Backs the "Probe now" row action in the Endpoints card.
+     */
+    fun probeAndReconnect() {
+        endpointResolver?.clearCache()
+        val current = serverUrl ?: return
+        scope.launch {
+            val resolved = resolveBestEndpointSafe()
+            val targetUrl = resolved?.relay?.url ?: current
+            _activeEndpoint.value = resolved
+            // Only reconnect if the target actually changed — otherwise the
+            // cache bust alone was enough and the user's socket should stay
+            // open.
+            if (normalizeRelayUrl(targetUrl) != current) {
+                Log.i(TAG, "probeAndReconnect: swapping $current → $targetUrl")
+                webSocket?.close(1000, "Endpoint re-probe")
+                connectToUrlOnMainPath(targetUrl)
+            }
+        }
+    }
+
+    /**
+     * Pin a specific role as the preferred endpoint. Cleared on [disconnect]
+     * per the Endpoints-card contract. No-op until the next connect / probe
+     * cycle — call [probeAndReconnect] to apply immediately.
+     */
+    fun setManualRoleOverride(role: String?) {
+        manualRoleOverride = role?.takeIf { it.isNotBlank() }
+        Log.i(TAG, "manualRoleOverride now=${manualRoleOverride ?: "(cleared)"}")
+    }
+
+    fun getManualRoleOverride(): String? = manualRoleOverride
+
+    private fun ensureNetworkCallbackRegistered() {
+        val ctx = context ?: return
+        if (networkCallback != null) return
+        val cm = ctx.getSystemService(ConnectivityManager::class.java) ?: return
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                Log.i(TAG, "network onAvailable — re-evaluating endpoint")
+                if (endpointResolver == null) return
+                val url = serverUrl ?: return
+                scope.launch {
+                    val resolved = resolveBestEndpointSafe()
+                    val newUrl = resolved?.relay?.url ?: return@launch
+                    val normalizedNew = normalizeRelayUrl(newUrl)
+                    // Only swap if the winner actually differs from the
+                    // currently-connected URL. Avoids dropping a healthy
+                    // socket on a no-op network flap (Wi-Fi scan, cell
+                    // handover that ends up on the same route, etc.).
+                    if (normalizedNew != url) {
+                        Log.i(TAG, "network change: swapping $url → $normalizedNew")
+                        _activeEndpoint.value = resolved
+                        webSocket?.close(1000, "Network change — switching endpoint")
+                        connectToUrlOnMainPath(newUrl)
+                    }
+                }
+            }
+
+            override fun onLost(network: Network) {
+                Log.i(TAG, "network onLost — marking active endpoint unreachable")
+                val active = _activeEndpoint.value ?: return
+                endpointResolver?.markUnreachable(active)
+            }
+        }
+        try {
+            val request = NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build()
+            cm.registerNetworkCallback(request, callback)
+            networkCallback = callback
+            Log.i(TAG, "registered NetworkCallback for ADR 24 re-resolution")
+        } catch (e: Exception) {
+            Log.w(TAG, "registerNetworkCallback failed: ${e.message}")
+        }
+    }
+
+    private fun unregisterNetworkCallback() {
+        val ctx = context ?: return
+        val cb = networkCallback ?: return
+        try {
+            val cm = ctx.getSystemService(ConnectivityManager::class.java)
+            cm?.unregisterNetworkCallback(cb)
+        } catch (e: Exception) {
+            Log.w(TAG, "unregisterNetworkCallback failed: ${e.message}")
+        } finally {
+            networkCallback = null
+        }
+    }
+
     private fun normalizeRelayUrl(url: String): String {
         // Strip scheme to reason about the path portion cheaply.
         val schemeEnd = url.indexOf("://")
@@ -169,10 +412,16 @@ class ConnectionManager(
         webSocket = null
         _connectionState.value = ConnectionState.Disconnected
         _isInsecureConnection.value = false
+        // ADR 24: clear manual override on explicit disconnect — the
+        // Endpoints card's "Prefer this endpoint" contract is that it lasts
+        // until the user disconnects, then resets to resolver-picked.
+        manualRoleOverride = null
+        _activeEndpoint.value = null
     }
 
     fun shutdown() {
         disconnect()
+        unregisterNetworkCallback()
         supervisorJob.cancel()
         client.dispatcher.executorService.shutdown()
         client.connectionPool.evictAll()
@@ -208,6 +457,7 @@ class ConnectionManager(
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 reconnectAttempt = 0
+                lastUpgradeResponseCode = null
                 _connectionState.value = ConnectionState.Connected
                 Log.i(TAG, "onOpen: WSS handshake complete ($url)")
 
@@ -252,7 +502,9 @@ class ConnectionManager(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                Log.w(TAG, "onFailure: ${t.javaClass.simpleName}: ${t.message} (responseCode=${response?.code})")
+                val code = response?.code
+                Log.w(TAG, "onFailure: ${t.javaClass.simpleName}: ${t.message} (responseCode=$code)")
+                lastUpgradeResponseCode = code
                 _connectionState.value = ConnectionState.Disconnected
                 scheduleReconnect()
             }
@@ -276,8 +528,17 @@ class ConnectionManager(
         val url = serverUrl ?: return
         reconnectAttempt++
 
-        val backoffMs = (BASE_BACKOFF_MS * (1L shl minOf(reconnectAttempt - 1, 4)))
-            .coerceAtMost(MAX_BACKOFF_MS)
+        // Server-issued 429 means we're IP-banned — keep retrying at our
+        // normal exponential cadence and we'll re-fill the ban bucket on
+        // every attempt, extending the ban indefinitely. Wait out the
+        // server's full block window instead.
+        val backoffMs = if (lastUpgradeResponseCode == 429) {
+            Log.i(TAG, "scheduleReconnect: rate-limited (429) — backing off ${RATE_LIMIT_BACKOFF_MS}ms")
+            RATE_LIMIT_BACKOFF_MS
+        } else {
+            (BASE_BACKOFF_MS * (1L shl minOf(reconnectAttempt - 1, 4)))
+                .coerceAtMost(MAX_BACKOFF_MS)
+        }
 
         scope.launch {
             delay(backoffMs)

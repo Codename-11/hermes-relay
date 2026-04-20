@@ -161,6 +161,14 @@ Phone (WSS)      → Relay Server (:8767)          [bridge, terminal]
 
 ### 8. Dynamic Personalities over Hardcoded Profiles
 
+> **Terminology note (2026-04-18):** The word "Profiles" in this decision's title predates the multi-server / multi-agent work landed in §19 and §21. Today's vocabulary:
+>
+> - **Connection** (§19) — a paired Hermes *server*. What earlier drafts sometimes called a "profile".
+> - **Profile** (§21) — an upstream-Hermes agent directory (`~/.hermes/profiles/<name>/`). Overlays model + SOUL on chat turns.
+> - **Personality** (this decision) — a system-prompt preset *within* one agent's config.
+>
+> This decision is unchanged; only the surrounding vocabulary shifted.
+
 **Decision:** Fetch personalities from `GET /api/config` → `config.agent.personalities` (name → system prompt map). Display active personality name on chat bubbles. Send selected personality's system prompt via `system_message` field.
 
 **Why:**
@@ -619,9 +627,55 @@ The `data` field tells the activity log and agent trace which tier succeeded, wh
 - `app/src/main/kotlin/com/hermesandroid/relay/bridge/BridgeStatusOverlay.kt` — `BridgeStatusOverlayChip` amber variant (shipped with the initial v0.4.1 unattended work)
 - `docs/spec.md` §5 Bridge Tab — user-facing description
 
+### 19. Multi-Connection Support — one app, many Hermes servers (2026-04-18)
+
+> **Terminology note (2026-04-18):** earlier drafts of this design called these "profiles" — that's been renamed to "Connection" to avoid collision with Hermes's in-config agent profiles concept (agent.profiles in config.yaml defines name + model + description for each agent personality). A follow-up pass will introduce the agent-profile layer on top of the connection layer described here.
+
+**Decision:** Formalize the implicit single-server connection as a first-class `Connection` entity, with a `ConnectionStore` that holds N connections in DataStore and persists the active one. Switching connection is a heavy context swap: cancel in-flight SSE, disconnect relay WSS, rebuild `HermesApiClient`, update URL `StateFlow`s (which `RelayHttpClient`/`RelayVoiceClient` providers already re-read lazily), rebuild `AuthManager` against a connection-scoped `EncryptedSharedPreferences` file, reconnect, reprobe capabilities, reload sessions/personalities, restore per-connection last-active session.
+
+**Why:**
+- Users with multiple Hermes installs (home + work, dev + prod, multiple NAS hosts) want to switch targets without wiping pairing state or re-running onboarding.
+- A "connection" in this app's terminology is *a separate gateway instance* — there is no `/api/connections` endpoint to enumerate. The honest model is "connection = baseUrl + bearer + pairing record". This also matches how Discord achieves multi-agent-in-one-channel: each "agent" is a distinct bot backed by its own gateway.
+- Personalities (Decision 8) are orthogonal and remain per-connection — each server exposes its own personality map via `/api/config`.
+
+**How:**
+- **Connection model:** UUID id, editable label (default = hostname), `apiServerUrl`, `relayUrl`, `tokenStoreKey` (EncryptedSharedPreferences file name), `pairedAt`, `lastActiveSessionId`, `transportHint`, `expiresAt`. Serialized as a JSON array in DataStore key `connections_v1`; active connection in `active_connection_id`.
+- **Migration:** on first launch of the new version, `ConnectionStore.migrateLegacyConnectionIfNeeded()` seeds connection 0 with the existing `hermes_companion_auth_hw` file as its store — zero re-pair, zero token migration, fully transparent to the user. Additionally, the DataStore key rename (`profiles_v1` → `connections_v1`, `active_profile_id` → `active_connection_id`) migrates in-place on first launch after the rename pass.
+- **Auth layer:** `SessionTokenStore.tryCreate()` accepts a `prefsName` parameter; `AuthManager` gains a `connectionId` constructor parameter and picks the store file via `Connection.buildTokenStoreKey(id)`. `CertPinStore` is unchanged — pins are already keyed by `host:port` and correctly shared across connections targeting the same server.
+- **Network rebind:** `RelayHttpClient` and `RelayVoiceClient` take provider lambdas that read URL + token at call time, so updating the backing `MutableStateFlow`s is sufficient — no client recreation. `HermesApiClient` is recreated (private OkHttp pool + SSE factory), using the existing `rebuildApiClient()` path in `ConnectionViewModel`.
+- **UI:** top-bar connection chip → `ConnectionSwitcherSheet` bottom sheet with radio list + "Manage connections…" link. `Screen.ConnectionsSettings` hosts card CRUD: rename (inline), re-pair (reuses `ConnectionWizard` with `connectionId` nav arg), revoke, remove.
+- **Remove semantics:** `ConnectionStore.removeConnection()` calls `context.deleteSharedPreferences(tokenStoreKey)` to wipe the connection's auth material. Cert pin survives in the global TOFU map keyed by host:port so re-adding the same server is still trusted.
+
+**Scope — what's per-connection vs. global:**
+
+| Per-connection | Global |
+|---|---|
+| API baseUrl + bearer | Theme, dev-mode toggles |
+| Sessions, messages, search | Bridge safety prefs (blocklist, destructive verbs, auto-disable) |
+| Personalities (`/api/config`) | Feature flags / DataStore overrides |
+| Skills, memory | Notification companion enabled/disabled |
+| Relay WSS endpoint + cert pin (shared by host) | Keystore itself (one keystore, many entries) |
+| Voice transcribe/synthesize endpoint | |
+| Bridge command target | |
+| Last-active session ID | |
+
+**Trade-off — Bridge safety prefs are global:** a blocklist entry added for server A also applies when connected to server B. Accepted for v1 because the safety model is phone-wide (one user, one device, same risk appetite). If users report the shared blocklist biting, split per-connection later — the store shape allows it without breaking compatibility.
+
+**Trade-off — "both agents in one channel" (Discord-style) deferred:** a unified chat view showing interleaved messages from two connections is possible but semantically fraught: sessions, memory, and tool calls don't merge on the server side, so the unified view would be purely client-side theater. Deferred until there's a concrete use case; v1 users switch contexts with one tap and carry on.
+
+**Upstream opportunity:** a real `/api/profiles` endpoint that returns `[{id, name, endpoint, model}]` from a single config would let one hermes install expose multiple agent profiles without the user running multiple daemons. That's the upcoming Pass 2 work on top of this connection layer — note that upstream's concept ("agent profile") is different from the multi-server concept this decision records ("connection"). Filed alongside `/api/commands` as a future contribution in `docs/upstream-contributions.md`.
+
+**References:**
+- `app/src/main/kotlin/.../data/ConnectionData.kt` — `Connection` + helpers
+- `app/src/main/kotlin/.../data/ConnectionStore.kt` — StateFlows + CRUD + migration
+- `app/src/main/kotlin/.../auth/AuthManager.kt` — `connectionId` ctor. (The `sessionLabels` field mentioned in earlier drafts has been replaced by `agentProfiles: StateFlow<List<Profile>>` in §21.)
+- `app/src/main/kotlin/.../viewmodel/ConnectionViewModel.kt` — `switchConnection()` orchestration
+- `app/src/main/kotlin/.../ui/components/ConnectionSwitcherSheet.kt` — bottom-sheet switcher
+- `app/src/main/kotlin/.../ui/screens/ConnectionsSettingsScreen.kt` — CRUD screen
+
 ---
 
-### 19. Dashboard plugin: single plugin with internal tabs + pre-built IIFE bundle (2026-04-18)
+### 20. Dashboard plugin: single plugin with internal tabs + pre-built IIFE bundle (2026-04-18)
 
 **Context:** The upstream Dashboard Plugin System landed on hermes-agent's `axiom` branch in three commits (`01214a7f` plugin system, `3f6c4346` theme, `247929b0` OAuth providers). The gateway now scans `~/.hermes/plugins/<name>/dashboard/manifest.json` at startup and exposes registered plugins as tabs in the web UI, with a frontend SDK exposed at `window.__HERMES_PLUGIN_SDK__` (React + shadcn subset + hooks) and a plugin-registration global at `window.__HERMES_PLUGINS__.register(name, Component)`. Several deferred items from the MVP audit (cron manager, skills browser, memory viewer) previously blocked on "needs relay extension" flip with this system — most belong in the upstream dashboard directly. The relay plugin only needs to surface the four items that **only the relay knows about**: paired-device state, bridge command history, push delivery (future), and active `MediaRegistry` tokens. The question was how to ship those four surfaces cleanly.
 
@@ -669,6 +723,101 @@ Four sub-decisions captured together:
 - `plugin/relay/media.py` — `MediaRegistry.list_all()` (commit `2212fbc`)
 - `docs/spec.md` §10.1 Dashboard plugin — user-facing overview + route table
 - `docs/relay-server.md` HTTP Routes — wire-shape details for `/bridge/activity`, `/media/inspect`, `/relay/info`, `/sessions` loopback branch
+
+### 21. Agent Profile picker — directory-discovered overlay of model + SOUL (2026-04-18)
+
+**Decision:** The relay auto-discovers upstream Hermes profiles by scanning `~/.hermes/profiles/*/` (plus a synthetic "default" entry for the root `~/.hermes/config.yaml`). Each discovered profile is advertised in the `auth.ok` payload as `{name, model, description, system_message}`. On chat send with a profile selected, the phone overrides the request's `model` field with the profile's model AND uses the profile's `SOUL.md` content (carried in `system_message`) as the request's `system_message`. Selection is ephemeral and clears on Connection switch.
+
+**Why this supersedes the original §21 design:**
+
+The first pass read from a fictional top-level `profiles:` / `agents:` list in `~/.hermes/config.yaml`. Upstream Hermes has **never** used that schema — profiles upstream are isolated directory instances at `~/.hermes/profiles/<name>/`, each with its own `config.yaml`, `.env`, `SOUL.md`, memory, sessions, skills, and (optionally) its own gateway daemon. The old path always returned an empty list on real installs, which is why nothing ever populated in the picker.
+
+Rather than invent our own schema, match upstream's layout. The relay scans the directory, reads each profile's config.yaml + SOUL.md, and reports what's really there.
+
+**Three-layer model (unchanged at the UI level):**
+- **Connection** (§19) — which Hermes server + gateway. One scan per server.
+- **Profile** (this decision) — which upstream-layout agent directory on that server. Overlays model + SOUL.
+- **Personality** (§8) — which system-prompt preset *within* the agent's config.
+
+**How:**
+
+Server side (`plugin/relay/config.py`, `plugin/relay/server.py`):
+- `_load_profiles` rewritten to walk `~/.hermes/profiles/*/`. For each profile: `name = dir.name`; `model = config.yaml/model.default || "unknown"`; `description = config.yaml/description || first non-blank line of SOUL.md || ""`; `system_message = SOUL.md content || null`. Plus a synthetic `"default"` entry from the root config.
+- New `RelayConfig.profile_discovery_enabled: bool = True`. Set to `false` in the relay's config to skip the scan and advertise an empty list — matches our configurability pattern of "opt-out defaults" for discovery features. Disabled state is logged at INFO on startup.
+- `auth.ok` payload shape: each entry is `{"name": str, "model": str, "description": str, "system_message": str | null}` (snake_case on the wire).
+
+Client side (`app/src/main/kotlin/.../data/ProfileData.kt`, `auth/AuthManager.kt`, `viewmodel/ChatViewModel.kt`):
+- `Profile(name, model, description, systemMessage: String? = null)`, `@SerialName("system_message")` for the last field.
+- `AuthManager.parseAgentProfiles` reads the new `system_message` field (null-safe, default null).
+- `ChatViewModel` send path: if `selectedProfile != null`, pass `modelOverride = profile.model` AND, when `profile.systemMessage?.isNotBlank() == true`, use `profile.systemMessage` as the `system_message` override. Profile's `system_message` WINS over the personality's system message when both are selected — the profile is a richer/newer concept, and picking both implies the user wants the profile's full persona.
+- `ConnectionViewModel.selectedProfile` and the reset-on-Connection-switch rule are unchanged from the earlier pass; `HermesApiClient.modelOverride` is unchanged.
+
+**Trade-offs / v1 scope:**
+- **Overlay, not isolation.** Selecting a profile on the phone routes through the active Connection's gateway with the profile's model + SOUL applied. The profile's `.env` (different API keys), memory, sessions, skills, and cron jobs stay with the Connection's default gateway. For fully isolated profile state, run the profile's own gateway (`hermes -p <name> platform start api --port <other>`) and pair it as a **separate Connection**. The server-side docs for this live in `plugin/relay/config.py` + `user-docs/features/profiles.md`.
+- **SOUL.md size.** Some SOUL files are multi-KB (Mizu's is 8 KB). The full content ships as `system_message` on every chat turn. Upstream's personality path already ships a system prompt per turn, so this is consistent — but it's worth keeping SOUL.md concise.
+- **Ephemeral only.** Selection doesn't persist across app restarts. Re-opening the app lands on server-default. Persisting per-Connection is a ~30-line extension (add `lastSelectedProfileName` to the Connection data class) — filed as a follow-up.
+- **Chat-only.** Voice transcribe/synthesize and bridge commands don't honor the profile selection. Voice routes through `/voice/*` relay endpoints that don't carry `model` or `system_message`; bridge is unrelated to model choice.
+- **Config toggle.** `profile_discovery_enabled = false` lets a server op keep the phone picker empty (e.g. if the operator wants Connections-only semantics). Per our configurability pattern of "enable useful defaults, let the operator opt out."
+
+**Earlier (abandoned) design, for the record:**
+
+First attempt parsed a top-level `profiles:` / `agents:` list from one YAML. That schema does not exist upstream and always returned empty on real installs. The data class + picker + `modelOverride` wiring from that attempt are preserved; only the data source + the addition of `system_message` changed. See commits `0303a4f` (initial parse), `b9d2914` (build fix), and the R1/R2 pass that followed this decision rewrite.
+
+**References:**
+- `app/src/main/kotlin/.../data/ProfileData.kt` — the data class
+- `app/src/main/kotlin/.../auth/AuthManager.kt` — `parseAgentProfiles` companion
+- `app/src/main/kotlin/.../viewmodel/ChatViewModel.kt` — precedence rule
+- `app/src/main/kotlin/.../network/HermesApiClient.kt` — `modelOverride`
+- `app/src/main/kotlin/.../ui/components/ProfilePicker.kt` — chip + dropdown
+- `plugin/relay/config.py:_load_profiles` — directory-scan source of truth
+- `plugin/relay/server.py` — auth.ok payload emission (enriched shape)
+- Upstream doc: `~/.hermes/hermes-agent/website/docs/user-guide/profiles.md` (canonical profile-layout definition)
+
+---
+
+### 22. Profile-scoped read-only config + skills API (2026-04-18)
+
+**Decision:** Add two relay-native HTTP routes — `GET /api/profiles/{name}/config` and `GET /api/profiles/{name}/skills` — that read `<profile_home>/config.yaml` and walk `<profile_home>/skills/<category>/<name>/SKILL.md` respectively. Both are read-only, use the existing loopback-or-bearer auth pattern (matching `/notifications/recent`), and resolve `name` via the same `default → ~/.hermes` / otherwise → `~/.hermes/profiles/<name>` helper used by `_load_profiles`. For `PUT /api/skills/toggle` (the upstream toggle shape the phone's capability probe checks), the bootstrap registers a stubbed handler that always returns **501 Not Implemented** with a structured `{"error": "skill_toggle_not_implemented", ...}` body.
+
+**Why relay-native, not a dashboard proxy:**
+
+The hermes-agent dashboard exposes `/api/config` and `/api/skills` via `hermes_cli/web_server.py` — a separate loopback-only web server from the chat API at `:8642`. Two problems if we proxied through the dashboard:
+1. **No profile scoping.** The dashboard's `/api/config` operates on the active profile only; there's no way to read another profile's config without switching first. Our relay already has the layout knowledge (`_load_profiles` scans the tree); duplicating that as "switch profile, read, switch back" is fragile and racy.
+2. **Secrets leakage risk.** `config.yaml` never holds credentials (those live in `~/.hermes/.env` + `~/.hermes/auth.json`), but proxying a general-purpose config endpoint invites future callers to pick up sensitive fields. A purpose-built read route keeps the attack surface small and the shape explicit — the response is `{profile, path, config, readonly: true}`, with the `readonly` flag part of the contract so clients can't silently assume write support.
+
+Both endpoints trust the same boundary as every other phone-facing relay route: bearer-auth for remote callers, loopback for in-process dashboard proxy calls. `.env` and `auth.json` are **never** read or returned by these routes.
+
+**Why read-only in v0.7:**
+
+Write support would require an `active_profile` routing layer on the relay — picking which profile's config to mutate, flushing caches, notifying any running gateway daemon for that profile. hermes-desktop handles this by shelling out to `hermes profile use <name>` + `hermes config set ...`, which bakes the lifecycle into the CLI. Doing the equivalent from the relay means either (a) shelling out (new subprocess surface, env handling, error classification) or (b) reimplementing the write path in Python (duplicates upstream logic, risks drift). Neither belongs in this pass. The `readonly: true` field in the response is a deliberate contract — callers that probe it can hide edit UI cleanly when (eventually) a v0.8 server drops the flag.
+
+**Why 501 on `PUT /api/skills/toggle` instead of omitting the route:**
+
+`tools.skills_tool` (the upstream module the bootstrap already imports for `skills_list` / `skill_view`) has no clean enable/disable hook — that logic lives on `hermes_cli.web_server.py`, which the relay doesn't proxy. Three options:
+1. Don't register the route → 404 → Android capability probe can't tell "toggle not implemented" from "wrong URL / server too old."
+2. Register with full behavior → requires either shelling to the CLI or duplicating upstream persistence. Same objections as write-path above, worse because skill toggle state is per-profile and upstream persists it in a JSON sidecar whose shape we don't want to pin.
+3. Register a 501 stub with a stable structured body → capability probe sees the route, reads `error: "skill_toggle_not_implemented"`, renders the toggle UI as disabled with a tooltip. Client logic stays a simple switch on error code; no magic version sniffing.
+
+We pick (3). When upstream PR #8556 or a follow-up exposes a real toggle on `api_server.py`, we flip the stub to call through — the Kotlin client sees the 501 disappear and the toggle unlocks.
+
+**Trade-offs:**
+- **Profile scoping is a directory lookup, not an active-profile check.** The request says "read profile X"; we do not require X to be the currently-active profile for the dashboard or for any gateway daemon. This matches the read-only intent — the phone picker shows every profile's shape, even ones no gateway is running against.
+- **Skill `enabled: true` is hardcoded.** We don't track disabled state server-side yet; the field is part of the response only so the shape aligns with upstream's eventual toggle response. Keep it stable so the Kotlin model doesn't need reshuffling when toggles land.
+- **No pagination on skills.** A profile with thousands of skills would get a fat response, but that's well outside current usage (the populous profiles on our server carry 20-40 skills). Revisit if this stops being true.
+- **Path-traversal guard is light.** Profile name is rejected if it contains `/`, `\\`, `.`, or `..`. That's enough for the `profiles/<name>/` join we do, and matches how `_load_profiles` already trusts `iterdir()` results — names that arrive over the wire get the extra check.
+
+**Why not just surface `_load_profiles`'s new `gateway_running` / `has_soul` / `skill_count` everywhere?**
+
+Those fields (added in the same commit series — see `auth.ok` profile shape) are intentionally summary-only. The picker uses them to render status; the detail screen pulls the full config + skill list via the new endpoints. Splitting summary (cheap, piggybacks on existing `auth.ok`) from detail (expensive enough to warrant on-demand HTTP) keeps pairing snappy even for servers with many skills per profile.
+
+**References:**
+- `plugin/relay/server.py` — `handle_profile_config`, `handle_profile_skills`, `_resolve_profile_home`
+- `plugin/relay/config.py:_load_profiles` — summary-field source (§21)
+- `hermes_relay_bootstrap/_handlers.py:toggle_skill` — 501 stub
+- `docs/spec.md` §6.1 — HTTP routes table rows
+- `TEMP-hermes-desktop-analysis.md` (session scratch, soon deleted) — `hermes-desktop` patterns we cross-referenced for the read/write split and credential-pool separation
+
+**Scope addendum (2026-04-18):** Followed up with two more profile-scoped read routes — `GET /api/profiles/{name}/soul` and `GET /api/profiles/{name}/memory` — to feed the phone Profile Inspector's four-section layout (config / SOUL / memory / skills). Both reuse `_resolve_profile_home`, the loopback-or-bearer gate, and the `profile_not_found` 404 shape from the original two endpoints. Content is capped inline at **200KB for SOUL.md** and **50KB per memory file**; larger bodies flag `truncated: true` and clients see the on-disk `size_bytes` so they know real dimensions without fetching the full body. The caps exist because the Inspector is a viewer, not a diff or edit tool — phone-safe wire sizes matter more than lossless fidelity, and anyone who needs a full dump has the dashboard. Memory listing is intentionally non-recursive (one `iterdir` pass, no `rglob`) so subdirectories under `memories/` — used by some users for archival snapshots — don't spam the response. `MEMORY.md` and `USER.md` (per upstream `hermes_cli/profiles.py`) sort first; the rest are alphabetical, so the ordering is stable across filesystems. Absent SOUL.md returns 200 with `exists: false`; absent `memories/` returns 200 with an empty `entries` array — both let the Inspector render the section rather than mask "no content yet" as a transport failure.
 
 ---
 
@@ -756,3 +905,269 @@ The plan called for adding a `// VOICE HOOK` callback to `ChatViewModel` so `Voi
 - `app/src/main/kotlin/.../ui/components/VoiceModeOverlay.kt` — full-screen overlay, VoiceState→SphereState mapping, three interaction modes
 - `app/src/main/kotlin/.../ui/components/MorphingSphere.kt` — Listening/Speaking states, `voiceAmplitude`/`voiceMode` params, @Preview functions for iteration
 - Obsidian plan: `3. System/Projects/Hermes-Relay/Plans/Voice Mode.md`
+
+### 23. Branch policy: `main` + `dev` (2026-04-19)
+
+**Evolution of the earlier "Feature branches" policy (2026-04-13):** the
+original rule was "feature branches merge into `main` continuously, `main`
+is always shippable." That worked while the project was small but produced
+two operational frictions as it grew:
+
+1. **Staging had no home.** The server pulled `main` for dogfood, so any
+   feature that passed CI was immediately exercised against real pairing /
+   bridge / voice state. When a merged-but-rough feature hit a bug on the
+   server, rolling back meant reverting a merge commit on the shippable
+   branch, which fought the "main is always shippable" invariant.
+2. **Release cadence and merge cadence were entangled.** Cutting a release
+   meant version-bumping on `main`, which required a branch-protection
+   carve-out (`release: vX.Y.Z` direct pushes) because atomic bump + tag
+   couldn't round-trip through a PR without racing another merge.
+
+**New policy:**
+- `main` = **released state only**. Every commit corresponds to a tag or
+  a release-merge from `dev`.
+- `dev` = **integration branch**. Feature branches target `dev`; the
+  `[Unreleased]` CHANGELOG section lives there.
+- Server pulls `dev` for staging. Users and `hermes-relay-update` track
+  `main` and tags.
+- Releases are opened as PRs from `dev` into `main`, merged `--no-ff`,
+  then tagged from `main`. No direct-push carve-out is needed — the
+  release PR is just a normal PR.
+
+**Trade-offs accepted:**
+- **Hotfix sync step.** When a hotfix lands on `main` from a tag
+  (bypassing `dev`), you have to merge `main` back into `dev` so the next
+  release doesn't collide on `appVersionCode`. Documented in RELEASE.md
+  hotfix recipe.
+- **Two branches to keep up to date.** Feature-branch authors need to
+  remember that the base is `dev`, not `main`. Mitigated by branch
+  protection on both and by CI running on both.
+- **Server tracks pre-release state.** Post-policy the server pulls
+  `dev`, so the real shift is that the Play Store / sideload-update
+  audience now trails `dev` by a release cadence, not a merge cadence.
+
+**CI impact:** the same workflow files trigger on both branches via
+path-filtered triggers (`ci-android.yml` / `ci-relay.yml` after the
+2026-04-19 split). `docs.yml` stays `main`-only — docs publish represents
+shipped state, not integration state. `release.yml` is tag-triggered and
+branch-agnostic, unchanged.
+
+**References:**
+- `CLAUDE.md` — "Git" section + "Testing / CI is split by path" note
+- `RELEASE.md` — "Branching policy" + Release Process step 4 + Hotfix recipe
+- `CONTRIBUTING.md` — "Commit Conventions"
+- `.github/workflows/ci-android.yml`, `.github/workflows/ci-relay.yml`
+- `scripts/bump-version.sh` — prints the dev → main release flow
+
+---
+
+### 24. Multi-endpoint pairing payload + network-aware switching (2026-04-19)
+
+**Problem:** pairing QRs today carry a single `host:port` (API) plus a single
+`relay.url`. That works for LAN-only operators, but the moment the phone
+moves between LAN / Tailscale / a public reverse-proxy hostname, the
+single URL is wrong half the time. Upstream hermes-agent's stance
+(SECURITY.md) is "use VPN / Tailscale / firewall or don't expose" — they
+don't plan to own a remote-access story. We do.
+
+**Decision:** Extend the QR schema with an **optional ordered list of
+endpoint candidates**. The phone picks the highest-priority reachable
+candidate at connect time and re-evaluates on network change. Old
+single-endpoint QRs remain valid — the phone synthesizes a single
+priority-0 candidate from the top-level fields when `endpoints` is absent.
+
+**Wire format (v3 — additive):**
+
+```json
+{
+  "hermes": 3,
+  "host": "192.168.1.100",
+  "port": 8642,
+  "key": "optional-api-key",
+  "tls": false,
+  "relay": { "url": "ws://192.168.1.100:8767", "code": "ABC123",
+             "ttl_seconds": 2592000, "grants": {...},
+             "transport_hint": "ws" },
+  "endpoints": [
+    { "role": "lan",       "priority": 0,
+      "api":   { "host": "192.168.1.100", "port": 8642, "tls": false },
+      "relay": { "url": "ws://192.168.1.100:8767",
+                 "transport_hint": "ws" } },
+    { "role": "tailscale", "priority": 1,
+      "api":   { "host": "hermes.tail-scale.ts.net", "port": 8642, "tls": true },
+      "relay": { "url": "wss://hermes.tail-scale.ts.net:8767",
+                 "transport_hint": "wss" } },
+    { "role": "public",    "priority": 2,
+      "api":   { "host": "hermes.example.com", "port": 443, "tls": true },
+      "relay": { "url": "wss://hermes.example.com/relay",
+                 "transport_hint": "wss" } }
+  ],
+  "sig": "base64-hmac-sha256"
+}
+```
+
+**Semantics (locked):**
+- **`role` is an open string.** Known values `lan` / `tailscale` / `public`
+  get styled chips + icons on the phone. Anything else (`wireguard`,
+  `zerotier`, `netbird-eu`, whatever the operator wants) renders with a
+  generic "Custom VPN" treatment and the raw role label. No enum, no
+  validation, no normalization — `role` is preserved exactly as emitted
+  so HMAC canonicalization round-trips.
+- **`priority` is strict, 0 = highest.** If priority-0 is reachable the
+  phone uses it; reachability never promotes a lower-priority candidate
+  over a higher one. Reachability is only the tiebreaker for candidates
+  that share the same priority. This is the DNS SRV priority/weight
+  contract — known-good semantics, nothing new to debate.
+- **Reachability probe**: `HEAD` against `${api.tls?https:http}://
+  ${api.host}:${api.port}/health` with a 2-second timeout. The result is
+  cached for 30 seconds per-endpoint so repeated `connect()` calls don't
+  hammer the network. Relay-side reachability is implied — if the API
+  server is reachable the relay usually is too, and the first WSS connect
+  will loudly fail otherwise.
+- **Network-change re-probe**: Android's `ConnectivityManager
+  .NetworkCallback.onAvailable` / `onLost` triggers a re-probe. If a
+  higher-priority candidate became reachable after a network transition,
+  the phone reconnects to it; if the current one became unreachable, the
+  phone falls through to the next candidate in priority order.
+- **TTL defaults by role** (informational — operator can override at
+  pair time): `lan` → 7 days, `tailscale` → 30 days, `public` → 30 days,
+  unknown role → 7 days (conservative). Plaintext-`ws://` consent still
+  gates any candidate with `transport_hint = "ws"`.
+
+**Canonicalization for the HMAC signature:** `canonicalize()` in
+`plugin/relay/qr_sign.py` uses `json.dumps(sort_keys=True,
+separators=(",",":"), ensure_ascii=True, allow_nan=False)`. Nested dicts
+are sort-keyed; **arrays preserve their emitted order** (priority is
+meaningful, not alphabetic). Role strings are embedded verbatim — no
+`.lower()`, no `.strip()`. A regression test in `plugin/tests/
+test_qr_sign.py` exercises this for mixed-case and non-ASCII role
+values so a future refactor can't silently divergence the canonical form.
+
+**Pin store:** `CertPinStore` continues to key by `host:port`, unchanged.
+Role doesn't participate in the pin key — if the operator points two
+roles at the same hostname they'll share a pin (which is correct: same
+cert, same pin). The role → hostname mapping lives in the per-device
+endpoint record in DataStore, read by the Paired Devices screen to
+render one row per `(device, endpoint)`.
+
+**Backward compatibility:**
+- `hermes: 1` and `hermes: 2` QRs continue to parse. When `endpoints` is
+  absent, the phone synthesizes a single priority-0 candidate of
+  `role: lan` (or `role: tailscale` if the top-level `host` matches the
+  Tailscale CGNAT pattern `100.64.0.0/10` or a `.ts.net` suffix — same
+  heuristics `TailscaleDetector` already uses).
+- `hermes: 3` is the first version that *requires* `endpoints`. The
+  bump is bookkeeping only; the parser is version-liberal
+  (`ignoreUnknownKeys = true` already, plus a nullable `endpoints`
+  field for the intermediate period when the server emits v3 but some
+  phones haven't updated yet).
+
+**Alternatives rejected:**
+- **Layer Noise / libsignal over WSS.** The operator owns both endpoints
+  and the transport is already TLS-terminated by the operator's chosen
+  path (Tailscale / reverse-proxy / WireGuard). A second crypto layer
+  adds complexity without defending against any threat in our model.
+- **Auto-promote reachability over priority** ("LAN is flaky, switch to
+  Tailscale even though priority-0 works"). Breaks operator intent; the
+  operator might have a reason for preferring LAN (zero egress billing,
+  lower latency, local-network-only policy). Strict priority keeps the
+  operator in charge.
+- **Close-vocabulary `role` enum.** Would force a release every time an
+  operator spun up a new mesh VPN. Open-string + known-values-display
+  map gives us the UI polish for common cases and zero friction for
+  unusual ones.
+
+**Key Files:**
+- `plugin/pair.py` — `build_payload()` emits `endpoints`; `--mode` /
+  `--public-url` flags; LAN-IP + Tailscale status auto-detection
+- `plugin/relay/qr_sign.py` — canonical form docstring now covers arrays
+- `plugin/relay/server.py` — `handle_pairing_mint` / `handle_pairing_register`
+  accept optional `endpoints` in the body
+- `plugin/tests/test_pairing_mint_schema.py` + `test_qr_sign.py`
+- `app/src/main/kotlin/.../data/Endpoint.kt` — new `EndpointCandidate`
+  data class
+- `app/src/main/kotlin/.../ui/components/QrPairingScanner.kt` — payload
+  extended; v1/v2 synthesizer
+- `app/src/main/kotlin/.../data/PairingPreferences.kt` — per-device
+  endpoint list store
+- `app/src/main/kotlin/.../network/ConnectionManager.kt` —
+  `resolveBestEndpoint()` + `NetworkCallback` plumbing
+- `app/src/main/kotlin/.../viewmodel/RelayUiState.kt` —
+  `activeEndpointRole` field
+- `skills/devops/hermes-relay-pair/SKILL.md` — new flags documented
+
+---
+
+### 25. First-class Tailscale helper as optional hermes enhancement (2026-04-19)
+
+**Problem:** the one piece of first-party upstream remote-access work
+([PR #9295](https://github.com/NousResearch/hermes-agent/pull/9295) —
+Tailscale Serve integration) is open but unmerged. Our current
+`TailscaleDetector` is informational-only. We want Tailscale to be a
+first-class supported mode today, without forking upstream.
+
+**Decision:** Ship a thin Tailscale helper in `plugin/relay/tailscale.py`
+that mirrors PR #9295's contract — keep the relay loopback-bound, let
+`tailscale serve --bg --https=<port> http://127.0.0.1:<port>` terminate
+TLS + identity. The helper is **optional** (no-op when the `tailscale`
+binary is absent) and **auto-retires** when upstream lands the canonical
+`hermes gateway run --tailscale` flag (detection via a one-shot capability
+probe; helper prints an `[info]` pointing at the canonical path and
+exits 0). Same pattern `hermes_relay_bootstrap/` uses for the
+session-API endpoints.
+
+**Surface:**
+- `plugin/relay/tailscale.py` — thin module: `status()`,
+  `enable(port=8767)`, `disable(port=8767)`, `canonical_upstream_present()`.
+  All shell out to `tailscale` CLI and return structured dicts; no new
+  daemon, no new state.
+- `scripts/hermes-relay-tailscale` — shell shim mirroring `hermes-pair`
+  pattern (see `project_hermes_plugin_cli_gap.md` memory — plugin
+  `register_cli_command` doesn't reach `main.py` argparse on v0.8.0,
+  so shell shim is the working path).
+- `install.sh` gets an optional step [7/7]: detect `tailscale` binary;
+  if present and the operator hasn't declined, offer to run
+  `tailscale serve --bg --https=8767 http://127.0.0.1:8767`. Skipped
+  silently if binary absent, `TS_DECLINE=1` set, or non-interactive
+  shell without `TS_AUTO=1`.
+- `plugin/pair.py --mode auto` calls `tailscale.status()`. If a `.ts.net`
+  hostname is available, emit a `role: tailscale` endpoint at the next
+  available priority after any `role: lan` entries.
+
+**Why this is the right shape:**
+- **Loopback-bound stays loopback-bound.** The relay keeps listening on
+  `127.0.0.1:8767`; Tailscale handles the TLS + external reachability.
+  No change to the relay's security posture.
+- **`tailscale serve` already handles auth** via tailnet ACLs + device
+  identity. We don't layer a second auth on top — the relay's existing
+  bearer-token session auth covers the application layer.
+- **Pins work unchanged.** The `.ts.net` hostname's cert is issued by
+  Tailscale's internal CA; TOFU pin captures it on first connect, same
+  mechanism as any other wss cert.
+- **Graceful absence.** Operator without Tailscale sees zero noise. All
+  failure modes exit non-fatal.
+
+**Upstream-merge retirement:** when PR #9295 lands, `canonical_upstream_present()`
+returns True (detected via `hermes gateway run --help | grep tailscale`
+or a `hermes.version >= X.Y.Z` gate — the exact probe is TODO until
+the PR lands and we see what its contract looks like). Helper then
+no-ops with a log line pointing at `hermes gateway run --tailscale`.
+`install.sh` gains an `# TODO(upstream-merge #9295):` comment marking
+the exit criteria. Same removal pattern as `hermes_relay_bootstrap/`
+after PR #8556.
+
+**Alternatives rejected:**
+- **Bundle our own `tailscaled` daemon.** Replaces Tailscale's existing
+  user-facing install / login flow with a worse one. Operators already
+  have Tailscale installed or don't — meeting them where they are is
+  strictly better.
+- **Wait for upstream PR #9295.** Unclear merge ETA; we'd ship v0.4.x
+  with the first-class-Tailscale UX paper-thin while waiting.
+
+**Key Files:**
+- `plugin/relay/tailscale.py` (new)
+- `scripts/hermes-relay-tailscale` (new) — shell shim
+- `plugin/tests/test_tailscale_helper.py` (new)
+- `install.sh` — optional step [7/7]
+- `plugin/pair.py` — `--mode auto` integration
+- `docs/remote-access.md` (new) — operator-facing setup guide

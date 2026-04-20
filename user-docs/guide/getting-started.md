@@ -167,6 +167,10 @@ The app also runs a **Trust On First Use** (TOFU) cert pinning check on `wss://`
 
 **Settings → Connection → Paired Devices** lists every device currently paired with the relay — device name, transport badge, session expiry, per-channel grant chips, and a **Revoke** button per row. Revoking the current device wipes local state and redirects to the pair flow. Any paired device can revoke any other; for single-operator setups this is intentional (so you can manage everything from one phone), multi-user deployments will need a role model later.
 
+::: tip Multiple Hermes servers
+The app supports pairing with more than one Hermes server (home + work, dev + prod, etc.) and switching with a single tap. Once you've paired the first server, open **Settings → Connections** to add a second — it launches the same QR flow. A Connection chip appears on the left of the Chat top bar as soon as you have two or more, letting you switch without re-pairing. See [Connections](/features/connections) for the full model.
+:::
+
 ::: warning Security
 The QR contains credentials — your API key if one is set, and the relay pairing code if a relay block was embedded. The pairing QR is now also signed with HMAC-SHA256 using a host-local secret (auto-created at `~/.hermes/hermes-relay-qr-secret`, mode 0o600). Don't screenshot or share it. The relay code is one-shot and expires in 10 minutes, but the API key is long-lived.
 :::
@@ -298,6 +302,20 @@ Run this on the same machine as hermes-agent. If the relay is running when you e
 For persistent deployment, Docker, systemd, and TLS options, see the [Relay Server docs](/reference/relay-server).
 
 If you only saw an API-only QR earlier (because the relay wasn't running), just start the relay and re-run `hermes-pair` — the new QR will include the relay block.
+
+## Connecting from Anywhere (Tailscale, VPN, Public URL)
+
+Hermes-Relay supports **multi-endpoint pairing**: one QR carries every network path your server is reachable on, and the phone auto-picks whichever is reachable at the moment. Works across LAN / cell / tailnet / public reverse proxy without re-pairing when you change networks.
+
+**Default — `--mode auto`.** `hermes-pair --mode auto` (run on the server) probes the LAN, detects Tailscale if it's running, and emits an ordered candidate list in the QR. To include an external reverse-proxy or Cloudflare Tunnel URL, add `--public-url https://hermes.example.com`.
+
+**Enable Tailscale on the server** with `hermes-relay-tailscale enable` — this fronts the loopback-bound relay port with `tailscale serve --https=8767`, using Tailscale's managed TLS + tailnet ACLs. Skip this if you prefer a reverse proxy + Let's Encrypt, or a self-hosted VPN — both work identically; Hermes-Relay doesn't care how the phone reaches the host as long as it can.
+
+**Forcing a specific mode at pair time** — `--prefer <role>` promotes a named role to priority 0 (e.g. `--prefer tailscale` for a QR biased toward the tailnet even when LAN is reachable). Open vocabulary — any role string you pass through `--mode` or a custom operator setup works here.
+
+**Override per-session on the phone** — Settings → Connection → Endpoints card → row menu → **Prefer this endpoint**.
+
+For the full matrix (Tailscale, Caddy + Let's Encrypt, Cloudflare Tunnel, self-hosted WireGuard, plaintext over trusted VPN) with working config blocks, see [remote-access.md](https://github.com/Codename-11/hermes-relay/blob/main/docs/remote-access.md) and the [Connections page](/features/connections#multi-endpoint-pairing-one-qr-for-every-network).
 
 ## Verify Connection
 

@@ -111,9 +111,19 @@ Talk to your Hermes agent from anywhere. Direct API streaming, session history, 
 | **Bridge** | Agent reads the screen and performs UI actions (tap, long-press, drag, type, clipboard, media, macros, events) | Available |
 | **Terminal** | Secure remote shell via tmux | Phase 2 |
 
+## What's new in v0.6.0
+
+- **Connect from anywhere** — multi-endpoint pairing with first-class Tailscale support; plug in any VPN or reverse proxy mode. See [`docs/remote-access.md`](docs/remote-access.md).
+- **Multi-Connection support** — pair with multiple Hermes servers (home + work, dev + prod, etc.) and switch in one tap from the Chat top bar. Each Connection keeps its own sessions, personalities, profiles, and relay state; theme and safety preferences stay global. Existing installs migrate transparently.
+- **Agent Profiles** — the relay auto-discovers upstream Hermes profiles at `~/.hermes/profiles/*/` and the phone overlays the selected profile's model + `SOUL.md` on chat turns. Ephemeral, chat-only, clears on Connection switch. Gated by `RELAY_PROFILE_DISCOVERY_ENABLED` (default on).
+- **Consolidated agent sheet** — Profile + Personality selection and per-session analytics now live in one scrollable bottom sheet opened from the Chat top-bar agent name.
+
+See the [changelog](CHANGELOG.md) for the full list.
+
 ## Features
 
 - **Streaming chat** — Direct SSE to the Hermes API Server with real-time markdown rendering, session history, tool-call visualization, personality picker, searchable command palette (29+ gateway commands), file attachments, and send-while-streaming message queuing
+- **Multi-Connection + agent profiles** — Pair with multiple Hermes servers and switch targets from the top bar; select an upstream-discovered agent profile to overlay model + `SOUL.md` on chat turns. Three-layer model: Connection (server) → Profile (agent directory) → Personality (prompt preset)
 - **Voice mode** — Real-time voice conversation via the relay; the sphere listens with you and performs the agent's reply as it speaks. Uses your server's configured TTS/STT providers (Edge TTS, ElevenLabs, OpenAI, MiniMax, Mistral, NeuTTS / faster-whisper, Groq, OpenAI Whisper)
 - **Phone control (bridge)** — The agent can read what's on screen and act on it — tap, long-press, drag, swipe, scroll, type, and press system keys — plus take screenshots, read/write the clipboard, and control system-wide media playback. Gesture reliability is hardened for dim/idle screens, and a smarter tap-fallback cascade handles apps where labels sit inside non-clickable wrappers
 - **Screen understanding** — Filtered accessibility-tree search, per-node property lookups with stable IDs, cheap screen-hash change detection, and multi-window reads (system overlays, popups, notification shade) so the agent can reason about UI without guessing

@@ -2,7 +2,10 @@ package com.hermesandroid.relay.ui.components
 
 import android.content.ClipData
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,9 +13,18 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -21,7 +33,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -32,18 +47,28 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.auth.AuthState
+import com.hermesandroid.relay.data.AppAnalytics
 import com.hermesandroid.relay.data.FeatureFlags
+import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.network.ChatMode
 import com.hermesandroid.relay.network.ConnectionState
+import com.hermesandroid.relay.ui.LocalSnackbarHost
+import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.launch
 
 // ---------------------------------------------------------------------------
@@ -178,7 +203,12 @@ fun SessionInfoSheet(
     val relayUrl by connectionViewModel.relayUrl.collectAsState()
     val relayConnectionState by connectionViewModel.relayConnectionState.collectAsState()
     val pairingCode by connectionViewModel.pairingCode.collectAsState()
-    val profiles by connectionViewModel.authManager.profiles.collectAsState()
+    // Pass 2 (2026-04-18): the old `sessionLabels: List<String>` field was
+    // replaced by a structured `agentProfiles: List<Profile>` on the VM
+    // (sourced from `auth.ok`'s `profiles` entry, whose items are objects
+    // with {name, model, description}). Render the profile names here so
+    // the user can confirm which agents the server advertised.
+    val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val pairedSession by connectionViewModel.currentPairedSession.collectAsState()
 
     ModalBottomSheet(
@@ -261,8 +291,12 @@ fun SessionInfoSheet(
             )
 
             InfoRow(
-                label = "Profiles",
-                value = if (profiles.isEmpty()) "(none)" else profiles.joinToString(", ")
+                label = "Agent profiles",
+                value = if (agentProfiles.isEmpty()) {
+                    "(none)"
+                } else {
+                    agentProfiles.joinToString(", ") { it.name }
+                }
             )
 
             // Security overhaul (2026-04-11) — show expiry + grants + storage.
@@ -528,6 +562,745 @@ fun RelayInfoSheet(
                     Text("Disconnect")
                 }
             }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 4. AgentInfoSheet
+// ---------------------------------------------------------------------------
+//
+// Consolidated "agent" sheet opened from the Chat top bar. Replaces the three
+// separate surfaces that used to split agent state across the UI:
+//   - the old AlertDialog on header tap (read-only connection summary)
+//   - the ProfilePicker chip (profile dropdown)
+//   - the PersonalityPicker chip (personality dropdown)
+//
+// One bottom sheet, one hierarchy: Profile → Personality → Connection. Mirrors
+// ChatViewModel.startStream's precedence rule: a profile with a non-blank
+// systemMessage overrides whatever personality is selected. When that case
+// triggers, the Personality section visually de-emphasizes (alpha drop) and
+// the Profile section footer spells out the override.
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AgentInfoSheet(
+    connectionViewModel: ConnectionViewModel,
+    chatViewModel: ChatViewModel,
+    onDismiss: () -> Unit,
+    onNavigateToConnections: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    // Profile + personality state — same flows the old pickers consumed.
+    val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
+    val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
+    val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
+    val personalityNames by chatViewModel.personalityNames.collectAsState()
+    val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
+
+    // Connection summary state.
+    val authState by connectionViewModel.authState.collectAsState()
+    val apiServerUrl by connectionViewModel.apiServerUrl.collectAsState()
+    val apiServerReachable by connectionViewModel.apiServerReachable.collectAsState()
+    val chatMode by connectionViewModel.chatMode.collectAsState()
+    val relayUrl by connectionViewModel.relayUrl.collectAsState()
+    val relayConnectionState by connectionViewModel.relayConnectionState.collectAsState()
+    val pairingCode by connectionViewModel.pairingCode.collectAsState()
+    val serverModelName by chatViewModel.serverModelName.collectAsState()
+
+    // Mid-stream gate — mirrors what ProfilePicker's `enabled` flag was doing:
+    // a radio tap during an in-flight chat turn would race the request. Apply
+    // to BOTH sections (profile + personality) since they both feed startStream.
+    val isStreaming by chatViewModel.isStreaming.collectAsState()
+
+    // Session context + analytics for the stats section. Session label
+    // derived by matching the currently-active session id against the
+    // cached sessions list (same pattern the old header dialog used
+    // before consolidation).
+    val messages by chatViewModel.messages.collectAsState()
+    val currentSessionId by chatViewModel.currentSessionId.collectAsState()
+    val sessions by chatViewModel.sessions.collectAsState()
+    val currentSession = remember(sessions, currentSessionId) {
+        sessions.firstOrNull { it.sessionId == currentSessionId }
+    }
+    val appStats by AppAnalytics.stats.collectAsState()
+
+    val profileOverridesPersonality =
+        selectedProfile?.systemMessage?.isNotBlank() == true
+    var endpointsExpanded by remember { mutableStateOf(false) }
+
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
+    val snackbar = LocalSnackbarHost.current
+
+    // Transient confirmation when the user picks a different profile or
+    // personality from inside the sheet. Kept short — these fire on the
+    // tap, so a 1-line toast is enough; the UI state update on the next
+    // chat turn is the real confirmation. Suspend snackbar dispatch goes
+    // through the local coroutine scope so it doesn't block the radio tap.
+    fun toast(message: String) {
+        scope.launch { snackbar.showSnackbar(message) }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+    ) {
+        Column(
+            modifier = Modifier
+                // verticalScroll wraps content so long content (when the
+                // connection block expands its endpoints, or on smaller
+                // phones) is reachable. ModalBottomSheet itself does not
+                // scroll its children — without this the sheet clips.
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp, vertical = 16.dp)
+                .navigationBarsPadding(),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            // ---- Header: avatar + agent name + live status ----
+            AgentSheetHeader(
+                selectedProfile = selectedProfile,
+                selectedPersonality = selectedPersonality,
+                defaultPersonality = defaultPersonality,
+                serverModelName = serverModelName,
+                apiServerReachable = apiServerReachable,
+                chatMode = chatMode,
+            )
+
+            HorizontalDivider()
+
+            // ---- Profile section (hidden when server advertises none) ----
+            if (agentProfiles.isNotEmpty()) {
+                // Apparent "server default" profile — the one the server
+                // would use if the phone sent no override. We infer this
+                // from the runtime metadata: the single profile (if any)
+                // whose gateway is reporting running. Used to add a tiny
+                // caption to that row so users can tell which of their
+                // profiles the server is actively serving — especially
+                // important when one of the profiles is literally named
+                // "default" so "Server default" vs "default" would be
+                // otherwise indistinguishable.
+                val apparentActiveProfile = agentProfiles
+                    .firstOrNull { it.gatewayRunning }
+
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    SectionLabel(
+                        title = "Profile",
+                        hint = "Overlay an agent's model + SOUL",
+                    )
+
+                    // "Server default" row — clears the profile override
+                    // so the request uses whatever the server's own
+                    // config.yaml picks. Renamed from "Default" so a
+                    // profile literally named "default" doesn't collide
+                    // with this row's label.
+                    ProfileRadioRow(
+                        primary = "Server default",
+                        secondary = "Use this connection's default profile",
+                        selected = selectedProfile == null,
+                        enabled = !isStreaming,
+                        onSelect = {
+                            if (selectedProfile != null) {
+                                connectionViewModel.selectProfile(null)
+                                toast("Using default model")
+                            }
+                        },
+                    )
+
+                    agentProfiles.forEach { profile ->
+                        // v0.7.0 runtime metadata indicators:
+                        //   - leadingDotColor: green when this profile's
+                        //     gateway is the live one, grey otherwise.
+                        //   - SOUL badge: primary-container when has_soul.
+                        //   - Skills chip: surface-variant when skill_count > 0.
+                        // Upstream Hermes runs one gateway at a time, so
+                        // non-active profiles correctly report off — that's
+                        // informational, not disabling. Every row stays at
+                        // full alpha; the dot alone communicates status.
+                        val dotColor = if (profile.gatewayRunning) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                        }
+                        val dotA11y = if (profile.gatewayRunning) {
+                            "Gateway running"
+                        } else {
+                            "Gateway idle"
+                        }
+                        val runningLabel = if (profile.gatewayRunning) {
+                            " \u2022 Running"
+                        } else {
+                            " \u2022 Idle"
+                        }
+                        val soulBg = MaterialTheme.colorScheme.primaryContainer
+                        val soulFg = MaterialTheme.colorScheme.onPrimaryContainer
+                        val skillsBg = MaterialTheme.colorScheme.surfaceVariant
+                        val skillsFg = MaterialTheme.colorScheme.onSurfaceVariant
+                        val isApparentActive =
+                            apparentActiveProfile?.name == profile.name
+                        // Emphasize the description as the primary label
+                        // when present — it's what users recognise (e.g.
+                        // "Victor") better than the profile key. Fall back
+                        // to the capitalised profile name when description
+                        // is blank.
+                        val hasDescription = profile.description.isNotBlank()
+                        val primaryLabel = if (hasDescription) {
+                            profile.description
+                        } else {
+                            profile.name.replaceFirstChar { it.uppercase() }
+                        }
+                        // Secondary line: `modelname • Running` / `• Idle`.
+                        // The dot itself carries the same information via
+                        // colour; the text label is the a11y-visible
+                        // complement so a screen reader user also gets
+                        // the status without relying on colour.
+                        val secondaryLine = profile.model + runningLabel
+                        // Tertiary caption: the profile identifier (when
+                        // we promoted the description to primary) plus an
+                        // "active on server" hint when this row matches
+                        // the apparent default.
+                        val tertiaryLine = buildString {
+                            if (hasDescription) {
+                                append("profile: ")
+                                append(profile.name)
+                            }
+                            if (isApparentActive && selectedProfile == null) {
+                                if (isNotEmpty()) append(" \u2022 ")
+                                append("This is the server's active profile")
+                            }
+                        }.takeIf { it.isNotBlank() }
+                        ProfileRadioRow(
+                            primary = primaryLabel,
+                            secondary = secondaryLine,
+                            tertiary = tertiaryLine,
+                            selected = selectedProfile?.name == profile.name,
+                            enabled = !isStreaming,
+                            contentAlpha = 1f,
+                            leadingDotColor = dotColor,
+                            leadingDotContentDescription = dotA11y,
+                            secondaryTrailing = if (profile.hasSoul || profile.skillCount > 0) {
+                                {
+                                    if (profile.skillCount > 0) {
+                                        ProfileMetadataBadge(
+                                            text = "${profile.skillCount} skills",
+                                            background = skillsBg,
+                                            contentColor = skillsFg,
+                                        )
+                                    }
+                                    if (profile.hasSoul) {
+                                        ProfileMetadataBadge(
+                                            text = "SOUL",
+                                            background = soulBg,
+                                            contentColor = soulFg,
+                                        )
+                                    }
+                                }
+                            } else null,
+                            onSelect = {
+                                if (selectedProfile?.name != profile.name) {
+                                    connectionViewModel.selectProfile(profile)
+                                    val display = primaryLabel
+                                    val suffix = if (profile.systemMessage?.isNotBlank() == true) {
+                                        " — model + SOUL applied"
+                                    } else {
+                                        " — model applied"
+                                    }
+                                    toast("Switched to $display$suffix")
+                                }
+                            },
+                        )
+                    }
+
+                    if (profileOverridesPersonality) {
+                        Text(
+                            text = "This profile's system message overrides the personality below.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp, start = 4.dp),
+                        )
+                    }
+                }
+
+                HorizontalDivider()
+            }
+
+            // ---- Personality section ----
+            // De-emphasize when a profile's systemMessage is taking over — the
+            // row is still tappable because the user may want to queue the
+            // choice for after they clear the profile. No alpha on the entire
+            // Column because the section header would look broken.
+            Column(
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.alpha(if (profileOverridesPersonality) 0.55f else 1f),
+            ) {
+                SectionLabel(
+                    title = "Personality",
+                    hint = "System-prompt preset on this agent",
+                )
+
+                // Default row — maps to selectedPersonality == "default" which
+                // the VM resolves to whatever server-side personality is
+                // currently active.
+                ProfileRadioRow(
+                    primary = if (defaultPersonality.isNotBlank()) {
+                        "${defaultPersonality.replaceFirstChar { it.uppercase() }} (default)"
+                    } else {
+                        "Default"
+                    },
+                    secondary = null,
+                    selected = selectedPersonality == "default",
+                    enabled = !isStreaming,
+                    onSelect = {
+                        if (selectedPersonality != "default") {
+                            chatViewModel.selectPersonality("default")
+                            if (!profileOverridesPersonality) {
+                                toast("Using default personality")
+                            }
+                        }
+                    },
+                )
+
+                personalityNames
+                    .filter { it != defaultPersonality }
+                    .forEach { name ->
+                        ProfileRadioRow(
+                            primary = name.replaceFirstChar { it.uppercase() },
+                            secondary = null,
+                            selected = selectedPersonality == name,
+                            enabled = !isStreaming,
+                            onSelect = {
+                                if (selectedPersonality != name) {
+                                    chatViewModel.selectPersonality(name)
+                                    if (!profileOverridesPersonality) {
+                                        val display = name.replaceFirstChar { it.uppercase() }
+                                        toast("Personality: $display")
+                                    }
+                                }
+                            },
+                        )
+                    }
+
+                // When a profile SOUL is active AND the user has picked a
+                // non-default personality, make the precedence explicit
+                // here at the point the confusion would otherwise land.
+                // The mirror caption in the Profile section tells the same
+                // story from the other direction — both are kept because a
+                // user scanning either section should see the constraint.
+                if (profileOverridesPersonality && selectedPersonality != "default") {
+                    Text(
+                        text = "Profile SOUL overrides personality while active.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp, start = 4.dp),
+                    )
+                }
+            }
+
+            HorizontalDivider()
+
+            // ---- Session + stats section ----
+            // Brings back the session/messages readout the old header
+            // AlertDialog used to show, plus adds current-session token
+            // counters pulled straight from AppAnalytics (no new flows
+            // needed — already being collected via ChatViewModel's
+            // stream lifecycle hooks).
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SectionLabel(title = "Session", hint = null)
+
+                val sessionLabel = currentSession?.let {
+                    it.title?.takeIf { t -> t.isNotBlank() }
+                        ?: it.sessionId.take(12)
+                } ?: "—"
+                InfoRow(label = "Name", value = sessionLabel)
+                InfoRow(label = "Messages", value = messages.size.toString())
+
+                // Token counters only — skip internal accumulator fields.
+                // Zero values are informative here ("no usage yet this
+                // session") so we don't hide them.
+                InfoRow(
+                    label = "Tokens",
+                    value = buildString {
+                        append(appStats.currentSessionTokensIn.toString())
+                        append(" in · ")
+                        append(appStats.currentSessionTokensOut.toString())
+                        append(" out")
+                    },
+                )
+                if (appStats.avgResponseTimeMs > 0L) {
+                    InfoRow(
+                        label = "Avg TTFT",
+                        value = "${appStats.avgResponseTimeMs} ms",
+                    )
+                }
+            }
+
+            HorizontalDivider()
+
+            // ---- Connection section (condensed) ----
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SectionLabel(title = "Connection", hint = null)
+
+                ChipRow(label = "Auth") { authStateChip(authState) }
+                ChipRow(label = "API reachable") {
+                    val (label, bg, fg) = if (apiServerReachable) {
+                        Triple(
+                            "Yes",
+                            MaterialTheme.colorScheme.primaryContainer,
+                            MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    } else {
+                        Triple(
+                            "No",
+                            MaterialTheme.colorScheme.errorContainer,
+                            MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    }
+                    StatusChip(text = label, background = bg, contentColor = fg)
+                }
+
+                // Pairing code only while the user is mid-pairing — no point
+                // showing it once we're paired (it's consumed).
+                if (authState is AuthState.Pairing && pairingCode.isNotBlank()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "Pairing code",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = pairingCode,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            IconButton(onClick = {
+                                scope.launch {
+                                    clipboard.setClipEntry(
+                                        ClipEntry(
+                                            ClipData.newPlainText(
+                                                "Pairing code",
+                                                pairingCode,
+                                            )
+                                        )
+                                    )
+                                }
+                            }) {
+                                Icon(
+                                    imageVector = Icons.Default.ContentCopy,
+                                    contentDescription = "Copy pairing code",
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Collapsible endpoint block — keeps the default view tidy.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { endpointsExpanded = !endpointsExpanded }
+                        .padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = if (endpointsExpanded) "Hide endpoints" else "Show endpoints",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Icon(
+                        imageVector = if (endpointsExpanded) {
+                            Icons.Filled.KeyboardArrowUp
+                        } else {
+                            Icons.Filled.KeyboardArrowDown
+                        },
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+
+                if (endpointsExpanded) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        InfoRow(label = "API", value = apiServerUrl, monospace = true)
+                        InfoRow(label = "Relay", value = relayUrl, monospace = true)
+                        ChipRow(label = "Relay state") {
+                            connectionChip(relayConnectionState)
+                        }
+                        InfoRow(label = "Streaming", value = chatMode.toString())
+                    }
+                }
+            }
+
+            HorizontalDivider()
+
+            // ---- Footer action: jump to Connections settings ----
+            TextButton(
+                onClick = {
+                    onDismiss()
+                    onNavigateToConnections()
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Tune,
+                    contentDescription = null,
+                )
+                Spacer(modifier = Modifier.size(8.dp))
+                Text("Manage connections\u2026")
+            }
+        }
+    }
+}
+
+// --- AgentInfoSheet helpers ----------------------------------------------
+
+@Composable
+private fun SectionLabel(title: String, hint: String?) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        if (hint != null) {
+            Text(
+                text = hint,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * Radio-style row used by both Profile and Personality sections. Whole row
+ * is a tap target (and selectable() for a11y). Disabled when [enabled] is
+ * false — look and behaviour both propagate the gate.
+ */
+@Composable
+private fun ProfileRadioRow(
+    primary: String,
+    secondary: String?,
+    tertiary: String? = null,
+    selected: Boolean,
+    enabled: Boolean,
+    onSelect: () -> Unit,
+    /**
+     * Extra alpha multiplier applied to the whole row on top of the
+     * disabled-state dimming. Used by the Profile section to hint that a
+     * gateway-off profile is selectable-but-probably-stale (50%). 1f is
+     * neutral.
+     */
+    contentAlpha: Float = 1f,
+    /**
+     * Optional status dot rendered between the RadioButton and the text
+     * column. 6 dp circle; hide by leaving null.
+     */
+    leadingDotColor: Color? = null,
+    /**
+     * Optional accessibility content description for the leading status
+     * dot. Screen readers announce this string so users don't have to
+     * rely on the dot's colour to know the profile's runtime state.
+     * Pass e.g. "Gateway running" / "Gateway idle". Null skips the
+     * a11y announcement (and renders the dot as a decoration-only).
+     */
+    leadingDotContentDescription: String? = null,
+    /**
+     * Optional trailing chip/badge row rendered next to the [secondary]
+     * line (same baseline as the model-name text for the Profile section
+     * entries). Slot-based so each call site composes its own badges.
+     */
+    secondaryTrailing: (@Composable () -> Unit)? = null,
+) {
+    val rowAlpha = (if (enabled) 1f else 0.5f) * contentAlpha
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .selectable(
+                selected = selected,
+                enabled = enabled,
+                role = Role.RadioButton,
+                onClick = onSelect,
+            )
+            .padding(vertical = 6.dp, horizontal = 4.dp)
+            .alpha(rowAlpha),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(
+            selected = selected,
+            onClick = null,
+            enabled = enabled,
+        )
+        if (leadingDotColor != null) {
+            Spacer(modifier = Modifier.size(8.dp))
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(leadingDotColor)
+                    .then(
+                        if (leadingDotContentDescription != null) {
+                            Modifier.semantics {
+                                contentDescription = leadingDotContentDescription
+                            }
+                        } else {
+                            Modifier
+                        }
+                    ),
+            )
+        }
+        Spacer(modifier = Modifier.size(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = primary,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            if (secondary != null || secondaryTrailing != null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (secondary != null) {
+                        Text(
+                            text = secondary,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (secondaryTrailing != null) {
+                        secondaryTrailing()
+                    }
+                }
+            }
+            if (tertiary != null) {
+                Text(
+                    text = tertiary,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (selected) {
+            Icon(
+                imageVector = Icons.Filled.Check,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
+    }
+}
+
+/**
+ * Tiny pill rendered inline with a profile row's secondary line. Used for
+ * "N skills" and "SOUL" indicators. Kept compact and visually subordinate
+ * to the model name — ~labelSmall, rounded to the max, padding trimmed.
+ */
+@Composable
+private fun ProfileMetadataBadge(
+    text: String,
+    background: Color,
+    contentColor: Color,
+) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        color = contentColor,
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(background)
+            .padding(horizontal = 6.dp, vertical = 1.dp),
+    )
+}
+
+@Composable
+private fun AgentSheetHeader(
+    selectedProfile: Profile?,
+    selectedPersonality: String,
+    defaultPersonality: String,
+    serverModelName: String,
+    apiServerReachable: Boolean,
+    chatMode: ChatMode,
+) {
+    val agentName = when {
+        selectedProfile != null -> selectedProfile.name.replaceFirstChar { it.uppercase() }
+        selectedPersonality != "default" -> selectedPersonality.replaceFirstChar { it.uppercase() }
+        defaultPersonality.isNotBlank() -> defaultPersonality.replaceFirstChar { it.uppercase() }
+        else -> "Hermes"
+    }
+    val modelLabel = selectedProfile?.model ?: serverModelName
+    val isConnecting = !apiServerReachable && chatMode != ChatMode.DISCONNECTED
+    val statusText = when {
+        apiServerReachable -> "Connected"
+        isConnecting -> "Connecting\u2026"
+        else -> "Disconnected"
+    }
+    val statusColor = when {
+        apiServerReachable -> MaterialTheme.colorScheme.primary
+        isConnecting -> MaterialTheme.colorScheme.tertiary
+        else -> MaterialTheme.colorScheme.error
+    }
+    val customized = selectedProfile != null || selectedPersonality != "default"
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .then(
+                    if (customized) {
+                        Modifier.border(
+                            width = 2.dp,
+                            color = MaterialTheme.colorScheme.primary,
+                            shape = CircleShape,
+                        )
+                    } else Modifier
+                )
+                .padding(2.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Surface(
+                modifier = Modifier.size(44.dp),
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primary,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = agentName.firstOrNull()?.uppercase() ?: "H",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                    )
+                }
+            }
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = agentName,
+                style = MaterialTheme.typography.titleLarge,
+                maxLines = 1,
+            )
+            if (modelLabel.isNotBlank()) {
+                Text(
+                    text = modelLabel,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+            Text(
+                text = statusText,
+                style = MaterialTheme.typography.labelSmall,
+                color = statusColor,
+                maxLines = 1,
+            )
         }
     }
 }

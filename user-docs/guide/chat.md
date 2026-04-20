@@ -69,13 +69,18 @@ When the agent uses tools (terminal commands, web search, file operations), tool
 
 In Detailed mode, tool cards auto-expand while the tool is running and auto-collapse when complete. Tap to expand/collapse manually.
 
-## Personalities
+## Agent Sheet — Profile + Personality
 
-The personality picker in the top bar shows personalities fetched from the Hermes API Server (`GET /api/config` → `config.agent.personalities`). The server's default personality is shown first, followed by all configured alternatives.
+Tap the agent name in the middle of the Chat top bar to open the **agent sheet** — a scrollable bottom sheet that holds Profile selection, Personality selection, and session info + analytics for the current conversation (message count, tokens in/out, avg TTFT).
 
-When you select a personality, its system prompt is sent with each chat request. The active personality name appears above assistant message bubbles.
+- **Profile** — [upstream Hermes agent directories](/features/profiles) auto-discovered on the server. Selecting one overlays its model + SOUL for subsequent chat turns.
+- **Personality** — system-prompt presets from the server's `config.agent.personalities`. The server default is shown first, followed by all configured alternatives.
 
-You can also switch via `/personality <name>` slash commands in the chat input.
+Switching either Profile or Personality shows a toast confirming the change. The active personality name appears above assistant message bubbles. You can also switch personalities via `/personality <name>` slash commands in the chat input.
+
+## Connection Chip
+
+If you've paired with more than one Hermes server, a **Connection chip** appears on the left of the top bar. Tap it to open a switcher sheet listing all your connections with a health indicator — tap one to switch targets. With a single connection, the chip is hidden. See [Connections](/features/connections) for the full model.
 
 ## Reasoning Display
 

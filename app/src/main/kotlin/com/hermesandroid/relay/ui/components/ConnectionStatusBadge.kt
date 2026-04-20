@@ -238,17 +238,29 @@ fun ConnectionStatusRow(
     }
     Row(
         modifier = modifier.then(interactiveModifier),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.Top,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        ConnectionStatusBadge(state = state)
+        // Small top padding on the badge so it sits visually centered with
+        // a single-line label+status, but stays aligned to the top for
+        // multi-line errors (where CenterVertically would drop it into the
+        // middle of a three-line block).
+        Box(modifier = Modifier.padding(top = 4.dp)) {
+            ConnectionStatusBadge(state = state)
+        }
 
+        // Label keeps its intrinsic width (no weight). Previously carried
+        // `weight(1f, fill = false)`, which collapsed it to 1 char wide
+        // when an unweighted statusText greedily claimed the whole row.
         Text(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.weight(1f, fill = false)
         )
 
+        // Status text gets the weight so long errors wrap inside their own
+        // allocation instead of squeezing the label. `fill = false` lets
+        // short statuses (e.g. "Reachable") sit naturally without forcing
+        // the row to span full width.
         Text(
             text = statusText,
             style = MaterialTheme.typography.bodyMedium,
@@ -257,7 +269,8 @@ fun ConnectionStatusRow(
                 BadgeState.Connecting -> Color(0xFFFFA726)
                 BadgeState.Probing -> MaterialTheme.colorScheme.onSurfaceVariant
                 BadgeState.Disconnected -> MaterialTheme.colorScheme.error
-            }
+            },
+            modifier = Modifier.weight(1f, fill = false),
         )
 
         if (onTest != null) {

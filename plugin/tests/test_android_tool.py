@@ -4,7 +4,7 @@ import responses
 import pytest
 
 # Import tool functions directly (not via registry)
-from tools.android_tool import (
+from plugin.tools.android_tool import (
     android_ping,
     android_read_screen,
     android_tap,

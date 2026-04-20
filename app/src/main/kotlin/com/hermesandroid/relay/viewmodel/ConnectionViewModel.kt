@@ -16,6 +16,11 @@ import com.hermesandroid.relay.auth.PairedSession
 import com.hermesandroid.relay.data.DataManager
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.PairingPreferences
+import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.ConnectionStore
+import com.hermesandroid.relay.data.ConnectionValidation
+import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.ProfileSelectionStore
 import com.hermesandroid.relay.data.relayDataStore
 import com.hermesandroid.relay.util.TailscaleDetector
 import com.hermesandroid.relay.network.ChannelMultiplexer
@@ -23,6 +28,7 @@ import com.hermesandroid.relay.network.ConnectivityObserver
 import com.hermesandroid.relay.network.ChatMode
 import com.hermesandroid.relay.network.ConnectionManager
 import com.hermesandroid.relay.network.ConnectionState
+import com.hermesandroid.relay.network.EndpointResolver
 import com.hermesandroid.relay.network.HermesApiClient
 import com.hermesandroid.relay.network.ServerCapabilities
 import com.hermesandroid.relay.network.RelayHttpClient
@@ -39,14 +45,21 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -61,6 +74,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         private val KEY_RELAY_URL = stringPreferencesKey("relay_url")
         private val KEY_SERVER_URL = stringPreferencesKey("server_url") // legacy migration
         private const val DEFAULT_RELAY_URL = "wss://localhost:8767"
+
+        // How long the derived [relayUiState] shows `Connecting` before
+        // promoting a Paired-but-Disconnected pose to `Stale`. Tuned to
+        // cover a typical WSS handshake (~500-2000 ms) plus a cushion so
+        // we don't flash "Stale" during a normal post-resume reconnect,
+        // while still surfacing a tap-to-retry affordance when the
+        // reconnect genuinely fails (server down, bad network).
+        private const val RELAY_RECONNECT_GRACE_MS = 5_000L
 
         // Shared
         private val KEY_THEME = stringPreferencesKey("theme")
@@ -98,24 +119,100 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // Relay (bridge/terminal)
     val multiplexer = ChannelMultiplexer()
     val chatHandler = ChatHandler()
+
+    // Multi-connection: the ConnectionStore is the source of truth for the
+    // list of Hermes server connections and which one is active. Constructed
+    // before AuthManager so the init-time migrateLegacyConnectionIfNeeded()
+    // call can see the existing URL preferences and seed connection 0.
+    val connectionStore: ConnectionStore = ConnectionStore(application)
+
+    /**
+     * Multi-connection: id of the currently-active [Connection], or null if
+     * no connection has been seeded yet (cold boot before
+     * migrateLegacyConnectionIfNeeded runs). Exposed through
+     * [connectionStore] directly for cheap access.
+     */
+    val connections: StateFlow<List<Connection>> = connectionStore.connections
+    val activeConnection: StateFlow<Connection?> = connectionStore.activeConnection
+    val activeConnectionId: StateFlow<String?> = connectionStore.activeConnectionId
+
     // AuthManager owns the CertPinStore; ConnectionManager takes a snapshot
     // of the store's current pins on every connect so re-pair wipes land.
     // AuthManager must be constructed before ConnectionManager so the pin
     // store is available for the certificate pinner.
-    val authManager = AuthManager(application, multiplexer, viewModelScope)
+    //
+    // Multi-connection: AuthManager is now a `var` — switchConnection()
+    // rebuilds it bound to the newly-active connection id. Every call site
+    // that touches this field goes through `this.authManager` so the
+    // reconnect gate, the multiplexer sendCallback, and the
+    // media-projection screen-capture token provider all read the current
+    // instance after a swap.
+    //
+    // Initial value uses the active connection id if ConnectionStore has
+    // already hydrated by the time this field initializer runs — which it
+    // normally hasn't, since hydration is async. We fall back to the legacy
+    // sentinel so the very first boot before migration mid-flight still
+    // binds to the legacy token store. The init block below then observes
+    // the first connection emission and rebuilds against the migrated id.
+    var authManager: AuthManager = AuthManager(
+        context = application,
+        multiplexer = multiplexer,
+        scope = viewModelScope,
+        connectionId = AuthManager.CONNECTION_ID_LEGACY,
+    )
+        private set
+
+    // Multi-connection: authState, pairingCode, and currentPairedSession
+    // were previously direct references to the initial AuthManager's
+    // backing flows. After a connection switch, `authManager` is replaced
+    // but a captured reference still points at the OLD instance —
+    // Compose's collectAsState caches the flow on first composition, so
+    // consumers would show the previous connection's auth state forever.
+    // We flatMapLatest over this MutableStateFlow so the public flows
+    // re-subscribe to the new manager whenever installAuthManager() swaps
+    // it.
+    private val _authManagerFlow = MutableStateFlow(authManager)
+
     // Pass hasPairContext as the reconnect gate — the auto-reconnect loop
     // inside ConnectionManager bypasses ConnectionViewModel.connectRelay's
     // primary gate, so we plumb the same AuthManager check directly into
     // the internal scheduler. Without this, clearSession leaves a live
     // reconnect loop that fires stale auth envelopes and rate-limits us.
+    //
+    // Multi-connection: the gate reads `this.authManager.hasPairContext` on
+    // every invocation so a connection switch's freshly-built AuthManager
+    // is honored without having to plumb a new gate through
+    // ConnectionManager. CertPinStore is process-wide (not per-connection)
+    // so holding a reference to the legacy AuthManager's pin store is
+    // still correct after a swap.
+    // OkHttp used by [endpointResolver] for HEAD /health probes. Keep it
+    // distinct from the relay HTTP client (long read timeout for media
+    // downloads) so probe timeouts stay tight and don't pick up a 2-minute
+    // stream inheritance from the shared pool. See ADR 24.
+    private val endpointProbeClient: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(2, TimeUnit.SECONDS)
+        .readTimeout(2, TimeUnit.SECONDS)
+        .writeTimeout(2, TimeUnit.SECONDS)
+        .callTimeout(2, TimeUnit.SECONDS)
+        .build()
+
+    private val endpointResolver = EndpointResolver(httpClient = endpointProbeClient)
+
     private val connectionManager = ConnectionManager(
         multiplexer,
         authManager.certPinStore,
-        reconnectGate = { authManager.hasPairContext }
+        reconnectGate = { authManager.hasPairContext },
+        context = application,
+        endpointResolver = endpointResolver,
+        // Pull the active device id through AuthManager — it's the same id
+        // PairingPreferences keys the endpoint list on. Nullable wrapper
+        // because AuthManager.getOrCreateDeviceId() is suspending.
+        deviceIdProvider = { runCatching { authManager.getOrCreateDeviceId() }.getOrNull() },
     )
 
-    // Data management
-    val dataManager = DataManager(application)
+    // Data management — ConnectionStore flows through so exportSettings()
+    // can include the current multi-connection snapshot in the backup blob.
+    val dataManager = DataManager(application, connectionStore)
 
     // --- Inbound media pipeline ------------------------------------------------
     //
@@ -170,7 +267,62 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     // --- Relay connection state ---
     val relayConnectionState: StateFlow<ConnectionState> = connectionManager.connectionState
-    val authState: StateFlow<AuthState> = authManager.authState
+
+    // Resolved UI state for the relay row — the single source of truth all
+    // three connection-related screens consume. Driven by a coroutine in
+    // `init` that combines authState + relayConnectionState + relayUrl and
+    // applies a grace window before promoting Paired-but-Disconnected to
+    // Stale. See [RelayUiState] kdoc for the full rationale.
+    private val _relayUiState = MutableStateFlow<RelayUiState>(RelayUiState.NotConfigured)
+    val relayUiState: StateFlow<RelayUiState> = _relayUiState.asStateFlow()
+
+    /**
+     * ADR 24 — [relayUiState] bundled with the currently-active endpoint
+     * role so connection chips can render "Connected · Tailscale" etc.
+     * New screens should prefer [relayRowState] over [relayUiState] when
+     * they want to surface the transport role; existing `== RelayUiState.X`
+     * comparisons keep working off [relayUiState].
+     */
+    val relayRowState: StateFlow<RelayRowState> = combine(
+        _relayUiState,
+        connectionManager.activeEndpoint,
+    ) { phase, endpoint ->
+        RelayRowState(phase = phase, activeEndpointRole = endpoint?.role)
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.Eagerly,
+        RelayRowState(phase = RelayUiState.NotConfigured, activeEndpointRole = null),
+    )
+
+    /** Currently-active endpoint, for the Endpoints card. */
+    val activeEndpoint = connectionManager.activeEndpoint
+
+    /**
+     * Signal stream for `profiles.updated` pushes — emits when the
+     * server's in-memory profile list has changed in a way the user
+     * should know about (a different set of names or a different
+     * count). The UI layer collects this flow to show a brief
+     * "Profiles updated" snackbar.
+     *
+     * Sourced from [AuthManager.profilesUpdatedEvents] so the filter
+     * logic ("actually changed") is centralised there rather than
+     * duplicated per-subscriber.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val profilesUpdatedEvents: kotlinx.coroutines.flow.SharedFlow<Unit> =
+        _authManagerFlow
+            .flatMapLatest { it.profilesUpdatedEvents }
+            .shareIn(
+                scope = viewModelScope,
+                started = SharingStarted.Eagerly,
+                replay = 0,
+            )
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val authState: StateFlow<AuthState> = _authManagerFlow
+        .flatMapLatest { it.authState }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, authManager.authState.value)
+
     val insecureMode: StateFlow<Boolean> = connectionManager.insecureMode
     val isInsecureConnection: StateFlow<Boolean> = connectionManager.isInsecureConnection
 
@@ -247,13 +399,81 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     private val _onboardingCompleted = MutableStateFlow(true) // default true to avoid flash
     val onboardingCompleted: StateFlow<Boolean> = _onboardingCompleted.asStateFlow()
 
-    // Pairing code from AuthManager
-    val pairingCode: StateFlow<String> = authManager.pairingCode
+    // Pairing code from AuthManager — see _authManagerFlow comment above for
+    // why this flatMapLatches rather than referencing authManager directly.
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val pairingCode: StateFlow<String> = _authManagerFlow
+        .flatMapLatest { it.pairingCode }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, authManager.pairingCode.value)
 
     // Paired-session snapshot (expires_at, grants, transport hint) from AuthManager.
     // Exposed straight through so SettingsScreen + PairedDevicesScreen can
     // render expiry + grant chips without poking at prefs.
-    val currentPairedSession: StateFlow<PairedSession?> = authManager.currentPairedSession
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val currentPairedSession: StateFlow<PairedSession?> = _authManagerFlow
+        .flatMapLatest { it.currentPairedSession }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, authManager.currentPairedSession.value)
+
+    // --- Agent profiles (Pass 2) -------------------------------------------
+    //
+    // Server-advertised named agent configs, flattened to a StateFlow the
+    // profile picker reads. Must flatMapLatest over [_authManagerFlow] for
+    // the same reason as [authState] / [pairingCode] — after a connection
+    // switch the underlying [AuthManager] instance is replaced and the
+    // public flow needs to repoint at the new manager's backing state.
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val agentProfiles: StateFlow<List<Profile>> = _authManagerFlow
+        .flatMapLatest { it.agentProfiles }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, authManager.agentProfiles.value)
+
+    /**
+     * User's current profile pick for the chat send pipeline. `null` means
+     * "no explicit pick — let the server fall back to its configured
+     * default profile."
+     *
+     * **v0.7.0: persisted per-connection** via [profileSelectionStore].
+     * Hydrated on init (for the active connection) and on every
+     * [switchConnection] (loads the destination connection's persisted
+     * selection). Written through on [selectProfile]. Cleared on
+     * [removeConnection] after the switch completes.
+     *
+     * Resolution from persisted `profileName: String?` → `Profile?` happens
+     * against [agentProfiles] at hydrate time; if the persisted name no
+     * longer exists in the server-advertised list (profile was removed on
+     * the server), the resolution yields null.
+     */
+    private val _selectedProfile = MutableStateFlow<Profile?>(null)
+    val selectedProfile: StateFlow<Profile?> = _selectedProfile.asStateFlow()
+
+    /**
+     * DataStore-backed persistence for [_selectedProfile] keyed by
+     * connection id. See [ProfileSelectionStore] for the schema. Separate
+     * from [connectionStore] so the selection survives (and can be
+     * cleared) independently of other connection fields.
+     */
+    private val profileSelectionStore: ProfileSelectionStore =
+        ProfileSelectionStore(application)
+
+    /**
+     * Set (or clear, with `null`) the active profile pick. Writes through
+     * to [profileSelectionStore] for the currently-active connection so
+     * the selection survives process death and connection switches.
+     */
+    fun selectProfile(profile: Profile?) {
+        _selectedProfile.value = profile
+        val connectionId = activeConnectionId.value ?: return
+        viewModelScope.launch {
+            profileSelectionStore.setSelectedProfile(connectionId, profile?.name)
+        }
+    }
+
+    /**
+     * Resolve a persisted profile `name` against the current
+     * [agentProfiles] list. Returns null when the profile no longer
+     * exists — the server may have removed or renamed it between runs.
+     */
+    private fun resolveProfileByName(name: String?): Profile? =
+        name?.let { n -> agentProfiles.value.firstOrNull { it.name == n } }
 
     // --- Paired devices list (GET /sessions) -------------------------------
     //
@@ -580,6 +800,275 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     )
     // === END PHASE3-accessibility (plus safety-rails wiring above) ===
 
+    // --- Connection switch orchestration ----------------------------------
+    //
+    // Multi-connection v0.5.0: the coordinator owns the heavy swap sequence
+    // (cancel stream → stop voice → disconnect WSS → rebuild AuthManager +
+    // api client → reconnect WSS if paired). Extracted so the swap is
+    // unit-testable without having to mock AndroidViewModel / DataStore.
+    private val connectionSwitchCoordinator = ConnectionSwitchCoordinator(
+        connectionStore = connectionStore,
+        connectionManager = connectionManager,
+        scope = viewModelScope,
+        authManagerFactory = { cid ->
+            AuthManager(
+                context = application,
+                multiplexer = multiplexer,
+                scope = viewModelScope,
+                connectionId = cid,
+            )
+        },
+        installAuthManager = { am ->
+            authManager = am
+            // Push into the flow so the flatMapLatest chains on authState /
+            // pairingCode / currentPairedSession repoint to the new manager.
+            // Without this, existing Compose collectors stay bound to the
+            // previous AuthManager's backing flows forever.
+            _authManagerFlow.value = am
+        },
+        setApiServerUrl = { url -> _apiServerUrl.value = url },
+        setRelayUrl = { url -> _relayUrl.value = url },
+        persistUrls = { apiUrl, relayUrl ->
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_API_SERVER_URL] = apiUrl
+                prefs[KEY_RELAY_URL] = relayUrl
+            }
+        },
+        rebuildApiClient = { rebuildApiClient() },
+    )
+
+    /**
+     * Multi-connection: emits the id of the newly-active connection right
+     * after the connection teardown half of the switch completes but before
+     * the rebuilt API/relay clients start serving requests. [ChatViewModel]
+     * subscribes to clear its per-connection local state (messages, session
+     * id, queued sends).
+     */
+    val connectionSwitchEvents: SharedFlow<String> = connectionSwitchCoordinator.connectionSwitchEvents
+
+    /**
+     * Multi-connection: start the full connection swap sequence. See
+     * [ConnectionSwitchCoordinator] for the ordered steps and why the order
+     * matters. No-ops when [connectionId] equals the current
+     * [activeConnectionId]. Fires and forgets — UI watches
+     * [activeConnection] for the completed state.
+     */
+    fun switchConnection(connectionId: String): Job =
+        connectionSwitchCoordinator.switchConnection(connectionId)
+
+    /**
+     * Multi-connection: RelayApp calls this at composition time with a
+     * callback that tears down [ChatViewModel]'s in-flight stream. The
+     * coordinator invokes it first in the switch sequence so the stream
+     * doesn't keep scribbling into `_messages` after the handler's API
+     * client reference gets rebuilt under it.
+     */
+    fun registerStreamCancelCallback(callback: () -> Unit) {
+        connectionSwitchCoordinator.registerStreamCancelCallback(callback)
+    }
+
+    /**
+     * Multi-connection: RelayApp calls this at composition time with a
+     * callback that stops any active voice turn. Kept as a registration
+     * hook (rather than a direct VoiceViewModel field) so
+     * [ConnectionViewModel] doesn't take on a hard voice dependency —
+     * voice is an optional feature wired per build flavor.
+     */
+    fun registerVoiceStopCallback(callback: () -> Unit) {
+        connectionSwitchCoordinator.registerVoiceStopCallback(callback)
+    }
+
+    // --- Connection CRUD helpers (Worker B2) ------------------------------
+    //
+    // These wrap [ConnectionStore] so callers (currently RelayApp's
+    // ConnectionsSettings + Pair routes) don't have to reach directly into
+    // the store for common mutations. Each method documents its scope and
+    // v1 constraints.
+
+    /**
+     * Creates a new connection from completed pairing data, persists it via
+     * [ConnectionStore], and switches the app to it. Returns the new
+     * connection id.
+     *
+     * Called from the Pair success handler when no existing `connectionId`
+     * was passed (i.e. the "Add connection" FAB flow).
+     *
+     * **v1 pairing-token limitation:** this method is invoked AFTER
+     * [applyPairingPayload] has already run, which writes the freshly-minted
+     * session token into the **currently-active** connection's
+     * EncryptedSharedPreferences (via the active [authManager] instance).
+     * The new connection that this method creates has its own distinct
+     * [Connection.tokenStoreKey] and does NOT carry those credentials
+     * across. Consequence: immediately after "Add connection → scan QR →
+     * switch to new connection", the new connection is unpaired from the
+     * token store's perspective and the user must re-pair it (scan a
+     * second QR while the new connection is active).
+     *
+     * A cleaner fix would require targeting [applyPairingPayload] at a
+     * specific token store BEFORE the pair runs — that's a bigger refactor
+     * deferred to a follow-up. See the TODO at the top of RelayApp's Pair
+     * route for the user-facing journey.
+     */
+    suspend fun addConnectionFromPairing(
+        label: String?,
+        apiServerUrl: String,
+        relayUrl: String,
+    ): Result<String> {
+        val resolvedLabel = (label?.trim()?.takeIf { it.isNotEmpty() })
+            ?: Connection.extractDefaultLabel(apiServerUrl)
+
+        // Validate in the same order the fields appear to the user — label
+        // then URLs — so the first error surfaced matches where their eye
+        // would be.
+        ConnectionValidation.validateLabel(resolvedLabel)?.let {
+            return Result.failure(IllegalArgumentException(it))
+        }
+        ConnectionValidation.validateApiServerUrl(apiServerUrl)?.let {
+            return Result.failure(IllegalArgumentException(it))
+        }
+        ConnectionValidation.validateRelayUrl(relayUrl)?.let {
+            return Result.failure(IllegalArgumentException(it))
+        }
+        ConnectionValidation.findDuplicate(
+            connections = connectionStore.connections.value,
+            apiServerUrl = apiServerUrl,
+            relayUrl = relayUrl,
+        )?.let { dup ->
+            return Result.failure(
+                IllegalStateException("A connection for this server already exists (\"${dup.label}\")"),
+            )
+        }
+
+        val id = java.util.UUID.randomUUID().toString()
+        val connection = Connection(
+            id = id,
+            label = resolvedLabel,
+            apiServerUrl = apiServerUrl.trim(),
+            relayUrl = relayUrl.trim(),
+            tokenStoreKey = Connection.buildTokenStoreKey(id),
+            pairedAt = null,
+            lastActiveSessionId = null,
+            transportHint = null,
+            expiresAt = null,
+        )
+        connectionStore.addConnection(connection)
+        // Switch to the new connection so subsequent chat/bridge/voice
+        // traffic uses its (currently empty) token store. Per the KDoc
+        // above, the user will need to re-pair against this connection to
+        // populate it.
+        switchConnection(id)
+        return Result.success(id)
+    }
+
+    /**
+     * Updates the label on a stored connection. Persists via
+     * [ConnectionStore.updateConnection]. Does not touch auth state; does
+     * not trigger a switch. No-op when the connection id is unknown.
+     */
+    suspend fun renameConnection(connectionId: String, newLabel: String): Result<Unit> {
+        val existing = connectionStore.connections.value.firstOrNull { it.id == connectionId }
+            ?: return Result.failure(NoSuchElementException("No connection with id=$connectionId"))
+        ConnectionValidation.validateLabel(newLabel)?.let {
+            return Result.failure(IllegalArgumentException(it))
+        }
+        connectionStore.updateConnection(existing.copy(label = newLabel.trim()))
+        return Result.success(Unit)
+    }
+
+    /**
+     * Revokes the connection's server-side session
+     * (`DELETE /sessions/{tokenPrefix}`) and clears the local auth material.
+     *
+     * **v1 constraint — active connection only:** if [connectionId] does
+     * not match [activeConnectionId] this returns [Result.failure] with a
+     * clear message and does nothing. Revoking an inactive connection
+     * would require loading its
+     * [com.hermesandroid.relay.auth.SessionTokenStore] out-of-band to read
+     * the bearer for the DELETE call, which is a bigger change — the
+     * current singleton [authManager] only reads the active connection's
+     * store. Deferred; documented as a follow-up.
+     *
+     * On success, marks the connection as unpaired (`pairedAt = null`,
+     * `expiresAt = null`, `transportHint = null`) via [ConnectionStore] so
+     * the UI reflects it. Also disconnects the relay and wipes the local
+     * session token via [AuthManager.clearSession].
+     */
+    suspend fun revokeConnection(connectionId: String): Result<Unit> {
+        if (connectionId != activeConnectionId.value) {
+            return Result.failure(
+                IllegalStateException(
+                    "revoke is limited to the active connection in v1",
+                ),
+            )
+        }
+        val existing = connectionStore.connections.value.firstOrNull { it.id == connectionId }
+            ?: return Result.failure(
+                IllegalStateException("connection $connectionId not found"),
+            )
+        // Token prefix = first 8 chars of the current session token.
+        // Matches the relay's `session.token[:8]` convention (see
+        // plugin/relay/server.py `token_prefix` sites).
+        val paired = authManager.currentPairedSession.value
+        if (paired != null) {
+            val prefix = paired.token.take(8)
+            val result = relayHttpClient.revokeSession(prefix)
+            if (result.isFailure) {
+                return Result.failure(
+                    result.exceptionOrNull()
+                        ?: IllegalStateException("revokeSession failed"),
+                )
+            }
+        }
+        // Clear local auth material + tear down the WSS so the reconnect
+        // loop doesn't keep re-authing with the just-revoked token.
+        clearSession()
+        connectionStore.updateConnection(
+            existing.copy(
+                pairedAt = null,
+                expiresAt = null,
+                transportHint = null,
+            ),
+        )
+        return Result.success(Unit)
+    }
+
+    /**
+     * Removes a connection and its stored auth material. [ConnectionStore]
+     * handles the [android.content.Context.deleteSharedPreferences] side
+     * effect for the connection's EncryptedSharedPreferences file.
+     *
+     * If the removed connection was active, this switches to another
+     * connection (if one exists) first so the app lands on a valid
+     * context; otherwise [activeConnectionId] ends up null and the top bar
+     * renders "No connection" until the user adds one via Settings.
+     */
+    suspend fun removeConnection(connectionId: String) {
+        val wasActive = connectionId == activeConnectionId.value
+        if (wasActive) {
+            val other = connectionStore.connections.value.firstOrNull { it.id != connectionId }
+            if (other != null) {
+                // Await the full switch before deleting the store file.
+                // switchConnection launches on viewModelScope; if we
+                // proceeded to ConnectionStore.removeConnection (which
+                // calls Context.deleteSharedPreferences) before the
+                // coordinator finished tearing down the old AuthManager,
+                // the old manager's in-flight init/hydrate coroutine could
+                // fault reading a file that was just deleted.
+                switchConnection(other.id).join()
+            }
+            // If no other connection exists, ConnectionStore.removeConnection
+            // will clear the active pointer on its own.
+        }
+        connectionStore.removeConnection(connectionId)
+        // Clear the persisted profile selection for the removed connection
+        // AFTER the switch-away above has finished. Ordering matters: if
+        // we cleared first, any in-flight hydration from the just-swapped
+        // AuthManager could race with the delete. Safe because
+        // ProfileSelectionStore is a separate DataStore file from
+        // ConnectionStore's EncryptedSharedPrefs.
+        profileSelectionStore.clear(connectionId)
+    }
+
     init {
         // Wire multiplexer to connection manager (for relay/bridge/terminal)
         multiplexer.setSendCallback { envelope ->
@@ -694,6 +1183,114 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             .multiplexer = multiplexer
         // === END PHASE3-notif-listener-followup ===
 
+        // Resolve [relayUiState] from the three raw inputs (authState,
+        // relayConnectionState, relayUrl) with a grace-window transition
+        // to Stale. Lifted here from three separate ad-hoc helpers across
+        // SettingsScreen / ConnectionSettingsScreen so every screen renders
+        // the relay row consistently. `pendingStaleJob` is the single
+        // in-flight grace timer; each new raw-state change cancels any
+        // prior timer, so we never get two "promote to Stale" jobs racing.
+        viewModelScope.launch {
+            var pendingStaleJob: Job? = null
+            combine(
+                authState,
+                relayConnectionState,
+                _relayUrl,
+            ) { auth, conn, url -> Triple(auth, conn, url) }
+                .collect { (auth, conn, url) ->
+                    pendingStaleJob?.cancel()
+                    pendingStaleJob = null
+                    _relayUiState.value = when {
+                        url.isBlank() -> RelayUiState.NotConfigured
+                        conn == ConnectionState.Connected -> RelayUiState.Connected
+                        conn == ConnectionState.Connecting ||
+                            conn == ConnectionState.Reconnecting ->
+                            RelayUiState.Connecting
+                        auth is AuthState.Paired &&
+                            conn == ConnectionState.Disconnected -> {
+                            // Start the grace-window timer. If the WSS
+                            // doesn't come up within RELAY_RECONNECT_GRACE_MS,
+                            // we promote to Stale so the UI stops lying
+                            // ("Connecting…" forever) and surfaces a
+                            // tap-to-retry affordance.
+                            pendingStaleJob = launch {
+                                delay(RELAY_RECONNECT_GRACE_MS)
+                                _relayUiState.value = RelayUiState.Stale
+                            }
+                            RelayUiState.Connecting
+                        }
+                        else -> RelayUiState.Disconnected
+                    }
+                }
+        }
+
+        // Multi-connection: stamp the active Connection with pairing metadata
+        // when AuthManager surfaces a fresh PairedSession. Closes the bug
+        // where Connections list showed "Not paired" even though the
+        // Settings card correctly said "Paired" — previously `markPaired`
+        // existed on the store but was never called after the
+        // Profile → Connection rename.
+        //
+        // Stamp only when `pairedAt` is still null so we don't churn
+        // DataStore writes on every auth reload. Re-pair flows explicitly
+        // clear `pairedAt` via the revoke path (see revokeConnection),
+        // so the next auth.ok will stamp again cleanly.
+        viewModelScope.launch {
+            combine(
+                connectionStore.activeConnectionId,
+                currentPairedSession,
+            ) { id, paired -> id to paired }
+                .distinctUntilChanged()
+                .collect { (connId, paired) ->
+                    if (connId == null || paired == null) return@collect
+                    val current = connectionStore.connections.value
+                        .firstOrNull { it.id == connId } ?: return@collect
+                    if (current.pairedAt != null) return@collect
+                    connectionStore.markPaired(
+                        connectionId = connId,
+                        pairedAtMillis = System.currentTimeMillis(),
+                        transportHint = paired.transportHint,
+                        // PairedSession.expiresAt is epoch seconds; the
+                        // store docs are explicit that it expects millis —
+                        // passing seconds would render as "Paired decades ago".
+                        expiresAtMillis = paired.expiresAt?.let { it * 1000L },
+                    )
+                }
+        }
+
+        // Multi-connection: on cold boot, if no connections are persisted
+        // yet, seed connection 0 from whatever URLs/session id the
+        // pre-multi-connection install left in DataStore. Idempotent — a
+        // no-op once connection 0 (or any user-created connection) is
+        // already in the list.
+        //
+        // Runs on its own coroutine so it doesn't block the DataStore
+        // collect loop below. A race where the collect-loop writes a new
+        // URL value mid-migration is benign — migrateLegacyConnectionIfNeeded
+        // is guarded by ConnectionStore.writeMutex and early-returns once
+        // any connection exists, so a second call observing the
+        // freshly-seeded connection just exits.
+        viewModelScope.launch {
+            try {
+                val prefs = application.relayDataStore.data.first()
+                val legacyApiUrl = prefs[KEY_API_SERVER_URL] ?: _apiServerUrl.value
+                val legacyRelayUrl = prefs[KEY_RELAY_URL]
+                    ?: prefs[KEY_SERVER_URL]
+                    ?: _relayUrl.value
+                val legacySessionId = prefs[KEY_LAST_SESSION_ID]
+                connectionStore.migrateLegacyConnectionIfNeeded(
+                    legacyApiServerUrl = legacyApiUrl,
+                    legacyRelayUrl = legacyRelayUrl,
+                    legacyLastSessionId = legacySessionId,
+                )
+            } catch (e: Exception) {
+                android.util.Log.w(
+                    "ConnectionViewModel",
+                    "migrateLegacyConnectionIfNeeded failed: ${e.message}",
+                )
+            }
+        }
+
         // Load saved state — split into fast (UI-blocking) and slow (network) paths
         viewModelScope.launch {
             _onboardingCompleted.value = dataManager.isOnboardingCompleted()
@@ -801,6 +1398,54 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             mediaSettingsRepo.settings.collect { settings ->
                 _cachedMediaCapMb = settings.cachedMediaCapMb
+            }
+        }
+
+        // Hydrate the persisted profile pick on every connection switch.
+        // The pick is per-connection: connection B may have its own
+        // separate last-selected profile from connection A, and neither
+        // should leak across. ProfileSelectionStore stores profile NAMES;
+        // the Profile object itself lives in agentProfiles which is
+        // repopulated by AuthManager on the post-switch reconnect, so we
+        // clear first (so a stale A selection never dangles) then let the
+        // agentProfiles collector below resolve the persisted name once
+        // the new server's list arrives.
+        viewModelScope.launch {
+            connectionSwitchEvents.collect { newConnectionId ->
+                _selectedProfile.value = null
+                val persistedName = profileSelectionStore
+                    .selectedProfileFlow(newConnectionId)
+                    .first()
+                // If the new connection has agentProfiles already (rare —
+                // usually the reconnect hasn't landed auth.ok yet), resolve
+                // immediately. Otherwise the collector below handles it
+                // when the list populates.
+                resolveProfileByName(persistedName)?.let { resolved ->
+                    _selectedProfile.value = resolved
+                }
+            }
+        }
+
+        // When agentProfiles updates (post auth.ok on boot or after a
+        // switch), try to resolve any persisted selection for the active
+        // connection. This covers the common case where the persisted
+        // name was loaded before the server's profile list arrived.
+        // Guarded: if the user has already picked something manually we
+        // don't clobber it — only promote from null-with-persisted-name
+        // to the resolved Profile.
+        viewModelScope.launch {
+            agentProfiles.collect { list ->
+                if (_selectedProfile.value != null) return@collect
+                val cid = activeConnectionId.value ?: return@collect
+                val persistedName = profileSelectionStore
+                    .selectedProfileFlow(cid)
+                    .first()
+                val resolved = persistedName?.let { n ->
+                    list.firstOrNull { it.name == n }
+                }
+                if (resolved != null) {
+                    _selectedProfile.value = resolved
+                }
             }
         }
     }
@@ -924,6 +1569,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             authManager.setPendingGrants(relay.grants)
         }
         authManager.setPendingTtlSeconds(ttlSeconds)
+        // ADR 24 — stage the endpoint-candidate list so AuthManager persists
+        // it under the paired device's id once `auth.ok` lands. `endpoints`
+        // is always non-null + non-empty coming out of `parseHermesPairingQr`
+        // (v1/v2 QRs get a synthesized priority-0 candidate); we pass
+        // through whatever v3 emitted verbatim.
+        authManager.setPendingEndpoints(payload.endpoints)
 
         viewModelScope.launch {
             // API side — always present in any QR.
@@ -1009,7 +1660,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             _apiServerHealth.value = HealthStatus.Probing
             val client = HermesApiClient(baseUrl = url, apiKey = key)
             _apiClient.value = client
-            oldClient?.shutdown()
+            shutdownClientOffMain(oldClient)
             val ok = client.checkHealth()
             _apiServerReachable.value = ok
             _apiServerHealth.value = if (ok) HealthStatus.Reachable else HealthStatus.Unreachable
@@ -1021,12 +1672,31 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             _chatMode.value = caps.toChatMode()
         } else {
             _apiClient.value = null
-            oldClient?.shutdown()
+            shutdownClientOffMain(oldClient)
             _apiServerReachable.value = false
             _apiServerHealth.value = HealthStatus.Unknown
             _chatMode.value = ChatMode.DISCONNECTED
             _serverCapabilities.value = ServerCapabilities.DISCONNECTED
         }
+    }
+
+    /**
+     * [HermesApiClient.shutdown] eventually drives OkHttp's
+     * [okhttp3.ConnectionPool.evictAll], which closes live SSL sockets
+     * synchronously — i.e. it performs network writes. Running that on
+     * the main thread trips StrictMode's `NetworkOnMainThreadException`
+     * on any keep-alive connection (observed on connection switch +
+     * updateApiServerUrl). Always hand off to IO.
+     */
+    private suspend fun shutdownClientOffMain(client: HermesApiClient?) {
+        if (client == null) return
+        runCatching { withContext(Dispatchers.IO) { client.shutdown() } }
+            .onFailure {
+                android.util.Log.w(
+                    "ConnectionVM",
+                    "HermesApiClient.shutdown failed: ${it.message}",
+                )
+            }
     }
 
     // --- Relay methods ---
@@ -1075,6 +1745,60 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     fun disconnectRelay() {
         connectionManager.disconnect()
+    }
+
+    // --- ADR 24 — multi-endpoint exposure ------------------------------------
+
+    /**
+     * Observe the per-device endpoint-candidate list. Emits an empty list
+     * for freshly-upgraded installs (no `endpoints` persisted yet) or for
+     * pre-ADR-24 v1/v2 QRs whose synthesizer produced a single candidate
+     * — in which case the UI renders a one-row card.
+     *
+     * The device id is looked up via [AuthManager.getOrCreateDeviceId] so
+     * the flow hot-rebinds when the active connection swaps.
+     */
+    fun observeDeviceEndpoints(): kotlinx.coroutines.flow.Flow<List<com.hermesandroid.relay.data.EndpointCandidate>> {
+        return kotlinx.coroutines.flow.flow {
+            val deviceId = runCatching { authManager.getOrCreateDeviceId() }.getOrNull()
+            if (deviceId == null) {
+                emit(emptyList())
+                return@flow
+            }
+            emitAll(
+                PairingPreferences.getDeviceEndpoints(getApplication(), deviceId)
+            )
+        }
+    }
+
+    /**
+     * Pin [role] as the preferred endpoint until the next disconnect. Calls
+     * [ConnectionManager.setManualRoleOverride] and kicks [probeNow] so the
+     * swap takes effect immediately if the override is reachable. Passing
+     * `null` clears the override.
+     */
+    fun setPreferredEndpointRole(role: String?) {
+        connectionManager.setManualRoleOverride(role)
+        probeNow()
+    }
+
+    fun getPreferredEndpointRole(): String? = connectionManager.getManualRoleOverride()
+
+    /** User-triggered re-probe — Endpoints card's "Probe now" row action. */
+    fun probeNow() {
+        connectionManager.probeAndReconnect()
+    }
+
+    /**
+     * Fetch the TOFU SPKI pin stored for this endpoint's host:port, if any.
+     * Used by the Endpoints card's "View pin" row action. Returns null when
+     * no pin has been recorded (not-yet-TOFU'd host) or when the cert store
+     * is unavailable.
+     */
+    suspend fun lookupEndpointPin(candidate: com.hermesandroid.relay.data.EndpointCandidate): String? {
+        val hostPort = "${candidate.api.host.lowercase()}:${candidate.api.port}"
+        val pins = PairingPreferences.getTofuPins(getApplication())
+        return pins[hostPort]
     }
 
     /**
@@ -1286,7 +2010,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             dataManager.resetAppData()
             _apiServerUrl.value = DEFAULT_API_URL
             _relayUrl.value = DEFAULT_RELAY_URL
-            _apiClient.value?.shutdown()
+            shutdownClientOffMain(_apiClient.value)
             _apiClient.value = null
             _apiServerReachable.value = false
         }
@@ -1298,7 +2022,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 serverUrl = _relayUrl.value,
                 theme = theme.value,
                 onboardingCompleted = _onboardingCompleted.value,
-                profiles = authManager.profiles.value,
+                // Pass 2: AuthManager.sessionLabels is gone — replaced by
+                // `agentProfiles: StateFlow<List<Profile>>`. The DataManager
+                // param is marked @Suppress("UNUSED_PARAMETER") and isn't
+                // written to the backup anyway, so an empty list keeps the
+                // signature stable until the param is removed in a later pass.
+                sessionLabels = emptyList(),
                 apiServerUrl = _apiServerUrl.value,
                 relayUrl = _relayUrl.value
             )
@@ -1542,7 +2271,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     override fun onCleared() {
         super.onCleared()
         connectionManager.shutdown()
-        _apiClient.value?.shutdown()
+        // ViewModel.onCleared runs on the main thread and viewModelScope
+        // is already being cancelled — fire-and-forget the client
+        // shutdown on a plain background Thread so
+        // ConnectionPool.evictAll doesn't trip
+        // NetworkOnMainThreadException on live SSL sockets.
+        _apiClient.value?.let { client ->
+            Thread({ runCatching { client.shutdown() } }, "HermesApiClient-shutdown").start()
+        }
         tailscaleDetector.shutdown()
         // Release the cached VirtualDisplay + ImageReader + HandlerThread
         // built by ScreenCapture on the first /screenshot call. Without

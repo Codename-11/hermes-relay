@@ -2,13 +2,15 @@
 
 Hermes-Relay fetches available personalities from the Hermes API Server and lets you switch between them.
 
+> A **personality** is a system-prompt preset on one agent. Switching a personality changes how the agent behaves on the next message, but not the server, the agent configuration, or the underlying model. To switch *server*, see [Connections](./connections.md); to switch *which named agent on that server*, see [Profiles](./profiles.md).
+
 ## Personality Picker
 
-The picker in the chat top bar shows all personalities configured on your server (from `GET /api/config` → `config.agent.personalities`). The server's default personality (from `config.display.personality`) is shown first.
+The Personality picker lives inside the **agent sheet** — tap the agent name in the Chat top bar to open it, then scroll to the Personality section. It shows all personalities configured on your server (from `GET /api/config` → `config.agent.personalities`), with the server's default (from `config.display.personality`) at the top.
 
 ### How to Switch
 
-Tap the personality chip in the top bar. A dropdown shows the default plus all configured personalities. When you select a non-default personality, its system prompt is sent with each chat request — the server applies it to the agent.
+Open the agent sheet and tap a personality. Its system prompt is sent with each subsequent chat request — the server applies it to the agent. A toast confirms the switch. The sheet also surfaces a Profile section (see [Profiles](./profiles.md)) and session info + analytics (message count, tokens in/out, avg TTFT) in the same surface.
 
 ### Agent Name on Bubbles
 

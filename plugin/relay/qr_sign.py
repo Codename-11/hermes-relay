@@ -110,6 +110,21 @@ def canonicalize(payload: dict) -> bytes:
       output is ASCII-escaped for maximum cross-platform stability
       (the phone parses JSON as UTF-8 but the HMAC input has to match
       exactly, so we lock down the serialization).
+    * **Arrays preserve emitted order.** ``json.dumps`` with
+      ``sort_keys=True`` sorts dict keys recursively but does NOT
+      reorder list elements. This matters for the ``endpoints`` array
+      in v3 QR payloads where ``priority`` is meaningful and position
+      encodes operator intent. The v3 contract (see ADR 24 in
+      ``docs/decisions.md``) locks down list order as part of the
+      canonical form so ``[lan, tailscale, public]`` and
+      ``[public, tailscale, lan]`` sign differently.
+    * **Values are embedded verbatim with no normalization.** String
+      values (notably ``role``) are not lowercased, stripped, or
+      otherwise transformed — ``"LAN"`` and ``"lan"`` produce different
+      canonical bytes and therefore different signatures. Non-ASCII
+      role labels round-trip through ``\\uXXXX`` escaping (since
+      ``ensure_ascii=True``) but remain recoverable byte-for-byte on
+      both sides.
 
     Raises ``TypeError`` if the payload contains values that don't
     round-trip through ``json.dumps`` (e.g. ``math.inf`` — callers

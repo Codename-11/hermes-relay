@@ -25,6 +25,13 @@ Endpoints injected (all bearer-auth gated via `adapter._check_auth`):
 
   GET    /api/skills                            — list skills (optional ?category=)
   GET    /api/skills/{name}                     — fetch skill body
+  PUT    /api/skills/toggle                     — STUB (501 Not Implemented).
+                                                  Registered so the Android client's
+                                                  capability probe observes the route
+                                                  and renders the UI as disabled
+                                                  instead of missing. See
+                                                  ``toggle_skill`` docstring for the
+                                                  upstream gap explanation.
 
   GET    /api/config                            — read model + config
   PATCH  /api/config                            — update model/provider/base_url
@@ -520,9 +527,51 @@ def _make_skills_handlers(adapter, upstream):
         file_path = (request.query.get("file_path") or "").strip() or None
         return web.json_response(json.loads(skill_view(name, file_path=file_path)))
 
+    async def toggle_skill(request):
+        """PUT /api/skills/toggle — stubbed 501.
+
+        Body: ``{"skill": "<name>", "enabled": true|false}``
+        Response (always 501):
+          ``{"error": "skill_toggle_not_implemented",
+             "detail": "Skill enable/disable requires upstream
+                        hermes_cli.web_server API — proxy not yet available"}``
+
+        Rationale: ``tools.skills_tool`` (the symbol we already import for
+        ``list_skills``/``view_skill``) has no clean enable/disable hook.
+        Upstream's dashboard implements the toggle in
+        ``hermes_cli.web_server`` — a separate, loopback-only web server —
+        which we don't proxy through the relay today. Surfacing the
+        endpoint with a clear 501 keeps the Kotlin client's capability
+        probe honest: it can observe the route exists, parse the
+        structured error, and hide the toggle UI until a real backend
+        lands. Returning 404 would make the probe confuse "server
+        doesn't know about toggles" (upstream gap) with "wrong URL"
+        (client bug).
+        """
+        auth_err = adapter._check_auth(request)
+        if auth_err:
+            return auth_err
+        # We still accept + ignore the body so misconfigured clients get
+        # a stable shape — not a JSON-decode error on top of the 501.
+        try:
+            await request.json()
+        except Exception:
+            pass
+        return web.json_response(
+            {
+                "error": "skill_toggle_not_implemented",
+                "detail": (
+                    "Skill enable/disable requires upstream "
+                    "hermes_cli.web_server API — proxy not yet available"
+                ),
+            },
+            status=501,
+        )
+
     return {
         "list_skills": list_skills,
         "view_skill": view_skill,
+        "toggle_skill": toggle_skill,
     }
 
 
@@ -647,6 +696,11 @@ def register_routes(app, adapter) -> None:
 
     app.router.add_get("/api/skills", skills["list_skills"])
     app.router.add_get("/api/skills/{name}", skills["view_skill"])
+    # Stubbed 501 — see `toggle_skill` docstring. Registered so the
+    # Kotlin client's capability probe observes the route and renders a
+    # disabled toggle rather than hitting a 404 and showing "unknown
+    # feature."
+    app.router.add_put("/api/skills/toggle", skills["toggle_skill"])
 
     app.router.add_get("/api/config", config["get_config"])
     app.router.add_patch("/api/config", config["update_config"])

@@ -2,24 +2,31 @@ package com.hermesandroid.relay.auth
 
 import android.content.Context
 import android.util.Log
+import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.PairingPreferences
+import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.models.Envelope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -57,7 +64,18 @@ sealed class AuthState {
 class AuthManager(
     private val context: Context,
     private val multiplexer: ChannelMultiplexer,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    /**
+     * Multi-connection: the id of the [com.hermesandroid.relay.data.Connection]
+     * this AuthManager is bound to. Drives which EncryptedSharedPreferences
+     * file the underlying [SessionTokenStore] reads/writes.
+     *
+     * Defaults to [CONNECTION_ID_LEGACY] so the pre-multi-connection call site
+     * in `ConnectionViewModel` still compiles. Worker B removes the default
+     * and passes a real connection id when they wire the active connection
+     * through.
+     */
+    private val connectionId: String = CONNECTION_ID_LEGACY,
 ) : ChannelMultiplexer.ChannelHandler {
 
     companion object {
@@ -68,6 +86,67 @@ class AuthManager(
         private const val KEY_PAIRED_META = "paired_session_meta_json"
         private const val PAIRING_CODE_LENGTH = 6
         private val PAIRING_CODE_CHARS = ('A'..'Z') + ('0'..'9')
+
+        /**
+         * Sentinel [connectionId] meaning "bind this AuthManager to the legacy
+         * single-connection EncryptedSharedPreferences file
+         * ([Connection.LEGACY_TOKEN_STORE_KEY])". Used as the default ctor arg
+         * so existing call sites don't need to change until Worker B threads
+         * a real connection id through.
+         */
+        const val CONNECTION_ID_LEGACY: String = "legacy"
+
+        /**
+         * Parse the `profiles` array from an `auth.ok` payload into a list of
+         * [Profile] entries. Extracted out of [handleAuthOk] so it's
+         * exercisable from a pure JVM unit test without constructing an
+         * Android [Context] / [kotlinx.coroutines.CoroutineScope].
+         *
+         * Defensive rules, in order:
+         *  - Non-[JsonObject] entries (stray strings, numbers) are dropped.
+         *  - An entry missing `name` is dropped — the picker has no label
+         *    to render for it.
+         *  - `model` defaults to `"unknown"` so a profile without a model
+         *    still renders as a selectable chip (server misconfiguration,
+         *    but we don't want to silently drop the only profile).
+         *  - `description` defaults to `""`.
+         *  - `system_message` is passed through as-is, including JSON `null`.
+         *    A null or missing value means "this profile has no SOUL.md on
+         *    disk — fall back to the personality/default system prompt at
+         *    send time". Kept separate from an empty string so ChatViewModel
+         *    can cleanly detect "no override" via `systemMessage?.isNotBlank()`.
+         *  - `gateway_running`, `has_soul`, `skill_count` (v0.7.0 runtime
+         *    metadata) are optional on the wire. Missing / malformed values
+         *    fall back to `false` / `false` / `0` so older relays stay
+         *    compatible and bad server data can't crash the pairing handshake.
+         */
+        fun parseAgentProfiles(array: JsonArray): List<Profile> {
+            return array.mapNotNull { entry ->
+                val obj = entry as? JsonObject ?: return@mapNotNull null
+                val name = obj["name"]?.jsonPrimitive?.contentOrNull
+                    ?: return@mapNotNull null
+                val model = obj["model"]?.jsonPrimitive?.contentOrNull
+                    ?: "unknown"
+                val description = obj["description"]?.jsonPrimitive?.contentOrNull
+                    ?: ""
+                val systemMessage = obj["system_message"]?.jsonPrimitive?.contentOrNull
+                val gatewayRunning = obj["gateway_running"]
+                    ?.jsonPrimitive?.booleanOrNull ?: false
+                val hasSoul = obj["has_soul"]
+                    ?.jsonPrimitive?.booleanOrNull ?: false
+                val skillCount = obj["skill_count"]
+                    ?.jsonPrimitive?.intOrNull ?: 0
+                Profile(
+                    name = name,
+                    model = model,
+                    description = description,
+                    systemMessage = systemMessage,
+                    gatewayRunning = gatewayRunning,
+                    hasSoul = hasSoul,
+                    skillCount = skillCount,
+                )
+            }
+        }
     }
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -92,8 +171,19 @@ class AuthManager(
         return storeMutex.withLock {
             _store?.let { return it }
             withContext(Dispatchers.IO) {
+                // Multi-connection: pick the EncryptedSharedPreferences
+                // filename based on the bound connection. The legacy sentinel
+                // keeps the pre-multi-connection install on its original file
+                // so the existing paired device keeps working with no
+                // migration.
+                val prefsName = if (connectionId == CONNECTION_ID_LEGACY) {
+                    Connection.LEGACY_TOKEN_STORE_KEY
+                } else {
+                    Connection.buildTokenStoreKey(connectionId)
+                }
                 val picked: SessionTokenStore =
-                    KeystoreTokenStore.tryCreate(context) ?: LegacyEncryptedPrefsTokenStore(context)
+                    KeystoreTokenStore.tryCreate(context, prefsName)
+                        ?: LegacyEncryptedPrefsTokenStore(context, prefsName)
                 migrateFromLegacyIfNeeded(picked)
                 _store = picked
                 picked
@@ -109,6 +199,11 @@ class AuthManager(
      */
     private fun migrateFromLegacyIfNeeded(picked: SessionTokenStore) {
         if (picked is LegacyEncryptedPrefsTokenStore) return
+        // Multi-connection: only the legacy connection inherits from the pre-
+        // multi-connection `hermes_companion_auth` file. A freshly-minted
+        // per-connection store must NOT be seeded from the legacy file or
+        // we'd copy connection 0's token into every new connection.
+        if (connectionId != CONNECTION_ID_LEGACY) return
         val legacy = try {
             LegacyEncryptedPrefsTokenStore(context)
         } catch (_: Exception) {
@@ -207,8 +302,37 @@ class AuthManager(
      */
     private var pendingGrants: Map<String, Long>? = null
 
-    private val _profiles = MutableStateFlow<List<String>>(emptyList())
-    val profiles: StateFlow<List<String>> = _profiles.asStateFlow()
+    /**
+     * Optional endpoint-candidate list from the pairing QR (ADR 24, v3+).
+     * Persisted via [PairingPreferences.setDeviceEndpoints] once the server
+     * confirms the pair in `auth.ok` so the reachability probe + network-aware
+     * switch (Kt-Probe) can read them on subsequent connects.
+     *
+     * `null` means "no endpoint list to persist on this pair" — either a v1/v2
+     * QR hit the legacy path without going through [setPendingEndpoints], or
+     * we're in a session-token refresh where the endpoint list doesn't change.
+     * Either way, we leave the previously-persisted list untouched.
+     */
+    private var pendingEndpoints: List<EndpointCandidate>? = null
+
+    /**
+     * Server-advertised agent profiles from the `auth.ok` payload's
+     * `profiles` field. Each entry corresponds to a named agent config in
+     * the server's `~/.hermes/config.yaml` (see Hermes's `_load_profiles`).
+     *
+     * This replaces the old `_sessionLabels` field (2026-04-18, Pass 2).
+     * The previous code parsed each entry as a raw [String] via
+     * `it.jsonPrimitive.content`, which blew up silently on the real
+     * object-shaped payload the server actually sends — so the list was
+     * always empty in practice. [parseAgentProfiles] is the structured
+     * replacement.
+     *
+     * Exposed via [com.hermesandroid.relay.viewmodel.ConnectionViewModel.agentProfiles]
+     * to the profile picker UI. Empty when unpaired or when the server
+     * returned no `profiles` entry.
+     */
+    private val _agentProfiles = MutableStateFlow<List<Profile>>(emptyList())
+    val agentProfiles: StateFlow<List<Profile>> = _agentProfiles.asStateFlow()
 
     /**
      * Whether an API key is currently stored. Updated reactively by
@@ -221,6 +345,12 @@ class AuthManager(
     init {
         // Register as system channel handler for auth messages
         multiplexer.registerHandler("system", this)
+        // Also listen on the "pairing" channel for server-initiated
+        // pushes — currently just profiles.updated (v0.7.1+ relay).
+        // Routed through the same onMessage dispatcher which switches
+        // by envelope type so adding new pairing.* events later is a
+        // one-line change in [onMessage].
+        multiplexer.registerHandler("pairing", this)
 
         // Check for existing session token off main thread
         scope.launch {
@@ -339,6 +469,21 @@ class AuthManager(
 
     fun setPendingGrants(grants: Map<String, Long>?) {
         pendingGrants = grants
+    }
+
+    /**
+     * Stage the endpoint-candidate list parsed from the pairing QR (ADR 24).
+     * Consumed in [handleAuthOk] — after the server confirms the pair we
+     * persist the list under the current device id via
+     * [PairingPreferences.setDeviceEndpoints].
+     *
+     * Safe to call with `null` or an empty list — either clears any staged
+     * value without persisting. Pair-code re-sends from an existing
+     * [AuthState.Paired] state never reach this setter, so session-token
+     * refreshes don't clobber the persisted list.
+     */
+    fun setPendingEndpoints(endpoints: List<EndpointCandidate>?) {
+        pendingEndpoints = endpoints?.takeIf { it.isNotEmpty() }
     }
 
     /**
@@ -464,8 +609,57 @@ class AuthManager(
         when (envelope.type) {
             "auth.ok" -> handleAuthOk(envelope)
             "auth.fail" -> handleAuthFail(envelope)
+            // `profiles.updated` push — sent by the v0.7.1+ relay on
+            // the "pairing" channel whenever its in-memory profile
+            // snapshot changes (file-watcher, SIGHUP, or a manual
+            // /api/profiles/refresh). The array shape mirrors the
+            // `profiles` field of auth.ok, so we parse with the exact
+            // same [parseAgentProfiles] helper.
+            "profiles.updated" -> handleProfilesUpdated(envelope)
         }
     }
+
+    /**
+     * Consumer for the pairing-channel `profiles.updated` envelope.
+     * Re-uses [parseAgentProfiles] because the wire shape of the
+     * `profiles` array exactly matches the auth.ok embedded form —
+     * the whole point of the push is that the app keeps a single
+     * parser regardless of which entry point the list arrives on.
+     *
+     * Emits a one-shot [profilesUpdatedEvents] event so the UI layer
+     * can show a brief "Profiles updated" snackbar. The event is only
+     * fired when the list actually changed (different names or count)
+     * — an idempotent push that matches the cached state is silent.
+     */
+    private fun handleProfilesUpdated(envelope: Envelope) {
+        val array = envelope.profiles ?: run {
+            Log.w(TAG, "handleProfilesUpdated: envelope has no `profiles` array")
+            return
+        }
+        val parsed = parseAgentProfiles(array)
+        val prev = _agentProfiles.value
+        _agentProfiles.value = parsed
+
+        // Did anything meaningful change? We treat "same names" as
+        // "nothing to announce" — the dashboard can emit these pushes
+        // liberally and we don't want to spam the user with toasts.
+        val prevNames = prev.map { it.name }.toSet()
+        val nextNames = parsed.map { it.name }.toSet()
+        if (prevNames != nextNames || prev.size != parsed.size) {
+            _profilesUpdatedEvents.tryEmit(Unit)
+        }
+    }
+
+    /**
+     * One-shot signal emitted every time a `profiles.updated` envelope
+     * materially changes the profile list. UI collects it via
+     * [com.hermesandroid.relay.viewmodel.ConnectionViewModel.profilesUpdatedEvents]
+     * to show a transient snackbar.
+     */
+    private val _profilesUpdatedEvents =
+        kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 4)
+    val profilesUpdatedEvents: kotlinx.coroutines.flow.SharedFlow<Unit> =
+        _profilesUpdatedEvents.asSharedFlow()
 
     fun regeneratePairingCode() {
         _pairingCode.value = generatePairingCode()
@@ -565,19 +759,55 @@ class AuthManager(
                     _currentPairedSession.value = paired
                     persistPairedSession(paired)
 
-                    // Pending TTL/grants are consumed — the server has
-                    // either honored or overridden them and the next
+                    // ADR 24 — persist the pairing's endpoint-candidate list
+                    // so the reachability probe + network-aware switch
+                    // (Kt-Probe) can load it on subsequent connects without
+                    // re-scanning the original QR. Keyed by the stable
+                    // device id so multiple paired devices coexist cleanly.
+                    //
+                    // Leave the previously-persisted list untouched when
+                    // nothing was staged (session-token refresh path, or
+                    // a legacy caller that didn't set endpoints).
+                    pendingEndpoints?.let { endpoints ->
+                        try {
+                            val deviceId = getDeviceId()
+                            PairingPreferences.setDeviceEndpoints(
+                                context,
+                                deviceId,
+                                endpoints,
+                            )
+                            Log.i(
+                                TAG,
+                                "handleAuthOk: persisted ${endpoints.size} endpoint(s) for device=$deviceId " +
+                                    "roles=${endpoints.map { it.role }}"
+                            )
+                        } catch (e: Exception) {
+                            Log.w(
+                                TAG,
+                                "handleAuthOk: endpoint persistence failed — continuing without; " +
+                                    "reachability probe will fall back to the single active endpoint. " +
+                                    "reason=${e.message}"
+                            )
+                        }
+                    }
+
+                    // Pending TTL/grants/endpoints are consumed — the server
+                    // has either honored or overridden them and the next
                     // auth round-trip should not resend stale values.
                     pendingTtlSeconds = null
                     pendingGrants = null
+                    pendingEndpoints = null
                 }
 
                 val profilesArray = payload["profiles"]?.jsonArray
                 if (profilesArray != null) {
-                    _profiles.value = profilesArray.map { it.jsonPrimitive.content }
+                    _agentProfiles.value = parseAgentProfiles(profilesArray)
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                // Replaces a silent `e.printStackTrace()` — that stack-trace-only
+                // handler is exactly why the broken `_sessionLabels` parser
+                // (stringifying object entries) sat undetected for so long.
+                Log.w(TAG, "auth.ok parse failed: ${e.message}", e)
             }
         }
     }

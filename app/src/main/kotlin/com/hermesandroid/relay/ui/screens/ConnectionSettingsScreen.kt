@@ -76,6 +76,7 @@ import com.hermesandroid.relay.network.ConnectionState
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.components.ApiServerInfoSheet
 import com.hermesandroid.relay.ui.components.ConnectionStatusRow
+import com.hermesandroid.relay.ui.components.EndpointsCard
 import com.hermesandroid.relay.ui.components.InsecureConnectionAckDialog
 import com.hermesandroid.relay.ui.components.RelayInfoSheet
 import com.hermesandroid.relay.ui.components.SessionInfoSheet
@@ -87,6 +88,9 @@ import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.util.classifyError
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import com.hermesandroid.relay.viewmodel.RelayUiState
+import com.hermesandroid.relay.viewmodel.asBadgeState
+import com.hermesandroid.relay.viewmodel.statusText
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -176,33 +180,17 @@ fun ConnectionSettingsScreen(
     // Feature flags
     val relayEnabled by FeatureFlags.relayEnabled(context).collectAsState(initial = FeatureFlags.isDevBuild)
 
-    // "Stale" = we have a paired session token but the WS is not currently
-    // open. Happens after backgrounding, network flaps, or manual disconnect.
-    // Shown as amber "Stale — tap to reconnect" instead of red "Disconnected"
-    // because the fix is a single reconnect, not a re-pair.
-    val isRelayStale = authState is AuthState.Paired &&
-        relayConnectionState == ConnectionState.Disconnected
-
-    // Auto-reconnect when entering the Settings screen in a stale state.
-    // Keeps 90% of users out of the contradictory "Paired + Disconnected"
-    // state without requiring a manual tap.
-    //
-    // [isAutoReconnecting] is a screen-local gate that unifies the brief
-    // "Stale → Connecting → Connected" transition into one consistent
-    // "Reconnecting..." label so users don't see the row flash between
-    // states. Flipped off when we either reach Connected, or after a
-    // 5s timeout (at which point we fall through to the real
-    // "Stale — tap to reconnect" affordance).
-    var isAutoReconnecting by remember { mutableStateOf(true) }
+    // Resolved relay UI state lives in ConnectionViewModel so every screen
+    // renders the relay row identically. The grace-window-to-Stale logic
+    // and the amber "Reconnecting…" flash-suppression that used to live
+    // here (as `isAutoReconnecting` + `isRelayStale`) are now centralized.
+    // We still kick `reconnectIfStale()` on screen entry so the WSS
+    // handshake starts right away — the VM's grace timer then hides the
+    // Disconnected→Connecting transition.
+    val relayUiState by connectionViewModel.relayUiState.collectAsState()
+    val relayRowState by connectionViewModel.relayRowState.collectAsState()
     LaunchedEffect(Unit) {
         connectionViewModel.reconnectIfStale()
-        kotlinx.coroutines.delay(5000)
-        isAutoReconnecting = false
-    }
-    LaunchedEffect(relayConnectionState) {
-        if (relayConnectionState == ConnectionState.Connected) {
-            isAutoReconnecting = false
-        }
     }
 
     // === MANUAL-PAIR-FOLLOWUP: observe authState for Card 3 Connect ===
@@ -366,45 +354,29 @@ fun ConnectionSettingsScreen(
                     )
 
                     if (relayEnabled) {
+                        // Row state comes straight from ConnectionViewModel's
+                        // resolved RelayUiState flow. Tap behavior: a Stale
+                        // state offers a direct reconnect; every other state
+                        // falls through to the relay info bottom sheet.
                         ConnectionStatusRow(
                             label = "Relay",
-                            isConnected = relayConnectionState == ConnectionState.Connected,
-                            // Treat "stale" AND the initial auto-reconnect
-                            // window as the amber in-flight state so the
-                            // row renders in amber instead of red — a tap
-                            // will bring it back, no re-pair needed.
-                            isConnecting = relayConnectionState == ConnectionState.Connecting ||
-                                relayConnectionState == ConnectionState.Reconnecting ||
-                                isRelayStale ||
-                                isAutoReconnecting,
-                            // Initial post-resume probe — show gray
-                            // checking state when the disconnect is fresh
-                            // and we haven't finished a /health probe yet.
-                            isProbing = relayConnectionState == ConnectionState.Disconnected &&
-                                !isRelayStale && !isAutoReconnecting &&
-                                relayHealth == ConnectionViewModel.HealthStatus.Probing,
-                            statusText = when {
-                                relayConnectionState == ConnectionState.Connected -> "Connected"
-                                // During the initial auto-reconnect window
-                                // (screen just opened, stale session is being
-                                // revived), show ONE consistent label even as
-                                // the underlying state bounces from
-                                // Disconnected → Connecting → Connected. Avoids
-                                // the flash of "Stale — tap to reconnect"
-                                // followed immediately by "Connecting..." that
-                                // users were seeing on every Settings entry.
-                                isAutoReconnecting && relayConnectionState != ConnectionState.Connected -> "Reconnecting..."
-                                relayConnectionState == ConnectionState.Connecting -> "Connecting..."
-                                relayConnectionState == ConnectionState.Reconnecting -> "Reconnecting..."
-                                isRelayStale -> "Stale — tap to reconnect"
-                                else -> "Disconnected"
-                            },
+                            // ADR 24: relayRowState carries both the phase and
+                            // the active endpoint role. Its statusText appends
+                            // " · <Role>" when the resolver has picked one.
+                            state = relayRowState.asBadgeState(),
+                            statusText = relayRowState.statusText(connectedLabel = "Connected"),
                             onClick = {
-                                // When stale, the primary affordance is
-                                // reconnect. Otherwise fall through to
-                                // the info bottom sheet.
-                                if (isRelayStale) {
+                                if (relayUiState == RelayUiState.Stale) {
                                     connectionViewModel.connectRelay()
+                                    // Immediate toast acknowledges the tap
+                                    // even if the handshake takes a beat —
+                                    // the row itself flips to Connecting
+                                    // within milliseconds via relayUiState.
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        "Reconnecting to relay…",
+                                        android.widget.Toast.LENGTH_SHORT,
+                                    ).show()
                                 } else {
                                     showRelayInfoSheet = true
                                 }
@@ -436,9 +408,16 @@ fun ConnectionSettingsScreen(
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            if (isRelayStale) {
+                            if (relayUiState == RelayUiState.Stale) {
                                 Button(
-                                    onClick = { connectionViewModel.connectRelay() }
+                                    onClick = {
+                                        connectionViewModel.connectRelay()
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            "Reconnecting to relay…",
+                                            android.widget.Toast.LENGTH_SHORT,
+                                        ).show()
+                                    }
                                 ) {
                                     Text("Reconnect")
                                 }
@@ -554,6 +533,45 @@ fun ConnectionSettingsScreen(
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                }
+            }
+
+            // Card 1.5 — ADR 24 Endpoints (collapsible). Only rendered when
+            // the relay feature is on since endpoints live on the relay
+            // channel. Reads the device's stored candidate list from
+            // PairingPreferences via observeDeviceEndpoints() and the
+            // resolver-picked active endpoint from ConnectionManager.
+            if (relayEnabled) {
+                val endpointsList by connectionViewModel.observeDeviceEndpoints()
+                    .collectAsState(initial = emptyList())
+                val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
+                var endpointsExpanded by rememberSaveable { mutableStateOf(false) }
+                var preferredRole by remember {
+                    mutableStateOf(connectionViewModel.getPreferredEndpointRole())
+                }
+                SettingsExpandableCard(
+                    title = "Endpoints (${endpointsList.size})",
+                    expanded = endpointsExpanded,
+                    onToggle = { endpointsExpanded = !endpointsExpanded },
+                    isDarkTheme = isDarkTheme,
+                ) {
+                    EndpointsCard(
+                        endpoints = endpointsList,
+                        activeEndpoint = activeEndpoint,
+                        preferredRole = preferredRole,
+                        onPreferEndpoint = { candidate ->
+                            connectionViewModel.setPreferredEndpointRole(candidate.role)
+                            preferredRole = candidate.role
+                        },
+                        onClearOverride = {
+                            connectionViewModel.setPreferredEndpointRole(null)
+                            preferredRole = null
+                        },
+                        onProbeNow = { connectionViewModel.probeNow() },
+                        onViewPin = { candidate ->
+                            connectionViewModel.lookupEndpointPin(candidate)
+                        },
+                    )
                 }
             }
 

@@ -6,7 +6,7 @@
 
 A native Android app (Kotlin + Jetpack Compose) paired with a Python relay server (aiohttp) for the Hermes agent platform. Chat connects directly to the Hermes API Server via HTTP/SSE; bridge and terminal use a relay over WSS.
 
-**Current state:** v0.4.x — Phase 0–3 complete. Direct API chat, session management, pairing + security, inbound media, voice mode, bridge/accessibility control, notification companion, and safety rails. Two product flavors: `googlePlay` (conservative) and `sideload` (full-capability).
+**Current state:** v0.7.x (unreleased on `dev`) — Phase 0–3 complete. Direct API chat, session management, pairing + security (now multi-endpoint, ADR 24), inbound media, voice mode, bridge/accessibility control, notification companion, safety rails, multi-Connection, agent profiles + inspector, and first-class Tailscale (ADR 25). Two product flavors: `googlePlay` (conservative) and `sideload` (full-capability).
 
 ## Architecture
 
@@ -31,7 +31,7 @@ Chat goes directly to the API server via HTTP/SSE. The API key (Bearer token) is
 | `POST /v1/responses` | OpenAI Responses API format | Structured `function_call` objects (non-streaming only) |
 | `GET /v1/models` | List available models | — |
 | `GET /health` | Health check | — |
-| `GET/POST/PATCH/DELETE /api/jobs/*` | Cron job management | — |
+| `GET/POST/PATCH/DELETE /api/jobs/*` | Cron job management (api_server surface) | — |
 
 **Non-standard endpoints (provided by fork OR by plugin bootstrap):**
 
@@ -48,11 +48,16 @@ These endpoints are not in stock upstream `gateway/platforms/api_server.py`. The
 | `GET /api/sessions/search` | Full-text message search | Fork OR bootstrap OR upstream-merged |
 | `POST /api/sessions/{id}/chat/stream` | Session-based SSE chat | Fork OR upstream-merged ONLY (NOT bootstrap) |
 | `GET /api/config`, `PATCH /api/config` | Personalities + model config | Fork OR bootstrap OR upstream-merged |
-| `GET /api/skills`, `/categories`, `/{name}` | Skill discovery | Fork OR bootstrap OR upstream-merged |
+| `GET /api/skills`, `/{name}` | Skill discovery (list + detail) | Fork OR bootstrap OR upstream-merged |
+| `PUT /api/skills/toggle` | Enable/disable installed skill | `hermes_cli/web_server.py` dashboard surface; mirrored into bootstrap |
 | `GET/POST/PATCH/DELETE /api/memory` | Memory CRUD | Fork OR bootstrap OR upstream-merged |
 | `GET /api/available-models` | Provider model list | Fork OR bootstrap OR upstream-merged |
 
 The Android client probes per-endpoint capability via `HermesApiClient.probeCapabilities()` (returns `ServerCapabilities`). When `streamingEndpoint = "auto"`, `ConnectionViewModel.resolveStreamingEndpoint()` picks `sessions` or `runs` based on the capability snapshot.
+
+**Dashboard web server (separate surface — loopback-only):**
+
+hermes-agent ships a second web server at `hermes_cli/web_server.py` that hosts the React admin dashboard at `hermes_cli/web_dist/`. It has its **own** `/api/*` routes that **do not live on `api_server.py`** — notably: `GET/PUT /api/config` (full tree), `GET /api/config/schema`, `GET /api/config/defaults`, `GET/PUT /api/config/raw` (YAML text), `GET/PUT/DELETE /api/env` + `POST /api/env/reveal`, `PUT /api/skills/toggle`, `/api/cron/jobs/*` (different shape from `/api/jobs/*`), `/api/providers/oauth/*`, `/api/dashboard/themes`, `/api/dashboard/plugins`, `/api/model/info`, `/api/logs`, `/api/analytics/usage`. Auth is a page-injected `window.__HERMES_SESSION_TOKEN__` — loopback-only, no external issuance. **Do not proxy this surface over the relay.** Phone consumes the narrower, fork/bootstrap `api_server.py` surface or relay-native profile-scoped endpoints.
 
 **Tool call rendering paths:**
 1. **Runs API** — Emits `tool.started`/`tool.completed` as real SSE events → `ToolProgressCard` in real-time.
@@ -116,16 +121,17 @@ hermes-android/
 
 ### Git
 - **Conventional Commits:** `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
-- **Feature branches** as of 2026-04-13. Straight-to-main for single-file typos only.
-- **Merge style:** `git merge --no-ff` — no squash. Preserves per-commit trail for agent-team branches.
-- **Merging ≠ releasing.** Feature branches land on `main` continuously as CI goes green; each PR appends to `[Unreleased]` in `CHANGELOG.md`. Releases are a separate act — cut when accumulated state is worth shipping, not per-feature. See `RELEASE.md` "When to cut a release."
-- **Version bumps on `main` only.** Use `bash scripts/bump-version.sh <new-version>` to bump all three sources atomically (`gradle/libs.versions.toml`, `pyproject.toml`, `plugin/relay/__init__.py`). Happens at release-prep, not per-feature.
-- **Branch protection** on `main` since 0.3.0 — PRs must pass CI; direct push blocked except `release: vX.Y.Z`.
+- **Branching model (as of 2026-04-19):** `main` + `dev`. Feature branches target `dev`, not `main`. `main` receives only release merges (and tags). No straight-to-main exemption — even single-file typos go through `dev`.
+- **Merge style:** `git merge --no-ff` — no squash. Preserves per-commit trail for agent-team branches on every merge in the chain (feature → dev → main).
+- **Merging ≠ releasing.** Feature branches land on `dev` continuously as CI goes green; each PR appends to `[Unreleased]` in `CHANGELOG.md` on `dev`. Releases are a separate act — cut when accumulated state is worth shipping, not per-feature. See `RELEASE.md` "When to cut a release."
+- **Version bumps happen on `dev`, then release-merge to `main`.** Use `bash scripts/bump-version.sh <new-version>` to bump all three sources atomically (`gradle/libs.versions.toml`, `pyproject.toml`, `plugin/relay/__init__.py`). The `release: vX.Y.Z` commit lives on `dev`, then a release PR merges `dev` → `main` with `--no-ff`, then the tag is cut from `main`.
+- **Server tracks `dev` for staging.** The hermes-host deployment pulls `dev` so merged features are exercised before they reach a tag. Released state lives on tags cut from `main`.
+- **Branch protection** on `main` — direct push blocked; only release-merge PRs from `dev` land here. `dev` also requires CI to pass on PRs but accepts feature-branch merges freely.
 
 ### Testing
 - **Android:** JUnit + Compose testing for UI, MockK for mocks
 - **Python:** `python -m unittest plugin.tests.test_<name>` — avoid bare `pytest` (conftest imports `responses` which may not be installed in the venv)
-- **CI runs on every push** — build must pass before merge
+- **CI is split by path:** `.github/workflows/ci-android.yml` runs on app/Gradle changes; `.github/workflows/ci-relay.yml` runs on plugin/Python changes. Both trigger on pushes to `main` and `dev` and on PRs targeting either. Build + tests must pass before merge to `dev`; release-merge to `main` requires the same.
 
 ## Key Files
 
@@ -138,7 +144,8 @@ hermes-android/
 | **App — Core** | |
 | `ui/RelayApp.kt` | Main scaffold — bottom nav, Compose navigation |
 | `viewmodel/ChatViewModel.kt` | Chat orchestration — send, stream, cancel, slash commands |
-| `viewmodel/ConnectionViewModel.kt` | Dual connection model (API + relay); `resolveStreamingEndpoint()` |
+| `viewmodel/ConnectionViewModel.kt` | Dual connection model (API + relay); `resolveStreamingEndpoint()`; derived `relayUiState` flow + `markPaired` hook stamp the active Connection |
+| `viewmodel/RelayUiState.kt` | Shared sealed state for the relay row — 5 cases + `asBadgeState()` / `statusText()` extensions; 5s grace window before Stale |
 | `network/HermesApiClient.kt` | Direct HTTP/SSE — `sendRunStream()`, `sendChatStream()`, `probeCapabilities()` |
 | `network/ConnectionManager.kt` | WSS to relay with auto-reconnect; rebuilds OkHttpClient with fresh CertPinner on connect |
 | `network/ChannelMultiplexer.kt` | Envelope routing by channel; `sendNotification()` for notification outbound |
@@ -150,6 +157,7 @@ hermes-android/
 | `auth/SessionTokenStore.kt` | Keystore (StrongBox) + EncryptedSharedPrefs fallback; lossless migration on upgrade |
 | `auth/CertPinStore.kt` | TOFU cert pinning — SHA-256 SPKI per host:port in DataStore |
 | `auth/PairedSession.kt` | PairedSession state + PairedDeviceInfo wire model |
+| `data/Endpoint.kt` | `EndpointCandidate` / `ApiEndpoint` / `RelayEndpoint` — multi-endpoint pairing (ADR 24); `displayLabel()` for LAN/Tailscale/Public/Custom chips |
 | `network/RelayHttpClient.kt` | OkHttp for /media, /sessions (list/revoke/extend), /health |
 | **App — Bridge** | |
 | `network/handlers/BridgeCommandHandler.kt` | Routes `bridge.command` → ActionExecutor; full path inventory + safety-rail integration |
@@ -180,13 +188,14 @@ hermes-android/
 | `notifications/HermesNotificationCompanion.kt` | NotificationListenerService; cold-start buffer (50); forwards via ChannelMultiplexer |
 | `util/RelayErrorClassifier.kt` | `classifyError(Throwable, context) → HumanError`; used by Voice/Chat/Connection |
 | **Relay — Server** | |
-| `plugin/relay/server.py` | Canonical relay — WSS + HTTP routes; bridge, media, voice, session, pairing handlers |
+| `plugin/relay/server.py` | Canonical relay — WSS + HTTP routes; bridge, media, voice, session, pairing handlers. `handle_pairing_mint` mirrors `pair.py:762` — top-level = API server, `relay.{url,code}` nested |
 | `plugin/relay/auth.py` | PairingManager, SessionManager, RateLimiter; `math.inf` for never-expire |
 | `plugin/relay/channels/bridge.py` | Bridge handler — `handle_command()` mints request_id, awaits response, 30s timeout |
 | `plugin/relay/channels/notifications.py` | Bounded deque (100) of notification metadata; in-memory only |
 | `plugin/relay/media.py` | MediaRegistry — LRU token store; `strict_sandbox` off by default for `/media/by-path` |
 | `plugin/relay/voice.py` | Voice endpoints — transcribe, synthesize, voice_config; lazy tool imports |
-| `plugin/relay/qr_sign.py` | HMAC-SHA256 QR signing; secret at `~/.hermes/hermes-relay-qr-secret` |
+| `plugin/relay/qr_sign.py` | HMAC-SHA256 QR signing; secret at `~/.hermes/hermes-relay-qr-secret`; canonical form preserves `endpoints` array order + role strings verbatim (ADR 24) |
+| `plugin/relay/tailscale.py` | First-class Tailscale helper (ADR 25) — `status()` / `enable(port)` / `disable(port)` / `canonical_upstream_present()`; safe-absent via shell-out to `tailscale` CLI |
 | `plugin/relay/_env_bootstrap.py` | Loads `~/.hermes/.env` before relay imports; called from both entry points |
 | **Plugin — Tools + Installer** | |
 | `plugin/tools/android_tool.py` | 18 `android_*` tool handlers (14 baseline + send_sms, call, search_contacts, return_to_hermes); `android_screenshot` first consumer of `register_media()` |
@@ -197,7 +206,7 @@ hermes-android/
 | `hermes_relay_bootstrap/` | Runtime patch for vanilla upstream; no-op on fork/upstream-merged; remove after PR #8556 |
 | **Plugin — Dashboard** | |
 | `plugin/dashboard/manifest.json` | Declares tab, entry bundle, and FastAPI module for hermes-agent discovery |
-| `plugin/dashboard/plugin_api.py` | FastAPI router proxying 5 routes to relay over loopback |
+| `plugin/dashboard/plugin_api.py` | FastAPI router proxying 5 routes to relay over loopback; `/pairing` body = API-server overrides (host/port/tls/api_key), relay URL auto-derived |
 | `plugin/dashboard/src/index.jsx` | React root registering `hermes-relay` plugin with 4-tab shell |
 | `plugin/dashboard/dist/index.js` | Committed IIFE bundle loaded verbatim by dashboard |
 
@@ -248,7 +257,7 @@ Curls every bridge HTTP route via `localhost:8767`. Catches the silent-drop regr
 2. **Python syntax check** — `python -m py_compile plugin/<file>.py`. Full tests run on the server.
 3. **Kotlin changes** — do NOT run `gradle build`. Bailey builds via Android Studio's ▶ button. Never `adb install` from Claude.
 4. **Before pushing Kotlin changes** — run `./gradlew lint` locally. It's the exact task CI runs (see `.github/workflows/ci.yml` → `gradlew lint` fallback) and catches errors Android Studio's live inspections miss — e.g. `UnsafeOptInUsageError` with `kotlin.OptIn` vs `androidx.annotation.OptIn`, `FlowOperatorInvokedInComposition` (mapped flows inside Composables), Media3 `@UnstableApi` propagation. Lint is a hard blocker in CI: Build + Test show "skipping" until lint passes, and lint prints only the **first failure** before aborting — so CI iterations reveal errors one at a time while a single local lint run surfaces all of them.
-5. **Commit + push** — feature branch for anything >1-2 commits.
+5. **Commit + push** — feature branch off `dev`, merged back to `dev` via PR. `main` is reserved for release merges.
 6. **Pull + restart on server** — see Server Deployment below.
 7. **Test on phone** — Bailey builds from Studio, installs to Samsung device, pairs via `/hermes-relay-pair`.
 
@@ -298,8 +307,10 @@ See [RELEASE.md](RELEASE.md) for the full recipe.
 | Chat (sessions) | `POST /api/sessions/{id}/chat/stream` | No live tool events; reloads history on stream complete |
 | Chat (compat) | `POST /v1/chat/completions` (stream=true) | Inline tool annotations only |
 | Session CRUD | `GET/POST/PATCH/DELETE /api/sessions` | Non-standard; bootstrap or fork |
-| Pairing (QR) | `POST /pairing/register` (loopback only) | Via `/hermes-relay-pair` or `hermes-pair` shim |
+| Pairing (QR) | `POST /pairing/register` (loopback only) | Via `/hermes-relay-pair` or `hermes-pair` shim; accepts optional `endpoints` for multi-endpoint QRs |
+| Pairing (multi-endpoint) | QR `endpoints` array (ADR 24) | `hermes: 3` schema; ordered `lan`/`tailscale`/`public`/... candidates; phone re-probes on network change |
 | Pairing auth | WSS `auth.ok` payload | Includes `expires_at`, `grants`, `transport_hint` |
+| Tailscale Serve (ADR 25) | `hermes-relay-tailscale enable\|disable\|status` CLI | Fronts loopback `:8767` with `tailscale serve --bg --https=<port>`; auto-retires on upstream PR #9295 |
 | Inbound media (token) | `GET /media/{token}` | Bearer auth; 24h TTL |
 | Inbound media (path) | `GET /media/by-path?path=<abs>` | Permissive by default; `RELAY_MEDIA_STRICT_SANDBOX=1` to restrict |
 | Session management | `GET /sessions`, `DELETE /sessions/{prefix}`, `PATCH /sessions/{prefix}` | List/revoke/extend; RelayHttpClient |

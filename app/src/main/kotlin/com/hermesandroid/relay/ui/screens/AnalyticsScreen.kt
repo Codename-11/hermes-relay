@@ -17,22 +17,35 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.ui.components.StatsForNerds
+import com.hermesandroid.relay.ui.components.TimelineView
+import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import com.hermesandroid.relay.viewmodel.VoiceViewModel
 
 /**
  * Dedicated Analytics screen — "Stats for Nerds". Hosts TTFT chart, tokens/
- * message, peak times, stream rate, health metrics, and the reset button.
- * Read-only display of in-app analytics from AppAnalytics.
+ * message, peak times, stream rate, health metrics, the voice / tool-call
+ * sections, the timeline view, and the reset button.
+ *
+ * [voiceViewModel] and [chatViewModel] are nullable so pre-wiring call
+ * sites (previews, legacy tests) still compile; when present, the voice
+ * + tool-call + timeline sections render.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AnalyticsScreen(
     connectionViewModel: ConnectionViewModel,
     onBack: () -> Unit,
+    voiceViewModel: VoiceViewModel? = null,
+    chatViewModel: ChatViewModel? = null,
 ) {
+    val voiceStats = voiceViewModel?.voiceStats?.collectAsState()?.value
+    val toolCalls = chatViewModel?.toolCallHistory?.collectAsState()?.value.orEmpty()
     Scaffold(
         topBar = {
             TopAppBar(
@@ -66,7 +79,20 @@ fun AnalyticsScreen(
                 color = MaterialTheme.colorScheme.primary
             )
 
-            StatsForNerds()
+            StatsForNerds(
+                voiceStats = voiceStats,
+                toolCalls = toolCalls,
+            )
+
+            // Timeline — renders below the stats card when a voice VM or
+            // chat VM is wired. Sources from the same flows so the two
+            // panels stay in sync without a separate event plumbing.
+            if (voiceViewModel != null || chatViewModel != null) {
+                TimelineView(
+                    voiceStats = voiceStats,
+                    toolCalls = toolCalls,
+                )
+            }
         }
     }
 }

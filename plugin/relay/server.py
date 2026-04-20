@@ -27,14 +27,18 @@ import mimetypes
 import os
 import signal
 import ssl
+import stat
 import sys
 import tempfile
 import time
 import uuid
 from typing import Any
+from urllib.parse import urlparse
 
 import aiohttp
+import yaml
 from aiohttp import web
+from pathlib import Path
 
 from . import __version__
 from .auth import (
@@ -64,9 +68,16 @@ class RelayServer:
         self.config = config
         self.start_time: float = time.monotonic()
 
-        # Auth
+        # Auth — SessionManager persistence is opt-in via
+        # ``config.session_persistence_path``. ``RelayConfig.from_env``
+        # sets it to ``<hermes_config_path.parent>/hermes-relay-sessions.json``
+        # for real startups; tests constructing ``RelayConfig()``
+        # directly get None (in-memory only), preserving the previous
+        # test isolation guarantees.
         self.pairing = PairingManager()
-        self.sessions = SessionManager()
+        self.sessions = SessionManager(
+            persistence_path=config.session_persistence_path,
+        )
         self.rate_limiter = RateLimiter()
 
         # Media registry — inbound media from tools (screenshots, etc.)
@@ -194,6 +205,16 @@ async def handle_pairing_register(request: web.Request) -> web.Response:
     if err is not None:
         return web.json_response({"ok": False, "error": err}, status=400)
 
+    # Optional v3 multi-endpoint payload (ADR 24). Accept the array as-is
+    # and mirror it back in the response; ``pair.py`` built it and it's
+    # about to be HMAC-signed, so the server doesn't re-validate shape.
+    # The phone validates structure on parse.
+    endpoints = payload.get("endpoints")
+    if endpoints is not None and not isinstance(endpoints, list):
+        return web.json_response(
+            {"ok": False, "error": "endpoints must be an array"}, status=400
+        )
+
     server: RelayServer = request.app["server"]
     if not server.pairing.register_code(
         code,
@@ -216,7 +237,10 @@ async def handle_pairing_register(request: web.Request) -> web.Response:
     server.rate_limiter.clear_all_blocks()
 
     logger.info("Pre-registered pairing code via /pairing/register: %s", code.upper())
-    return web.json_response({"ok": True, "code": code.upper()})
+    response: dict[str, Any] = {"ok": True, "code": code.upper()}
+    if endpoints is not None:
+        response["endpoints"] = endpoints
+    return web.json_response(response)
 
 
 def _parse_pairing_metadata(
@@ -272,18 +296,41 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
 
     Loopback-only. Used by the dashboard plugin's "pair new device" flow.
     Generates a random 6-char A-Z/0-9 code, registers it via the
-    PairingManager, then hands back the same signed JSON blob that
-    ``hermes pair`` would print so the caller can render it as a QR
-    image.
+    PairingManager, then hands back the same signed JSON blob the CLI
+    (`hermes-pair`) would print so the caller can render it as a QR.
+
+    The payload shape matches what the Android app parses in
+    ``QrPairingScanner.kt``: top-level ``host/port/key/tls`` describe the
+    direct-chat Hermes **API** server the phone will hit for chat; the
+    nested ``relay`` block describes the WSS relay connection:
+
+    ```json
+    {
+      "hermes": 2,
+      "host": "172.16.24.250", "port": 8642, "key": "<api-key>", "tls": false,
+      "relay": {"url": "ws://172.16.24.250:8767", "code": "ABC123",
+                "ttl_seconds": 604800, "transport_hint": "ws"}
+    }
+    ```
+
+    This mirrors ``pair.py``'s CLI ``build_payload(...)`` call. Before
+    2026-04-18 the endpoint put the minted code in top-level ``key`` and
+    emitted top-level ``port`` as the relay port, which broke scanning —
+    the phone treated the relay port as the API server address and the
+    relay block had no url/code for it to open a WSS against.
 
     POST /pairing/mint
-      body: {"host": "172.16.24.250", "port": 8767, "tls": false,
-             "ttl_seconds": <int optional>, "transport_hint": "wss"|"ws",
-             "grants": {...} optional}
-      → 200 {"code": "ABC123", "qr_payload": "{...}",
-             "expires_at": <unix ts>, "host": "...", "port": 8767,
-             "tls": false}
-      → 400 invalid JSON
+      body (all optional — fall back to RelayConfig defaults):
+        - host: "172.16.24.250"        API server host override (LAN IP)
+        - port: 8642                    API server port override
+        - tls: false                    API server TLS override
+        - api_key: "<token>"            API bearer token (goes in top-level
+                                        "key"; empty = open access)
+        - ttl_seconds: <int>            Session TTL
+        - transport_hint: "wss"|"ws"    Forwarded verbatim
+        - grants: {...}                 Channel TTL map
+      → 200 {ok, code, qr_payload, expires_at, host, port, tls, relay_url}
+      → 400 invalid JSON or API host can't be resolved
       → 403 non-loopback caller
     """
     _require_loopback(request)
@@ -299,21 +346,73 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         payload = {}
 
     server: RelayServer = request.app["server"]
-    host = str(payload.get("host") or server.config.host or "").strip()
-    if not host or host == "0.0.0.0":
+
+    from ..pair import build_payload, _relay_lan_base_url, _resolve_lan_ip
+
+    # ── API server info (top-level of the QR payload) ────────────────────
+    # Defaults come from ``RelayConfig.webapi_url`` (the Hermes API gateway
+    # URL the relay is fronting). The dashboard's "editable pair URL" UI
+    # overrides any of host/port/tls via the request body.
+    default_api_url = urlparse(server.config.webapi_url or "http://localhost:8642")
+    api_host_override = payload.get("host")
+    api_port_override = payload.get("port")
+    api_tls_override = payload.get("tls")
+
+    raw_api_host = str(
+        api_host_override
+        if api_host_override
+        else (default_api_url.hostname or "")
+    ).strip()
+    if not raw_api_host or raw_api_host == "0.0.0.0":
         return web.json_response(
-            {"ok": False, "error": "missing 'host' — relay binds to 0.0.0.0"},
+            {
+                "ok": False,
+                "error": "missing 'host' — API server address could not be resolved",
+            },
             status=400,
         )
-    port = int(payload.get("port") or server.config.port)
-    tls = bool(payload.get("tls", False))
+    api_host = _resolve_lan_ip(raw_api_host)
 
+    if api_port_override is not None:
+        try:
+            api_port = int(api_port_override)
+        except (TypeError, ValueError):
+            return web.json_response(
+                {"ok": False, "error": "'port' must be an integer"}, status=400
+            )
+    elif default_api_url.port is not None:
+        api_port = default_api_url.port
+    else:
+        api_port = 443 if default_api_url.scheme == "https" else 8642
+
+    if api_tls_override is not None:
+        api_tls = bool(api_tls_override)
+    else:
+        api_tls = default_api_url.scheme == "https"
+
+    api_key_raw = payload.get("api_key")
+    api_key = str(api_key_raw) if api_key_raw is not None else ""
+
+    # ── Pairing metadata ─────────────────────────────────────────────────
     ttl_seconds, grants, transport_hint, err = _parse_pairing_metadata(payload)
     if err is not None:
         return web.json_response({"ok": False, "error": err}, status=400)
 
+    # Optional v3 multi-endpoint array (ADR 24). The caller (dashboard
+    # "pair new device" UI) composes this; the server just stores and
+    # mirrors it. Shape is validated on the phone — any server-side
+    # normalization would break HMAC round-tripping.
+    endpoints_raw = payload.get("endpoints")
+    if endpoints_raw is not None and not isinstance(endpoints_raw, list):
+        return web.json_response(
+            {"ok": False, "error": "endpoints must be an array"}, status=400
+        )
+    endpoints_list: list[Any] | None = (
+        list(endpoints_raw) if endpoints_raw is not None else None
+    )
+
+    # ── Mint the relay pairing code ──────────────────────────────────────
     alphabet = string.ascii_uppercase + string.digits
-    # Retry on the off-chance of a collision with an already-registered code.
     for _ in range(5):
         code = "".join(secrets.choice(alphabet) for _ in range(6))
         if server.pairing.register_code(
@@ -328,39 +427,71 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
             {"ok": False, "error": "could not mint a unique code"}, status=503
         )
 
-    from ..pair import build_payload
-
-    relay_block: dict[str, Any] | None = None
-    if ttl_seconds is not None or grants is not None or transport_hint is not None:
-        relay_block = {}
-        if ttl_seconds is not None:
-            relay_block["ttl_seconds"] = ttl_seconds
-        if grants is not None:
-            relay_block["grants"] = grants
-        if transport_hint is not None:
-            relay_block["transport_hint"] = transport_hint
+    # ── Relay block (nested in the QR payload) ───────────────────────────
+    # URL derives from the relay's own bind config — the relay knows where
+    # the phone should connect. Matches pair.py:746 exactly.
+    relay_tls = bool(server.config.ssl_cert)
+    relay_url = _relay_lan_base_url(
+        server.config.host, server.config.port, tls=relay_tls
+    )
+    relay_block: dict[str, Any] = {
+        "url": relay_url,
+        "code": code,
+    }
+    if ttl_seconds is not None:
+        relay_block["ttl_seconds"] = ttl_seconds
+    if grants is not None:
+        relay_block["grants"] = grants
+    if transport_hint is not None:
+        relay_block["transport_hint"] = transport_hint
 
     qr_payload = build_payload(
-        host=host, port=port, key=code, tls=tls, relay=relay_block, sign=True
+        host=api_host,
+        port=api_port,
+        key=api_key,
+        tls=api_tls,
+        relay=relay_block,
+        sign=True,
+        endpoints=endpoints_list or None,
     )
 
     expires_at = int(time.time()) + (
         int(ttl_seconds) if ttl_seconds and ttl_seconds > 0 else 60
     )
 
+    # Same rationale as /pairing/register and /pairing/approve — a phone
+    # self-banned on the rate limiter (e.g. reconnect-loop after a relay
+    # restart invalidated its session token) must not be left unpairable
+    # just because the minting path is different. Any loopback-originated
+    # mint implies operator intent to pair, so wiping the block table is
+    # safe and matches the other two pairing entry points.
+    server.rate_limiter.clear_all_blocks()
+
     logger.info(
-        "Minted pairing code via /pairing/mint: %s (host=%s port=%d tls=%s)",
-        code, host, port, tls,
+        "Minted pairing code via /pairing/mint: %s "
+        "(api=%s://%s:%d relay=%s)",
+        code,
+        "https" if api_tls else "http",
+        api_host,
+        api_port,
+        relay_url,
     )
-    return web.json_response({
+    mint_response: dict[str, Any] = {
         "ok": True,
         "code": code,
         "qr_payload": qr_payload,
         "expires_at": expires_at,
-        "host": host,
-        "port": port,
-        "tls": tls,
-    })
+        "host": api_host,
+        "port": api_port,
+        "tls": api_tls,
+        "relay_url": relay_url,
+    }
+    if endpoints_list is not None:
+        # Mirror the endpoints back verbatim so the dashboard can render
+        # the same list it sent (useful for "edit URL" round-trips) and
+        # persist it alongside the pairing code metadata.
+        mint_response["endpoints"] = endpoints_list
+    return web.json_response(mint_response)
 
 
 async def handle_pairing_approve(request: web.Request) -> web.Response:
@@ -1536,6 +1667,907 @@ async def handle_relay_info(request: web.Request) -> web.Response:
     )
 
 
+# ── Profile-scoped read-only config + skills ────────────────────────────────
+#
+# Loopback-or-bearer gated (same pattern as /notifications/recent). The
+# dashboard plugin proxies these over 127.0.0.1; the paired phone hits
+# them with its relay session bearer. Both surfaces reach the same data
+# with profile scoping applied server-side — no client-side directory
+# walking, no secret leakage (SOUL.md is intentionally emitted as
+# system_message via auth.ok; these endpoints focus on config + skill
+# metadata).
+#
+# READ ONLY for now — profile writes require an active_profile routing
+# layer we haven't built yet. See docs/decisions.md §22.
+
+
+def _resolve_profile_home(server: "RelayServer", name: str) -> Path | None:
+    """Return the on-disk home directory for a profile name.
+
+    ``"default"`` maps to the parent of ``hermes_config_path`` (i.e.
+    ``~/.hermes``). Every other name maps to
+    ``<hermes_dir>/profiles/<name>``. Returns ``None`` if the target
+    directory does not exist — callers surface this as a 404.
+    """
+    root_config = Path(server.config.hermes_config_path).expanduser()
+    hermes_dir = root_config.parent
+
+    if name == "default":
+        home = hermes_dir
+    else:
+        # Reject path traversal: profile name must be a plain directory
+        # token, no separators, no "..".
+        if not name or "/" in name or "\\" in name or name in (".", ".."):
+            return None
+        home = hermes_dir / "profiles" / name
+
+    return home if home.is_dir() else None
+
+
+def _parse_skill_frontmatter(text: str) -> dict[str, Any]:
+    """Best-effort parse of the leading ``---`` YAML frontmatter block.
+
+    Mirrors the shape used by upstream Hermes skills and our own
+    ``skills/`` tree. Returns ``{}`` on any parse failure or when no
+    frontmatter is present. We never raise — skill listing must tolerate
+    hand-written SKILL.md files.
+    """
+    if not text.startswith("---"):
+        return {}
+    # Split on the first pair of --- lines.
+    try:
+        _, rest = text.split("---", 1)
+        body, _ = rest.split("\n---", 1)
+    except ValueError:
+        return {}
+    try:
+        data = yaml.safe_load(body)
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+async def handle_profile_config(request: web.Request) -> web.Response:
+    """Return the parsed ``config.yaml`` for a named profile.
+
+    GET /api/profiles/{name}/config
+      → 200 {"profile", "path", "config": {...}, "readonly": true}
+      → 401 missing/invalid bearer (remote callers only)
+      → 404 profile dir missing or no config.yaml
+      → 500 yaml parse error
+
+    Loopback callers may skip bearer auth (matches
+    ``/notifications/recent``); remote callers must present a valid
+    relay session token.
+    """
+    is_loopback = request.remote in ("127.0.0.1", "::1")
+    if is_loopback:
+        server: RelayServer = request.app["server"]
+    else:
+        server, _session = _require_bearer_session(request)
+
+    name = request.match_info.get("name", "").strip()
+    if not name:
+        return web.json_response(
+            {"ok": False, "error": "missing profile name"}, status=400
+        )
+
+    home = _resolve_profile_home(server, name)
+    if home is None:
+        return web.json_response(
+            {"ok": False, "error": "profile not found", "profile": name},
+            status=404,
+        )
+
+    config_path = home / "config.yaml"
+    if not config_path.is_file():
+        return web.json_response(
+            {
+                "ok": False,
+                "error": "config.yaml not found for profile",
+                "profile": name,
+            },
+            status=404,
+        )
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as fh:
+            parsed = yaml.safe_load(fh)
+    except Exception as exc:
+        logger.warning(
+            "Profile config read failed for %r at %s: %s",
+            name,
+            config_path,
+            exc,
+        )
+        return web.json_response(
+            {
+                "ok": False,
+                "error": "failed to parse config.yaml",
+                "profile": name,
+                "detail": str(exc),
+            },
+            status=500,
+        )
+
+    if parsed is None:
+        parsed = {}
+
+    return web.json_response(
+        {
+            "profile": name,
+            "path": str(config_path),
+            "config": parsed,
+            "readonly": True,
+        }
+    )
+
+
+async def handle_profile_skills(request: web.Request) -> web.Response:
+    """Enumerate skills under a profile's ``skills/<category>/<name>/SKILL.md``.
+
+    GET /api/profiles/{name}/skills
+      → 200 {"profile", "skills": [...], "total": N}
+      → 401 missing/invalid bearer (remote callers only)
+      → 404 profile dir missing
+
+    Each skill entry:
+      {name, category, description, path, enabled: true}
+
+    ``name``/``description`` come from YAML frontmatter when present,
+    falling back to the directory basename and an empty string. Skills
+    always report ``enabled: true`` — disabled-skill tracking is an
+    upstream concern (see ``PUT /api/skills/toggle`` in the bootstrap,
+    which is 501 today).
+    """
+    is_loopback = request.remote in ("127.0.0.1", "::1")
+    if is_loopback:
+        server: RelayServer = request.app["server"]
+    else:
+        server, _session = _require_bearer_session(request)
+
+    name = request.match_info.get("name", "").strip()
+    if not name:
+        return web.json_response(
+            {"ok": False, "error": "missing profile name"}, status=400
+        )
+
+    home = _resolve_profile_home(server, name)
+    if home is None:
+        return web.json_response(
+            {"ok": False, "error": "profile not found", "profile": name},
+            status=404,
+        )
+
+    skills_dir = home / "skills"
+    skills: list[dict[str, Any]] = []
+
+    if skills_dir.is_dir():
+        try:
+            skill_files = sorted(skills_dir.rglob("SKILL.md"))
+        except OSError:
+            skill_files = []
+
+        for skill_md in skill_files:
+            try:
+                rel = skill_md.relative_to(skills_dir)
+            except ValueError:
+                continue
+            parts = rel.parts
+            if len(parts) < 2:
+                # Skip files that live directly in skills/ — we require a
+                # category directory.
+                continue
+            category = parts[0]
+            skill_name = parts[-2]
+
+            description = ""
+            fm: dict[str, Any] = {}
+            try:
+                fm = _parse_skill_frontmatter(
+                    skill_md.read_text(encoding="utf-8")
+                )
+            except Exception:
+                fm = {}
+
+            fm_name = fm.get("name")
+            if isinstance(fm_name, str) and fm_name.strip():
+                skill_name = fm_name.strip()
+            fm_desc = fm.get("description")
+            if isinstance(fm_desc, str):
+                description = fm_desc.strip()
+
+            skills.append(
+                {
+                    "name": skill_name,
+                    "category": category,
+                    "description": description,
+                    "path": str(skill_md),
+                    "enabled": True,
+                }
+            )
+
+    return web.json_response(
+        {
+            "profile": name,
+            "skills": skills,
+            "total": len(skills),
+        }
+    )
+
+
+# ── Profile-scoped SOUL.md + memory read endpoints ──────────────────────────
+#
+# Same auth + path-traversal model as ``/config`` and ``/skills`` above.
+# These feed the phone's Profile Inspector viewer — READ ONLY. Content is
+# capped to phone-safe sizes (SOUL: 200KB, each memory file: 50KB). The
+# Inspector is a viewer, not a diff tool — see docs/decisions.md §22.
+
+# Max bytes of SOUL.md content returned inline before truncation.
+_PROFILE_SOUL_MAX_BYTES = 200 * 1024
+# Max bytes per memory file returned inline before truncation.
+_PROFILE_MEMORY_MAX_BYTES = 50 * 1024
+
+
+def _read_profile_soul(soul_path: Path) -> tuple[str, bool, int]:
+    """Read ``SOUL.md`` with a 200KB inline cap.
+
+    Returns ``(content, truncated, size_bytes)`` where ``size_bytes`` is
+    the file's on-disk size (not the length of the returned string). May
+    raise ``OSError``/``UnicodeDecodeError`` — callers translate those
+    into HTTP 500 with ``error: "soul_read_failed"``.
+    """
+    size_bytes = soul_path.stat().st_size
+    with open(soul_path, "r", encoding="utf-8") as fh:
+        content = fh.read(_PROFILE_SOUL_MAX_BYTES + 1)
+    if len(content) > _PROFILE_SOUL_MAX_BYTES:
+        return content[:_PROFILE_SOUL_MAX_BYTES], True, size_bytes
+    return content, False, size_bytes
+
+
+async def handle_profile_soul(request: web.Request) -> web.Response:
+    """Return the raw ``SOUL.md`` for a named profile.
+
+    GET /api/profiles/{name}/soul
+      → 200 {"profile", "path", "content", "exists", "size_bytes", [truncated]}
+      → 401 missing/invalid bearer (remote callers only)
+      → 404 {"error": "profile_not_found", "profile": name}
+      → 500 {"error": "soul_read_failed", "detail": "..."}
+
+    Absent SOUL.md is NOT an error — returns 200 with ``exists: false``
+    and an empty string body. Content over 200KB is truncated with
+    ``truncated: true``.
+    """
+    is_loopback = request.remote in ("127.0.0.1", "::1")
+    if is_loopback:
+        server: RelayServer = request.app["server"]
+    else:
+        server, _session = _require_bearer_session(request)
+
+    name = request.match_info.get("name", "").strip()
+    if not name:
+        return web.json_response(
+            {"error": "profile_not_found", "profile": name}, status=404
+        )
+
+    home = _resolve_profile_home(server, name)
+    if home is None:
+        return web.json_response(
+            {"error": "profile_not_found", "profile": name}, status=404
+        )
+
+    soul_path = home / "SOUL.md"
+
+    if not soul_path.is_file():
+        return web.json_response(
+            {
+                "profile": name,
+                "path": str(soul_path),
+                "content": "",
+                "exists": False,
+                "size_bytes": 0,
+            }
+        )
+
+    try:
+        content, truncated, size_bytes = _read_profile_soul(soul_path)
+    except Exception as exc:
+        logger.warning(
+            "Profile SOUL read failed for %r at %s: %s",
+            name,
+            soul_path,
+            exc,
+        )
+        return web.json_response(
+            {"error": "soul_read_failed", "detail": str(exc)},
+            status=500,
+        )
+
+    payload: dict[str, Any] = {
+        "profile": name,
+        "path": str(soul_path),
+        "content": content,
+        "exists": True,
+        "size_bytes": size_bytes,
+    }
+    if truncated:
+        payload["truncated"] = True
+    return web.json_response(payload)
+
+
+async def handle_profile_memory(request: web.Request) -> web.Response:
+    """Return the memory files under ``<profile_home>/memories/``.
+
+    GET /api/profiles/{name}/memory
+      → 200 {"profile", "memories_dir", "entries": [...], "total"}
+      → 401 missing/invalid bearer (remote callers only)
+      → 404 {"error": "profile_not_found", "profile": name}
+
+    Only the top-level ``*.md`` files are listed — we intentionally do
+    NOT recurse. Per upstream (``hermes_cli/profiles.py``) MEMORY.md and
+    USER.md are the canonical files; anything else the user dropped in
+    the directory also surfaces. MEMORY.md and USER.md sort first (in
+    that order); the rest are alphabetical. Each file's content is
+    capped at 50KB; larger files set ``truncated: true``.
+
+    An absent memories dir is NOT an error — returns an empty list.
+    """
+    is_loopback = request.remote in ("127.0.0.1", "::1")
+    if is_loopback:
+        server: RelayServer = request.app["server"]
+    else:
+        server, _session = _require_bearer_session(request)
+
+    name = request.match_info.get("name", "").strip()
+    if not name:
+        return web.json_response(
+            {"error": "profile_not_found", "profile": name}, status=404
+        )
+
+    home = _resolve_profile_home(server, name)
+    if home is None:
+        return web.json_response(
+            {"error": "profile_not_found", "profile": name}, status=404
+        )
+
+    memories_dir = home / "memories"
+    entries: list[dict[str, Any]] = []
+
+    if memories_dir.is_dir():
+        try:
+            md_files = [
+                p
+                for p in memories_dir.iterdir()
+                if p.is_file() and p.suffix == ".md"
+            ]
+        except OSError:
+            md_files = []
+
+        # MEMORY.md first, then USER.md, then the rest alphabetical by
+        # filename (case-insensitive for predictable ordering on macOS).
+        priority = {"MEMORY.md": 0, "USER.md": 1}
+
+        def _sort_key(path: Path) -> tuple[int, str]:
+            return (priority.get(path.name, 2), path.name.lower())
+
+        md_files.sort(key=_sort_key)
+
+        for md_path in md_files:
+            try:
+                size_bytes = md_path.stat().st_size
+            except OSError:
+                continue
+            try:
+                with open(md_path, "r", encoding="utf-8") as fh:
+                    raw = fh.read(_PROFILE_MEMORY_MAX_BYTES + 1)
+            except Exception as exc:
+                logger.warning(
+                    "Profile memory read failed for %r at %s: %s",
+                    name,
+                    md_path,
+                    exc,
+                )
+                continue
+
+            truncated = len(raw) > _PROFILE_MEMORY_MAX_BYTES
+            if truncated:
+                raw = raw[:_PROFILE_MEMORY_MAX_BYTES]
+
+            stem = md_path.stem  # "MEMORY.md" → "MEMORY"
+            entries.append(
+                {
+                    "name": stem,
+                    "filename": md_path.name,
+                    "path": str(md_path),
+                    "content": raw,
+                    "size_bytes": size_bytes,
+                    "truncated": truncated,
+                }
+            )
+
+    return web.json_response(
+        {
+            "profile": name,
+            "memories_dir": str(memories_dir),
+            "entries": entries,
+            "total": len(entries),
+        }
+    )
+
+
+# ── Profile-scoped SOUL.md + memory write endpoints ──────────────────────────
+#
+# Symmetric to the GET endpoints above — same loopback-or-bearer auth,
+# same ``_resolve_profile_home`` path resolver, same
+# ``profile_not_found`` 404 shape. Wire contracts:
+#
+#   PUT /api/profiles/{name}/soul
+#     Body: {"content": "..."}
+#     → 200 {"ok": true, "profile", "path", "bytes_written"}
+#     → 404 {"error": "profile_not_found", "profile": name}
+#     → 413 {"error": "payload_too_large", "limit_bytes": 1048576}
+#
+#   PUT /api/profiles/{name}/memory/{filename}
+#     Body: {"content": "..."}
+#     → 200 {"ok": true, "profile", "filename", "path", "bytes_written"}
+#     → 400 {"error": "invalid_filename", "detail": "..."}
+#     → 404 {"error": "profile_not_found", "profile": name}
+#     → 413 {"error": "payload_too_large", "limit_bytes": 1048576}
+#
+# Atomic write pattern: write to ``<name>.tmp``, ``os.replace()`` into
+# place. Preserves the original file's POSIX mode when present — the
+# operator's existing choice wins over any default we might impose
+# (SOUL files are typically world-readable in a home directory).
+
+# Max bytes we accept for a single SOUL.md or memory-file write.
+_PROFILE_WRITE_MAX_BYTES = 1 * 1024 * 1024  # 1 MB
+
+
+def _extract_write_content(body: Any) -> tuple[str | None, web.Response | None]:
+    """Pull the ``content`` field out of a PUT body with shared
+    validation.
+
+    Returns ``(content, None)`` on success or ``(None, error_response)``
+    on validation failure — the caller ``return``s the response
+    unchanged. Separated from the handlers so both share identical
+    wire shapes.
+    """
+    if not isinstance(body, dict):
+        return None, web.json_response(
+            {"error": "invalid_body", "detail": "body must be a JSON object"},
+            status=400,
+        )
+    content = body.get("content")
+    if content is None:
+        return None, web.json_response(
+            {"error": "invalid_body", "detail": "missing 'content' field"},
+            status=400,
+        )
+    if not isinstance(content, str):
+        return None, web.json_response(
+            {"error": "invalid_body", "detail": "'content' must be a string"},
+            status=400,
+        )
+    # Size gate — measured in UTF-8 bytes since that's what lands on
+    # disk. ``len(content)`` alone underestimates for non-ASCII.
+    encoded_size = len(content.encode("utf-8"))
+    if encoded_size > _PROFILE_WRITE_MAX_BYTES:
+        return None, web.json_response(
+            {
+                "error": "payload_too_large",
+                "limit_bytes": _PROFILE_WRITE_MAX_BYTES,
+                "received_bytes": encoded_size,
+            },
+            status=413,
+        )
+    return content, None
+
+
+def _atomic_write_text(target: Path, content: str) -> int:
+    """Write ``content`` to ``target`` atomically, preserving the
+    existing file's POSIX mode when present. Returns the bytes
+    written.
+
+    Implementation: write to a sibling ``<name>.tmp`` file, fsync,
+    ``os.replace()``. Raises :class:`OSError` on IO failure — callers
+    decide how to surface that (typically 500).
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    # Preserve mode of existing file if present.
+    preserve_mode: int | None = None
+    if target.exists():
+        try:
+            preserve_mode = stat.S_IMODE(target.stat().st_mode)
+        except OSError:
+            preserve_mode = None
+
+    tmp_path = target.with_name(target.name + ".tmp")
+    data = content.encode("utf-8")
+
+    with open(tmp_path, "wb") as fh:
+        fh.write(data)
+        fh.flush()
+        try:
+            os.fsync(fh.fileno())
+        except OSError:
+            pass
+
+    if preserve_mode is not None:
+        try:
+            os.chmod(tmp_path, preserve_mode)
+        except OSError:
+            pass
+
+    os.replace(tmp_path, target)
+    return len(data)
+
+
+async def handle_profile_soul_put(request: web.Request) -> web.Response:
+    """Write ``SOUL.md`` for a named profile.
+
+    PUT /api/profiles/{name}/soul
+      Body: {"content": "..."}
+      → 200 {"ok": true, "profile", "path", "bytes_written"}
+      → 400 invalid body (missing / wrong-type content)
+      → 401 missing/invalid bearer (remote callers only)
+      → 404 {"error": "profile_not_found", "profile": name}
+      → 413 {"error": "payload_too_large", "limit_bytes": 1048576}
+      → 500 {"error": "soul_write_failed", "detail": "..."}
+
+    Atomic: writes ``SOUL.md.tmp``, replaces on success. Preserves the
+    existing SOUL.md's mode when present.
+    """
+    is_loopback = request.remote in ("127.0.0.1", "::1")
+    if is_loopback:
+        server: RelayServer = request.app["server"]
+    else:
+        server, _session = _require_bearer_session(request)
+
+    name = request.match_info.get("name", "").strip()
+    if not name:
+        return web.json_response(
+            {"error": "profile_not_found", "profile": name}, status=404
+        )
+
+    home = _resolve_profile_home(server, name)
+    if home is None:
+        return web.json_response(
+            {"error": "profile_not_found", "profile": name}, status=404
+        )
+
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return web.json_response(
+            {"error": "invalid_body", "detail": "invalid JSON"}, status=400
+        )
+
+    content, err = _extract_write_content(body)
+    if err is not None:
+        return err
+    assert content is not None  # narrow for type checker
+
+    soul_path = home / "SOUL.md"
+    try:
+        bytes_written = _atomic_write_text(soul_path, content)
+    except OSError as exc:
+        logger.warning(
+            "Profile SOUL write failed for %r at %s: %s",
+            name,
+            soul_path,
+            exc,
+        )
+        return web.json_response(
+            {"error": "soul_write_failed", "detail": str(exc)},
+            status=500,
+        )
+
+    logger.info(
+        "Profile SOUL write: profile=%s bytes=%d path=%s",
+        name,
+        bytes_written,
+        soul_path,
+    )
+    # Profile metadata may have shifted (description falls back to
+    # SOUL.md's first line if config.yaml lacks one). Broadcast wiring
+    # lands in the follow-up ``feat(relay): push profiles.updated...``
+    # commit; the hook below is a stub so the write-path signature
+    # freezes now.
+    _notify_profiles_changed(server, reason="soul_written", profile=name)
+    return web.json_response(
+        {
+            "ok": True,
+            "profile": name,
+            "path": str(soul_path),
+            "bytes_written": bytes_written,
+        }
+    )
+
+
+def _validate_memory_filename(filename: str) -> str | None:
+    """Return ``None`` if ``filename`` is safe; otherwise a human-
+    readable detail message for the 400 response body.
+
+    Rules:
+      * must end with ``.md`` (case-sensitive — matches upstream
+        MEMORY.md / USER.md / anything.md convention)
+      * must not contain ``/`` ``\\`` or ``..``
+      * must not start with ``.`` (even ``.MEMORY.md`` is rejected —
+        we only allow ``.`` as the separator before ``md``)
+      * must not be empty
+      * must not be the literal name ``SOUL.md`` (that has its own
+        endpoint — avoid stomping via memory path)
+      * charset limited to ascii letters, digits, and ``._-`` for
+        predictable behavior on case-insensitive filesystems.
+    """
+    if not filename:
+        return "filename is empty"
+    if "/" in filename or "\\" in filename:
+        return "filename must not contain path separators"
+    if ".." in filename:
+        return "filename must not contain '..'"
+    if filename.startswith("."):
+        return "filename must not start with '.'"
+    if not filename.endswith(".md"):
+        return "filename must end with '.md'"
+    if filename == "SOUL.md":
+        return "use the /soul endpoint to write SOUL.md"
+    for ch in filename:
+        if not (ch.isalnum() or ch in "._-"):
+            return f"filename contains disallowed character {ch!r}"
+    return None
+
+
+async def handle_profile_memory_put(request: web.Request) -> web.Response:
+    """Write a memory file under ``<profile>/memories/`` for a named profile.
+
+    PUT /api/profiles/{name}/memory/{filename}
+      Body: {"content": "..."}
+      → 200 {"ok": true, "profile", "filename", "path", "bytes_written"}
+      → 400 invalid filename or invalid body
+      → 401 missing/invalid bearer (remote callers only)
+      → 404 {"error": "profile_not_found", "profile": name}
+      → 413 {"error": "payload_too_large", "limit_bytes": 1048576}
+      → 500 {"error": "memory_write_failed", "detail": "..."}
+
+    Creates ``memories/`` if absent. Atomic write mirrors the SOUL
+    path. Filename validation rejects path traversal, leading dot,
+    and non-.md extensions.
+    """
+    is_loopback = request.remote in ("127.0.0.1", "::1")
+    if is_loopback:
+        server: RelayServer = request.app["server"]
+    else:
+        server, _session = _require_bearer_session(request)
+
+    name = request.match_info.get("name", "").strip()
+    if not name:
+        return web.json_response(
+            {"error": "profile_not_found", "profile": name}, status=404
+        )
+
+    home = _resolve_profile_home(server, name)
+    if home is None:
+        return web.json_response(
+            {"error": "profile_not_found", "profile": name}, status=404
+        )
+
+    filename = request.match_info.get("filename", "")
+    detail = _validate_memory_filename(filename)
+    if detail is not None:
+        return web.json_response(
+            {"error": "invalid_filename", "detail": detail},
+            status=400,
+        )
+
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return web.json_response(
+            {"error": "invalid_body", "detail": "invalid JSON"}, status=400
+        )
+
+    content, err = _extract_write_content(body)
+    if err is not None:
+        return err
+    assert content is not None
+
+    memory_path = home / "memories" / filename
+    try:
+        bytes_written = _atomic_write_text(memory_path, content)
+    except OSError as exc:
+        logger.warning(
+            "Profile memory write failed for %r/%s at %s: %s",
+            name,
+            filename,
+            memory_path,
+            exc,
+        )
+        return web.json_response(
+            {"error": "memory_write_failed", "detail": str(exc)},
+            status=500,
+        )
+
+    logger.info(
+        "Profile memory write: profile=%s filename=%s bytes=%d path=%s",
+        name,
+        filename,
+        bytes_written,
+        memory_path,
+    )
+    _notify_profiles_changed(
+        server,
+        reason="memory_written",
+        profile=name,
+        filename=filename,
+    )
+    return web.json_response(
+        {
+            "ok": True,
+            "profile": name,
+            "filename": filename,
+            "path": str(memory_path),
+            "bytes_written": bytes_written,
+        }
+    )
+
+
+def _notify_profiles_changed(
+    server: "RelayServer",
+    *,
+    reason: str,
+    profile: str | None = None,
+    filename: str | None = None,
+) -> None:
+    """Hook called after a profile write lands on disk.
+
+    Re-runs profile discovery, compares against the cached snapshot
+    stored on the server, and if the shape differs broadcasts a
+    ``pairing/profiles.updated`` envelope to every authenticated
+    client. Whole-array diff — we don't bother per-profile — simpler
+    than per-field and the response size is identical either way.
+    """
+    # Lazy import to avoid a module-level circular (_load_profiles
+    # lives in .config which already imports from .auth).
+    from .config import _load_profiles
+
+    try:
+        fresh_profiles = _load_profiles(
+            server.config.hermes_config_path,
+            enabled=server.config.profile_discovery_enabled,
+        )
+    except Exception:
+        logger.warning(
+            "profiles-changed hook: _load_profiles raised (reason=%s profile=%s)",
+            reason,
+            profile,
+            exc_info=True,
+        )
+        return
+
+    previous = server.config.profiles
+    if fresh_profiles == previous:
+        logger.debug(
+            "profiles-changed hook: no diff after reason=%s profile=%s filename=%s",
+            reason,
+            profile,
+            filename,
+        )
+        return
+
+    server.config.profiles = fresh_profiles
+    logger.info(
+        "profiles-changed hook: reshape detected (reason=%s profile=%s) — "
+        "broadcasting profiles.updated to %d client(s)",
+        reason,
+        profile,
+        len(server._clients),
+    )
+    # Fire-and-forget the broadcast — keep the write-path handler
+    # non-async-blocking. Create_task on the running loop; if there's
+    # no loop (called from a sync context, e.g. the rescan task that
+    # IS in an async context will still work), fall back to logging.
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.debug(
+            "profiles-changed hook: no running loop — "
+            "skipping broadcast (will be picked up on next rescan)"
+        )
+        return
+    loop.create_task(
+        _broadcast_profiles_updated(server, fresh_profiles),
+        name="profiles-updated-broadcast",
+    )
+
+
+async def _broadcast_profiles_updated(
+    server: "RelayServer",
+    profiles: list[dict[str, Any]],
+) -> None:
+    """Send a ``pairing/profiles.updated`` envelope to every client.
+
+    Wire contract:
+    ``{"channel": "pairing", "type": "profiles.updated",
+       "id": <uuid>, "payload": {"profiles": [...]}}``
+
+    Clients update their local cache on receipt; no ack expected. We
+    iterate over a snapshot of ``_clients`` so disconnects mid-send
+    don't blow up the loop.
+    """
+    blob = json.dumps(
+        {
+            "channel": "pairing",
+            "type": "profiles.updated",
+            "id": str(uuid.uuid4()),
+            "payload": {"profiles": profiles},
+        }
+    )
+    for ws in list(server._clients):
+        if ws.closed:
+            continue
+        try:
+            await ws.send_str(blob)
+        except ConnectionResetError:
+            # Client dropped during send — disconnect cleanup will
+            # remove it from _clients on the next WS read tick.
+            continue
+        except Exception:
+            logger.debug(
+                "profiles.updated broadcast: send failed for one ws",
+                exc_info=True,
+            )
+
+
+# Interval for the background profile-rescan task. Low enough that
+# an operator tweaking config.yaml / dropping a skills/ dir sees the
+# phone reflect it quickly; high enough that the filesystem walk
+# stays cheap. 30 seconds matches the coordinator spec.
+_PROFILE_RESCAN_INTERVAL_SECONDS = 30.0
+
+
+async def _profile_rescan_loop(app: web.Application) -> None:
+    """Background task that rescans the profile tree every
+    ``_PROFILE_RESCAN_INTERVAL_SECONDS`` and broadcasts
+    ``profiles.updated`` whenever the array differs from the
+    cached snapshot.
+
+    Fires-and-forgets per iteration so a slow filesystem scan doesn't
+    queue up duplicate rescans. Cancellation-safe — shutdown clears
+    the task via aiohttp's on_cleanup hook.
+    """
+    from .config import _load_profiles
+
+    server: RelayServer = app["server"]
+    try:
+        while True:
+            await asyncio.sleep(_PROFILE_RESCAN_INTERVAL_SECONDS)
+            try:
+                fresh = _load_profiles(
+                    server.config.hermes_config_path,
+                    enabled=server.config.profile_discovery_enabled,
+                )
+            except Exception:
+                logger.warning(
+                    "profile rescan: _load_profiles raised — skipping cycle",
+                    exc_info=True,
+                )
+                continue
+            if fresh == server.config.profiles:
+                continue
+            server.config.profiles = fresh
+            logger.info(
+                "profile rescan: reshape detected — "
+                "broadcasting profiles.updated to %d client(s)",
+                len(server._clients),
+            )
+            await _broadcast_profiles_updated(server, fresh)
+    except asyncio.CancelledError:
+        logger.info("profile rescan loop cancelled")
+        raise
+
+
 # === PHASE3-notif-listener: notifications HTTP routes ===
 #
 # Bearer-auth'd HTTP read endpoint for the cached notification deque
@@ -1710,6 +2742,10 @@ def _build_auth_ok_payload(
     def _norm(ts: float) -> float | None:
         return None if math.isinf(ts) else ts
 
+    # ``profiles`` is the result of ``_load_profiles()`` — a list of
+    # snake_case dicts with ``name``, ``model``, ``description``, and
+    # ``system_message`` (which may be ``None``). The Kotlin client
+    # deserializes into PairedDeviceInfo.profiles.
     return {
         "session_token": session.token,
         "server_version": __version__,
@@ -1818,8 +2854,27 @@ async def _authenticate(
             )
             return session.token
 
-    # Both failed
-    server.rate_limiter.record_failure(remote_ip)
+    # Both failed. Route the failure to the appropriate bucket so
+    # legitimate-but-fumbled pairing attempts don't get penalized at the
+    # stricter session-token threshold. If the client sent a pairing
+    # code (attempting fresh pair), it's a pairing failure; if it sent
+    # a session token (reconnect attempt), it's a session failure. If
+    # the client sent both (unusual — phone testing its cached token
+    # then falling back to a QR), we count both buckets since both
+    # attempts genuinely failed.
+    recorded = False
+    if session_token_attempt:
+        server.rate_limiter.record_session_failure(remote_ip)
+        recorded = True
+    if pairing_code:
+        server.rate_limiter.record_pairing_failure(remote_ip)
+        recorded = True
+    if not recorded:
+        # Auth envelope with neither code nor token — treat as a
+        # session-bucket failure (stricter) since the client sent
+        # nothing at all to validate.
+        server.rate_limiter.record_session_failure(remote_ip)
+
     reason = "Invalid pairing code or session token"
     await _send_system(ws, "auth.fail", {"reason": reason})
     raise _AuthFailed(reason)
@@ -1987,7 +3042,15 @@ async def _on_disconnect(
 
 def create_app(config: RelayConfig) -> web.Application:
     """Create and configure the aiohttp application."""
-    app = web.Application()
+    # aiohttp's default client_max_size (1 MiB) would short-circuit
+    # phone uploads at the aiohttp layer, returning a plain-text 413
+    # before our handlers can produce the structured JSON error
+    # bodies the phone expects. Bump to 2 MiB so our 1 MB ``content``
+    # gate is the real gate — plus a little slack for JSON envelope
+    # overhead (``{"content": "..."}``). The voice/media upload
+    # routes have their own per-route streaming/offloading which is
+    # unaffected by this setting.
+    app = web.Application(client_max_size=2 * 1024 * 1024)
 
     server = RelayServer(config)
     app["server"] = server
@@ -2092,12 +3155,60 @@ def create_app(config: RelayConfig) -> web.Application:
 
     # === PHASE3-notif-listener: notifications HTTP routes ===
     app.router.add_get("/notifications/recent", handle_notifications_recent)
+
+    # Profile-scoped read-only config + skills (§22).
+    app.router.add_get(
+        "/api/profiles/{name}/config", handle_profile_config
+    )
+    app.router.add_get(
+        "/api/profiles/{name}/skills", handle_profile_skills
+    )
+    app.router.add_get(
+        "/api/profiles/{name}/soul", handle_profile_soul
+    )
+    app.router.add_get(
+        "/api/profiles/{name}/memory", handle_profile_memory
+    )
+    # Profile-scoped SOUL + memory WRITE endpoints (§22 addendum).
+    app.router.add_put(
+        "/api/profiles/{name}/soul", handle_profile_soul_put
+    )
+    app.router.add_put(
+        "/api/profiles/{name}/memory/{filename}",
+        handle_profile_memory_put,
+    )
     # === END PHASE3-notif-listener ===
+
+    # Background profile-rescan task — catches filesystem-level
+    # changes (operator edits config.yaml, drops a new SKILL.md, etc.)
+    # that bypass the write endpoints. Registered as on_startup /
+    # on_cleanup so the task lives exactly as long as the aiohttp app.
+    app.on_startup.append(_on_app_startup)
+    app.on_cleanup.append(_on_app_cleanup)
 
     # Cleanup on shutdown
     app.on_shutdown.append(_on_app_shutdown)
 
     return app
+
+
+async def _on_app_startup(app: web.Application) -> None:
+    """Launch background tasks that live for the app lifetime."""
+    task = asyncio.create_task(
+        _profile_rescan_loop(app), name="profile-rescan-loop"
+    )
+    app["_profile_rescan_task"] = task
+
+
+async def _on_app_cleanup(app: web.Application) -> None:
+    """Cancel background tasks cleanly."""
+    task = app.get("_profile_rescan_task")
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
 
 
 async def _on_app_shutdown(app: web.Application) -> None:
@@ -2197,7 +3308,10 @@ def main() -> None:
         config.hermes_config_path = args.config
         # Reload profiles with the new path
         from .config import _load_profiles
-        config.profiles = _load_profiles(config.hermes_config_path)
+        config.profiles = _load_profiles(
+            config.hermes_config_path,
+            enabled=config.profile_discovery_enabled,
+        )
     if args.webapi_url is not None:
         config.webapi_url = args.webapi_url
     if args.log_level is not None:
@@ -2252,6 +3366,10 @@ def main() -> None:
         config.port,
     )
     logger.info("WebAPI target: %s", config.webapi_url)
+    logger.info(
+        "Profile discovery: %s",
+        "enabled" if config.profile_discovery_enabled else "disabled",
+    )
     logger.info(
         "Profiles loaded: %s",
         ", ".join(p["name"] for p in config.profiles) if config.profiles else "(none)",

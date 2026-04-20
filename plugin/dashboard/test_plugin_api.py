@@ -196,5 +196,124 @@ class RelayErrorTests(PluginApiTestCase):
         self.assertEqual(resp.json(), {"detail": {"error": "not found"}})
 
 
+# ---------------------------------------------------------------------------
+# Remote Access tab — tailscale helper, public URL state, /probe
+# ---------------------------------------------------------------------------
+
+
+class RemoteAccessStateTests(PluginApiTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        # Redirect ``HERMES_HOME`` into a tmp dir so each test writes its
+        # own relay-remote.json instead of touching the real one. We
+        # monkey-patch ``_hermes_home`` rather than the env var so the
+        # path the route resolves is identical to what the test
+        # resolves.
+        import tempfile
+
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self._orig_hermes_home = plugin_api._hermes_home
+        plugin_api._hermes_home = lambda: __import__("pathlib").Path(self._tmpdir.name)
+        self.addCleanup(lambda: setattr(plugin_api, "_hermes_home", self._orig_hermes_home))
+
+    def test_put_public_url_persists_then_get_reads(self) -> None:
+        resp = self.client.put(
+            "/remote-access/public-url", json={"url": "https://relay.example.com"}
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["url"], "https://relay.example.com")
+
+        resp = self.client.get("/remote-access/public-url")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["url"], "https://relay.example.com")
+
+    def test_put_public_url_clears_on_empty(self) -> None:
+        self.client.put("/remote-access/public-url", json={"url": "https://a.example.com"})
+        resp = self.client.put("/remote-access/public-url", json={"url": ""})
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNone(resp.json()["url"])
+
+        resp = self.client.get("/remote-access/public-url")
+        self.assertEqual(resp.json()["url"], None)
+
+    def test_put_public_url_rejects_bad_scheme(self) -> None:
+        resp = self.client.put(
+            "/remote-access/public-url", json={"url": "ftp://example.com"}
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("http", resp.json()["detail"])
+
+    def test_put_public_url_rejects_non_string(self) -> None:
+        resp = self.client.put("/remote-access/public-url", json={"url": 42})
+        self.assertEqual(resp.status_code, 400)
+
+
+class RemoteAccessProbeTests(PluginApiTestCase):
+    def test_probe_returns_per_candidate_reachability(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            # Accept the /health suffix the route appends.
+            if request.url.path == "/health" and request.url.host == "relay.example.com":
+                return httpx.Response(200, json={"ok": True})
+            return httpx.Response(500, text="unexpected url")
+
+        _install_mock_transport(self, handler)
+        resp = self.client.post(
+            "/remote-access/probe",
+            json={"candidates": ["https://relay.example.com"]},
+        )
+        self.assertEqual(resp.status_code, 200)
+        results = resp.json()["results"]
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0]["reachable"])
+        self.assertEqual(results[0]["status"], 200)
+
+    def test_probe_captures_connect_error_per_entry(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("refused", request=request)
+
+        _install_mock_transport(self, handler)
+        resp = self.client.post(
+            "/remote-access/probe",
+            json={"candidates": ["https://down.example.com"]},
+        )
+        self.assertEqual(resp.status_code, 200)
+        results = resp.json()["results"]
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0]["reachable"])
+        self.assertIn("refused", results[0]["error"])
+
+    def test_probe_rejects_non_array(self) -> None:
+        resp = self.client.post(
+            "/remote-access/probe", json={"candidates": "https://a.example.com"}
+        )
+        self.assertEqual(resp.status_code, 400)
+
+
+class RemoteAccessStatusTests(PluginApiTestCase):
+    def test_status_surfaces_tailscale_dict_and_public_pin(self) -> None:
+        # Monkey-patch the tailscale helper so the test doesn't shell out.
+        from plugin.relay import tailscale as ts_mod
+
+        orig_status = ts_mod.status
+        orig_canonical = ts_mod.canonical_upstream_present
+        ts_mod.status = lambda: {
+            "available": True,
+            "hostname": "hermes.tail1234.ts.net",
+            "tailscale_ip": "100.64.0.1",
+            "serve_ports": [8767],
+        }
+        ts_mod.canonical_upstream_present = lambda: False
+        self.addCleanup(lambda: setattr(ts_mod, "status", orig_status))
+        self.addCleanup(lambda: setattr(ts_mod, "canonical_upstream_present", orig_canonical))
+
+        resp = self.client.get("/remote-access/status")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["tailscale"]["hostname"], "hermes.tail1234.ts.net")
+        self.assertIsNone(body["public"]["url"])
+        self.assertFalse(body["upstream_canonical"])
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

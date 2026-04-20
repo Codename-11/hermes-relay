@@ -26,6 +26,151 @@
 
 **Worktree gotcha.** `git worktree add` doesn't copy `.gitignore`d files. `local.properties` (SDK path + keystore creds) has to be recreated in any new worktree before gradle tasks run. For the parity test a minimal `sdk.dir=...` is enough — signing creds stay in the main checkout.
 
+## 2026-04-19 — Multi-endpoint pairing + first-class Tailscale (ADR 24 + 25)
+
+**Branches:** Wave 1 + Wave 2 landed on `dev`. ADRs 24 and 25 written and committed. Docs pass (this entry) closes the work out.
+
+**Shipped.**
+
+- **ADR 24 — Multi-endpoint pairing.** `plugin/pair.py` now emits an ordered `endpoints` array (`lan` / `tailscale` / `public` / operator-defined roles) in a new `hermes: 3` QR schema; `hermes: 2` stays the default when no endpoints are present. New CLI flags `--mode {auto,lan,tailscale,public}` and `--public-url <url>` drive candidate emission; `--mode auto` autodetects LAN IP + Tailscale status and composes them with an optional public URL. `plugin/relay/qr_sign.py` canonical form preserves array order and role strings verbatim — HMAC round-trip test pins this against future refactors. `plugin/relay/server.py` `handle_pairing_mint` / `handle_pairing_register` accept the optional `endpoints` body field. Phone side: new `data/Endpoint.kt` (`EndpointCandidate` / `ApiEndpoint` / `RelayEndpoint` / `displayLabel()`), `data/PairingPreferences.kt` per-device endpoint store, `ui/components/QrPairingScanner.kt` parses the new field with a v1/v2 synthesizer for back-compat, `auth/AuthManager.kt` persists the endpoint list on `auth.ok`, and `viewmodel/ConnectionViewModel.kt` stages endpoints at pair time. Wave 2 Kt-Probe added `ConnectionManager.resolveBestEndpoint()` + `NetworkCallback` re-probing and `RelayUiState.activeEndpointRole`.
+- **ADR 25 — First-class Tailscale helper.** New `plugin/relay/tailscale.py` with `status()` / `enable(port)` / `disable(port)` / `canonical_upstream_present()` — all shell out to the `tailscale` CLI with short timeouts, return structured dicts, never raise. New `plugin/relay/tailscale_cli.py` argparse wrapper + `scripts/hermes-relay-tailscale` shell shim mirroring the `hermes-pair` pattern. `install.sh` gains optional step [7/7] offering Tailscale enablement; honours `TS_DECLINE=1` / `TS_AUTO=1`.
+- **Dashboard Remote Access tab (Wave 2 Dashboard-R4).** `plugin/dashboard/plugin_api.py` + React UI + committed `dist/index.js` — operator can enable/disable the helper, mint multi-endpoint QRs, and inspect which modes are active without dropping to a shell.
+- **Docs pass.** New `docs/remote-access.md` (263 lines) — decision matrix + per-mode setup recipes + troubleshooting. Updated `docs/security.md` with a "Remote connectivity" subsection + top-of-list Tailscale recommendation. Updated `docs/relay-server.md` with `TS_AUTO` / `TS_DECLINE` env vars, the dashboard plugin proxy-route table, and a Tailscale-helper subsection. Updated `docs/spec.md` §3.3 + §3.3.1 for v3 QR schema + endpoints array. Updated `README.md` "What's new" with the one-line connect-from-anywhere pitch. Updated `CHANGELOG.md` `[Unreleased]` with Added / Changed / Backward compatible subsections. Updated `CLAUDE.md` Key Files + Integration Points (hygiene pass only).
+
+**Key architectural decisions (restated from the ADRs).**
+
+1. **Strict priority, not reachability-weighted.** Priority 0 wins when reachable; reachability is a tiebreaker among equal priorities, never a promoter across priority boundaries. Matches DNS SRV semantics — nothing new to debate, and keeps operator intent authoritative.
+2. **Open-string `role`, not a closed enum.** `wireguard`, `zerotier`, `netbird-eu`, etc. render as generic "Custom VPN (<role>)" without a release. HMAC canonicalization preserves the exact emitted string.
+3. **Tailscale helper auto-retires on upstream merge.** `canonical_upstream_present()` probes `hermes gateway run --help | grep tailscale`; once PR #9295 lands, the helper prints a log line pointing at the canonical flag and exits 0. Same removal pattern as `hermes_relay_bootstrap/` after PR #8556.
+4. **No second crypto layer.** The operator already owns both endpoints and the transport (Tailscale / Caddy / WireGuard / Cloudflare Tunnel) is TLS-terminated by the operator's chosen path. Adding Noise / libsignal over WSS would add complexity without defending any threat in the trust model.
+
+**What's next.**
+
+- Monitor upstream PR #9295 for merge. When it lands, verify `canonical_upstream_present()` detection works on a vanilla hermes-agent install, update the helper to print the retirement log line, and schedule the helper's removal PR (one file + the install.sh step + the shim).
+- Bailey's Studio build + `./gradlew lint` pass before the multi-endpoint work gets pushed from Kotlin side. No Python blockers.
+
+**Blockers.** None. Awaiting Bailey's lint + build pass on the Kotlin changes before the feature branches merge into `dev`.
+
+### Same-day follow-up — `--prefer` priority override + regression fix
+
+Two commits landed on `dev` after the initial ADR 24 + 25 bundle:
+
+- **`feat(pairing): --prefer priority override on all pair surfaces` (`e914810`).** Adds explicit "promote this role to priority 0" control so operators can force a specific endpoint path without re-ordering defaults globally. Surfaces: CLI `hermes-pair --prefer tailscale`, the `/hermes-relay-pair` skill (SKILL.md updated), and a dropdown below the Endpoint Preview card on the dashboard's Remote Access tab. Open-vocab role string; case-insensitive matching; unknown role emits a stderr warning and keeps natural order. 6 new `BuildEndpointCandidatesPreferTests` cover the happy paths and edge cases. Dashboard bundle rebuilt to 61.3 KB.
+
+- **`fix(relay): restore profile PUT handlers clobbered by ADR 24 commit` (`ee653d4`).** The ADR 24 bundle (`fae8ccd`) had an Edit that replaced a wider chunk of `plugin/relay/server.py` than intended while adding the endpoints passthrough to `handle_pairing_mint` / `handle_pairing_register` — collaterally deleting ~479 lines of `handle_profile_soul_put` / `handle_profile_memory_put` + `_extract_write_content`. CI — Relay went from 2 pre-existing failures (`test_profile_discovery`, unrelated) → 27 on the bundle push → back down to the same 2 after the fix. Restored by resetting `server.py` to the pre-ADR-24 state (`47667bd`) and re-applying only the intended ~30-line endpoints passthrough. Full suite: 673 pass / 6 skipped locally. Same bug class as the `AuthManager.profilesUpdatedEvents` collateral wipe caught mid-deploy — worth a note in any future "agent-assisted refactor" guidance: tight `old_string` anchors + verify-by-compile after every agent's work.
+
+- **Server deploy** (`~/.hermes/hermes-relay/` on `dev`, PID restarted for `hermes-relay` + `hermes-gateway` + `hermes-dashboard`) verified at each step: `{"status": "ok"}` health, `tailscale.status()` returning the live `docker-server.tail6f460.ts.net` / `100.71.8.56`, and `POST /api/plugins/hermes-relay/pairing {"mode":"auto","prefer":"tailscale"}` returning `[(0, 'tailscale'), (1, 'lan')]` over the wire. Pre-existing `test_profile_discovery` failures on Linux CI runners (Windows-local passes) are a separate Bailey in-progress item — not introduced by this work.
+
+- **Docs sync pass.** `docs/remote-access.md` → added "Promoting a role to priority 0 — `--prefer`" subsection under Combining modes. `user-docs/features/connections.md` → new "Multi-endpoint pairing" section (end-user facing). `user-docs/guide/getting-started.md` → new "Connecting from Anywhere (Tailscale, VPN, Public URL)" section between Relay Server and Verify Connection. `CHANGELOG.md` `[Unreleased]` gains `--prefer` under Added + the PUT-handler restore under Fixed.
+
+## 2026-04-18 — Profile Inspector UI (v0.7.0)
+
+**Branch:** `feature/profile-inspector-ui`. Kotlin-worker slice of the v0.7.0 Profile Inspector feature — Python worker runs in parallel and owns the `/soul` + `/memory` relay endpoints. Two feature commits + docs.
+
+**Shipped (Kotlin).**
+
+- **`RelayProfileInspectorClient` + wire models.** New read-only HTTP client for the four inspector endpoints (`/api/profiles/{name}/config`, `/skills`, `/soul`, `/memory`) mirroring `RelayHttpClient`'s constructor shape (OkHttp, lazy bearer-token provider, `ws://` → `http://` URL flip). All four fetch methods return `Result<T>` and hop to `Dispatchers.IO` before any network I/O — reinforcing the v0.6.0 post-mortem fix for `NetworkOnMainThreadException` in the voice client. Profile names are URL-encoded before being spliced into the path so names with spaces / non-ASCII characters don't blow up the route. Wire models (`ProfileConfigResponse`, `ProfileSkillsResponse`, `ProfileSoulResponse`, `ProfileMemoryResponse`) are `@Serializable` with snake_case → camelCase mapping via `@SerialName`. Optional wire fields (`truncated`, `readonly`, `enabled`) default to safe values so pre-v0.7.0 relays that omit them deserialize cleanly.
+- **`ProfileInspectorScreen` (4 tabs).** Config renders as a collapsible JSON tree (nested objects click to expand, monospace leaf values, 120-char truncation). SOUL is a scrollable monospace box with byte-size caption + truncation banner when the server flags the content as sliced; absent SOUL renders an empty-state with the expected path. Memory is a list of expandable cards per entry (filename + size in the header, content revealed on tap, per-entry truncation banner). Skills groups by category with a "(disabled)" label on skills where `enabled=false`. Top-bar Refresh icon fires `loadAll()`; each pane has its own inline Retry button on error state. PullToRefresh was skipped in favour of the explicit Refresh icon + per-section Retry — matches `PairedDevicesScreen`'s "still-experimental PullRefresh" note.
+- **`ProfileInspectorViewModel`.** Four independent `LoadState<T>` flows — one per section — so a slow `/memory` fetch never blocks the already-arrived `/config` tab. Lazy (no fetch until `loadAll()`) and stateful per-section (`refreshSection(InspectorSection.Config)` re-fetches just that tab). Profile name comes in via `SavedStateHandle` so a process-death restore inspects the same profile. The VM is keyed off the profile name in the nav backstack so entering a different profile produces a fresh VM rather than reusing stale state.
+- **`ProfileInspectorCard` in Settings.** Sits directly under `ActiveAgentCard` so the "active agent → inspect it" reads naturally top-to-bottom. When no profile is selected, the card renders at 50% alpha with "No active agent" and becomes a no-op — kept visible (not hidden) so the feature stays discoverable before a pair-and-pick happens.
+- **`Screen.ProfileInspector` nav destination.** Typed String path arg, registered via a tiny `ViewModelProvider.Factory` that pulls `SavedStateHandle` out of `CreationExtras` so nav args propagate into the VM constructor cleanly. Back navigation pops the destination and the VM is GC'd with it.
+
+**Key architectural decisions.**
+
+1. **Four independent load states, not one "screen state".** Each section's flow transitions Idle → Loading → Loaded/Error independently. One combined state would have meant the fastest-arriving tab gets blocked by the slowest — unnecessary UX cost given the 3 - 4 tabs the user flips between.
+2. **URL-encoded profile-name splice, not an OkHttp path segment.** We use `URLEncoder.encode(..., "UTF-8").replace("+", "%20")` before splicing into the literal path string, then build the `HttpUrl` from the full string. OkHttp's `addPathSegment` would re-encode and produce double-encoding for profile names with `%` already in them (pathological but possible). A single round of encoding is the safe choice.
+3. **ViewModel keyed on nav arg.** `viewModel(key = "profile-inspector-$name", ...)` means the same profile navigated to twice yields the same VM (back-stack reuse), but switching to profile B produces a fresh VM — avoids the "I opened inspector for axiom, changed profiles, reopened and saw axiom's data" class of bug.
+
+**Deferred.**
+
+- **Pull-to-refresh gesture.** Explicit Refresh button is enough for v0.7.0; if users ask for the gesture we'll revisit once Material3's `PullToRefreshBox` graduates out of experimental.
+- **Edit-in-place.** Inspector is strictly read-only by design. Editing is still "SSH to the server and `$EDITOR config.yaml`" territory. A "Copy to clipboard" affordance on each section is a possible follow-up if users ask for it.
+- **MockWebServer integration tests.** `testImplementation` doesn't include MockWebServer and the spec forbids adding deps for this slice — we covered wire-contract parsing + URL encoding + required-field enforcement via JVM-local tests, and the client's actual network path is exercised by the on-device relay smoke test.
+
+**Upstream dependency.** Soul and Memory endpoints land via the parallel Python worker on the same branch. The Kotlin side is fetch-and-render — if either endpoint returns a 5xx / 404 before the Python change merges, the relevant tab just shows a Retry error state and the rest of the inspector keeps working.
+
+## 2026-04-18 — Profile metadata + read-only config API (v0.7.0 groundwork)
+
+**Branch:** `feature/profile-config-readonly`. Kotlin-worker slice of the v0.7.0 groundwork (Python-worker slice runs in parallel, owns the relay-side wire contract). Three feature commits + docs.
+
+**Shipped (Kotlin).**
+
+- **Extended `Profile` data class.** Added three optional fields — `gatewayRunning: Boolean`, `hasSoul: Boolean`, `skillCount: Int` — mapped via `@SerialName` to the snake_case wire keys (`gateway_running`, `has_soul`, `skill_count`) the relay will emit in `auth.ok` profiles entries. All three default to safe zero-values so pre-v0.7 relays deserialize cleanly. `AuthManager.parseAgentProfiles` reads them with `booleanOrNull` / `intOrNull` fallbacks — malformed values fall through to defaults rather than crashing the pairing handshake.
+- **Runtime-metadata indicators in the agent sheet.** Each Profile row in `AgentInfoSheet` now carries a 6 dp status dot (green when gateway_running, grey otherwise), an optional "N skills" chip (hidden when skill_count == 0), and an optional "SOUL" badge (primary-container, hidden when has_soul is false). Gateway-off profiles stay selectable at 50% alpha — the probe is best-effort, and a stale dot shouldn't lock a user out. `ProfileRadioRow` grew three optional params (`contentAlpha`, `leadingDotColor`, `secondaryTrailing` slot) without changing the Default/personality-row call sites. Also added an inline "Profile SOUL overrides personality while active" caption under the personality section when a profile-with-SOUL + non-default personality are both selected, mirroring the existing caption in the Profile section.
+- **Persisted `selectedProfile` per Connection.** New `ProfileSelectionStore` — its own DataStore (`profile_selections`) keyed by connectionId — lets each Connection remember its last-picked profile across app restart. `ConnectionViewModel.selectProfile` writes through. Connection switch clears `_selectedProfile` first (so a stale A pick never dangles on B) then loads B's persisted name and resolves it against `agentProfiles` once the post-switch `auth.ok` repopulates the list. `removeConnection` calls `store.clear(connectionId)` after the switch-away to avoid racing the unmounted store.
+
+**Key architectural decisions.**
+
+1. **Name-based persistence, not Profile-object persistence.** The persisted value is the profile `name: String`, resolved at read time against the server's fresh `agentProfiles` list. Profiles can be renamed, removed, or re-modelled on the server between app launches; persisting a full `Profile` snapshot risks silently using a stale model override. Resolution-at-read yields null when the name no longer exists, and the UI falls through to the Default row.
+2. **Dedicated DataStore.** `profile_selections` is separate from `relay_settings` so clearing or migrating one doesn't threaten the other. A new per-connection key prefix (`selected_profile_<id>`) lets us clear-per-connection cleanly on removal.
+3. **Gateway-off profiles remain selectable.** Spec explicitly allows the user to pick a profile whose gateway probe is grey. Rationale: the probe is best-effort, can miss a recent restart, and hard-disabling a row based on a stale probe would confuse users who just ran `hermes profile use` and haven't restarted the relay.
+
+**Deferred.**
+
+- **Migration of any old "ephemeral" pick into the new store.** N/A — the prior behaviour was to always reset on restart, so there's nothing to migrate from. First boot on v0.7.0 starts clean; next `selectProfile` call writes through.
+- **UI for inspecting the gateway-running timestamp.** Useful for debugging stale probes but noise for the common path. Track in a future dashboard pass if it's actually asked about.
+
+**Upstream dependency.** The three new profile fields are optional on the wire and fall back to defaults, so this PR is safe to land ahead of the Python-worker relay change. Pairing against a pre-v0.7 relay continues to work — the phone just renders every dot grey and hides every badge.
+
+## 2026-04-18 — v0.6.0: Multi-Connection + Agent Profiles
+
+**Branch:** `feature/multi-profile-connections`. Landing as v0.6.0. Two orthogonal pieces of work that compose into a three-layer agent model (Connection → Profile → Personality), plus a top-bar + Settings UX consolidation.
+
+**Shipped.**
+
+- **Multi-Connection (`docs/decisions.md` §19).** Renamed the original internal "profile" concept to **Connection** — a paired Hermes *server*. `ConnectionStore` persists N connections in DataStore with the active one, migration seeds connection 0 from the existing `hermes_companion_auth_hw` store (zero re-pair, transparent to the user), `SessionTokenStore` takes a `prefsName` parameter so each Connection gets its own `EncryptedSharedPreferences` file, `AuthManager` gains a `connectionId` ctor. Switch is a heavy context swap: cancel in-flight SSE, disconnect relay WSS, rebind provider StateFlows (`RelayHttpClient` / `RelayVoiceClient` re-read lazily), rebuild `HermesApiClient`, reconnect, reprobe capabilities, reload sessions + personalities + profiles, restore per-Connection last-active session. Top-bar Connection chip + `ConnectionSwitcherSheet` for switching; Settings → Connections for CRUD (rename, re-pair via `ConnectionWizard`, revoke, remove). Per-connection scope: sessions, memory, personalities, skills, profiles, relay cert pin, voice endpoints, last-active session. Global scope: theme, bridge safety prefs, TOFU cert-pin map, notification companion state.
+- **Agent Profiles (`docs/decisions.md` §21).** Directory-scan + overlay. Relay walks `~/.hermes/profiles/*/`, reads each profile's `config.yaml` + `SOUL.md`, and advertises the list in `auth.ok` as `{name, model, description, system_message}` (plus a synthetic "default" entry for the root config). Phone sends `model` override + `system_message` from `SOUL.md` on chat turns when a profile is selected. Gated by `RELAY_PROFILE_DISCOVERY_ENABLED=1` (default on). Shipped as `overlay-not-isolation`: memory, sessions, `.env`, skills, and cron jobs still ride the Connection's default gateway. For full isolation, run the profile's own gateway on its own port and pair as a separate Connection.
+- **Consolidated agent sheet.** Deleted standalone `ProfilePicker.kt` and `PersonalityPicker.kt` top-bar chips in favor of a single bottom sheet opened from the top-bar agent name. Sheet holds Profile list, Personality list, and session info + analytics (message count, tokens in/out, avg TTFT). Scrollable. Toast confirmations on switch. Reclaims top-bar real estate and reduces the visual layer count (one tap instead of two chips).
+- **Settings "Active agent" card** — top-of-Settings summary of the current Connection / Profile / Personality with a `openAgentSheet` nav arg that navigates to Chat and auto-opens the sheet. Closes the "how do I change my agent" discoverability gap for Settings-originating users.
+- **Polish pass (7031115).** Pair wizard URL-scheme cross-validation (inline hint when API field has `wss://`); pair-stamp of the active Connection's metadata on successful auth (no stale state after re-pair); `ConnectionStatusBadge` top-aligns on multi-line rows; Settings treats paired + briefly-disconnected Connection as **Connecting** (amber) rather than **Disconnected** (red).
+
+**Key architectural decisions.**
+
+1. **Directory-scan for profiles.** First pass parsed a fictional top-level `profiles:` / `agents:` list in `config.yaml`. Upstream has never used that shape — profiles upstream are isolated directory instances at `~/.hermes/profiles/<name>/`, each with its own config, `.env`, `SOUL.md`, memory, sessions, and (optionally) its own gateway daemon. Old path always returned empty on real installs. Rewrite: walk `~/.hermes/profiles/*/`, read config + SOUL, report what's really there. See the "Earlier (abandoned) design" paragraph in `docs/decisions.md` §21 and commits `0303a4f` / `b9d2914` / `ec7559c`.
+2. **Overlay-not-isolation for v1.** A profile overrides `model` + `system_message`; everything else (memory, sessions, skills, API keys) rides the Connection's gateway. Rationale: a real per-profile isolation layer is "run the profile's gateway as its own service and pair it as a separate Connection" — we already have the plumbing for that via Multi-Connection. Building a second isolation layer inside one gateway would double the attack surface for no UX win.
+3. **Three-layer model = Connection → Profile → Personality.** Connection picks the server. Profile picks the agent directory on that server. Personality picks a system-prompt preset within the agent's config. Hierarchy flows top to bottom; picking a Connection resets Profile (Profile is ephemeral and server-scoped). `docs/decisions.md` §8 now carries a terminology-note block making this explicit, since the §8 title still says "Profiles" in the legacy sense.
+4. **Kept scope intentionally small for v0.6.0.** No per-Connection Profile persistence, no gateway-running probe, no mode where one Connection hosts multiple profile-gateways behind one pairing. Those are §21 follow-ups (see Deferred).
+
+**Deferred to v0.7+.**
+
+- **True per-profile isolation via separate Connections.** Doc how `hermes -p <name> platform start api --port 8643` + pair-as-new-Connection achieves this today, in user-docs.
+- **Persisted profile selection per Connection.** Currently resets on app restart and Connection switch. ~30-line extension: add `lastSelectedProfileName` to the `Connection` data class and restore on switch.
+- **Gateway-running probe** (hermes-desktop-inspired). Would let the Connection health indicator distinguish "server unreachable" from "paired, awake, responding" without waiting for a first request to fail. Low-priority; the existing probe behavior is adequate for v0.6.0.
+
+**Docs pass.**
+
+- `CHANGELOG.md` — new `[0.6.0]` section above the existing (v0.5.x-work-in-progress) entries.
+- `docs/spec.md` — Chat top-bar section rewritten around the three-chip reality; `auth.ok` `profiles[]` field documented.
+- `docs/decisions.md` — §8 gained a terminology-note block pointing forward to §19 and §21.
+- `user-docs/features/connections.md`, `profiles.md`, `personalities.md` — top-bar chip references updated to the agent sheet. `index.md` feature grid picked up Connections + Profiles rows.
+- `user-docs/guide/chat.md` — Personalities section expanded into "Agent Sheet — Profile + Personality" + Connection Chip subsection. `getting-started.md` gained a "Multiple Hermes servers" tip pointing at `features/connections.md`.
+- `user-docs/architecture/decisions.md` — new ADR-14 (Multi-Connection) + ADR-15 (Agent Profile picker) mirroring `docs/decisions.md`.
+- `README.md` — new "What's new in v0.6.0" block above the feature list; added a feature bullet for multi-Connection + profiles.
+
+## 2026-04-18 — Dashboard pairing: `/pairing/mint` schema rework + grants render fix
+
+**Context.** Bailey hit a silent pairing failure scanning QRs minted by the dashboard's "Pair new device" flow. Logcat showed the app attempting pairing with `serverUrl=http://172.16.24.250:8767` (relay's port, not API's) and an empty `relay` block (`relayUrl=` and `code=` both blank), causing `applyServerIssuedCodeAndReset` to bail with "empty code, returning early — authState NOT reset" and the WSS never handshook.
+
+**Root cause.** `handle_pairing_mint` in `plugin/relay/server.py` was written as if the QR was relay-only: it defaulted top-level `host/port/tls` to `server.config.host/port` (which is the RELAY's bind — `0.0.0.0:8767`), put the freshly-minted pairing code in top-level `key`, and emitted only session metadata inside the `relay` block (`ttl_seconds`, `grants`, `transport_hint` — no `url`, no `code`). But the wire format documented at `docs/spec.md` §3.3.1 and implemented by `QrPairingScanner.kt` expects top-level = **API** server (port 8642 default) with `relay.{url,code}` nested. The CLI path (`pair.py` → `build_payload` at line 762) was correct; the endpoint was the outlier. The dashboard plugin's "editable pair URL" feature (commit `d7e5fc8`) inherited the broken semantics because its request body forwards `host/port/tls` verbatim to the endpoint.
+
+**Fix.** `handle_pairing_mint` now mirrors the CLI shape exactly:
+- Top-level `host/port/tls` default from `RelayConfig.webapi_url` (parsed via `urllib.parse.urlparse`; host resolved through `pair._resolve_lan_ip` so `localhost` / `0.0.0.0` become the machine's LAN IP, which is what the phone needs)
+- Body overrides: `host` / `port` / `tls` / `api_key`
+- `relay_block["url"]` derived from `_relay_lan_base_url(server.config.host, server.config.port, tls=bool(server.config.ssl_cert))` — the relay knows its own WSS address
+- `relay_block["code"]` carries the minted value (used to live at top-level `key`; `key` is now the optional API bearer)
+
+Regression test at `plugin/tests/test_pairing_mint_schema.py` — 8 AioHTTP cases pinning the payload shape that `QrPairingScanner.kt` parses, including that the minted code lands in `relay.code` (not top-level `key`) and top-level port defaults to 8642 (not 8767). All pass. Test file uses `unittest` per CLAUDE.md — `pytest` tripped on `conftest.py`'s `responses` import on the server venv.
+
+**Doc sync.** `docs/spec.md` §3.3.1 already documented the correct wire format — this fix brought the server code back into line. Bumped the Updated stamp from 2026-04-13 to 2026-04-18 and added a line under Implementation references pointing at `handle_pairing_mint` + the new regression test. `CLAUDE.md` Key Files rows for `plugin/relay/server.py` + `plugin/dashboard/plugin_api.py` updated to reflect the API-server-at-top-level semantics.
+
+**Deployment hazard discovered along the way.** The server had two parallel checkouts: `~/hermes-relay/` (a dev clone, looked authoritative because SYSTEM.md lists `~/` as the project root) and `~/.hermes/hermes-relay/` (the actual symlinked install per CLAUDE.md). Running `git pull` in the wrong one updated nothing visible — restart-and-check reported stale version. Verified via `systemctl --user cat hermes-relay | grep WorkingDirectory` that the installed path is the `.hermes/` copy; then pulled + restarted on that one. Also noticed the installed repo was on a long-dead `feature/dashboard-plugin` branch with 10 local WIP commits (bisect diagnostics from the dashboard build-up). Switched to `main` (fast-forward clean, 45 commits) after confirming the local feature branch's meaningful work was already on origin/main through the merged PR. The dead branch stays in local refs for history; origin has no matching ref.
+
+**Bonus fix in the same branch.** Dashboard's Relay Management tab was crashing with minified React error #31 (`object with keys {chat, terminal, bridge}`) when rendering the paired-sessions list. `RelayManagement.jsx:172` wrapped a dict-shaped `s.grants` in a 1-element array then rendered each entry as a React child — Badge doesn't accept objects. Fix: `Object.keys(s.grants)` when the value is dict-shaped so Badge children are always channel-name strings. Rebuilt `plugin/dashboard/dist/index.js` via `npm run build` (the dashboard loads the pre-built IIFE verbatim, source edits without a rebuild are invisible).
+
+**Branch + PR.** `fix/pairing-mint-schema` — two commits (`4f0affa`, `ca50524`), pushed, deployed to `~/.hermes/hermes-relay/`, restarted, verified live `curl /pairing/mint` round-trip produces the correct shape. PR open at the origin-suggested URL — merge to land in v0.6.0.
+
+**Principle.** The original endpoint divergence would have been caught immediately by a schema round-trip test between the server's minted payload and the Android parser's data class. Added that test now as guardrail, not post-mortem — the two implementations will drift again eventually, this time CI yells instead of a silent field-mapping failure.
+
 ## 2026-04-18 — v0.5.1 release prep: lint iterations + VoicePlayerTest deferred
 
 **PR #31** (`feature/voice-quality-pass` → `main`, v0.5.1 candidate) — CI iteration, no app-behavior changes beyond the preceding v0.5.1 feature commits.

@@ -196,26 +196,37 @@ fun VoiceModeOverlay(
             }
         }
 
-        // Center column: pinned "you said" chip → sphere → waveform → scrolling transcript.
+        // Center column: sphere → waveform → scrolling transcript.
         //
         // Layout uses fixed-weight slots (sphere 1.5, transcript 1f) instead
         // of SpaceBetween so the sphere/waveform don't drift as the transcript
         // grows. The transcript area owns its own scroll state with auto-
         // scroll-to-tail and a top/bottom fade mask for overflow indication.
         //
-        // Transcript content sources:
-        //   - transcriptMessages: last N chat messages (includes voice-intent
-        //     traces rendered via MarkdownContent)
-        //   - uiState.responseText: the in-flight streaming response for the
-        //     current turn (a bubble that hasn't yet been finalized into a
-        //     ChatMessage by the time the user sees it mid-stream)
+        // Transcript content source: `transcriptMessages` (last N chat
+        // messages from [ChatViewModel.messages]) — the SINGLE source of
+        // truth for both user and agent turns. We used to also render
+        // `uiState.transcribedText` (as a "YOU" chip) and `uiState.responseText`
+        // (as a dedicated `StreamingResponseRow`), but those were also
+        // present in `transcriptMessages` once ChatViewModel committed the
+        // user's send and the assistant's streaming bubble — so every turn
+        // appeared twice. Picking chat-history as the single source keeps
+        // one bubble per turn; the last assistant message in-flight still
+        // updates in real time through its existing MutableStateFlow, so
+        // live-stream visibility is preserved.
         val transcriptScrollState = rememberScrollState()
 
-        // Auto-scroll to the tail whenever: (a) a new message arrives in the
-        // transcript, (b) the streaming responseText grows. Both conditions
-        // fire the same smooth animateScrollTo so the user's eye never has
-        // to chase token churn.
-        LaunchedEffect(transcriptMessages.size, uiState.responseText.length) {
+        // Derive the streaming "token length" from the last assistant message
+        // in the transcript so auto-scroll follows mid-stream growth without
+        // needing a separate `responseText` flow.
+        val lastStreamingContentLength = transcriptMessages.lastOrNull {
+            it.role == MessageRole.ASSISTANT && it.isStreaming
+        }?.content?.length ?: 0
+
+        // Auto-scroll to the tail whenever a new message arrives in the
+        // transcript or the last streaming assistant bubble grows. Smooth
+        // animateScrollTo so the user's eye never has to chase token churn.
+        LaunchedEffect(transcriptMessages.size, lastStreamingContentLength) {
             transcriptScrollState.animateScrollTo(transcriptScrollState.maxValue)
         }
 
@@ -300,53 +311,22 @@ fun VoiceModeOverlay(
 
             Spacer(Modifier.height(4.dp))
 
-            // "You said" block — sits directly above the agent response so
-            // the eye flows from the waveform straight down through the
-            // transcribed text into the answer in one motion. The old top-
-            // anchored chip forced the user to look up after stopping the
-            // mic, then back down to read the response — splitting attention.
-            // Left-aligned + small uppercase caption so it visually pairs
-            // with the response below it like a mini chat thread.
-            AnimatedVisibility(
-                visible = !uiState.transcribedText.isNullOrBlank(),
-                enter = fadeIn(),
-                exit = fadeOut(),
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 6.dp),
-                    horizontalAlignment = Alignment.Start,
-                ) {
-                    Text(
-                        text = "YOU",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        text = uiState.transcribedText.orEmpty(),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Start,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
-
             // Transcript area. Shows the last N chat messages in a compact
-            // rolling list, plus the in-flight streaming responseText for
-            // the current turn. Empty-state hint renders when BOTH the
-            // transcript AND the live response are empty (first launch,
-            // fresh voice session).
+            // rolling list — this is the SINGLE source of truth for both
+            // user ("YOU") and agent ("AGENT") turns in voice mode. The
+            // last streaming assistant message updates in real time through
+            // ChatViewModel's StateFlow, so mid-stream tokens still appear
+            // live without a separate `responseText` row.
+            //
+            // Empty-state hint renders when the transcript is empty (first
+            // launch, fresh voice session before any turn has committed).
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f, fill = true),
             ) {
                 val hasTranscript = transcriptMessages.isNotEmpty()
-                val hasLiveResponse = uiState.responseText.isNotBlank()
-                if (hasTranscript || hasLiveResponse) {
+                if (hasTranscript) {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -361,15 +341,6 @@ fun VoiceModeOverlay(
                     ) {
                         transcriptMessages.forEach { msg ->
                             CompactTranscriptRow(msg)
-                        }
-                        // Live streaming response for the current turn —
-                        // rendered as a trailing row so it sits below the
-                        // committed history. Once the turn completes and
-                        // the message is appended to chat history,
-                        // responseText clears and this row collapses back
-                        // into the transcript list naturally.
-                        if (hasLiveResponse) {
-                            StreamingResponseRow(uiState.responseText)
                         }
                     }
                 } else {
@@ -803,33 +774,8 @@ private fun PermissionDeniedChip(
     }
 }
 
-/**
- * Row for the in-flight streaming response — `uiState.responseText` that
- * hasn't yet been committed to chat history. Separate composable so it
- * can render slightly differently from committed [CompactTranscriptRow]
- * (larger type, onSurface instead of onSurfaceVariant) matching the
- * pre-transcript single-line "current response" visual weight, and so
- * streaming tokens accrete in place without the AnimatedContent flicker
- * we had before transcript mode.
- */
-@Composable
-private fun StreamingResponseRow(responseText: String) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.Start,
-    ) {
-        Text(
-            text = "AGENT",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.secondary,
-        )
-        Spacer(Modifier.height(2.dp))
-        Text(
-            text = responseText,
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-            textAlign = TextAlign.Start,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
-}
+// StreamingResponseRow removed: the overlay now renders the in-flight
+// streaming assistant response through the same `transcriptMessages` path
+// as committed turns, since ChatViewModel's last streaming message already
+// updates in real time. See the transcript-source comment above for
+// rationale (the double-entry bug fix).

@@ -6,6 +6,7 @@ import RelayManagement from "./tabs/RelayManagement.jsx";
 import BridgeActivity from "./tabs/BridgeActivity.jsx";
 import PushConsole from "./tabs/PushConsole.jsx";
 import MediaInspector from "./tabs/MediaInspector.jsx";
+import RemoteAccess from "./tabs/RemoteAccess.jsx";
 import { Switch } from "./lib/ui-shims.jsx";
 
 const { Label } = SDK.components;
@@ -17,6 +18,7 @@ const TABS = [
   { key: "activity", label: "Activity" },
   { key: "push", label: "Push" },
   { key: "media", label: "Media" },
+  { key: "remote", label: "Remote Access" },
 ];
 
 function readAutoRefresh() {
@@ -99,6 +101,7 @@ function RelayPluginRoot() {
         {tab === "activity" && <BridgeActivity autoRefresh={autoRefresh} />}
         {tab === "push" && <PushConsole />}
         {tab === "media" && <MediaInspector autoRefresh={autoRefresh} />}
+        {tab === "remote" && <RemoteAccess autoRefresh={autoRefresh} />}
       </div>
     </div>
   );

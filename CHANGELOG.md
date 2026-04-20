@@ -6,28 +6,71 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
-### Changed — MorphingSphere: pure-core extraction + parity-verified browser preview (2026-04-19)
+### Added
 
-- **Split `MorphingSphere.kt` into `MorphingSphereCore.kt` (pure algorithm) + Compose renderer.**
-  The algorithm core uses only `kotlin.math` — no Android, no Compose, no `Paint`. Declared
-  the single source of truth for the sphere going forward. The `@Composable MorphingSphere`
-  public API is unchanged (same params, same defaults); call sites in `VoiceModeOverlay` and
-  the chat empty state need no updates. Renderer also swapped legacy `android.graphics.Paint`
-  + `Typeface` + `nativeCanvas.drawText` for Compose's `rememberTextMeasurer()` + `drawText`.
-- **Added `preview/web/` — zero-dep browser harness.** `sphere.js` is a line-for-line JS
-  mirror of `MorphingSphereCore.kt` (`Math.imul` + `|0` for Kotlin `Int` overflow, floored
-  modulo for `.mod()`, `Math.trunc` for `.toInt()`). Live `index.html` with panel controls
-  for state / voice / layout (cols, rows, fill%, aspect, char size) + a `phone 9:16` preset
-  matching Compose `@Preview(widthDp=360, heightDp=640)`. Serve via
-  `python3 -m http.server --directory preview/web`.
-- **Added runtime parity harness.** `preview/web/parity-check.mjs` + JVM
-  `MorphingSphereCoreParityTest` render the 8 Compose `@Preview` fixtures on both sides and
-  emit FNV-1a 32-bit checksums. 8/8 structural checksums match (`(row, col, char)` tuples
-  are identical across platforms); 8/8 zone histograms match; 6/8 full checksums match —
-  Listening and Speaking (low-amp) drift at the 3rd decimal of color/alpha due to Float
-  (Kotlin) vs Double (JS) precision in compound expressions, sub-perceptible.
-- **Reusable surface unlocked.** The pure core is now droppable into a terminal TUI (Hermes
-  CLI), the codename-11.dev user site (via `sphere.js` directly), or Compose Desktop.
+- **`MorphingSphereCore.kt` — pure, platform-agnostic sphere algorithm.** Extracted from `MorphingSphere.kt` as the single source of truth for the sphere going forward. Uses only `kotlin.math` — no Android, no Compose, no `Paint` — so the same math can back a terminal TUI (Hermes CLI), the codename-11.dev user site, or a Compose Desktop port without visual drift between surfaces.
+- **`preview/web/` — zero-dep browser harness for the sphere.** `sphere.js` is a line-for-line JS mirror of `MorphingSphereCore.kt` (`Math.imul` + `|0` for Kotlin `Int` overflow, floored modulo for `.mod()`, `Math.trunc` for `.toInt()`). `index.html` exposes live panel controls for state / voice / layout (cols, rows, fill%, aspect, char size) + a `phone 9:16` preset matching Compose `@Preview(widthDp=360, heightDp=640)`. Serve via `python3 -m http.server --directory preview/web`.
+- **Runtime parity harness for the sphere.** `preview/web/parity-check.mjs` + JVM `MorphingSphereCoreParityTest` render the 8 Compose `@Preview` fixtures on both sides and emit FNV-1a 32-bit checksums. **8/8 structural checksums** (over discrete `(row, col, char)` tuples) and **8/8 zone histograms** match between JS and Kotlin; 6/8 full (color/alpha-inclusive) checksums match — the 2 voice-modulated fixtures drift at the 3rd decimal due to Float (Kotlin) vs Double (JS) precision in compound expressions, sub-perceptible.
+- **Multi-endpoint pairing QR** (ADR 24). A single pairing now carries an ordered list of endpoint candidates (`lan` / `tailscale` / `public` / operator-defined) so the same phone works seamlessly across LAN, Tailscale, and a public reverse-proxy URL. The phone picks the highest-priority reachable candidate at connect time and re-probes reachability on every `ConnectivityManager` network change with a 30s per-candidate cache. Strict-priority semantics — reachability only breaks ties among equal priorities, never promotes a lower priority over a higher one. New `plugin/pair.py` CLI flags `--mode {auto,lan,tailscale,public}` (default auto) and `--public-url <url>` drive candidate emission. See [`docs/remote-access.md`](docs/remote-access.md).
+- **First-class Tailscale helper** (ADR 25). New `plugin/relay/tailscale.py` + `hermes-relay-tailscale` CLI shim fronts the loopback-bound relay with `tailscale serve --bg --https=<port>` so the port is reachable over the tailnet with managed TLS + ACL-based identity. Safe to call unconditionally — no-ops with structured-dict failure when the `tailscale` binary is absent. `install.sh` gains an optional step [7/7] offering Tailscale enablement; skipped silently when the binary is missing, when `TS_DECLINE=1`, or under non-interactive shells without `TS_AUTO=1`. Auto-retires when upstream PR [#9295](https://github.com/NousResearch/hermes-agent/pull/9295) merges.
+- **Remote Access dashboard tab** (in the dashboard plugin). Operators can enable/disable the Tailscale helper, mint multi-endpoint pairing QRs, and inspect which endpoint modes are currently active — all from the hermes-agent web UI.
+- **Reachability probe + network-change re-probe** in the Android client. `ConnectionManager.resolveBestEndpoint()` does `HEAD /health` against each API candidate with a 2s timeout + 30s cache; `NetworkCallback.onAvailable` / `onLost` triggers a re-probe. `RelayUiState` gains `activeEndpointRole` so the UI can render which endpoint (LAN / Tailscale / Public) is currently serving.
+- **Opt-in terminal sessions.** Fresh terminal tabs no longer auto-attach — each tab shows a centered **Start session** overlay and spawns the tmux-backed shell only after the user taps it. Tabs that have already been started still auto-reattach on reconnect. Removes the previous behavior of creating persistent server-side shells just by opening the Terminal tab.
+- **`terminal.kill` envelope** — hard-destroy a session. The relay runs `tmux kill-session -t <name>` out-of-band before tearing down the PTY so the background shell (and any running commands) die with it. Closing a tab now opens a confirmation dialog with explicit **Detach** (preserve tmux session) vs **Kill** (destroy it) choices; the session info sheet also gains an error-tinted **Kill session** button.
+- **Touch-scroll + scrollback buttons for the terminal.** A vertical swipe on the terminal surface now moves xterm.js's scrollback (with a 12 px deadzone so long-press-to-select still works); the extras toolbar gains ⇑ / ⇓ / ⇲ buttons for ten-line scroll up, ten-line scroll down, and jump-to-bottom. Scrollback depth is unchanged at 10 000 lines.
+- **Friendly names for terminal tabs.** The session info sheet now has an inline rename field that persists a cosmetic name (up to 40 chars) keyed on the wire-side `session_name`. Names survive app restart and re-pair; cleared on Kill but preserved on Detach. The tab chip renders `1 · build` when named.
+- **`--prefer <role>` priority override** on every pair surface (`hermes-pair --prefer tailscale`, the `/hermes-relay-pair` skill, and the dashboard Remote Access tab's "Prefer role" dropdown). Open-vocab role string — promotes the named role to priority 0 with the rest renumbered in natural order. Unknown role emits a stderr warning and keeps the natural order. Case-insensitive matching; role string preserved verbatim for HMAC round-trip.
+
+### Changed
+
+- **`MorphingSphere.kt` is now a thin Compose renderer** that delegates all math to `MorphingSphereCore`. Public `@Composable` API is unchanged (same params, same defaults); call sites in `VoiceModeOverlay` and the chat empty state need no updates. Renderer also swapped legacy `android.graphics.Paint` + `Typeface` + `nativeCanvas.drawText` for Compose's `rememberTextMeasurer()` + `drawText`, dropping all `android.graphics.*` imports.
+- **Pairing QR now carries the `hermes: 3` schema when endpoints are emitted.** `plugin/pair.py` → `build_payload(endpoints=...)` bumps the version only when the `endpoints` array is present; pairs without endpoint candidates continue to emit `hermes: 2`. `canonicalize()` in `plugin/relay/qr_sign.py` preserves array order and role strings verbatim (no case/whitespace normalization) so HMAC signatures round-trip across Python / Kotlin.
+- **Paired Devices screen renders per-endpoint rows.** Each paired device now shows one row per `(device, endpoint)` pair, with a styled chip per role (LAN / Tailscale / Public / Custom VPN). Settings and Paired Devices both read from the new `PairingPreferences` per-device endpoint store.
+- **Terminal session info sheet is vertically scrollable** — tall phones in landscape with the new Start / Reattach / Kill action rows no longer clip the Done button.
+
+### Backward compatible
+
+- **Old v1 / v2 QRs keep parsing unchanged.** The Android parser's `ignoreUnknownKeys = true` plus the nullable `endpoints` field means pre-v3 QRs work on new phones (the phone synthesizes a single priority-0 `role: lan` candidate from the top-level fields, promoted to `role: tailscale` when the host matches `100.64.0.0/10` / `.ts.net`), and v3 QRs work on v0.6.x and earlier clients (they ignore `endpoints` and use the top-level fields). No forced re-pair for existing installs.
+
+### Fixed
+
+- **Profile `PUT` endpoints restored.** The ADR 24 commit collaterally deleted ~479 lines of `handle_profile_soul_put` / `handle_profile_memory_put` while adding multi-endpoint passthrough to the pairing handlers. `PUT /api/profiles/{name}/soul` and `PUT /api/profiles/{name}/memory/{filename}` are back at their canonical positions; atomic-write semantics and loopback-or-bearer auth unchanged.
+- **Stray terminal errors no longer poison the wrong tab.** Server-level error envelopes without a `session_name` (e.g. "Unknown terminal message type" from an older relay) previously fell through to the active tab and flashed an error overlay on whichever tab the user happened to be looking at. Errors without session scope now log only.
+
+## [0.6.0] — 2026-04-18
+
+### Added
+
+- **Pair with multiple Hermes servers** and switch in one tap. A new Connection chip on the left of the Chat top bar opens a switcher sheet with a health indicator for each paired server — tap one to cancel in-flight chat, disconnect the old relay, rebind to the new server, and reload sessions + personalities + profiles. The chip is hidden automatically when you only have one Connection. Existing single-server installs migrate transparently on first launch of this version — zero re-pair, zero token migration. See `docs/decisions.md` §19.
+- **Connections management screen** at Settings → Connections. Each paired server is a card with inline rename, re-pair (reuses the QR onboarding flow), revoke, and remove. Add a new Connection from the same screen. Per-connection state kept separate: sessions, memory, personalities, skills, profiles, relay URL + cert pin, voice endpoints, last-active session. Theme, bridge safety preferences, and TOFU cert-pin map stay global.
+- **Agent Profiles** — the relay now auto-discovers upstream Hermes profiles by scanning `~/.hermes/profiles/*/` (plus a synthetic "default" for the root config) and advertises them in the `auth.ok` payload. On chat send with a profile selected, the phone overlays the request's `model` and `system_message` with the profile's `model.default` + `SOUL.md`. Selection is ephemeral and clears on Connection switch. Gated by `RELAY_PROFILE_DISCOVERY_ENABLED=1` (default on) — operators can set it to `false` to keep the picker empty. See `docs/decisions.md` §21.
+- **Consolidated agent sheet** on the Chat top bar. Tap the agent name in the middle of the top bar to open a scrollable bottom sheet holding Profile selection, Personality selection, and session info + analytics (message count, tokens in/out, avg TTFT). Replaces the separate top-bar chips from intermediate v0.5.x builds. Toast confirmations fire on Profile and Personality switches.
+- **"Active agent" card** at the top of Settings — summarizes the current Connection / Profile / Personality. Tap navigates to Chat with the agent sheet auto-opened via the `openAgentSheet` nav arg, giving Settings-originating users a one-tap path to change agent context.
+- **Three-layer agent model** formalized: Connection (server) → Profile (agent directory) → Personality (system-prompt preset). Documented in `docs/spec.md`, `docs/decisions.md` §8 / §19 / §21, and `user-docs/features/{connections,profiles,personalities}.md`.
+- **Pair wizard URL scheme cross-validation** — an inline hint fires when the API field is given a `wss://` URL (or any obviously-wrong scheme), so misplaced values surface before the pair attempt instead of after.
+- **Pair-stamp on the active Connection** — successful auth now stamps the active Connection's pairing metadata (paired-at, transport hint, expiry) in place, so a re-pair from Settings doesn't leave stale state on the card.
+- **Live WSS state on the active Connection row** in the Connections list — the active card now reflects Connected / Reconnecting… / Stale in real time instead of a static "Paired N minutes ago" timestamp. A Stale state also surfaces an inline **Reconnect** action button (promoted above Rename) tinted to signal "attention."
+- **Reconnect taps get explicit feedback.** Every Stale-recovery affordance (the Relay row, the Reconnect button in Connection Settings, and the new Reconnect action in the Connections list) now shows a snackbar / toast "Reconnecting to relay…" so users know the tap registered even during the sub-second before the row flips to Connecting.
+
+### Changed
+
+- **Unified relay status across screens.** `SettingsScreen`, `ConnectionSettingsScreen`, and the Connections list used to resolve relay status independently (each with its own ad-hoc stale / auto-reconnect / probing combinator), which let them disagree on what state the relay was in — e.g. the Settings card said **Disconnected** red while the Connection sub-screen said **Reconnecting…** amber for the same moment. State resolution now lives on `ConnectionViewModel.relayUiState: StateFlow<RelayUiState>` with five well-defined cases (`NotConfigured` / `Connected` / `Connecting` / `Stale` / `Disconnected`) and a 5 s grace window before a Paired-but-Disconnected pose is promoted to `Stale` — every screen maps the single source of truth onto the existing `ConnectionStatusRow` API.
+- **Settings "Connection" card → "Active Connection".** Title renamed, and the current Connection's label now renders as the card subtitle so installs with multiple servers can see at a glance which one the status rows describe. Fresh `reconnectIfStale()` tick on first compose so the Relay row doesn't flash red before the lifecycle observer's resume path lands.
+- **Status-badge UX polish.** `ConnectionStatusBadge` top-aligns cleanly on multi-line rows (was vertically centered and drifted off-center when the label wrapped). The Settings screen now treats a paired Connection with a briefly-down relay as **Connecting** (amber) instead of **Disconnected** (red) — avoids scare-red during the few seconds around a relay restart.
+- **Top-bar chip layout.** `ProfilePicker.kt` and `PersonalityPicker.kt` as standalone top-bar chips are gone; their selection now lives inside the consolidated agent sheet.
+
+### Fixed
+
+- **`POST /pairing/mint` emits the correct wire format.** Dashboard-minted QRs were unscannable — the relay endpoint put the freshly-minted pairing code in top-level `key` and defaulted the top-level port to the relay's own `8767` (its `server.config.port`) instead of the Hermes API server's `8642`. The Android scanner reads top-level `host:port` as the **API** server URL and expects the minted code inside `relay.code`, so phones saw `serverUrl=http://host:8767` (wrong port, no API reachable) and an empty `relay` block — `applyServerIssuedCodeAndReset` bailed on the empty code and the WSS never handshook. Silent fail. The `hermes-pair` CLI and `/hermes-relay-pair` skill were unaffected because they go through `pair.py`'s CLI path which builds the payload correctly; only the dashboard's "Pair new device" flow hit the bug. `handle_pairing_mint` now mirrors `pair.py:762` — top-level `host/port/key/tls` default from `RelayConfig.webapi_url` (resolved to a LAN-routable IP via `_resolve_lan_ip`) with `host`/`port`/`tls`/`api_key` body overrides, and the `relay` block carries `url` from `_relay_lan_base_url(server.config.host, server.config.port, ...)` plus the minted `code`. Shape now matches `docs/spec.md` §3.3.1 and `QrPairingScanner.kt`. Regression test at `plugin/tests/test_pairing_mint_schema.py` (8 cases) pins the payload shape against what the Android parser expects so the two sides can't drift silently again.
+- **Dashboard Relay Management tab no longer crashes on paired-session list.** `RelayManagement.jsx:172` wrapped a dict-shaped `s.grants` (`{chat, terminal, bridge}`) in a 1-element array and rendered each entry as a React child, tripping minified React error #31 ("objects are not valid as a React child"). Now uses `Object.keys(s.grants)` when the value is dict-shaped so Badge children are always strings; existing array path preserved for future callers. Rebuilt bundle at `plugin/dashboard/dist/index.js` — the hermes-agent dashboard loads that file verbatim so source changes require a rebuild.
+
+### Deferred
+
+- True per-profile isolation on a single Connection (memory + sessions + `.env` shared today; use separate Connections for full isolation).
+- Persisted Profile selection per Connection across app restarts.
+- Gateway-running probe (hermes-desktop-inspired) on the Connection health indicator.
+
+## [0.5.x] — Unreleased feature work
 
 ### Added — Voice silence auto-stop (2026-04-18)
 
