@@ -179,6 +179,9 @@ hermes-android/
 | `voice/VoiceBridgeIntentHandler.kt` | Interface routing voice utterances to bridge; impls per flavor via factory |
 | `voice/VoiceIntentClassifier.kt` | Regex phone-control classifier (sideload only); false-negatives preferred over false-positives |
 | `ui/components/VoiceModeOverlay.kt` | Full-screen voice UI — MorphingSphere + VoiceWaveform + mic button |
+| `ui/components/MorphingSphere.kt` | Compose renderer for the agent sphere — delegates math to `MorphingSphereCore` |
+| `ui/components/MorphingSphereCore.kt` | Platform-agnostic sphere algorithm (`kotlin.math` only) — single source of truth; mirrored byte-for-byte in `preview/web/sphere.js` |
+| `preview/web/` | Zero-dep browser harness — live `index.html` preview + `parity-check.mjs`; paired with `MorphingSphereCoreParityTest` (JVM) for struct/full checksum diffing |
 | **App — Media + Notifications** | |
 | `util/MediaCacheWriter.kt` | `cacheDir/hermes-media/` LRU writer; returns FileProvider URIs |
 | `ui/components/InboundAttachmentCard.kt` | Discord-style attachment card for images/video/audio/pdf/text/generic |
