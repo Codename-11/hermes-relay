@@ -251,6 +251,114 @@ def _build_disable_command(port: int) -> list[str]:
     return ["tailscale", "serve", "--https=" + str(port), "off"]
 
 
+def funnel_url(port: int = DEFAULT_PORT) -> str | None:
+    """Return the public Funnel URL fronting ``port`` if one is active.
+
+    Tailscale Funnel is the "open to the public internet" sibling of
+    ``tailscale serve`` — same syntax but any internet user (not just
+    the tailnet) can reach the fronted port, still with TLS terminated
+    on Tailscale's edge. Returns ``https://<hostname>/`` when the given
+    port is currently funneled, otherwise ``None``.
+
+    Used by :func:`plugin.pair.build_endpoint_candidates` to auto-
+    populate the ``role=public`` candidate when ``mode=auto`` is picked
+    without an explicit ``--public-url`` — removes the "pin the public
+    URL manually on the Remote Access tab" operator step when Funnel
+    is already live.
+
+    Safe on all platforms: returns ``None`` when the CLI is absent,
+    when ``funnel status`` exits non-zero, when the JSON isn't shaped
+    the way we expect, or when nothing is funneled on ``port``.
+
+    Shape parsed (as of 2026-04):
+      { "AllowFunnel": { "host:port": true }, ... }
+      or the newer ``tailscale funnel status --json`` form, which
+      returns the same ``AllowFunnel`` key under the top-level Web
+      config.
+    """
+    if not _tailscale_available():
+        return None
+
+    # Try the modern ``funnel status`` invocation first; fall back to
+    # parsing ``serve status`` if that path isn't available on this
+    # Tailscale version.
+    hostname = _funnel_hostname()
+    if hostname is None:
+        return None
+
+    allow = _funnel_allowed_ports()
+    if port not in allow:
+        return None
+
+    # Tailscale Funnel terminates TLS at Tailscale's edge, so the URL
+    # is always https and always on the default 443. The ``port`` arg
+    # tells us *which local port is funneled*, not what port callers
+    # will dial — the public URL itself is hostname-only.
+    return f"https://{hostname}/"
+
+
+def _funnel_hostname() -> str | None:
+    """Tailscale-assigned hostname (``*.ts.net``) for Funnel URLs.
+
+    Reads from the same ``status --json`` blob :func:`status` uses,
+    but factored out so :func:`funnel_url` can call it without
+    re-running the expensive status() probe (which also shells
+    ``serve status`` for ``serve_ports``).
+    """
+    rc, out, _ = _run(["tailscale", "status", "--json"])
+    if rc != 0:
+        return None
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    self_node = data.get("Self") or {}
+    if not isinstance(self_node, dict):
+        return None
+    hostname = self_node.get("DNSName") or self_node.get("HostName")
+    if not isinstance(hostname, str):
+        return None
+    return hostname.strip().rstrip(".") or None
+
+
+def _funnel_allowed_ports() -> set[int]:
+    """Ports currently published with Funnel (public-internet) access.
+
+    Parses ``tailscale serve status --json`` for ``AllowFunnel`` flags
+    and extracts the integer tails of the ``host:port`` keys. Returns
+    an empty set on any parse failure — downstream treats empty as
+    "nothing funneled".
+    """
+    rc, out, _ = _run(["tailscale", "serve", "status", "--json"])
+    if rc != 0 or not out.strip():
+        return set()
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError:
+        return set()
+    if not isinstance(data, dict):
+        return set()
+
+    funnel_map = data.get("AllowFunnel")
+    if not isinstance(funnel_map, dict):
+        return set()
+
+    ports: set[int] = set()
+    for key, allowed in funnel_map.items():
+        if not allowed:
+            continue
+        if not isinstance(key, str):
+            continue
+        tail = key.rsplit(":", 1)[-1]
+        try:
+            ports.add(int(tail))
+        except ValueError:
+            continue
+    return ports
+
+
 def canonical_upstream_present() -> bool:
     """Return True when the canonical ``--tailscale`` flag is available.
 
@@ -275,5 +383,6 @@ __all__ = [
     "canonical_upstream_present",
     "disable",
     "enable",
+    "funnel_url",
     "status",
 ]

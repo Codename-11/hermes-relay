@@ -485,15 +485,35 @@ def build_endpoint_candidates(
             pass
 
     if want_public:
-        if public_url:
+        effective_public_url = public_url
+        # Auto-detect Tailscale Funnel URL when mode=auto and caller
+        # didn't pin one explicitly. Saves operators the "set public
+        # URL" step on the Remote Access tab when Funnel is already
+        # publishing the relay port. Fails soft — funnel_url returns
+        # None when the CLI is absent, nothing is funneled on this
+        # port, or the JSON parse hits an unexpected shape.
+        if not effective_public_url:
+            try:
+                from plugin.relay import tailscale as _ts_helper  # type: ignore
+
+                detected = _ts_helper.funnel_url(port=relay_port)
+            except Exception:  # noqa: BLE001 — any failure = no funnel
+                detected = None
+            if detected:
+                effective_public_url = detected
+
+        if effective_public_url:
             _emit(
                 _public_endpoint(
-                    public_url, relay_port=relay_port, priority=next_priority
+                    effective_public_url,
+                    relay_port=relay_port,
+                    priority=next_priority,
                 )
             )
         elif mode == "public":
             raise ValueError(
-                "--mode public requires --public-url <url>"
+                "--mode public requires --public-url <url> "
+                "(no Tailscale Funnel detected for this port)"
             )
 
     # Priority override — promote the named role to priority 0 and

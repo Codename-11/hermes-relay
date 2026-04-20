@@ -68,10 +68,24 @@ class EndpointResolver(
 
     companion object {
         private const val TAG = "EndpointResolver"
-        /** Per-candidate HEAD probe timeout. Matches ADR 24 "2-second timeout". */
-        const val PROBE_TIMEOUT_MS = 2_000L
-        /** Probe-result cache TTL. Matches ADR 24 "cached for 30 seconds per-endpoint". */
-        const val CACHE_TTL_MS = 30_000L
+        /**
+         * Per-candidate HEAD probe timeout. ADR 24 speced 2s which was
+         * tight — LTE hand-off and slow hotel Wi-Fi routinely blew past
+         * 2s on the first packet and got candidates marked unreachable
+         * spuriously. 4s preserves "fast-fail on real outage" while
+         * surviving the flaky-network case.
+         */
+        const val PROBE_TIMEOUT_MS = 4_000L
+        /**
+         * Probe-result cache TTL. Widened from ADR 24's 30s to 60s for
+         * two reasons: (1) HEAD /health on every tab open was burning
+         * battery unnecessarily on mobile, (2) NetworkCallback's
+         * onAvailable / onLost invalidates the cache on real network
+         * changes anyway, so a 60s idle cache is functionally
+         * equivalent. Manual probes (EndpointsCard → "Probe now")
+         * bypass the cache.
+         */
+        const val CACHE_TTL_MS = 60_000L
 
         /**
          * Stable cache key for a candidate: `"<role>|<api.host>:<api.port>"`.

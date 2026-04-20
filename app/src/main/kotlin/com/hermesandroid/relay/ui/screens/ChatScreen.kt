@@ -116,6 +116,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.ui.platform.LocalContext
 import com.hermesandroid.relay.data.Attachment
+import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
 import com.hermesandroid.relay.ui.components.CommandPalette
 import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
@@ -813,6 +814,33 @@ fun ChatScreen(
                     }
                 },
                 actions = {
+                    // ADR 24 — compact chip surfacing which endpoint role is
+                    // currently serving the relay (LAN / Tailscale / Public /
+                    // Custom). Only rendered when the active connection
+                    // actually has a resolved endpoint; invisible for single-
+                    // endpoint legacy pairings where the Settings row already
+                    // spells the host out. Tap → Connections CRUD so the
+                    // user can re-probe / pin / re-pair without leaving chat.
+                    val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
+                    activeEndpoint?.let { ep ->
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            modifier = Modifier
+                                .padding(end = 4.dp)
+                                .clickable { onNavigateToConnections() },
+                        ) {
+                            Text(
+                                text = ep.displayLabel(),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(
+                                    horizontal = 8.dp,
+                                    vertical = 4.dp,
+                                ),
+                            )
+                        }
+                    }
                     // Ambient mode toggle (show/hide sphere visualization).
                     // Profile + personality pickers moved into the agent sheet
                     // that opens on title tap — the top bar no longer owns

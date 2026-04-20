@@ -28,6 +28,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -270,12 +271,20 @@ private fun ConnectionCard(
                 else -> "Not paired"
             }
             // ADR 24 — on the active card we also know the active endpoint
-            // role + total endpoint count; splice them into the subtitle so
-            // the list entry matches what the Active card at Settings →
-            // Connection shows, instead of stopping at hostname + paired.
+            // role + the full set of roles the QR carried; splice both into
+            // the subtitle so the list entry matches what the Active card at
+            // Settings → Connection shows. Previous version said "2 endpoints"
+            // which was accurate but opaque — users couldn't tell at a glance
+            // whether their QR had LAN, Tailscale, Public, or some mix.
             val endpointBadge = if (isActive && endpoints.isNotEmpty()) {
                 val activeLabel = activeEndpoint?.displayLabel() ?: "resolving…"
-                " • $activeLabel • ${endpoints.size} endpoint${if (endpoints.size == 1) "" else "s"}"
+                val allRoles = endpoints.map { it.displayLabel() }.distinct()
+                val rolesSummary = if (allRoles.size == 1) {
+                    allRoles.first()
+                } else {
+                    allRoles.joinToString(" + ")
+                }
+                " • Active: $activeLabel • $rolesSummary"
             } else {
                 ""
             }
@@ -295,6 +304,37 @@ private fun ConnectionCard(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
+
+            // ADR 24 — nudge operators on legacy single-endpoint pairings
+            // to re-pair so their QR picks up LAN + Tailscale + Public
+            // automatically. Only on the active card (non-active don't
+            // have endpoint state loaded) and only when exactly 1 endpoint
+            // exists — zero means "not multi-endpoint-aware at all" (legacy
+            // pre-ADR-24 pairing, expected to be empty), and ≥2 is already
+            // what we want.
+            if (isActive && endpoints.size == 1) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.6f),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    ) {
+                        Text(
+                            text = "Only one endpoint in this pairing — re-pair with " +
+                                "Mode = Auto to get LAN + Tailscale + Public in one QR.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = onRepair) {
+                            Text("Re-pair")
+                        }
+                    }
+                }
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),

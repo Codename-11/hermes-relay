@@ -116,6 +116,11 @@ export default function PairDialog({ open, onClose }) {
   const [settings, setSettings] = useState(loadSettings);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [state, setState] = useState({ status: "idle" });
+  // Operator's explicit "yes, I know it's proxy-fronted, mint anyway"
+  // acknowledgement. Resets every time the pinned host changes so a new
+  // host triggers a fresh consent step — avoids a situation where the
+  // operator tabs through hostnames and silently reuses old consent.
+  const [proxyConfirmed, setProxyConfirmed] = useState(false);
   const canvasRef = useRef(null);
   const countdown = useCountdown(state.data ? state.data.expires_at : null);
 
@@ -123,6 +128,11 @@ export default function PairDialog({ open, onClose }) {
     () => summarizeEndpoints(state.data ? state.data.qr_payload : null),
     [state.data],
   );
+
+  // Derived — the pinned host in Advanced looks like a forward-auth-
+  // gated FQDN. Gates the auto-mint: we don't want the dashboard to
+  // silently produce a QR the phone will fail to use.
+  const hostLooksProxyFronted = settings.host && looksProxyFronted(settings.host);
 
   const mint = useCallback(async (s) => {
     const use = s || settings;
@@ -148,8 +158,13 @@ export default function PairDialog({ open, onClose }) {
   }, [settings]);
 
   useEffect(() => {
-    if (open && state.status === "idle") mint();
-  }, [open, state.status, mint]);
+    // Gate the auto-mint when the pinned host trips the proxy heuristic
+    // and the operator hasn't explicitly confirmed. "Mint anyway" sets
+    // proxyConfirmed=true and kicks the mint via the regenerate path.
+    if (!open || state.status !== "idle") return;
+    if (hostLooksProxyFronted && !proxyConfirmed) return;
+    mint();
+  }, [open, state.status, mint, hostLooksProxyFronted, proxyConfirmed]);
 
   useEffect(() => {
     if (state.status !== "ok" || !canvasRef.current) return;
@@ -164,6 +179,11 @@ export default function PairDialog({ open, onClose }) {
       saveSettings(next);
       return next;
     });
+    // Changing the pinned host means the previous consent doesn't
+    // apply — force a fresh confirm step.
+    if (Object.prototype.hasOwnProperty.call(patch, "host")) {
+      setProxyConfirmed(false);
+    }
     // Re-mint with the new settings. Debouncing isn't worth it — the
     // dropdowns only fire on user action, not typing.
     setState({ status: "idle" });
@@ -171,12 +191,23 @@ export default function PairDialog({ open, onClose }) {
 
   const regenerate = useCallback(() => {
     setState({ status: "idle" });
-    mint();
-  }, [mint]);
+    // Re-enter the auto-mint path; if the host is proxy-fronted, the
+    // confirm block will render instead of an actual mint.
+  }, []);
+
+  const confirmProxyAndMint = useCallback(() => {
+    setProxyConfirmed(true);
+    setState({ status: "idle" });
+    // The useEffect watching [state, proxyConfirmed] will fire the
+    // mint as soon as both gates are clear.
+  }, []);
 
   if (!open) return null;
 
-  const proxyWarning = advancedOpen && settings.host && looksProxyFronted(settings.host);
+  const proxyWarning = advancedOpen && hostLooksProxyFronted;
+  // Pause the body UI and show the confirm-first block whenever the
+  // override is proxy-fronted and hasn't been acknowledged.
+  const blockForProxyConsent = hostLooksProxyFronted && !proxyConfirmed;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
@@ -228,10 +259,39 @@ export default function PairDialog({ open, onClose }) {
             </div>
           </div>
 
-          {state.status === "loading" && (
+          {blockForProxyConsent && (
+            <div className="rounded-md border border-amber-500/60 bg-amber-500/15 p-3 text-sm space-y-2">
+              <div className="font-medium">Proxy-fronted host detected — confirm before minting</div>
+              <div className="text-xs">
+                <span className="font-mono">{settings.host}</span> looks like a reverse-proxy
+                or forward-auth gateway (Authelia, Cloudflare Access, Traefik, …). The relay
+                WSS will pair fine, but the phone's API calls will likely return 401/403
+                because it has no way to present the gateway's session cookie. Result: the
+                paired device shows up in Management but the app silently drops the config.
+              </div>
+              <div className="text-xs">
+                Prefer: leave this field blank (use <code className="font-mono">mode=auto</code>)
+                or switch to a non-gated endpoint (Tailscale Serve / direct LAN). See
+                <em>docs/remote-access.md</em> &rarr; &ldquo;Forward-auth gateways&rdquo;.
+              </div>
+              <div className="flex gap-2 pt-1">
+                <Button size="sm" onClick={confirmProxyAndMint}>
+                  Mint anyway
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => updateSetting({ host: "", port: 8642, tls: false })}
+                >
+                  Clear override
+                </Button>
+              </div>
+            </div>
+          )}
+          {!blockForProxyConsent && state.status === "loading" && (
             <div className="text-sm text-muted-foreground">Minting code…</div>
           )}
-          {state.status === "error" && (
+          {!blockForProxyConsent && state.status === "error" && (
             <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
               <div className="font-medium mb-1">Minting failed</div>
               <div className="break-words">{state.error}</div>
@@ -240,7 +300,7 @@ export default function PairDialog({ open, onClose }) {
               </div>
             </div>
           )}
-          {state.status === "ok" && (
+          {!blockForProxyConsent && state.status === "ok" && (
             <>
               <div className="flex justify-center rounded-md border border-border bg-white p-3">
                 <canvas ref={canvasRef} className="block" />
