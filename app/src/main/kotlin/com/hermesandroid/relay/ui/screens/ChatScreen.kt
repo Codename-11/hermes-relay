@@ -613,25 +613,35 @@ fun ChatScreen(
     // human-readable description (e.g. "Victor") if present, then the
     // profile's slug name, then the personality, then the connection label,
     // then the literal "Hermes" fallback.
-    val agentDisplayName = remember(effectiveProfile, selectedPersonality, defaultPersonality, activeConnection) {
-        val profile = effectiveProfile
-        val fromProfile = when {
-            profile == null -> null
-            profile.description.isNotBlank() -> profile.description
-            profile.name.isNotBlank() -> profile.name.replaceFirstChar { it.uppercase() }
-            else -> null
-        }
-        fromProfile ?: run {
-            val personalityName = if (selectedPersonality == "default" && defaultPersonality.isNotBlank()) {
-                defaultPersonality
-            } else {
-                selectedPersonality
+    //
+    // Wrapped in `derivedStateOf` so the recomposition scope tracks every
+    // state read inside (effectiveProfile, selectedPersonality,
+    // defaultPersonality, activeConnection) — the previous plain
+    // `remember(k1,k2,k3,k4)` form relied on equality diffs against those
+    // four keys, which missed updates in some cases (most notably a
+    // profile switch while the ConnectionInfoSheet was open, where the
+    // ambient sheet scope appeared to swallow the key comparison).
+    val agentDisplayName by remember {
+        derivedStateOf {
+            val profile = effectiveProfile
+            val fromProfile = when {
+                profile == null -> null
+                profile.description.isNotBlank() -> profile.description
+                profile.name.isNotBlank() -> profile.name.replaceFirstChar { it.uppercase() }
+                else -> null
             }
-            when {
-                personalityName.isNotBlank() && personalityName != "default" ->
-                    personalityName.replaceFirstChar { it.uppercase() }
-                !activeConnection?.label.isNullOrBlank() -> activeConnection!!.label
-                else -> ""
+            fromProfile ?: run {
+                val personalityName = if (selectedPersonality == "default" && defaultPersonality.isNotBlank()) {
+                    defaultPersonality
+                } else {
+                    selectedPersonality
+                }
+                when {
+                    personalityName.isNotBlank() && personalityName != "default" ->
+                        personalityName.replaceFirstChar { it.uppercase() }
+                    !activeConnection?.label.isNullOrBlank() -> activeConnection!!.label
+                    else -> ""
+                }
             }
         }
     }

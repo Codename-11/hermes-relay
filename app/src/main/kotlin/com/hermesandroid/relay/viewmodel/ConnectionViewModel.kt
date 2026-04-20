@@ -83,6 +83,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // reconnect genuinely fails (server down, bad network).
         private const val RELAY_RECONNECT_GRACE_MS = 5_000L
 
+        /**
+         * Placeholder label written by [beginAddConnection] before the
+         * user has scanned a QR. The pair-success watcher treats a
+         * connection whose label is still this exact string as
+         * "unlabeled" and auto-renames to the API-host-derived default
+         * once pairing completes. Exposed as a constant so tests and
+         * the watcher share one source of truth.
+         */
+        const val PLACEHOLDER_LABEL = "New connection…"
+
         // Shared
         private val KEY_THEME = stringPreferencesKey("theme")
         private val KEY_FONT_SCALE = floatPreferencesKey("font_scale")
@@ -899,15 +909,18 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * The placeholder starts with empty URLs — [applyPairingPayload]
      * will overwrite them via [updateApiServerUrl] / [updateRelayUrl]
      * on the newly-active Connection once the QR is scanned. Label is
-     * "New connection…" until the pair completes; the caller can rename
-     * after success. Callers that abandon the wizard must invoke
-     * [discardPlaceholderConnection] to remove the empty record.
+     * [PLACEHOLDER_LABEL] until the pair completes; on auth.ok the
+     * pair-success watcher (same `viewModelScope.launch` block that
+     * calls `markPaired`) detects the placeholder label and renames
+     * to the API-host-derived default. Callers that abandon the
+     * wizard must invoke [discardPlaceholderConnection] to remove
+     * the empty record.
      */
     suspend fun beginAddConnection(): String {
         val id = java.util.UUID.randomUUID().toString()
         val placeholder = Connection(
             id = id,
-            label = "New connection…",
+            label = PLACEHOLDER_LABEL,
             apiServerUrl = "",
             relayUrl = "",
             tokenStoreKey = Connection.buildTokenStoreKey(id),
@@ -1242,6 +1255,39 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                         // passing seconds would render as "Paired decades ago".
                         expiresAtMillis = paired.expiresAt?.let { it * 1000L },
                     )
+
+                    // Auto-rename the placeholder label created by
+                    // [beginAddConnection]. We only touch the label when
+                    // it's still the exact placeholder string — if the
+                    // user typed a custom name during pairing we leave
+                    // it alone. Derived label is the API host (matches
+                    // Connection.extractDefaultLabel used elsewhere for
+                    // default-label generation).
+                    if (current.label == PLACEHOLDER_LABEL &&
+                        current.apiServerUrl.isNotBlank()
+                    ) {
+                        val derivedLabel = Connection.extractDefaultLabel(current.apiServerUrl)
+                        val refreshed = connectionStore.connections.value
+                            .firstOrNull { it.id == connId }
+                        if (refreshed != null) {
+                            connectionStore.updateConnection(
+                                refreshed.copy(label = derivedLabel),
+                            )
+                        }
+                    }
+
+                    // ADR 24 — on fresh pair, endpoints land in DataStore
+                    // inside handleAuthOk. The initial connect() call
+                    // ran BEFORE that persistence and therefore gave up
+                    // on the resolver (no endpoints stored yet) → set
+                    // activeEndpoint to null. Kick a re-probe now that
+                    // the candidate list is on disk; probeAndReconnect
+                    // only swaps the socket if the winner's URL differs
+                    // from the currently-connected URL, so for a
+                    // same-endpoint pair (the common case — LAN won
+                    // during pair, LAN still wins post-pair) this is a
+                    // zero-disruption activeEndpoint flow update.
+                    connectionManager.probeAndReconnect()
                 }
         }
 
