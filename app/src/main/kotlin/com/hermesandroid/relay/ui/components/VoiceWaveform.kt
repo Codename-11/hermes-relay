@@ -54,7 +54,7 @@ import kotlin.math.sin
  * Pure Compose Canvas — no external libraries.
  */
 
-// Exact hex values from MorphingSphere palette (see colorsFor() in that file).
+// Exact hex values from MorphingSphere palette (see colorsFor() in MorphingSphereCore.kt).
 // Listening poles (cool soft blue/purple) and Speaking poles (vivid green/teal).
 private val ListeningPrimary = Color(0xFF597EF2)   // soft blue
 private val ListeningSecondary = Color(0xFFA573F2) // soft purple
