@@ -3,15 +3,31 @@ const { React } = SDK;
 const { useState, useEffect, useRef, useCallback, useMemo } = SDK.hooks;
 
 import QRCode from "qrcode";
-import { mintPairing } from "../lib/api.js";
+import { mintPairingWithMode } from "../lib/api.js";
 
 const { Card, CardHeader, CardTitle, CardContent, Button, Badge, Input, Label } = SDK.components;
 
 // localStorage keys — per-browser, not per-user. Sensible defaults on first
 // open; stick with whatever the operator last used.
-const LS_HOST = "hermes-relay-pair-host";
-const LS_PORT = "hermes-relay-pair-port";
-const LS_TLS  = "hermes-relay-pair-tls";
+const LS_MODE   = "hermes-relay-pair-mode";
+const LS_PREFER = "hermes-relay-pair-prefer";
+const LS_HOST   = "hermes-relay-pair-host";
+const LS_PORT   = "hermes-relay-pair-port";
+const LS_TLS    = "hermes-relay-pair-tls";
+
+const MODES = [
+  { value: "auto",      label: "Auto (all reachable candidates)" },
+  { value: "lan",       label: "LAN only" },
+  { value: "tailscale", label: "Tailscale only" },
+  { value: "public",    label: "Public URL only" },
+];
+
+const PREFER_ROLES = [
+  { value: "",          label: "Natural order (LAN → Tailscale → Public)" },
+  { value: "lan",       label: "LAN → priority 0" },
+  { value: "tailscale", label: "Tailscale → priority 0" },
+  { value: "public",    label: "Public → priority 0" },
+];
 
 function readString(key, fallback) {
   try { return window.localStorage.getItem(key) ?? fallback; }
@@ -21,42 +37,26 @@ function writeString(key, value) {
   try { window.localStorage.setItem(key, value); } catch (_e) { /* best-effort */ }
 }
 
-/**
- * Infer the most likely defaults from the dashboard's own URL.
- *
- * - host: the dashboard hostname (the operator's "currently visible"
- *   address). Works for plain LAN (172.16.x.y) and Traefik-fronted
- *   subdomains (hermes.axiom-labs.dev). Operator can override if the
- *   relay lives at a different subdomain or IP than the dashboard.
- * - port: 443 if the dashboard is on https (assume Traefik-terminated
- *   TLS → relay also on 443), else the relay's default 8767.
- * - tls: true when the dashboard is https.
- */
-function inferDefaults() {
-  if (typeof window === "undefined") return { host: "", port: 8767, tls: false };
-  const tls = window.location.protocol === "https:";
-  return {
-    host: window.location.hostname || "",
-    port: tls ? 443 : 8767,
-    tls,
-  };
-}
-
 function loadSettings() {
-  const d = inferDefaults();
-  const saved = readString(LS_HOST, null);
-  if (!saved) return d;  // first open — use inferred
   const rawPort = parseInt(readString(LS_PORT, ""), 10);
   return {
-    host: saved || d.host,
-    port: Number.isFinite(rawPort) && rawPort > 0 && rawPort <= 65535 ? rawPort : d.port,
-    tls: readString(LS_TLS, "") === "true",
+    mode:   readString(LS_MODE, "auto") || "auto",
+    prefer: readString(LS_PREFER, "") || "",
+    // Advanced overrides — usually unused since `mode=auto` derives
+    // everything from the server's own config (Tailscale + pinned public
+    // URL). Kept for operators who specifically want to pin the API-server
+    // target from the dashboard.
+    host:   readString(LS_HOST, "") || "",
+    port:   Number.isFinite(rawPort) && rawPort > 0 && rawPort <= 65535 ? rawPort : 8642,
+    tls:    readString(LS_TLS, "") === "true",
   };
 }
-function saveSettings({ host, port, tls }) {
-  writeString(LS_HOST, host || "");
-  writeString(LS_PORT, String(port));
-  writeString(LS_TLS, tls ? "true" : "false");
+function saveSettings(s) {
+  writeString(LS_MODE, s.mode || "auto");
+  writeString(LS_PREFER, s.prefer || "");
+  writeString(LS_HOST, s.host || "");
+  writeString(LS_PORT, String(s.port || ""));
+  writeString(LS_TLS, s.tls ? "true" : "false");
 }
 
 function useCountdown(expiresAt) {
@@ -74,29 +74,82 @@ function useCountdown(expiresAt) {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
+// Heuristic: the hostname "looks" like it's fronted by a reverse proxy /
+// auth-forward gateway (Traefik + Authelia, Cloudflare Access, etc.) rather
+// than a direct relay host. Used to warn operators that pinning an API
+// override to that hostname will fail with 401/403 unless the phone can
+// present the expected auth material — which it can't.
+function looksProxyFronted(host) {
+  if (!host) return false;
+  const h = host.toLowerCase().trim();
+  // Raw IP + .local / .ts.net / .lan / loopback → almost certainly not
+  // behind a forward-auth gateway.
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(h)) return false;
+  if (h === "localhost" || h.endsWith(".local") || h.endsWith(".ts.net")) return false;
+  // Anything else FQDN-shaped with a public TLD is a strong hint the
+  // operator has it behind a proxy. Not perfect, but good enough for a
+  // soft warning.
+  return h.includes(".") && !h.endsWith(".lan") && !h.endsWith(".home.arpa");
+}
+
+// Derive candidate URLs for the small preview list under the QR, from the
+// `endpoints` array on the minted payload. The actual rich preview lives
+// on the Remote Access tab; we just show "3 endpoints: LAN, Tailscale,
+// Public" here as a compact receipt.
+function summarizeEndpoints(qrPayload) {
+  if (!qrPayload) return null;
+  try {
+    const parsed = JSON.parse(qrPayload);
+    const eps = parsed.endpoints;
+    if (!Array.isArray(eps) || eps.length === 0) return null;
+    return eps.map((e, i) => ({
+      role: e.role || "?",
+      priority: e.priority != null ? e.priority : i,
+      api: e.api || {},
+    }));
+  } catch (_e) {
+    return null;
+  }
+}
+
 export default function PairDialog({ open, onClose }) {
   const [settings, setSettings] = useState(loadSettings);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(settings);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [state, setState] = useState({ status: "idle" });
+  // Operator's explicit "yes, I know it's proxy-fronted, mint anyway"
+  // acknowledgement. Resets every time the pinned host changes so a new
+  // host triggers a fresh consent step — avoids a situation where the
+  // operator tabs through hostnames and silently reuses old consent.
+  const [proxyConfirmed, setProxyConfirmed] = useState(false);
   const canvasRef = useRef(null);
   const countdown = useCountdown(state.data ? state.data.expires_at : null);
 
-  const scheme = settings.tls ? "wss" : "ws";
-  const portStr = (settings.tls && settings.port === 443) || (!settings.tls && settings.port === 80)
-    ? ""
-    : `:${settings.port}`;
-  const previewUrl = `${scheme}://${settings.host || "…"}${portStr}`;
+  const endpoints = useMemo(
+    () => summarizeEndpoints(state.data ? state.data.qr_payload : null),
+    [state.data],
+  );
 
-  const mint = useCallback(async (cfg) => {
-    const use = cfg || settings;
+  // Derived — the pinned host in Advanced looks like a forward-auth-
+  // gated FQDN. Gates the auto-mint: we don't want the dashboard to
+  // silently produce a QR the phone will fail to use.
+  const hostLooksProxyFronted = settings.host && looksProxyFronted(settings.host);
+
+  const mint = useCallback(async (s) => {
+    const use = s || settings;
     setState({ status: "loading" });
     try {
-      const data = await mintPairing({
-        host: use.host,
-        port: use.port,
-        tls: use.tls,
-        transport_hint: use.tls ? "wss" : "ws",
+      // Only forward host/port/tls/api_key when the operator has actually
+      // pinned an API override — empty host means "use server config".
+      const overrides = {};
+      if (use.host && use.host.trim()) {
+        overrides.host = use.host.trim();
+        overrides.port = Number(use.port) || 8642;
+        overrides.tls = !!use.tls;
+      }
+      const data = await mintPairingWithMode({
+        mode: use.mode || "auto",
+        prefer: use.prefer || undefined,
+        ...overrides,
       });
       setState({ status: "ok", data });
     } catch (err) {
@@ -105,10 +158,13 @@ export default function PairDialog({ open, onClose }) {
   }, [settings]);
 
   useEffect(() => {
-    if (open && state.status === "idle" && settings.host) mint();
-    // If host is empty on open, force edit mode so the operator fills it in.
-    if (open && !settings.host && !editing) setEditing(true);
-  }, [open, state.status, settings.host, editing, mint]);
+    // Gate the auto-mint when the pinned host trips the proxy heuristic
+    // and the operator hasn't explicitly confirmed. "Mint anyway" sets
+    // proxyConfirmed=true and kicks the mint via the regenerate path.
+    if (!open || state.status !== "idle") return;
+    if (hostLooksProxyFronted && !proxyConfirmed) return;
+    mint();
+  }, [open, state.status, mint, hostLooksProxyFronted, proxyConfirmed]);
 
   useEffect(() => {
     if (state.status !== "ok" || !canvasRef.current) return;
@@ -117,39 +173,45 @@ export default function PairDialog({ open, onClose }) {
     }).catch(() => { /* canvas failure non-fatal */ });
   }, [state.status, state.data]);
 
-  const applyDraft = useCallback(() => {
-    const host = (draft.host || "").trim();
-    const port = parseInt(draft.port, 10);
-    if (!host) { window.alert("Host is required."); return; }
-    if (!Number.isFinite(port) || port <= 0 || port > 65535) { window.alert("Port must be 1-65535."); return; }
-    const next = { host, port, tls: !!draft.tls };
-    setSettings(next);
-    saveSettings(next);
-    setEditing(false);
-    setState({ status: "idle" });
-    mint(next);
-  }, [draft, mint]);
-
-  const toggleTls = useCallback((checked) => {
-    setDraft((prev) => {
-      const next = { ...prev, tls: !!checked };
-      // Flip port to the matching default if the operator hasn't customized.
-      if (checked && (prev.port === 8767 || prev.port === 80)) next.port = 443;
-      if (!checked && (prev.port === 443)) next.port = 8767;
+  const updateSetting = useCallback((patch) => {
+    setSettings((prev) => {
+      const next = { ...prev, ...patch };
+      saveSettings(next);
       return next;
     });
+    // Changing the pinned host means the previous consent doesn't
+    // apply — force a fresh confirm step.
+    if (Object.prototype.hasOwnProperty.call(patch, "host")) {
+      setProxyConfirmed(false);
+    }
+    // Re-mint with the new settings. Debouncing isn't worth it — the
+    // dropdowns only fire on user action, not typing.
+    setState({ status: "idle" });
   }, []);
 
-  const resetToInferred = useCallback(() => {
-    const d = inferDefaults();
-    setDraft(d);
+  const regenerate = useCallback(() => {
+    setState({ status: "idle" });
+    // Re-enter the auto-mint path; if the host is proxy-fronted, the
+    // confirm block will render instead of an actual mint.
+  }, []);
+
+  const confirmProxyAndMint = useCallback(() => {
+    setProxyConfirmed(true);
+    setState({ status: "idle" });
+    // The useEffect watching [state, proxyConfirmed] will fire the
+    // mint as soon as both gates are clear.
   }, []);
 
   if (!open) return null;
 
+  const proxyWarning = advancedOpen && hostLooksProxyFronted;
+  // Pause the body UI and show the confirm-first block whenever the
+  // override is proxy-fronted and hasn't been acknowledged.
+  const blockForProxyConsent = hostLooksProxyFronted && !proxyConfirmed;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
-      <Card className="w-full max-w-md">
+      <Card className="w-full max-w-xl max-h-[90vh] overflow-y-auto">
         <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
           <div>
             <CardTitle>Pair new device</CardTitle>
@@ -160,22 +222,85 @@ export default function PairDialog({ open, onClose }) {
           <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
         </CardHeader>
         <CardContent className="space-y-3">
-          {state.status === "loading" && !editing && (
-            <div className="text-sm text-muted-foreground">Minting code…</div>
-          )}
-          {state.status === "error" && !editing && (
-            <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
-              <div className="font-medium mb-1">Minting failed</div>
-              <div className="break-words">{state.error}</div>
-              <div className="mt-2 flex gap-2">
-                <Button size="sm" variant="outline" onClick={() => mint()}>Retry</Button>
-                <Button size="sm" variant="ghost" onClick={() => { setDraft(settings); setEditing(true); }}>
-                  Edit pair URL
+          {/* Mode + prefer controls — always visible, these are the
+              primary inputs now. Multi-endpoint candidates get derived
+              server-side from Tailscale + pinned Public URL. */}
+          <div className="space-y-2">
+            <div className="space-y-1">
+              <Label htmlFor="pair-mode">Mode</Label>
+              <select
+                id="pair-mode"
+                className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
+                value={settings.mode}
+                onChange={(e) => updateSetting({ mode: e.target.value })}
+              >
+                {MODES.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground">
+                <strong>Auto</strong> embeds every reachable endpoint so the phone
+                switches as networks change. Configure Tailscale + Public URL on
+                the <em>Remote Access</em> tab.
+              </p>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="pair-prefer">Prefer role</Label>
+              <select
+                id="pair-prefer"
+                className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
+                value={settings.prefer}
+                onChange={(e) => updateSetting({ prefer: e.target.value })}
+              >
+                {PREFER_ROLES.map((p) => (
+                  <option key={p.value} value={p.value}>{p.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {blockForProxyConsent && (
+            <div className="rounded-md border border-amber-500/60 bg-amber-500/15 p-3 text-sm space-y-2">
+              <div className="font-medium">Proxy-fronted host detected — confirm before minting</div>
+              <div className="text-xs">
+                <span className="font-mono">{settings.host}</span> looks like a reverse-proxy
+                or forward-auth gateway (Authelia, Cloudflare Access, Traefik, …). The relay
+                WSS will pair fine, but the phone's API calls will likely return 401/403
+                because it has no way to present the gateway's session cookie. Result: the
+                paired device shows up in Management but the app silently drops the config.
+              </div>
+              <div className="text-xs">
+                Prefer: leave this field blank (use <code className="font-mono">mode=auto</code>)
+                or switch to a non-gated endpoint (Tailscale Serve / direct LAN). See
+                <em>docs/remote-access.md</em> &rarr; &ldquo;Forward-auth gateways&rdquo;.
+              </div>
+              <div className="flex gap-2 pt-1">
+                <Button size="sm" onClick={confirmProxyAndMint}>
+                  Mint anyway
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => updateSetting({ host: "", port: 8642, tls: false })}
+                >
+                  Clear override
                 </Button>
               </div>
             </div>
           )}
-          {state.status === "ok" && !editing && (
+          {!blockForProxyConsent && state.status === "loading" && (
+            <div className="text-sm text-muted-foreground">Minting code…</div>
+          )}
+          {!blockForProxyConsent && state.status === "error" && (
+            <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
+              <div className="font-medium mb-1">Minting failed</div>
+              <div className="break-words">{state.error}</div>
+              <div className="mt-2 flex gap-2">
+                <Button size="sm" variant="outline" onClick={regenerate}>Retry</Button>
+              </div>
+            </div>
+          )}
+          {!blockForProxyConsent && state.status === "ok" && (
             <>
               <div className="flex justify-center rounded-md border border-border bg-white p-3">
                 <canvas ref={canvasRef} className="block" />
@@ -192,83 +317,104 @@ export default function PairDialog({ open, onClose }) {
                   </Badge>
                 </div>
               </div>
-              <div className="flex items-center justify-between rounded-md border border-border bg-muted/20 px-3 py-2 text-xs">
-                <div className="flex flex-col">
-                  <span className="uppercase tracking-wider text-muted-foreground">Pair URL</span>
-                  <span className="font-mono">{previewUrl}</span>
+              {/* Compact endpoint receipt — full preview + probes live on
+                  the Remote Access tab. */}
+              {endpoints && endpoints.length > 0 ? (
+                <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs space-y-1">
+                  <div className="uppercase tracking-wider text-muted-foreground">
+                    Endpoints in this QR ({endpoints.length})
+                  </div>
+                  {endpoints.map((ep) => (
+                    <div key={`${ep.role}-${ep.priority}`} className="flex items-center gap-2">
+                      <Badge variant="outline" className="text-xs capitalize">{ep.role}</Badge>
+                      <span className="font-mono">
+                        {ep.api.host}{ep.api.port ? `:${ep.api.port}` : ""}
+                      </span>
+                      <span className="text-muted-foreground ml-auto">p{ep.priority}</span>
+                    </div>
+                  ))}
                 </div>
-                <Button size="sm" variant="ghost" onClick={() => { setDraft(settings); setEditing(true); }}>
-                  Edit
-                </Button>
-              </div>
+              ) : null}
               <div className="flex gap-2 pt-1">
-                <Button size="sm" variant="outline" onClick={() => { setState({ status: "idle" }); mint(); }}>
+                <Button size="sm" variant="outline" onClick={regenerate}>
                   New code
                 </Button>
                 <Button size="sm" onClick={onClose}>Done</Button>
               </div>
             </>
           )}
-          {editing && (
-            <div className="space-y-3">
-              <p className="text-xs text-muted-foreground">
-                Override what the phone will connect to — use your relay's LAN IP, a reverse-proxy
-                hostname (e.g. <code className="font-mono">relay.example.com</code> via Traefik),
-                or any other reachable endpoint. Saved per-browser.
-              </p>
-              <div className="space-y-1">
-                <Label htmlFor="pair-host">Host</Label>
-                <Input
-                  id="pair-host"
-                  value={draft.host}
-                  placeholder="172.16.24.250 or relay.example.com"
-                  onChange={(e) => setDraft((d) => ({ ...d, host: e.target.value }))}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
+
+          {/* Advanced — API server override. Most operators never need
+              this; it's kept for edge cases. Warn when the host looks
+              proxy-fronted (Authelia etc.) because the phone has no way
+              to present that auth material. */}
+          <div className="border-t border-border pt-3">
+            <button
+              type="button"
+              onClick={() => setAdvancedOpen((v) => !v)}
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {advancedOpen ? "▾ Hide advanced" : "▸ Advanced · API-server override"}
+            </button>
+            {advancedOpen && (
+              <div className="mt-3 space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  Override the API-server host embedded in the QR (defaults to the
+                  relay's configured API host). Relay URL is auto-derived server-side —
+                  edit Tailscale / Public URL on the <em>Remote Access</em> tab instead.
+                </p>
+                {proxyWarning ? (
+                  <div className="rounded-md border border-amber-500/50 bg-amber-500/10 p-2 text-xs">
+                    <strong>Heads-up:</strong> <span className="font-mono">{settings.host}</span> looks
+                    like a reverse-proxy / forward-auth host. If it's fronted by
+                    Authelia, Cloudflare Access, or similar, the phone will fail
+                    to authenticate against the API even though the relay WSS
+                    pairs fine. Leave this blank and let <code className="font-mono">mode=auto</code> pick.
+                  </div>
+                ) : null}
                 <div className="space-y-1">
-                  <Label htmlFor="pair-port">Port</Label>
+                  <Label htmlFor="pair-host">API host (optional)</Label>
                   <Input
-                    id="pair-port"
-                    type="number"
-                    min="1"
-                    max="65535"
-                    value={draft.port}
-                    onChange={(e) => setDraft((d) => ({ ...d, port: e.target.value }))}
+                    id="pair-host"
+                    value={settings.host}
+                    placeholder="leave blank to use server config"
+                    onChange={(e) => updateSetting({ host: e.target.value })}
                   />
                 </div>
-                <div className="space-y-1">
-                  <Label htmlFor="pair-tls">Scheme</Label>
-                  <div className="flex items-center gap-2 pt-1">
-                    <input
-                      id="pair-tls"
-                      type="checkbox"
-                      className="h-4 w-4"
-                      checked={!!draft.tls}
-                      onChange={(e) => toggleTls(e.target.checked)}
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label htmlFor="pair-port">API port</Label>
+                    <Input
+                      id="pair-port"
+                      type="number"
+                      min="1"
+                      max="65535"
+                      value={settings.port}
+                      onChange={(e) => updateSetting({ port: parseInt(e.target.value, 10) || 8642 })}
                     />
-                    <Label htmlFor="pair-tls" className="text-sm font-normal">
-                      Use wss:// (TLS)
-                    </Label>
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="pair-tls">Scheme</Label>
+                    <div className="flex items-center gap-2 pt-1">
+                      <input
+                        id="pair-tls"
+                        type="checkbox"
+                        className="h-4 w-4"
+                        checked={!!settings.tls}
+                        onChange={(e) => updateSetting({ tls: e.target.checked })}
+                      />
+                      <Label htmlFor="pair-tls" className="text-sm font-normal">
+                        https://
+                      </Label>
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs font-mono">
-                {draft.tls ? "wss" : "ws"}://{(draft.host || "…")}
-                {((draft.tls && draft.port === 443) || (!draft.tls && draft.port === 80))
-                  ? "" : `:${draft.port}`}
-              </div>
-              <div className="flex flex-wrap gap-2 pt-1">
-                <Button size="sm" onClick={applyDraft}>Save &amp; regenerate</Button>
-                <Button size="sm" variant="outline" onClick={() => { setEditing(false); setDraft(settings); }}>
-                  Cancel
-                </Button>
-                <Button size="sm" variant="ghost" onClick={resetToInferred}>
-                  Reset to dashboard URL
+                <Button size="sm" variant="ghost" onClick={() => updateSetting({ host: "", port: 8642, tls: false })}>
+                  Clear override
                 </Button>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </CardContent>
       </Card>
     </div>

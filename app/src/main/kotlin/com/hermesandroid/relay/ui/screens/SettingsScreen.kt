@@ -57,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.ui.components.ConnectionStatusRow
+import com.hermesandroid.relay.ui.components.ProfileInspectorCard
 import com.hermesandroid.relay.viewmodel.asBadgeState
 import com.hermesandroid.relay.viewmodel.statusText
 import com.hermesandroid.relay.ui.theme.gradientBorder
@@ -108,6 +109,13 @@ fun SettingsScreen(
     onNavigateToPairedDevices: () -> Unit,
     onNavigateToDeveloperSettings: () -> Unit,
     onNavigateToAbout: () -> Unit,
+    // Profile Inspector — opens the full-screen viewer showing Config,
+    // SOUL, Memory, and Skills for the currently-active profile. Called
+    // with the profile name so RelayApp can build the nav route. The
+    // card itself is disabled (half-alpha, no-op onClick) when no
+    // profile is selected yet — it stays visible so the feature is
+    // discoverable before a pair-and-pick happens.
+    onNavigateToProfileInspector: (profileName: String) -> Unit,
 ) {
     val context = LocalContext.current
     val isDarkTheme = isSystemInDarkTheme()
@@ -118,11 +126,13 @@ fun SettingsScreen(
     val apiUrl by connectionViewModel.apiServerUrl.collectAsState()
     val relayUrl by connectionViewModel.relayUrl.collectAsState()
     val relayUiState by connectionViewModel.relayUiState.collectAsState()
+    val relayRowState by connectionViewModel.relayRowState.collectAsState()
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
     // Active Agent card inputs — personality + profile drive the title,
     // ring-accent, and subtitle. Kept next to the other top-level
     // collectAsState calls so the data-gather stays in one block.
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
+    val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
     val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
     val devOptionsUnlocked by FeatureFlags.devOptionsUnlocked(context)
@@ -179,6 +189,22 @@ fun SettingsScreen(
                 ),
                 isCustomized = selectedProfile != null || selectedPersonality != "default",
                 onClick = onNavigateToChatWithAgentSheet,
+                isDarkTheme = isDarkTheme,
+            )
+
+            // ── Inspect Agent ──────────────────────────────────────────
+            // Opens the full-screen ProfileInspectorScreen for the
+            // currently-active profile. When no explicit override is
+            // selected (server-configured model), fall back to the
+            // `default` profile — the relay always advertises one, and
+            // it IS the effective agent. Still falls back to disabled
+            // when no profiles have loaded yet (unpaired / pre-auth).
+            val inspectorTarget = selectedProfile
+                ?: agentProfiles.firstOrNull { it.name == "default" }
+                ?: agentProfiles.firstOrNull()
+            ProfileInspectorCard(
+                activeProfile = inspectorTarget,
+                onClick = { profileName -> onNavigateToProfileInspector(profileName) },
                 isDarkTheme = isDarkTheme,
             )
 
@@ -253,8 +279,11 @@ fun SettingsScreen(
                         // show "Connected" via a different label.
                         ConnectionStatusRow(
                             label = "Relay",
-                            state = relayUiState.asBadgeState(),
-                            statusText = relayUiState.statusText(connectedLabel = relayUrl),
+                            state = relayRowState.asBadgeState(),
+                            // RelayRowState.statusText appends " · <Role>" when
+                            // the ADR 24 resolver has picked an endpoint, so
+                            // the chip reads "Connected · Tailscale" etc.
+                            statusText = relayRowState.statusText(connectedLabel = relayUrl),
                         )
                         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
                         ConnectionStatusRow(

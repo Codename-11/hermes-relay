@@ -28,6 +28,10 @@ Invoke this skill when any of the following happens:
 
 Do NOT use this skill to start or install the relay server itself — that is a prerequisite. Reference `hermes relay start` and stop.
 
+### Dashboard alternative
+
+Operators with the Hermes dashboard open can also mint the same QR from the web UI: **Relay tab → Management → "Pair new device"** (Mode + Prefer dropdowns), or **Relay tab → Remote Access → "Regenerate QR"** for the fuller preview + probe view. Both UIs call the same `handle_pairing_mint` endpoint this skill shells into. Prefer this skill when you're already in a terminal (faster + scriptable); prefer the dashboard when the operator needs to see + probe candidate endpoints before minting. The dashboard's "Advanced · API-server override" field should stay blank in almost every case — pinning a forward-auth-gated hostname there (e.g. Authelia-fronted FQDN) pairs WSS but breaks the API side. See `docs/remote-access.md` § "Forward-auth gateways".
+
 ## Prerequisites
 
 1. **Hermes-Relay plugin installed into the Hermes venv.** Verify by running `python -m plugin.pair --help` — if it errors with `ModuleNotFoundError: No module named 'plugin'`, install it first: `pip install -e <path-to-hermes-relay-repo>`.
@@ -56,6 +60,9 @@ Do NOT use this skill to start or install the relay server itself — that is a 
    - `--no-qr` — text only, no QR at all. Use when the agent is running in a non-TTY context and QR output would be wasted.
    - `--no-relay` — skip relay pre-pairing, render API-only QR. Use if the relay is intentionally offline.
    - `--host <ip>` / `--port <n>` — override the API server host or port when config auto-detection picks the wrong values.
+   - `--mode {auto,lan,tailscale,public}` — endpoint discovery mode (ADR 24). Default `auto` probes LAN + Tailscale (if the helper is installed) + `--public-url` (if passed) and bakes them into the QR as an ordered candidate list so the phone switches networks automatically. `lan` / `tailscale` / `public` emit just that role. Example: `python -m plugin.pair --mode auto --public-url https://hermes.example.com`.
+   - `--public-url <url>` — public hostname for a reverse proxy / Cloudflare Tunnel. Must be `http://` or `https://`. Added as a `role=public` endpoint candidate. Example: `python -m plugin.pair --public-url https://hermes.example.com`.
+   - `--prefer <role>` — promote the named role to priority 0 in the endpoint list. Open vocab — commonly `lan` / `tailscale` / `public`. Useful when the user wants to force a specific path during testing without re-ordering defaults. Example: `python -m plugin.pair --mode auto --prefer tailscale` emits all detected modes but with Tailscale as the first-probed endpoint. Warns (non-fatal) if the named role isn't detected.
    - `--register-code <code>` — **manual fallback**. Skip QR rendering entirely and just pre-register a 6-char code the user is reading off the phone screen. See "Manual fallback" below.
 
 4. **Show the output verbatim.** `plugin.pair` prints, in order:

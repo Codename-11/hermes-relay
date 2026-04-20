@@ -1,5 +1,94 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-19 — MorphingSphere: pure-core extraction + browser preview + runtime parity proof
+
+**Context.** The sphere had grown into a 494-line Compose file with Android `Paint` + `Typeface` + `nativeCanvas.drawText` wired into the same function that did the math. That made it impossible to iterate on the algorithm without building to a device — and blocked any future port to a non-Android surface (user site, Hermes TUI, Compose Desktop). Branch `claude/ui-dev-preview-exploration-vKvzr` split the file into a pure algorithm + a Compose renderer and added a zero-dep browser harness; this session added the parity proof.
+
+**Layout — three artifacts, one seam.**
+- `MorphingSphereCore.kt` (new, 412 lines) — `kotlin.math` only. Owns `SphereState`, `SphereParams`, `SphereColors`, `SphereFrame`, `SphereCell`, `paramsFor()`, `colorsFor()`, `forEachSphereCell()`. No Android, no Compose, no `Paint`.
+- `MorphingSphere.kt` (494 → ~45 lines of renderer + `@Preview` decorators) — Compose Canvas binding. Swapped legacy `Paint` + `Typeface` + `nativeCanvas.drawText` for `rememberTextMeasurer()` + Compose `drawText`. Owns animation state (`animateFloatAsState`, `rememberInfiniteTransition`) and feeds a `SphereFrame` into the core per tick.
+- `preview/web/sphere.js` — line-for-line JS mirror of `MorphingSphereCore.kt`. `Math.imul` + `|0` to match Kotlin's `Int` overflow in the hash, `((x % n) + n) % n` for Kotlin's floored-positive `.mod()`, `Math.trunc` for `.toInt()` truncation-toward-zero.
+
+**Browser harness.** `preview/web/index.html` — live HTML+canvas, `python3 -m http.server --directory preview/web`, no build step. Panel exposes State / Voice mode / Voice amp / Intensity / Tool burst / Pause / reset t, plus a Layout section (Cols, Rows, Fill %, Aspect, Char size) added this session with a `phone 9:16` preset that pins canvas aspect to 0.5625 to match Compose `@Preview(widthDp=360, heightDp=640)`. Hitting `1`..`6` cycles state; `Space` pauses.
+
+**Runtime parity proof.** Line-by-line code audit was first, but proving parity needs evidence, not inspection. Added:
+- `preview/web/parity-check.mjs` — Node harness running sphere.js at the 8 Compose `@Preview` fixtures (Idle/Thinking/Streaming/Error/Compact/Listening/Speaking-low/Speaking-peak), emitting two FNV-1a 32-bit checksums per fixture. `struct` hashes only `(row, col, charCode)` — discrete, robust to Float/Double precision drift. `full` hashes the same plus color/alpha rounded to 3 decimals.
+- `app/src/test/kotlin/com/hermesandroid/relay/ui/components/MorphingSphereCoreParityTest.kt` — JVM unit test (no Android deps, runs on `testGooglePlayDebugUnitTest`), mirrors the JS harness exactly: same 8 fixtures, same FNV-1a impl via Kotlin `UInt`, same `%.3f` formatting via `Locale.ROOT`, same tuple layout.
+
+**Result.** 8 / 8 structural checksums match. 8 / 8 zone histograms match (inside/glow/ring counts identical). 6 / 8 full checksums match — Listening and Speaking-low drift on color/alpha at the 3rd decimal, which is expected Float (Kotlin) vs Double (JS) mantissa precision in compound expressions like `(colR + lightBoost + warmth).coerceIn(0, 1)`. Speaking-peak avoids the drift because `amp=0.95` puts `lerp()` results near the endpoints where Float mantissa has room.
+
+**Decision.** `MorphingSphereCore` is declared the single source of truth going forward. The Compose `MorphingSphere` composable keeps its public API (same params, same defaults) so call sites — `VoiceModeOverlay`, the chat empty state — need no changes. Future edits to the algorithm go in `MorphingSphereCore.kt`, mirror into `sphere.js`, and `MorphingSphereCoreParityTest` catches drift between sides.
+
+**Reusable surface.** The core is now droppable into:
+- A terminal TUI (Hermes CLI) — swap Compose `drawText` for ANSI-colored `print`, keep everything else.
+- The user site (codename-11.dev) — reuse `sphere.js` directly with an HTML `<canvas>` host.
+- Compose Desktop — reuse `MorphingSphere.kt` unchanged once the host project adds the `ui/components` dir to its source set.
+
+**Worktree gotcha.** `git worktree add` doesn't copy `.gitignore`d files. `local.properties` (SDK path + keystore creds) has to be recreated in any new worktree before gradle tasks run. For the parity test a minimal `sdk.dir=...` is enough — signing creds stay in the main checkout.
+
+## 2026-04-19 — Multi-endpoint pairing + first-class Tailscale (ADR 24 + 25)
+
+**Branches:** Wave 1 + Wave 2 landed on `dev`. ADRs 24 and 25 written and committed. Docs pass (this entry) closes the work out.
+
+**Shipped.**
+
+- **ADR 24 — Multi-endpoint pairing.** `plugin/pair.py` now emits an ordered `endpoints` array (`lan` / `tailscale` / `public` / operator-defined roles) in a new `hermes: 3` QR schema; `hermes: 2` stays the default when no endpoints are present. New CLI flags `--mode {auto,lan,tailscale,public}` and `--public-url <url>` drive candidate emission; `--mode auto` autodetects LAN IP + Tailscale status and composes them with an optional public URL. `plugin/relay/qr_sign.py` canonical form preserves array order and role strings verbatim — HMAC round-trip test pins this against future refactors. `plugin/relay/server.py` `handle_pairing_mint` / `handle_pairing_register` accept the optional `endpoints` body field. Phone side: new `data/Endpoint.kt` (`EndpointCandidate` / `ApiEndpoint` / `RelayEndpoint` / `displayLabel()`), `data/PairingPreferences.kt` per-device endpoint store, `ui/components/QrPairingScanner.kt` parses the new field with a v1/v2 synthesizer for back-compat, `auth/AuthManager.kt` persists the endpoint list on `auth.ok`, and `viewmodel/ConnectionViewModel.kt` stages endpoints at pair time. Wave 2 Kt-Probe added `ConnectionManager.resolveBestEndpoint()` + `NetworkCallback` re-probing and `RelayUiState.activeEndpointRole`.
+- **ADR 25 — First-class Tailscale helper.** New `plugin/relay/tailscale.py` with `status()` / `enable(port)` / `disable(port)` / `canonical_upstream_present()` — all shell out to the `tailscale` CLI with short timeouts, return structured dicts, never raise. New `plugin/relay/tailscale_cli.py` argparse wrapper + `scripts/hermes-relay-tailscale` shell shim mirroring the `hermes-pair` pattern. `install.sh` gains optional step [7/7] offering Tailscale enablement; honours `TS_DECLINE=1` / `TS_AUTO=1`.
+- **Dashboard Remote Access tab (Wave 2 Dashboard-R4).** `plugin/dashboard/plugin_api.py` + React UI + committed `dist/index.js` — operator can enable/disable the helper, mint multi-endpoint QRs, and inspect which modes are active without dropping to a shell.
+- **Docs pass.** New `docs/remote-access.md` (263 lines) — decision matrix + per-mode setup recipes + troubleshooting. Updated `docs/security.md` with a "Remote connectivity" subsection + top-of-list Tailscale recommendation. Updated `docs/relay-server.md` with `TS_AUTO` / `TS_DECLINE` env vars, the dashboard plugin proxy-route table, and a Tailscale-helper subsection. Updated `docs/spec.md` §3.3 + §3.3.1 for v3 QR schema + endpoints array. Updated `README.md` "What's new" with the one-line connect-from-anywhere pitch. Updated `CHANGELOG.md` `[Unreleased]` with Added / Changed / Backward compatible subsections. Updated `CLAUDE.md` Key Files + Integration Points (hygiene pass only).
+
+**Key architectural decisions (restated from the ADRs).**
+
+1. **Strict priority, not reachability-weighted.** Priority 0 wins when reachable; reachability is a tiebreaker among equal priorities, never a promoter across priority boundaries. Matches DNS SRV semantics — nothing new to debate, and keeps operator intent authoritative.
+2. **Open-string `role`, not a closed enum.** `wireguard`, `zerotier`, `netbird-eu`, etc. render as generic "Custom VPN (<role>)" without a release. HMAC canonicalization preserves the exact emitted string.
+3. **Tailscale helper auto-retires on upstream merge.** `canonical_upstream_present()` probes `hermes gateway run --help | grep tailscale`; once PR #9295 lands, the helper prints a log line pointing at the canonical flag and exits 0. Same removal pattern as `hermes_relay_bootstrap/` after PR #8556.
+4. **No second crypto layer.** The operator already owns both endpoints and the transport (Tailscale / Caddy / WireGuard / Cloudflare Tunnel) is TLS-terminated by the operator's chosen path. Adding Noise / libsignal over WSS would add complexity without defending any threat in the trust model.
+
+**What's next.**
+
+- Monitor upstream PR #9295 for merge. When it lands, verify `canonical_upstream_present()` detection works on a vanilla hermes-agent install, update the helper to print the retirement log line, and schedule the helper's removal PR (one file + the install.sh step + the shim).
+- Bailey's Studio build + `./gradlew lint` pass before the multi-endpoint work gets pushed from Kotlin side. No Python blockers.
+
+**Blockers.** None. Awaiting Bailey's lint + build pass on the Kotlin changes before the feature branches merge into `dev`.
+
+### Same-day follow-up — `--prefer` priority override + regression fix
+
+Two commits landed on `dev` after the initial ADR 24 + 25 bundle:
+
+- **`feat(pairing): --prefer priority override on all pair surfaces` (`e914810`).** Adds explicit "promote this role to priority 0" control so operators can force a specific endpoint path without re-ordering defaults globally. Surfaces: CLI `hermes-pair --prefer tailscale`, the `/hermes-relay-pair` skill (SKILL.md updated), and a dropdown below the Endpoint Preview card on the dashboard's Remote Access tab. Open-vocab role string; case-insensitive matching; unknown role emits a stderr warning and keeps natural order. 6 new `BuildEndpointCandidatesPreferTests` cover the happy paths and edge cases. Dashboard bundle rebuilt to 61.3 KB.
+
+- **`fix(relay): restore profile PUT handlers clobbered by ADR 24 commit` (`ee653d4`).** The ADR 24 bundle (`fae8ccd`) had an Edit that replaced a wider chunk of `plugin/relay/server.py` than intended while adding the endpoints passthrough to `handle_pairing_mint` / `handle_pairing_register` — collaterally deleting ~479 lines of `handle_profile_soul_put` / `handle_profile_memory_put` + `_extract_write_content`. CI — Relay went from 2 pre-existing failures (`test_profile_discovery`, unrelated) → 27 on the bundle push → back down to the same 2 after the fix. Restored by resetting `server.py` to the pre-ADR-24 state (`47667bd`) and re-applying only the intended ~30-line endpoints passthrough. Full suite: 673 pass / 6 skipped locally. Same bug class as the `AuthManager.profilesUpdatedEvents` collateral wipe caught mid-deploy — worth a note in any future "agent-assisted refactor" guidance: tight `old_string` anchors + verify-by-compile after every agent's work.
+
+- **Server deploy** (`~/.hermes/hermes-relay/` on `dev`, PID restarted for `hermes-relay` + `hermes-gateway` + `hermes-dashboard`) verified at each step: `{"status": "ok"}` health, `tailscale.status()` returning the live `docker-server.tail6f460.ts.net` / `100.71.8.56`, and `POST /api/plugins/hermes-relay/pairing {"mode":"auto","prefer":"tailscale"}` returning `[(0, 'tailscale'), (1, 'lan')]` over the wire. Pre-existing `test_profile_discovery` failures on Linux CI runners (Windows-local passes) are a separate Bailey in-progress item — not introduced by this work.
+
+- **Docs sync pass.** `docs/remote-access.md` → added "Promoting a role to priority 0 — `--prefer`" subsection under Combining modes. `user-docs/features/connections.md` → new "Multi-endpoint pairing" section (end-user facing). `user-docs/guide/getting-started.md` → new "Connecting from Anywhere (Tailscale, VPN, Public URL)" section between Relay Server and Verify Connection. `CHANGELOG.md` `[Unreleased]` gains `--prefer` under Added + the PUT-handler restore under Fixed.
+
+## 2026-04-18 — Profile Inspector UI (v0.7.0)
+
+**Branch:** `feature/profile-inspector-ui`. Kotlin-worker slice of the v0.7.0 Profile Inspector feature — Python worker runs in parallel and owns the `/soul` + `/memory` relay endpoints. Two feature commits + docs.
+
+**Shipped (Kotlin).**
+
+- **`RelayProfileInspectorClient` + wire models.** New read-only HTTP client for the four inspector endpoints (`/api/profiles/{name}/config`, `/skills`, `/soul`, `/memory`) mirroring `RelayHttpClient`'s constructor shape (OkHttp, lazy bearer-token provider, `ws://` → `http://` URL flip). All four fetch methods return `Result<T>` and hop to `Dispatchers.IO` before any network I/O — reinforcing the v0.6.0 post-mortem fix for `NetworkOnMainThreadException` in the voice client. Profile names are URL-encoded before being spliced into the path so names with spaces / non-ASCII characters don't blow up the route. Wire models (`ProfileConfigResponse`, `ProfileSkillsResponse`, `ProfileSoulResponse`, `ProfileMemoryResponse`) are `@Serializable` with snake_case → camelCase mapping via `@SerialName`. Optional wire fields (`truncated`, `readonly`, `enabled`) default to safe values so pre-v0.7.0 relays that omit them deserialize cleanly.
+- **`ProfileInspectorScreen` (4 tabs).** Config renders as a collapsible JSON tree (nested objects click to expand, monospace leaf values, 120-char truncation). SOUL is a scrollable monospace box with byte-size caption + truncation banner when the server flags the content as sliced; absent SOUL renders an empty-state with the expected path. Memory is a list of expandable cards per entry (filename + size in the header, content revealed on tap, per-entry truncation banner). Skills groups by category with a "(disabled)" label on skills where `enabled=false`. Top-bar Refresh icon fires `loadAll()`; each pane has its own inline Retry button on error state. PullToRefresh was skipped in favour of the explicit Refresh icon + per-section Retry — matches `PairedDevicesScreen`'s "still-experimental PullRefresh" note.
+- **`ProfileInspectorViewModel`.** Four independent `LoadState<T>` flows — one per section — so a slow `/memory` fetch never blocks the already-arrived `/config` tab. Lazy (no fetch until `loadAll()`) and stateful per-section (`refreshSection(InspectorSection.Config)` re-fetches just that tab). Profile name comes in via `SavedStateHandle` so a process-death restore inspects the same profile. The VM is keyed off the profile name in the nav backstack so entering a different profile produces a fresh VM rather than reusing stale state.
+- **`ProfileInspectorCard` in Settings.** Sits directly under `ActiveAgentCard` so the "active agent → inspect it" reads naturally top-to-bottom. When no profile is selected, the card renders at 50% alpha with "No active agent" and becomes a no-op — kept visible (not hidden) so the feature stays discoverable before a pair-and-pick happens.
+- **`Screen.ProfileInspector` nav destination.** Typed String path arg, registered via a tiny `ViewModelProvider.Factory` that pulls `SavedStateHandle` out of `CreationExtras` so nav args propagate into the VM constructor cleanly. Back navigation pops the destination and the VM is GC'd with it.
+
+**Key architectural decisions.**
+
+1. **Four independent load states, not one "screen state".** Each section's flow transitions Idle → Loading → Loaded/Error independently. One combined state would have meant the fastest-arriving tab gets blocked by the slowest — unnecessary UX cost given the 3 - 4 tabs the user flips between.
+2. **URL-encoded profile-name splice, not an OkHttp path segment.** We use `URLEncoder.encode(..., "UTF-8").replace("+", "%20")` before splicing into the literal path string, then build the `HttpUrl` from the full string. OkHttp's `addPathSegment` would re-encode and produce double-encoding for profile names with `%` already in them (pathological but possible). A single round of encoding is the safe choice.
+3. **ViewModel keyed on nav arg.** `viewModel(key = "profile-inspector-$name", ...)` means the same profile navigated to twice yields the same VM (back-stack reuse), but switching to profile B produces a fresh VM — avoids the "I opened inspector for axiom, changed profiles, reopened and saw axiom's data" class of bug.
+
+**Deferred.**
+
+- **Pull-to-refresh gesture.** Explicit Refresh button is enough for v0.7.0; if users ask for the gesture we'll revisit once Material3's `PullToRefreshBox` graduates out of experimental.
+- **Edit-in-place.** Inspector is strictly read-only by design. Editing is still "SSH to the server and `$EDITOR config.yaml`" territory. A "Copy to clipboard" affordance on each section is a possible follow-up if users ask for it.
+- **MockWebServer integration tests.** `testImplementation` doesn't include MockWebServer and the spec forbids adding deps for this slice — we covered wire-contract parsing + URL encoding + required-field enforcement via JVM-local tests, and the client's actual network path is exercised by the on-device relay smoke test.
+
+**Upstream dependency.** Soul and Memory endpoints land via the parallel Python worker on the same branch. The Kotlin side is fetch-and-render — if either endpoint returns a 5xx / 404 before the Python change merges, the relevant tab just shows a Retry error state and the rest of the inspector keeps working.
+
 ## 2026-04-18 — Profile metadata + read-only config API (v0.7.0 groundwork)
 
 **Branch:** `feature/profile-config-readonly`. Kotlin-worker slice of the v0.7.0 groundwork (Python-worker slice runs in parallel, owns the relay-side wire contract). Three feature commits + docs.

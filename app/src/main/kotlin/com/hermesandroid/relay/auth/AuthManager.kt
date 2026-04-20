@@ -3,6 +3,7 @@ package com.hermesandroid.relay.auth
 import android.content.Context
 import android.util.Log
 import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.PairingPreferences
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.network.ChannelMultiplexer
@@ -11,6 +12,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -301,6 +303,19 @@ class AuthManager(
     private var pendingGrants: Map<String, Long>? = null
 
     /**
+     * Optional endpoint-candidate list from the pairing QR (ADR 24, v3+).
+     * Persisted via [PairingPreferences.setDeviceEndpoints] once the server
+     * confirms the pair in `auth.ok` so the reachability probe + network-aware
+     * switch (Kt-Probe) can read them on subsequent connects.
+     *
+     * `null` means "no endpoint list to persist on this pair" — either a v1/v2
+     * QR hit the legacy path without going through [setPendingEndpoints], or
+     * we're in a session-token refresh where the endpoint list doesn't change.
+     * Either way, we leave the previously-persisted list untouched.
+     */
+    private var pendingEndpoints: List<EndpointCandidate>? = null
+
+    /**
      * Server-advertised agent profiles from the `auth.ok` payload's
      * `profiles` field. Each entry corresponds to a named agent config in
      * the server's `~/.hermes/config.yaml` (see Hermes's `_load_profiles`).
@@ -330,6 +345,12 @@ class AuthManager(
     init {
         // Register as system channel handler for auth messages
         multiplexer.registerHandler("system", this)
+        // Also listen on the "pairing" channel for server-initiated
+        // pushes — currently just profiles.updated (v0.7.1+ relay).
+        // Routed through the same onMessage dispatcher which switches
+        // by envelope type so adding new pairing.* events later is a
+        // one-line change in [onMessage].
+        multiplexer.registerHandler("pairing", this)
 
         // Check for existing session token off main thread
         scope.launch {
@@ -448,6 +469,21 @@ class AuthManager(
 
     fun setPendingGrants(grants: Map<String, Long>?) {
         pendingGrants = grants
+    }
+
+    /**
+     * Stage the endpoint-candidate list parsed from the pairing QR (ADR 24).
+     * Consumed in [handleAuthOk] — after the server confirms the pair we
+     * persist the list under the current device id via
+     * [PairingPreferences.setDeviceEndpoints].
+     *
+     * Safe to call with `null` or an empty list — either clears any staged
+     * value without persisting. Pair-code re-sends from an existing
+     * [AuthState.Paired] state never reach this setter, so session-token
+     * refreshes don't clobber the persisted list.
+     */
+    fun setPendingEndpoints(endpoints: List<EndpointCandidate>?) {
+        pendingEndpoints = endpoints?.takeIf { it.isNotEmpty() }
     }
 
     /**
@@ -573,8 +609,57 @@ class AuthManager(
         when (envelope.type) {
             "auth.ok" -> handleAuthOk(envelope)
             "auth.fail" -> handleAuthFail(envelope)
+            // `profiles.updated` push — sent by the v0.7.1+ relay on
+            // the "pairing" channel whenever its in-memory profile
+            // snapshot changes (file-watcher, SIGHUP, or a manual
+            // /api/profiles/refresh). The array shape mirrors the
+            // `profiles` field of auth.ok, so we parse with the exact
+            // same [parseAgentProfiles] helper.
+            "profiles.updated" -> handleProfilesUpdated(envelope)
         }
     }
+
+    /**
+     * Consumer for the pairing-channel `profiles.updated` envelope.
+     * Re-uses [parseAgentProfiles] because the wire shape of the
+     * `profiles` array exactly matches the auth.ok embedded form —
+     * the whole point of the push is that the app keeps a single
+     * parser regardless of which entry point the list arrives on.
+     *
+     * Emits a one-shot [profilesUpdatedEvents] event so the UI layer
+     * can show a brief "Profiles updated" snackbar. The event is only
+     * fired when the list actually changed (different names or count)
+     * — an idempotent push that matches the cached state is silent.
+     */
+    private fun handleProfilesUpdated(envelope: Envelope) {
+        val array = envelope.profiles ?: run {
+            Log.w(TAG, "handleProfilesUpdated: envelope has no `profiles` array")
+            return
+        }
+        val parsed = parseAgentProfiles(array)
+        val prev = _agentProfiles.value
+        _agentProfiles.value = parsed
+
+        // Did anything meaningful change? We treat "same names" as
+        // "nothing to announce" — the dashboard can emit these pushes
+        // liberally and we don't want to spam the user with toasts.
+        val prevNames = prev.map { it.name }.toSet()
+        val nextNames = parsed.map { it.name }.toSet()
+        if (prevNames != nextNames || prev.size != parsed.size) {
+            _profilesUpdatedEvents.tryEmit(Unit)
+        }
+    }
+
+    /**
+     * One-shot signal emitted every time a `profiles.updated` envelope
+     * materially changes the profile list. UI collects it via
+     * [com.hermesandroid.relay.viewmodel.ConnectionViewModel.profilesUpdatedEvents]
+     * to show a transient snackbar.
+     */
+    private val _profilesUpdatedEvents =
+        kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 4)
+    val profilesUpdatedEvents: kotlinx.coroutines.flow.SharedFlow<Unit> =
+        _profilesUpdatedEvents.asSharedFlow()
 
     fun regeneratePairingCode() {
         _pairingCode.value = generatePairingCode()
@@ -674,11 +759,44 @@ class AuthManager(
                     _currentPairedSession.value = paired
                     persistPairedSession(paired)
 
-                    // Pending TTL/grants are consumed — the server has
-                    // either honored or overridden them and the next
+                    // ADR 24 — persist the pairing's endpoint-candidate list
+                    // so the reachability probe + network-aware switch
+                    // (Kt-Probe) can load it on subsequent connects without
+                    // re-scanning the original QR. Keyed by the stable
+                    // device id so multiple paired devices coexist cleanly.
+                    //
+                    // Leave the previously-persisted list untouched when
+                    // nothing was staged (session-token refresh path, or
+                    // a legacy caller that didn't set endpoints).
+                    pendingEndpoints?.let { endpoints ->
+                        try {
+                            val deviceId = getDeviceId()
+                            PairingPreferences.setDeviceEndpoints(
+                                context,
+                                deviceId,
+                                endpoints,
+                            )
+                            Log.i(
+                                TAG,
+                                "handleAuthOk: persisted ${endpoints.size} endpoint(s) for device=$deviceId " +
+                                    "roles=${endpoints.map { it.role }}"
+                            )
+                        } catch (e: Exception) {
+                            Log.w(
+                                TAG,
+                                "handleAuthOk: endpoint persistence failed — continuing without; " +
+                                    "reachability probe will fall back to the single active endpoint. " +
+                                    "reason=${e.message}"
+                            )
+                        }
+                    }
+
+                    // Pending TTL/grants/endpoints are consumed — the server
+                    // has either honored or overridden them and the next
                     // auth round-trip should not resend stale values.
                     pendingTtlSeconds = null
                     pendingGrants = null
+                    pendingEndpoints = null
                 }
 
                 val profilesArray = payload["profiles"]?.jsonArray

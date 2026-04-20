@@ -70,7 +70,8 @@ onBeforeUnmount(() => {
     0 0 0 1px var(--vp-c-divider),
     0 30px 60px -20px rgba(0, 0, 0, 0.5),
     0 0 80px -10px var(--vp-c-brand-soft);
-  width: 280px;
+  width: clamp(180px, 62vw, 280px);
+  max-height: 70vh;
   margin: 0 auto;
   box-sizing: border-box;
   overflow: hidden;
@@ -124,14 +125,8 @@ onBeforeUnmount(() => {
   opacity: 0;
 }
 
-@media (max-width: 960px) {
-  .hero-demo-frame {
-    width: 240px;
-  }
-}
 @media (max-width: 640px) {
   .hero-demo-frame {
-    width: 200px;
     padding: 8px;
     border-radius: 30px;
   }

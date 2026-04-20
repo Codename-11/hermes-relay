@@ -28,6 +28,7 @@ import com.hermesandroid.relay.network.ConnectivityObserver
 import com.hermesandroid.relay.network.ChatMode
 import com.hermesandroid.relay.network.ConnectionManager
 import com.hermesandroid.relay.network.ConnectionState
+import com.hermesandroid.relay.network.EndpointResolver
 import com.hermesandroid.relay.network.HermesApiClient
 import com.hermesandroid.relay.network.ServerCapabilities
 import com.hermesandroid.relay.network.RelayHttpClient
@@ -46,7 +47,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.combine
@@ -54,6 +57,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
@@ -78,6 +82,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // while still surfacing a tap-to-retry affordance when the
         // reconnect genuinely fails (server down, bad network).
         private const val RELAY_RECONNECT_GRACE_MS = 5_000L
+
+        /**
+         * Placeholder label written by [beginAddConnection] before the
+         * user has scanned a QR. The pair-success watcher treats a
+         * connection whose label is still this exact string as
+         * "unlabeled" and auto-renames to the API-host-derived default
+         * once pairing completes. Exposed as a constant so tests and
+         * the watcher share one source of truth.
+         */
+        const val PLACEHOLDER_LABEL = "New connection…"
 
         // Shared
         private val KEY_THEME = stringPreferencesKey("theme")
@@ -181,10 +195,29 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // ConnectionManager. CertPinStore is process-wide (not per-connection)
     // so holding a reference to the legacy AuthManager's pin store is
     // still correct after a swap.
+    // OkHttp used by [endpointResolver] for HEAD /health probes. Keep it
+    // distinct from the relay HTTP client (long read timeout for media
+    // downloads) so probe timeouts stay tight and don't pick up a 2-minute
+    // stream inheritance from the shared pool. See ADR 24.
+    private val endpointProbeClient: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(2, TimeUnit.SECONDS)
+        .readTimeout(2, TimeUnit.SECONDS)
+        .writeTimeout(2, TimeUnit.SECONDS)
+        .callTimeout(2, TimeUnit.SECONDS)
+        .build()
+
+    private val endpointResolver = EndpointResolver(httpClient = endpointProbeClient)
+
     private val connectionManager = ConnectionManager(
         multiplexer,
         authManager.certPinStore,
-        reconnectGate = { authManager.hasPairContext }
+        reconnectGate = { authManager.hasPairContext },
+        context = application,
+        endpointResolver = endpointResolver,
+        // Pull the active device id through AuthManager — it's the same id
+        // PairingPreferences keys the endpoint list on. Nullable wrapper
+        // because AuthManager.getOrCreateDeviceId() is suspending.
+        deviceIdProvider = { runCatching { authManager.getOrCreateDeviceId() }.getOrNull() },
     )
 
     // Data management — ConnectionStore flows through so exportSettings()
@@ -252,6 +285,48 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // Stale. See [RelayUiState] kdoc for the full rationale.
     private val _relayUiState = MutableStateFlow<RelayUiState>(RelayUiState.NotConfigured)
     val relayUiState: StateFlow<RelayUiState> = _relayUiState.asStateFlow()
+
+    /**
+     * ADR 24 — [relayUiState] bundled with the currently-active endpoint
+     * role so connection chips can render "Connected · Tailscale" etc.
+     * New screens should prefer [relayRowState] over [relayUiState] when
+     * they want to surface the transport role; existing `== RelayUiState.X`
+     * comparisons keep working off [relayUiState].
+     */
+    val relayRowState: StateFlow<RelayRowState> = combine(
+        _relayUiState,
+        connectionManager.activeEndpoint,
+    ) { phase, endpoint ->
+        RelayRowState(phase = phase, activeEndpointRole = endpoint?.role)
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.Eagerly,
+        RelayRowState(phase = RelayUiState.NotConfigured, activeEndpointRole = null),
+    )
+
+    /** Currently-active endpoint, for the Endpoints card. */
+    val activeEndpoint = connectionManager.activeEndpoint
+
+    /**
+     * Signal stream for `profiles.updated` pushes — emits when the
+     * server's in-memory profile list has changed in a way the user
+     * should know about (a different set of names or a different
+     * count). The UI layer collects this flow to show a brief
+     * "Profiles updated" snackbar.
+     *
+     * Sourced from [AuthManager.profilesUpdatedEvents] so the filter
+     * logic ("actually changed") is centralised there rather than
+     * duplicated per-subscriber.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val profilesUpdatedEvents: kotlinx.coroutines.flow.SharedFlow<Unit> =
+        _authManagerFlow
+            .flatMapLatest { it.profilesUpdatedEvents }
+            .shareIn(
+                scope = viewModelScope,
+                started = SharingStarted.Eagerly,
+                replay = 0,
+            )
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val authState: StateFlow<AuthState> = _authManagerFlow
@@ -821,78 +896,68 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // v1 constraints.
 
     /**
-     * Creates a new connection from completed pairing data, persists it via
-     * [ConnectionStore], and switches the app to it. Returns the new
-     * connection id.
+     * Pre-create a placeholder [Connection] and switch to it BEFORE the
+     * Pair wizard runs, so [applyPairingPayload]'s token write (which
+     * targets the currently-active [authManager]) lands in the new
+     * connection's EncryptedSharedPrefs instead of the outgoing one's.
      *
-     * Called from the Pair success handler when no existing `connectionId`
-     * was passed (i.e. the "Add connection" FAB flow).
+     * This replaces the earlier "pair then create" flow that left the
+     * fresh connection in an unpaired state because the token had been
+     * written to the wrong store. See [addConnectionFromPairing]'s KDoc
+     * for the historical limitation; this method is the structural fix.
      *
-     * **v1 pairing-token limitation:** this method is invoked AFTER
-     * [applyPairingPayload] has already run, which writes the freshly-minted
-     * session token into the **currently-active** connection's
-     * EncryptedSharedPreferences (via the active [authManager] instance).
-     * The new connection that this method creates has its own distinct
-     * [Connection.tokenStoreKey] and does NOT carry those credentials
-     * across. Consequence: immediately after "Add connection → scan QR →
-     * switch to new connection", the new connection is unpaired from the
-     * token store's perspective and the user must re-pair it (scan a
-     * second QR while the new connection is active).
-     *
-     * A cleaner fix would require targeting [applyPairingPayload] at a
-     * specific token store BEFORE the pair runs — that's a bigger refactor
-     * deferred to a follow-up. See the TODO at the top of RelayApp's Pair
-     * route for the user-facing journey.
+     * The placeholder starts with empty URLs — [applyPairingPayload]
+     * will overwrite them via [updateApiServerUrl] / [updateRelayUrl]
+     * on the newly-active Connection once the QR is scanned. Label is
+     * [PLACEHOLDER_LABEL] until the pair completes; on auth.ok the
+     * pair-success watcher (same `viewModelScope.launch` block that
+     * calls `markPaired`) detects the placeholder label and renames
+     * to the API-host-derived default. Callers that abandon the
+     * wizard must invoke [discardPlaceholderConnection] to remove
+     * the empty record.
      */
-    suspend fun addConnectionFromPairing(
-        label: String?,
-        apiServerUrl: String,
-        relayUrl: String,
-    ): Result<String> {
-        val resolvedLabel = (label?.trim()?.takeIf { it.isNotEmpty() })
-            ?: Connection.extractDefaultLabel(apiServerUrl)
-
-        // Validate in the same order the fields appear to the user — label
-        // then URLs — so the first error surfaced matches where their eye
-        // would be.
-        ConnectionValidation.validateLabel(resolvedLabel)?.let {
-            return Result.failure(IllegalArgumentException(it))
-        }
-        ConnectionValidation.validateApiServerUrl(apiServerUrl)?.let {
-            return Result.failure(IllegalArgumentException(it))
-        }
-        ConnectionValidation.validateRelayUrl(relayUrl)?.let {
-            return Result.failure(IllegalArgumentException(it))
-        }
-        ConnectionValidation.findDuplicate(
-            connections = connectionStore.connections.value,
-            apiServerUrl = apiServerUrl,
-            relayUrl = relayUrl,
-        )?.let { dup ->
-            return Result.failure(
-                IllegalStateException("A connection for this server already exists (\"${dup.label}\")"),
-            )
-        }
-
+    suspend fun beginAddConnection(): String {
         val id = java.util.UUID.randomUUID().toString()
-        val connection = Connection(
+        val placeholder = Connection(
             id = id,
-            label = resolvedLabel,
-            apiServerUrl = apiServerUrl.trim(),
-            relayUrl = relayUrl.trim(),
+            label = PLACEHOLDER_LABEL,
+            apiServerUrl = "",
+            relayUrl = "",
             tokenStoreKey = Connection.buildTokenStoreKey(id),
             pairedAt = null,
             lastActiveSessionId = null,
             transportHint = null,
             expiresAt = null,
         )
-        connectionStore.addConnection(connection)
-        // Switch to the new connection so subsequent chat/bridge/voice
-        // traffic uses its (currently empty) token store. Per the KDoc
-        // above, the user will need to re-pair against this connection to
-        // populate it.
-        switchConnection(id)
-        return Result.success(id)
+        connectionStore.addConnection(placeholder)
+        // Join so the fresh authManager is bound before the caller
+        // navigates into the Pair wizard — otherwise applyPairingPayload
+        // could fire against the outgoing auth store if the user scans
+        // faster than the switch coroutine completes.
+        switchConnection(id).join()
+        return id
+    }
+
+    /**
+     * Remove a placeholder [Connection] created by [beginAddConnection]
+     * when the user cancels before a successful pair. No-op when the
+     * connection has been paired (pairedAt != null) or already has a
+     * non-empty URL — i.e. the pair partially succeeded and the record
+     * is now real. Also no-op when [connectionId] isn't found.
+     *
+     * Called from the Pair route's onCancel handler. Safe to call on
+     * every cancel without checking state; the internal guard handles
+     * the "real connection" case.
+     */
+    suspend fun discardPlaceholderConnection(connectionId: String) {
+        val existing = connectionStore.connections.value.firstOrNull { it.id == connectionId }
+            ?: return
+        if (existing.pairedAt != null) return
+        // An unpaired connection with a populated API URL means the
+        // scan hit applyPairingPayload (which writes the URL) but the
+        // handshake didn't complete to Paired. We still remove it —
+        // the user pressed cancel, the record is garbage.
+        removeConnection(connectionId)
     }
 
     /**
@@ -1190,6 +1255,39 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                         // passing seconds would render as "Paired decades ago".
                         expiresAtMillis = paired.expiresAt?.let { it * 1000L },
                     )
+
+                    // Auto-rename the placeholder label created by
+                    // [beginAddConnection]. We only touch the label when
+                    // it's still the exact placeholder string — if the
+                    // user typed a custom name during pairing we leave
+                    // it alone. Derived label is the API host (matches
+                    // Connection.extractDefaultLabel used elsewhere for
+                    // default-label generation).
+                    if (current.label == PLACEHOLDER_LABEL &&
+                        current.apiServerUrl.isNotBlank()
+                    ) {
+                        val derivedLabel = Connection.extractDefaultLabel(current.apiServerUrl)
+                        val refreshed = connectionStore.connections.value
+                            .firstOrNull { it.id == connId }
+                        if (refreshed != null) {
+                            connectionStore.updateConnection(
+                                refreshed.copy(label = derivedLabel),
+                            )
+                        }
+                    }
+
+                    // ADR 24 — on fresh pair, endpoints land in DataStore
+                    // inside handleAuthOk. The initial connect() call
+                    // ran BEFORE that persistence and therefore gave up
+                    // on the resolver (no endpoints stored yet) → set
+                    // activeEndpoint to null. Kick a re-probe now that
+                    // the candidate list is on disk; probeAndReconnect
+                    // only swaps the socket if the winner's URL differs
+                    // from the currently-connected URL, so for a
+                    // same-endpoint pair (the common case — LAN won
+                    // during pair, LAN still wins post-pair) this is a
+                    // zero-disruption activeEndpoint flow update.
+                    connectionManager.probeAndReconnect()
                 }
         }
 
@@ -1504,6 +1602,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             authManager.setPendingGrants(relay.grants)
         }
         authManager.setPendingTtlSeconds(ttlSeconds)
+        // ADR 24 — stage the endpoint-candidate list so AuthManager persists
+        // it under the paired device's id once `auth.ok` lands. `endpoints`
+        // is always non-null + non-empty coming out of `parseHermesPairingQr`
+        // (v1/v2 QRs get a synthesized priority-0 candidate); we pass
+        // through whatever v3 emitted verbatim.
+        authManager.setPendingEndpoints(payload.endpoints)
 
         viewModelScope.launch {
             // API side — always present in any QR.
@@ -1674,6 +1778,60 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     fun disconnectRelay() {
         connectionManager.disconnect()
+    }
+
+    // --- ADR 24 — multi-endpoint exposure ------------------------------------
+
+    /**
+     * Observe the per-device endpoint-candidate list. Emits an empty list
+     * for freshly-upgraded installs (no `endpoints` persisted yet) or for
+     * pre-ADR-24 v1/v2 QRs whose synthesizer produced a single candidate
+     * — in which case the UI renders a one-row card.
+     *
+     * The device id is looked up via [AuthManager.getOrCreateDeviceId] so
+     * the flow hot-rebinds when the active connection swaps.
+     */
+    fun observeDeviceEndpoints(): kotlinx.coroutines.flow.Flow<List<com.hermesandroid.relay.data.EndpointCandidate>> {
+        return kotlinx.coroutines.flow.flow {
+            val deviceId = runCatching { authManager.getOrCreateDeviceId() }.getOrNull()
+            if (deviceId == null) {
+                emit(emptyList())
+                return@flow
+            }
+            emitAll(
+                PairingPreferences.getDeviceEndpoints(getApplication(), deviceId)
+            )
+        }
+    }
+
+    /**
+     * Pin [role] as the preferred endpoint until the next disconnect. Calls
+     * [ConnectionManager.setManualRoleOverride] and kicks [probeNow] so the
+     * swap takes effect immediately if the override is reachable. Passing
+     * `null` clears the override.
+     */
+    fun setPreferredEndpointRole(role: String?) {
+        connectionManager.setManualRoleOverride(role)
+        probeNow()
+    }
+
+    fun getPreferredEndpointRole(): String? = connectionManager.getManualRoleOverride()
+
+    /** User-triggered re-probe — Endpoints card's "Probe now" row action. */
+    fun probeNow() {
+        connectionManager.probeAndReconnect()
+    }
+
+    /**
+     * Fetch the TOFU SPKI pin stored for this endpoint's host:port, if any.
+     * Used by the Endpoints card's "View pin" row action. Returns null when
+     * no pin has been recorded (not-yet-TOFU'd host) or when the cert store
+     * is unavailable.
+     */
+    suspend fun lookupEndpointPin(candidate: com.hermesandroid.relay.data.EndpointCandidate): String? {
+        val hostPort = "${candidate.api.host.lowercase()}:${candidate.api.port}"
+        val pins = PairingPreferences.getTofuPins(getApplication())
+        return pins[hostPort]
     }
 
     /**

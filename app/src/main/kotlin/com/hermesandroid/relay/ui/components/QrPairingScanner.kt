@@ -60,6 +60,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
+import com.hermesandroid.relay.data.ApiEndpoint
+import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.data.RelayEndpoint
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -73,7 +76,7 @@ import kotlin.math.max
 /**
  * Parsed result from a Hermes pairing QR code.
  *
- * **Supported versions:** v1 and v2.
+ * **Supported versions:** v1, v2, and v3.
  *
  * v1 (legacy, pre-2026-04-11):
  * ```json
@@ -106,19 +109,47 @@ import kotlin.math.max
  * }
  * ```
  *
+ * v3 (multi-endpoint pairing, 2026-04-19 — ADR 24):
+ * ```json
+ * {
+ *   "hermes": 3,
+ *   "host": "192.168.1.100",
+ *   "port": 8642,
+ *   "key": "optional-api-key",
+ *   "tls": false,
+ *   "relay": { "url": "ws://192.168.1.100:8767", "code": "ABC123",
+ *              "ttl_seconds": 2592000, "grants": {...},
+ *              "transport_hint": "ws" },
+ *   "endpoints": [
+ *     { "role": "lan", "priority": 0,
+ *       "api":   { "host": "192.168.1.100", "port": 8642, "tls": false },
+ *       "relay": { "url": "ws://192.168.1.100:8767", "transport_hint": "ws" } },
+ *     { "role": "tailscale", "priority": 1,
+ *       "api":   { "host": "hermes.tail-scale.ts.net", "port": 8642, "tls": true },
+ *       "relay": { "url": "wss://hermes.tail-scale.ts.net:8767", "transport_hint": "wss" } }
+ *   ],
+ *   "sig": "base64-hmac-sha256"
+ * }
+ * ```
+ *
  * The top-level fields configure the direct-chat Hermes API server. The
  * optional [relay] block configures the Hermes-Relay WSS connection used by
- * the terminal and bridge channels.
+ * the terminal and bridge channels. The [endpoints] list (v3+) carries an
+ * ordered array of candidate endpoints; the phone picks the highest-priority
+ * reachable candidate at connect time — see ADR 24.
  *
  * **Forward/backward compatibility:**
  *  - `hermes` now has a default of `1` so v1 QRs without the field parse.
  *  - `sig` is captured but **not verified** — we don't have the server's
  *    HMAC secret. Stored for future verification and for operator audit.
  *    TODO: once the server exposes a pairing public key, verify.
- *  - Unknown fields are tolerated via `ignoreUnknownKeys = true`. v3+ QRs
+ *  - Unknown fields are tolerated via `ignoreUnknownKeys = true`. v4+ QRs
  *    will still parse on this phone.
  *  - The `ttl_seconds`, `grants`, and `transport_hint` fields on [RelayPairing]
  *    are nullable so v1 QRs with only `url` + `code` still deserialize.
+ *  - [endpoints] is nullable — v1/v2 QRs without the field still parse, and
+ *    [parseHermesPairingQr] synthesizes a single priority-0 candidate from
+ *    the top-level fields so downstream code always has at least one entry.
  *
  * Old QRs without the relay block still parse cleanly because the field is
  * nullable.
@@ -132,6 +163,13 @@ data class HermesPairingPayload(
     val tls: Boolean = false,
     val relay: RelayPairing? = null,
     val sig: String? = null,
+    /**
+     * Optional ordered list of endpoint candidates (v3+). Present verbatim
+     * when the payload carried one; synthesized by [parseHermesPairingQr]
+     * from the top-level fields for v1/v2 payloads so callers can always
+     * assume this is non-null + non-empty after parse.
+     */
+    val endpoints: List<EndpointCandidate>? = null,
 ) {
     /** Build the full API server URL from host, port, and tls flag. */
     val serverUrl: String
@@ -181,14 +219,23 @@ private val json = Json {
 /**
  * Try to parse a scanned string as a Hermes pairing QR payload.
  *
- * Accepts both v1 and v2 (or anything without a `hermes` field — we default
+ * Accepts v1, v2, and v3 (or anything without a `hermes` field — we default
  * to `1`). Returns null when the payload is not valid JSON, has no `host`
  * field, or fails strict decoding.
+ *
+ * **Endpoint synthesis (ADR 24):** when the payload has no `endpoints`
+ * array (v1/v2 QRs), a single priority-0 [EndpointCandidate] is materialized
+ * from the top-level fields so downstream code can always iterate
+ * `payload.endpoints`. The synthesized `role` is `"tailscale"` when the
+ * top-level [HermesPairingPayload.host] matches the Tailscale CGNAT /
+ * MagicDNS heuristic (`.ts.net` suffix or `100.` prefix), `"lan"` otherwise.
+ * A v3+ payload with an explicit `endpoints` array round-trips verbatim —
+ * role case, priority order, and unknown roles are all preserved.
  */
 fun parseHermesPairingQr(raw: String): HermesPairingPayload? {
     return try {
         // Quick check: must contain a `host` field and be valid JSON. We no
-        // longer reject based on the `hermes` version int — future v3+ QRs
+        // longer reject based on the `hermes` version int — future v4+ QRs
         // should still parse on this phone so Bailey doesn't have to ship a
         // whole release to keep up with wire-format growth.
         val obj = json.decodeFromString<JsonObject>(raw)
@@ -203,10 +250,50 @@ fun parseHermesPairingQr(raw: String): HermesPairingPayload? {
         // unsigned payloads — the phone has no way to fetch the server's
         // secret in-band.
 
-        decoded
+        // Synthesize a single priority-0 candidate from the top-level fields
+        // when the wire payload didn't carry an explicit `endpoints` array.
+        // v3+ payloads with an explicit array pass through untouched.
+        if (decoded.endpoints.isNullOrEmpty()) {
+            decoded.copy(endpoints = listOf(synthesizeLegacyEndpoint(decoded)))
+        } else {
+            decoded
+        }
     } catch (_: Exception) {
         null
     }
+}
+
+/**
+ * Build a single priority-0 [EndpointCandidate] from a v1/v2 pairing payload
+ * that lacked an `endpoints` array. Preserves the top-level API coordinates
+ * + the optional relay block (the synthesized candidate's [RelayEndpoint]
+ * intentionally drops `code` / `grants` / `ttl_seconds` — those stay on the
+ * top-level [RelayPairing]).
+ *
+ * Role detection: matches [TailscaleDetector]'s heuristic — `.ts.net` suffix
+ * or `100.`-prefixed IPv4 (CGNAT range 100.64.0.0/10 is the canonical one,
+ * but the broader `100.*` check keeps us tolerant of operator labeling).
+ * Inlined here so this pure-parse code has no Android Context dependency
+ * and stays unit-testable on the JVM.
+ */
+private fun synthesizeLegacyEndpoint(payload: HermesPairingPayload): EndpointCandidate {
+    val host = payload.host
+    val isTailscale = host.endsWith(".ts.net", ignoreCase = true) ||
+        host.startsWith("100.")
+    val role = if (isTailscale) "tailscale" else "lan"
+    return EndpointCandidate(
+        role = role,
+        priority = 0,
+        api = ApiEndpoint(
+            host = payload.host,
+            port = payload.port,
+            tls = payload.tls,
+        ),
+        relay = RelayEndpoint(
+            url = payload.relay?.url ?: "",
+            transportHint = payload.relay?.transportHint,
+        ),
+    )
 }
 
 /**

@@ -142,6 +142,21 @@ html:not(.dark) .VPNavBar {
   border-radius: 0 !important;
 }
 
+/* VPHero's default image-container is a fixed 320×320 square on mobile
+   with negative-margin overlap into .main — designed for round illustrations,
+   not a 9:16 phone frame. Unshackle the container and zero the overlap so
+   the portrait video stacks cleanly above the text. */
+@media (max-width: 959px) {
+  .VPHero .image {
+    margin: 0 !important;
+  }
+  .VPHero .image-container {
+    width: auto !important;
+    height: auto !important;
+    max-width: 100% !important;
+  }
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
    FEATURE CARDS — subtle border, hover border only
    ══════════════════════════════════════════════════════════════════════════ */

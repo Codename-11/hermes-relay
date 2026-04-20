@@ -239,6 +239,166 @@
             }
         };
 
+        // ── Scroll shims + gesture ────────────────────────────────────────
+        // xterm.js ships a scrollback buffer (scrollback: 10000 above) but
+        // has no built-in mobile touch-to-scroll — its input handlers are
+        // designed around mouse/wheel events, and it sets touch-action on
+        // its root to swallow gestures for selection. That leaves the
+        // scrollback unreachable on phones unless we add a translator.
+        //
+        // Strategy: one finger, mostly-vertical drag → convert delta to
+        // line-scroll via term.scrollLines(). The threshold keeps short
+        // taps (and their tiny jitter) from triggering scroll; the axis
+        // dominance check lets users still long-press for selection or
+        // horizontal-swipe for future features without false positives.
+        // Every scroll intent on this terminal — gesture, toolbar button,
+        // whatever — gets funneled through a synthetic WheelEvent dispatched
+        // on xterm's render root. This is deliberately NOT a direct call to
+        // term.scrollLines(), because that skips xterm's own buffer + mouse-
+        // mode routing. Letting xterm handle the wheel gives us all three
+        // correct behaviors for free:
+        //
+        //   1. Main buffer (at the shell prompt): xterm scrolls its own
+        //      10k-line scrollback locally — same as our first version.
+        //   2. Alternate buffer + TUI has enabled mouse tracking
+        //      (claude-code, hermes TUI, tmux with `mouse on`, less, vim
+        //      with `set mouse=a` — basically any modern TUI; it's what
+        //      makes hover-to-scroll work on desktop): xterm encodes the
+        //      wheel as an SGR mouse-wheel escape (\e[<64;col;rowM for
+        //      up / <65 for down) and forwards it to the PTY, so the TUI
+        //      scrolls its own content natively.
+        //   3. Alternate buffer + TUI has NOT enabled mouse tracking
+        //      (rare on modern TUIs; mostly old curses apps): xterm
+        //      ignores the wheel — safe no-op, no garbage injected.
+        const wheelTarget = function () {
+            return document.querySelector('.xterm-screen') ||
+                   document.querySelector('.xterm') ||
+                   document.getElementById('terminal');
+        };
+        const dispatchWheel = function (deltaY) {
+            const target = wheelTarget();
+            if (!target) {
+                console.warn('scrollTerminal: no wheel target element found');
+                return;
+            }
+            const rect = target.getBoundingClientRect();
+            // Mouse position matters for SGR wheel encoding — use the
+            // viewport center so TUIs that care (tmux split-pane) hit the
+            // right pane instead of always the top-left cell.
+            const clientX = rect.left + rect.width / 2;
+            const clientY = rect.top + rect.height / 2;
+            const evt = new WheelEvent('wheel', {
+                deltaY: deltaY,
+                deltaMode: 0, // DOM_DELTA_PIXEL
+                bubbles: true,
+                cancelable: true,
+                clientX: clientX,
+                clientY: clientY,
+            });
+            const altBuffer = (function () {
+                try { return term.buffer.active.type === 'alternate'; }
+                catch (_) { return false; }
+            })();
+            // Visible in logcat via TerminalWebView's onConsoleMessage —
+            // confirms the wheel fired and on which buffer. If scroll is
+            // not working in a TUI, this is the first thing to check:
+            // no line here = gesture path broken; line present but no
+            // TUI response = TUI hasn't enabled mouse tracking.
+            console.log('dispatchWheel: deltaY=' + deltaY +
+                ' altBuffer=' + altBuffer +
+                ' target=' + (target.className || target.id));
+            target.dispatchEvent(evt);
+        };
+
+        const lineHeightPx = function () {
+            const size = term.options.fontSize || 13;
+            const lh = term.options.lineHeight || 1.15;
+            return Math.max(10, size * lh);
+        };
+
+        window.scrollTerminalLines = function (lines) {
+            const n = Math.round(lines);
+            if (n === 0) return;
+            dispatchWheel(n * lineHeightPx());
+        };
+        window.scrollTerminalPages = function (pages) {
+            const n = Math.round(pages);
+            if (n === 0) return;
+            dispatchWheel(n * lineHeightPx() * Math.max(1, term.rows - 2));
+        };
+        // Jump-to-bottom only makes sense in the main buffer (alt buffer is
+        // always "at the bottom" — the TUI owns every visible row). In alt
+        // buffer we simply no-op rather than guess what "bottom" means for
+        // whichever app is running.
+        window.scrollTerminalToBottom = function () {
+            try {
+                if (term.buffer.active.type === 'alternate') return;
+                term.scrollToBottom();
+            } catch (_) {}
+        };
+        window.scrollTerminalToTop = function () {
+            try {
+                if (term.buffer.active.type === 'alternate') return;
+                term.scrollToTop();
+            } catch (_) {}
+        };
+
+        (function installTouchScroll() {
+            const root = document.getElementById('terminal');
+            if (!root) return;
+            let touchId = null;
+            let startY = 0;
+            let accumulated = 0;
+            // lineHeightPx() is defined at module scope above — it already
+            // tracks setFontSize() via term.options and returns a fresh
+            // value per call, so we just use it directly here.
+            const onStart = function (ev) {
+                if (ev.touches.length !== 1) { touchId = null; return; }
+                touchId = ev.touches[0].identifier;
+                startY = ev.touches[0].clientY;
+                accumulated = 0;
+            };
+            const onMove = function (ev) {
+                if (touchId === null) return;
+                let t = null;
+                for (let i = 0; i < ev.touches.length; i++) {
+                    if (ev.touches[i].identifier === touchId) { t = ev.touches[i]; break; }
+                }
+                if (!t) return;
+                const dy = t.clientY - startY;
+                // Only fire once past a small deadzone so long-press+select
+                // isn't stolen from xterm.
+                if (Math.abs(dy) < 12) return;
+                const lh = lineHeightPx();
+                const lines = Math.trunc((dy - accumulated) / lh);
+                if (lines !== 0) {
+                    // Route through the shared shim so alt-buffer detection
+                    // kicks in — TUIs (claude-code, hermes, vim, less) live
+                    // in the alt buffer and need real input events, while
+                    // the shell's main buffer uses local scrollback.
+                    // Finger down = older content, so we flip the sign.
+                    window.scrollTerminalLines(-lines);
+                    accumulated += lines * lh;
+                    ev.preventDefault();
+                }
+            };
+            const onEnd = function (ev) {
+                for (let i = 0; i < ev.changedTouches.length; i++) {
+                    if (ev.changedTouches[i].identifier === touchId) {
+                        touchId = null;
+                        return;
+                    }
+                }
+            };
+            // passive:false is required because we preventDefault above to
+            // stop the browser from also hijacking the gesture for refresh
+            // or selection.
+            root.addEventListener('touchstart', onStart, { passive: true });
+            root.addEventListener('touchmove', onMove, { passive: false });
+            root.addEventListener('touchend', onEnd, { passive: true });
+            root.addEventListener('touchcancel', onEnd, { passive: true });
+        })();
+
         // Refit on any container size change. ResizeObserver is more reliable
         // than `window.resize` on Android WebView — the window doesn't always
         // fire `resize` when Compose resizes the parent View, so the initial

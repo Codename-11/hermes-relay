@@ -76,6 +76,7 @@ import com.hermesandroid.relay.network.ConnectionState
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.components.ApiServerInfoSheet
 import com.hermesandroid.relay.ui.components.ConnectionStatusRow
+import com.hermesandroid.relay.ui.components.EndpointsCard
 import com.hermesandroid.relay.ui.components.InsecureConnectionAckDialog
 import com.hermesandroid.relay.ui.components.RelayInfoSheet
 import com.hermesandroid.relay.ui.components.SessionInfoSheet
@@ -187,6 +188,7 @@ fun ConnectionSettingsScreen(
     // handshake starts right away — the VM's grace timer then hides the
     // Disconnected→Connecting transition.
     val relayUiState by connectionViewModel.relayUiState.collectAsState()
+    val relayRowState by connectionViewModel.relayRowState.collectAsState()
     LaunchedEffect(Unit) {
         connectionViewModel.reconnectIfStale()
     }
@@ -358,8 +360,11 @@ fun ConnectionSettingsScreen(
                         // falls through to the relay info bottom sheet.
                         ConnectionStatusRow(
                             label = "Relay",
-                            state = relayUiState.asBadgeState(),
-                            statusText = relayUiState.statusText(connectedLabel = "Connected"),
+                            // ADR 24: relayRowState carries both the phase and
+                            // the active endpoint role. Its statusText appends
+                            // " · <Role>" when the resolver has picked one.
+                            state = relayRowState.asBadgeState(),
+                            statusText = relayRowState.statusText(connectedLabel = "Connected"),
                             onClick = {
                                 if (relayUiState == RelayUiState.Stale) {
                                     connectionViewModel.connectRelay()
@@ -528,6 +533,45 @@ fun ConnectionSettingsScreen(
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                }
+            }
+
+            // Card 1.5 — ADR 24 Endpoints (collapsible). Only rendered when
+            // the relay feature is on since endpoints live on the relay
+            // channel. Reads the device's stored candidate list from
+            // PairingPreferences via observeDeviceEndpoints() and the
+            // resolver-picked active endpoint from ConnectionManager.
+            if (relayEnabled) {
+                val endpointsList by connectionViewModel.observeDeviceEndpoints()
+                    .collectAsState(initial = emptyList())
+                val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
+                var endpointsExpanded by rememberSaveable { mutableStateOf(false) }
+                var preferredRole by remember {
+                    mutableStateOf(connectionViewModel.getPreferredEndpointRole())
+                }
+                SettingsExpandableCard(
+                    title = "Endpoints (${endpointsList.size})",
+                    expanded = endpointsExpanded,
+                    onToggle = { endpointsExpanded = !endpointsExpanded },
+                    isDarkTheme = isDarkTheme,
+                ) {
+                    EndpointsCard(
+                        endpoints = endpointsList,
+                        activeEndpoint = activeEndpoint,
+                        preferredRole = preferredRole,
+                        onPreferEndpoint = { candidate ->
+                            connectionViewModel.setPreferredEndpointRole(candidate.role)
+                            preferredRole = candidate.role
+                        },
+                        onClearOverride = {
+                            connectionViewModel.setPreferredEndpointRole(null)
+                            preferredRole = null
+                        },
+                        onProbeNow = { connectionViewModel.probeNow() },
+                        onViewPin = { candidate ->
+                            connectionViewModel.lookupEndpointPin(candidate)
+                        },
+                    )
                 }
             }
 

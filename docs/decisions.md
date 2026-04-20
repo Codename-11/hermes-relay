@@ -817,6 +817,8 @@ Those fields (added in the same commit series — see `auth.ok` profile shape) a
 - `docs/spec.md` §6.1 — HTTP routes table rows
 - `TEMP-hermes-desktop-analysis.md` (session scratch, soon deleted) — `hermes-desktop` patterns we cross-referenced for the read/write split and credential-pool separation
 
+**Scope addendum (2026-04-18):** Followed up with two more profile-scoped read routes — `GET /api/profiles/{name}/soul` and `GET /api/profiles/{name}/memory` — to feed the phone Profile Inspector's four-section layout (config / SOUL / memory / skills). Both reuse `_resolve_profile_home`, the loopback-or-bearer gate, and the `profile_not_found` 404 shape from the original two endpoints. Content is capped inline at **200KB for SOUL.md** and **50KB per memory file**; larger bodies flag `truncated: true` and clients see the on-disk `size_bytes` so they know real dimensions without fetching the full body. The caps exist because the Inspector is a viewer, not a diff or edit tool — phone-safe wire sizes matter more than lossless fidelity, and anyone who needs a full dump has the dashboard. Memory listing is intentionally non-recursive (one `iterdir` pass, no `rglob`) so subdirectories under `memories/` — used by some users for archival snapshots — don't spam the response. `MEMORY.md` and `USER.md` (per upstream `hermes_cli/profiles.py`) sort first; the rest are alphabetical, so the ordering is stable across filesystems. Absent SOUL.md returns 200 with `exists: false`; absent `memories/` returns 200 with an empty `entries` array — both let the Inspector render the section rather than mask "no content yet" as a transport failure.
+
 ---
 
 ## Voice Mode — Architecture
@@ -956,3 +958,216 @@ branch-agnostic, unchanged.
 - `CONTRIBUTING.md` — "Commit Conventions"
 - `.github/workflows/ci-android.yml`, `.github/workflows/ci-relay.yml`
 - `scripts/bump-version.sh` — prints the dev → main release flow
+
+---
+
+### 24. Multi-endpoint pairing payload + network-aware switching (2026-04-19)
+
+**Problem:** pairing QRs today carry a single `host:port` (API) plus a single
+`relay.url`. That works for LAN-only operators, but the moment the phone
+moves between LAN / Tailscale / a public reverse-proxy hostname, the
+single URL is wrong half the time. Upstream hermes-agent's stance
+(SECURITY.md) is "use VPN / Tailscale / firewall or don't expose" — they
+don't plan to own a remote-access story. We do.
+
+**Decision:** Extend the QR schema with an **optional ordered list of
+endpoint candidates**. The phone picks the highest-priority reachable
+candidate at connect time and re-evaluates on network change. Old
+single-endpoint QRs remain valid — the phone synthesizes a single
+priority-0 candidate from the top-level fields when `endpoints` is absent.
+
+**Wire format (v3 — additive):**
+
+```json
+{
+  "hermes": 3,
+  "host": "192.168.1.100",
+  "port": 8642,
+  "key": "optional-api-key",
+  "tls": false,
+  "relay": { "url": "ws://192.168.1.100:8767", "code": "ABC123",
+             "ttl_seconds": 2592000, "grants": {...},
+             "transport_hint": "ws" },
+  "endpoints": [
+    { "role": "lan",       "priority": 0,
+      "api":   { "host": "192.168.1.100", "port": 8642, "tls": false },
+      "relay": { "url": "ws://192.168.1.100:8767",
+                 "transport_hint": "ws" } },
+    { "role": "tailscale", "priority": 1,
+      "api":   { "host": "hermes.tail-scale.ts.net", "port": 8642, "tls": true },
+      "relay": { "url": "wss://hermes.tail-scale.ts.net:8767",
+                 "transport_hint": "wss" } },
+    { "role": "public",    "priority": 2,
+      "api":   { "host": "hermes.example.com", "port": 443, "tls": true },
+      "relay": { "url": "wss://hermes.example.com/relay",
+                 "transport_hint": "wss" } }
+  ],
+  "sig": "base64-hmac-sha256"
+}
+```
+
+**Semantics (locked):**
+- **`role` is an open string.** Known values `lan` / `tailscale` / `public`
+  get styled chips + icons on the phone. Anything else (`wireguard`,
+  `zerotier`, `netbird-eu`, whatever the operator wants) renders with a
+  generic "Custom VPN" treatment and the raw role label. No enum, no
+  validation, no normalization — `role` is preserved exactly as emitted
+  so HMAC canonicalization round-trips.
+- **`priority` is strict, 0 = highest.** If priority-0 is reachable the
+  phone uses it; reachability never promotes a lower-priority candidate
+  over a higher one. Reachability is only the tiebreaker for candidates
+  that share the same priority. This is the DNS SRV priority/weight
+  contract — known-good semantics, nothing new to debate.
+- **Reachability probe**: `HEAD` against `${api.tls?https:http}://
+  ${api.host}:${api.port}/health` with a 2-second timeout. The result is
+  cached for 30 seconds per-endpoint so repeated `connect()` calls don't
+  hammer the network. Relay-side reachability is implied — if the API
+  server is reachable the relay usually is too, and the first WSS connect
+  will loudly fail otherwise.
+- **Network-change re-probe**: Android's `ConnectivityManager
+  .NetworkCallback.onAvailable` / `onLost` triggers a re-probe. If a
+  higher-priority candidate became reachable after a network transition,
+  the phone reconnects to it; if the current one became unreachable, the
+  phone falls through to the next candidate in priority order.
+- **TTL defaults by role** (informational — operator can override at
+  pair time): `lan` → 7 days, `tailscale` → 30 days, `public` → 30 days,
+  unknown role → 7 days (conservative). Plaintext-`ws://` consent still
+  gates any candidate with `transport_hint = "ws"`.
+
+**Canonicalization for the HMAC signature:** `canonicalize()` in
+`plugin/relay/qr_sign.py` uses `json.dumps(sort_keys=True,
+separators=(",",":"), ensure_ascii=True, allow_nan=False)`. Nested dicts
+are sort-keyed; **arrays preserve their emitted order** (priority is
+meaningful, not alphabetic). Role strings are embedded verbatim — no
+`.lower()`, no `.strip()`. A regression test in `plugin/tests/
+test_qr_sign.py` exercises this for mixed-case and non-ASCII role
+values so a future refactor can't silently divergence the canonical form.
+
+**Pin store:** `CertPinStore` continues to key by `host:port`, unchanged.
+Role doesn't participate in the pin key — if the operator points two
+roles at the same hostname they'll share a pin (which is correct: same
+cert, same pin). The role → hostname mapping lives in the per-device
+endpoint record in DataStore, read by the Paired Devices screen to
+render one row per `(device, endpoint)`.
+
+**Backward compatibility:**
+- `hermes: 1` and `hermes: 2` QRs continue to parse. When `endpoints` is
+  absent, the phone synthesizes a single priority-0 candidate of
+  `role: lan` (or `role: tailscale` if the top-level `host` matches the
+  Tailscale CGNAT pattern `100.64.0.0/10` or a `.ts.net` suffix — same
+  heuristics `TailscaleDetector` already uses).
+- `hermes: 3` is the first version that *requires* `endpoints`. The
+  bump is bookkeeping only; the parser is version-liberal
+  (`ignoreUnknownKeys = true` already, plus a nullable `endpoints`
+  field for the intermediate period when the server emits v3 but some
+  phones haven't updated yet).
+
+**Alternatives rejected:**
+- **Layer Noise / libsignal over WSS.** The operator owns both endpoints
+  and the transport is already TLS-terminated by the operator's chosen
+  path (Tailscale / reverse-proxy / WireGuard). A second crypto layer
+  adds complexity without defending against any threat in our model.
+- **Auto-promote reachability over priority** ("LAN is flaky, switch to
+  Tailscale even though priority-0 works"). Breaks operator intent; the
+  operator might have a reason for preferring LAN (zero egress billing,
+  lower latency, local-network-only policy). Strict priority keeps the
+  operator in charge.
+- **Close-vocabulary `role` enum.** Would force a release every time an
+  operator spun up a new mesh VPN. Open-string + known-values-display
+  map gives us the UI polish for common cases and zero friction for
+  unusual ones.
+
+**Key Files:**
+- `plugin/pair.py` — `build_payload()` emits `endpoints`; `--mode` /
+  `--public-url` flags; LAN-IP + Tailscale status auto-detection
+- `plugin/relay/qr_sign.py` — canonical form docstring now covers arrays
+- `plugin/relay/server.py` — `handle_pairing_mint` / `handle_pairing_register`
+  accept optional `endpoints` in the body
+- `plugin/tests/test_pairing_mint_schema.py` + `test_qr_sign.py`
+- `app/src/main/kotlin/.../data/Endpoint.kt` — new `EndpointCandidate`
+  data class
+- `app/src/main/kotlin/.../ui/components/QrPairingScanner.kt` — payload
+  extended; v1/v2 synthesizer
+- `app/src/main/kotlin/.../data/PairingPreferences.kt` — per-device
+  endpoint list store
+- `app/src/main/kotlin/.../network/ConnectionManager.kt` —
+  `resolveBestEndpoint()` + `NetworkCallback` plumbing
+- `app/src/main/kotlin/.../viewmodel/RelayUiState.kt` —
+  `activeEndpointRole` field
+- `skills/devops/hermes-relay-pair/SKILL.md` — new flags documented
+
+---
+
+### 25. First-class Tailscale helper as optional hermes enhancement (2026-04-19)
+
+**Problem:** the one piece of first-party upstream remote-access work
+([PR #9295](https://github.com/NousResearch/hermes-agent/pull/9295) —
+Tailscale Serve integration) is open but unmerged. Our current
+`TailscaleDetector` is informational-only. We want Tailscale to be a
+first-class supported mode today, without forking upstream.
+
+**Decision:** Ship a thin Tailscale helper in `plugin/relay/tailscale.py`
+that mirrors PR #9295's contract — keep the relay loopback-bound, let
+`tailscale serve --bg --https=<port> http://127.0.0.1:<port>` terminate
+TLS + identity. The helper is **optional** (no-op when the `tailscale`
+binary is absent) and **auto-retires** when upstream lands the canonical
+`hermes gateway run --tailscale` flag (detection via a one-shot capability
+probe; helper prints an `[info]` pointing at the canonical path and
+exits 0). Same pattern `hermes_relay_bootstrap/` uses for the
+session-API endpoints.
+
+**Surface:**
+- `plugin/relay/tailscale.py` — thin module: `status()`,
+  `enable(port=8767)`, `disable(port=8767)`, `canonical_upstream_present()`.
+  All shell out to `tailscale` CLI and return structured dicts; no new
+  daemon, no new state.
+- `scripts/hermes-relay-tailscale` — shell shim mirroring `hermes-pair`
+  pattern (see `project_hermes_plugin_cli_gap.md` memory — plugin
+  `register_cli_command` doesn't reach `main.py` argparse on v0.8.0,
+  so shell shim is the working path).
+- `install.sh` gets an optional step [7/7]: detect `tailscale` binary;
+  if present and the operator hasn't declined, offer to run
+  `tailscale serve --bg --https=8767 http://127.0.0.1:8767`. Skipped
+  silently if binary absent, `TS_DECLINE=1` set, or non-interactive
+  shell without `TS_AUTO=1`.
+- `plugin/pair.py --mode auto` calls `tailscale.status()`. If a `.ts.net`
+  hostname is available, emit a `role: tailscale` endpoint at the next
+  available priority after any `role: lan` entries.
+
+**Why this is the right shape:**
+- **Loopback-bound stays loopback-bound.** The relay keeps listening on
+  `127.0.0.1:8767`; Tailscale handles the TLS + external reachability.
+  No change to the relay's security posture.
+- **`tailscale serve` already handles auth** via tailnet ACLs + device
+  identity. We don't layer a second auth on top — the relay's existing
+  bearer-token session auth covers the application layer.
+- **Pins work unchanged.** The `.ts.net` hostname's cert is issued by
+  Tailscale's internal CA; TOFU pin captures it on first connect, same
+  mechanism as any other wss cert.
+- **Graceful absence.** Operator without Tailscale sees zero noise. All
+  failure modes exit non-fatal.
+
+**Upstream-merge retirement:** when PR #9295 lands, `canonical_upstream_present()`
+returns True (detected via `hermes gateway run --help | grep tailscale`
+or a `hermes.version >= X.Y.Z` gate — the exact probe is TODO until
+the PR lands and we see what its contract looks like). Helper then
+no-ops with a log line pointing at `hermes gateway run --tailscale`.
+`install.sh` gains an `# TODO(upstream-merge #9295):` comment marking
+the exit criteria. Same removal pattern as `hermes_relay_bootstrap/`
+after PR #8556.
+
+**Alternatives rejected:**
+- **Bundle our own `tailscaled` daemon.** Replaces Tailscale's existing
+  user-facing install / login flow with a worse one. Operators already
+  have Tailscale installed or don't — meeting them where they are is
+  strictly better.
+- **Wait for upstream PR #9295.** Unclear merge ETA; we'd ship v0.4.x
+  with the first-class-Tailscale UX paper-thin while waiting.
+
+**Key Files:**
+- `plugin/relay/tailscale.py` (new)
+- `scripts/hermes-relay-tailscale` (new) — shell shim
+- `plugin/tests/test_tailscale_helper.py` (new)
+- `install.sh` — optional step [7/7]
+- `plugin/pair.py` — `--mode auto` integration
+- `docs/remote-access.md` (new) — operator-facing setup guide

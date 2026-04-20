@@ -261,6 +261,10 @@ dependencies {
     testImplementation(libs.mockk)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.kotlinx.serialization.json)
+    // MockWebServer for ADR 24 EndpointResolver tests — probes HEAD /health
+    // across priority groups against real local sockets so the behavior we
+    // validate matches on-device.
+    testImplementation(libs.okhttp.mockwebserver)
     androidTestImplementation(libs.compose.ui.test.junit4)
     debugImplementation(libs.compose.ui.tooling)
     debugImplementation(libs.compose.ui.test.manifest)

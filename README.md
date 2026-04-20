@@ -113,6 +113,7 @@ Talk to your Hermes agent from anywhere. Direct API streaming, session history, 
 
 ## What's new in v0.6.0
 
+- **Connect from anywhere** — multi-endpoint pairing with first-class Tailscale support; plug in any VPN or reverse proxy mode. See [`docs/remote-access.md`](docs/remote-access.md).
 - **Multi-Connection support** — pair with multiple Hermes servers (home + work, dev + prod, etc.) and switch in one tap from the Chat top bar. Each Connection keeps its own sessions, personalities, profiles, and relay state; theme and safety preferences stay global. Existing installs migrate transparently.
 - **Agent Profiles** — the relay auto-discovers upstream Hermes profiles at `~/.hermes/profiles/*/` and the phone overlays the selected profile's model + `SOUL.md` on chat turns. Ephemeral, chat-only, clears on Connection switch. Gated by `RELAY_PROFILE_DISCOVERY_ENABLED` (default on).
 - **Consolidated agent sheet** — Profile + Personality selection and per-session analytics now live in one scrollable bottom sheet opened from the Chat top-bar agent name.

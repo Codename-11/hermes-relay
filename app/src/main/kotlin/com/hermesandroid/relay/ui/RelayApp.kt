@@ -58,6 +58,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.ui.theme.purpleGlow
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -97,13 +98,16 @@ import com.hermesandroid.relay.ui.screens.DeveloperSettingsScreen
 import com.hermesandroid.relay.ui.screens.MediaSettingsScreen
 import com.hermesandroid.relay.ui.screens.PairedDevicesScreen
 import com.hermesandroid.relay.ui.screens.ConnectionsSettingsScreen
+import com.hermesandroid.relay.ui.screens.ProfileInspectorScreen
 import com.hermesandroid.relay.ui.screens.SettingsScreen
 import com.hermesandroid.relay.ui.screens.TerminalScreen
 import com.hermesandroid.relay.ui.screens.NotificationCompanionSettingsScreen
 import com.hermesandroid.relay.ui.screens.VoiceSettingsScreen
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
+import com.hermesandroid.relay.network.RelayProfileInspectorClient
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import com.hermesandroid.relay.viewmodel.ProfileInspectorViewModel
 import com.hermesandroid.relay.viewmodel.TerminalViewModel
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
 import com.hermesandroid.relay.audio.VoicePlayer
@@ -170,11 +174,12 @@ sealed class Screen(
     // get a real fullscreen surface (the Dialog wasn't actually filling the
     // window — Settings cards were leaking through behind it).
     //
-    // Multi-connection: accepts an optional `connectionId` query arg so
-    // the ConnectionsSettings "Re-pair" button can target a specific
-    // connection. When null, the flow creates a new connection on success
-    // (handoff: Worker B still needs
-    // `ConnectionViewModel.addConnectionFromPairing(...)` for that).
+    // Multi-connection: accepts an optional `connectionId` query arg —
+    // the ConnectionsSettings "Re-pair" button targets a specific
+    // connection. The "Add connection" path pre-creates a placeholder
+    // via `ConnectionViewModel.beginAddConnection()` and routes here
+    // with that id, so the wizard's applyPairingPayload lands in the
+    // new connection's auth store instead of the outgoing one's.
     data object Pair : Screen("pair?connectionId={connectionId}", "Pair", Icons.Filled.Settings) {
         const val ARG_CONNECTION_ID: String = "connectionId"
         fun route(connectionId: String? = null): String =
@@ -199,6 +204,51 @@ sealed class Screen(
     data object Analytics : Screen("settings/analytics", "Analytics", Icons.Filled.Settings)
     data object DeveloperSettings : Screen("settings/developer", "Developer", Icons.Filled.Settings)
     data object About : Screen("settings/about", "About", Icons.Filled.Settings)
+
+    // Profile Inspector — full-screen read-only viewer with 4 tabs
+    // (Config / SOUL / Memory / Skills) for a single profile. The
+    // `profileName` path segment survives process death via Android's
+    // SavedStateHandle arg propagation; the route template is registered
+    // in the NavHost with a typed `StringType` arg, and the concrete
+    // URI is built by `route(profileName)`.
+    data object ProfileInspector : Screen(
+        "settings/profile_inspector/{profileName}?section={section}",
+        "Profile Inspector",
+        Icons.Filled.Settings,
+    ) {
+        const val ARG_PROFILE_NAME: String = "profileName"
+        const val ARG_SECTION: String = "section"
+
+        /** Tab sections accepted by the `section` query arg. */
+        const val SECTION_CONFIG: String = "config"
+        const val SECTION_SOUL: String = "soul"
+        const val SECTION_MEMORY: String = "memory"
+        const val SECTION_SKILLS: String = "skills"
+
+        /**
+         * Build a concrete nav URI for the Profile Inspector.
+         *
+         * @param profileName the profile to inspect (required).
+         * @param section     which tab to land on. One of
+         *                    [SECTION_CONFIG] / [SECTION_SOUL] /
+         *                    [SECTION_MEMORY] / [SECTION_SKILLS].
+         *                    Defaults to [SECTION_CONFIG] so callers
+         *                    that don't care about the tab — the
+         *                    common "Inspect" card entry — land on
+         *                    Config, matching the pre-deep-link
+         *                    behaviour.
+         *
+         * Backwards compat: the route template still accepts a
+         * call without `?section=` because the query arg has a
+         * default value in the navArgument declaration. Old
+         * deep-links without the arg resolve to Config.
+         */
+        fun route(profileName: String, section: String = SECTION_CONFIG): String {
+            val encoded = java.net.URLEncoder.encode(profileName, "UTF-8")
+                .replace("+", "%20")
+            return "settings/profile_inspector/$encoded?section=$section"
+        }
+    }
 }
 
 private val bottomNavScreens = listOf(
@@ -225,13 +275,40 @@ fun RelayApp() {
     // One-time init: the terminal channel ViewModel registers with the shared
     // multiplexer and observes the relay connection state so it can attach/
     // reattach automatically on network changes.
+    val terminalAppContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
     LaunchedEffect(Unit) {
         terminalViewModel.initialize(
             multiplexer = connectionViewModel.multiplexer,
             connectionState = connectionViewModel.relayConnectionState,
             authState = connectionViewModel.authState,
-            authManager = connectionViewModel.authManager
+            authManager = connectionViewModel.authManager,
+            tabNameStore = com.hermesandroid.relay.data.TerminalTabNameStore(terminalAppContext),
         )
+    }
+
+    // Cold-start relay kick.
+    //
+    // The ON_RESUME observer installed below in DisposableEffect misses the
+    // Activity's very first ON_RESUME because DisposableEffect attaches the
+    // observer AFTER the Activity has already resumed — LifecycleEventObserver
+    // does not fire state transitions retroactively, it only sees *future*
+    // events. That meant cold-start users had a disconnected relay UI until
+    // they navigated to Settings (whose own `LaunchedEffect(Unit)` fires
+    // `reconnectIfStale()` on entry) or backgrounded + foregrounded the app
+    // to trigger a fresh ON_RESUME.
+    //
+    // Watching authState here handles both branches: on cold start the
+    // persisted session rehydrates asynchronously from AuthManager and flips
+    // authState → Paired after DataStore + crypto init. That transition fires
+    // this LaunchedEffect, which kicks the WSS handshake regardless of which
+    // tab the user is looking at. reconnectIfStale() is cheap and
+    // self-guarding (paired && disconnected && hasUrl) so the second firing
+    // on any later Paired-refresh is a no-op.
+    val coldStartAuthState by connectionViewModel.authState.collectAsState()
+    LaunchedEffect(coldStartAuthState) {
+        if (coldStartAuthState is AuthState.Paired) {
+            connectionViewModel.reconnectIfStale()
+        }
     }
 
     // Lifecycle-aware revalidation. ON_RESUME (every time the app comes
@@ -269,6 +346,23 @@ fun RelayApp() {
             context = mediaContext,
             okHttpClient = okhttp3.OkHttpClient.Builder()
                 .readTimeout(2, java.util.concurrent.TimeUnit.MINUTES)
+                .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                .build(),
+            relayUrlProvider = { connectionViewModel.relayUrl.value },
+            sessionTokenProvider = {
+                (connectionViewModel.authState.value as? AuthState.Paired)?.token
+            },
+        )
+    }
+
+    // Profile Inspector client. Shares the same lazy relay URL + bearer
+    // token providers as the voice client so any rotation/re-pair is
+    // automatically picked up on the next fetch. Process-stable via
+    // remember {} so the OkHttpClient isn't rebuilt on recomposition.
+    val profileInspectorClient = remember {
+        RelayProfileInspectorClient(
+            okHttpClient = okhttp3.OkHttpClient.Builder()
+                .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
                 .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                 .build(),
             relayUrlProvider = { connectionViewModel.relayUrl.value },
@@ -487,6 +581,15 @@ fun RelayApp() {
         // so voice/chat/settings screens can call showHumanError from their
         // error-collector LaunchedEffects without threading state downwards.
         val snackbarHostState = remember { SnackbarHostState() }
+
+        // Relay-pushed `profiles.updated` announcements. AuthManager
+        // filters out idempotent pushes (same names + same count), so
+        // this only fires when the profile list actually changed.
+        LaunchedEffect(connectionViewModel) {
+            connectionViewModel.profilesUpdatedEvents.collect {
+                snackbarHostState.showSnackbar("Profiles updated")
+            }
+        }
 
         // === v0.4.1 polish: global unattended-access banner ===
         // Rendered at the top of the scaffold on every tab when BOTH the
@@ -891,7 +994,12 @@ fun RelayApp() {
                         },
                         onNavigateToAbout = {
                             navController.navigate(Screen.About.route)
-                        }
+                        },
+                        onNavigateToProfileInspector = { profileName ->
+                            navController.navigate(
+                                Screen.ProfileInspector.route(profileName),
+                            )
+                        },
                     )
                 }
                 composable(Screen.VoiceSettings.route) {
@@ -935,7 +1043,14 @@ fun RelayApp() {
                             navController.navigate(Screen.PairedDevices.route)
                         },
                         onNavigateToPair = {
-                            navController.navigate(Screen.Pair.route(null))
+                            // Pre-create + switch to the placeholder so
+                            // applyPairingPayload's token write lands in
+                            // the new connection's store. See
+                            // ConnectionViewModel.beginAddConnection kdoc.
+                            connectionSwitchScope.launch {
+                                val id = connectionViewModel.beginAddConnection()
+                                navController.navigate(Screen.Pair.route(id))
+                            }
                         }
                     )
                 }
@@ -1000,9 +1115,19 @@ fun RelayApp() {
                             }
                         },
                         onAddConnection = {
-                            navController.navigate(Screen.Pair.route(null))
+                            // Pre-create + switch to a placeholder so
+                            // applyPairingPayload writes into the new
+                            // connection's EncryptedSharedPrefs.
+                            connectionSwitchScope.launch {
+                                val id = connectionViewModel.beginAddConnection()
+                                navController.navigate(Screen.Pair.route(id))
+                            }
                         },
                         onBack = { navController.popBackStack() },
+                        // Pass the VM so the active card can render the
+                        // shared EndpointsCard inline — matches the info
+                        // density of Settings → Connection's Card 1.5.
+                        connectionViewModel = connectionViewModel,
                     )
                 }
                 composable(
@@ -1020,49 +1145,30 @@ fun RelayApp() {
                     com.hermesandroid.relay.ui.screens.PairScreen(
                         connectionViewModel = connectionViewModel,
                         onComplete = {
-                            // Multi-connection: on successful pair,
-                            //  - connectionIdArg == null → new-connection
-                            //    add path. Call addConnectionFromPairing
-                            //    which creates a fresh Connection (with
-                            //    its own tokenStoreKey) and switches to it.
-                            //
-                            //    **v1 pairing-token limitation:** the pair
-                            //    that just completed wrote its session token
-                            //    into the previously-active connection's
-                            //    token store — NOT the new connection's
-                            //    (because applyPairingPayload runs against
-                            //    the live authManager, which was still
-                            //    bound to the outgoing connection when the
-                            //    pair completed). The new connection
-                            //    therefore lands in an unpaired state and
-                            //    the user must re-pair it (scan a second
-                            //    QR while the new connection is active). A
-                            //    cleaner fix — targeting
-                            //    applyPairingPayload at a specific store
-                            //    BEFORE the pair runs — is a deferred
-                            //    follow-up.
-                            //  - connectionIdArg != null → re-pair in place.
-                            //    applyPairingPayload already wrote to the
-                            //    active connection's auth store (the
-                            //    calling site switched to it before
-                            //    navigating), so there's nothing extra to
-                            //    do here.
-                            if (connectionIdArg == null) {
+                            // Both "add new" and "re-pair in place" now
+                            // route to this screen with connectionIdArg
+                            // set — add-new goes through
+                            // ConnectionViewModel.beginAddConnection()
+                            // which pre-creates the placeholder + switches
+                            // to it before navigating here, so
+                            // applyPairingPayload lands on the correct
+                            // auth store. Nothing extra to do on success
+                            // beyond popping the backstack.
+                            navController.popBackStack()
+                        },
+                        onCancel = {
+                            // If the user bailed out before completing a
+                            // pair, discard the placeholder we pre-created
+                            // on entry. Safe no-op for real (paired)
+                            // connections; only removes placeholders that
+                            // never got a pairedAt stamp.
+                            if (connectionIdArg != null) {
                                 connectionSwitchScope.launch {
-                                    connectionViewModel.addConnectionFromPairing(
-                                        label = null,
-                                        apiServerUrl = connectionViewModel.apiServerUrl.value,
-                                        relayUrl = connectionViewModel.relayUrl.value,
-                                    ).onFailure { err ->
-                                        snackbarHostState.showSnackbar(
-                                            err.message ?: "Could not save connection",
-                                        )
-                                    }
+                                    connectionViewModel.discardPlaceholderConnection(connectionIdArg)
                                 }
                             }
                             navController.popBackStack()
                         },
-                        onCancel = { navController.popBackStack() },
                     )
                 }
                 composable(Screen.ChatSettings.route) {
@@ -1086,7 +1192,9 @@ fun RelayApp() {
                 composable(Screen.Analytics.route) {
                     AnalyticsScreen(
                         connectionViewModel = connectionViewModel,
-                        onBack = { navController.popBackStack() }
+                        onBack = { navController.popBackStack() },
+                        voiceViewModel = voiceViewModel,
+                        chatViewModel = chatViewModel,
                     )
                 }
                 composable(Screen.DeveloperSettings.route) {
@@ -1099,6 +1207,82 @@ fun RelayApp() {
                     AboutScreen(
                         connectionViewModel = connectionViewModel,
                         onBack = { navController.popBackStack() }
+                    )
+                }
+                composable(
+                    route = Screen.ProfileInspector.route,
+                    arguments = listOf(
+                        navArgument(Screen.ProfileInspector.ARG_PROFILE_NAME) {
+                            type = NavType.StringType
+                        },
+                        // Optional `section` query arg — which tab to
+                        // land on. Defaults to "config" so existing
+                        // deep-links without the arg keep their
+                        // pre-deep-link behaviour.
+                        navArgument(Screen.ProfileInspector.ARG_SECTION) {
+                            type = NavType.StringType
+                            defaultValue = Screen.ProfileInspector.SECTION_CONFIG
+                        },
+                    ),
+                ) { backStackEntry ->
+                    // Build the VM with the shared inspector client and
+                    // the nav-back-stack's SavedStateHandle. A small
+                    // factory keeps the VM scoped to this destination —
+                    // leaving the screen (popBackStack) destroys it, so
+                    // entering a different profile later gets a fresh
+                    // VM rather than reusing stale state.
+                    //
+                    // Keyed on the profile-name arg so navigating from
+                    // profile A → profile B (unlikely in v1 but possible
+                    // via deep link) yields a fresh VM rather than
+                    // reusing the A VM with A's loaded state.
+                    val profileNameArg = backStackEntry.arguments
+                        ?.getString(Screen.ProfileInspector.ARG_PROFILE_NAME)
+                        .orEmpty()
+                    val sectionArg = backStackEntry.arguments
+                        ?.getString(Screen.ProfileInspector.ARG_SECTION)
+                        ?: Screen.ProfileInspector.SECTION_CONFIG
+                    val inspectorViewModel: ProfileInspectorViewModel = viewModel(
+                        viewModelStoreOwner = backStackEntry,
+                        key = "profile-inspector-$profileNameArg",
+                        factory = object : androidx.lifecycle.ViewModelProvider.Factory {
+                            @Suppress("UNCHECKED_CAST")
+                            override fun <T : androidx.lifecycle.ViewModel> create(
+                                modelClass: Class<T>,
+                                extras: androidx.lifecycle.viewmodel.CreationExtras,
+                            ): T {
+                                // createSavedStateHandle() pulls the
+                                // typed nav args out of extras — the
+                                // backStackEntry is the SavedStateRegistry
+                                // owner here, so the resulting
+                                // SavedStateHandle contains our
+                                // `profileName` arg automatically.
+                                val ssh = extras.createSavedStateHandle()
+                                return ProfileInspectorViewModel(
+                                    client = profileInspectorClient,
+                                    savedStateHandle = ssh,
+                                ) as T
+                            }
+                        },
+                    )
+
+                    // Pull the model label off the current activeProfile
+                    // for the top-bar subtitle — read-only snapshot,
+                    // falls back to null when the selected profile
+                    // doesn't happen to match the one we're inspecting
+                    // (shouldn't normally happen since the entry is
+                    // keyed off the same Profile).
+                    val selectedProfile by connectionViewModel
+                        .selectedProfile.collectAsState()
+                    val modelLabel = selectedProfile
+                        ?.takeIf { it.name == profileNameArg }
+                        ?.model
+
+                    ProfileInspectorScreen(
+                        viewModel = inspectorViewModel,
+                        profileModel = modelLabel,
+                        initialSection = sectionArg,
+                        onBack = { navController.popBackStack() },
                     )
                 }
             }

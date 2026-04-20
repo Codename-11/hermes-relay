@@ -54,6 +54,8 @@ import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -670,16 +672,32 @@ fun AgentInfoSheet(
 
             // ---- Profile section (hidden when server advertises none) ----
             if (agentProfiles.isNotEmpty()) {
+                // Apparent "server default" profile — the one the server
+                // would use if the phone sent no override. We infer this
+                // from the runtime metadata: the single profile (if any)
+                // whose gateway is reporting running. Used to add a tiny
+                // caption to that row so users can tell which of their
+                // profiles the server is actively serving — especially
+                // important when one of the profiles is literally named
+                // "default" so "Server default" vs "default" would be
+                // otherwise indistinguishable.
+                val apparentActiveProfile = agentProfiles
+                    .firstOrNull { it.gatewayRunning }
+
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     SectionLabel(
                         title = "Profile",
                         hint = "Overlay an agent's model + SOUL",
                     )
 
-                    // Default row — clears the profile override.
+                    // "Server default" row — clears the profile override
+                    // so the request uses whatever the server's own
+                    // config.yaml picks. Renamed from "Default" so a
+                    // profile literally named "default" doesn't collide
+                    // with this row's label.
                     ProfileRadioRow(
-                        primary = "Default",
-                        secondary = "Server-configured model",
+                        primary = "Server default",
+                        secondary = "Use this connection's default profile",
                         selected = selectedProfile == null,
                         enabled = !isStreaming,
                         onSelect = {
@@ -692,33 +710,75 @@ fun AgentInfoSheet(
 
                     agentProfiles.forEach { profile ->
                         // v0.7.0 runtime metadata indicators:
-                        //   - leadingDotColor: green for gateway_running,
-                        //     grey otherwise. Best-effort probe — a wrong
-                        //     dot doesn't disable the row.
-                        //   - SOUL badge: primary-container, shown only
-                        //     when has_soul.
-                        //   - Skills chip: surface-variant, shown only
-                        //     when skill_count > 0.
-                        // Gateway-off profiles remain selectable (the probe
-                        // can be stale) but render at 50% alpha as a hint.
+                        //   - leadingDotColor: green when this profile's
+                        //     gateway is the live one, grey otherwise.
+                        //   - SOUL badge: primary-container when has_soul.
+                        //   - Skills chip: surface-variant when skill_count > 0.
+                        // Upstream Hermes runs one gateway at a time, so
+                        // non-active profiles correctly report off — that's
+                        // informational, not disabling. Every row stays at
+                        // full alpha; the dot alone communicates status.
                         val dotColor = if (profile.gatewayRunning) {
                             MaterialTheme.colorScheme.primary
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
                         }
-                        val gatewayAlpha = if (profile.gatewayRunning) 1f else 0.5f
+                        val dotA11y = if (profile.gatewayRunning) {
+                            "Gateway running"
+                        } else {
+                            "Gateway idle"
+                        }
+                        val runningLabel = if (profile.gatewayRunning) {
+                            " \u2022 Running"
+                        } else {
+                            " \u2022 Idle"
+                        }
                         val soulBg = MaterialTheme.colorScheme.primaryContainer
                         val soulFg = MaterialTheme.colorScheme.onPrimaryContainer
                         val skillsBg = MaterialTheme.colorScheme.surfaceVariant
                         val skillsFg = MaterialTheme.colorScheme.onSurfaceVariant
+                        val isApparentActive =
+                            apparentActiveProfile?.name == profile.name
+                        // Emphasize the description as the primary label
+                        // when present — it's what users recognise (e.g.
+                        // "Victor") better than the profile key. Fall back
+                        // to the capitalised profile name when description
+                        // is blank.
+                        val hasDescription = profile.description.isNotBlank()
+                        val primaryLabel = if (hasDescription) {
+                            profile.description
+                        } else {
+                            profile.name.replaceFirstChar { it.uppercase() }
+                        }
+                        // Secondary line: `modelname • Running` / `• Idle`.
+                        // The dot itself carries the same information via
+                        // colour; the text label is the a11y-visible
+                        // complement so a screen reader user also gets
+                        // the status without relying on colour.
+                        val secondaryLine = profile.model + runningLabel
+                        // Tertiary caption: the profile identifier (when
+                        // we promoted the description to primary) plus an
+                        // "active on server" hint when this row matches
+                        // the apparent default.
+                        val tertiaryLine = buildString {
+                            if (hasDescription) {
+                                append("profile: ")
+                                append(profile.name)
+                            }
+                            if (isApparentActive && selectedProfile == null) {
+                                if (isNotEmpty()) append(" \u2022 ")
+                                append("This is the server's active profile")
+                            }
+                        }.takeIf { it.isNotBlank() }
                         ProfileRadioRow(
-                            primary = profile.name.replaceFirstChar { it.uppercase() },
-                            secondary = profile.model,
-                            tertiary = profile.description.takeIf { it.isNotBlank() },
+                            primary = primaryLabel,
+                            secondary = secondaryLine,
+                            tertiary = tertiaryLine,
                             selected = selectedProfile?.name == profile.name,
                             enabled = !isStreaming,
-                            contentAlpha = gatewayAlpha,
+                            contentAlpha = 1f,
                             leadingDotColor = dotColor,
+                            leadingDotContentDescription = dotA11y,
                             secondaryTrailing = if (profile.hasSoul || profile.skillCount > 0) {
                                 {
                                     if (profile.skillCount > 0) {
@@ -740,7 +800,7 @@ fun AgentInfoSheet(
                             onSelect = {
                                 if (selectedProfile?.name != profile.name) {
                                     connectionViewModel.selectProfile(profile)
-                                    val display = profile.name.replaceFirstChar { it.uppercase() }
+                                    val display = primaryLabel
                                     val suffix = if (profile.systemMessage?.isNotBlank() == true) {
                                         " — model + SOUL applied"
                                     } else {
@@ -1044,6 +1104,14 @@ private fun ProfileRadioRow(
      */
     leadingDotColor: Color? = null,
     /**
+     * Optional accessibility content description for the leading status
+     * dot. Screen readers announce this string so users don't have to
+     * rely on the dot's colour to know the profile's runtime state.
+     * Pass e.g. "Gateway running" / "Gateway idle". Null skips the
+     * a11y announcement (and renders the dot as a decoration-only).
+     */
+    leadingDotContentDescription: String? = null,
+    /**
      * Optional trailing chip/badge row rendered next to the [secondary]
      * line (same baseline as the model-name text for the Profile section
      * entries). Slot-based so each call site composes its own badges.
@@ -1076,7 +1144,16 @@ private fun ProfileRadioRow(
                 modifier = Modifier
                     .size(6.dp)
                     .clip(CircleShape)
-                    .background(leadingDotColor),
+                    .background(leadingDotColor)
+                    .then(
+                        if (leadingDotContentDescription != null) {
+                            Modifier.semantics {
+                                contentDescription = leadingDotContentDescription
+                            }
+                        } else {
+                            Modifier
+                        }
+                    ),
             )
         }
         Spacer(modifier = Modifier.size(8.dp))

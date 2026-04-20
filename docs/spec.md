@@ -147,7 +147,8 @@ PTY streaming — raw terminal I/O.
 | `terminal.input` | App → Server | `{ data }` (raw keystrokes) |
 | `terminal.output` | Server → App | `{ data }` (raw ANSI output) |
 | `terminal.resize` | App → Server | `{ cols, rows }` |
-| `terminal.detach` | App → Server | `{}` |
+| `terminal.detach` | App → Server | `{ session_name? }` — preserves tmux session |
+| `terminal.kill` | App → Server | `{ session_name? }` — destroys tmux session and kills the shell |
 
 #### Channel: `bridge`
 Phone control — mirrors upstream relay protocol.
@@ -162,24 +163,39 @@ Phone control — mirrors upstream relay protocol.
 
 Pairing is QR-driven. The operator runs the pair command on the host — either `/hermes-relay-pair` from any Hermes chat surface (backed by the `devops/hermes-relay-pair` skill) or the `hermes-pair` shell shim (a thin wrapper around `python -m plugin.pair`). Both share the same implementation in `plugin/pair.py`. The command probes for a running relay, generates a fresh 6-char code, pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint, then embeds the relay URL + code + **chosen TTL + per-channel grants + HMAC signature** (and the API server credentials) in a single QR payload. The phone scans once, **confirms the TTL and grants via a picker dialog**, and is configured for both chat AND terminal/bridge.
 
+As of **v3 (ADR 24)**, the QR can also carry an ordered list of **endpoint candidates** (`lan` / `tailscale` / `public` / operator-defined roles). A single pairing covers every network the phone might be on — the phone picks the highest-priority reachable candidate at connect time and re-probes on network change. The single-URL top-level fields still appear in v3 QRs for backward compatibility; old phones ignore `endpoints` via `ignoreUnknownKeys = true`, new phones prefer `endpoints` and fall back to the top-level URL when the array is absent. See [`docs/remote-access.md`](remote-access.md) for the operator-facing setup per mode.
+
 ```
 1. Operator runs /hermes-relay-pair (or hermes-pair) on the Hermes host,
-   optionally with --ttl <duration> and --grants terminal=7d,bridge=1d.
+   optionally with --ttl <duration>, --grants terminal=7d,bridge=1d,
+   --mode {auto,lan,tailscale,public} (default auto), --public-url <url>.
 2. The pair command reads the API server config (host/port/key) from
-   ~/.hermes/config.yaml or ~/.hermes/.env.
+   ~/.hermes/config.yaml or ~/.hermes/.env, and auto-detects candidate
+   endpoints: LAN IP via routing lookup; Tailscale hostname via
+   tailscale.status() when the CLI is present; public URL from
+   --public-url when provided. Strict-priority ordering (lan → tailscale
+   → public) with 0 = highest. --mode lan/tailscale/public emits only
+   that candidate.
 3. If a relay is reachable at localhost:RELAY_PORT (default 8767):
    a. Mint a fresh 6-char code from A-Z / 0-9
    b. Compute the transport hint (wss / ws) from the relay's TLS config
-   c. POST /pairing/register { code, ttl_seconds, grants, transport_hint }
-      (loopback only — the relay clears all rate-limit blocks on success
-      so stale blocks don't prevent legitimate re-pair)
-   d. Build the payload dict, HMAC-SHA256-sign it with the host-local
-      secret at ~/.hermes/hermes-relay-qr-secret (auto-created, 32 bytes,
-      mode 0o600), attach as `sig` field.
+   c. POST /pairing/register { code, ttl_seconds, grants, transport_hint,
+      endpoints? } (loopback only — the relay clears all rate-limit
+      blocks on success so stale blocks don't prevent legitimate re-pair)
+   d. Build the payload dict (`hermes: 3` when endpoints present, else
+      `hermes: 2`), HMAC-SHA256-sign it with the host-local secret at
+      ~/.hermes/hermes-relay-qr-secret (auto-created, 32 bytes, mode
+      0o600), attach as `sig` field. Canonicalization preserves array
+      order — priority is meaningful, not alphabetic.
 4. Render QR + plain-text block (includes "Pair: for 30 days" or
-   "Pair: indefinitely" + per-channel grant labels).
+   "Pair: indefinitely" + per-channel grant labels + per-endpoint role
+   chips when endpoints are present).
 5. Phone scans the QR → parses HermesPairingPayload (see §3.3.1).
-6. Phone stores the API server URL + key and, if present, the relay URL.
+6. Phone stores the API server URL + key. When endpoints are present,
+   stores the ordered candidate list in PairingPreferences; otherwise
+   synthesizes a single priority-0 `role: lan` (or `role: tailscale`
+   when the top-level host matches `100.64.0.0/10` / `.ts.net`) entry
+   from the top-level fields for forward-compat.
 7. SessionTtlPickerDialog opens with the QR's operator-chosen TTL
    preselected (or default 30d on wss/Tailscale, 7d on plain ws). User
    picks: 1d / 7d / 30d / 90d / 1y / Never. Never-expire warns inline
@@ -202,7 +218,7 @@ Pairing is QR-driven. The operator runs the pair command on the host — either 
     revoke.
 ```
 
-**Old API-only QRs** (no `relay` block, no `hermes` field, or `hermes: 1`) still parse — the phone just skips the relay setup step and can be paired against a relay later via Settings. **v1 QRs with a relay block** (no TTL / grants / sig fields) still parse via `ignoreUnknownKeys`; the phone treats missing TTL as "prompt the user with defaults". Forward-compat: future v3+ QRs will ignore-unknown-keys in existing clients.
+**Old API-only QRs** (no `relay` block, no `hermes` field, or `hermes: 1`) still parse — the phone just skips the relay setup step and can be paired against a relay later via Settings. **v1 QRs with a relay block** (no TTL / grants / sig fields) still parse via `ignoreUnknownKeys`; the phone treats missing TTL as "prompt the user with defaults". **v3 QRs with an `endpoints` array** (ADR 24) also parse on v0.6.x and earlier clients — they ignore the array and keep using the top-level fields. New clients prefer `endpoints` and fall back to the top-level fields when absent.
 
 **Re-pair explicitly resets the TOFU pin** for the target host (`applyServerIssuedCodeAndReset(code, relayUrl)` wipes `CertPinStore[host:port]`) — a QR rescan is taken as consent to possibly-new certificate material. This is the documented recovery path when a relay restarts with a new self-signed cert.
 
@@ -210,11 +226,11 @@ Pairing is QR-driven. The operator runs the pair command on the host — either 
 
 Biometric gate on the app side for terminal access (fingerprint/face) remains planned.
 
-#### 3.3.1 QR Wire Format — `HermesPairingPayload` (v2)
+#### 3.3.1 QR Wire Format — `HermesPairingPayload` (v3)
 
 ```json
 {
-  "hermes": 2,
+  "hermes": 3,
   "host": "172.16.24.250",
   "port": 8642,
   "key": "api-bearer-token",
@@ -223,17 +239,26 @@ Biometric gate on the app side for terminal access (fingerprint/face) remains pl
     "url": "ws://172.16.24.250:8767",
     "code": "ABCD12",
     "ttl_seconds": 2592000,
-    "grants": {
-      "terminal": 2592000,
-      "bridge": 604800
-    },
+    "grants": { "terminal": 2592000, "bridge": 604800 },
     "transport_hint": "ws"
   },
+  "endpoints": [
+    { "role": "lan",       "priority": 0,
+      "api":   { "host": "192.168.1.100", "port": 8642, "tls": false },
+      "relay": { "url": "ws://192.168.1.100:8767", "transport_hint": "ws" } },
+    { "role": "tailscale", "priority": 1,
+      "api":   { "host": "hermes.tail-scale.ts.net", "port": 8642, "tls": true },
+      "relay": { "url": "wss://hermes.tail-scale.ts.net:8767", "transport_hint": "wss" } },
+    { "role": "public",    "priority": 2,
+      "api":   { "host": "hermes.example.com", "port": 443, "tls": true },
+      "relay": { "url": "wss://hermes.example.com/relay", "transport_hint": "wss" } }
+  ],
   "sig": "base64url-hmac-sha256"
 }
 ```
 
-- `hermes` — payload version. `1` is the legacy shape (no new fields); `2` is set when any v2-only field (`ttl_seconds`, `grants`, `transport_hint`) is present in the `relay` block. Both versions parse on phones with the v2 parser.
+- `hermes` — payload version. `1` is the legacy shape (no new fields); `2` is set when any v2-only field (`ttl_seconds`, `grants`, `transport_hint`) is present in the `relay` block; `3` is set when `endpoints` is present (ADR 24). All three versions parse on the current Android client.
+- `endpoints` — **optional** ordered list of endpoint candidates. When present, the phone uses these in strict-priority order (0 = highest) and re-probes reachability on network change. When absent, the phone synthesizes a single priority-0 candidate from the top-level `host`/`port`/`tls` + `relay.url`/`transport_hint` fields. `role` is an open string (known values `lan` / `tailscale` / `public` get styled UI; anything else renders as "Custom VPN (<role>)"). Per-endpoint entries intentionally carry **only** `api` + `relay` — the pairing code, TTL, and grants stay at the top level because they're per-pair artifacts, not per-endpoint. Full schema in ADR 24.
 - Top-level fields (`host`/`port`/`key`/`tls`) configure the direct-chat Hermes API Server. Unchanged since v1.
 - `relay` — **optional** and nullable. Present only when the pair command found a running relay and successfully pre-registered a pairing code with it.
 - `relay.url` — full WebSocket URL (`ws://` for dev, `wss://` for production).
@@ -245,11 +270,14 @@ Biometric gate on the app side for terminal access (fingerprint/face) remains pl
 - The Android parser uses `kotlinx.serialization` with `ignoreUnknownKeys = true`, so future fields can be added without breaking older app builds. `RelayPairing.ttlSeconds` / `grants` / `transportHint` are all nullable with defaults.
 
 Implementation references:
-- Server-side payload builder + CLI flags: `plugin/pair.py` → `build_payload(sign=True)` / `pair_command()` / `parse_duration()` / `parse_grants()`
-- Server-side HMAC: `plugin/relay/qr_sign.py` → `canonicalize` / `sign_payload` / `verify_payload` / `load_or_create_secret`
-- Phone-side parser: `app/src/main/kotlin/.../ui/components/QrPairingScanner.kt` → `HermesPairingPayload` / `RelayPairing`
+- Server-side payload builder + CLI flags: `plugin/pair.py` → `build_payload(sign=True, endpoints=...)` / `pair_command()` / `parse_duration()` / `parse_grants()`; `--mode {auto,lan,tailscale,public}` + `--public-url <url>`
+- Server-side HMAC: `plugin/relay/qr_sign.py` → `canonicalize` / `sign_payload` / `verify_payload` / `load_or_create_secret` — canonical form preserves `endpoints` array order and role strings verbatim
+- Phone-side endpoint model: `app/src/main/kotlin/.../data/Endpoint.kt` → `EndpointCandidate` / `ApiEndpoint` / `RelayEndpoint` / `displayLabel()`
+- Phone-side parser: `app/src/main/kotlin/.../ui/components/QrPairingScanner.kt` → `HermesPairingPayload.endpoints` + v1/v2 synthesizer
+- Phone-side endpoint store: `app/src/main/kotlin/.../data/PairingPreferences.kt` — per-device endpoint list
+- Phone-side network-aware switching: `app/src/main/kotlin/.../network/ConnectionManager.kt` → `resolveBestEndpoint()` + `NetworkCallback`
 - Phone-side TTL picker: `app/src/main/kotlin/.../ui/components/SessionTtlPickerDialog.kt`
-- Relay registration endpoint: `plugin/relay/server.py` → `handle_pairing_register` (see §6 for details)
+- Relay registration endpoint: `plugin/relay/server.py` → `handle_pairing_register` (see §6 for details), accepts optional `endpoints` in body
 - Dashboard pairing endpoint: `plugin/relay/server.py` → `handle_pairing_mint` mints a fresh code and returns a signed payload in this exact shape; regression-tested against the Android parser in `plugin/tests/test_pairing_mint_schema.py`. The endpoint is loopback-only and surfaced to the dashboard via `plugin/dashboard/plugin_api.py` at `POST /api/plugins/hermes-relay/pairing`.
 
 ### 3.4 Security
@@ -270,6 +298,8 @@ Implementation references:
 | Cert pinning | TOFU via `CertPinStore` — SHA-256 SPKI fingerprint recorded per `host:port` on first successful wss connect. Subsequent connects verify via OkHttp `CertificatePinner`. Pin wiped explicitly on QR re-pair (`applyServerIssuedCodeAndReset`). Plain ws:// short-circuits pinning entirely. |
 | QR integrity | HMAC-SHA256 over canonicalized payload. Host-local secret at `~/.hermes/hermes-relay-qr-secret`. Phone parses + stores the signature but does NOT verify yet (secret distribution TBD). |
 | Tailscale detection | Informational only — `tailscale0` interface + `100.64.0.0/10` CGNAT + `.ts.net` hostname checks. Displayed as a Connection-section chip. Does NOT auto-change TTL defaults. |
+| Tailscale helper (first-class) | `plugin/relay/tailscale.py` + `hermes-relay-tailscale` CLI (ADR 25). Publishes the loopback relay over the tailnet via `tailscale serve --bg --https=<port>`; managed TLS + tailnet ACL identity. Optional, graceful-absent when the binary isn't installed. Auto-retires when upstream PR #9295 lands. See [`docs/remote-access.md`](remote-access.md). |
+| Multi-endpoint pairing | Single QR carries an ordered list of `role: lan/tailscale/public/...` candidates with strict-priority selection (ADR 24). Phone re-probes reachability on every network change. Per-candidate `transport_hint` drives the plaintext-`ws://` consent dialog. |
 | Device revocation | Paired Devices screen → `GET /sessions` (tokens masked to 8-char prefix) / `DELETE /sessions/{token_prefix}` (self-revoke allowed, wipes local state + redirects to pair flow). Any paired device can revoke any other — trade-off documented in ADR 15. |
 | Terminal gate | Biometric/PIN required before terminal access (planned). |
 
@@ -404,6 +434,8 @@ HTTP routes registered by `create_app()` in `plugin/relay/server.py`:
 | `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code. Used by the pair command (`/hermes-relay-pair` skill or `hermes-pair` shim) to inject codes that will appear in QR payloads. Request: `{"code": "ABCD12"}`. Rejects non-loopback peers with HTTP 403. |
 | `/api/profiles/{name}/config` | GET | Profile-scoped read-only config. Returns `{profile, path, config, readonly: true}` — `config` is the parsed `config.yaml` for `~/.hermes/` (when `name == "default"`) or `~/.hermes/profiles/<name>/`. Loopback callers skip bearer; remote callers require the relay session bearer. 404 on missing profile / missing config.yaml; 500 on yaml parse error. See §22 in decisions.md. |
 | `/api/profiles/{name}/skills` | GET | Profile-scoped skill enumeration. Walks `<profile>/skills/<category>/<skill>/SKILL.md` recursively; returns `{profile, skills: [{name, category, description, path, enabled: true}], total}`. Same auth model as `/config`. `name`/`description` come from YAML frontmatter when present, else directory basename. All skills report `enabled: true` today — see §22 for the toggle stub. |
+| `/api/profiles/{name}/soul` | GET | Profile-scoped raw `SOUL.md` read. Returns `{profile, path, content, exists, size_bytes}` with optional `truncated: true` when content exceeds the 200KB inline cap. Absent SOUL.md returns 200 with `exists: false` and an empty content string so the Inspector can distinguish "no soul" from transport failure. Same auth model as `/config`. 404 on unknown profile; 500 `{error: "soul_read_failed"}` on decode error. See §22 in decisions.md. |
+| `/api/profiles/{name}/memory` | GET | Profile-scoped memory listing. Returns `{profile, memories_dir, entries: [{name, filename, path, content, size_bytes, truncated}], total}` for `*.md` files directly under `<profile>/memories/` (non-recursive). Ordering: `MEMORY.md` first, `USER.md` second, remainder alphabetical. Each entry capped at 50KB inline with `truncated: true` when larger. Absent memories dir → 200 with empty `entries` array. Same auth model as `/config`. 404 on unknown profile. See §22 in decisions.md. |
 
 ### 6.2 Chat — Direct API Connection
 

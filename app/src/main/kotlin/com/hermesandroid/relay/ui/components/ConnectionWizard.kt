@@ -28,6 +28,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ContentCopy
@@ -40,6 +41,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -70,7 +73,9 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.ClipEntry
 import com.hermesandroid.relay.auth.AuthState
+import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.FeatureFlags
+import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.first
@@ -294,8 +299,16 @@ fun ConnectionWizard(
                                 pendingPayload = null
                                 step = WizardStep.Method
                             },
-                            onConfirm = {
-                                connectionViewModel.applyPairingPayload(payload, ttlSeconds)
+                            onConfirm = { reorderedPayload ->
+                                // Persist the reordered payload so a retry
+                                // from VerifyStep reuses the chosen preferred
+                                // role — otherwise Retry would drop the user's
+                                // "Prefer" choice on every failure.
+                                pendingPayload = reorderedPayload
+                                connectionViewModel.applyPairingPayload(
+                                    reorderedPayload,
+                                    ttlSeconds,
+                                )
                                 step = WizardStep.Verify
                                 verifyAttempt += 1
                             },
@@ -915,11 +928,19 @@ private fun ConfirmStep(
     onTtlChange: (Long) -> Unit,
     isTailscaleDetected: Boolean,
     onBack: () -> Unit,
-    onConfirm: () -> Unit,
+    onConfirm: (HermesPairingPayload) -> Unit,
 ) {
     val transportHint = payload.relay?.transportHint
     val relayUrl = payload.relay?.url
     val isInsecureRelay = relayUrl?.startsWith("ws://") == true
+
+    // Endpoints preview + prefer-role control (ADR 24). `endpoints` is
+    // always non-null + non-empty after parseHermesPairingQr, but we still
+    // null-safe on the orEmpty() path for defense in depth.
+    val endpoints = payload.endpoints.orEmpty()
+    val distinctRoles = endpoints.map { it.role }.distinct()
+    var preferRole by remember(payload) { mutableStateOf<String?>(null) }
+    var preferMenuOpen by remember { mutableStateOf(false) }
 
     Column(
         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -971,6 +992,95 @@ private fun ConfirmStep(
                     size = TransportSecuritySize.Row,
                     modifier = Modifier.fillMaxWidth(),
                 )
+            }
+        }
+
+        // Endpoints preview (ADR 24) — always shown so v1/v2 pairings that
+        // synthesize a single candidate still get a "what will connect"
+        // summary row. v3 QRs with multiple candidates expose the full list
+        // + a Prefer dropdown that promotes the chosen role to priority 0.
+        if (endpoints.isNotEmpty()) {
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "Endpoints (${endpoints.size})",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        text = "The phone tries these in priority order and picks " +
+                            "the first reachable one. Switches automatically when " +
+                            "your network changes.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    endpoints.forEachIndexed { index, candidate ->
+                        if (index > 0) HorizontalDivider()
+                        EndpointPreviewRow(
+                            candidate = candidate,
+                            isPreferred = preferRole?.equals(
+                                candidate.role,
+                                ignoreCase = true,
+                            ) == true,
+                        )
+                    }
+                    // Only expose the Prefer control when the QR carried
+                    // more than one distinct role — single-endpoint payloads
+                    // have nothing to reorder.
+                    if (distinctRoles.size > 1) {
+                        HorizontalDivider()
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                text = "Prefer:",
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(end = 8.dp),
+                            )
+                            Box {
+                                TextButton(onClick = { preferMenuOpen = true }) {
+                                    Text(
+                                        text = preferRole?.let { roleLabel(it) }
+                                            ?: "Natural order",
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Filled.ArrowDropDown,
+                                        contentDescription = null,
+                                    )
+                                }
+                                DropdownMenu(
+                                    expanded = preferMenuOpen,
+                                    onDismissRequest = { preferMenuOpen = false },
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Natural order") },
+                                        onClick = {
+                                            preferRole = null
+                                            preferMenuOpen = false
+                                        },
+                                    )
+                                    distinctRoles.forEach { role ->
+                                        DropdownMenuItem(
+                                            text = { Text(roleLabel(role)) },
+                                            onClick = {
+                                                preferRole = role
+                                                preferMenuOpen = false
+                                            },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -1053,7 +1163,12 @@ private fun ConfirmStep(
                 Text("Back")
             }
             Button(
-                onClick = onConfirm,
+                onClick = {
+                    val effective = preferRole
+                        ?.let { reorderByPreferredRole(payload, it) }
+                        ?: payload
+                    onConfirm(effective)
+                },
                 modifier = Modifier.weight(1f),
             ) {
                 Text("Pair")
@@ -1154,4 +1269,93 @@ private fun LabeledLine(label: String, value: String, hint: String? = null) {
             color = MaterialTheme.colorScheme.onSurface,
         )
     }
+}
+
+/**
+ * One row of the ConfirmStep's Endpoints preview — role label, host:port,
+ * priority, optional "Preferred" chip when the user promoted it.
+ *
+ * Intentionally NOT the shared `EndpointsCard` component: that one carries
+ * probe status, 3-dot actions, and TOFU pin viewer — none of which apply
+ * pre-pair. Here we only need a lightweight visual summary.
+ */
+@Composable
+private fun EndpointPreviewRow(
+    candidate: EndpointCandidate,
+    isPreferred: Boolean,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = candidate.displayLabel(),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (isPreferred) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                    ) {
+                        Text(
+                            text = "Preferred",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
+                    }
+                }
+            }
+            Text(
+                text = "${candidate.api.host}:${candidate.api.port}" +
+                    (candidate.relay.transportHint?.let { " · $it" } ?: ""),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontFamily = FontFamily.Monospace,
+            )
+        }
+        Text(
+            text = "p${candidate.priority}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontFamily = FontFamily.Monospace,
+        )
+    }
+}
+
+/**
+ * Reorder the endpoints array so the chosen role lands at priority 0.
+ * Priority values are renumbered to match the new order — this matters at
+ * persist time because `setDeviceEndpoints` stores the list verbatim and
+ * downstream [com.hermesandroid.relay.network.EndpointResolver] trusts the
+ * `priority` field (see ADR 24 "strict priority").
+ *
+ * No-op when the preferred role is already at index 0, or when the role
+ * isn't present in the candidates list.
+ */
+private fun reorderByPreferredRole(
+    payload: HermesPairingPayload,
+    preferRole: String,
+): HermesPairingPayload {
+    val list = payload.endpoints.orEmpty().toMutableList()
+    val idx = list.indexOfFirst { it.role.equals(preferRole, ignoreCase = true) }
+    if (idx <= 0) return payload
+    val promoted = list.removeAt(idx)
+    list.add(0, promoted)
+    val renumbered = list.mapIndexed { i, c -> c.copy(priority = i) }
+    return payload.copy(endpoints = renumbered)
+}
+
+/** Role → user-facing label used inside the Prefer dropdown menu. */
+private fun roleLabel(role: String): String = when (role.lowercase()) {
+    "lan" -> "LAN"
+    "tailscale" -> "Tailscale"
+    "public" -> "Public"
+    else -> role
 }

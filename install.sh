@@ -162,6 +162,7 @@ HERMES_CONFIG="$HERMES_HOME/config.yaml"
 SHIM_PATH="$HOME/.local/bin/hermes-pair"
 STATUS_SHIM_PATH="$HOME/.local/bin/hermes-status"
 UPDATE_SHIM_PATH="$HOME/.local/bin/hermes-relay-update"
+TS_SHIM_PATH="$HOME/.local/bin/hermes-relay-tailscale"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 SERVICE_SRC="$RELAY_HOME/relay_server/hermes-relay.service"
 SERVICE_DST="$SYSTEMD_USER_DIR/hermes-relay.service"
@@ -468,8 +469,8 @@ else:
     print(f"  [ok] Added {target} to skills.external_dirs in {cfg_path}")
 PY
 
-# ── 5/6  Install hermes-pair + hermes-status + hermes-relay-update shims ──
-step 5 6 "Installing hermes-pair + hermes-status + hermes-relay-update shims"
+# ── 5/7  Install hermes-pair + hermes-status + hermes-relay-update shims ──
+step 5 7 "Installing hermes-pair + hermes-status + hermes-relay-update shims"
 mkdir -p "$(dirname "$SHIM_PATH")"
 cat > "$SHIM_PATH" <<SHIM
 #!/usr/bin/env bash
@@ -551,7 +552,34 @@ SHIM
 chmod +x "$UPDATE_SHIM_PATH"
 ok "Installed $UPDATE_SHIM_PATH"
 
-# ── 6/6  Install systemd user service (optional) ───────────────────────────
+# hermes-relay-tailscale — thin wrapper around `python -m
+# plugin.relay.tailscale_cli`. Installed unconditionally (the shim
+# itself is cheap); the ONE-TIME enablement prompt happens below in
+# step 7/7 and only if the tailscale binary is actually present.
+cat > "$TS_SHIM_PATH" <<SHIM
+#!/usr/bin/env bash
+# Hermes-Relay Tailscale helper — routes to \`python -m
+# plugin.relay.tailscale_cli\` inside the hermes-agent venv.
+#
+# Usage:
+#   hermes-relay-tailscale status
+#   hermes-relay-tailscale enable [--port N]
+#   hermes-relay-tailscale disable [--port N]
+#
+# Override the venv python path with \$HERMES_VENV_PY if needed.
+set -eu
+HERMES_VENV_PY="\${HERMES_VENV_PY:-\$HOME/.hermes/hermes-agent/venv/bin/python}"
+if [ ! -x "\$HERMES_VENV_PY" ]; then
+    echo "hermes-relay-tailscale: cannot find hermes venv python at \$HERMES_VENV_PY" >&2
+    echo "hermes-relay-tailscale: set HERMES_VENV_PY or reinstall hermes-agent" >&2
+    exit 1
+fi
+exec "\$HERMES_VENV_PY" -m plugin.relay.tailscale_cli "\$@"
+SHIM
+chmod +x "$TS_SHIM_PATH"
+ok "Installed $TS_SHIM_PATH"
+
+# ── 6/7  Install systemd user service (optional) ───────────────────────────
 # Idempotent: safe to re-run. Skipped gracefully on hosts without a systemd
 # user session (macOS, bare chroots, WSL without systemd, containers, etc).
 # The relay still runs fine on those — users just start it manually or via
@@ -561,7 +589,7 @@ ok "Installed $UPDATE_SHIM_PATH"
 # ~/.hermes/.env into os.environ on startup, mirroring how the gateway
 # handles API keys. Any future `systemctl --user restart hermes-relay`
 # picks up fresh values from .env automatically.
-step 6 6 "Installing systemd user service"
+step 6 7 "Installing systemd user service"
 
 if [ -n "${HERMES_RELAY_NO_SYSTEMD:-}" ]; then
     info "  HERMES_RELAY_NO_SYSTEMD set — skipping"
@@ -621,7 +649,67 @@ else
     info "  Linger tip: 'loginctl enable-linger $USER' keeps it running after logout"
 fi
 
-# ── 6b/6  Offer (don't force) hermes-gateway restart ──────────────────────
+# ── 7/7  Offer (don't force) Tailscale serve enablement ───────────────────
+# ADR 25 — first-class Tailscale helper. The relay stays loopback-bound on
+# :8767; `tailscale serve` terminates TLS + identity for the tailnet. This
+# step is fully optional:
+#
+#   - Binary absent?                    → skip silently (no Tailscale = no offer)
+#   - TS_DECLINE=1 in env?              → skip silently (scripted opt-out)
+#   - Non-interactive shell w/o TS_AUTO → skip silently with a one-line hint
+#   - Non-interactive shell + TS_AUTO=1 → enable non-interactively
+#   - Interactive shell                 → prompt with default "no"
+#
+# Wrapped in a protective `if` — nothing here can break the installer.
+#
+# TODO(upstream-merge #9295): remove this block once the canonical
+# `hermes gateway run --tailscale` flag lands on hermes-agent main. The
+# capability probe lives in plugin/relay/tailscale.py::canonical_upstream_present.
+if command -v tailscale >/dev/null 2>&1; then
+    step 7 7 "Optional — publish relay over Tailscale"
+    if [ -n "${TS_DECLINE:-}" ]; then
+        info "  TS_DECLINE=1 set — skipping Tailscale serve offer"
+    else
+        ts_do=""
+        if [ ! -t 0 ] || [ "${CI:-}" = "true" ]; then
+            # Non-interactive — only proceed when explicitly opted in.
+            if [ "${TS_AUTO:-}" = "1" ]; then
+                ts_do="yes"
+            else
+                info "  tailscale detected; skipping in non-interactive mode"
+                info "  To enable later: ${C_BOLD}hermes-relay-tailscale enable${C_RESET}"
+                info "  Or re-run install.sh with TS_AUTO=1 to auto-enable."
+            fi
+        else
+            printf "\n"
+            printf "    ${C_DIM}%s${C_RESET} %s\n" "$SYM_INFO" "Tailscale is installed. Publish the relay over your tailnet?"
+            printf "    ${C_DIM}%s${C_RESET} %s\n" "$SYM_INFO" "Runs: ${C_BOLD}tailscale serve --bg --https=8767 http://127.0.0.1:8767${C_RESET}"
+            printf "    ${C_DIM}%s${C_RESET} %s\n" "$SYM_INFO" "Relay stays loopback-bound; Tailscale handles TLS + identity."
+            printf "\n    ${C_BOLD}Enable now?${C_RESET} ${C_DIM}[y/N]${C_RESET} "
+            read -r ts_reply </dev/tty || ts_reply=""
+            case "$ts_reply" in
+                [Yy]*) ts_do="yes" ;;
+                *)     ts_do="" ;;
+            esac
+        fi
+
+        if [ -n "$ts_do" ]; then
+            if "$VENV_PY" -m plugin.relay.tailscale_cli enable --port 8767 >/dev/null 2>&1; then
+                ok "tailscale serve enabled on https://<your-tailnet-host>:8767"
+                info "  Check:  ${C_BOLD}hermes-relay-tailscale status${C_RESET}"
+                info "  Revoke: ${C_BOLD}hermes-relay-tailscale disable${C_RESET}"
+            else
+                warn "tailscale serve command failed — relay still reachable on loopback"
+                info "  Retry manually: ${C_BOLD}hermes-relay-tailscale enable${C_RESET}"
+            fi
+        elif [ -z "${TS_AUTO:-}" ] && [ -t 0 ] && [ "${CI:-}" != "true" ]; then
+            info "  Declined — relay stays loopback-only."
+            info "  Enable later with: ${C_BOLD}hermes-relay-tailscale enable${C_RESET}"
+        fi
+    fi
+fi
+
+# ── 7b/7  Offer (don't force) hermes-gateway restart ──────────────────────
 # The hermes-agent gateway caches plugin tools (android_*, etc.) and skills
 # at import time, so a fresh `git pull` of the plugin does NOT take effect
 # until the gateway re-imports. We could auto-restart it, but that interrupts

@@ -45,13 +45,19 @@ There is no granular permission system — the agent can access banking apps, me
 There is no persistent log of what commands the agent executed on the phone.
 - **Mitigation**: The relay logs commands to stdout when run with INFO logging.
 
+### Remote connectivity
+
+Hermes-Relay does **not** ship its own application-layer crypto. The operator owns both endpoints, and the trust model assumes TLS is terminated somewhere on the path that the operator already controls — Tailscale (managed TLS + tailnet ACL identity), a reverse proxy with Let's Encrypt, a WireGuard / other VPN, or a Cloudflare Tunnel. See [`docs/remote-access.md`](remote-access.md) for the decision matrix and setup recipes per mode.
+
+Multi-endpoint pairing (ADR 24) makes "same phone, different networks" a first-class case: a single QR carries `lan` / `tailscale` / `public` candidates in strict-priority order and the phone re-probes reachability on every network change. Per-candidate `transport_hint` drives the plaintext-`ws://` consent dialog — explicit operator consent is still required for any unencrypted leg. The TOFU cert pin is keyed by `host:port`, so two endpoints pointing at the same hostname share a pin (correct — same cert, same pin) while distinct hostnames each get their own.
+
 ## Recommendations for Production Use
 
-1. **Add TLS**: Put the relay behind a reverse proxy (nginx/caddy) with Let's Encrypt certificates
+1. **Use Tailscale (built-in) or a reverse proxy + Let's Encrypt.** `hermes-relay-tailscale enable` is the shortest path to a managed-TLS remote-access story; Caddy + Let's Encrypt is the shortest path to a real public domain. Either works. See [`docs/remote-access.md`](remote-access.md).
 2. **Use a strong pairing code**: Don't share your code publicly
 3. **Disconnect when idle**: Tap Disconnect in the app when you're not actively using it
 4. **Monitor the phone**: Keep the status overlay enabled to see when the bridge is active
-5. **Don't pair on public WiFi**: The unencrypted connection is vulnerable to interception
+5. **Don't pair on public WiFi without a VPN**: Plain `ws://` is vulnerable to interception — pair on a network you trust or front the relay with Tailscale / TLS first.
 
 ## Privacy
 

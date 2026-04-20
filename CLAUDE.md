@@ -6,7 +6,7 @@
 
 A native Android app (Kotlin + Jetpack Compose) paired with a Python relay server (aiohttp) for the Hermes agent platform. Chat connects directly to the Hermes API Server via HTTP/SSE; bridge and terminal use a relay over WSS.
 
-**Current state:** v0.4.x — Phase 0–3 complete. Direct API chat, session management, pairing + security, inbound media, voice mode, bridge/accessibility control, notification companion, and safety rails. Two product flavors: `googlePlay` (conservative) and `sideload` (full-capability).
+**Current state:** v0.7.x (unreleased on `dev`) — Phase 0–3 complete. Direct API chat, session management, pairing + security (now multi-endpoint, ADR 24), inbound media, voice mode, bridge/accessibility control, notification companion, safety rails, multi-Connection, agent profiles + inspector, and first-class Tailscale (ADR 25). Two product flavors: `googlePlay` (conservative) and `sideload` (full-capability).
 
 ## Architecture
 
@@ -157,6 +157,7 @@ hermes-android/
 | `auth/SessionTokenStore.kt` | Keystore (StrongBox) + EncryptedSharedPrefs fallback; lossless migration on upgrade |
 | `auth/CertPinStore.kt` | TOFU cert pinning — SHA-256 SPKI per host:port in DataStore |
 | `auth/PairedSession.kt` | PairedSession state + PairedDeviceInfo wire model |
+| `data/Endpoint.kt` | `EndpointCandidate` / `ApiEndpoint` / `RelayEndpoint` — multi-endpoint pairing (ADR 24); `displayLabel()` for LAN/Tailscale/Public/Custom chips |
 | `network/RelayHttpClient.kt` | OkHttp for /media, /sessions (list/revoke/extend), /health |
 | **App — Bridge** | |
 | `network/handlers/BridgeCommandHandler.kt` | Routes `bridge.command` → ActionExecutor; full path inventory + safety-rail integration |
@@ -178,6 +179,9 @@ hermes-android/
 | `voice/VoiceBridgeIntentHandler.kt` | Interface routing voice utterances to bridge; impls per flavor via factory |
 | `voice/VoiceIntentClassifier.kt` | Regex phone-control classifier (sideload only); false-negatives preferred over false-positives |
 | `ui/components/VoiceModeOverlay.kt` | Full-screen voice UI — MorphingSphere + VoiceWaveform + mic button |
+| `ui/components/MorphingSphere.kt` | Compose renderer for the agent sphere — delegates math to `MorphingSphereCore` |
+| `ui/components/MorphingSphereCore.kt` | Platform-agnostic sphere algorithm (`kotlin.math` only) — single source of truth; mirrored byte-for-byte in `preview/web/sphere.js` |
+| `preview/web/` | Zero-dep browser harness — live `index.html` preview + `parity-check.mjs`; paired with `MorphingSphereCoreParityTest` (JVM) for struct/full checksum diffing |
 | **App — Media + Notifications** | |
 | `util/MediaCacheWriter.kt` | `cacheDir/hermes-media/` LRU writer; returns FileProvider URIs |
 | `ui/components/InboundAttachmentCard.kt` | Discord-style attachment card for images/video/audio/pdf/text/generic |
@@ -190,7 +194,8 @@ hermes-android/
 | `plugin/relay/channels/notifications.py` | Bounded deque (100) of notification metadata; in-memory only |
 | `plugin/relay/media.py` | MediaRegistry — LRU token store; `strict_sandbox` off by default for `/media/by-path` |
 | `plugin/relay/voice.py` | Voice endpoints — transcribe, synthesize, voice_config; lazy tool imports |
-| `plugin/relay/qr_sign.py` | HMAC-SHA256 QR signing; secret at `~/.hermes/hermes-relay-qr-secret` |
+| `plugin/relay/qr_sign.py` | HMAC-SHA256 QR signing; secret at `~/.hermes/hermes-relay-qr-secret`; canonical form preserves `endpoints` array order + role strings verbatim (ADR 24) |
+| `plugin/relay/tailscale.py` | First-class Tailscale helper (ADR 25) — `status()` / `enable(port)` / `disable(port)` / `canonical_upstream_present()`; safe-absent via shell-out to `tailscale` CLI |
 | `plugin/relay/_env_bootstrap.py` | Loads `~/.hermes/.env` before relay imports; called from both entry points |
 | **Plugin — Tools + Installer** | |
 | `plugin/tools/android_tool.py` | 18 `android_*` tool handlers (14 baseline + send_sms, call, search_contacts, return_to_hermes); `android_screenshot` first consumer of `register_media()` |
@@ -302,8 +307,10 @@ See [RELEASE.md](RELEASE.md) for the full recipe.
 | Chat (sessions) | `POST /api/sessions/{id}/chat/stream` | No live tool events; reloads history on stream complete |
 | Chat (compat) | `POST /v1/chat/completions` (stream=true) | Inline tool annotations only |
 | Session CRUD | `GET/POST/PATCH/DELETE /api/sessions` | Non-standard; bootstrap or fork |
-| Pairing (QR) | `POST /pairing/register` (loopback only) | Via `/hermes-relay-pair` or `hermes-pair` shim |
+| Pairing (QR) | `POST /pairing/register` (loopback only) | Via `/hermes-relay-pair` or `hermes-pair` shim; accepts optional `endpoints` for multi-endpoint QRs |
+| Pairing (multi-endpoint) | QR `endpoints` array (ADR 24) | `hermes: 3` schema; ordered `lan`/`tailscale`/`public`/... candidates; phone re-probes on network change |
 | Pairing auth | WSS `auth.ok` payload | Includes `expires_at`, `grants`, `transport_hint` |
+| Tailscale Serve (ADR 25) | `hermes-relay-tailscale enable\|disable\|status` CLI | Fronts loopback `:8767` with `tailscale serve --bg --https=<port>`; auto-retires on upstream PR #9295 |
 | Inbound media (token) | `GET /media/{token}` | Bearer auth; 24h TTL |
 | Inbound media (path) | `GET /media/by-path?path=<abs>` | Permissive by default; `RELAY_MEDIA_STRICT_SANDBOX=1` to restrict |
 | Session management | `GET /sessions`, `DELETE /sessions/{prefix}`, `PATCH /sessions/{prefix}` | List/revoke/extend; RelayHttpClient |
