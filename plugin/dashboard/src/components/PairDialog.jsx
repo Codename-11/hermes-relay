@@ -180,7 +180,7 @@ export default function PairDialog({ open, onClose }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
-      <Card className="w-full max-w-md max-h-[90vh] overflow-y-auto">
+      <Card className="w-full max-w-xl max-h-[90vh] overflow-y-auto">
         <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
           <div>
             <CardTitle>Pair new device</CardTitle>
