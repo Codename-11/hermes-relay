@@ -28,6 +28,10 @@ Invoke this skill when any of the following happens:
 
 Do NOT use this skill to start or install the relay server itself — that is a prerequisite. Reference `hermes relay start` and stop.
 
+### Dashboard alternative
+
+Operators with the Hermes dashboard open can also mint the same QR from the web UI: **Relay tab → Management → "Pair new device"** (Mode + Prefer dropdowns), or **Relay tab → Remote Access → "Regenerate QR"** for the fuller preview + probe view. Both UIs call the same `handle_pairing_mint` endpoint this skill shells into. Prefer this skill when you're already in a terminal (faster + scriptable); prefer the dashboard when the operator needs to see + probe candidate endpoints before minting. The dashboard's "Advanced · API-server override" field should stay blank in almost every case — pinning a forward-auth-gated hostname there (e.g. Authelia-fronted FQDN) pairs WSS but breaks the API side. See `docs/remote-access.md` § "Forward-auth gateways".
+
 ## Prerequisites
 
 1. **Hermes-Relay plugin installed into the Hermes venv.** Verify by running `python -m plugin.pair --help` — if it errors with `ModuleNotFoundError: No module named 'plugin'`, install it first: `pip install -e <path-to-hermes-relay-repo>`.

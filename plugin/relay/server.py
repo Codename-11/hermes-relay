@@ -42,6 +42,7 @@ from pathlib import Path
 
 from . import __version__
 from .auth import (
+    _PAIRING_CODE_TTL,
     PairingManager,
     RateLimiter,
     Session,
@@ -455,9 +456,16 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         endpoints=endpoints_list or None,
     )
 
-    expires_at = int(time.time()) + (
-        int(ttl_seconds) if ttl_seconds and ttl_seconds > 0 else 60
-    )
+    # This is the pairing-code expiry (how long the user has to scan),
+    # not the future session's TTL. The pairing-code hard-cap is
+    # ``_PAIRING_CODE_TTL`` (10 minutes); the per-session TTL, if the
+    # caller pinned one, is stamped into ``grants`` / the QR payload's
+    # top-level ``ttl_seconds`` — it governs post-pair session life, not
+    # the window to scan. Earlier code conflated the two and defaulted
+    # to 60s when no session TTL was passed, which made dashboard-minted
+    # QRs appear to expire in ~1 minute even though the code itself was
+    # valid for 10.
+    expires_at = int(time.time() + _PAIRING_CODE_TTL)
 
     # Same rationale as /pairing/register and /pairing/approve — a phone
     # self-banned on the rate limiter (e.g. reconnect-loop after a relay

@@ -286,6 +286,48 @@ the helper still works but the canonical path
 be removed in a future release. Same retirement pattern as
 `hermes_relay_bootstrap/` after PR #8556.
 
+### Forward-auth gateways (Authelia, Cloudflare Access) in front of the API server
+
+A surprising failure mode: the relay's WSS endpoint pairs fine (the phone
+presents the one-shot pairing code, which the relay knows about), but
+every follow-up API call from the phone returns `401`/`403` because the
+API server is behind a forward-auth gateway that expects a browser-issued
+SSO cookie the phone doesn't have. Result: the relay creates a session
+(so the paired device shows up in the Management tab), but the phone's
+wizard times out waiting for `AuthState.Paired` and cleans up the config
+locally — looks like "pair succeeded, then silently dropped."
+
+**Diagnosing the shape:**
+
+- Server-side: `journalctl --user -u hermes-relay -f` shows
+  `Client authenticated from <LAN IP> (token=...)` — proof WSS pairing
+  worked.
+- Server-side: the same log shows no corresponding `/v1/models` or
+  `/v1/runs` 200s from the phone — just silence or 4xx.
+- Phone-side: ConnectionViewModel logs `probeCapabilities()` failures
+  or HTTP 401 on initial model listing.
+
+**Fix options, in order of preference:**
+
+1. **Don't put the Hermes API behind forward-auth.** Keep the API
+   server on `127.0.0.1:8642` and front it *only* via the relay's
+   loopback plugin routes or via Tailscale Serve (identity at the
+   network edge, no HTTP-layer challenge). Forward-auth gateways are
+   the wrong tool for machine-to-machine traffic.
+2. **Use the relay's canonical remote path:** Tailscale Serve
+   (`hermes-relay-tailscale enable`) terminates TLS + identity inside
+   the tailnet ACL, so the phone never meets an SSO challenger.
+3. **Bypass-auth rule for the phone's IP range.** Some forward-auth
+   stacks (Traefik + Authelia `bypass` rules, Caddy
+   `reverse_proxy` + access control) can whitelist the phone's
+   Tailscale IP or a well-known source CIDR. Fragile — prefer #1 or #2.
+
+**UI guardrail:** the dashboard's `PairDialog` warns when the operator
+types an FQDN into the "Advanced · API-server override" field, because
+that path has been the trap — the input pins the API host in the QR,
+and when the typed host is forward-auth-gated the phone hits the
+failure above. Leave the override blank and let `mode=auto` pick.
+
 ## See also
 
 - `docs/decisions.md` §24 — multi-endpoint pairing wire format +
