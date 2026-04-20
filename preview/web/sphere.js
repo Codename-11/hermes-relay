@@ -136,8 +136,14 @@ export function forEachSphereCell(frame, onCell) {
 
   const noiseJitter1 = fbm(t * 0.05 + 7.3, 1.7) * 0.5;
   const noiseJitter2 = fbm(3.1, t * 0.04 + 13.7) * 0.5;
-  const lightAngle1 = t * frame.lightSpeedX + noiseJitter1;
-  const lightAngle2 = t * frame.lightSpeedY + noiseJitter2;
+  const naturalAngle1 = t * frame.lightSpeedX + noiseJitter1;
+  const naturalAngle2 = t * frame.lightSpeedY + noiseJitter2;
+  // Gaze bias — mirrors MorphingSphereCore.kt. Defaults keep original behavior.
+  const biasX = frame.lightAngleBiasX ?? 0;
+  const biasY = frame.lightAngleBiasY ?? 0;
+  const blend = clamp(frame.lightAngleBlend ?? 0, 0, 1);
+  const lightAngle1 = naturalAngle1 * (1 - blend) + biasX * blend;
+  const lightAngle2 = naturalAngle2 * (1 - blend) + biasY * blend;
   const lx = Math.sin(lightAngle1) * 0.65;
   const ly = Math.cos(lightAngle2) * 0.65;
   const lz = Math.sqrt(atLeast(1 - lx * lx - ly * ly, 0.01));
@@ -198,7 +204,11 @@ export function forEachSphereCell(frame, onCell) {
 
         const heartbeatFx = heartbeat * 0.05 * (1 - normDist * normDist);
 
-        const brightness = distWeight * distBrightness + frame.lightInfluence * directionalLight + heartbeatFx;
+        // Shadow modulation — mirrors MorphingSphereCore.kt. shadowStrength
+        // defaults to 0 (legacy pearl shading preserved byte-for-byte).
+        const shadowStrength = frame.shadowStrength ?? 0;
+        const shadowFactor = 1 - shadowStrength * (1 - directionalLight);
+        const brightness = distWeight * distBrightness * shadowFactor + frame.lightInfluence * directionalLight + heartbeatFx;
         const charNoise = structural + turbulence + radialFlow + ripple;
 
         // Kotlin: `(t * 0.3f + col * 0.17f + row * 0.13f).toInt()` — truncation toward zero.

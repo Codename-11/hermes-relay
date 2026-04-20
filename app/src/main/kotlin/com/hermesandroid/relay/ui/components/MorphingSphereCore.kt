@@ -138,7 +138,20 @@ data class SphereFrame(
     val toolCallBurst: Float,
     val voiceAmplitude: Float,
     val voiceMode: Boolean,
-    val voiceRadiusScale: Float
+    val voiceRadiusScale: Float,
+    // Gaze bias — lets callers aim the sphere's "eye" (bright spot) at a
+    // specific direction without moving the sphere body. `lightAngleBlend`
+    // blends between natural rotation (0) and the bias override (1).
+    // Defaults keep the original behavior for every existing caller.
+    val lightAngleBiasX: Float = 0f,
+    val lightAngleBiasY: Float = 0f,
+    val lightAngleBlend: Float = 0f,
+    // Shadow contrast — darkens distBrightness on the hemisphere facing away
+    // from the light, making the bright spot ("eye") clearly distinguishable
+    // from the shadow side. 0 = uniform pearl shading (legacy behavior, full
+    // parity preserved); 1 = shadow side fully uses directionalLight to scale
+    // the distBrightness (strong Lambertian contrast).
+    val shadowStrength: Float = 0f
 )
 
 /** What to draw at one grid cell. RGB + alpha in 0..1. */
@@ -208,8 +221,11 @@ fun forEachSphereCell(frame: SphereFrame, onCell: (SphereCell) -> Unit) {
 
     val noiseJitter1 = fbm(t * 0.05f + 7.3f, 1.7f) * 0.5f
     val noiseJitter2 = fbm(3.1f, t * 0.04f + 13.7f) * 0.5f
-    val lightAngle1 = t * frame.lightSpeedX + noiseJitter1
-    val lightAngle2 = t * frame.lightSpeedY + noiseJitter2
+    val naturalAngle1 = t * frame.lightSpeedX + noiseJitter1
+    val naturalAngle2 = t * frame.lightSpeedY + noiseJitter2
+    val blend = frame.lightAngleBlend.coerceIn(0f, 1f)
+    val lightAngle1 = naturalAngle1 * (1f - blend) + frame.lightAngleBiasX * blend
+    val lightAngle2 = naturalAngle2 * (1f - blend) + frame.lightAngleBiasY * blend
     val lx = sin(lightAngle1) * 0.65f
     val ly = cos(lightAngle2) * 0.65f
     val lz = sqrt((1f - lx * lx - ly * ly).coerceAtLeast(0.01f))
@@ -284,7 +300,11 @@ fun forEachSphereCell(frame: SphereFrame, onCell: (SphereCell) -> Unit) {
 
                 val heartbeatFx = heartbeat * 0.05f * (1f - normDist * normDist)
 
-                val brightness = distWeight * distBrightness +
+                // Shadow modulation — leave distBrightness alone on the lit
+                // side (directionalLight=1 → factor=1), dim it on the shadow
+                // side (directionalLight=0 → factor = 1 - shadowStrength).
+                val shadowFactor = 1f - frame.shadowStrength * (1f - directionalLight)
+                val brightness = distWeight * distBrightness * shadowFactor +
                     frame.lightInfluence * directionalLight +
                     heartbeatFx
                 val charNoise = structural + turbulence + radialFlow + ripple

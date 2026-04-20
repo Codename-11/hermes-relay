@@ -46,7 +46,9 @@ async function copy(key: string, text: string) {
     </p>
 
     <div class="install-code">
-      <pre><code>{{ installCommand }}</code></pre>
+      <div class="install-code-scroll">
+        <pre><code>{{ installCommand }}</code></pre>
+      </div>
       <button
         type="button"
         class="copy-btn"
@@ -61,7 +63,9 @@ async function copy(key: string, text: string) {
     <p class="install-then">Then:</p>
 
     <div class="install-code">
-      <pre><code>{{ pairCommand }}</code></pre>
+      <div class="install-code-scroll">
+        <pre><code>{{ pairCommand }}</code></pre>
+      </div>
       <button
         type="button"
         class="copy-btn"
@@ -173,8 +177,13 @@ async function copy(key: string, text: string) {
   background: var(--vp-c-bg-alt);
   border: 1px solid var(--vp-c-divider);
   border-radius: 8px;
-  padding: 14px 58px 14px 18px;
+}
+/* Scrolling lives on the inner container so the absolutely-positioned copy
+   button stays pinned to the visible top-right corner of .install-code,
+   instead of scrolling out of view with the overflowing command text. */
+.install-code-scroll {
   overflow-x: auto;
+  padding: 14px 58px 14px 18px;
 }
 .install-code pre {
   margin: 0;

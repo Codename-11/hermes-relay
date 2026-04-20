@@ -6,9 +6,10 @@ export default defineConfig({
   description: 'Android app for Hermes Agent — chat, control, and connect from your phone',
 
   head: [
-    // Favicon
-    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/logo.svg' }],
-    ['link', { rel: 'apple-touch-icon', href: '/logo.svg' }],
+    // Favicon — base path is NOT auto-applied to head entries in VitePress,
+    // so hard-prefix with /hermes-relay/ to match the GitHub Pages deploy.
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/hermes-relay/logo.svg' }],
+    ['link', { rel: 'apple-touch-icon', href: '/hermes-relay/logo.svg' }],
 
     // Canonical
     ['link', { rel: 'canonical', href: 'https://codename-11.github.io/hermes-relay/' }],

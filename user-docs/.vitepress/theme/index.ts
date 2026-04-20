@@ -6,6 +6,7 @@ import HermesFlow from './components/HermesFlow.vue';
 import InstallSection from './components/InstallSection.vue';
 import HeroDemo from './components/HeroDemo.vue';
 import FeatureMatrix from './components/FeatureMatrix.vue';
+import SphereMark from './components/SphereMark.vue';
 
 export default {
   extends: DefaultTheme,
@@ -16,7 +17,7 @@ export default {
   Layout() {
     return h(DefaultTheme.Layout, null, {
       'home-hero-image': () => h(HeroDemo),
-      'home-hero-after': () => h(InstallSection),
+      'home-hero-after': () => [h(SphereMark), h(InstallSection)],
       'doc-after': () =>
         h('div', { class: 'doc-footer-cta' }, [
           h('hr'),
