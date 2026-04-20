@@ -1110,6 +1110,10 @@ fun RelayApp() {
                             navController.navigate(Screen.Pair.route(null))
                         },
                         onBack = { navController.popBackStack() },
+                        // Pass the VM so the active card can render the
+                        // shared EndpointsCard inline — matches the info
+                        // density of Settings → Connection's Card 1.5.
+                        connectionViewModel = connectionViewModel,
                     )
                 }
                 composable(
