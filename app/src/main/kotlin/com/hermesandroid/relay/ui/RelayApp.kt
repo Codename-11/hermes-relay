@@ -174,11 +174,12 @@ sealed class Screen(
     // get a real fullscreen surface (the Dialog wasn't actually filling the
     // window — Settings cards were leaking through behind it).
     //
-    // Multi-connection: accepts an optional `connectionId` query arg so
-    // the ConnectionsSettings "Re-pair" button can target a specific
-    // connection. When null, the flow creates a new connection on success
-    // (handoff: Worker B still needs
-    // `ConnectionViewModel.addConnectionFromPairing(...)` for that).
+    // Multi-connection: accepts an optional `connectionId` query arg —
+    // the ConnectionsSettings "Re-pair" button targets a specific
+    // connection. The "Add connection" path pre-creates a placeholder
+    // via `ConnectionViewModel.beginAddConnection()` and routes here
+    // with that id, so the wizard's applyPairingPayload lands in the
+    // new connection's auth store instead of the outgoing one's.
     data object Pair : Screen("pair?connectionId={connectionId}", "Pair", Icons.Filled.Settings) {
         const val ARG_CONNECTION_ID: String = "connectionId"
         fun route(connectionId: String? = null): String =
@@ -1042,7 +1043,14 @@ fun RelayApp() {
                             navController.navigate(Screen.PairedDevices.route)
                         },
                         onNavigateToPair = {
-                            navController.navigate(Screen.Pair.route(null))
+                            // Pre-create + switch to the placeholder so
+                            // applyPairingPayload's token write lands in
+                            // the new connection's store. See
+                            // ConnectionViewModel.beginAddConnection kdoc.
+                            connectionSwitchScope.launch {
+                                val id = connectionViewModel.beginAddConnection()
+                                navController.navigate(Screen.Pair.route(id))
+                            }
                         }
                     )
                 }
@@ -1107,7 +1115,13 @@ fun RelayApp() {
                             }
                         },
                         onAddConnection = {
-                            navController.navigate(Screen.Pair.route(null))
+                            // Pre-create + switch to a placeholder so
+                            // applyPairingPayload writes into the new
+                            // connection's EncryptedSharedPrefs.
+                            connectionSwitchScope.launch {
+                                val id = connectionViewModel.beginAddConnection()
+                                navController.navigate(Screen.Pair.route(id))
+                            }
                         },
                         onBack = { navController.popBackStack() },
                         // Pass the VM so the active card can render the
@@ -1131,49 +1145,30 @@ fun RelayApp() {
                     com.hermesandroid.relay.ui.screens.PairScreen(
                         connectionViewModel = connectionViewModel,
                         onComplete = {
-                            // Multi-connection: on successful pair,
-                            //  - connectionIdArg == null → new-connection
-                            //    add path. Call addConnectionFromPairing
-                            //    which creates a fresh Connection (with
-                            //    its own tokenStoreKey) and switches to it.
-                            //
-                            //    **v1 pairing-token limitation:** the pair
-                            //    that just completed wrote its session token
-                            //    into the previously-active connection's
-                            //    token store — NOT the new connection's
-                            //    (because applyPairingPayload runs against
-                            //    the live authManager, which was still
-                            //    bound to the outgoing connection when the
-                            //    pair completed). The new connection
-                            //    therefore lands in an unpaired state and
-                            //    the user must re-pair it (scan a second
-                            //    QR while the new connection is active). A
-                            //    cleaner fix — targeting
-                            //    applyPairingPayload at a specific store
-                            //    BEFORE the pair runs — is a deferred
-                            //    follow-up.
-                            //  - connectionIdArg != null → re-pair in place.
-                            //    applyPairingPayload already wrote to the
-                            //    active connection's auth store (the
-                            //    calling site switched to it before
-                            //    navigating), so there's nothing extra to
-                            //    do here.
-                            if (connectionIdArg == null) {
+                            // Both "add new" and "re-pair in place" now
+                            // route to this screen with connectionIdArg
+                            // set — add-new goes through
+                            // ConnectionViewModel.beginAddConnection()
+                            // which pre-creates the placeholder + switches
+                            // to it before navigating here, so
+                            // applyPairingPayload lands on the correct
+                            // auth store. Nothing extra to do on success
+                            // beyond popping the backstack.
+                            navController.popBackStack()
+                        },
+                        onCancel = {
+                            // If the user bailed out before completing a
+                            // pair, discard the placeholder we pre-created
+                            // on entry. Safe no-op for real (paired)
+                            // connections; only removes placeholders that
+                            // never got a pairedAt stamp.
+                            if (connectionIdArg != null) {
                                 connectionSwitchScope.launch {
-                                    connectionViewModel.addConnectionFromPairing(
-                                        label = null,
-                                        apiServerUrl = connectionViewModel.apiServerUrl.value,
-                                        relayUrl = connectionViewModel.relayUrl.value,
-                                    ).onFailure { err ->
-                                        snackbarHostState.showSnackbar(
-                                            err.message ?: "Could not save connection",
-                                        )
-                                    }
+                                    connectionViewModel.discardPlaceholderConnection(connectionIdArg)
                                 }
                             }
                             navController.popBackStack()
                         },
-                        onCancel = { navController.popBackStack() },
                     )
                 }
                 composable(Screen.ChatSettings.route) {

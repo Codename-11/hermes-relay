@@ -886,78 +886,65 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // v1 constraints.
 
     /**
-     * Creates a new connection from completed pairing data, persists it via
-     * [ConnectionStore], and switches the app to it. Returns the new
-     * connection id.
+     * Pre-create a placeholder [Connection] and switch to it BEFORE the
+     * Pair wizard runs, so [applyPairingPayload]'s token write (which
+     * targets the currently-active [authManager]) lands in the new
+     * connection's EncryptedSharedPrefs instead of the outgoing one's.
      *
-     * Called from the Pair success handler when no existing `connectionId`
-     * was passed (i.e. the "Add connection" FAB flow).
+     * This replaces the earlier "pair then create" flow that left the
+     * fresh connection in an unpaired state because the token had been
+     * written to the wrong store. See [addConnectionFromPairing]'s KDoc
+     * for the historical limitation; this method is the structural fix.
      *
-     * **v1 pairing-token limitation:** this method is invoked AFTER
-     * [applyPairingPayload] has already run, which writes the freshly-minted
-     * session token into the **currently-active** connection's
-     * EncryptedSharedPreferences (via the active [authManager] instance).
-     * The new connection that this method creates has its own distinct
-     * [Connection.tokenStoreKey] and does NOT carry those credentials
-     * across. Consequence: immediately after "Add connection → scan QR →
-     * switch to new connection", the new connection is unpaired from the
-     * token store's perspective and the user must re-pair it (scan a
-     * second QR while the new connection is active).
-     *
-     * A cleaner fix would require targeting [applyPairingPayload] at a
-     * specific token store BEFORE the pair runs — that's a bigger refactor
-     * deferred to a follow-up. See the TODO at the top of RelayApp's Pair
-     * route for the user-facing journey.
+     * The placeholder starts with empty URLs — [applyPairingPayload]
+     * will overwrite them via [updateApiServerUrl] / [updateRelayUrl]
+     * on the newly-active Connection once the QR is scanned. Label is
+     * "New connection…" until the pair completes; the caller can rename
+     * after success. Callers that abandon the wizard must invoke
+     * [discardPlaceholderConnection] to remove the empty record.
      */
-    suspend fun addConnectionFromPairing(
-        label: String?,
-        apiServerUrl: String,
-        relayUrl: String,
-    ): Result<String> {
-        val resolvedLabel = (label?.trim()?.takeIf { it.isNotEmpty() })
-            ?: Connection.extractDefaultLabel(apiServerUrl)
-
-        // Validate in the same order the fields appear to the user — label
-        // then URLs — so the first error surfaced matches where their eye
-        // would be.
-        ConnectionValidation.validateLabel(resolvedLabel)?.let {
-            return Result.failure(IllegalArgumentException(it))
-        }
-        ConnectionValidation.validateApiServerUrl(apiServerUrl)?.let {
-            return Result.failure(IllegalArgumentException(it))
-        }
-        ConnectionValidation.validateRelayUrl(relayUrl)?.let {
-            return Result.failure(IllegalArgumentException(it))
-        }
-        ConnectionValidation.findDuplicate(
-            connections = connectionStore.connections.value,
-            apiServerUrl = apiServerUrl,
-            relayUrl = relayUrl,
-        )?.let { dup ->
-            return Result.failure(
-                IllegalStateException("A connection for this server already exists (\"${dup.label}\")"),
-            )
-        }
-
+    suspend fun beginAddConnection(): String {
         val id = java.util.UUID.randomUUID().toString()
-        val connection = Connection(
+        val placeholder = Connection(
             id = id,
-            label = resolvedLabel,
-            apiServerUrl = apiServerUrl.trim(),
-            relayUrl = relayUrl.trim(),
+            label = "New connection…",
+            apiServerUrl = "",
+            relayUrl = "",
             tokenStoreKey = Connection.buildTokenStoreKey(id),
             pairedAt = null,
             lastActiveSessionId = null,
             transportHint = null,
             expiresAt = null,
         )
-        connectionStore.addConnection(connection)
-        // Switch to the new connection so subsequent chat/bridge/voice
-        // traffic uses its (currently empty) token store. Per the KDoc
-        // above, the user will need to re-pair against this connection to
-        // populate it.
-        switchConnection(id)
-        return Result.success(id)
+        connectionStore.addConnection(placeholder)
+        // Join so the fresh authManager is bound before the caller
+        // navigates into the Pair wizard — otherwise applyPairingPayload
+        // could fire against the outgoing auth store if the user scans
+        // faster than the switch coroutine completes.
+        switchConnection(id).join()
+        return id
+    }
+
+    /**
+     * Remove a placeholder [Connection] created by [beginAddConnection]
+     * when the user cancels before a successful pair. No-op when the
+     * connection has been paired (pairedAt != null) or already has a
+     * non-empty URL — i.e. the pair partially succeeded and the record
+     * is now real. Also no-op when [connectionId] isn't found.
+     *
+     * Called from the Pair route's onCancel handler. Safe to call on
+     * every cancel without checking state; the internal guard handles
+     * the "real connection" case.
+     */
+    suspend fun discardPlaceholderConnection(connectionId: String) {
+        val existing = connectionStore.connections.value.firstOrNull { it.id == connectionId }
+            ?: return
+        if (existing.pairedAt != null) return
+        // An unpaired connection with a populated API URL means the
+        // scan hit applyPairingPayload (which writes the URL) but the
+        // handshake didn't complete to Paired. We still remove it —
+        // the user pressed cancel, the record is garbage.
+        removeConnection(connectionId)
     }
 
     /**
