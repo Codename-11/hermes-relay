@@ -609,6 +609,14 @@ fun AgentInfoSheet(
     val pairingCode by connectionViewModel.pairingCode.collectAsState()
     val serverModelName by chatViewModel.serverModelName.collectAsState()
 
+    // Multi-connection switcher state — folded into this sheet in place of
+    // the separate top-bar ConnectionChip (see 2026-04-20 DEVLOG). Read
+    // through the store so the sheet picks up add/remove/rename events
+    // without needing an explicit re-collect.
+    val allConnections by connectionViewModel.connectionStore.connections.collectAsState()
+    val activeConnectionId by connectionViewModel.connectionStore
+        .activeConnectionId.collectAsState()
+
     // Mid-stream gate — mirrors what ProfilePicker's `enabled` flag was doing:
     // a radio tap during an in-flight chat turn would race the request. Apply
     // to BOTH sections (profile + personality) since they both feed startStream.
@@ -939,7 +947,47 @@ fun AgentInfoSheet(
 
             // ---- Connection section (condensed) ----
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                SectionLabel(title = "Connection", hint = null)
+                SectionLabel(
+                    title = "Connection",
+                    hint = if (allConnections.size >= 2) "Switch between paired servers" else null,
+                )
+
+                // Multi-connection switcher. Renders inline as a radio list
+                // (mirrors the Profile + Personality sections above) when the
+                // user has ≥2 paired connections. Replaces the separate top-
+                // bar ConnectionChip that used to be the only switch surface
+                // — folding it here keeps all agent/connection controls in
+                // one place, matching Bailey's ask in the 2026-04-20 audit.
+                //
+                // Single-connection case shows no radio list (would be a
+                // redundant "only one row, already selected" waste of
+                // vertical space). The Auth / API reachable / endpoints
+                // block below always renders regardless.
+                if (allConnections.size >= 2) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        allConnections.forEach { connection ->
+                            val isActive = connection.id == activeConnectionId
+                            val hostname = com.hermesandroid.relay.data.Connection
+                                .extractDefaultLabel(connection.apiServerUrl)
+                            val statusLine = when {
+                                connection.pairedAt == null -> "$hostname • Not paired"
+                                else -> "$hostname • Paired"
+                            }
+                            ProfileRadioRow(
+                                primary = connection.label,
+                                secondary = statusLine,
+                                selected = isActive,
+                                enabled = !isStreaming,
+                                onSelect = {
+                                    if (!isActive) {
+                                        connectionViewModel.switchConnection(connection.id)
+                                        toast("Switched to ${connection.label}")
+                                    }
+                                },
+                            )
+                        }
+                    }
+                }
 
                 ChipRow(label = "Auth") { authStateChip(authState) }
                 ChipRow(label = "API reachable") {

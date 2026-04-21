@@ -48,6 +48,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -56,6 +59,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.FeatureFlags
+import com.hermesandroid.relay.ui.components.AgentInfoSheet
 import com.hermesandroid.relay.ui.components.ConnectionStatusRow
 import com.hermesandroid.relay.ui.components.ProfileInspectorCard
 import com.hermesandroid.relay.viewmodel.asBadgeState
@@ -87,10 +91,13 @@ fun SettingsScreen(
     // `connection · model · personality` without re-reading ChatViewModel
     // state from a different place.
     chatViewModel: ChatViewModel,
-    // Tapping the Active Agent card jumps to Chat AND auto-opens the
-    // consolidated AgentInfoSheet. Plumbing lives in RelayApp via a
-    // parameterised Chat route (openAgentSheet=true).
-    onNavigateToChatWithAgentSheet: () -> Unit,
+    // (The `onNavigateToChatWithAgentSheet` param that used to live here
+    // was removed as part of the 2026-04-21 pairing-audit fix. Tapping the
+    // Active Agent card now opens the consolidated AgentInfoSheet INLINE
+    // on this screen — the previous redirect-to-Chat-then-open design
+    // confused users, who expected dismissing the sheet to drop them back
+    // on Settings, not on a different tab. The local state + AgentInfoSheet
+    // block at the bottom of this composable drives the flow directly.)
     // Multi-connection: entry point for the Connections manager. Kept at
     // the top of the category list so switching server connections is one
     // tap from the bottom nav, not buried behind "Connection → Paired
@@ -151,6 +158,15 @@ fun SettingsScreen(
         connectionViewModel.reconnectIfStale()
     }
 
+    // AgentInfoSheet visibility — driven by a tap on the Active Agent
+    // card at the top of the category list. Previously this tapped
+    // route was `onNavigateToChatWithAgentSheet` (navigate to Chat +
+    // pass ?openAgentSheet=true), which caused the sheet to open on a
+    // different tab and left the user on Chat after dismissing it. Now
+    // the sheet renders inline over Settings so closing drops the user
+    // back where they started.
+    var showAgentSheet by remember { mutableStateOf(false) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -188,7 +204,7 @@ fun SettingsScreen(
                     defaultPersonality = defaultPersonality,
                 ),
                 isCustomized = selectedProfile != null || selectedPersonality != "default",
-                onClick = onNavigateToChatWithAgentSheet,
+                onClick = { showAgentSheet = true },
                 isDarkTheme = isDarkTheme,
             )
 
@@ -404,6 +420,20 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
         }
+    }
+
+    // Agent info sheet — same consolidated surface ChatScreen uses from
+    // its TopAppBar tap target, hoisted here so tapping the Active Agent
+    // card on Settings opens it in-place. ModalBottomSheet is a popup, so
+    // placement as a sibling to Scaffold is cosmetic — visual stacking is
+    // handled by the underlying window manager, not the Compose tree.
+    if (showAgentSheet) {
+        AgentInfoSheet(
+            connectionViewModel = connectionViewModel,
+            chatViewModel = chatViewModel,
+            onDismiss = { showAgentSheet = false },
+            onNavigateToConnections = onNavigateToConnections,
+        )
     }
 }
 

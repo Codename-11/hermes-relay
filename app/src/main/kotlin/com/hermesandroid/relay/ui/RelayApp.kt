@@ -9,7 +9,6 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
@@ -19,7 +18,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.sp
@@ -69,7 +67,6 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.hermesandroid.relay.ui.components.MorphingSphere
-import com.hermesandroid.relay.ui.components.ConnectionChip
 import com.hermesandroid.relay.ui.components.ConnectionSwitcherSheet
 import com.hermesandroid.relay.ui.components.UnattendedGlobalBanner
 import com.hermesandroid.relay.ui.components.UpdateBanner
@@ -180,10 +177,28 @@ sealed class Screen(
     // via `ConnectionViewModel.beginAddConnection()` and routes here
     // with that id, so the wizard's applyPairingPayload lands in the
     // new connection's auth store instead of the outgoing one's.
-    data object Pair : Screen("pair?connectionId={connectionId}", "Pair", Icons.Filled.Settings) {
+    data object Pair : Screen(
+        "pair?connectionId={connectionId}&autoStart={autoStart}",
+        "Pair",
+        Icons.Filled.Settings,
+    ) {
         const val ARG_CONNECTION_ID: String = "connectionId"
-        fun route(connectionId: String? = null): String =
-            if (connectionId == null) "pair" else "pair?connectionId=$connectionId"
+        /**
+         * Optional "skip the chooser, jump into this pair method" hint.
+         * Currently only `"scan"` is recognised — the "Add connection" FAB
+         * on the Connections screen passes it so the camera opens
+         * immediately instead of forcing the user through the Method step.
+         * Re-pair flows intentionally leave this null so the full chooser
+         * (Scan / Enter code / Show code) remains available.
+         */
+        const val ARG_AUTO_START: String = "autoStart"
+        fun route(connectionId: String? = null, autoStart: String? = null): String {
+            val params = buildList {
+                if (connectionId != null) add("connectionId=$connectionId")
+                if (autoStart != null) add("autoStart=$autoStart")
+            }
+            return if (params.isEmpty()) "pair" else "pair?${params.joinToString("&")}"
+        }
     }
     data object ConnectionsSettings : Screen("settings/connections", "Connections", Icons.Filled.Settings)
     data object VoiceSettings : Screen("voice_settings", "Voice", Icons.Filled.Settings)
@@ -634,25 +649,21 @@ fun RelayApp() {
             !voiceUiState.voiceMode
         // === END v0.4.1 polish ===
 
-        // Multi-connection: top-bar ConnectionChip state. Visible on the
-        // four primary tabs (Chat / Terminal / Bridge / Settings) per
-        // decisions.md §19 — connection first, personality second. Hidden
-        // while onboarding or during voice-mode full-screen takeover.
-        // Tapping opens the switcher sheet declared below the Scaffold.
-        val currentRoute = navBackStackEntry?.destination?.route
-        val connections by connectionViewModel.connections.collectAsState()
-        val activeConnection by connectionViewModel.activeConnection.collectAsState()
-        val activeConnectionId by connectionViewModel.activeConnectionId.collectAsState()
-        var connectionSheetVisible by remember { mutableStateOf(false) }
-        // Only surface the chip when there's something to switch between.
-        // With a single connection (the default after migration) the strip
-        // is just dead chrome above every screen — users reach it via
-        // Settings → Connections → Add instead. Hidden during onboarding
-        // and voice-mode takeovers regardless.
-        val connectionChipVisible = !isOnboarding &&
-            !voiceUiState.voiceMode &&
-            currentRoute in bottomNavScreens.map { it.route } &&
-            connections.size >= 2
+        // Multi-connection switcher has moved into the AgentInfoSheet's
+        // Connection section (see ConnectionInfoSheet.kt) — the top-bar
+        // ConnectionChip row that used to live here was duplicating that
+        // surface and eating vertical space. The `connectionSheetVisible`
+        // state and the ConnectionSwitcherSheet declaration further down
+        // are kept for any callers that still need the modal switcher
+        // (e.g. programmatic routes), but nothing in the default UI opens
+        // them anymore.
+        //
+        // Kept as a named const so the `if (showUnattendedBanner ||
+        // connectionChipVisible)` window-inset conditional below still
+        // compiles without a deeper rewrite. Collapses to false now that
+        // the chip is gone; when the unattended banner is absent too, the
+        // Scaffold goes back to default TopAppBar status-bar padding.
+        val connectionChipVisible = false
 
         Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -697,38 +708,12 @@ fun RelayApp() {
             }
         }
 
-        // Multi-connection: app-wide connection chip. Rendered above the
-        // Scaffold (outside the per-screen TopAppBars) so it's visible on
-        // every primary tab without having to edit Chat / Terminal /
-        // Bridge / Settings screens individually — all four screens own
-        // their own TopAppBar, and doubling up by stuffing the chip inside
-        // each one would be a much bigger surface-area change. Aligned to
-        // the end so it reads like a header action rather than a primary
-        // title.
-        AnimatedVisibility(
-            visible = connectionChipVisible,
-            enter = fadeIn(tween(200)),
-            exit = fadeOut(tween(200)),
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    // Background BEFORE statusBarsPadding so the surface
-                    // colour extends up under the status bar (otherwise
-                    // there's a dead rectangle of system-window behind the
-                    // time / wifi icons that doesn't match the app chrome).
-                    .background(MaterialTheme.colorScheme.surface)
-                    .statusBarsPadding()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                ConnectionChip(
-                    label = activeConnection?.label ?: "No connection",
-                    onClick = { connectionSheetVisible = true },
-                )
-            }
-        }
+        // (The app-wide ConnectionChip row that used to live here has been
+        // removed. Multi-connection switching is now reachable from the
+        // AgentInfoSheet's Connection section — see ConnectionInfoSheet.kt's
+        // "Multi-connection switcher" block. Keeps the top chrome tidy and
+        // puts the control next to the related Profile + Personality
+        // radios.)
         Scaffold(
             // weight(1f) instead of fillMaxSize(): Column arranges children
             // top-down, so a fillMaxSize child would try to claim the full
@@ -931,6 +916,13 @@ fun RelayApp() {
                     // scope, a shared holder or explicit VM param gets added
                     // here.
                     BridgeScreen(
+                        // Pass the connection VM so the screen can render
+                        // the "Relay not connected" banner when the WSS
+                        // isn't in a Paired+Connected state. Without this
+                        // the user can flip master toggle on, pass every
+                        // permission check, and still receive zero
+                        // commands — silently useless.
+                        connectionViewModel = connectionViewModel,
                         // === PHASE3-safety-rails: bridge safety route ===
                         onNavigateToBridgeSafety = {
                             navController.navigate(Screen.BridgeSafetySettings.route)
@@ -943,20 +935,12 @@ fun RelayApp() {
                     SettingsScreen(
                         connectionViewModel = connectionViewModel,
                         chatViewModel = chatViewModel,
-                        // Tap on the Active Agent card: land on Chat with
-                        // the AgentInfoSheet auto-opened. launchSingleTop
-                        // avoids stacking duplicate Chat entries; popUpTo
-                        // Settings (inclusive=false) preserves Settings on
-                        // the back stack so pressing Back from Chat
-                        // returns to Settings rather than exiting.
-                        onNavigateToChatWithAgentSheet = {
-                            navController.navigate(
-                                Screen.Chat.route(openAgentSheet = true),
-                            ) {
-                                launchSingleTop = true
-                                popUpTo(Screen.Settings.route) { inclusive = false }
-                            }
-                        },
+                        // (The `onNavigateToChatWithAgentSheet` callback that
+                        // used to live here was removed 2026-04-21. Tapping
+                        // the Active Agent card on Settings now opens the
+                        // AgentInfoSheet inline on THAT screen — closing the
+                        // sheet returns the user to Settings instead of
+                        // leaving them on Chat after a confusing redirect.)
                         onNavigateToConnections = {
                             navController.navigate(Screen.ConnectionsSettings.route)
                         },
@@ -1117,10 +1101,16 @@ fun RelayApp() {
                         onAddConnection = {
                             // Pre-create + switch to a placeholder so
                             // applyPairingPayload writes into the new
-                            // connection's EncryptedSharedPrefs.
+                            // connection's EncryptedSharedPrefs. Pass
+                            // autoStart=scan so the wizard jumps into the
+                            // camera on first composition — "Add connection"
+                            // has exactly one obvious next step, no reason
+                            // to force the Method chooser in between.
                             connectionSwitchScope.launch {
                                 val id = connectionViewModel.beginAddConnection()
-                                navController.navigate(Screen.Pair.route(id))
+                                navController.navigate(
+                                    Screen.Pair.route(connectionId = id, autoStart = "scan")
+                                )
                             }
                         },
                         onBack = { navController.popBackStack() },
@@ -1138,12 +1128,20 @@ fun RelayApp() {
                             nullable = true
                             defaultValue = null
                         },
+                        navArgument(Screen.Pair.ARG_AUTO_START) {
+                            type = NavType.StringType
+                            nullable = true
+                            defaultValue = null
+                        },
                     ),
                 ) { backStackEntry ->
                     val connectionIdArg = backStackEntry.arguments
                         ?.getString(Screen.Pair.ARG_CONNECTION_ID)
+                    val autoStartArg = backStackEntry.arguments
+                        ?.getString(Screen.Pair.ARG_AUTO_START)
                     com.hermesandroid.relay.ui.screens.PairScreen(
                         connectionViewModel = connectionViewModel,
+                        autoStart = autoStartArg,
                         onComplete = {
                             // Both "add new" and "re-pair in place" now
                             // route to this screen with connectionIdArg
@@ -1290,23 +1288,12 @@ fun RelayApp() {
         }
         } // end Column (wraps banner + Scaffold)
 
-        // Multi-connection: connection switcher sheet. Hoisted to Box
-        // scope so the sheet floats over whatever screen is active —
-        // ModalBottomSheet renders as a popup, so the placement in the
-        // composition tree only affects state ownership, not visual
-        // stacking.
-        if (connectionSheetVisible) {
-            ConnectionSwitcherSheet(
-                connections = connections,
-                activeConnectionId = activeConnectionId,
-                onSelectConnection = { id -> connectionViewModel.switchConnection(id) },
-                onManageConnections = {
-                    connectionSheetVisible = false
-                    navController.navigate(Screen.ConnectionsSettings.route)
-                },
-                onDismiss = { connectionSheetVisible = false },
-            )
-        }
+        // (The ConnectionSwitcherSheet modal that used to live here was
+        // driven by the removed top-bar ConnectionChip. Switching is now
+        // inline in AgentInfoSheet's Connection section — see
+        // ConnectionInfoSheet.kt's "Multi-connection switcher" block.
+        // ConnectionSwitcherSheet.kt itself is kept so any future programmatic
+        // callers (deep links, automation) can still invoke it if needed.)
 
         // Sphere intro overlay — fades out after 1.5s to reveal main UI
         AnimatedVisibility(

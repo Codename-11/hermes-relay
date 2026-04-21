@@ -166,6 +166,48 @@ class ConnectionSwitchCoordinator(
     }
 
     /**
+     * Tear down the transport half of an active connection WITHOUT
+     * rebuilding against a successor — the "removing the last remaining
+     * connection" case in [ConnectionViewModel.removeConnection].
+     *
+     * Runs steps 2-5 of [switchConnection] (cancel stream, stop voice,
+     * disconnect WSS, emit switch event) then returns. The emitted event
+     * carries an empty payload so subscribers (ChatViewModel, profile
+     * resolver) treat it as "no new target" and wipe their per-connection
+     * state the same way they would on a regular switch.
+     *
+     * The caller is responsible for:
+     *  - Clearing the app-wide URL flows so the API client probe loop
+     *    stops firing against the removed URL.
+     *  - Nulling out the API client itself via `rebuildApiClient()` with
+     *    blank URLs, which drives the Unreachable/Unknown states on the
+     *    status badges.
+     *
+     * We intentionally do NOT rebuild [AuthManager] here — there's no
+     * successor id to bind it to. The previous AuthManager instance stays
+     * in memory; its EncryptedSharedPreferences file was just deleted by
+     * [ConnectionStore.removeConnection], but that's a storage-side
+     * concern (a future write would just re-create the file). Any
+     * subsequent `Add connection` flow rebuilds the AuthManager against
+     * the new connection's id anyway.
+     */
+    fun teardownActive(): Job = scope.launch {
+        switchMutex.withLock {
+            runCatching { streamCancelCallback?.invoke() }
+                .onFailure { Log.w(TAG, "streamCancelCallback failed: ${it.message}") }
+            runCatching { voiceStopCallback?.invoke() }
+                .onFailure { Log.w(TAG, "voiceStopCallback failed: ${it.message}") }
+            runCatching { connectionManager.disconnect() }
+                .onFailure { Log.w(TAG, "connectionManager.disconnect failed: ${it.message}") }
+            // Empty payload signals "no successor". Subscribers that look
+            // up per-connection state (profile selection, session
+            // history) treat the empty id as a miss and fall back to
+            // their null/empty branches, matching the on-switch behavior.
+            _connectionSwitchEvents.emit("")
+        }
+    }
+
+    /**
      * Run the full switch sequence described on the class KDoc. Returns a
      * [Job] so callers can `.join()` in tests; in production the VM fires
      * and forgets.

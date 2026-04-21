@@ -232,6 +232,11 @@ fun ChatScreen(
     val messages by chatViewModel.messages.collectAsState()
     val isStreaming by chatViewModel.isStreaming.collectAsState()
     val chatReady by connectionViewModel.chatReady.collectAsState()
+    // Voice mode's /voice/transcribe and /voice/synthesize calls both go
+    // over the relay — gate the Mic button on relayReady so we fail
+    // deterministically at the button instead of after recording, when
+    // the transcribe POST would have surfaced a cryptic network error.
+    val relayReady by connectionViewModel.relayReady.collectAsState()
     val apiReachable by connectionViewModel.apiServerReachable.collectAsState()
     val chatMode by connectionViewModel.chatMode.collectAsState()
     val error by chatViewModel.error.collectAsState()
@@ -1103,6 +1108,21 @@ fun ChatScreen(
                                 onAttachmentManualFetch = { msgId, idx ->
                                     chatViewModel.manualFetchAttachment(msgId, idx)
                                 },
+                                onCardAction = { msgId, cardKey, action ->
+                                    // OPEN_URL is resolved at the UI layer
+                                    // because launching ACTION_VIEW needs a
+                                    // Context. We record the dispatch FIRST
+                                    // via the ViewModel so the card collapses
+                                    // even if the browser launch throws.
+                                    if (action.mode == com.hermesandroid.relay.data.HermesCardAction.Modes.OPEN_URL) {
+                                        chatViewModel.dispatchCardAction(msgId, cardKey, action)
+                                        com.hermesandroid.relay.ui.components.handleCardActionExternally(
+                                            context, action
+                                        )
+                                    } else {
+                                        chatViewModel.dispatchCardAction(msgId, cardKey, action)
+                                    }
+                                },
                                 onCopyMessage = { text ->
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     // The new Clipboard API is suspend-based, so the
@@ -1412,11 +1432,39 @@ fun ChatScreen(
                             )
                         }
                     } else {
-                        IconButton(onClick = { requestVoiceMode() }) {
+                        // Gate on relayReady — voice mode calls
+                        // /voice/transcribe and /voice/synthesize which
+                        // only exist on the relay. Muted tint + toast on
+                        // tap mirrors Terminal's "relay disconnected"
+                        // subtitle pattern: we surface the dependency
+                        // at the button, not after the user has already
+                        // recorded an utterance.
+                        IconButton(
+                            onClick = {
+                                if (relayReady) {
+                                    requestVoiceMode()
+                                } else {
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        "Voice mode needs a relay connection",
+                                        android.widget.Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                            },
+                        ) {
                             Icon(
                                 imageVector = Icons.Filled.Mic,
-                                contentDescription = "Voice mode",
-                                tint = MaterialTheme.colorScheme.primary
+                                contentDescription = if (relayReady) {
+                                    "Voice mode"
+                                } else {
+                                    "Voice mode (relay disconnected)"
+                                },
+                                tint = if (relayReady) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                        .copy(alpha = 0.5f)
+                                },
                             )
                         }
                     }

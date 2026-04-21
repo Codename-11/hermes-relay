@@ -64,6 +64,7 @@ import com.hermesandroid.relay.ui.components.BridgePermissionChecklist
 import com.hermesandroid.relay.ui.components.UnattendedAccessRow
 // === END v0.4.1 unattended-access ===
 import com.hermesandroid.relay.viewmodel.BridgeViewModel
+import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.launch
 
 /**
@@ -92,6 +93,13 @@ import kotlinx.coroutines.launch
 @Composable
 fun BridgeScreen(
     viewModel: BridgeViewModel = viewModel(),
+    // Relay dependency — Bridge commands arrive over the WSS relay, so
+    // surfacing the relay-connected state on this screen lets the user
+    // see "why is my bridge not responding" before the first missed
+    // command, not after. Optional (default null) so legacy call sites
+    // / preview fixtures that don't have a ConnectionViewModel still
+    // compile; the nag banner simply hides when it's absent.
+    connectionViewModel: ConnectionViewModel? = null,
     // === PHASE3-safety-rails: safety summary card ===
     onNavigateToBridgeSafety: () -> Unit = {},
     // === END PHASE3-safety-rails ===
@@ -100,6 +108,13 @@ fun BridgeScreen(
     val permissionStatus by viewModel.permissionStatus.collectAsState()
     val bridgeStatus by viewModel.bridgeStatus.collectAsState()
     val activityLog by viewModel.activityLog.collectAsState()
+    // Relay-ready signal for the dependency banner. Falls back to `true`
+    // (hides the banner) when connectionViewModel is null — lets the
+    // @Preview fixture + any future caller-without-VM path render
+    // cleanly without a stale warning.
+    val relayReady by (connectionViewModel?.relayReady
+        ?: remember { kotlinx.coroutines.flow.MutableStateFlow(true) })
+        .collectAsState()
     // === v0.4.1 unattended-access ===
     val unattendedEnabled by viewModel.unattendedEnabled.collectAsState()
     val unattendedWarningSeen by viewModel.unattendedWarningSeen.collectAsState()
@@ -188,6 +203,56 @@ fun BridgeScreen(
                 .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            // Relay-not-connected banner. Bridge commands arrive over the
+            // relay's WSS — when relay is Unpaired / Disconnected / URL
+            // blank, the AccessibilityService + foreground service will
+            // come up on master-toggle but will never receive commands
+            // from the agent. Surface that dependency at the top of the
+            // page so users don't assume "Bridge is on = bridge is
+            // working". Matches the soft-gate pattern used by
+            // TerminalScreen's "relay disconnected" subtitle.
+            //
+            // Banner renders whenever connectionViewModel is provided AND
+            // relay isn't ready. We intentionally do NOT block the master
+            // toggle here — letting users pre-configure permissions /
+            // safety rails before a relay pairs is valuable, and the
+            // BridgeViewModel's own state won't fire commands until the
+            // relay connects anyway.
+            if (connectionViewModel != null && !relayReady) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Warning,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        Column {
+                            Text(
+                                text = "Relay not connected",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                            Text(
+                                text = "Bridge commands travel over the relay. " +
+                                    "Pair a relay in Settings → Connection for " +
+                                    "the bridge to actually do anything.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                        }
+                    }
+                }
+            }
+
             // === PHASE3-safety-rails-followup: overlay-permission nag banner ===
             // Bridge is enabled but the user hasn't granted Display Over Other
             // Apps. Without that permission, the destructive-verb confirmation
