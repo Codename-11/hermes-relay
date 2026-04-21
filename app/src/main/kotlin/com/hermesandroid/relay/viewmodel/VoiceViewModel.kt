@@ -780,6 +780,28 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun exitVoiceMode() {
+        // Idempotence guard — added 2026-04-21 after logcat showed the voice-
+        // exit chime playing on every Add-connection tap.
+        //
+        // Why: `ConnectionSwitchCoordinator.switchConnection` fires the
+        // voice-stop callback unconditionally on step 3, which is correct for
+        // "user switches between two paired connections while voice is
+        // active." But `beginAddConnection` also goes through `switchConnection`
+        // (to bind the placeholder's auth store before the pair wizard runs),
+        // and in that path voice mode is almost never active — the user just
+        // tapped an FAB. Playing `playExit()` there is an audible bug.
+        //
+        // The early return is safe because every line of teardown below has
+        // its own try/catch + null-guard; running it when voiceMode is false
+        // would be a no-op anyway (recorder/player/timers are all already
+        // null). The meaningful difference is that `sfxPlayer?.playExit()`
+        // unconditionally enqueues a playback regardless of state.
+        //
+        // If a caller ever needs unconditional teardown (e.g. onCleared), they
+        // can bypass this guard by calling the primitives directly — or we
+        // add a separate `forceExitVoiceMode()` when that need materializes.
+        if (!_uiState.value.voiceMode) return
+
         // Chime BEFORE teardown — AudioTrack release would cut it off otherwise.
         try { sfxPlayer?.playExit() } catch (_: Exception) { /* ignore */ }
         // B4: tear down the barge-in listener + timers before we kill the

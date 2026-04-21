@@ -270,10 +270,30 @@ class ConnectionSwitchCoordinator(
             // answer. The authState flow seeds to Unpaired and flips to
             // Paired asynchronously; without this await we'd almost
             // always skip the WSS connect on switch.
-            val hydrated = withTimeoutOrNull(AUTH_HYDRATE_TIMEOUT_MS) {
-                waitForStableAuth(newAuth.authState)
+            //
+            // Short-circuit on target.pairedAt == null (added 2026-04-21
+            // after logcat showed a 500 ms freeze on every Add-connection
+            // FAB tap). A null pairedAt signals "this Connection has never
+            // completed a pair" — which means the EncryptedSharedPreferences
+            // store behind its AuthManager is empty, and waitForStableAuth
+            // can NEVER return because AuthState will stay Unpaired forever.
+            // The Add-connection path hits this 100% of the time; skipping
+            // the wait reclaims a full half-second of UI freeze per tap.
+            // Real paired-to-paired switches still run the hydrate wait
+            // because pairedAt != null for both sides.
+            val hydrated = if (target.pairedAt == null) {
+                Log.d(
+                    TAG,
+                    "switchConnection: target.pairedAt == null (placeholder/unpaired) — " +
+                        "skipping auth hydrate wait",
+                )
+                null
+            } else {
+                withTimeoutOrNull(AUTH_HYDRATE_TIMEOUT_MS) {
+                    waitForStableAuth(newAuth.authState)
+                }
             }
-            if (hydrated == null) {
+            if (target.pairedAt != null && hydrated == null) {
                 Log.i(
                     TAG,
                     "switchConnection: auth hydrate timeout after ${AUTH_HYDRATE_TIMEOUT_MS}ms " +
