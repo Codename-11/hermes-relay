@@ -42,6 +42,23 @@ data class ChatMessage(
     // File attachments (images, documents, etc.)
     val attachments: List<Attachment> = emptyList(),
     /**
+     * Rich content cards emitted by the agent via `CARD:{json}` line
+     * markers in the text stream. Parsed in
+     * [com.hermesandroid.relay.network.handlers.ChatHandler.scanForCardMarkers]
+     * and rendered inline by
+     * [com.hermesandroid.relay.ui.components.HermesCardBubble]. Mirrors
+     * [attachments]' lifecycle — the marker line is stripped from
+     * [content] on match so the raw `CARD:{...}` never appears in the
+     * bubble text, same as the `MEDIA:` parser.
+     */
+    val cards: List<HermesCard> = emptyList(),
+    /**
+     * Tapped actions on any of [cards]. Checked by the renderer so a card
+     * whose action has been dispatched collapses into a confirmation state
+     * rather than re-offering the buttons.
+     */
+    val cardDispatches: List<HermesCardDispatch> = emptyList(),
+    /**
      * Structured trace of a phone-local voice intent dispatch. Populated only
      * for messages whose [id] starts with `voice-intent-` and that originated
      * from the sideload voice classifier. Used by

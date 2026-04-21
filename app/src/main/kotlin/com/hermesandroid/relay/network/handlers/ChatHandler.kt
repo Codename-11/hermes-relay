@@ -3,6 +3,7 @@ package com.hermesandroid.relay.network.handlers
 import android.util.Log
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
+import com.hermesandroid.relay.data.HermesCard
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.ToolCall
 import com.hermesandroid.relay.data.VoiceIntentTrace
@@ -70,6 +71,22 @@ class ChatHandler {
         //   placeholder instead of attempting a fetch.
         private val mediaRelayRegex = Regex("""MEDIA:hermes-relay://([A-Za-z0-9_-]+)""")
         private val mediaBarePathRegex = Regex("""^\s*MEDIA:(/\S+)\s*$""")
+        // Rich card marker — single line, full JSON object payload.
+        //
+        // Agents emit:
+        //   CARD:{"type":"approval_request","title":"...","actions":[...]}
+        //
+        // Constraints (mirrors the `MEDIA:` marker contract in
+        // hermes-agent's prompt_builder.py): the marker MUST live on its
+        // own line, and the JSON must be single-line (escape newlines in
+        // string fields as `\n`). This keeps the line-buffer parser
+        // trivial — same strategy as MEDIA.
+        //
+        // The regex is intentionally greedy on the JSON body so nested
+        // braces in fields/actions are captured correctly. Invalid JSON is
+        // logged and the line is left in content untouched so the user
+        // still sees _something_ rather than a silent drop.
+        private val cardMarkerRegex = Regex("""^\s*CARD:(\{.*\})\s*$""")
         // Known completion/failure emojis — if these appear in backtick format, it's a completion
         private val completionEmojis = setOf("✅", "✓", "☑")
         private val failureEmojis = setOf("❌", "✗", "⚠")
@@ -130,6 +147,27 @@ class ChatHandler {
      */
     private var mediaLineBuffer = StringBuilder()
     private val dispatchedMediaMarkers = mutableSetOf<String>()
+
+    /**
+     * Separate line buffer + dedupe set for rich-card markers, mirroring
+     * the media-marker pipeline above. Cards are a first-class feature
+     * (not gated behind any flag), so they need their own buffer for the
+     * same reason `MEDIA:` does — tool-annotation parsing can be toggled
+     * off without silently dropping partial card lines.
+     */
+    private var cardLineBuffer = StringBuilder()
+    private val dispatchedCardMarkers = mutableSetOf<String>()
+
+    /**
+     * Lenient JSON for card payloads. `ignoreUnknownKeys` means future
+     * schema additions (new card types, new field shapes) won't crash
+     * older phone builds — the renderer's unknown-type fallback handles
+     * display.
+     */
+    private val cardJson = kotlinx.serialization.json.Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+    }
 
     /**
      * Tracks which tool names currently have an active (in-progress) annotation-based
@@ -298,6 +336,36 @@ class ChatHandler {
                     changed = true
                     msg.copy(voiceIntent = trace.copy(syncedToServer = true))
                 } else msg
+            }
+            if (changed) mapped else messages
+        }
+    }
+
+    /**
+     * Twin of [markVoiceIntentsSynced] for rich-card action dispatches.
+     * Flips [com.hermesandroid.relay.data.HermesCardDispatch.syncedToServer]
+     * to true on every dispatch whose flag is currently false, so the
+     * [com.hermesandroid.relay.viewmodel.CardDispatchSyncBuilder] doesn't
+     * re-emit them on the next chat send. Called from
+     * [com.hermesandroid.relay.viewmodel.ChatViewModel.startStream] at the
+     * same point — right after the API client accepts the request — so
+     * the voice-intent and card-dispatch sync paths have identical
+     * commit-timing semantics and a thrown request-building exception
+     * falsely marks neither stream as synced.
+     */
+    fun markCardDispatchesSynced() {
+        _messages.update { messages ->
+            var changed = false
+            val mapped = messages.map { msg ->
+                if (msg.cardDispatches.isEmpty()) return@map msg
+                val anyUnsynced = msg.cardDispatches.any { !it.syncedToServer }
+                if (!anyUnsynced) return@map msg
+                changed = true
+                msg.copy(
+                    cardDispatches = msg.cardDispatches.map {
+                        if (it.syncedToServer) it else it.copy(syncedToServer = true)
+                    }
+                )
             }
             if (changed) mapped else messages
         }
@@ -482,6 +550,8 @@ class ChatHandler {
         dispatchedMediaMarkers.clear()
         annotationLineBuffer.clear()
         activeAnnotationTools.clear()
+        cardLineBuffer.clear()
+        dispatchedCardMarkers.clear()
     }
 
     /**
@@ -571,10 +641,22 @@ class ChatHandler {
 
             // Run the media marker parser on assistant content; strip matched
             // lines and queue hits for post-assignment dispatch.
-            val cleanedContent = if (role == MessageRole.ASSISTANT && rawContent.isNotEmpty()) {
+            val afterMedia = if (role == MessageRole.ASSISTANT && rawContent.isNotEmpty()) {
                 extractMediaMarkersFromContent(messageId, rawContent, pendingMediaHits)
             } else {
                 rawContent
+            }
+
+            // Cards are synchronous (no async fetch) so we attach them
+            // straight onto the reconstructed ChatMessage and strip their
+            // lines from the displayed content in the same pass. No
+            // post-assignment dispatch needed.
+            val (cleanedContent, extractedCards) = if (
+                role == MessageRole.ASSISTANT && afterMedia.isNotEmpty()
+            ) {
+                extractCardsFromContent(afterMedia)
+            } else {
+                afterMedia to emptyList()
             }
 
             ChatMessage(
@@ -583,7 +665,8 @@ class ChatHandler {
                 content = cleanedContent,
                 timestamp = timestampMs,
                 isStreaming = false,
-                toolCalls = toolCalls
+                toolCalls = toolCalls,
+                cards = extractedCards,
             )
         }
 
@@ -689,6 +772,38 @@ class ChatHandler {
             }
         }
         return cleaned.trim()
+    }
+
+    /**
+     * Scan loaded content for `CARD:{json}` lines, parse each to a
+     * [HermesCard], return the cleaned content + the extracted cards. Pure
+     * function — does not mutate [_messages] or mark anything dispatched.
+     * Called from [loadMessageHistory]. Unparseable card lines are left in
+     * the content (same policy as [tryDispatchCardMarker]) so the user
+     * sees a visible artifact instead of a silent drop.
+     */
+    private fun extractCardsFromContent(content: String): Pair<String, List<HermesCard>> {
+        var cleaned = content
+        val cards = mutableListOf<HermesCard>()
+        for (rawLine in content.lines()) {
+            val trimmed = rawLine.trim()
+            if (trimmed.isEmpty()) continue
+            val match = cardMarkerRegex.find(trimmed) ?: continue
+            val payload = match.groupValues[1]
+            val card = try {
+                cardJson.decodeFromString(HermesCard.serializer(), payload)
+            } catch (e: Exception) {
+                Log.w(TAG, "Card reload parse failed: ${e.message}")
+                continue
+            }
+            cards += card
+            cleaned = cleaned
+                .replace("\n$rawLine\n", "\n")
+                .replace("\n$rawLine", "")
+                .replace("$rawLine\n", "")
+                .replace(rawLine, "")
+        }
+        return cleaned.trim() to cards
     }
 
     /**
@@ -846,6 +961,12 @@ class ChatHandler {
         // Always scan for media markers — inbound attachments are a first-class
         // feature and shouldn't be gated behind the tool-annotation flag.
         scanForMediaMarkers(messageId, processedDelta)
+
+        // Rich cards ride the same "always on" treatment as media — the
+        // agent can emit `CARD:{json}` at any point in any endpoint and
+        // the renderer should pick it up without the user having to
+        // opt in to any parsing mode.
+        scanForCardMarkers(messageId, processedDelta)
     }
 
     /**
@@ -980,6 +1101,116 @@ class ChatHandler {
 
             if (tryDispatchMediaMarker(messageId, trimmed)) {
                 stripLineFromContent(messageId, trimmed)
+            }
+        }
+    }
+
+    /**
+     * Card-marker line scanner — twin of [scanForMediaMarkers] for
+     * `CARD:{json}` rows. Matched cards are appended to the message's
+     * [ChatMessage.cards] list and the raw line is stripped from
+     * [ChatMessage.content] so the user only sees the rendered
+     * [com.hermesandroid.relay.ui.components.HermesCardBubble], never the
+     * literal JSON.
+     */
+    private fun scanForCardMarkers(messageId: String, delta: String) {
+        cardLineBuffer.append(delta)
+
+        while (true) {
+            val newlineIndex = cardLineBuffer.indexOf('\n')
+            if (newlineIndex == -1) break
+
+            val line = cardLineBuffer.substring(0, newlineIndex)
+            cardLineBuffer.delete(0, newlineIndex + 1)
+
+            val trimmed = line.trim()
+            if (trimmed.isEmpty()) continue
+
+            if (tryDispatchCardMarker(messageId, trimmed)) {
+                stripLineFromContent(messageId, trimmed)
+            }
+        }
+    }
+
+    /**
+     * Parse a single `CARD:{json}` line. On success, appends the card to
+     * [ChatMessage.cards] for [messageId]. Dedupes by "messageId:cardKey"
+     * where cardKey is the parsed [HermesCard.id] or a SHA-style hash
+     * (content-based) fallback, so the same card re-appearing during
+     * streaming + finalize reconciliation doesn't render twice.
+     *
+     * Invalid JSON is logged and returns false — the caller leaves the
+     * line in the content, which at least gives the user a visible hint
+     * that the agent tried to emit a card the phone couldn't parse.
+     */
+    private fun tryDispatchCardMarker(messageId: String, line: String): Boolean {
+        val match = cardMarkerRegex.find(line) ?: return false
+        val payload = match.groupValues[1]
+
+        val card = try {
+            cardJson.decodeFromString(HermesCard.serializer(), payload)
+        } catch (e: Exception) {
+            Log.w(TAG, "Card marker parse failed: ${e.message} | payload=${payload.take(200)}")
+            return false
+        }
+
+        // Content-based fallback key when the agent didn't supply an id —
+        // good enough for dedupe of the exact same card within a single
+        // message turn.
+        val cardKey = card.id ?: "anon:${payload.hashCode()}"
+        val dedupeKey = "$messageId:$cardKey"
+        if (!dispatchedCardMarkers.add(dedupeKey)) {
+            Log.d(TAG, "Card marker duplicate, skipping: $cardKey")
+            return true // Still strip the line — it's a valid card, just a repeat.
+        }
+
+        Log.d(TAG, "Card marker: type=${card.type} key=$cardKey")
+
+        _messages.update { messages ->
+            messages.map { msg ->
+                if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
+                    msg.copy(cards = msg.cards + card)
+                } else msg
+            }
+        }
+        return true
+    }
+
+    /**
+     * Flush the card line buffer + post-stream reconcile, twin of
+     * [finalizeMediaMarkers]. Guards against the race where a CARD: line
+     * arrived as the last delta with no trailing newline, and also
+     * re-sweeps the finalized content for any card lines that survived
+     * real-time stripping (update-ordering race against [stripLineFromContent]).
+     */
+    private fun finalizeCardMarkers(messageId: String) {
+        if (cardLineBuffer.isNotEmpty()) {
+            val remaining = cardLineBuffer.toString().trim()
+            cardLineBuffer.clear()
+            if (remaining.isNotEmpty() && tryDispatchCardMarker(messageId, remaining)) {
+                stripLineFromContent(messageId, remaining)
+            }
+        }
+
+        _messages.update { messages ->
+            messages.map { msg ->
+                if (msg.id != messageId || msg.role != MessageRole.ASSISTANT) return@map msg
+                var cleaned = msg.content
+                var changed = false
+                for (rawLine in msg.content.lines()) {
+                    val trimmed = rawLine.trim()
+                    if (trimmed.isEmpty()) continue
+                    if (cardMarkerRegex.containsMatchIn(trimmed)) {
+                        tryDispatchCardMarker(messageId, trimmed)
+                        cleaned = cleaned
+                            .replace("\n$rawLine\n", "\n")
+                            .replace("\n$rawLine", "")
+                            .replace("$rawLine\n", "")
+                            .replace(rawLine, "")
+                        changed = true
+                    }
+                }
+                if (changed) msg.copy(content = cleaned.trim()) else msg
             }
         }
     }
@@ -1446,6 +1677,9 @@ class ChatHandler {
 
         // Finalize media markers unconditionally (not gated by parseToolAnnotations)
         finalizeMediaMarkers(messageId)
+        // Rich cards get the same unconditional treatment — a partial
+        // card line without a trailing newline should still render.
+        finalizeCardMarkers(messageId)
         // Note: do NOT set _isStreaming to false — the run is still active
     }
 
@@ -1480,6 +1714,7 @@ class ChatHandler {
 
         // Finalize media markers unconditionally
         finalizeMediaMarkers(messageId)
+        finalizeCardMarkers(messageId)
     }
 
     fun onStreamError(message: String) {
@@ -1534,6 +1769,37 @@ class ChatHandler {
                         estimatedCost = cost
                     )
                 } else msg
+            }
+        }
+    }
+
+    // --- Card action dispatch ---
+
+    /**
+     * Record that the user tapped an action on a rich card. Appends a
+     * [com.hermesandroid.relay.data.HermesCardDispatch] to the owning
+     * message's dispatch list, which
+     * [com.hermesandroid.relay.ui.components.HermesCardBubble] reads to
+     * collapse the action row into a "you chose X" confirmation.
+     *
+     * Idempotent — taps on the same (cardKey, actionValue) pair are
+     * silently coalesced, so tapping twice during a slow send doesn't
+     * double-stamp the history.
+     */
+    fun recordCardDispatch(messageId: String, cardKey: String, actionValue: String) {
+        val stamp = com.hermesandroid.relay.data.HermesCardDispatch(
+            cardKey = cardKey,
+            actionValue = actionValue,
+            timestamp = System.currentTimeMillis(),
+        )
+        _messages.update { messages ->
+            messages.map { msg ->
+                if (msg.id != messageId) return@map msg
+                val alreadyDispatched = msg.cardDispatches.any {
+                    it.cardKey == cardKey && it.actionValue == actionValue
+                }
+                if (alreadyDispatched) msg
+                else msg.copy(cardDispatches = msg.cardDispatches + stamp)
             }
         }
     }
