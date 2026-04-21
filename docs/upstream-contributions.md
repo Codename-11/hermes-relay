@@ -114,6 +114,43 @@ This respects upstream's intentional design (api_server stays stateless, no rout
 
 **Workaround (current / near-term):** `hermes_relay_bootstrap/_command_middleware.py` (planned for v0.4.1) mirrors Stage 1 as an aiohttp middleware injected at bootstrap time, so vanilla upstream installs that ship with the relay get the hallucination fix and the stateless commands without waiting for an upstream release. The bootstrap middleware fork-detects the same way the existing route injection does — it no-ops once Stage 1 lands upstream.
 
+## 6a. Rich Card Rendering Across Platform Adapters (ADR 26 Phase B)
+
+**Current state (upstream).** `gateway/platforms/base.py` exposes no rich-content abstraction — just `send()` / `send_image()` / `edit_message()`. Confirmed:
+- `discord.py` contains zero `discord.Embed()` instantiations; all assistant output flows as plain text chunks + native file attachments.
+- `slack.py` uses Block Kit **only** for `send_exec_approval` (a 4-button command-approval dialog). No block rendering for regular assistant output.
+- The base class hints at a rich-surface concept via `REQUIRES_EDIT_FINALIZE` + its DingTalk AI Cards reference, but stops short of a uniform abstraction.
+
+**Current state (hermes-relay Android).** We shipped Phase A of ADR 26 — agents emit a `CARD:{json}` inline line marker in the text stream, and the phone parses + renders it as a Material 3 card. The envelope (type / title / body / fields / actions / accent / footer, with semantic `info` / `success` / `warning` / `danger` colors and `primary` / `secondary` / `danger` button styles) is intentionally compatible with both Slack Block Kit and Discord Embeds. Session-memory sync is shipped too — card action dispatches materialize as OpenAI `assistant`+`tool` pairs under a synthetic `hermes_card_action` tool name on the next chat send.
+
+**Proposed upstream contribution.** Add a `gateway/rich_cards.py` helper that takes a card dict and returns platform-appropriate output:
+- **Discord** → a `List[discord.Embed]` + optional `discord.ui.View` for buttons (Discord's first real embed usage; approval_request cards become interactive with real buttons).
+- **Slack** → a Block Kit `{"blocks": [...]}` structure (reuses the existing Block Kit precedent from `send_exec_approval` for any card, not just command approvals).
+- **Plain-text platforms** (Signal, SMS, email) → a deterministic markdown rendering so the same card gracefully degrades.
+
+Adapters would gain a `send_card()` method with a default fallback that renders the card as markdown via the helper. Platforms override to emit native richer output. Matches how `send_image()` has a default text-URL fallback today.
+
+**Envelope shape for the upstream PR** (identical to our phone-side parser — no translation needed):
+```json
+{
+  "type": "approval_request",
+  "title": "Run shell command?",
+  "body": "`rm -rf /tmp/cache`",
+  "accent": "warning",
+  "fields": [{"label": "Working dir", "value": "/home/user"}],
+  "actions": [
+    {"label": "Allow", "value": "/approve", "style": "primary"},
+    {"label": "Deny",  "value": "/deny",    "style": "danger"}
+  ]
+}
+```
+
+**Impact.** Every hermes-agent frontend — Discord server, Slack workspace, mobile relay — renders skill results and approval prompts with the same information density. Skills authored once work everywhere. Removes the ambiguity about how (or whether) rich content surfaces across platforms.
+
+**Held because.** We want concrete phone-side card fidelity issues to surface first (via real usage) before designing the translation layer. Speculating on Discord Embed layout without watching at least a dozen real cards flow through our own UI tends to produce a helper that looks right on paper and wrong in practice.
+
+**Workaround (current):** Rich cards only render on hermes-relay Android today. Other platforms receive the raw `CARD:{json}` line as plain text — visible as a JSON string in the message, which is ugly but functionally harmless (users can still read the content). A quick-fix middleware in `hermes_relay_bootstrap/` could strip the markers on platforms that don't consume them, but we haven't prioritized it since Hermes-Relay is currently the only UI on this pipeline.
+
 ## 6. Terminal HTTP API (for non-relay setups)
 
 **Current state:** hermes-agent's `terminal_tool.py` supports 6 backends (local, Docker, SSH, Modal, Daytona, Singularity) but is only callable internally by the agent during conversations. There is no HTTP API for interactive terminal sessions.

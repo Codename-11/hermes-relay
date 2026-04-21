@@ -22,6 +22,17 @@ Code blocks include:
 - **Monospace font** for readability
 - **Horizontal scrolling** for long lines
 
+## Rich Cards
+
+When an agent or skill has something structured to show — an approval prompt, a link preview, a calendar entry, a weather snapshot — the phone renders it as an inline **card** instead of plain markdown. Cards appear between the assistant's prose and any attached files, with:
+
+- A **colored accent stripe** on the leading edge (blue = info, green = success, amber = warning, red = danger)
+- A **type icon** (shield for approvals, globe for links, calendar, sun, sparkle for generic skill output)
+- **Title**, **subtitle**, **markdown body**, and **label/value fields** — the body supports the same markdown syntax as message bubbles
+- **Action buttons** you can tap to respond (for example, an `approval_request` card asking "Run shell command?" shows **Allow** in primary style and **Deny** in danger style)
+
+After you tap an action the button row collapses into a **"Chose: Allow"** confirmation, so a session reload from history doesn't re-prompt you. Unknown card types — ones added after your phone build — still render cleanly via a generic fallback (title + body + fields + actions), so updates to the agent side never break your scrollback.
+
 ## How It Works
 
 The app uses [Multiplatform Markdown Renderer](https://github.com/mikepenz/multiplatform-markdown-renderer) — a Compose-native renderer that maps markdown elements to Compose text styles and layouts. User messages render as plain text.

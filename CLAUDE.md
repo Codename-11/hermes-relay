@@ -182,9 +182,13 @@ hermes-android/
 | `ui/components/MorphingSphere.kt` | Compose renderer for the agent sphere — delegates math to `MorphingSphereCore` |
 | `ui/components/MorphingSphereCore.kt` | Platform-agnostic sphere algorithm (`kotlin.math` only) — single source of truth; mirrored byte-for-byte in `preview/web/sphere.js` |
 | `preview/web/` | Zero-dep browser harness — live `index.html` preview + `parity-check.mjs`; paired with `MorphingSphereCoreParityTest` (JVM) for struct/full checksum diffing |
+| `user-docs/.vitepress/theme/components/SphereMark.vue` | Docs-site sphere embed — imports `preview/web/sphere.js` directly; autonomous fbm drift + pointer-proximity gaze/state blend; `<ClientOnly>` + `IntersectionObserver` + `prefers-reduced-motion` aware |
 | **App — Media + Notifications** | |
 | `util/MediaCacheWriter.kt` | `cacheDir/hermes-media/` LRU writer; returns FileProvider URIs |
 | `ui/components/InboundAttachmentCard.kt` | Discord-style attachment card for images/video/audio/pdf/text/generic |
+| `data/HermesCard.kt` | `CARD:{json}` envelope (ADR 26) — type/accent/fields/actions; kotlinx.serialization |
+| `ui/components/HermesCardBubble.kt` | Rich-card renderer — accent stripe + FlowRow actions + dispatch stamp collapse |
+| `viewmodel/CardDispatchSyncBuilder.kt` | Twin of VoiceIntentSyncBuilder — synthesizes card dispatches as `hermes_card_action` OpenAI pairs for session memory |
 | `notifications/HermesNotificationCompanion.kt` | NotificationListenerService; cold-start buffer (50); forwards via ChannelMultiplexer |
 | `util/RelayErrorClassifier.kt` | `classifyError(Throwable, context) → HumanError`; used by Voice/Chat/Connection |
 | **Relay — Server** | |
