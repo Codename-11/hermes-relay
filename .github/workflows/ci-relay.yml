@@ -62,11 +62,19 @@ jobs:
 
   # ──────────────────────────────────────────────
   # Python Relay — unittest discover
+  #
+  # Tests are ADVISORY on dev (push or PR) so WIP commits don't block the
+  # merge queue. Strict on main — the dev → main release-merge PR surfaces
+  # any real failures before release.
   # ──────────────────────────────────────────────
   unit-tests:
     name: Unit tests (Python)
     needs: syntax-check
     runs-on: ubuntu-latest
+    # Advisory on dev, strict on main. Evaluates to false (= strict) for
+    # pushes to main and PRs whose base branch is main; true (= advisory)
+    # for everything else (dev pushes, dev-targeted PRs, feature branches).
+    continue-on-error: ${{ github.ref != 'refs/heads/main' && github.base_ref != 'main' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
