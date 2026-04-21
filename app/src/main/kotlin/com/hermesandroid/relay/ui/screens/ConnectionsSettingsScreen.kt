@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.ui.screens
 
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -34,6 +35,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -42,12 +44,21 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.displayLabel
+import com.hermesandroid.relay.ui.components.ActiveCardAdvancedSection
+import com.hermesandroid.relay.ui.components.ActiveCardSecurityPosture
+import com.hermesandroid.relay.ui.components.ActiveCardStatusSection
+import com.hermesandroid.relay.ui.components.ApiServerInfoSheet
 import com.hermesandroid.relay.ui.components.EndpointsCard
+import com.hermesandroid.relay.ui.components.InsecureConnectionAckDialog
+import com.hermesandroid.relay.ui.components.RelayInfoSheet
+import com.hermesandroid.relay.ui.components.SessionInfoSheet
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.RelayUiState
 import com.hermesandroid.relay.viewmodel.statusText
@@ -55,17 +66,30 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Full-screen manager for the list of Hermes connections. Reachable via
- * Settings → Connections and via the "Manage connections…" button in the
- * connection switcher bottom sheet.
+ * Settings → Connections — the single authoritative home for everything
+ * connection-related. Replaces the older (deleted) singular
+ * `ConnectionSettingsScreen` that used to own pair / manual-URL / insecure
+ * toggle / manual-pairing-code; all of that now lives on the active card
+ * below under expandable sections.
  *
- * Each connection is a card with:
- *  - Label (tappable → rename dialog)
- *  - Hostname + paired status subtitle
- *  - Re-pair / Revoke / Remove actions
- *  - "Active" badge + tonal highlight on the currently-active connection
+ * Cards, top to bottom inside the `LazyColumn`:
+ *  - **Non-active connection cards** — label + status badge subtitle +
+ *    per-card action row (Reconnect/Rename/Re-pair/Revoke/Remove). Flat,
+ *    no expanders, no deep content. Users switch to the card to make it
+ *    active before drilling in.
+ *  - **The active connection card** — everything above, plus an inline
+ *    body with three zones:
+ *      1. Status rows (API / Relay / Session) — always visible; tap opens
+ *         the matching info sheet.
+ *      2. Endpoints expander (when the pairing carries endpoints).
+ *      3. Advanced expander — manual URL config, insecure toggle, manual
+ *         pairing code fallback (the full 3-step flow).
+ *      4. Security posture strip (transport badge, Tailscale chip,
+ *         hardware keystore badge, Paired Devices row) — always visible.
  *
- * An Extended FAB pinned bottom-right launches the add-connection pairing
- * flow.
+ * The Extended FAB launches the Add-connection pairing wizard via
+ * [onAddConnection] (which in `RelayApp` pre-creates a placeholder and
+ * navigates to `Screen.Pair` with `autoStart = "scan"`).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -84,13 +108,41 @@ fun ConnectionsSettingsScreen(
     onRemoveConnection: (id: String) -> Unit,
     onAddConnection: () -> Unit,
     onBack: () -> Unit,
-    // ADR 24 — the active connection's endpoint state. Passed in so the
-    // active card's inline-expand reveals the same EndpointsCard the
-    // Settings → Connection screen renders (role/probe/prefer chips) instead
-    // of a stale "paired X hours ago" stub. `null` = no VM wired, which the
-    // card treats as "legacy pairing, no endpoint list available".
+    // Opens `PairedDevicesScreen` for the server-side session list. Wired
+    // via the "Paired Devices" row inside the active card's security
+    // posture strip. Must not be null — the row is always rendered.
+    onNavigateToPairedDevices: () -> Unit,
+    // ADR 24 — the active connection's endpoint state is read through this
+    // VM. `null` means no VM wired (test harness / @Preview); the active
+    // card falls back to legacy behavior and hides all deep content.
     connectionViewModel: ConnectionViewModel? = null,
 ) {
+    val context = LocalContext.current
+    val isDarkTheme = isSystemInDarkTheme()
+
+    // Feature flag for the entire relay surface (WSS, voice, bridge).
+    // When off, Status section hides the Relay + Session rows and the
+    // Advanced section hides relay-specific subsections. ChatReady path
+    // (HTTP-only) is unaffected.
+    val relayEnabled by FeatureFlags.relayEnabled(context)
+        .collectAsState(initial = FeatureFlags.isDevBuild)
+
+    // Kick a WSS reconnect on screen entry in case the user landed here
+    // from a Stale chip. Moved here from the deleted singular
+    // ConnectionSettingsScreen — same intent, same implementation.
+    LaunchedEffect(Unit) {
+        connectionViewModel?.reconnectIfStale()
+    }
+
+    // Info-sheet + ack-dialog visibility is hoisted to screen scope so
+    // the composables survive when the owning card scrolls out of the
+    // LazyColumn viewport (items can be disposed). Card-level booleans
+    // would dismiss silently under scroll.
+    var showSessionInfoSheet by remember { mutableStateOf(false) }
+    var showApiInfoSheet by remember { mutableStateOf(false) }
+    var showRelayInfoSheet by remember { mutableStateOf(false) }
+    var showInsecureAckDialog by remember { mutableStateOf(false) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -122,21 +174,23 @@ fun ConnectionsSettingsScreen(
         },
     ) { innerPadding ->
         if (connections.isEmpty()) {
+            // Empty state — the FAB is the only useful action. Shown in
+            // practice only during tests / after a wipe; cold start seeds
+            // a default connection, so the list is rarely ever truly empty.
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
-                    .padding(24.dp),
+                    .padding(horizontal = 24.dp, vertical = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
             ) {
                 Text(
                     text = "No connections yet",
                     style = MaterialTheme.typography.titleMedium,
                 )
-                Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Pair with a Hermes server to add your first connection.",
+                    text = "Tap Add connection to pair with a Hermes server.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -157,22 +211,25 @@ fun ConnectionsSettingsScreen(
                     ConnectionCard(
                         connection = connection,
                         isActive = isActive,
-                        // Only the active card gets a live state; others
-                        // fall back to the persistent pairedAt timestamp
-                        // since we don't track WSS state for background
-                        // connections.
+                        // Live state only meaningful for the active card;
+                        // non-active cards render pairedAt timestamp.
                         liveState = if (isActive) activeRelayUiState else null,
-                        // Endpoint plumbing is only meaningful for the
-                        // active connection — EndpointResolver only tracks
-                        // probe state for the currently-connected relay.
-                        // Non-active cards get null and hide the expand
-                        // affordance.
+                        // Active-card-only deep content. Null-guard below
+                        // means non-active cards stay flat (title + subtitle
+                        // + action row) and don't collect any VM flows.
                         activeConnectionViewModel = if (isActive) connectionViewModel else null,
+                        relayEnabled = relayEnabled,
+                        isDarkTheme = isDarkTheme,
                         onReconnect = onReconnectActive,
                         onRename = { newLabel -> onRenameConnection(connection.id, newLabel) },
                         onRepair = { onRepairConnection(connection.id) },
                         onRevoke = { onRevokeConnection(connection.id) },
                         onRemove = { onRemoveConnection(connection.id) },
+                        onOpenApiInfo = { showApiInfoSheet = true },
+                        onOpenRelayInfo = { showRelayInfoSheet = true },
+                        onOpenSessionInfo = { showSessionInfoSheet = true },
+                        onInsecureAckRequested = { showInsecureAckDialog = true },
+                        onNavigateToPairedDevices = onNavigateToPairedDevices,
                     )
                 }
                 // Footer spacer so the last card isn't hidden by the FAB.
@@ -180,26 +237,77 @@ fun ConnectionsSettingsScreen(
             }
         }
     }
+
+    // ── Screen-scope dialogs + info sheets ───────────────────────────────
+    // Kept here (not at card scope) so a card being disposed by LazyColumn
+    // while scrolling can't silently dismiss an open sheet.
+    if (connectionViewModel != null) {
+        if (showSessionInfoSheet) {
+            SessionInfoSheet(
+                connectionViewModel = connectionViewModel,
+                onDismiss = { showSessionInfoSheet = false },
+            )
+        }
+        if (showApiInfoSheet) {
+            ApiServerInfoSheet(
+                connectionViewModel = connectionViewModel,
+                onDismiss = { showApiInfoSheet = false },
+            )
+        }
+        if (showRelayInfoSheet) {
+            RelayInfoSheet(
+                connectionViewModel = connectionViewModel,
+                onDismiss = { showRelayInfoSheet = false },
+            )
+        }
+        if (showInsecureAckDialog) {
+            InsecureConnectionAckDialog(
+                onConfirm = { reason ->
+                    connectionViewModel.setInsecureAckComplete(reason)
+                    connectionViewModel.setInsecureMode(true)
+                    showInsecureAckDialog = false
+                },
+                onCancel = {
+                    // User bailed out of the ack — leave the toggle OFF
+                    // in the Advanced section (it never flipped visually
+                    // because onCheckedChange only routed through this
+                    // dialog for first-enable).
+                    showInsecureAckDialog = false
+                },
+            )
+        }
+    }
 }
 
+/**
+ * Per-connection Card. Non-active cards are flat (title + subtitle +
+ * actions). The active card grows an inline deep body — status rows,
+ * optional endpoints expander, Advanced expander, security posture
+ * strip — via the helpers in [ActiveConnectionSections.kt].
+ *
+ * The `activeConnectionViewModel` non-null check on the active card is
+ * the single gate for the deep content. When null (test fixtures,
+ * previews), we degrade gracefully to the flat layout — no VM flows
+ * are collected and no dialogs fire.
+ */
 @Composable
 private fun ConnectionCard(
     connection: Connection,
     isActive: Boolean,
-    // Live state for the active connection. Null for inactive ones — they
-    // render the persistent "Paired 2 days ago" style timestamp instead.
     liveState: RelayUiState?,
-    // Only non-null for the active connection. When present, the card
-    // grows an inline-expand affordance that reveals the shared
-    // EndpointsCard with role/probe/prefer chips — the same component the
-    // Settings → Connection detail screen uses. For non-active connections
-    // this is null and the card stays flat (matches pre-ADR-24 layout).
     activeConnectionViewModel: ConnectionViewModel?,
+    relayEnabled: Boolean,
+    isDarkTheme: Boolean,
     onReconnect: () -> Unit,
     onRename: (String) -> Unit,
     onRepair: () -> Unit,
     onRevoke: () -> Unit,
     onRemove: () -> Unit,
+    onOpenApiInfo: () -> Unit,
+    onOpenRelayInfo: () -> Unit,
+    onOpenSessionInfo: () -> Unit,
+    onInsecureAckRequested: () -> Unit,
+    onNavigateToPairedDevices: () -> Unit,
 ) {
     var showRenameDialog by remember { mutableStateOf(false) }
     var showRevokeConfirm by remember { mutableStateOf(false) }
@@ -212,9 +320,10 @@ private fun ConnectionCard(
         MaterialTheme.colorScheme.surfaceVariant
     }
 
-    // Only the active card gets endpoint state. Flows are collected at the
-    // card level (not hoisted) so non-active cards don't pay the
-    // DataStore read cost — they get nothing and render flat.
+    // Endpoint flows only start collecting when activeConnectionViewModel
+    // is non-null (active card only). Guards below make that a no-op for
+    // non-active cards — the `observeDeviceEndpoints()` collector never
+    // opens, no DataStore subscriber is registered.
     val endpoints: List<EndpointCandidate> = if (activeConnectionViewModel != null) {
         val list by activeConnectionViewModel.observeDeviceEndpoints()
             .collectAsState(initial = emptyList())
@@ -238,6 +347,7 @@ private fun ConnectionCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            // ── Title row ────────────────────────────────────────────────
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = connection.label,
@@ -259,39 +369,23 @@ private fun ConnectionCard(
                 }
             }
 
+            // ── Subtitle: hostname + status + endpoints roles ──────────
             val hostname = Connection.extractDefaultLabel(connection.apiServerUrl)
-            // For the active card, surface live WSS state (Connected,
-            // Reconnecting…, Stale, etc.) so the subtitle is a real-time
-            // reflection rather than a stale "Paired 5 minutes ago". For
-            // non-active cards the persistent pairedAt timestamp is all we
-            // have, so it stays.
             val pairedStatus = when {
                 liveState != null -> liveState.statusText(connectedLabel = "Connected")
                 connection.pairedAt != null -> formatPairedRelative(connection.pairedAt)
                 else -> "Not paired"
             }
-            // ADR 24 — on the active card we also know the active endpoint
-            // role + the full set of roles the QR carried; splice both into
-            // the subtitle so the list entry matches what the Active card at
-            // Settings → Connection shows. Previous version said "2 endpoints"
-            // which was accurate but opaque — users couldn't tell at a glance
-            // whether their QR had LAN, Tailscale, Public, or some mix.
+            // ADR 24 — active-only endpoint role summary.
             val endpointBadge = if (isActive && endpoints.isNotEmpty()) {
                 val activeLabel = activeEndpoint?.displayLabel() ?: "resolving…"
                 val allRoles = endpoints.map { it.displayLabel() }.distinct()
-                val rolesSummary = if (allRoles.size == 1) {
-                    allRoles.first()
-                } else {
-                    allRoles.joinToString(" + ")
-                }
+                val rolesSummary = if (allRoles.size == 1) allRoles.first()
+                else allRoles.joinToString(" + ")
                 " • Active: $activeLabel • $rolesSummary"
             } else {
                 ""
             }
-            // Tint the subtitle amber when the live state is Stale so the
-            // row visually signals "attention — tap Reconnect" even before
-            // the explicit button is read. Other states keep the muted
-            // color.
             val statusColor = if (liveState == RelayUiState.Stale) {
                 MaterialTheme.colorScheme.tertiary
             } else {
@@ -305,126 +399,152 @@ private fun ConnectionCard(
                 overflow = TextOverflow.Ellipsis,
             )
 
-            // ADR 24 — nudge operators on legacy single-endpoint pairings
-            // to re-pair so their QR picks up LAN + Tailscale + Public
-            // automatically. Only on the active card (non-active don't
-            // have endpoint state loaded) and only when exactly 1 endpoint
-            // exists — zero means "not multi-endpoint-aware at all" (legacy
-            // pre-ADR-24 pairing, expected to be empty), and ≥2 is already
-            // what we want.
+            // ── Single-endpoint nudge (active only) ──────────────────────
             if (isActive && endpoints.size == 1) {
                 Surface(
+                    color = MaterialTheme.colorScheme.tertiaryContainer,
                     shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.6f),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         Text(
-                            text = "Only one endpoint in this pairing — re-pair with " +
-                                "Mode = Auto to get LAN + Tailscale + Public in one QR.",
+                            text = "Legacy single-endpoint pairing",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        )
+                        Text(
+                            text = "Re-pair with Mode = Auto to get LAN + Tailscale + " +
+                                "Public in one QR.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onTertiaryContainer,
-                            modifier = Modifier.weight(1f),
                         )
-                        TextButton(onClick = onRepair) {
+                        TextButton(
+                            onClick = onRepair,
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                horizontal = 0.dp,
+                            ),
+                        ) {
                             Text("Re-pair")
                         }
                     }
                 }
             }
 
+            // ── Action row ───────────────────────────────────────────────
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                // Stale-only Reconnect action. Promoted to first position so
-                // it reads as the primary recovery affordance when the row
-                // needs it, and simply absent otherwise so the Rename/Re-pair/
-                // Revoke/Remove sequence isn't disrupted.
                 if (liveState == RelayUiState.Stale) {
-                    TextButton(onClick = onReconnect) {
-                        Text("Reconnect")
-                    }
+                    TextButton(onClick = onReconnect) { Text("Reconnect") }
                 }
-                TextButton(onClick = { showRenameDialog = true }) {
-                    Text("Rename")
-                }
-                TextButton(onClick = onRepair) {
-                    Text("Re-pair")
-                }
-                TextButton(onClick = { showRevokeConfirm = true }) {
-                    Text("Revoke")
-                }
+                TextButton(onClick = { showRenameDialog = true }) { Text("Rename") }
+                TextButton(onClick = onRepair) { Text("Re-pair") }
+                TextButton(onClick = { showRevokeConfirm = true }) { Text("Revoke") }
                 TextButton(onClick = { showRemoveConfirm = true }) {
-                    Text(
-                        text = "Remove",
-                        color = MaterialTheme.colorScheme.error,
-                    )
+                    Text(text = "Remove", color = MaterialTheme.colorScheme.error)
                 }
             }
 
-            // Inline endpoints expander — only on the active card and only
-            // when the paired device actually has endpoints stored (v3+
-            // pairings). Legacy pairings get no affordance so we don't
-            // pretend they have information we can't render.
-            if (activeConnectionViewModel != null && endpoints.isNotEmpty()) {
+            // ── Active-card-only deep content ────────────────────────────
+            // Gate everything on activeConnectionViewModel != null so
+            // preview fixtures / test harnesses degrade to the flat layout
+            // without VM collection.
+            if (isActive && activeConnectionViewModel != null) {
                 HorizontalDivider()
-                var preferredRole by remember {
-                    mutableStateOf(activeConnectionViewModel.getPreferredEndpointRole())
-                }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                ) {
-                    Text(
-                        text = if (endpointsExpanded) "Hide endpoints" else "Show endpoints",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.weight(1f),
-                    )
-                    IconButton(onClick = { endpointsExpanded = !endpointsExpanded }) {
-                        Icon(
-                            imageVector = if (endpointsExpanded) {
-                                Icons.Filled.ExpandLess
-                            } else {
-                                Icons.Filled.ExpandMore
+
+                // Status section (3 tappable rows → info sheets). Always
+                // visible on the active card — the "health dashboard"
+                // replacing the old Settings-top quick-look card.
+                ActiveCardStatusSection(
+                    connectionViewModel = activeConnectionViewModel,
+                    relayEnabled = relayEnabled,
+                    onOpenApiInfo = onOpenApiInfo,
+                    onOpenRelayInfo = onOpenRelayInfo,
+                    onOpenSessionInfo = onOpenSessionInfo,
+                )
+
+                // Endpoints expander (conditional on having endpoints).
+                // ADR 24 behavior preserved verbatim from pre-refactor.
+                if (endpoints.isNotEmpty()) {
+                    HorizontalDivider()
+                    var preferredRole by remember {
+                        mutableStateOf(activeConnectionViewModel.getPreferredEndpointRole())
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                    ) {
+                        Text(
+                            text = if (endpointsExpanded) "Hide endpoints"
+                            else "Show endpoints (${endpoints.size})",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(onClick = { endpointsExpanded = !endpointsExpanded }) {
+                            Icon(
+                                imageVector = if (endpointsExpanded) Icons.Filled.ExpandLess
+                                else Icons.Filled.ExpandMore,
+                                contentDescription = if (endpointsExpanded) "Collapse endpoints"
+                                else "Expand endpoints",
+                            )
+                        }
+                    }
+                    if (endpointsExpanded) {
+                        EndpointsCard(
+                            endpoints = endpoints,
+                            activeEndpoint = activeEndpoint,
+                            preferredRole = preferredRole,
+                            onPreferEndpoint = { candidate ->
+                                activeConnectionViewModel.setPreferredEndpointRole(candidate.role)
+                                preferredRole = candidate.role
                             },
-                            contentDescription = if (endpointsExpanded) {
-                                "Collapse endpoints"
-                            } else {
-                                "Expand endpoints"
+                            onClearOverride = {
+                                activeConnectionViewModel.setPreferredEndpointRole(null)
+                                preferredRole = null
+                            },
+                            onProbeNow = { activeConnectionViewModel.probeNow() },
+                            onViewPin = { candidate ->
+                                activeConnectionViewModel.lookupEndpointPin(candidate)
                             },
                         )
                     }
                 }
-                if (endpointsExpanded) {
-                    EndpointsCard(
-                        endpoints = endpoints,
-                        activeEndpoint = activeEndpoint,
-                        preferredRole = preferredRole,
-                        onPreferEndpoint = { candidate ->
-                            activeConnectionViewModel.setPreferredEndpointRole(candidate.role)
-                            preferredRole = candidate.role
-                        },
-                        onClearOverride = {
-                            activeConnectionViewModel.setPreferredEndpointRole(null)
-                            preferredRole = null
-                        },
-                        onProbeNow = { activeConnectionViewModel.probeNow() },
-                        onViewPin = { candidate ->
-                            activeConnectionViewModel.lookupEndpointPin(candidate)
-                        },
-                    )
-                }
+
+                HorizontalDivider()
+
+                // Advanced expander: manual URL config + insecure toggle
+                // + manual pairing code fallback. Collapsed by default —
+                // the canonical path is the Re-pair button up top.
+                ActiveCardAdvancedSection(
+                    connectionViewModel = activeConnectionViewModel,
+                    relayEnabled = relayEnabled,
+                    isDarkTheme = isDarkTheme,
+                    onInsecureAckRequested = onInsecureAckRequested,
+                )
+
+                HorizontalDivider()
+
+                // Security posture strip: transport badge + Tailscale chip
+                // + hardware keystore badge + Paired Devices row.
+                ActiveCardSecurityPosture(
+                    connectionViewModel = activeConnectionViewModel,
+                    onNavigateToPairedDevices = onNavigateToPairedDevices,
+                )
             }
         }
     }
 
+    // ── Card-scope dialogs (rename / revoke / remove confirms) ──────────
+    // These survive card-level recomposition; they DON'T need screen-
+    // scope hoisting because they're tied to a single card and cannot
+    // logically open on two cards at once.
     if (showRenameDialog) {
         RenameConnectionDialog(
             initialLabel = connection.label,
@@ -435,7 +555,6 @@ private fun ConnectionCard(
             },
         )
     }
-
     if (showRevokeConfirm) {
         AlertDialog(
             onDismissRequest = { showRevokeConfirm = false },
@@ -452,18 +571,13 @@ private fun ConnectionCard(
                         onRevoke()
                         showRevokeConfirm = false
                     },
-                ) {
-                    Text("Revoke")
-                }
+                ) { Text("Revoke") }
             },
             dismissButton = {
-                TextButton(onClick = { showRevokeConfirm = false }) {
-                    Text("Cancel")
-                }
+                TextButton(onClick = { showRevokeConfirm = false }) { Text("Cancel") }
             },
         )
     }
-
     if (showRemoveConfirm) {
         AlertDialog(
             onDismissRequest = { showRemoveConfirm = false },
@@ -481,16 +595,11 @@ private fun ConnectionCard(
                         showRemoveConfirm = false
                     },
                 ) {
-                    Text(
-                        text = "Remove",
-                        color = MaterialTheme.colorScheme.error,
-                    )
+                    Text(text = "Remove", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showRemoveConfirm = false }) {
-                    Text("Cancel")
-                }
+                TextButton(onClick = { showRemoveConfirm = false }) { Text("Cancel") }
             },
         )
     }
@@ -502,63 +611,55 @@ private fun RenameConnectionDialog(
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {
-    var value by remember { mutableStateOf(initialLabel) }
-    // Validate on every keystroke so the Save button disables + the
-    // supporting text appears without needing a failed submit first.
-    val validationError = com.hermesandroid.relay.data.ConnectionValidation.validateLabel(value)
+    var input by remember { mutableStateOf(initialLabel) }
+    val validation = com.hermesandroid.relay.data.ConnectionValidation.validateLabel(input)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Rename connection") },
         text = {
-            OutlinedTextField(
-                value = value,
-                onValueChange = { value = it },
-                singleLine = true,
-                label = { Text("Label") },
-                isError = validationError != null && value.isNotEmpty(),
-                supportingText = {
-                    // Only show the error message once the user has typed
-                    // *something* — starting with the initial value we don't
-                    // want the dialog to appear with a red "can't be blank"
-                    // on first open.
-                    if (validationError != null && value.isNotEmpty()) {
-                        Text(validationError)
-                    }
-                },
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it },
+                    singleLine = true,
+                    isError = validation != null,
+                    supportingText = {
+                        if (validation != null) Text(validation)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         },
         confirmButton = {
             TextButton(
-                enabled = validationError == null,
-                onClick = { onConfirm(value.trim()) },
+                onClick = { onConfirm(input.trim()) },
+                enabled = validation == null && input.trim() != initialLabel,
             ) {
-                Text("Save")
+                Text("Rename")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         },
     )
 }
 
 /**
- * Coarse-grained relative time — "Paired 3d ago". We don't need exact
- * precision here, and rolling our own avoids adding android.text.format or
- * ThreeTenABP dependencies just for one subtitle.
+ * Hand-rolled "N minutes ago" / "N hours ago" / "N days ago" formatter
+ * for the non-active card subtitle. Could use `DateUtils.getRelativeTimeSpanString`
+ * but that returns awkward copy ("in 0 minutes") for small deltas.
  */
 private fun formatPairedRelative(pairedAtMillis: Long): String {
     val deltaMs = System.currentTimeMillis() - pairedAtMillis
-    if (deltaMs < 0) return "Paired"
+    if (deltaMs < 0) return "Just paired"
     val minutes = TimeUnit.MILLISECONDS.toMinutes(deltaMs)
     val hours = TimeUnit.MILLISECONDS.toHours(deltaMs)
     val days = TimeUnit.MILLISECONDS.toDays(deltaMs)
     return when {
-        minutes < 1L -> "Paired just now"
-        minutes < 60L -> "Paired ${minutes}m ago"
-        hours < 24L -> "Paired ${hours}h ago"
-        days < 30L -> "Paired ${days}d ago"
-        else -> "Paired ${days / 30L}mo ago"
+        minutes < 1L -> "Just paired"
+        minutes < 60L -> "Paired $minutes minute${if (minutes == 1L) "" else "s"} ago"
+        hours < 24L -> "Paired $hours hour${if (hours == 1L) "" else "s"} ago"
+        days < 30L -> "Paired $days day${if (days == 1L) "" else "s"} ago"
+        else -> "Paired"
     }
 }

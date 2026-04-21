@@ -1,5 +1,59 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-21 — Connection-settings unification: kill the singular screen, active card owns everything
+
+**Context.** Pre-ship scan for v0.7.0 surfaced a UX fault line that had been accruing since v0.3: the app had *two* screens with nearly identical names (`ConnectionSettings` singular, `ConnectionsSettings` plural) reached from *two* different Settings-top surfaces (Active Connection quick-look card vs. "Connections" category row), covering *overlapping* surfaces of functionality. Users hitting "Active Connection" from Settings landed on a 1429-line detail screen with pair / manual URL / TLS / manual pairing code; users hitting "Connections" landed on a 564-line card list with rename / re-pair / revoke / remove per card. Both said "Active" somewhere; both claimed to be the authoritative connection home. Neither was.
+
+**Design.** One screen, one mental model. The plural `ConnectionsSettings` screen stays — it's the multi-connection-aware home and structurally correct. The singular `ConnectionSettings` (and its route, and its `onNavigateToConnectionSettings` param chain, and the Active Connection quick-look card on Settings that led to it) all delete. Everything the singular screen *did* — pair QR entry, manual URL config, insecure toggle, manual pairing code fallback, status rows with tap-for-info-sheet — folds into the **active card** on the plural screen as expandable body sections:
+
+ 1. **Status section** — 3 tappable rows (API / Relay / Session), always visible on the active card. Replaces the Settings-top quick-look card verbatim. Tap → same info sheets. Relay-row tap while Stale → immediate reconnect + toast.
+ 2. **Endpoints expander** — unchanged from before; just repositioned below the status rows.
+ 3. **Advanced expander** — manual URL config (API + relay), insecure toggle with Ack dialog, manual pairing code fallback (full 3-step flow with 15s auth watcher + snackbar). Collapsed by default — the canonical path is the per-card "Re-pair" button above.
+ 4. **Security posture strip** — transport badge, Tailscale chip, hardware keystore badge, Paired Devices row. Always visible on the active card.
+
+Non-active cards stay flat — just title + subtitle + action row. List density is preserved.
+
+**Where the code landed.**
+- `ui/components/ActiveConnectionSections.kt` (new, ~650 lines) — owns the three active-card-only bodies (`ActiveCardStatusSection`, `ActiveCardAdvancedSection` with three private subsections, `ActiveCardSecurityPosture`) plus the `ManualPairStep` helper lifted from the deleted legacy screen.
+- `ui/screens/ConnectionsSettingsScreen.kt` (rewritten, ~580 lines) — now renders the full active-card body inline via the new sections, with screen-scope hoisting for info sheets + insecure-Ack dialog (so `LazyColumn` disposing the card mid-scroll can't silently dismiss an open sheet).
+- `ui/screens/ConnectionSettingsScreen.kt` (deleted, was 1429 lines).
+- `ui/RelayApp.kt` — drops the `composable(Screen.ConnectionSettings.route)` block, the `data object ConnectionSettings` entry in the `Screen` sealed class, and the `onNavigateToConnectionSettings` lambda wired into `SettingsScreen`. Adds `onNavigateToPairedDevices` to the plural screen's composable call.
+- `ui/screens/SettingsScreen.kt` — deletes the Active Connection quick-look Card block (~90 lines), the `onNavigateToConnectionSettings` param, and the 7 `collectAsState` calls (apiReachable / apiHealth / authState / apiUrl / relayUrl / relayUiState / relayRowState + `relayFeatureEnabled`) that were only used by that card.
+- `user-docs/reference/configuration.md` + `user-docs/guide/getting-started.md` — nav paths updated throughout: every `Settings → Connection → X` becomes `Settings → Connections → [active card] → X` or `...→ Advanced → X`.
+
+**Subtle decisions worth flagging.**
+
+*LazyColumn item disposal vs. modal state.* The Card is a `LazyColumn` item. If the user scrolls it off-screen while a status-row info sheet is open, the item gets disposed and any `remember { mutableStateOf(false) }` inside it is gone. So `showApiInfoSheet` / `showRelayInfoSheet` / `showSessionInfoSheet` / `showInsecureAckDialog` are all hoisted to `ConnectionsSettingsScreen` scope. Dialog confirmation still wipes card-scope state if the card is still alive; screen scope survives scroll regardless. Card-scope `remember` is retained only for per-card modals that logically can't exist cross-card (rename / revoke-confirm / remove-confirm dialogs).
+
+*Endpoint-flow cold-start gap.* `observeDeviceEndpoints()` is a cold `flow { ... }` that suspends on `getOrCreateDeviceId()` before the first emission. During that gap, `endpoints == emptyList()` and the Endpoints expander hides — which is correct for the Endpoints-only content but NOT for the Status section or Advanced section, which should be unconditionally visible on the active card. I split the guard: outer `if (isActive && activeConnectionViewModel != null)` gates the deep body; the inner `if (endpoints.isNotEmpty())` only gates the Endpoints expander. Flagged by the code-explorer agent's "one thing to warn a new developer about" — worth documenting.
+
+*Why `InsecureConnectionAckDialog` is hoisted through a callback rather than owned by the Advanced section.* The dialog would work if owned by the card — but if the card scrolls off mid-open, the dialog dismisses silently. The Advanced subsection fires `onInsecureAckRequested()` which opens a screen-scope boolean; the dialog renders in the screen's root composition. Survives scroll, survives recomposition, one source of truth.
+
+*Mutex-free reconnect-on-entry.* Both `SettingsScreen` and `ConnectionsSettingsScreen` call `reconnectIfStale()` in `LaunchedEffect(Unit)`. The VM method no-ops if a reconnect is already in flight, so the duplicate call is free and actually helpful — firing on Settings entry means the subpage arrival already has a warm reconnect attempt rather than triggering one on its own arrival.
+
+**Team delivery.** Spawned three parallel `feature-dev:code-explorer` agents up front — one to inventory the 1429-line singular screen's features by category (inline / advanced / duplicate / dead code / state deps / dialogs / nav entry points), one to map the plural screen's current active-card rendering + expansion patterns + constraints, one to trace every caller of the route and parameter chains that would need rewiring. All three returned line-numbered reports in under 2 minutes, which made the synthesis + implementation step mechanical. Worth the pattern for any similar "delete-and-fold" refactor.
+
+**Post-refactor vertical map for connection management:**
+
+```
+Settings
+├── Active Agent card                 (unchanged — summary chip, opens AgentInfoSheet inline)
+├── Inspect Agent card                (unchanged — Profile deep-link)
+└── [Connections] category row
+    └── ConnectionsSettings subpage
+        ├── Non-active card           (title + subtitle + action row — flat)
+        └── Active card               (everything above, PLUS inline deep body:)
+            ├── Status section        (API / Relay / Session rows → info sheets)
+            ├── Endpoints expander    (conditional on endpoints.isNotEmpty())
+            ├── Advanced expander
+            │   ├── Manual URL        (API + Relay URL + Save & Test)
+            │   ├── Insecure toggle   (with first-enable Ack dialog)
+            │   └── Manual code       (3-step fallback flow)
+            └── Security posture      (transport + Tailscale + hardware + Paired Devices row)
+```
+
+Two top-level entries. One subpage. One active card. Every connection action reachable in a deterministic drill-down. No naming collisions, no duplicate surfaces, no wondering which "Connection" the Settings tap will land on.
+
 ## 2026-04-21 — `relayReady` gate + KDoc nested-comment trap
 
 **Context.** Two unrelated passes in one session. (1) Voice mode and Bridge commands both depend on the WSS relay, but the app had no unified signal for "relay is actually functional" — a user with no relay paired would tap the Mic and get a cryptic failure, or the Bridge master toggle would happily enable an accessibility service whose commands would never arrive. (2) While running a ship-readiness scan for v0.7.0, the compile failed with "Unresolved reference 'isReady'" at `MainActivity.kt:67` — a symptom that took some digging to trace to its real cause.

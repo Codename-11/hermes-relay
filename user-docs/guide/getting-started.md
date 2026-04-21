@@ -135,7 +135,7 @@ hermes-pair --ttl 1d
 Supported duration formats: `1d`, `7d`, `30d`, `90d`, `1y`, `never` (or any `<number><unit>` combo where unit is `s`/`m`/`h`/`d`/`w`/`y`). Grants can be pre-set for the `terminal` and `bridge` channels and are automatically clamped to the overall session TTL — a grant cannot outlive its session.
 
 ::: tip Camera unavailable? Use manual pairing
-If you can't scan a QR — for example you're SSH'd into the host from the same phone you want to pair, the host has no display attached, or there's no second camera-equipped device handy — Hermes-Relay ships a manual fallback flow. Open the app's **Settings → Connection → Manual pairing code (fallback)** card to read its locally-generated 6-char code, then on the host run:
+If you can't scan a QR — for example you're SSH'd into the host from the same phone you want to pair, the host has no display attached, or there's no second camera-equipped device handy — Hermes-Relay ships a manual fallback flow. Open the app's **Settings → Connections → [active card] → Advanced → Manual pairing code (fallback)** section to read its locally-generated 6-char code, then on the host run:
 
 ```bash
 hermes-pair --register-code ABCD12             # default 30d session
@@ -165,10 +165,10 @@ The app also runs a **Trust On First Use** (TOFU) cert pinning check on `wss://`
 
 #### Paired Devices management
 
-**Settings → Connection → Paired Devices** lists every device currently paired with the relay — device name, transport badge, session expiry, per-channel grant chips, and a **Revoke** button per row. Revoking the current device wipes local state and redirects to the pair flow. Any paired device can revoke any other; for single-operator setups this is intentional (so you can manage everything from one phone), multi-user deployments will need a role model later.
+**Settings → Connections → [active card] → Paired Devices** lists every device currently paired with the relay — device name, transport badge, session expiry, per-channel grant chips, and a **Revoke** button per row. Revoking the current device wipes local state and redirects to the pair flow. Any paired device can revoke any other; for single-operator setups this is intentional (so you can manage everything from one phone), multi-user deployments will need a role model later.
 
 ::: tip Multiple Hermes servers
-The app supports pairing with more than one Hermes server (home + work, dev + prod, etc.) and switching with a single tap. Once you've paired the first server, open **Settings → Connections** to add a second — it launches the same QR flow. A Connection chip appears on the left of the Chat top bar as soon as you have two or more, letting you switch without re-pairing. See [Connections](/features/connections) for the full model.
+The app supports pairing with more than one Hermes server (home + work, dev + prod, etc.) and switching with a single tap. Once you've paired the first server, open **Settings → Connections** to add a second — it launches the same QR flow. When you have two or more, a **Connection** radio list appears inside the agent sheet (tap the agent name in the Chat top bar), letting you switch without re-pairing. See [Connections](/features/connections) for the full model.
 :::
 
 ::: warning Security
@@ -280,7 +280,7 @@ If you don't want to use QR pairing, you can enter connection details by hand �
 5. Optionally enter a **Relay URL** for Terminal/Bridge features
 6. Tap **Get Started**
 
-**After onboarding:** open **Settings → Connection**. The top card (**Pair with your server**) shows a **Scan Pairing QR** button and a status summary for the API server, relay, and session. To enter values by hand, expand the **Manual configuration** card below it — API Server URL, API Key, Relay URL, and Insecure Mode live there, along with **Save & Test**.
+**After onboarding:** open **Settings → Connections**. Each paired server is a card in the list; the currently-active card expands inline to show status rows, endpoint details, and an **Advanced** section with manual URL config, insecure-mode toggle, and the manual pairing-code fallback flow. The per-card **Re-pair** button is the one-tap entry point for scanning a new QR. API Server URL, API Key, Relay URL, and Insecure Mode all live under the active card's **Advanced** expander, with **Save & Test** for each.
 
 The `hermes-pair` command always prints these same values as plain text alongside the QR code, so you can copy them directly.
 
@@ -313,7 +313,7 @@ Hermes-Relay supports **multi-endpoint pairing**: one QR carries every network p
 
 **Forcing a specific mode at pair time** — `--prefer <role>` promotes a named role to priority 0 (e.g. `--prefer tailscale` for a QR biased toward the tailnet even when LAN is reachable). Open vocabulary — any role string you pass through `--mode` or a custom operator setup works here.
 
-**Override per-session on the phone** — Settings → Connection → Endpoints card → row menu → **Prefer this endpoint**.
+**Override per-session on the phone** — Settings → Connections → [active card] → **Show endpoints** expander → row menu → **Prefer this endpoint**.
 
 For the full matrix (Tailscale, Caddy + Let's Encrypt, Cloudflare Tunnel, self-hosted WireGuard, plaintext over trusted VPN) with working config blocks, see [remote-access.md](https://github.com/Codename-11/hermes-relay/blob/main/docs/remote-access.md) and the [Connections page](/features/connections#multi-endpoint-pairing-one-qr-for-every-network).
 

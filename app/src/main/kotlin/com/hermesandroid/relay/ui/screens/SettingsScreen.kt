@@ -57,13 +57,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
-import com.hermesandroid.relay.ui.components.ConnectionStatusRow
 import com.hermesandroid.relay.ui.components.ProfileInspectorCard
-import com.hermesandroid.relay.viewmodel.asBadgeState
-import com.hermesandroid.relay.viewmodel.statusText
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
@@ -98,12 +94,15 @@ fun SettingsScreen(
     // confused users, who expected dismissing the sheet to drop them back
     // on Settings, not on a different tab. The local state + AgentInfoSheet
     // block at the bottom of this composable drives the flow directly.)
-    // Multi-connection: entry point for the Connections manager. Kept at
-    // the top of the category list so switching server connections is one
-    // tap from the bottom nav, not buried behind "Connection → Paired
-    // devices".
+    // Connections manager — the unified home for everything connection-
+    // related. Kept at the top of the category list so switching server
+    // connections is one tap from the bottom nav. The former "Active
+    // Connection quick-look card" that lived here (and navigated into a
+    // second singular detail screen) was removed on 2026-04-21 — the
+    // plural Connections screen's active card now owns the full status
+    // + manual URL + insecure toggle + manual pairing code surface via
+    // expandable sections, so there's nothing left to link to twice.
     onNavigateToConnections: () -> Unit,
-    onNavigateToConnectionSettings: () -> Unit,
     onNavigateToChatSettings: () -> Unit,
     onNavigateToMediaSettings: () -> Unit,
     onNavigateToAppearanceSettings: () -> Unit,
@@ -127,33 +126,22 @@ fun SettingsScreen(
     val context = LocalContext.current
     val isDarkTheme = isSystemInDarkTheme()
 
-    val apiReachable by connectionViewModel.apiServerReachable.collectAsState()
-    val apiHealth by connectionViewModel.apiServerHealth.collectAsState()
-    val authState by connectionViewModel.authState.collectAsState()
-    val apiUrl by connectionViewModel.apiServerUrl.collectAsState()
-    val relayUrl by connectionViewModel.relayUrl.collectAsState()
-    val relayUiState by connectionViewModel.relayUiState.collectAsState()
-    val relayRowState by connectionViewModel.relayRowState.collectAsState()
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
     // Active Agent card inputs — personality + profile drive the title,
-    // ring-accent, and subtitle. Kept next to the other top-level
-    // collectAsState calls so the data-gather stays in one block.
+    // ring-accent, and subtitle.
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
     val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
     val devOptionsUnlocked by FeatureFlags.devOptionsUnlocked(context)
         .collectAsState(initial = FeatureFlags.isDevBuild)
-    val relayFeatureEnabled by FeatureFlags.relayEnabled(context)
-        .collectAsState(initial = FeatureFlags.isDevBuild)
 
-    // Kick a WSS reconnect when Settings first composes so the Active
-    // Connection card doesn't flash red/Disconnected on cold entry. Without
-    // this, the relay row rendered with whatever state ConnectionManager
-    // held after the last resume — which on fresh launch is often
-    // Disconnected since RelayApp's ON_RESUME fires before the tab even
-    // exists on screen. Matches ConnectionSettingsScreen's behavior so the
-    // two paths converge.
+    // Kick a WSS reconnect when Settings first composes so the Connections
+    // subpage's active-card relay row doesn't flash Disconnected on cold
+    // entry. ConnectionsSettingsScreen runs the same `reconnectIfStale()`
+    // on its own entry, but firing here too means the first "Settings →
+    // Connections" navigation lands on an already-warm reconnect attempt
+    // rather than triggering it on arrival.
     LaunchedEffect(Unit) {
         connectionViewModel.reconnectIfStale()
     }
@@ -224,98 +212,19 @@ fun SettingsScreen(
                 isDarkTheme = isDarkTheme,
             )
 
-            // ── Connection quick-look card ─────────────────────────────
-            // Live status summary for API + relay + session, tappable as a
-            // shortcut into the Connection sub-screen where the full
-            // pairing / manual configuration UX lives.
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .gradientBorder(
-                        shape = RoundedCornerShape(12.dp),
-                        isDarkTheme = isDarkTheme
-                    )
-                    .clickable(onClick = onNavigateToConnectionSettings),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Active Connection",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                            // Connection label lands right under the title so
-                            // users with multiple saved connections can see at
-                            // a glance which one the status rows describe. Fall
-                            // back to "No connection" only when the store has
-                            // no active entry — normal startup seeds one.
-                            Text(
-                                text = activeConnection?.label ?: "No connection",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    ConnectionStatusRow(
-                        label = "API",
-                        isConnected = apiReachable,
-                        isProbing = apiHealth == ConnectionViewModel.HealthStatus.Probing,
-                        statusText = when {
-                            apiUrl.isBlank() -> "Not configured"
-                            apiHealth == ConnectionViewModel.HealthStatus.Probing -> "Checking…"
-                            apiReachable -> apiUrl
-                            else -> "Unreachable"
-                        }
-                    )
-
-                    if (relayFeatureEnabled) {
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
-                        // All state-resolution rules live in ConnectionViewModel's
-                        // relayUiState flow — this row just maps that resolved
-                        // state onto the row's badge + text. Settings shows the
-                        // full relay URL in the Connected case; other screens
-                        // show "Connected" via a different label.
-                        ConnectionStatusRow(
-                            label = "Relay",
-                            state = relayRowState.asBadgeState(),
-                            // RelayRowState.statusText appends " · <Role>" when
-                            // the ADR 24 resolver has picked an endpoint, so
-                            // the chip reads "Connected · Tailscale" etc.
-                            statusText = relayRowState.statusText(connectedLabel = relayUrl),
-                        )
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
-                        ConnectionStatusRow(
-                            label = "Session",
-                            isConnected = authState is AuthState.Paired,
-                            isConnecting = authState is AuthState.Pairing,
-                            statusText = when (authState) {
-                                is AuthState.Paired -> "Paired"
-                                is AuthState.Pairing -> "Pairing…"
-                                is AuthState.Failed -> "Failed"
-                                is AuthState.Unpaired -> "Not paired"
-                            }
-                        )
-                    }
-                }
-            }
+            // (The "Active Connection quick-look card" that used to live
+            // here — showing API / Relay / Session status rows with a
+            // clickable shortcut into a separate singular-connection
+            // detail screen — was removed on 2026-04-21. It was the
+            // second "connection status" surface on a screen that already
+            // had the Active Agent card above it, and it pointed at a
+            // near-identically-named screen (`ConnectionSettings` singular
+            // vs `ConnectionsSettings` plural) which users couldn't tell
+            // apart. Everything the card did — status rows, pair, manual
+            // URL, insecure toggle, manual pairing code — now lives inline
+            // on the active card of the Connections subpage, reached via
+            // the "Connections" category row below. See ADR on the
+            // connection-settings unification.)
 
             // ── Category list ──────────────────────────────────────────
             // Multi-connection: Connections sits at the very top of the

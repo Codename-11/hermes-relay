@@ -90,7 +90,6 @@ import com.hermesandroid.relay.ui.screens.BridgeSafetySettingsScreen
 // === END PHASE3-safety-rails ===
 import com.hermesandroid.relay.ui.screens.ChatScreen
 import com.hermesandroid.relay.ui.screens.ChatSettingsScreen
-import com.hermesandroid.relay.ui.screens.ConnectionSettingsScreen
 import com.hermesandroid.relay.ui.screens.DeveloperSettingsScreen
 import com.hermesandroid.relay.ui.screens.MediaSettingsScreen
 import com.hermesandroid.relay.ui.screens.PairedDevicesScreen
@@ -212,7 +211,10 @@ sealed class Screen(
     // === END PHASE3-safety-rails ===
     // Per-category settings sub-screens — split out of the mega SettingsScreen
     // following the VoiceSettingsScreen pattern (see DEVLOG 2026-04-11).
-    data object ConnectionSettings : Screen("settings/connection", "Connection", Icons.Filled.Settings)
+    // (The singular `ConnectionSettings` object was removed on 2026-04-21
+    // when its underlying screen was collapsed into the active card of
+    // the plural `ConnectionsSettings` subpage. See `ConnectionsSettings`
+    // above for the surviving route.)
     data object ChatSettings : Screen("settings/chat", "Chat", Icons.Filled.Settings)
     data object MediaSettings : Screen("settings/media", "Media", Icons.Filled.Settings)
     data object AppearanceSettings : Screen("settings/appearance", "Appearance", Icons.Filled.Settings)
@@ -944,9 +946,6 @@ fun RelayApp() {
                         onNavigateToConnections = {
                             navController.navigate(Screen.ConnectionsSettings.route)
                         },
-                        onNavigateToConnectionSettings = {
-                            navController.navigate(Screen.ConnectionSettings.route)
-                        },
                         onNavigateToChatSettings = {
                             navController.navigate(Screen.ChatSettings.route)
                         },
@@ -1019,25 +1018,19 @@ fun RelayApp() {
                         }
                     )
                 }
-                composable(Screen.ConnectionSettings.route) {
-                    ConnectionSettingsScreen(
-                        connectionViewModel = connectionViewModel,
-                        onBack = { navController.popBackStack() },
-                        onNavigateToPairedDevices = {
-                            navController.navigate(Screen.PairedDevices.route)
-                        },
-                        onNavigateToPair = {
-                            // Pre-create + switch to the placeholder so
-                            // applyPairingPayload's token write lands in
-                            // the new connection's store. See
-                            // ConnectionViewModel.beginAddConnection kdoc.
-                            connectionSwitchScope.launch {
-                                val id = connectionViewModel.beginAddConnection()
-                                navController.navigate(Screen.Pair.route(id))
-                            }
-                        }
-                    )
-                }
+                // (The `composable(Screen.ConnectionSettings.route)` block
+                // that used to live here — hosting the singular, legacy
+                // 1400-line `ConnectionSettingsScreen` — was removed on
+                // 2026-04-21 as part of the connection-settings
+                // unification. Everything that screen did (pair, manual
+                // URL config, TLS/insecure toggle, manual pairing code
+                // fallback) now lives inline on the active card of the
+                // plural `ConnectionsSettings` screen below, via the
+                // expandable sections in `ActiveConnectionSections.kt`.
+                // The corresponding `data object ConnectionSettings` was
+                // also removed from the `Screen` sealed class, and the
+                // `onNavigateToConnectionSettings` param on
+                // `SettingsScreen` was dropped.)
                 composable(Screen.ConnectionsSettings.route) {
                     val connectionsList by connectionViewModel.connections.collectAsState()
                     val activeId by connectionViewModel.activeConnectionId.collectAsState()
@@ -1114,9 +1107,15 @@ fun RelayApp() {
                             }
                         },
                         onBack = { navController.popBackStack() },
+                        onNavigateToPairedDevices = {
+                            navController.navigate(Screen.PairedDevices.route)
+                        },
                         // Pass the VM so the active card can render the
-                        // shared EndpointsCard inline — matches the info
-                        // density of Settings → Connection's Card 1.5.
+                        // shared EndpointsCard inline AND the unified
+                        // Advanced section (manual URL / insecure toggle /
+                        // manual pairing code). Null-safe — if the VM
+                        // isn't wired (tests, previews), the active card
+                        // degrades to the flat layout.
                         connectionViewModel = connectionViewModel,
                     )
                 }

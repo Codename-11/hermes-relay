@@ -4,11 +4,21 @@ Hermes-Relay stores its settings using Android's DataStore, Android Keystore (fo
 
 ## Connection Settings
 
-These are configured during onboarding or from the **Settings → Connection** screen. The Connection screen groups everything under a single section with three cards:
+These are configured during onboarding or from the **Settings → Connections** screen. That screen is the single authoritative home for everything connection-related (as of the 2026-04-21 unification — the legacy singular *Settings → Connection* subpage was folded in here). Each paired server appears as its own card in the list; the currently-active card expands inline to surface all deep-configuration UI.
 
-- **Pair with your server** — always visible. One-tap entry point: a **Scan Pairing QR** button plus a unified status summary (API Server reachable, Relay connected, Session paired). One scan of the QR printed by `/hermes-relay-pair` (or the `hermes-pair` shell shim) configures everything. When paired, a **Transport Security** badge (🔒 secure / 🔓 insecure with reason / 🔓 unknown) and a **Tailscale detected** chip (if applicable) surface above the status rows. A **Paired Devices** row navigates to the full device-management screen.
-- **Manual configuration** — collapsible. Starts collapsed when you're already paired and reachable, expanded otherwise. Holds the manual-entry fields below and a **Save & Test** action. This is the power-user / troubleshooting path. Toggling **Insecure mode** (plain `ws://` instead of `wss://`) for the first time opens a consent dialog with a reason picker (LAN only / Tailscale or VPN / Local dev only). The reason is displayed on the Transport Security badge but is not enforced — the operator's intent is the trust model.
-- **Manual pairing code (fallback)** — collapsible and only visible when the relay feature flag is on. Shows a locally-generated 6-char code with copy / regenerate icons. This is a **fallback for when you can't use the QR scan flow** — for example, the device that needs to pair is also your only camera, you're SSH'd into the host from your phone, or the host has no display attached. **Workflow:** (1) open this card and read the displayed code; (2) on the host, run `hermes-pair --register-code <code>` (the command pre-registers the code with the local relay over loopback and confirms which code it accepted); (3) come back to this card in the app and tap **Connect**. The relay accepts the code, mints a session, and you're paired. The canonical flow is still the QR from `/hermes-relay-pair` — use this only when QR scanning is physically impossible. Bridge control is gated by the master toggle on the Bridge tab, NOT by this code.
+**On any card (active or not) — the per-connection action row:**
+- **Reconnect** (only on Stale state)
+- **Rename**, **Re-pair**, **Revoke**, **Remove**
+
+**On the active card — a deep body below the action row:**
+- **Status rows** (API / Relay / Session) — always visible, tappable to open detail sheets with token, endpoint, health, and session info.
+- **Endpoints** (collapsible, when the pairing carries them) — role chips (LAN / Tailscale / Public / Custom VPN), probe-now button, per-candidate *Prefer this endpoint* override, per-candidate TOFU pin inspection.
+- **Advanced** (collapsible) — the power-user / troubleshooting path. Holds:
+  - **Manual URL config** — API Server URL, API Key, Relay URL, each with **Save & Test**.
+  - **Allow insecure connections** toggle — first enable opens a consent dialog with a reason picker (LAN only / Tailscale or VPN / Local dev only). Reason is displayed on the Transport Security badge below but is not enforced — operator intent is the trust model.
+  - **Disconnect** button — drops the active WSS without clearing the session token.
+  - **Manual pairing code (fallback)** — the 3-step flow for when you can't use QR scanning. (1) Copy the locally-generated 6-char code; (2) on the host, run `hermes-pair --register-code <code>`; (3) tap **Connect** here. Canonical flow is still the QR from `/hermes-relay-pair` — use this only when QR scanning is physically impossible. Bridge control is gated by the master toggle on the Bridge tab, NOT by this code.
+- **Security posture strip** (always visible) — Transport Security badge (🔒 secure / 🔓 insecure with reason / 🔓 unknown), Tailscale-detected chip, Hardware-keystore badge, and a **Paired Devices** row that navigates to the full device list.
 
 | Setting | Storage | Description |
 |---------|---------|-------------|
@@ -37,7 +47,7 @@ Per-channel grants (`terminal`, `bridge`) can be pre-set by the operator via `he
 
 ### Paired Devices
 
-**Settings → Connection → Paired Devices** opens a full-screen list of every device currently paired with the relay. Each card shows:
+**Settings → Connections → [active card] → Paired Devices** opens a full-screen list of every device currently paired with the relay. Each card shows:
 
 - Device name + device ID
 - **Current device** badge if this is the device you're looking at the list on
