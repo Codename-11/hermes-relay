@@ -444,7 +444,7 @@ private fun InsecureToggleSubsection(
                 modifier = Modifier.size(16.dp),
             )
             Text(
-                text = "Insecure connection — traffic is not encrypted",
+                text = "Plain connection — traffic is not encrypted",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
             )
@@ -458,7 +458,7 @@ private fun InsecureToggleSubsection(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "Allow insecure connections",
+                text = "Allow plain (unencrypted) connections",
                 style = MaterialTheme.typography.bodyMedium,
             )
             Text(
@@ -732,12 +732,17 @@ fun ActiveCardSecurityPosture(
     val isTailscaleDetected by connectionViewModel.isTailscaleDetected.collectAsState()
     val currentPairedSession by connectionViewModel.currentPairedSession.collectAsState()
     val pairedDevices by connectionViewModel.pairedDevices.collectAsState()
+    // ADR 24 — surface the live endpoint role so the insecure badge can
+    // say "Plain (on LAN)" instead of "Insecure (network unknown)" when
+    // the resolver already knows which candidate we're on.
+    val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
 
     TransportSecurityBadge(
         isSecure = isUrlSecure(relayUrl),
         reason = insecureReason.ifBlank { null },
         size = TransportSecuritySize.Row,
         modifier = Modifier.fillMaxWidth(),
+        activeRole = activeEndpoint?.role,
     )
 
     if (isTailscaleDetected) {

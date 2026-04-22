@@ -16,7 +16,7 @@ These are configured during onboarding or from the **Settings → Connections** 
 - **Routes (N)** (when the pairing carries multi-endpoint candidates) — *"The app picks the fastest reachable network automatically and switches when you change networks."* Expander reveals one row per route with role chip (LAN / Tailscale / Public / Custom VPN), per-row Secure/Plain security chip, state chip (Active / Fallback), probe-now button, per-candidate *Prefer this route* override, and per-candidate TOFU pin inspection.
 - **Advanced** (collapsible) — *"Manual setup — most people don't need this after QR pairing."* Holds:
   - **Manual URL config** — API Server URL, API Key, Relay URL, each with **Save & Test**.
-  - **Allow insecure connections** toggle — first enable opens a consent dialog with a reason picker (LAN only / Tailscale or VPN / Local dev only). Reason is displayed on the Transport Security badge below but is not enforced — operator intent is the trust model.
+  - **Allow plain (unencrypted) connections** toggle — first enable opens a consent dialog with a reason picker (LAN only / Tailscale or VPN / Local dev only). Reason is stored for later but the Transport Security badge usually derives a more accurate label from the live active-route role. Operator intent is the trust model — the toggle gates the UI's ability to save `ws://` / `http://` URLs, nothing server-side.
   - **Disconnect** button — drops the active WSS without clearing the session token.
   - **Manual pairing code (fallback)** — the 3-step flow for when you can't use QR scanning. (1) Copy the locally-generated 6-char code; (2) on the host, run `hermes-pair --register-code <code>`; (3) tap **Connect** here. Canonical flow is still the QR from `/hermes-relay-pair` — use this only when QR scanning is physically impossible. Bridge control is gated by the master toggle on the Bridge tab, NOT by this code.
 - **Security** (always visible) — Transport Security badge (🔒 secure / 🔓 plain with reason / 🔓 unknown), Tailscale-detected chip, Hardware-keystore badge, and a **Relay sessions** row that navigates to the full list of phones paired with this server.
@@ -29,8 +29,10 @@ These are configured during onboarding or from the **Settings → Connections** 
 | Relay Session Token | **Keystore** (StrongBox when available), with fallback to EncryptedSharedPreferences | Persistent token from relay pairing flow. Migrated automatically from the legacy EncryptedSharedPreferences file on first launch post-upgrade. |
 | TOFU Cert Pins | DataStore (`tofu_pins`) | SHA-256 SPKI fingerprints per `host:port`. Recorded on the first successful `wss://` connect, verified on subsequent connects via OkHttp `CertificatePinner`. Wiped explicitly when the user re-pairs via QR (taken as consent to new cert material). |
 | Pair TTL Preference | DataStore (`pair_ttl_seconds`) | User's last-selected session TTL on the pair flow. Preselected next time. |
-| Insecure Ack Seen | DataStore (`insecure_ack_seen`) | Whether the user has acknowledged the insecure-mode threat model. The ack dialog only shows once per install; revoke via **Clear data** to reshow. |
-| Insecure Reason | DataStore (`insecure_reason`) | The reason selected on the insecure ack dialog — `lan_only` / `tailscale_vpn` / `local_dev` / empty. Displayed on the Transport Security badge for context. |
+| Plain toggle ack seen | DataStore (`insecure_ack_seen`) | Whether the user has acknowledged the Allow-plain-connections toggle threat model. Per-install; revoke via **Clear data** to reshow. (Key name retains the legacy `insecure_` prefix for migration compatibility.) |
+| Plain toggle reason | DataStore (`insecure_reason`) | Reason selected on the plain-toggle ack dialog — `lan_only` / `tailscale_vpn` / `local_dev` / empty. Auto-stamped at pair time when the resolved endpoint's role is `lan` or `tailscale` (cleared on upgrade to a secure endpoint). The Transport Security badge prefers the live active-route role over this stored value. |
+| All-plain pairing ack | DataStore (`all_insecure_pair_ack_seen`) | Whether the user has acknowledged the one-time pairing-consent checkbox that appears on step 2 when every route in the scanned QR is plain `ws://` / `http://` (no secure sibling). Per-install. Mixed QRs (LAN + Tailscale) are ungated because the secure route is a safety net. |
+| Trusted bridge actions | DataStore (`bridge_trusted_destructive_verbs`) | Set of destructive bridge verbs (e.g. `send_sms`, `call`) that bypass the confirmation overlay because the user ticked "Don't ask again" in a prior confirm. The master-disable toggle and the blocklist still override — trust is for eliminating confirmation fatigue on approved verbs, not a kill-switch bypass. Reset from Bridge → Trusted actions → **Reset**. |
 
 ### Pair Flow — TTL Picker
 
@@ -52,7 +54,7 @@ Per-channel grants (`terminal`, `bridge`) can be pre-set by the operator via `he
 
 - Device name + device ID
 - **Current device** badge if this is the device you're looking at the list on
-- Transport security badge (secure / insecure / unknown)
+- Transport security badge (Secure (TLS) / Plain (on `<role>`) / Plain (no TLS))
 - Session expiry (a date or "Never")
 - Per-channel grant chips (`chat · terminal · bridge`)
 - **Extend** button — opens the same TTL picker dialog used during initial pair, preselected with the current remaining lifetime (or "Never" if already never-expiring). Confirming calls `PATCH /sessions/{token_prefix}` with the new TTL; the server restarts the clock from now and auto-clamps any existing grants to the (possibly new) session lifetime. Also works to **shorten** sessions — pick a shorter duration or "Never" to change the policy without re-pairing.

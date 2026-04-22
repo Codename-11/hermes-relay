@@ -40,7 +40,9 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -170,6 +172,12 @@ fun BridgeScreen(
         .collectAsState()
     val autoDisableAtMs by (safetyManager?.autoDisableAtMs
         ?: remember { kotlinx.coroutines.flow.MutableStateFlow<Long?>(null) })
+        .collectAsState()
+    // Trusted-verb set — drives the "Trusted actions" row below the safety
+    // summary. Empty-set fallback when safetyManager is null so previews
+    // / test harnesses render cleanly.
+    val trustedVerbs by (safetyManager?.trustedDestructiveVerbs
+        ?: remember { kotlinx.coroutines.flow.MutableStateFlow<Set<String>>(emptySet()) })
         .collectAsState()
     // === END PHASE3-safety-rails ===
 
@@ -400,6 +408,18 @@ fun BridgeScreen(
                     autoDisableAtMs = autoDisableAtMs,
                     onManage = onNavigateToBridgeSafety,
                 )
+
+                // 5b. Trusted actions — "Don't ask again" escape hatch.
+                //     Sits next to the safety summary so users who change
+                //     their minds can find it without digging into
+                //     developer options. Only shown when the safety
+                //     manager is wired (same gate as the summary).
+                if (safetyManager != null) {
+                    TrustedActionsRow(
+                        trustedCount = trustedVerbs.size,
+                        onReset = { safetyManager.clearTrustedDestructiveVerbs() },
+                    )
+                }
             }
 
             // 6. Activity log — goes last because it's a history view,
@@ -491,6 +511,104 @@ private fun OverlayPermissionNagCard(onTap: () -> Unit) {
                 )
             }
         }
+    }
+}
+
+/**
+ * "Trusted actions" row. Shows how many destructive verbs the user has
+ * marked "don't ask again" for, plus a Reset button (gated on a confirm
+ * dialog) that clears the set so every destructive action prompts again.
+ *
+ * Copy choices:
+ *  - Empty state says "Every action still prompts" — deliberately
+ *    reassuring instead of promotional. We don't want to nudge users
+ *    into bypassing their own safety rails by advertising the feature
+ *    here; it's surfaced at the point of use inside the confirmation
+ *    dialog itself.
+ *  - Non-empty count is stated factually ("{N} actions bypass
+ *    confirmation") so the state is visible at a glance without opening
+ *    a sub-screen.
+ *
+ * Reset flow is double-gated (button + AlertDialog) because a single tap
+ * shouldn't un-do weeks of "don't ask again" decisions by accident.
+ * Reset is disabled when count == 0 to avoid dead-tap confusion in the
+ * safe default.
+ */
+@Composable
+private fun TrustedActionsRow(
+    trustedCount: Int,
+    onReset: () -> Unit,
+) {
+    var showConfirm by remember { mutableStateOf(false) }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Trusted actions",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = if (trustedCount == 0) {
+                        "Every action still prompts"
+                    } else {
+                        "$trustedCount action${if (trustedCount == 1) "" else "s"} " +
+                            "bypass confirmation"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            androidx.compose.material3.TextButton(
+                onClick = { showConfirm = true },
+                enabled = trustedCount > 0,
+            ) {
+                Text("Reset")
+            }
+        }
+    }
+    if (showConfirm) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showConfirm = false },
+            title = { Text("Reset trusted actions?") },
+            text = {
+                Text(
+                    "After reset, every destructive action will prompt " +
+                        "for confirmation again. You can re-enable " +
+                        "\"Don't ask again\" from any future confirmation dialog."
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        onReset()
+                        showConfirm = false
+                    },
+                ) {
+                    Text("Reset")
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = { showConfirm = false },
+                ) {
+                    Text("Cancel")
+                }
+            },
+        )
     }
 }
 

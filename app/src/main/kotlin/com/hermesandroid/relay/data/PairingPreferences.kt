@@ -44,6 +44,8 @@ object PairingPreferences {
     private val KEY_INSECURE_ACK_SEEN = booleanPreferencesKey("insecure_ack_seen")
     private val KEY_INSECURE_REASON = stringPreferencesKey("insecure_reason")
     private val KEY_TOFU_PINS = stringPreferencesKey("tofu_pins")
+    private val KEY_ALL_INSECURE_PAIR_ACK_SEEN =
+        booleanPreferencesKey("all_insecure_pair_ack_seen")
 
     /**
      * Prefix for per-device endpoint-candidate keys. Full key is
@@ -94,6 +96,27 @@ object PairingPreferences {
 
     suspend fun setInsecureAckSeen(context: Context, seen: Boolean) {
         context.relayDataStore.edit { it[KEY_INSECURE_ACK_SEEN] = seen }
+    }
+
+    /**
+     * Per-install acknowledgment that the user understands the implications of
+     * pairing to a QR where *every* endpoint candidate is plain text
+     * (`ws://` / `http://` with no secure Tailscale/wss fallback — the
+     * [TransportSecurityState.AllInsecure] case).
+     *
+     * Gates the Pair button on the wizard's Confirm step only for the absolute-
+     * boundary AllInsecure scenario. Mixed pairings (any secure route present)
+     * are NOT gated — the app auto-falls back to the secure one, so the
+     * existing amber advisory is sufficient. Once the user has acknowledged
+     * once on this install the gate is removed for all future AllInsecure
+     * pairs — matches the precedent set by [insecureAckSeen] for the
+     * per-install insecure-mode dialog.
+     */
+    fun allInsecurePairAckSeen(context: Context): Flow<Boolean> =
+        context.relayDataStore.data.map { it[KEY_ALL_INSECURE_PAIR_ACK_SEEN] ?: false }
+
+    suspend fun setAllInsecurePairAckSeen(context: Context, seen: Boolean) {
+        context.relayDataStore.edit { it[KEY_ALL_INSECURE_PAIR_ACK_SEEN] = seen }
     }
 
     /**

@@ -12,17 +12,23 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -53,9 +59,20 @@ fun DestructiveVerbConfirmDialog(
     method: String,
     verb: String,
     fullText: String,
-    onAllow: () -> Unit,
+    onAllow: (trustVerb: Boolean) -> Unit,
     onDeny: () -> Unit,
 ) {
+    // Checkbox is always OFF when the dialog opens — the user must
+    // actively opt in to bypass future prompts. Kept local-only: we only
+    // persist the verb to the trusted set when the user then taps Allow.
+    // Tapping Deny with the box checked does NOT add the verb (denying is
+    // not consent to anything).
+    var trustVerb by remember { mutableStateOf(false) }
+    // Only offer the "Don't ask again" escape hatch when we actually have
+    // a specific verb to key the trust on. Routes like /call and
+    // /send_sms come through with verb="" and must always prompt — there's
+    // nothing to trust.
+    val canTrust = verb.isNotBlank()
     // Root-fills-overlay-with-center-alignment. The overlay already applies
     // FLAG_DIM_BEHIND so we only need to draw the card itself.
     Box(
@@ -131,6 +148,30 @@ fun DestructiveVerbConfirmDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
 
+                if (canTrust) {
+                    // "Don't ask again" row — whole row is clickable so the
+                    // label is a tappable target (accessibility + fat-fingers).
+                    // Off by default on every open; see the @Composable KDoc.
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { trustVerb = !trustVerb }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Checkbox(
+                            checked = trustVerb,
+                            onCheckedChange = { trustVerb = it },
+                        )
+                        Text(
+                            text = "Don't ask again for \"$verb\"",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(4.dp))
 
                 Row(
@@ -139,13 +180,16 @@ fun DestructiveVerbConfirmDialog(
                 ) {
                     OutlinedButton(
                         modifier = Modifier.weight(1f),
+                        // Deny never writes trust — denying a command isn't
+                        // consent to anything, even if the user happened to
+                        // tick the checkbox before changing their mind.
                         onClick = onDeny,
                     ) {
                         Text("Deny")
                     }
                     Button(
                         modifier = Modifier.weight(1f),
-                        onClick = onAllow,
+                        onClick = { onAllow(trustVerb && canTrust) },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = Color(0xFFE53935),
                             contentColor = Color.White,
@@ -238,7 +282,7 @@ private fun DestructiveVerbConfirmDialogPreview_TapText() {
             method = "/tap_text",
             verb = "Send",
             fullText = "Send $500 to Alice",
-            onAllow = {},
+            onAllow = { _ -> },
             onDeny = {},
         )
     }
@@ -252,7 +296,7 @@ private fun DestructiveVerbConfirmDialogPreview_Type() {
             method = "/type",
             verb = "delete",
             fullText = "delete all messages in #general",
-            onAllow = {},
+            onAllow = { _ -> },
             onDeny = {},
         )
     }

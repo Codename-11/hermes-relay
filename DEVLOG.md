@@ -1,5 +1,64 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-22 (II) — Power-user override philosophy: three tightenings + the Transport Security badge reason-derivation fix
+
+**Context.** Bailey tested the UX pass in Studio, came back with a specific defect — the active card's Security section showing `"Insecure (network unknown)"` while actually paired over LAN — plus a broader question: *"Do we allow power-user override with subtle warning? (No forced confirm) etc?"* The answer codified in this commit is **three-tier**:
+
+| Tier | Rule | Examples |
+|------|------|----------|
+| **1 — Forced confirm (once per install)** | Crosses a security boundary OR flips global policy. | First insecure-toggle enable, first bridge enable, first unattended bridge enable, first run of `send_sms` / `call`, **new: AllInsecure pairing** |
+| **2 — Subtle warning, no confirm** | Reversible, informational, or risk is informed by design (e.g. secure fallback exists). | Mixed-state pairing (secure fallback present), Never-expire TTL, Plain badge on active route |
+| **3 — Per-action Yes/No confirm (not persistable)** | Genuinely destructive short-term action. | Revoke session, Remove connection, Kill terminal |
+
+Today's commit lands four changes that operationalize this framework.
+
+### (a) Transport Security badge — derive reason from active endpoint role
+
+**The defect.** `TransportSecurityBadge` has long had a `reason: String?` parameter whose labels were `"Insecure (LAN)"` / `"Insecure (Tailscale)"` / `"Insecure (dev)"` / `"Insecure (network unknown)"`. The `reason` only got populated when the user toggled "Allow insecure connections" ON via the `InsecureConnectionAckDialog` and explicitly picked a reason. But if the user pairs from a plain-`ws://` LAN QR directly, they never hit that toggle — the connection is already `ws://` — so the reason stays blank and the badge falls through to `"Insecure (network unknown)"`. The app had the information (`ConnectionManager.activeEndpoint.role = "lan"`), it just wasn't reading it.
+
+**The fix.** `insecureReasonLabel(reason, activeRole)` now prefers role over stored reason:
+- `activeRole == "lan"` → `"Plain (on LAN)"`
+- `activeRole == "tailscale"` → `"Plain (on Tailscale)"`
+- `activeRole == "public"` → `"Plain (on public URL)"` (this is the actually-concerning case)
+- `activeRole` unknown, `reason == "lan_only"` → `"Plain (LAN only)"` (user-stated intent)
+- Both unknown → `"Plain (no TLS)"` (neutral fallback, not scary)
+
+Also: `ConnectionViewModel.applyPairingPayload` now auto-stamps `PairingPreferences.insecureReason` at pair time based on which endpoint got selected. `lan` → `"lan_only"`, `tailscale` → `"tailscale_vpn"`, `public`/unknown → leave blank (those cases deserve user thought). Only stamps when the current stored reason is blank (never clobbers user choice). Clears stale reason when upgrading to a secure endpoint so a connection that moves LAN → Tailscale doesn't carry a zombie `"Plain (LAN)"` label.
+
+**Copy polish.** Swapped "Insecure" → "Plain" everywhere user-facing (the badge labels, the two "Insecure connection" / "Allow insecure connections" strings inside the Advanced section's insecure-toggle subsection). The new vocabulary matches the UX pass's amber-not-red treatment — "Plain" is factual, "Insecure" was connotatively red.
+
+### (b) Bridge destructive-verb "Don't ask again" per verb
+
+Confirmation fatigue is real. A user who has approved `send_sms` 50 times has effectively consented — forcing confirm #51 trains them to click through without reading. New `trustedDestructiveVerbs: Flow<Set<String>>` in `BridgeSafetyPreferences`; `BridgeSafetyManager` short-circuits the confirmation overlay when the incoming verb is in the trusted set (still logs to the activity log — the trail is preserved). The `DestructiveVerbConfirmDialog` gets a `Don't ask again for "{verb}"` checkbox, off by default every dialog open, so the user has to actively opt in per-action.
+
+**Kill-switch precedence** (explicitly verified by the code-reviewer agent, tracing `send_sms` through the full dispatcher): master-disable wins over blocklist wins over per-verb trust. A trusted verb in a blocklisted app still 403s. A trusted verb under a disabled master toggle never fires. Deny never sets trust — denying is not consent.
+
+`BridgeScreen` surfaces a `"Trusted actions · N actions bypass confirmation"` row under the existing safety section with a `Reset` button (guarded by its own confirm dialog). The escape hatch is findable without deep-linking.
+
+### (c) AllInsecure pairing — per-install acknowledgment
+
+When every endpoint in the scanned QR is plain (no secure sibling), `ConnectionWizard.ConfirmStep` renders an ack checkbox above the Pair button. `gateIsSatisfied = allInsecureAckSeen || ackThisPair` for AllInsecure only — Mixed and AllSecure flow through `else → true` and see no gate. Once the user acknowledges once, `PairingPreferences.allInsecurePairAckSeen` persists per-install and the checkbox never shows again. Matches the `insecureAckSeen` precedent for the Allow-insecure toggle.
+
+Final copy: *"I understand this pairing sends traffic in plain text — visible to anyone on the network."* Concrete — explains the *consequence* ("visible to others"), not just the transport ("plain text"). No legalese.
+
+**Why Mixed doesn't get this gate.** Mixed by definition has a secure fallback in the same list — LAN + Tailscale means the phone auto-switches to Tailscale when LAN fails, so the user *is* covered on any network. The existing amber "Mixed — secure fallback available" warning card is sufficient. Only the AllInsecure case (no secure sibling) crosses a trust boundary the user needs to acknowledge once.
+
+### (d) Vocabulary cleanup
+
+Two "Insecure" stragglers caught by the code-reviewer sweep inside `ActiveConnectionSections.kt`:
+- `"Insecure connection — traffic is not encrypted"` → `"Plain connection — traffic is not encrypted"`
+- `"Allow insecure connections"` → `"Allow plain (unencrypted) connections"` (toggle label — functional copy, but "plain" keeps the app's vocabulary consistent without being dismissive of the real risk)
+
+### Team delivery
+
+Three parallel `general-purpose` implementation agents (isolated file ownership) + one `feature-dev:code-reviewer` sweep. One transient cross-file compile break caught mid-flight — the Bridge agent's in-progress changes to `BridgeSafetyManager` referenced a method the `BridgeScreen` edit hadn't yet wired up; the AllInsecure agent stashed + restored `BridgeScreen` to isolate its test. Final combined state compiles clean on both flavors without intervention. Lesson logged: **when two parallel agents touch the same concept (Bridge infrastructure + Bridge UI), one of them needs to own both files, even if the actual diff per file is small.** The Bridge agent ended up doing both anyway — the AllInsecure agent's stash was defensive and correct.
+
+### Logcat sanity
+
+Pulled full ADB logcat for the test session as a sanity check. Zero errors from our code. The only Hermes-app warning was the `HermesNotifCompanion: Buffered notification (pending=50)` cold-start log — notifications arriving before the WSS multiplexer connects, buffered until capped. This is the designed behavior of the notification listener's cold-start gap; worth a follow-up to confirm we aren't silently losing useful data on systems with high pre-pair notification volume.
+
+---
+
 ## 2026-04-22 — Connection UX self-narration: Route / Relay sessions vocabulary, contextual security, per-route chips
 
 **Context.** Bailey finished testing the 2026-04-21 connection-settings unification in Studio and came back with five concrete UX observations, all sharing one theme: *the UI has the right information but isn't narrating it*. (1) Add-Connection still had a perceptible lag before the QR scanner opened. (2) On a multi-endpoint QR with LAN + Tailscale, pairing step 2 flashed an amber "Insecure (dev)" badge and a red warning card — making users think they were stuck with insecure forever, even though the Tailscale fallback was right there in the same list. (3) The active card had the right structure post-unification but no narration — sections stacked without headers, Advanced surfaced manual URLs without a "most people don't need this" framing. (4) "Paired Devices" sounded like Bluetooth to anyone outside the project; the actual concept is server-side relay sessions. (5) Priority labels on endpoint rows were `p0` / `p1` / `p2` — developer-speak.

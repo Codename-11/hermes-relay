@@ -1945,6 +1945,54 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 }
             }
 
+            // ADR 24 — auto-stamp / clear PairingPreferences.insecureReason
+            // based on the resolved endpoint's role so the Transport Security
+            // badge reads correctly even when the user paired from a plain
+            // LAN QR directly (and thus never had to toggle the insecure-ack
+            // dialog that would otherwise be the only writer of this key).
+            //
+            //  - Secure (wss/https) → clear any stale stored reason so a
+            //    post-Tailscale-upgrade connection doesn't keep showing
+            //    "Insecure (LAN)" from a prior plain-LAN pair.
+            //  - Plain + role=lan       → stamp "lan_only"
+            //  - Plain + role=tailscale → stamp "tailscale_vpn" (rare — usually
+            //    wss on Tailscale, but possible)
+            //  - Plain + role=public / other / absent → leave blank; the user
+            //    should consciously ack via the insecure dialog for those.
+            //
+            // Only overwrite when the stored reason is currently blank so we
+            // never clobber a user-selected choice.
+            run {
+                val ctx = getApplication<Application>()
+                val relayUrl = payload.relay?.url
+                val isSecure = relayUrl?.let {
+                    it.startsWith("wss://") || it.startsWith("https://")
+                } ?: false
+                if (isSecure) {
+                    // Clear any stale "Insecure (LAN)" stamp left over from
+                    // a prior plain pair on the same Connection.
+                    if (insecureReason.value.isNotBlank()) {
+                        PairingPreferences.setInsecureReason(ctx, "")
+                    }
+                } else if (relayUrl != null && insecureReason.value.isBlank()) {
+                    // Find the candidate whose relay.url matches what we're
+                    // about to connect to; fall back to the first candidate
+                    // (priority-0) if the payload has endpoints but none
+                    // match exactly.
+                    val matched = payload.endpoints?.firstOrNull {
+                        it.relay.url == relayUrl
+                    } ?: payload.endpoints?.firstOrNull()
+                    val autoReason = when (matched?.role?.lowercase()) {
+                        "lan" -> "lan_only"
+                        "tailscale" -> "tailscale_vpn"
+                        else -> null // public / unknown / absent → let user ack
+                    }
+                    if (autoReason != null) {
+                        PairingPreferences.setInsecureReason(ctx, autoReason)
+                    }
+                }
+            }
+
             // Mirror the just-applied URLs into the active Connection's
             // store entry. [updateApiServerUrl] / [updateRelayUrl] above
             // only touch the APP-WIDE flows (_apiServerUrl, _relayUrl) +

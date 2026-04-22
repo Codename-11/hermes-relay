@@ -556,12 +556,16 @@ private fun DeviceCard(
                 else -> null
             }
             if (transportSecure != null) {
+                // Prefer the live active-endpoint role (ADR 24) when this is
+                // the current device; otherwise let the neutral fallback
+                // ("Plain (no TLS)") render. The old hardcoded "lan_only"
+                // lied for Tailscale/public rows.
+                val rowRole = if (isCurrent) activeEndpoint?.role else null
                 TransportSecurityBadge(
                     isSecure = transportSecure,
-                    // We don't have per-row reason on server-returned data —
-                    // fall back to the generic "LAN/dev" label when insecure.
-                    reason = if (transportSecure) null else "lan_only",
-                    size = TransportSecuritySize.Row
+                    reason = null,
+                    size = TransportSecuritySize.Row,
+                    activeRole = rowRole,
                 )
             }
 

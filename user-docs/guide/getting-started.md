@@ -151,15 +151,21 @@ The phone's TTL picker dialog always opens on scan, preselected with your chosen
 `Never expire` is always available in the picker regardless of transport. The phone treats your intent as the trust model rather than gating on secure-transport detection — if you explicitly pick it, the session stays active until you revoke it from **Relay sessions**.
 :::
 
-#### Transport security + insecure-mode consent
+#### Transport security — plain connections and pairing consent
 
-The app renders a **Transport Security** badge next to each Connection row:
+The app renders a **Transport Security** badge inside the active connection card's Security section:
 
-- 🔒 **Secure (TLS)** — paired over `wss://`
-- 🔓 **Insecure (LAN only / Tailscale / Local dev)** — paired over plain `ws://` with the reason you picked on the consent dialog
-- 🔓 **Insecure** — plain `ws://` with no reason recorded
+- 🔒 **Secure (TLS)** — paired over `wss://` / `https://`
+- 🔓 **Plain (on LAN / Tailscale / public URL)** — paired over `ws://` / `http://`; the label reflects the **currently active route** so a Tailscale fallback reads honestly even if you originally paired over LAN
+- 🔓 **Plain (no TLS)** — plain transport with no active-route information yet (cold start, or manual URL config before the first probe)
 
-The first time you toggle insecure mode on, a consent dialog opens with a plain-language threat-model explanation and a reason picker. The reason is displayed on the badge but is not enforced — it's informational, to make the choice visible to you later.
+Amber, not red — the trust model on `ws://` is the network perimeter, not TLS. A home/office LAN and a private Tailscale network are both legitimate trust domains for plain transport; the badge is factual, not alarming.
+
+**Three different consent gates** exist for plain transport, each firing at the moment that actually changes the threat model:
+
+1. **Scanning an all-plain QR** (no secure route in the candidate list) — one-time per install. The pairing confirm step renders a checkbox: *"I understand this pairing sends traffic in plain text — visible to anyone on the network."* Tick it once per install; the Pair button activates. Subsequent all-plain pairs don't re-prompt. Mixed QRs (LAN + Tailscale) are ungated — the secure fallback is your safety net.
+2. **First toggle of "Allow plain (unencrypted) connections"** in the active card's Advanced section — opens a consent dialog with a reason picker (LAN only / Tailscale or VPN / Local dev only). Reason displays on the badge afterward (though the role-aware label above usually overrides it).
+3. **Changing a paired TTL to "Never expire"** on a plain connection — inline warning, no forced confirm. The trust model is already established at pair time.
 
 The app also runs a **Trust On First Use** (TOFU) cert pinning check on `wss://` connections: on the first successful handshake it records the server's certificate fingerprint, and every subsequent connect verifies against it. If the cert changes (because the relay was rebuilt, the Let's Encrypt cert rolled over, or an MITM is happening), the connection fails loudly. Re-pairing via QR is taken as explicit consent to pin a new certificate.
 

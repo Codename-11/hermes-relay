@@ -104,8 +104,9 @@ fun TransportSecurityBadge(
     reason: String?,
     modifier: Modifier = Modifier,
     size: TransportSecuritySize = TransportSecuritySize.Chip,
+    activeRole: String? = null,
 ) {
-    val (label, bg, fg) = resolveAppearance(isSecure, reason)
+    val (label, bg, fg) = resolveAppearance(isSecure, reason, activeRole)
     val icon = if (isSecure) Icons.Filled.Lock else Icons.Filled.LockOpen
     RenderBadge(
         label = label,
@@ -179,12 +180,32 @@ private fun RenderBadge(
     }
 }
 
-/** Build the user-facing label for a given insecure reason code. */
-fun insecureReasonLabel(reason: String?): String = when (reason) {
-    "lan_only" -> "Insecure (LAN)"
-    "tailscale_vpn" -> "Insecure (Tailscale)"
-    "local_dev" -> "Insecure (dev)"
-    else -> "Insecure (network unknown)"
+/**
+ * Build the user-facing label for an insecure transport.
+ *
+ * Prefers the **live** endpoint role (`activeRole`) because it reflects
+ * current reality — the stored `reason` only captures user intent at the
+ * moment they toggled the insecure-connection ack dialog, and for LAN QRs
+ * the user never had to toggle anything (the QR was already `ws://`).
+ *
+ * Label copy uses "Plain" rather than "Insecure" — amber, not red, and
+ * matches the UX pass where plaintext LAN is treated as informational.
+ */
+fun insecureReasonLabel(reason: String?, activeRole: String? = null): String {
+    val roleLabel = when (activeRole?.lowercase()) {
+        "lan" -> "Plain (on LAN)"
+        "tailscale" -> "Plain (on Tailscale)"
+        "public" -> "Plain (on public URL)"
+        null, "" -> null
+        else -> "Plain (on $activeRole)"
+    }
+    if (roleLabel != null) return roleLabel
+    return when (reason) {
+        "lan_only" -> "Plain (LAN only)"
+        "tailscale_vpn" -> "Plain (Tailscale)"
+        "local_dev" -> "Plain (dev only)"
+        else -> "Plain (no TLS)"
+    }
 }
 
 private data class BadgeAppearance(val label: String, val bg: Color, val fg: Color)
@@ -221,7 +242,11 @@ private fun resolveStateAppearance(state: TransportSecurityState): BadgeAppearan
 }
 
 @Composable
-private fun resolveAppearance(isSecure: Boolean, reason: String?): BadgeAppearance {
+private fun resolveAppearance(
+    isSecure: Boolean,
+    reason: String?,
+    activeRole: String? = null,
+): BadgeAppearance {
     // Secure — green, matches ConnectionStatusBadge connected palette.
     if (isSecure) {
         val green = Color(0xFF2E7D32)
@@ -232,24 +257,28 @@ private fun resolveAppearance(isSecure: Boolean, reason: String?): BadgeAppearan
         )
     }
 
+    // A known live role is just as informative as a stored ack reason —
+    // if the resolver knows we're on LAN/Tailscale/etc., treat it as amber
+    // rather than red, because we have a meaningful label to show.
+    val hasKnownRole = !activeRole.isNullOrBlank()
     val hasKnownReason = when (reason) {
         "lan_only", "tailscale_vpn", "local_dev" -> true
         else -> false
     }
 
-    return if (hasKnownReason) {
-        // Amber — user has acknowledged + picked a reason, UX is informational.
+    return if (hasKnownRole || hasKnownReason) {
+        // Amber — we have a specific context to show, UX is informational.
         val amber = Color(0xFFF9A825)
         BadgeAppearance(
-            label = insecureReasonLabel(reason),
+            label = insecureReasonLabel(reason, activeRole),
             bg = amber.copy(alpha = 0.16f),
             fg = amber,
         )
     } else {
-        // Red — no ack yet, louder warning.
+        // Red — nothing known; louder warning.
         val red = MaterialTheme.colorScheme.error
         BadgeAppearance(
-            label = insecureReasonLabel(reason),
+            label = insecureReasonLabel(reason, activeRole),
             bg = red.copy(alpha = 0.16f),
             fg = red,
         )

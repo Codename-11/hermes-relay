@@ -41,6 +41,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -1179,6 +1180,21 @@ private fun ConfirmStep(
     onBack: () -> Unit,
     onConfirm: (HermesPairingPayload) -> Unit,
 ) {
+    val context = LocalContext.current
+    val confirmScope = rememberCoroutineScope()
+    // Per-install acknowledgment for the AllInsecure pair gate
+    // ([PairingPreferences.allInsecurePairAckSeen]). Once true, the
+    // checkbox below is not rendered at all on subsequent pairings —
+    // the user has consented to plain-text pairs and shouldn't keep
+    // seeing friction for an already-made choice.
+    val allInsecureAckSeen by com.hermesandroid.relay.data.PairingPreferences
+        .allInsecurePairAckSeen(context)
+        .collectAsState(initial = false)
+    // Transient, per-pair tick. Resets every time ConfirmStep is composed
+    // for a fresh payload — we don't want a stale tick from a previous
+    // scan to carry forward.
+    var ackThisPair by remember(payload) { mutableStateOf(false) }
+
     val transportHint = payload.relay?.transportHint
     val relayUrl = payload.relay?.url
     val isInsecureRelay = relayUrl?.startsWith("ws://") == true
@@ -1436,6 +1452,28 @@ private fun ConfirmStep(
                         )
                     }
                 }
+                // Per-install Tier-1 gate: only render the checkbox when the
+                // user has never acknowledged an AllInsecure pair on this
+                // install. Once they have, we never show it again — the
+                // warning card above stays, but the gate is lifted.
+                if (!allInsecureAckSeen) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Checkbox(
+                            checked = ackThisPair,
+                            onCheckedChange = { ackThisPair = it },
+                        )
+                        Text(
+                            text = "I understand this pairing sends traffic in " +
+                                "plain text — visible to anyone on the network.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(start = 4.dp),
+                        )
+                    }
+                }
             }
             TransportSecurityState.Mixed -> {
                 // Amber-tinted informational card. The secure route is the
@@ -1479,6 +1517,15 @@ private fun ConfirmStep(
             }
         }
 
+        // Gate for the absolute-boundary AllInsecure case only. Mixed and
+        // AllSecure stay one-tap. Satisfied when either (a) the user has
+        // previously ack'd an AllInsecure pair on this install (per-install,
+        // never expires), or (b) they've ticked the checkbox for this pair.
+        val gateIsSatisfied = when (securityState) {
+            TransportSecurityState.AllInsecure -> allInsecureAckSeen || ackThisPair
+            else -> true
+        }
+
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth(),
@@ -1491,11 +1538,24 @@ private fun ConfirmStep(
             }
             Button(
                 onClick = {
+                    // Persist the per-install ack the first time an
+                    // AllInsecure pair goes through via the checkbox path.
+                    // Future AllInsecure pairs skip the checkbox entirely.
+                    if (securityState == TransportSecurityState.AllInsecure &&
+                        ackThisPair &&
+                        !allInsecureAckSeen
+                    ) {
+                        confirmScope.launch {
+                            com.hermesandroid.relay.data.PairingPreferences
+                                .setAllInsecurePairAckSeen(context, true)
+                        }
+                    }
                     val effective = preferRole
                         ?.let { reorderByPreferredRole(payload, it) }
                         ?: payload
                     onConfirm(effective)
                 },
+                enabled = gateIsSatisfied,
                 modifier = Modifier.weight(1f),
             ) {
                 Text("Pair")

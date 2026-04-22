@@ -110,9 +110,25 @@ class BridgeSafetyManager(
     private val _settings = MutableStateFlow(BridgeSafetySettings())
     val settings: StateFlow<BridgeSafetySettings> = _settings.asStateFlow()
 
+    /**
+     * "Don't ask again" set for destructive verbs. When a confirmation is
+     * about to fire and the matched verb is in this set, we short-circuit
+     * to Allow (and let the normal activity-log path record the action so
+     * the user still has an audit trail). This does NOT bypass the master
+     * blocklist or the master-disable toggle — both of those gates run in
+     * [BridgeCommandHandler] before the code ever reaches [awaitConfirmation].
+     */
+    private val _trustedDestructiveVerbs = MutableStateFlow<Set<String>>(emptySet())
+    val trustedDestructiveVerbs: StateFlow<Set<String>> =
+        _trustedDestructiveVerbs.asStateFlow()
+
     /** True once the DataStore collector has ticked at least once. */
     @Volatile
     private var settingsHydrated: Boolean = false
+
+    /** True once the trusted-verbs collector has ticked at least once. */
+    @Volatile
+    private var trustedHydrated: Boolean = false
 
     /**
      * Pending confirmation requests keyed by a monotonic id. The overlay's
@@ -143,6 +159,12 @@ class BridgeSafetyManager(
             prefsRepo.settings.collect { latest ->
                 _settings.value = latest
                 settingsHydrated = true
+            }
+        }
+        scope.launch {
+            prefsRepo.trustedDestructiveVerbs.collect { latest ->
+                _trustedDestructiveVerbs.value = latest
+                trustedHydrated = true
             }
         }
     }
@@ -197,12 +219,32 @@ class BridgeSafetyManager(
         val timeoutMs = snapshot.confirmationTimeoutSeconds * 1000L
         val requestId = nextRequestId.incrementAndGet()
 
+        val matchedVerb = text?.let { firstMatchedVerb(it, snapshot.destructiveVerbs) }.orEmpty()
+
+        // "Don't ask again" short-circuit. If the user has previously
+        // allowed this verb with the trust checkbox ticked, skip the
+        // modal entirely and return allow. We intentionally only short-
+        // circuit when the matched verb is non-empty — routes like /call
+        // and /send_sms whose confirm text doesn't match any user verb
+        // (verb = "") always prompt so irreversible actions never bypass.
+        //
+        // This path is NOT consulted before the master blocklist or the
+        // master-disable toggle — both of those live in BridgeCommandHandler
+        // and fail earlier, so even a trusted verb can't slip through a
+        // blocklisted app or a disabled bridge.
+        if (matchedVerb.isNotBlank() &&
+            currentTrustedVerbs().contains(matchedVerb.lowercase())
+        ) {
+            Log.i(TAG, "awaitConfirmation: verb '$matchedVerb' is trusted — auto-allowing")
+            return true
+        }
+
         val deferred = CompletableDeferred<Boolean>()
         val pending = PendingConfirmation(
             id = requestId,
             method = method,
             text = text.orEmpty(),
-            verb = text?.let { firstMatchedVerb(it, snapshot.destructiveVerbs) }.orEmpty(),
+            verb = matchedVerb,
             deferred = deferred,
         )
         pendingConfirmations[requestId] = pending
@@ -301,6 +343,46 @@ class BridgeSafetyManager(
     }
 
     // ── Internals ────────────────────────────────────────────────────────
+
+    /**
+     * Add [verb] to the trusted-verb set. Idempotent; no-op on blank input.
+     * Called from the overlay host when the user ticks "Don't ask again"
+     * and taps Allow. Verbs are persisted lowercase/trimmed by the
+     * underlying repository.
+     */
+    fun trustDestructiveVerb(verb: String) {
+        val normalized = verb.trim().lowercase()
+        if (normalized.isEmpty()) return
+        scope.launch {
+            runCatching { prefsRepo.addTrustedDestructiveVerb(normalized) }
+                .onFailure { Log.w(TAG, "trustDestructiveVerb('$verb') failed", it) }
+        }
+    }
+
+    /**
+     * Wipe the trusted-verb set. Called from [BridgeScreen]'s "Reset"
+     * affordance after the user confirms. After this, every destructive
+     * verb prompts again.
+     */
+    fun clearTrustedDestructiveVerbs() {
+        scope.launch {
+            runCatching { prefsRepo.clearTrustedDestructiveVerbs() }
+                .onFailure { Log.w(TAG, "clearTrustedDestructiveVerbs failed", it) }
+        }
+    }
+
+    private suspend fun currentTrustedVerbs(): Set<String> {
+        if (trustedHydrated) return _trustedDestructiveVerbs.value
+        return try {
+            val first = prefsRepo.trustedDestructiveVerbs.first()
+            _trustedDestructiveVerbs.value = first
+            trustedHydrated = true
+            first
+        } catch (t: Throwable) {
+            Log.w(TAG, "currentTrustedVerbs: DataStore read failed — using empty", t)
+            emptySet()
+        }
+    }
 
     private suspend fun currentSettings(): BridgeSafetySettings {
         // Prefer the cached value once the DataStore collector has ticked

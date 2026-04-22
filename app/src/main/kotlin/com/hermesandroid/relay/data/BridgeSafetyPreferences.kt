@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.encodeToString
@@ -164,6 +165,17 @@ class BridgeSafetyPreferencesRepository(private val context: Context) {
             booleanPreferencesKey("bridge_unattended_warning_seen")
         // === END v0.4.1 unattended-access keys ===
 
+        // === "Don't ask again" trusted destructive verbs ===
+        // Set of normalized (lowercase, trimmed) destructive verbs the user
+        // has chosen to stop being prompted about. Stored as a native
+        // stringSet (not JSON) because there's no ordering/evolution concern
+        // here — just membership. Empty set by default — every destructive
+        // verb prompts until the user opts in via the confirmation dialog's
+        // "Don't ask again" checkbox.
+        private val KEY_TRUSTED_DESTRUCTIVE_VERBS =
+            stringSetPreferencesKey("bridge_trusted_destructive_verbs")
+        // === END trusted destructive verbs ===
+
         /** Sentinel key we set the first time settings get written. Used to
          *  tell "user cleared the blocklist" from "user has never touched it". */
         private val KEY_SAFETY_INITIALIZED = booleanPreferencesKey("bridge_safety_initialized")
@@ -306,6 +318,52 @@ class BridgeSafetyPreferencesRepository(private val context: Context) {
     }
 
     // === END v0.4.1 unattended-access setters ===
+
+    // === "Don't ask again" trusted destructive verbs ===
+
+    /**
+     * Live Flow of the verbs the user has marked "don't ask again" for.
+     * Values are normalized (lowercase, trimmed) on write, so comparisons
+     * against [BridgeSafetySettings.destructiveVerbs] and the incoming
+     * modal `verb` field don't need any extra casing logic at the read
+     * site. Master blocklist + master-disable still take precedence over
+     * this set — this is only consulted AFTER the destructive-verb gate
+     * decides a confirmation would otherwise fire.
+     */
+    val trustedDestructiveVerbs: Flow<Set<String>> =
+        context.relayDataStore.data.map { prefs ->
+            prefs[KEY_TRUSTED_DESTRUCTIVE_VERBS]?.toSet() ?: emptySet()
+        }
+
+    suspend fun setTrustedDestructiveVerbs(verbs: Set<String>) {
+        val normalized = verbs
+            .map { it.trim().lowercase() }
+            .filter { it.isNotEmpty() }
+            .toSet()
+        context.relayDataStore.edit { prefs ->
+            prefs[KEY_TRUSTED_DESTRUCTIVE_VERBS] = normalized
+            prefs[KEY_SAFETY_INITIALIZED] = true
+        }
+    }
+
+    suspend fun addTrustedDestructiveVerb(verb: String) {
+        val normalized = verb.trim().lowercase()
+        if (normalized.isEmpty()) return
+        context.relayDataStore.edit { prefs ->
+            val current = prefs[KEY_TRUSTED_DESTRUCTIVE_VERBS] ?: emptySet()
+            prefs[KEY_TRUSTED_DESTRUCTIVE_VERBS] = current + normalized
+            prefs[KEY_SAFETY_INITIALIZED] = true
+        }
+    }
+
+    suspend fun clearTrustedDestructiveVerbs() {
+        context.relayDataStore.edit { prefs ->
+            prefs[KEY_TRUSTED_DESTRUCTIVE_VERBS] = emptySet()
+            prefs[KEY_SAFETY_INITIALIZED] = true
+        }
+    }
+
+    // === END trusted destructive verbs ===
 
     private fun decodeSet(raw: String): Set<String> =
         runCatching { json.decodeFromString<List<String>>(raw).toSet() }
