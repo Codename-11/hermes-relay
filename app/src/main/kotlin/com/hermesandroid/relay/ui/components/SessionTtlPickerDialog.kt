@@ -161,7 +161,7 @@ fun SessionTtlPickerDialog(
                         )
                         Text(
                             text = "This device will stay paired until you " +
-                                "revoke it manually from Paired Devices. " +
+                                "revoke it manually from Relay sessions. " +
                                 "Only choose this if you control the network " +
                                 "— LAN, Tailscale, VPN, or TLS.",
                             style = MaterialTheme.typography.labelSmall,

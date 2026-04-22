@@ -1,5 +1,48 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-22 — Connection UX self-narration: Route / Relay sessions vocabulary, contextual security, per-route chips
+
+**Context.** Bailey finished testing the 2026-04-21 connection-settings unification in Studio and came back with five concrete UX observations, all sharing one theme: *the UI has the right information but isn't narrating it*. (1) Add-Connection still had a perceptible lag before the QR scanner opened. (2) On a multi-endpoint QR with LAN + Tailscale, pairing step 2 flashed an amber "Insecure (dev)" badge and a red warning card — making users think they were stuck with insecure forever, even though the Tailscale fallback was right there in the same list. (3) The active card had the right structure post-unification but no narration — sections stacked without headers, Advanced surfaced manual URLs without a "most people don't need this" framing. (4) "Paired Devices" sounded like Bluetooth to anyone outside the project; the actual concept is server-side relay sessions. (5) Priority labels on endpoint rows were `p0` / `p1` / `p2` — developer-speak.
+
+**Root cause of the insecure-scare.** `ConnectionWizard.kt:1183` computed `isInsecureRelay = relayUrl?.startsWith("ws://")` where `relayUrl` was synthesized from `payload.endpoints[0]` alone (first-in-QR = LAN). Both the amber top badge and the red warning card fired from this single boolean. The code *had* the other endpoints, it just never inspected them — so a secure Tailscale sibling was invisible to the warning logic.
+
+**Design.** Introduce one shared vocabulary, apply it end-to-end:
+
+| Noun | Replaces | Notes |
+|------|----------|-------|
+| **Route** | "Endpoint" in user copy | Code identifiers (`EndpointCandidate`, `observeDeviceEndpoints`) keep the old term — just strings change |
+| **Relay session** | "Paired device" | `Screen.PairedDevices` + the Kotlin class stay for deep-link stability |
+| **Active / Fallback** | implicit in chip state | State-based chips on the active card (post-connection semantics) |
+| **1st choice / Fallback / Fallback 2** | `p0` / `p1` / `p2` | Ordinal labels on pairing step 2 only (pre-connection semantics) |
+| **Secure / Plain** | "Encrypted" / "Insecure" | Green 🔒 / amber 🔓 — amber, not red, so the Mixed case doesn't feel like a crisis |
+
+Active card gains four `labelMedium` section headers — Connection health, Routes (N), Advanced, Security — each with a one-line `bodySmall` caption above the body: *"Tap any row for details"*, *"The app picks the fastest reachable network automatically…"*, *"Manual setup — most people don't need this after QR pairing"*, etc. Section-header-with-caption is now the structural pattern for any expandable subsection in the app.
+
+**Where the code landed.**
+- `ui/components/TransportSecurityBadge.kt` — new `TransportSecurityState` enum (`AllSecure` / `Mixed` / `AllInsecure`) with a tri-state overload. Binary-boolean callers untouched (back-compat is explicit — the new overload sits alongside the old, and the shared `RenderBadge` private composable keeps the visual language identical).
+- `ui/components/ConnectionWizard.kt` — `ConfirmStep` now computes `securityState` from the full `endpoints` list (`anySecure` + `anyInsecure` booleans over `relay.url.startsWith("wss")` / `api.tls` / `relay.transportHint`). Top badge wired to the tri-state. Warning card is `when (securityState)` — `AllInsecure` keeps the legacy red copy (slightly reworded), `Mixed` shows an amber-tinted info card with per-role copy ("$plainLabel is plain ws:// — fine at home or the office, not on public Wi-Fi. $secureLabel is encrypted (wss://)…"), `AllSecure` omits the block entirely. `EndpointPreviewRow` rewritten with per-row Secure/Plain pill + humanized ordinal (`1st choice` / `Fallback` / `Fallback N`).
+- `ui/components/ActiveConnectionSections.kt` — `Paired Devices` row renamed to `Relay sessions` (both the label and the subtitle copy); logic unchanged.
+- `ui/screens/ConnectionsSettingsScreen.kt` — four new section-header-caption pairs inside the `if (isActive && activeConnectionViewModel != null)` gate. New private `SectionHeader` + `SectionCaption` helpers. Expander toggle swapped from `"Show endpoints (N)"` to `"Show routes"` (count lives on the header above — no double-counting).
+- `ui/components/EndpointsCard.kt` — populated-state intro caption, new `FallbackChip()` composable (outlined neutral), `when { isActive → ActiveChip … else → FallbackChip() }` so every row has a chip.
+- `ui/screens/PairedDevicesScreen.kt` — top-bar title + empty + error copy renamed. New intro paragraph ("Each row is a phone that has paired with this server…"). Info icon next to "Channel grants" opens a dialog explaining that chat/bridge/voice are per-feature permissions with independent expiries.
+- `ui/RelayApp.kt` — `Screen.PairedDevices` nav title renamed (`"Relay sessions"`, Kotlin class stays). `onAddConnection` now pre-allocates a UUID synchronously, navigates, then fires `beginAddConnection(preAllocatedId = id)` in the background — the lag fix.
+- `viewmodel/ConnectionViewModel.kt` — `beginAddConnection(preAllocatedId: String? = null)` — existence check for idempotence, otherwise preserves the legacy placeholder-reuse scan path byte-for-byte.
+- Seven vocabulary stragglers in files the initial agents didn't touch: `ConnectionInfoSheet.kt` (both the collapsible label + the "Endpoint preference" info row), `SessionTtlPickerDialog.kt` ("revoke it from Paired Devices" → "…from Relay sessions"), `SettingsScreen.kt` (the "Paired devices" category row), `EndpointsCard.kt` (menu item "Prefer this endpoint" → "Prefer this route"). All caught by the `code-reviewer` sweep.
+
+**Subtle decisions worth flagging.**
+
+*Why two different framings for endpoint state.* Pairing step 2 uses ordinal labels (`1st choice` / `Fallback`) because at that moment the user is committing to an ordering — "which one should the phone try first?" is the only meaningful question. The active card uses state chips (`Active` / `Fallback`) because once connected, ordinal position doesn't matter — what the user cares about is "which one is live right now?" Using the same vocab on both surfaces would force one or the other to lie about its real meaning. Letting each surface use the framing that matches its moment is the "say what you mean" principle applied to UX copy.
+
+*Why amber, not red, for Plain / Mixed.* The previous UI used errorContainer red for every ws:// case, which conflated "dev hack" with "security emergency." Plain ws:// on LAN is the *normal* home-network case — the trust model is the network perimeter, not TLS. Red connotes danger; amber connotes caution. The Mixed card stays amber too, because the composite state ("your LAN is plain but your fallback is secure") isn't dangerous — it's well-designed defense in depth. Red is reserved for `AllInsecure` without a secure fallback.
+
+*Tri-state badge API back-compat.* The new `TransportSecurityBadge(state: TransportSecurityState, size)` overload sits alongside the existing `TransportSecurityBadge(isSecure: Boolean, reason: String?, size)`. The reviewer agent independently verified all three call sites compile and render identically — the old overload delegates to the same `RenderBadge` private composable, so visual language is guaranteed identical across surfaces. No migration churn for the handful of callers outside the pairing flow.
+
+*Add-Connection lag — why this fix is correct.* The previous architecture (`await beginAddConnection().join()` → `navigate(...)`) was *structurally* correct — you want the placeholder connection bound before the pair wizard starts reading `activeConnectionId`, because `applyPairingPayload` reads `connectionStore.activeConnectionId.value` as a one-shot at submit time. But the read happens on user-action callbacks (confirm QR / manual submit), which are many seconds after navigation — plenty of time for the background coroutine's three DataStore writes to complete. Pre-allocating the UUID synchronously means the navigation knows the id; the ViewModel catches up reactively. The mutex + existence check handle double-tap idempotence.
+
+**Team delivery.** Four-agent pipeline this time: three `feature-dev:code-explorer` agents up front (each mapping a different surface in parallel — ConfirmStep layout, active card body, add-connection code path), three `general-purpose` implementation agents (one per file cluster, isolated ownership so they can't stomp each other), one `feature-dev:code-reviewer` at the end for the vocabulary-consistency sweep. The reviewer caught seven stragglers the implementation agents couldn't have seen (their file scope was deliberately narrow). That's the pattern: **wide exploration, narrow implementation, wide review**.
+
+---
+
 ## 2026-04-21 — Connection-settings unification: kill the singular screen, active card owns everything
 
 **Context.** Pre-ship scan for v0.7.0 surfaced a UX fault line that had been accruing since v0.3: the app had *two* screens with nearly identical names (`ConnectionSettings` singular, `ConnectionsSettings` plural) reached from *two* different Settings-top surfaces (Active Connection quick-look card vs. "Connections" category row), covering *overlapping* surfaces of functionality. Users hitting "Active Connection" from Settings landed on a 1429-line detail screen with pair / manual URL / TLS / manual pairing code; users hitting "Connections" landed on a 564-line card list with rename / re-pair / revoke / remove per card. Both said "Active" somewhere; both claimed to be the authoritative connection home. Neither was.

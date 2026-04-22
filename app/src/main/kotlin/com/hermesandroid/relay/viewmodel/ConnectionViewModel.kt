@@ -974,13 +974,64 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      */
     private val addConnectionMutex = Mutex()
 
-    suspend fun beginAddConnection(): String = addConnectionMutex.withLock {
-        // Reuse an existing unpaired placeholder from a prior aborted
-        // attempt if one is lying around. Cheaper than creating a
-        // second placeholder + expecting the init-time orphan sweep
-        // to clean it up later, and correctly idempotent under
-        // rapid double-tap: both callers converge on the same id,
-        // the second `switchConnection` is a no-op (coordinator
+    /**
+     * @param preAllocatedId when non-null, use this id for the placeholder
+     *   instead of generating a fresh UUID. Lets the caller navigate to
+     *   [ui.screens.PairScreen] synchronously with a known id and run the
+     *   DataStore-heavy placeholder creation + switch in the background —
+     *   the Pair wizard's reactive state picks up the active connection
+     *   by the time the user has framed a QR.
+     *
+     *   When a connection with this id already exists (re-entry from a
+     *   double-tap racing the first call), this call becomes a no-op
+     *   switch and returns the same id — safe to invoke twice for the
+     *   same pre-allocated id.
+     *
+     *   When null, falls back to the original placeholder-reuse scan
+     *   (for any legacy caller that still wants the old behavior).
+     */
+    suspend fun beginAddConnection(preAllocatedId: String? = null): String = addConnectionMutex.withLock {
+        // Fast path for the pre-allocated-id caller (RelayApp's
+        // onAddConnection). If a connection with this id already exists
+        // in the store, we're the second call of a double-tap — just
+        // ensure the switch landed and return. Otherwise create the
+        // placeholder under the caller-supplied id so navigation and
+        // persistence converge on the same handle.
+        if (preAllocatedId != null) {
+            val existing = connectionStore.connections.value.firstOrNull { it.id == preAllocatedId }
+            if (existing != null) {
+                android.util.Log.i(
+                    "ConnectionViewModel",
+                    "beginAddConnection: pre-allocated id=$preAllocatedId already exists, ensuring switch",
+                )
+                if (connectionStore.activeConnectionId.value != existing.id) {
+                    switchConnection(existing.id).join()
+                }
+                return@withLock existing.id
+            }
+
+            val placeholder = Connection(
+                id = preAllocatedId,
+                label = PLACEHOLDER_LABEL,
+                apiServerUrl = "",
+                relayUrl = "",
+                tokenStoreKey = Connection.buildTokenStoreKey(preAllocatedId),
+                pairedAt = null,
+                lastActiveSessionId = null,
+                transportHint = null,
+                expiresAt = null,
+            )
+            connectionStore.addConnection(placeholder)
+            switchConnection(preAllocatedId).join()
+            return@withLock preAllocatedId
+        }
+
+        // Legacy path: reuse an existing unpaired placeholder from a
+        // prior aborted attempt if one is lying around. Cheaper than
+        // creating a second placeholder + expecting the init-time
+        // orphan sweep to clean it up later, and correctly idempotent
+        // under rapid double-tap: both callers converge on the same
+        // id, the second `switchConnection` is a no-op (coordinator
         // short-circuits when id == activeConnectionId), and we
         // return the same string both times.
         val existing = connectionStore.connections.value.firstOrNull { c ->

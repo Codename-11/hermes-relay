@@ -717,7 +717,7 @@ private fun ManualPairingCodeSubsection(
  *  - Transport security badge (wss:// vs ws://)
  *  - Tailscale detected chip (conditional)
  *  - Hardware keystore badge (conditional)
- *  - Paired Devices row (always — tap to navigate)
+ *  - Relay sessions row (always — tap to navigate)
  *
  * These are the "what's my pairing posture?" facts. Short + info-dense,
  * so they don't live behind an expander.
@@ -788,12 +788,15 @@ fun ActiveCardSecurityPosture(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "Paired Devices",
+                text = "Relay sessions",
                 style = MaterialTheme.typography.bodyMedium,
             )
             Text(
-                text = if (pairedDevices.isNotEmpty()) "${pairedDevices.size} active"
-                else "View and revoke paired phones",
+                text = if (pairedDevices.isNotEmpty()) {
+                    "${pairedDevices.size} active sessions on this server"
+                } else {
+                    "Manage which phones can connect"
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

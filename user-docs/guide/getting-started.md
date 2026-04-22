@@ -148,7 +148,7 @@ The command pre-registers your code with the local relay over loopback and print
 The phone's TTL picker dialog always opens on scan, preselected with your chosen values, so you have one final chance to confirm or override before the session is created. The selection you make is persisted as the new default for future pairs.
 
 ::: tip Never expire
-`Never expire` is always available in the picker regardless of transport. The phone treats your intent as the trust model rather than gating on secure-transport detection — if you explicitly pick it, the session stays active until you revoke it from **Paired Devices**.
+`Never expire` is always available in the picker regardless of transport. The phone treats your intent as the trust model rather than gating on secure-transport detection — if you explicitly pick it, the session stays active until you revoke it from **Relay sessions**.
 :::
 
 #### Transport security + insecure-mode consent
@@ -163,9 +163,9 @@ The first time you toggle insecure mode on, a consent dialog opens with a plain-
 
 The app also runs a **Trust On First Use** (TOFU) cert pinning check on `wss://` connections: on the first successful handshake it records the server's certificate fingerprint, and every subsequent connect verifies against it. If the cert changes (because the relay was rebuilt, the Let's Encrypt cert rolled over, or an MITM is happening), the connection fails loudly. Re-pairing via QR is taken as explicit consent to pin a new certificate.
 
-#### Paired Devices management
+#### Relay sessions management
 
-**Settings → Connections → [active card] → Paired Devices** lists every device currently paired with the relay — device name, transport badge, session expiry, per-channel grant chips, and a **Revoke** button per row. Revoking the current device wipes local state and redirects to the pair flow. Any paired device can revoke any other; for single-operator setups this is intentional (so you can manage everything from one phone), multi-user deployments will need a role model later.
+**Settings → Connections → [active card] → Security → Relay sessions** (or simply **Settings → Relay sessions**) lists every phone currently paired with the relay — device name, transport badge, route list, session expiry, per-channel grant chips (tap the info icon next to *Channel grants* for an explanation of what each channel does), and a **Revoke** button per row. Revoking the current device wipes local state and redirects to the pair flow. Any paired phone can revoke any other; for single-operator setups this is intentional (so you can manage everything from one phone), multi-user deployments will need a role model later.
 
 ::: tip Multiple Hermes servers
 The app supports pairing with more than one Hermes server (home + work, dev + prod, etc.) and switching with a single tap. Once you've paired the first server, open **Settings → Connections** to add a second — it launches the same QR flow. When you have two or more, a **Connection** radio list appears inside the agent sheet (tap the agent name in the Chat top bar), letting you switch without re-pairing. See [Connections](/features/connections) for the full model.
@@ -313,7 +313,7 @@ Hermes-Relay supports **multi-endpoint pairing**: one QR carries every network p
 
 **Forcing a specific mode at pair time** — `--prefer <role>` promotes a named role to priority 0 (e.g. `--prefer tailscale` for a QR biased toward the tailnet even when LAN is reachable). Open vocabulary — any role string you pass through `--mode` or a custom operator setup works here.
 
-**Override per-session on the phone** — Settings → Connections → [active card] → **Show endpoints** expander → row menu → **Prefer this endpoint**.
+**Override per-session on the phone** — Settings → Connections → [active card] → **Show routes** expander → row menu → **Prefer this route**.
 
 For the full matrix (Tailscale, Caddy + Let's Encrypt, Cloudflare Tunnel, self-hosted WireGuard, plaintext over trusted VPN) with working config blocks, see [remote-access.md](https://github.com/Codename-11/hermes-relay/blob/main/docs/remote-access.md) and the [Connections page](/features/connections#multi-endpoint-pairing-one-qr-for-every-network).
 

@@ -420,7 +420,7 @@ fun ApiServerInfoSheet(
             }
 
             InfoRow(label = "Streaming mode", value = chatMode.toString())
-            InfoRow(label = "Endpoint preference", value = streamingEndpoint)
+            InfoRow(label = "Route preference", value = streamingEndpoint)
             InfoRow(
                 label = "API key set",
                 value = if (apiKeyPresent) "Yes (hidden)" else "No"
@@ -1058,7 +1058,7 @@ fun AgentInfoSheet(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = if (endpointsExpanded) "Hide endpoints" else "Show endpoints",
+                        text = if (endpointsExpanded) "Hide routes" else "Show routes",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary,
                     )

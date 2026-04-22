@@ -295,8 +295,8 @@ fun SettingsScreen(
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Devices,
-                title = "Paired devices",
-                subtitle = "Active sessions, revoke, extend",
+                title = "Relay sessions",
+                subtitle = "Phones paired with this server — revoke, extend",
                 onClick = onNavigateToPairedDevices,
                 isDarkTheme = isDarkTheme,
             )

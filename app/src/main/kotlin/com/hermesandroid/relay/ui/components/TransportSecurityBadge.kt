@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -18,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
@@ -53,6 +55,49 @@ import androidx.compose.ui.unit.dp
  */
 enum class TransportSecuritySize { Chip, Row, Large }
 
+/**
+ * Tri-state security posture across a *set* of endpoints/routes. Used for
+ * multi-endpoint pairing QRs (ADR 24) where a single binary label lies about
+ * the truth — e.g. LAN + Tailscale where LAN is `ws://` but Tailscale is
+ * `wss://`. Old binary callers keep working via the `isSecure: Boolean`
+ * overload.
+ *
+ *  - [AllSecure]   — every route is TLS (wss:// or https://). Green.
+ *  - [Mixed]       — at least one secure + at least one plain route. Amber.
+ *    The app will pick the secure one automatically when the plain one
+ *    isn't reachable, so this is informational, not alarming.
+ *  - [AllInsecure] — every route is plain (ws:// / http://). Red, dev-only.
+ */
+enum class TransportSecurityState { AllSecure, Mixed, AllInsecure }
+
+/**
+ * Tri-state variant of [TransportSecurityBadge] for multi-endpoint contexts.
+ * Pass [TransportSecurityState] directly so the badge can distinguish
+ * "all routes secure" from "some routes secure" — the original binary
+ * overload collapses Mixed into Insecure, which is the bug we're fixing.
+ */
+@Composable
+fun TransportSecurityBadge(
+    state: TransportSecurityState,
+    modifier: Modifier = Modifier,
+    size: TransportSecuritySize = TransportSecuritySize.Chip,
+) {
+    val (label, bg, fg) = resolveStateAppearance(state)
+    val icon = when (state) {
+        TransportSecurityState.AllSecure -> Icons.Filled.Lock
+        TransportSecurityState.Mixed -> Icons.Filled.Shield
+        TransportSecurityState.AllInsecure -> Icons.Filled.LockOpen
+    }
+    RenderBadge(
+        label = label,
+        bg = bg,
+        fg = fg,
+        icon = icon,
+        size = size,
+        modifier = modifier,
+    )
+}
+
 @Composable
 fun TransportSecurityBadge(
     isSecure: Boolean,
@@ -62,6 +107,25 @@ fun TransportSecurityBadge(
 ) {
     val (label, bg, fg) = resolveAppearance(isSecure, reason)
     val icon = if (isSecure) Icons.Filled.Lock else Icons.Filled.LockOpen
+    RenderBadge(
+        label = label,
+        bg = bg,
+        fg = fg,
+        icon = icon,
+        size = size,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun RenderBadge(
+    label: String,
+    bg: Color,
+    fg: Color,
+    icon: ImageVector,
+    size: TransportSecuritySize,
+    modifier: Modifier,
+) {
 
     val shape = RoundedCornerShape(
         when (size) {
@@ -124,6 +188,37 @@ fun insecureReasonLabel(reason: String?): String = when (reason) {
 }
 
 private data class BadgeAppearance(val label: String, val bg: Color, val fg: Color)
+
+@Composable
+private fun resolveStateAppearance(state: TransportSecurityState): BadgeAppearance {
+    return when (state) {
+        TransportSecurityState.AllSecure -> {
+            val green = Color(0xFF2E7D32)
+            BadgeAppearance(
+                label = "Secure \u2014 TLS",
+                bg = green.copy(alpha = 0.14f),
+                fg = green,
+            )
+        }
+        TransportSecurityState.Mixed -> {
+            // Amber (not red): secure fallback exists, so this is informational.
+            val amber = Color(0xFFF9A825)
+            BadgeAppearance(
+                label = "Mixed \u2014 secure fallback available",
+                bg = amber.copy(alpha = 0.16f),
+                fg = amber,
+            )
+        }
+        TransportSecurityState.AllInsecure -> {
+            val red = MaterialTheme.colorScheme.error
+            BadgeAppearance(
+                label = "All routes plain \u2014 dev only",
+                bg = red.copy(alpha = 0.16f),
+                fg = red,
+            )
+        }
+    }
+}
 
 @Composable
 private fun resolveAppearance(isSecure: Boolean, reason: String?): BadgeAppearance {

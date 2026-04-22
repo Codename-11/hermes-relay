@@ -214,11 +214,11 @@ Works identically from three surfaces:
 - **Dashboard:** Remote Access tab → Endpoint preview card →
   **Prefer role** dropdown → Regenerate QR
 
-On the phone side, the per-session equivalent is Settings → Connection
-→ Endpoints card → row menu → "Prefer this endpoint." Server-side
-`--prefer` sets the *baseline* order in the QR; phone-side override is
-*per-session* and survives network changes as long as the pinned role
-stays reachable.
+On the phone side, the per-session equivalent is Settings → Connections
+→ [active card] → Routes expander → row menu → "Prefer this route."
+Server-side `--prefer` sets the *baseline* order in the QR; phone-side
+override is *per-session* and survives network changes as long as the
+pinned role stays reachable.
 
 ## Migrating from single-URL pairing
 

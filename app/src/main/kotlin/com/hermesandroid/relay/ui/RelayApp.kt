@@ -163,8 +163,11 @@ sealed class Screen(
     data object Settings : Screen("settings", "Settings", Icons.Filled.Settings)
 
     // Non-bottom-nav destinations — reached by explicit navigation, not the
-    // NavigationBar. Paired Devices is opened from Settings → Connection.
-    data object PairedDevices : Screen("paired_devices", "Paired Devices", Icons.Filled.Settings)
+    // NavigationBar. "Relay sessions" is the user-facing label; the Kotlin
+    // object name keeps `PairedDevices` to avoid churning navigation identifiers
+    // and deep-link routes. Opened from Settings → Relay sessions and from the
+    // active connection card's Security section.
+    data object PairedDevices : Screen("paired_devices", "Relay sessions", Icons.Filled.Settings)
     // Full-screen pair wizard route. Replaces the old in-Settings Dialog
     // launch so the chooser + Confirm + Verify steps + the camera viewport
     // get a real fullscreen surface (the Dialog wasn't actually filling the
@@ -1092,18 +1095,30 @@ fun RelayApp() {
                             }
                         },
                         onAddConnection = {
-                            // Pre-create + switch to a placeholder so
-                            // applyPairingPayload writes into the new
-                            // connection's EncryptedSharedPrefs. Pass
-                            // autoStart=scan so the wizard jumps into the
-                            // camera on first composition — "Add connection"
-                            // has exactly one obvious next step, no reason
-                            // to force the Method chooser in between.
+                            // Perf: pre-allocate the id synchronously so we
+                            // can navigate immediately — the DataStore-heavy
+                            // placeholder creation + switch happens in the
+                            // background (still serialized by
+                            // addConnectionMutex). The Pair wizard observes
+                            // activeConnectionId reactively via collectAsState,
+                            // so by the time the user has framed a QR the
+                            // placeholder is active and applyPairingPayload
+                            // writes into the correct EncryptedSharedPrefs.
+                            //
+                            // autoStart=scan jumps straight to camera-perm →
+                            // scanner since "Add connection" has exactly one
+                            // obvious next step.
+                            //
+                            // Double-tap is safe: both invocations lock on
+                            // addConnectionMutex; the second sees the
+                            // placeholder already in the store and collapses
+                            // to a no-op switch.
+                            val id = java.util.UUID.randomUUID().toString()
+                            navController.navigate(
+                                Screen.Pair.route(connectionId = id, autoStart = "scan")
+                            )
                             connectionSwitchScope.launch {
-                                val id = connectionViewModel.beginAddConnection()
-                                navController.navigate(
-                                    Screen.Pair.route(connectionId = id, autoStart = "scan")
-                                )
+                                connectionViewModel.beginAddConnection(preAllocatedId = id)
                             }
                         },
                         onBack = { navController.popBackStack() },

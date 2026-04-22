@@ -85,7 +85,7 @@ import java.util.concurrent.TimeUnit
  *      3. Advanced expander — manual URL config, insecure toggle, manual
  *         pairing code fallback (the full 3-step flow).
  *      4. Security posture strip (transport badge, Tailscale chip,
- *         hardware keystore badge, Paired Devices row) — always visible.
+ *         hardware keystore badge, Relay sessions row) — always visible.
  *
  * The Extended FAB launches the Add-connection pairing wizard via
  * [onAddConnection] (which in `RelayApp` pre-creates a placeholder and
@@ -109,7 +109,7 @@ fun ConnectionsSettingsScreen(
     onAddConnection: () -> Unit,
     onBack: () -> Unit,
     // Opens `PairedDevicesScreen` for the server-side session list. Wired
-    // via the "Paired Devices" row inside the active card's security
+    // via the "Relay sessions" row inside the active card's security
     // posture strip. Must not be null — the row is always rendered.
     onNavigateToPairedDevices: () -> Unit,
     // ADR 24 — the active connection's endpoint state is read through this
@@ -456,6 +456,10 @@ private fun ConnectionCard(
             if (isActive && activeConnectionViewModel != null) {
                 HorizontalDivider()
 
+                // ── Connection health section ────────────────────────────
+                SectionHeader(text = "Connection health")
+                SectionCaption(text = "Tap any row for details.")
+
                 // Status section (3 tappable rows → info sheets). Always
                 // visible on the active card — the "health dashboard"
                 // replacing the old Settings-top quick-look card.
@@ -467,10 +471,18 @@ private fun ConnectionCard(
                     onOpenSessionInfo = onOpenSessionInfo,
                 )
 
-                // Endpoints expander (conditional on having endpoints).
-                // ADR 24 behavior preserved verbatim from pre-refactor.
+                // ── Routes section (conditional on having endpoints) ─────
+                // ADR 24 behavior preserved verbatim from pre-refactor;
+                // user-facing copy now reads "Routes" instead of
+                // "Endpoints" per the shared-vocabulary pass.
                 if (endpoints.isNotEmpty()) {
                     HorizontalDivider()
+                    SectionHeader(text = "Routes (${endpoints.size})")
+                    SectionCaption(
+                        text = "The app picks the fastest reachable network " +
+                            "automatically and switches when you change networks.",
+                    )
+
                     var preferredRole by remember {
                         mutableStateOf(activeConnectionViewModel.getPreferredEndpointRole())
                     }
@@ -481,8 +493,8 @@ private fun ConnectionCard(
                             .padding(vertical = 4.dp),
                     ) {
                         Text(
-                            text = if (endpointsExpanded) "Hide endpoints"
-                            else "Show endpoints (${endpoints.size})",
+                            text = if (endpointsExpanded) "Hide routes"
+                            else "Show routes",
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.weight(1f),
@@ -491,8 +503,8 @@ private fun ConnectionCard(
                             Icon(
                                 imageVector = if (endpointsExpanded) Icons.Filled.ExpandLess
                                 else Icons.Filled.ExpandMore,
-                                contentDescription = if (endpointsExpanded) "Collapse endpoints"
-                                else "Expand endpoints",
+                                contentDescription = if (endpointsExpanded) "Collapse routes"
+                                else "Expand routes",
                             )
                         }
                     }
@@ -519,6 +531,16 @@ private fun ConnectionCard(
 
                 HorizontalDivider()
 
+                // ── Advanced section ─────────────────────────────────────
+                // Header + caption above the collapsed Advanced card so
+                // users understand this branch is a power-user surface,
+                // not something they're expected to touch after QR pairing.
+                SectionHeader(text = "Advanced")
+                SectionCaption(
+                    text = "Manual setup — most people don't need this " +
+                        "after QR pairing.",
+                )
+
                 // Advanced expander: manual URL config + insecure toggle
                 // + manual pairing code fallback. Collapsed by default —
                 // the canonical path is the Re-pair button up top.
@@ -531,8 +553,11 @@ private fun ConnectionCard(
 
                 HorizontalDivider()
 
+                // ── Security section ─────────────────────────────────────
+                SectionHeader(text = "Security")
+
                 // Security posture strip: transport badge + Tailscale chip
-                // + hardware keystore badge + Paired Devices row.
+                // + hardware keystore badge + Relay sessions row.
                 ActiveCardSecurityPosture(
                     connectionViewModel = activeConnectionViewModel,
                     onNavigateToPairedDevices = onNavigateToPairedDevices,
@@ -641,6 +666,36 @@ private fun RenameConnectionDialog(
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
         },
+    )
+}
+
+/**
+ * Inline section header for the active-card deep body. `labelMedium` on
+ * `onSurfaceVariant`, 12dp top padding / 4dp bottom, so successive
+ * sections visually chunk "Connection health → Routes → Advanced →
+ * Security" without needing per-section cards.
+ */
+@Composable
+private fun SectionHeader(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+    )
+}
+
+/**
+ * Muted caption paired with [SectionHeader] — `bodySmall` on
+ * `onSurfaceVariant`, no extra padding so it hugs the header line
+ * above. Use for one-line explanatory copy per section.
+ */
+@Composable
+private fun SectionCaption(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
 

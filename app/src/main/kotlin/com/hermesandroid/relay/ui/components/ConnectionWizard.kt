@@ -65,6 +65,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
@@ -1186,6 +1187,39 @@ private fun ConfirmStep(
     // always non-null + non-empty after parseHermesPairingQr, but we still
     // null-safe on the orEmpty() path for defense in depth.
     val endpoints = payload.endpoints.orEmpty()
+
+    // Tri-state security posture across the full endpoint set. A multi-
+    // endpoint QR with LAN (ws://) + Tailscale (wss://) is *Mixed* — the
+    // app auto-falls back to the secure one, so a blanket "Insecure (dev)"
+    // badge from endpoint[0] alone would lie to the user.
+    val anySecure = endpoints.any { c ->
+        c.relay.url.startsWith("wss://") || c.api.tls ||
+            c.relay.transportHint.equals("wss", ignoreCase = true)
+    }
+    val anyInsecure = endpoints.any { c ->
+        c.relay.url.startsWith("ws://") || !c.api.tls ||
+            c.relay.transportHint.equals("ws", ignoreCase = true)
+    }
+    val securityState = when {
+        endpoints.isEmpty() ->
+            if (isInsecureRelay) TransportSecurityState.AllInsecure
+            else TransportSecurityState.AllSecure
+        anySecure && anyInsecure -> TransportSecurityState.Mixed
+        anySecure -> TransportSecurityState.AllSecure
+        else -> TransportSecurityState.AllInsecure
+    }
+    // Pick the first secure endpoint's label for user-facing copy in the
+    // Mixed case ("Tailscale is encrypted..." vs "Public is encrypted...").
+    val firstSecureLabel = endpoints
+        .firstOrNull { c ->
+            c.relay.url.startsWith("wss://") || c.api.tls ||
+                c.relay.transportHint.equals("wss", ignoreCase = true)
+        }?.displayLabel()
+    val firstInsecureLabel = endpoints
+        .firstOrNull { c ->
+            c.relay.url.startsWith("ws://") ||
+                c.relay.transportHint.equals("ws", ignoreCase = true)
+        }?.displayLabel()
     val distinctRoles = endpoints.map { it.role }.distinct()
     var preferRole by remember(payload) { mutableStateOf<String?>(null) }
     var preferMenuOpen by remember { mutableStateOf(false) }
@@ -1235,8 +1269,7 @@ private fun ConfirmStep(
                 }
                 Spacer(Modifier.height(2.dp))
                 TransportSecurityBadge(
-                    isSecure = !isInsecureRelay,
-                    reason = if (isInsecureRelay) "local_dev" else null,
+                    state = securityState,
                     size = TransportSecuritySize.Row,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -1259,13 +1292,13 @@ private fun ConfirmStep(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        text = "Endpoints (${endpoints.size})",
+                        text = "Routes (${endpoints.size})",
                         style = MaterialTheme.typography.titleSmall,
                     )
                     Text(
-                        text = "The phone tries these in priority order and picks " +
-                            "the first reachable one. Switches automatically when " +
-                            "your network changes.",
+                        text = "Your phone tries these routes in order and uses " +
+                            "the first one it can reach. It switches automatically " +
+                            "as you change networks.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1273,6 +1306,7 @@ private fun ConfirmStep(
                         if (index > 0) HorizontalDivider()
                         EndpointPreviewRow(
                             candidate = candidate,
+                            index = index,
                             isPreferred = preferRole?.equals(
                                 candidate.role,
                                 ignoreCase = true,
@@ -1378,25 +1412,70 @@ private fun ConfirmStep(
             }
         }
 
-        if (isInsecureRelay) {
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
-                ),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text(
-                        text = "This relay uses plain ws:// — traffic is not encrypted.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                    )
-                    Text(
-                        text = "Only continue if you trust the network (LAN, Tailscale, VPN).",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                    )
+        when (securityState) {
+            TransportSecurityState.AllInsecure -> {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                            .copy(alpha = 0.4f),
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = "This relay uses plain ws:// \u2014 traffic is " +
+                                "not encrypted.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        Text(
+                            text = "Only continue if you trust the network on any " +
+                                "connection (LAN, Tailscale, VPN).",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    }
                 }
+            }
+            TransportSecurityState.Mixed -> {
+                // Amber-tinted informational card. The secure route is the
+                // safety net — spell that out explicitly so users stop
+                // reading "some plain" as "all plain".
+                val plainLabel = firstInsecureLabel ?: "LAN"
+                val secureLabel = firstSecureLabel ?: "Tailscale"
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color(0xFFF9A825).copy(alpha = 0.12f),
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            text = "$plainLabel is plain ws:// \u2014 fine at home or " +
+                                "the office, not on public Wi-Fi.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            text = "$secureLabel is encrypted (wss://) and the app " +
+                                "uses it automatically when $plainLabel is unreachable.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            text = "You're safe on any network.",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+            }
+            TransportSecurityState.AllSecure -> {
+                // No warning block — every route is TLS.
             }
         }
 
@@ -1530,11 +1609,23 @@ private fun LabeledLine(label: String, value: String, hint: String? = null) {
 @Composable
 private fun EndpointPreviewRow(
     candidate: EndpointCandidate,
+    index: Int,
     isPreferred: Boolean,
 ) {
+    // Per-row security derived from the same three signals as the overall
+    // securityState computation — scheme, tls flag, transportHint.
+    val isSecure = candidate.relay.url.startsWith("wss://") ||
+        candidate.api.tls ||
+        candidate.relay.transportHint.equals("wss", ignoreCase = true)
+    val ordinalLabel = when (index) {
+        0 -> "1st choice"
+        1 -> "Fallback"
+        else -> "Fallback $index"
+    }
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.weight(1f)) {
@@ -1546,33 +1637,54 @@ private fun EndpointPreviewRow(
                     text = candidate.displayLabel(),
                     style = MaterialTheme.typography.bodyMedium,
                 )
+                SoftPill(
+                    text = if (isSecure) "Secure" else "Plain",
+                    fg = if (isSecure) Color(0xFF2E7D32) else Color(0xFFF9A825),
+                )
                 if (isPreferred) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
-                    ) {
-                        Text(
-                            text = "Preferred",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                        )
-                    }
+                    SoftPill(
+                        text = "Preferred",
+                        fg = MaterialTheme.colorScheme.primary,
+                    )
                 }
             }
             Text(
                 text = "${candidate.api.host}:${candidate.api.port}" +
-                    (candidate.relay.transportHint?.let { " · $it" } ?: ""),
+                    (candidate.relay.transportHint?.let { " \u00b7 $it" } ?: ""),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontFamily = FontFamily.Monospace,
             )
         }
+        // Ordinal chip pinned to the right — "1st choice" / "Fallback" /
+        // "Fallback N" replaces the raw `p0/p1/p2` from the old UI.
+        SoftPill(
+            text = ordinalLabel,
+            fg = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * Compact pill used by [EndpointPreviewRow] — matches the "Preferred" soft
+ * chip style so the row reads as a row of related chips rather than a mix
+ * of primary + secondary visual weights.
+ */
+@Composable
+private fun SoftPill(
+    text: String,
+    fg: Color,
+) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = fg.copy(alpha = 0.14f),
+    ) {
         Text(
-            text = "p${candidate.priority}",
+            text = text,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontFamily = FontFamily.Monospace,
+            color = fg,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
         )
     }
 }

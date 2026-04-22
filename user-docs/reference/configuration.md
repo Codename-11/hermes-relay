@@ -10,15 +10,16 @@ These are configured during onboarding or from the **Settings → Connections** 
 - **Reconnect** (only on Stale state)
 - **Rename**, **Re-pair**, **Revoke**, **Remove**
 
-**On the active card — a deep body below the action row:**
-- **Status rows** (API / Relay / Session) — always visible, tappable to open detail sheets with token, endpoint, health, and session info.
-- **Endpoints** (collapsible, when the pairing carries them) — role chips (LAN / Tailscale / Public / Custom VPN), probe-now button, per-candidate *Prefer this endpoint* override, per-candidate TOFU pin inspection.
-- **Advanced** (collapsible) — the power-user / troubleshooting path. Holds:
+**On the active card — a deep body below the action row.** Each section is headed by a labelMedium header and a one-line caption so the card self-narrates:
+
+- **Connection health** (always visible) — *"Tap any row for details."* Three tappable rows (API / Relay / Session) open detail sheets with token, endpoint, health, and session info.
+- **Routes (N)** (when the pairing carries multi-endpoint candidates) — *"The app picks the fastest reachable network automatically and switches when you change networks."* Expander reveals one row per route with role chip (LAN / Tailscale / Public / Custom VPN), per-row Secure/Plain security chip, state chip (Active / Fallback), probe-now button, per-candidate *Prefer this route* override, and per-candidate TOFU pin inspection.
+- **Advanced** (collapsible) — *"Manual setup — most people don't need this after QR pairing."* Holds:
   - **Manual URL config** — API Server URL, API Key, Relay URL, each with **Save & Test**.
   - **Allow insecure connections** toggle — first enable opens a consent dialog with a reason picker (LAN only / Tailscale or VPN / Local dev only). Reason is displayed on the Transport Security badge below but is not enforced — operator intent is the trust model.
   - **Disconnect** button — drops the active WSS without clearing the session token.
   - **Manual pairing code (fallback)** — the 3-step flow for when you can't use QR scanning. (1) Copy the locally-generated 6-char code; (2) on the host, run `hermes-pair --register-code <code>`; (3) tap **Connect** here. Canonical flow is still the QR from `/hermes-relay-pair` — use this only when QR scanning is physically impossible. Bridge control is gated by the master toggle on the Bridge tab, NOT by this code.
-- **Security posture strip** (always visible) — Transport Security badge (🔒 secure / 🔓 insecure with reason / 🔓 unknown), Tailscale-detected chip, Hardware-keystore badge, and a **Paired Devices** row that navigates to the full device list.
+- **Security** (always visible) — Transport Security badge (🔒 secure / 🔓 plain with reason / 🔓 unknown), Tailscale-detected chip, Hardware-keystore badge, and a **Relay sessions** row that navigates to the full list of phones paired with this server.
 
 | Setting | Storage | Description |
 |---------|---------|-------------|
@@ -39,15 +40,15 @@ When you scan a pairing QR (or enter a code manually), a **Session TTL Picker** 
 - **7 days** — the default for plain `ws://` without Tailscale.
 - **30 days** — the default for `wss://` or when Tailscale is detected. Also matches the legacy hardcoded TTL.
 - **90 days** / **1 year** — longer-lived operator devices.
-- **Never expire** — the device stays paired until you revoke it manually from Paired Devices. Always selectable — the phone treats user intent as the trust model and doesn't gate on transport security. A warning is shown inline.
+- **Never expire** — the device stays paired until you revoke it manually from Relay sessions. Always selectable — the phone treats user intent as the trust model and doesn't gate on transport security. A warning is shown inline.
 
 The default pre-selection depends on the QR's operator-chosen TTL (if any, via `hermes-pair --ttl <duration>`), falling back to 30d on secure/Tailscale transports or 7d on plain ws. Your last pick persists as the new default for future pairs.
 
-Per-channel grants (`terminal`, `bridge`) can be pre-set by the operator via `hermes-pair --grants terminal=7d,bridge=1d`. The phone displays them on the Paired Devices card as chips. Grants cannot outlive the session — they're clamped to the session TTL server-side.
+Per-channel grants (`terminal`, `bridge`) can be pre-set by the operator via `hermes-pair --grants terminal=7d,bridge=1d`. The phone displays them on the Relay sessions card as chips with a tap-for-info icon explaining that each grant is a per-feature permission (chat / bridge / voice) with an independent expiry. Grants cannot outlive the session — they're clamped to the session TTL server-side.
 
-### Paired Devices
+### Relay sessions
 
-**Settings → Connections → [active card] → Paired Devices** opens a full-screen list of every device currently paired with the relay. Each card shows:
+**Settings → Connections → [active card] → Security → Relay sessions** (or **Settings → Relay sessions**) opens a full-screen list of every phone currently paired with the relay. The screen leads with a short intro paragraph explaining that each row is a server-side session (not a Bluetooth pairing, not an account), then renders one card per session:
 
 - Device name + device ID
 - **Current device** badge if this is the device you're looking at the list on
