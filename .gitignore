@@ -63,3 +63,7 @@ hermes-agent-upstream/
 # Release signing & Play Store credentials — never commit these
 play-service-account.json
 keystore.properties
+
+# Desktop TUI smoke harness runtime artifacts
+.smoke-relay.pid
+.smoke-relay.log

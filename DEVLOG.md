@@ -1,5 +1,60 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-22 (III) — Desktop TUI MVP Phases 1–3 landed
+
+**Context.** Bailey green-lit the `Desktop TUI over WSS` plan (see `docs/plans/2026-04-22-desktop-tui-mvp.md`). Three implementation phases ran as parallel agents on two repos:
+
+- **hermes-relay `feature/desktop-tui-mvp`** (this repo).
+- **hermes-agent `feat/tui-transport-pluggable`** (Codename-11 fork off `axiom`).
+
+### Phase 1 — `tui` channel on the relay (landed in commit `849bd2e`)
+Python handler at `plugin/relay/channels/tui.py` spawns a `tui_gateway` subprocess per connected WebSocket and transparently pumps line-delimited JSON-RPC between the socket and the subprocess's stdio. Clean SIGTERM-then-SIGKILL teardown on `tui.detach` or WS close. 14/14 unittests in `plugin/tests/test_tui_channel.py`. Auth grants extended to include `tui` with a 30-day cap (`auth.py _default_grants`). Router registered at `ChannelMultiplexer`. Resize RPC method confirmed as `terminal.resize` after spot-checking `tui_gateway/server.py:1508` — the Phase 1 guess stood.
+
+### Phase 2 — Pluggable transport in `ui-tui/` (hermes-agent `4a7d026`)
+Extracted `gatewayClient.ts` into a `Transport` interface (`ui-tui/src/transport/Transport.ts`) with two impls: `LocalSubprocessTransport` (current behavior) and `RelayTransport` (new — WSS + envelope wrap/unwrap). `entry.tsx` factory picks transport from `HERMES_RELAY_URL` / `--remote`. No Python changes — `tui_gateway/server.py` is byte-identical. 190/190 new transport tests pass; the 4 pre-existing `terminalSetup.test.ts` failures are unrelated (SSH-session mock drift, documented by the Phase 2 agent).
+
+### Phase 3 — Glue: CLI flag + session storage + smoke harness *(this session)*
+
+**hermes-agent side:**
+- `hermes_cli/main.py`: added top-level `--remote <url>`, `--pair / --pairing-code <code>`, `--token <token>` flags and a new `_launch_remote_tui()` short-circuit that skips the local `tui_gateway` spawn entirely and forwards credentials as `HERMES_RELAY_*` env vars to the Node TUI. Gives a helpful "pair first" error when no credentials exist.
+- `ui-tui/src/remoteSessions.ts` (new, ~160 LOC): `~/.hermes/remote-sessions.json` storage — `getSession` / `saveSession` / `deleteSession` / `listSessions`. Atomic tempfile → rename write, mode 0o600. Fail-closed on any read/parse error. Cert pin SHA-256 inlined into the same file under `cert_pin_sha256`.
+- `ui-tui/src/transport/RelayTransport.ts`: added `onAuthSuccess(cb)` observer + `getAuthInfo()` getter + `sendResize(cols, rows)` method.
+- `ui-tui/src/entry.tsx`: loads a stored session token before constructing `RelayTransport`, persists the minted token after `auth.ok`, and wires a `process.stdout.on('resize')` pump that forwards cols/rows as `tui.resize` envelopes.
+
+**hermes-relay side:**
+- `scripts/tui-smoke.sh` + `scripts/tui-smoke-teardown.sh`: non-interactive harness that stops any running relay, starts a dev relay (port 8767, no SSL), waits for `/health`, mints a pairing code via `POST /pairing/register`, and prints the exact command to run on the desktop. Verified end-to-end here — relay came up, health returned 200, code minted, handoff printed.
+- `.gitignore`: exclude `.smoke-relay.pid` / `.smoke-relay.log` runtime artifacts.
+
+**Deferred:** TOFU cert pinning. The current `RelayTransport` uses Node's global `WebSocket` (undici), which doesn't expose the server certificate. Doing cert pinning properly requires switching to the `ws` npm package + constructor cert inspection — too invasive for the MVP. Storage slot is reserved in `remote-sessions.json` under `cert_pin_sha256` so adding pin capture later is a one-file change to `RelayTransport` (or a new `TlsCertPinnedTransport`). TLS verification against system CAs is still on by default, so the "production" risk here is MITM-by-CA-compromise — an acceptable baseline for v0.8.0-alpha. Defer to v0.8.1 as a hardening follow-up.
+
+### Green criteria
+- `python -m py_compile hermes_cli/main.py` → OK
+- `cd ui-tui && npm run type-check` → clean
+- `cd ui-tui && npm test` → 204 passing (190 → 204, the 14 net-new tests cover `remoteSessions` + `RelayTransport.onAuthSuccess` / `sendResize`); 4 pre-existing `terminalSetup.test.ts` failures unchanged
+- `python -m unittest plugin.tests.test_tui_channel` → 14/14 OK
+- `bash scripts/tui-smoke.sh` → relay up, health 200, pairing code minted, handoff printed
+
+### Open items (post-MVP)
+1. **`profiles` surfacing.** The relay's `auth.ok` already carries a `profiles[]` array (see `docs/relay-protocol.md` §1.3). The Node TUI currently ignores it. Wire it into the transport log + expose as a `/profiles` slash-command listing so the user can pick a profile on `--remote` mirrors the local HERMES_PROFILE flow.
+2. **Reconnect + `resume_session_id`.** On WS drop, `RelayTransport` currently just tears down. Phase 2 already stashed `resume_session_id` on the protocol — Phase 4 adds exponential-backoff reconnect that re-attaches to the same subprocess if the relay still has it alive (the relay keeps subprocesses for a short grace period after a client disconnects — TBD).
+3. **Single-binary packaging.** Currently the user needs Node 20 + this repo's `ui-tui/` checkout. Ship as `npm install -g @codename-11/hermes-tui-remote` or `pkg`-bundle for Windows/Mac.
+4. **Upstream PR candidates.** The `Transport` refactor is defensible on its own (decouples UI from runtime). Good PR candidate for NousResearch/hermes-agent once Bailey validates end-to-end.
+5. **TOFU cert pinning** (deferred from this session — see note above).
+
+### Next
+Interactive smoke test by Bailey from a separate terminal:
+```
+bash scripts/tui-smoke.sh
+# (copy the printed code)
+cd ~/.hermes/hermes-agent/ui-tui && \
+  HERMES_RELAY_URL=ws://localhost:8767 \
+  HERMES_RELAY_CODE=<CODE> \
+  node --loader tsx src/entry.tsx
+```
+Or via the CLI: `hermes --remote ws://localhost:8767 --pair <CODE>` once hermes-agent `feat/tui-transport-pluggable` is installed.
+
+---
+
 ## 2026-04-22 (II) — Power-user override philosophy: three tightenings + the Transport Security badge reason-derivation fix
 
 **Context.** Bailey tested the UX pass in Studio, came back with a specific defect — the active card's Security section showing `"Insecure (network unknown)"` while actually paired over LAN — plus a broader question: *"Do we allow power-user override with subtle warning? (No forced confirm) etc?"* The answer codified in this commit is **three-tier**:
