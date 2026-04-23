@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // `src/` is not shipped in the published tarball (see package.json `files`),
+    // so .d.ts.map and .js.map files would reference paths that don't exist
+    // for consumers. Turn them off for publish builds.
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts", "tests"]
+}

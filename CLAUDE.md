@@ -84,6 +84,22 @@ hermes-android/
 │   ├── accessibility/       # HermesAccessibilityService, ScreenReader, ActionExecutor
 │   ├── bridge/              # BridgeSafetyManager, BridgeForegroundService, BridgeStatusOverlay
 │   └── notifications/       # HermesNotificationCompanion
+├── desktop/                 ← Node thin-client CLI (`@hermes-relay/cli`)
+│   ├── bin/hermes-relay.js  # #!/usr/bin/env node shim → dist/cli.js
+│   ├── src/
+│   │   ├── cli.ts           # argv parser + subcommand dispatcher (bare → shell)
+│   │   ├── commands/        # chat, shell, pair, status, tools, devices
+│   │   ├── banner.ts        # contextual connect line (LAN / Tailscale / Plain / Secure)
+│   │   ├── renderer.ts      # GatewayEvent → plain-line stdout formatter (chat only)
+│   │   ├── endpoint.ts      # ADR 24 EndpointCandidate + role helpers
+│   │   ├── pairingQr.ts     # v3 QR decode + priority-raced reachability probe
+│   │   ├── pairing.ts       # readline 6-char prompt + payload validator
+│   │   ├── credentials.ts   # token → pair-qr → code → stored → prompt precedence
+│   │   ├── certPin.ts       # TOFU SPKI sha256 extract / pinKey / compare
+│   │   ├── tools/           # desktop.command router + fs/terminal/search handlers + consent
+│   │   ├── transport/       # RelayTransport (reconnect state machine + TLS probe TOFU)
+│   │   └── lib/             # gracefulExit, rpc, circularBuffer (vendored)
+│   └── scripts/             # install.sh + install.ps1 curl/iwr one-liners
 ├── plugin/                  ← Hermes agent plugin
 │   ├── android_tool.py      # 18 android_* tool handlers
 │   ├── pair.py              # QR pairing implementation
@@ -113,6 +129,13 @@ hermes-android/
 - **Namespace (Kotlin source tree):** `com.hermesandroid.relay` — stable, drives on-disk layout + class FQCNs
 - **applicationId:** `com.axiomlabs.hermesrelay` (googlePlay), `com.axiomlabs.hermesrelay.sideload` (sideload)
 - **Min SDK 26, Target SDK 35, Compile SDK 36** / **Kotlin 2.0+**, JVM toolchain 17
+
+### Code Style — Desktop CLI (Node/TypeScript)
+- **Node ≥21** — uses built-in global `WebSocket` (no `ws`/`undici` dep). Strict TS, ES modules, `NodeNext` resolution.
+- **Zero runtime deps** — `@types/node` + `tsx`/`rimraf`/`typescript` are devDeps only. Ship compiled `dist/`, not tsx.
+- **One binary, subcommands** — idiomatic for Node CLIs (codex, continue, vite pattern). Bare invocation is `chat`.
+- **Vendor-for-now** — transport/gateway/types are copied verbatim from `hermes-agent-tui-smoke/ui-tui/src/` with a header note. Extract to a shared package when the TUI and CLI stabilize.
+- **Dev loop:** `npx tsx src/cli.ts <args>` (no rebuild). `npm run build` + `npm link` before pushing to verify the bin shim. Never ship tsx in the published tarball — pre-build with `tsc` so Windows `npm install -g` can cmd-shim the JS directly.
 
 ### Code Style — Server (Python)
 - **aiohttp** — async, matches existing Hermes relay patterns
@@ -213,6 +236,35 @@ hermes-android/
 | `plugin/dashboard/plugin_api.py` | FastAPI router proxying 5 routes to relay over loopback; `/pairing` body = API-server overrides (host/port/tls/api_key), relay URL auto-derived |
 | `plugin/dashboard/src/index.jsx` | React root registering `hermes-relay` plugin with 4-tab shell |
 | `plugin/dashboard/dist/index.js` | Committed IIFE bundle loaded verbatim by dashboard |
+| **Desktop CLI** | |
+| `desktop/package.json` | `@hermes-relay/cli` package manifest — Node ≥21, one `hermes-relay` bin, pre-built dist |
+| `desktop/bin/hermes-relay.js` | Tiny shim: `import('../dist/cli.js').then(m => m.main())` + error surfacing |
+| `desktop/src/cli.ts` | argv parser + subcommand dispatcher — bare → `shell` (PTY), positional-only → `chat` |
+| `desktop/src/commands/chat.ts` | REPL + one-shot + piped-stdin; `runOneTurn` returns `{promise, cancel}` for safe SIGINT; auto-wires `DesktopToolRouter` when consented |
+| `desktop/src/commands/shell.ts` | Pipes the `terminal` relay channel to raw-mode stdin/stdout; post-attach `exec hermes` 350ms after tmux settles; `Ctrl+A .` detach / `Ctrl+A k` kill / `Ctrl+A Ctrl+A` literal |
+| `desktop/src/commands/pair.ts` | Either 6-char code + `--remote`, or full v3 QR via `--pair-qr` — probes + picks endpoint, records role |
+| `desktop/src/commands/tools.ts` | `tools.list` RPC → enabled/available toolsets; `--verbose` lists individual tools |
+| `desktop/src/commands/status.ts` | Local read of `~/.hermes/remote-sessions.json`; renders `grants:` + `expires:` + `route:`; `--json` redacts tokens, `--reveal-tokens` opts in |
+| `desktop/src/commands/devices.ts` | Server-side session management — `GET/DELETE/PATCH /sessions` via `fetch` over http(s)://host:port; `list` / `revoke <prefix>` / `extend <prefix> --ttl <s>` |
+| `desktop/src/banner.ts` | `buildConnectBanner({url, meta, endpointRole})` → "Connected via LAN (plain) — server 0.6.0"; `humanExpiry()` for TTL formatting |
+| `desktop/src/endpoint.ts` | `EndpointCandidate` / `EndpointRole` types + `displayLabel()` — mirrors Android `data/Endpoint.kt` |
+| `desktop/src/pairingQr.ts` | `decodePairingPayload` (JSON or base64), `payloadToCandidates` (v3 verbatim / v1–v2 synthesized), `probeCandidatesByPriority` (`Promise.any` within tier, `AbortSignal.any`, 4s timeout, 60s cache) |
+| `desktop/src/certPin.ts` | `extractSpkiSha256(der)` via `crypto.X509Certificate` + `publicKey.export({type:'spki'})`; `pinKey(url)`, `comparePins()`, `isSecureUrl()` |
+| `desktop/src/tools/router.ts` | `DesktopToolRouter.attach(relay)` — installs `onChannel('desktop')`, dispatches `desktop.command` under 30s `AbortController`, 30s heartbeat via `desktop.status` advertising handler names |
+| `desktop/src/tools/consent.ts` | `ensureToolsConsent(url)` — stored per-URL in `toolsConsented`; TTY prompt; non-TTY fails closed |
+| `desktop/src/tools/handlers/fs.ts` | `readFileHandler` / `writeFileHandler` / `patchHandler` — strict unified-diff applier, no fuzz |
+| `desktop/src/tools/handlers/terminal.ts` | `bash -lc` / `cmd /c`, SIGKILL on timeout or abort, returns `{stdout, stderr, exit_code, duration_ms}` |
+| `desktop/src/tools/handlers/search.ts` | ripgrep with pure-Node fallback, skips `.git`/`node_modules`/`dist`/`.next`/`.cache` |
+| `desktop/src/renderer.ts` | Streams `message.delta` → stdout, tool events → decorated lines; NO_COLOR / --json / --quiet aware |
+| `desktop/src/pairing.ts` | readline-based 6-char prompt (`A-Z0-9`); headless mirror of TUI's Ink prompt; `validatePairingPayloadString` discriminated-union wrapper |
+| `desktop/src/credentials.ts` | Precedence: `--token` → `--pair-qr` (probe+pair) → `--code` → stored → prompt; returns `Credentials{sessionToken?, pairingCode?, resolvedEndpoint?}` |
+| `desktop/src/transport/RelayTransport.ts` | Fork of ui-tui's transport + reconnect state machine (`idle/connecting/connected/reconnecting`, exp backoff 1→30s, 5min on 429, gate re-check post-sleep) + pre-WS TLS probe for TOFU |
+| `desktop/src/remoteSessions.ts` | Same file path as TUI (`~/.hermes/remote-sessions.json`, 0600); schema widened with `grants`, `ttlExpiresAt`, `endpointRole`, `toolsConsented`; `saveSession` back-compat overload |
+| `desktop/scripts/install.sh` / `install.ps1` | curl/iwr one-liner installers — gate on Node ≥21, delegate to `npm install -g` |
+| `desktop/README.md` | User-facing install + usage reference |
+| **Server — Desktop tool routing (Phase B)** | |
+| `plugin/relay/channels/desktop.py` | Mirrors `bridge.py` — `desktop.command`/`desktop.response`/`desktop.status`, UUID-correlated futures, 30s timeout, single-client MVP, per-session advertised-tools set |
+| `plugin/tools/desktop_tool.py` | `desktop_read_file` / `_write_file` / `_terminal` / `_search_files` / `_patch` — registers with `tools.registry` under `desktop` toolset; `_check_requirements` pings `/desktop/_ping` for "is a client connected AND does it advertise this tool?" |
 
 ## What NOT to Do
 
@@ -324,6 +376,12 @@ See [RELEASE.md](RELEASE.md) for the full recipe.
 | Notifications | `GET /notifications/recent?limit=N` | Loopback callers skip bearer |
 | Relay health | `GET /health` on `:8767` | Used by `RelayHttpClient.probeHealth()` |
 | Capabilities | `HEAD /api/sessions`, `HEAD /v1/runs`, etc. | HEAD avoids CORS 403 on OPTIONS preflight |
+| Desktop CLI (tui channel) | WSS `tui.attach` / `tui.rpc.request` / `tui.rpc.event` | Same channel + envelopes as the Ink TUI — the CLI just renders events as plain lines. Zero server changes. |
+| Desktop CLI (terminal channel) | WSS `terminal.attach` / `terminal.input` / `terminal.output` / `terminal.resize` / `terminal.detached` | Existing channel (shared with Android). CLI `shell` subcommand attaches, injects `clear; exec hermes\n` 350ms after ack, pipes raw bytes. `Ctrl+A .` detaches (tmux preserved), `Ctrl+A k` kills. |
+| Desktop CLI tool visibility | `tools.list` RPC on the shared tui channel | Returns `{toolsets: [{name, description, tool_count, enabled, tools:[]}]}`; surfaced by `hermes-relay tools` |
+| Desktop CLI devices | HTTP `GET/DELETE/PATCH /sessions` on the relay's same port | Wrapped by `hermes-relay devices list | revoke <prefix> | extend <prefix> --ttl <s>`; bearer token from stored session; token prefix only (never full token) |
+| Desktop tool routing (Phase B) | WSS `desktop.command` (s→c) + `desktop.response` (c→s) + `desktop.status` (c→s heartbeat) | New channel. Hermes calls `desktop_read_file(path)` → Python handler POSTs to `/desktop/desktop_read_file` → relay forwards over `desktop.command` → Node client's `DesktopToolRouter` runs the handler locally → response bubbles back. Mirror of Android's `bridge.command` pattern. |
+| Desktop tool check_fn | HTTP `GET /desktop/_ping?tool=<name>` | Returns 200 if a client is connected AND advertises this tool; 503 otherwise. Hermes uses this to fail the tool quickly when no desktop client is live, instead of waiting 30s for the dispatch timeout. |
 
 ## Upstream References
 

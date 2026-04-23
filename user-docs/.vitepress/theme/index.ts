@@ -7,12 +7,14 @@ import InstallSection from './components/InstallSection.vue';
 import HeroDemo from './components/HeroDemo.vue';
 import FeatureMatrix from './components/FeatureMatrix.vue';
 import SphereMark from './components/SphereMark.vue';
+import ExperimentalBadge from './components/ExperimentalBadge.vue';
 
 export default {
   extends: DefaultTheme,
   enhanceApp({ app }: { app: any }) {
     app.component('HermesFlow', HermesFlow);
     app.component('FeatureMatrix', FeatureMatrix);
+    app.component('ExperimentalBadge', ExperimentalBadge);
   },
   Layout() {
     return h(DefaultTheme.Layout, null, {

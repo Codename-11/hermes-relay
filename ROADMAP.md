@@ -12,6 +12,29 @@ Native Android companion for the [Hermes agent platform](https://github.com/Nous
 - **v0.2.0** — Voice mode foundation, terminal preview, TOFU cert pinning, Paired Devices screen. [CHANGELOG](CHANGELOG.md)
 - **v0.1.0** — Chat, sessions, QR pairing, encrypted storage, Play Store submission.
 
+### Desktop track (parallel lane to Android) — **experimental**
+
+Release tags: `desktop-v*` (separate cadence from Android `v*`). Curl-installed prebuilt binaries (no Node required); Windows first, macOS / Linux same release. Workflows: [`ci-desktop.yml`](.github/workflows/ci-desktop.yml) + [`release-desktop.yml`](.github/workflows/release-desktop.yml).
+
+**Shipped (same-day, 2026-04-23):**
+
+- **`@hermes-relay/cli` v0.1** — Node thin-client at [`desktop/`](desktop/). Remote chat + pair + status + tools subcommands over the relay's `tui` WSS channel. Shares `~/.hermes/remote-sessions.json` with the Android client (pair once, both work).
+- **v0.2 — resilience + pairing UX** — multi-endpoint pairing (ADR 24: `--pair-qr` probes LAN/Tailscale/Public, strict-priority within-tier race, 4s timeout, 60s cache), reconnect-on-drop state machine (1s→30s exp backoff, 5min on 429, gate re-check post-sleep), TOFU cert pinning via pre-WS TLS probe (SPKI sha256, `sha256/<base64>` OkHttp-compatible).
+- **v0.2 — UX polish** — bare `hermes-relay` → `shell` (full Hermes CLI over PTY with `clear; exec hermes` after tmux settles); contextual connect banner (`Connected via LAN (plain) — server 0.6.0`); `status` surfaces grants + TTL + endpoint role from `auth.ok`; new `devices` subcommand talking to relay `GET/DELETE/PATCH /sessions` over HTTP.
+- **Phase B — client-side tool routing** — server-side `plugin/relay/channels/desktop.py` + `plugin/tools/desktop_tool.py` register `desktop_read_file` / `_write_file` / `_terminal` / `_search_files` / `_patch` via `tools.registry` (mirror of `android_*` pattern — **zero hermes-agent core change**). Client-side `DesktopToolRouter` attaches to the `desktop` channel, dispatches under a 30s AbortController, heartbeats `desktop.status` every 30s. One-time per-URL consent gate + `--no-tools` kill-switch.
+- **Self-setup skill** — [`skills/devops/hermes-relay-desktop-setup/SKILL.md`](skills/devops/hermes-relay-desktop-setup/SKILL.md) lets any Hermes agent install, pair, and troubleshoot the CLI with **live local diagnostics** via `desktop_terminal` (can read the user's Node version, PATH, binary location directly — something the Android setup skill can't match).
+
+**Next — v1.0 GA milestones:**
+
+- **`hermes-relay daemon`** — headless background subcommand that keeps the WSS + tool router attached without a visible shell. JSON-line logging, SIGTERM/SIGINT graceful shutdown, `--quiet` for production logs.
+- **Service installers** — `scripts/install-service-{win,linux,mac}.{ps1,sh}` — Windows Service via `sc.exe create`, `systemd --user` unit with `loginctl enable-linger`, `launchctl load` plist for macOS. Auto-start on login.
+- **Multi-client routing on the `desktop` channel** — replace single-client MVP with per-token indexing + device-id reconnect handoff. Hermes session state carries `desktop_session_token` via a new `ContextVar` in `gateway/session_context.py` (hermes-agent PR candidate — won't affect Android).
+- **Signed binaries** — Windows EV code-signing (~$300/yr, DigiCert or SSL.com) + Apple Developer ID + notarization ($99/yr). Removes SmartScreen/Gatekeeper warnings.
+- **npm publish** — `@hermes-relay/cli` goes to the npm registry once v1.0 is cut, enabling `npm i -g` / `npx` for Node-having users in addition to the curl-binary path.
+- **HMAC verification on QR payloads** — defer until a client-accessible secret story exists (same deferral as the Android app). Not blocking GA.
+
+**Docs + references:** user-docs `/desktop/` section (Overview → Installation → Pairing → Subcommands → Local tool routing → Troubleshooting → FAQ) with an `<ExperimentalBadge />` Vue component on every page. README.md landing has a dedicated "Experimental: Desktop CLI" section with the install one-liners.
+
 ## Current — Axiom-Labs migration
 
 Moving the Play Store listing from a personal account to the DUNS-verified Axiom-Labs LLC org account. Unblocks straight-to-production rollout (no 14-day closed-testing requirement). New applicationId `com.axiomlabs.hermesrelay`; keystore identity + SHA256 fingerprint preserved. In progress — waiting on Google DUNS verification.
@@ -68,6 +91,10 @@ Small follow-ons to v0.4 deliberately deferred to keep the v0.4.0 release surfac
 ## Future — v0.5+
 
 Shape subject to change. Each theme needs a separate design + plan pass before implementation; file design notes as research matures.
+
+### Desktop thin-client — Phase B (client-side tool routing)
+
+v0.1 ships a remote-chat CLI. Phase B is the bigger win: **per-tool dispatch routing** so file/terminal/browser tools run against the user's machine while state tools (memory, skills, sessions, cron) stay on the server. Design detailed in the vault under `Axiom-Vault/3. System/Projects/Hermes-Relay/Desktop Client.md`. Key insertion point is hermes-agent `model_tools.py::handle_function_call()` (~line 517) — before `registry.dispatch()`, consult a session-scoped routing table populated by a relay handshake extension where the client advertises which tools it can service. Isomorphic to how `android_*` tools already flow through the `bridge.command` channel. Proposed branch: `fork/tool-relay` on the hermes-agent fork; upstream issue to open before merging. Blocked on: (a) the handshake extension in `plugin/relay/auth.py` to carry the advertised-tools list, (b) a new `desktop.command` channel mirroring `bridge.command` semantics, (c) the upstream PR conversation.
 
 ### Observability & introspection
 - Real-time accessibility event streaming for reactive workflows (`android_events`, `android_event_stream`)

@@ -48,14 +48,18 @@ certs/
 user-docs/.vitepress/cache/
 user-docs/.vitepress/dist/
 node_modules/
-package.json
-package-lock.json
+# Anchor VitePress-only npm manifests to root/user-docs so desktop/package.json is tracked.
+/package.json
+/package-lock.json
+/user-docs/package.json
+/user-docs/package-lock.json
 
 # Local upstream reference
 hermes-agent-upstream/
 
 # Claude Code internal state (worktrees, image cache, conversation logs)
 .claude/
+.claude-launcher/
 
 # Kotlin compiler cache
 .kotlin/

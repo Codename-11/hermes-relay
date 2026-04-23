@@ -1,5 +1,168 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-23 (III) — Desktop CLI daemon + pre-release hardening: uninstall, doctor, first-run prompts, version-aware install
+
+**Context.** The morning session landed Phase A.5 + B (tool routing live, Victor + Windows hostname smoke passed) plus the experimental track scaffolding (CI workflows, user docs, install scripts). Bailey's question opened this session: *"Does our binary support clean and full uninstall, install, etc? Any ideas before we release?"* Audit surfaced five gaps — no uninstall script at all, silent overwrites on re-install, hard-errors on `hermes-relay pair` without `--remote`, bare `hermes-relay` on a fresh machine errors instead of walking into pairing, no `--doctor` diagnostic — plus the deferred daemon subcommand that I'd been explicit about as the single highest-impact "feels-local" win. Shipped all six in two waves.
+
+### Wave 1 — `hermes-relay daemon`
+
+Single focused effort. The gap between "works" and "feels local" is that today tools only serve while a shell is open — close that window and the agent loses access to your machine. Fix: new `desktop/src/commands/daemon.ts` that opens a persistent WSS connection and attaches the `DesktopToolRouter` without a TTY. Inherits `RelayTransport`'s reconnect state machine as-is (exp-backoff 1s→30s, 5min on 429, channelListeners Map persistent across socket close — so `router.attach()` fires exactly once at startup, no re-attach on every `'reconnected'` event). Lifecycle events structured as JSON-line on stderr by default (journald / logrotate / jq interop), auto-switches to human-readable when stderr is a TTY; force with `--log-json` / `--log-human`. Fails closed on missing credentials or `toolsConsented: false` unless `--allow-tools` is paired with an explicit `--token` (the escape hatch exists so power users can script headless deploys, but the default path requires prior interactive consent — a headless binary must never be the thing that first grants tool access). `setImmediate(() => process.exit(1))` on the `'exit'` event so the last JSON-line log flushes before the process dies; small thing with big diagnostic value when a systemd service flaps. Live smoke against `ws://172.16.24.250:8767` (with the session re-paired post-test): `starting` → `authed` (server 0.6.0, ws) → `ready` (5 tools advertised) in ~120 ms. New BOOLEAN_FLAGS: `log-human`, `log-json`, `allow-tools`.
+
+Service installers (systemd user unit / launchd plist / Windows `sc.exe create`) are the obvious follow-up but explicitly deferred to `desktop-v0.3.0-alpha.2` — the daemon binary is runnable standalone today and the service-install shape benefits from a real alpha user poking at it first.
+
+### Wave 2 — pre-release hardening, four parallel agents
+
+1. **Uninstall scripts (Agent A).** New `desktop/scripts/uninstall.{sh,ps1}` mirroring install one-liners. 3-tier: default `--binary-only` (removes binary + user PATH entry, preserves `~/.hermes/remote-sessions.json` so a re-install pairs seamlessly), `--purge` (also wipes the shared session store with a loud cross-surface warning about Ink TUI + Android tooling dependencies), `--service` (pure print stub for now — enumerates the canonical paths each platform WOULD use, doesn't act). Windows iex-pipe safety: `irm ... | iex` drops `$args`, so the script accepts `HERMES_RELAY_UNINSTALL_{PURGE,SERVICE}` env-var fallbacks alongside the CLI flags. Shell rc files deliberately untouched — mirrors install.sh's "never write user dotfiles" stance. Documented in `desktop/README.md` + `user-docs/desktop/installation.md`.
+
+2. **First-run prompts (Agent B).** New `src/relayUrlPrompt.ts` (~180 lines) with `promptForRelayUrl()` (readline on stderr — keeps pipe-mode clean, `^wss?:\/\/\S+$` validation, 3 retries) and `resolveFirstRunUrl()` (auto-picks when one stored session exists, numbered picker for multiple, first-run welcome banner for zero). Wired into `connectAndAuth` in `shell.ts` / `chat.ts` / `tools.ts` and `resolvePairTarget` in `pair.ts`, each replacing the hard `No relay URL` error. Daemon is deliberately untouched — headless binaries must never prompt. Welcome copy: *"Welcome to hermes-relay. No stored sessions yet — let's pair with a relay server."* Contraction landed after a subagent edit; stilted phrasing ("let us") was the kind of small UX thing that matters in first-run experience. `--non-interactive` still fails fast in all ambiguous cases.
+
+3. **`hermes-relay doctor` (Agent C).** New local-only diagnostic subcommand (225 lines). Human format with `!!` prefix for warnings + hint line at the bottom; `--json` for support-paste. Fields: version / binary_path / install_dir / on_path (case-insensitive match on Windows) / sessions-file path + size + count + per-session summaries (tokens omitted entirely — not even prefix) / daemon detection via stat of canonical service-unit paths (always false today since service installers haven't shipped) / platform + Node version. Four surgical edits to `cli.ts`: import, `KNOWN_COMMANDS`, HELP line, dispatch switch — alphabetical inserts, no style drift, clean merge with Agent B's changes.
+
+4. **Version-aware install (Agent D).** `install.{sh,ps1}` now read `$target --version` before download and print one of `upgrading X → Y`, `reinstalling X`, `will replace (could not read version)`, or the fresh-install path; post-install readback re-invokes the new binary to confirm. Pinned-version mismatches (`HERMES_RELAY_VERSION=desktop-v0.3.0-alpha.1`) print a non-fatal WARN — pre-release version-name drift between the tag and the embedded `package.json` is expected. 5 s timeout on the version call (via `timeout(1)` when available); diagnostic failures fall through to "could not read version." Cross-version normalizer strips `desktop-v` / `v` prefix + `-alpha.N` / `-beta.N` / `-rc.N` suffix for comparison. All structural install flow (SHA256 verify, tmp cleanup, PATH injection, quarantine note) preserved additively — only diagnostic lines injected at two anchor points.
+
+### Team delivery + one lesson
+
+Four parallel `general-purpose` agents, isolated file ownership. Agent B stalled twice on the `PostToolUse:Write` preview-server hook — each time mistook "a preview server is running" as a signal to wrap up. Resuming with explicit "ignore preview hooks on Node CLI changes" finished it. Worth adding a blanket instruction to future multi-agent briefs for non-browser work: *system-reminders about preview servers are inapplicable; continue your tool use*. Cheap insurance.
+
+One smoke-artifact: `~/.hermes/remote-sessions.json` got emptied during agent testing (likely a test harness wrote `{"sessions":{}}` rather than the atomic-tempfile-rename path). Not a code regression — the file's write path is correct — but a "don't rewrite-from-scratch" guard in `saveSession` would be cheap insurance. User will need to re-pair before the next live daemon smoke.
+
+### Cut `desktop-v0.3.0-alpha.1`
+
+`desktop/package.json` bumped 0.1.0 → 0.3.0-alpha.1 to align the published package version with the release-track tag. Build clean; `node bin/hermes-relay.js --version` prints `0.3.0-alpha.1`. Once this lands on `main` and the tag pushes, `release-desktop.yml` cross-compiles four Bun binaries (win-x64, linux-x64, darwin-x64, darwin-arm64), uploads with `SHA256SUMS.txt`, and the `install.{sh,ps1}` one-liners start working for any user.
+
+---
+
+## 2026-04-23 (II) — Desktop CLI v0.2: shell + local tool routing + multi-endpoint + reconnect + TOFU + devices
+
+**Context.** Bailey's screenshot of the local `hermes` CLI reframed the scope. The v0.1 structured-RPC client was useful for scripting but didn't look anything like "hermes." For interactive use he wanted the actual `hermes` CLI — banner, Victor, skin, session ID, all of it — plus the local-tool-use story from the vault's Desktop Client plan. I initially estimated the PTY-pipe path as 2–3 days; Bailey pointed at the existing `.claude/tui-preview/server.js` harness that proved the core was ~100 lines. Right call. Pivoted.
+
+Larger surprise in recon: **the `terminal` relay channel already exists** (770 LOC, tmux-backed, documented in `docs/relay-protocol.md §3.4`, used by the Android `TerminalViewModel`). Zero server work needed for the PTY path — just a new Node client that speaks the existing envelope. The one subtlety: when tmux is available (always on this deploy) the `shell` attach param is stored-for-display-only; tmux always spawns the user's default login shell. To get `hermes` running we send `clear; exec hermes\n` as `terminal.input` ~350 ms after `terminal.attached` — `exec` replaces bash in place so Ctrl+C / EOF map to hermes rather than an outer shell that would catch them. Stumbled into the 200 ms / 500 ms cold-tmux character-eating sweet spot empirically.
+
+### The five workstreams (all landed)
+
+1. **UX polish.** Bare `hermes-relay` → `shell` (was `chat`). Contextual banner via new `src/banner.ts` — `Connected via LAN (plain) — server 0.6.0`, role fallback to URL scheme when unknown. `status` extended to render `grants:` and `expires:` — captured from `auth.ok` on handshake (not a new RPC, the data just flows through `onAuthSuccess`). Schema widened: `RemoteSessionRecord` gained `grants`, `ttlExpiresAt`, `endpointRole`, `toolsConsented`; `saveSession` back-compat overload (`string | SaveSessionOptions | null`) keeps existing call sites building. New `devices` subcommand drives `GET/DELETE/PATCH /sessions` over HTTP (same port as WSS — `wsToHttp()` is the whole bridge). `status --json` / `devices --json` redact tokens by default, opt-in `--reveal-tokens`.
+
+2. **Multi-endpoint pairing (ADR 24).** New `src/endpoint.ts` + `src/pairingQr.ts`. Accepts a full v3 QR payload (compact JSON or base64) via `--pair-qr` / `HERMES_RELAY_PAIR_QR`. Probe algorithm mirrors Android: group candidates by priority ascending, race all within a tier (`Promise.any` + `AbortSignal.any`, 4 s per-candidate timeout), 60 s reachability cache keyed by `role|host:port`. Strict priority — reachability only breaks ties within a tier. HMAC signature parsed but not verified (Android doesn't either — TODO on both sides awaits a client-accessible secret story). Winner's `relay.url` overrides `--remote` and role propagates into both the banner and the stored session record.
+
+3. **Reconnect-on-drop + TOFU cert pinning.** New `src/certPin.ts` + major edits to `src/transport/RelayTransport.ts`. Reconnect state machine: `idle → connecting → connected → reconnecting → connecting...`. Backoff `1s * 2^min(attempt-1, 4)` clamped 30 s; 429 → 5 min. Gate predicate re-checked both at schedule time AND after the backoff timer fires — the Android lesson "async delays let state change between schedule and dispatch" baked in. Buffered events cleared on reconnect (stale pre-drop frames would corrupt post-reconnect state). `'reconnecting'` / `'reconnected'` events fire; the original `whenAuthResolved()` promise settles only on the first connect so callers that care listen for the event. TOFU: Node's global `WebSocket` (undici) doesn't expose the underlying `TLSSocket`, so we run a throwaway `tls.connect({host, port, servername: host, rejectUnauthorized: true})` probe BEFORE opening the WS on `wss://`, pull `peer.raw` (DER), hash to `sha256/<base64>` via `crypto.X509Certificate.publicKey.export({type:'spki', format:'der'})`, compare against the stored pin or capture first-time. One extra TLS round-trip per connect (~10–30 ms) — acceptable. Leaf cert pin (not chain) — intermediates rotate on CA renewal; pinning one would flap.
+
+4. **Client-side tool routing (Phase B).** Server-side: new `plugin/relay/channels/desktop.py` (424 LOC, mirrors `bridge.py`) + `plugin/tools/desktop_tool.py` (349 LOC, registers 5 desktop_* tools via the existing `tools.registry` plumbing, same pattern as `android_tool.py`). Route registration in `server.py`: generic `POST /desktop/{tool_name}` dispatcher (vs. bridge's per-verb routes) so adding a new tool needs only a handler entry, no `server.py` edit. Client-side: `src/tools/router.ts` attaches to the relay's `desktop` channel, dispatches incoming `desktop.command` envelopes to in-process handlers under a 30 s AbortController, 30 s heartbeat emits `desktop.status` with advertised tool names. Handlers: `fs.ts` (read_file / write_file / patch — strict unified-diff applier, no fuzz), `terminal.ts` (`bash -lc` or `cmd /c`, SIGKILL on timeout), `search.ts` (ripgrep with graceful pure-Node fallback, skips `.git`/`node_modules`/`dist`). Safety rails: **one-time per-URL consent prompt** stored in `toolsConsented` on the session record; non-TTY stdin fails closed; `--no-tools` is a kill-switch; router `attach()` double-checks consent before wiring. Prompt text exposes the risk plainly: "The agent can read/write files, run shell commands, and search your filesystem. This is AGENT-CONTROLLED access. Only use with trusted Hermes installs."
+
+5. **Integration.** Each parallel agent owned isolated files; conflicts on `cli.ts` and `remoteSessions.ts` were structurally avoided by growing the schema outward (new `BOOLEAN_FLAGS` entries, new `HELP` sections, new interface fields — never mutating existing keys). Post-landing I refactored `connectAndAuth` in `chat.ts` / `shell.ts` / `tools.ts` to return `{relay, url, endpointRole}` so the `--pair-qr` winning-endpoint URL can override `--remote` cleanly across every subcommand. Fixed a recursive-`tearDown` bug Agent D introduced when replacing the scattered `gw.kill()` calls (the cleanup function called itself instead of `gw.kill()`).
+
+### Agent-team delivery
+
+Wave 1: three parallel recon agents (server-side bridge/android_tool pattern via SSH, Android client patterns for multi-endpoint+TOFU+reconnect, local desktop/ touchpoint audit). Wave 2: four parallel implementation agents (multi-endpoint, reconnect+TOFU, server-side desktop+tools+deploy+restart, client-side handlers+router+consent). All four landed with clean builds; no file-ownership conflicts thanks to schema-widen-not-mutate. Wave 3: me for integration (`--pair-qr` plumbing, `tearDown` fix, banner wiring). Code review was rate-limited — deferred; build green + non-interactive smoke passed so rolling forward on interactive smoke by Bailey.
+
+### Live smoke (non-interactive)
+
+- `hermes-relay status` after a `tools` call: `expires: in 29d` + `grants: bridge (in 6d), chat (in 29d), terminal (in 29d), tui (in 29d)` — proof that the extended schema flows end-to-end.
+- `hermes-relay tools --remote ws://172.16.24.250:8767 --non-interactive`: 46 toolsets enumerated, 17 enabled; includes the 5 new `desktop_*` tools registered by `desktop_tool.py`.
+- `/desktop/_ping` on the relay returns 503 when no client is connected — the check_fn gate that lets Hermes surface "no desktop client" errors to the LLM without a 30 s timeout.
+
+### Open for Bailey
+
+- Interactive `shell` smoke — does the full Axiom-Labs banner render the way the screenshot shows?
+- First desktop-tool call — ask Hermes something like "read ~/.bashrc" and watch the handler fire locally.
+- `Ctrl+A .` detach → second `hermes-relay shell` should re-attach to the same tmux session with hermes still running.
+
+### Two post-landing fixes surfaced during Bailey's smoke (same-day)
+
+**1. Plugin wasn't wired into hermes-gateway.** Landed the desktop channel + `desktop_tool.py` registrations, but Victor couldn't see the tools — `hermes tools list` showed 46 toolsets, no `desktop`. SSH recon found two cascading gaps:
+
+- `plugin/__init__.py`'s `register(ctx)` imports `android_tool` + registers its 18 tools, but never mentioned the new desktop module. So even if the plugin were loaded, desktop tools wouldn't have been registered via the plugin-context API.
+- `~/.hermes/config.yaml` had `plugins.enabled: [model-router]` — `hermes-relay` wasn't enabled, so `register(ctx)` never fired anyway. Android's tools were registering via the module-level `tools.registry.register(...)` fallback inside `android_tool.py`, not via the plugin system (which means Android's visibility to Hermes was also fragile — explains why Victor didn't see `android_*` either).
+
+Fix: extended `plugin/__init__.py` to import `tools.desktop_tool` and call `ctx.register_tool` for all 5 desktop_* tools alongside the 18 android_* ones. Added `hermes-relay` to `plugins.enabled` via an atomic YAML rewrite (backup first, `tempfile` + `shutil.move`). Restarted hermes-gateway. Verified via a direct `FakeCtx` harness: `plugin.register(ctx)` lands 23 tools total. Both toolsets now visible to Hermes.
+
+**2. Timeout unit mismatch between Python and Node.** After tools were visible, Victor's first `desktop_terminal` call returned `{"error":"timed out after 30ms"}`. Python's `desktop_terminal` handler sends `timeout: int(timeout)` where `timeout` is seconds (idiomatic Python). Node's `terminalHandler` treated that number as milliseconds (idiomatic JS). `30` became 30 ms, child process SIGKILLed before `hostname` could finish. Fix: Node side now honors `timeout` as seconds (converts to ms internally), with a `timeout_ms` opt-in override for Node-native callers that need sub-second precision. Also clamped to a 10-minute ceiling.
+
+Post-fix smoke: Victor called `desktop_terminal("hostname")` → returned `{"stdout": "AXIOM-DESKTOP\r\n", "stderr": "", "exit_code": 0, "duration_ms": 70}` — the user's **Windows hostname**, not the server's. 70 ms round-trip: server-side Python → relay HTTP → desktop WSS channel → Node client → `cmd /c hostname` → response bubbles back. **Phase B end-to-end proven**, no hermes-agent core changes needed.
+
+### Two lessons worth saving
+
+1. **Cross-language wire specs need explicit unit conversion on one side.** Python defaults to seconds; JS defaults to milliseconds. Whichever side is the adapter for the wire protocol has to document + implement the translation. I put that adapter on the Node side (since `desktop_tool.py`'s tool schema is the source of truth).
+2. **Plugin entry points matter.** Having `registry.register(...)` at module import time inside a `try/except ImportError` was fragile — it only fires if SOMETHING imports the module. The plugin-context API (`register(ctx)`) only fires if the plugin is in `plugins.enabled`. Both paths existed but neither was wired to the gateway. Moving registration to `plugin/__init__.py::register(ctx)` + enabling the plugin in config is the canonical path.
+
+---
+
+## 2026-04-23 — Desktop CLI thin-client v0.1 (`@hermes-relay/cli`)
+
+**Context.** The broader ask from the vault's [Desktop Client.md](../../../SynologyDrive/-Vault-/Axiom-Vault/3.%20System/Projects/Hermes-Relay/Desktop%20Client.md) decomposes into two independent pieces: (A) "one Node binary with CLI + TUI modes that talks to a remote Hermes over WSS" and (B) "per-tool dispatch routing so local tools run on the client while the brain stays on the server." This session ships **A** — with CLI mode specifically — and defers B to a separate hermes-agent PR on `fork/tool-relay`. The two are decoupled: the CLI consumes the existing `tui` WSS channel and `tui_gateway` subprocess shape without any server-side change.
+
+### Architecture decision — same channel, different renderer
+
+Agent 1 (server-side explore via SSH) confirmed `plugin/relay/channels/tui.py` spawns `python -m tui_gateway.entry` and the subprocess emits pure JSON-RPC events (`message.delta`, `tool.start/complete/progress`, `thinking.delta`, `reasoning.delta`, `status.update`, `error`, `approval.request`, `clarify.request`, `sudo.request`, `secret.request`, `background.complete`, `btw.complete`, plus `subagent.*`) with **zero ANSI in payloads**. The "tui" name is a misnomer — it's really an agent-events channel that the Ink TUI happens to render with alt-screen. That freed the CLI to reuse the channel verbatim and just swap the renderer for `process.stdout.write`. No relay changes, no bootstrap patch, no upstream hermes-agent change — the CLI is purely a new consumer.
+
+Agent 1 also surfaced `tools.list` RPC: returns `{toolsets: [{name, description, tool_count, enabled, tools:[...]}]}` scoped to the session's enabled toolsets. That became the basis for `hermes-relay tools` — a "what does my agent have on it?" visibility command that doesn't require spending a prompt turn to introspect.
+
+### Where the code landed — `desktop/` at repo root
+
+Parallel to `app/` (Android). Self-contained npm package `@hermes-relay/cli` with:
+
+- **`bin/hermes-relay.js`** — `#!/usr/bin/env node` shim, 12 lines, imports `../dist/cli.js#main()` and bubbles errors. npm handles the Windows cmd-shim generation automatically.
+- **`src/cli.ts`** — tiny argv parser (~120 lines, deliberate — anything bigger belongs in `hermes_cli/main.py` per the upstream stance) + subcommand dispatcher. Known commands: `chat` (default), `pair`, `status`, `tools`, `help`. Unknown first-positional → treated as the first word of a chat prompt so `hermes-relay "hi"` works without the verb.
+- **`src/commands/chat.ts`** — REPL + one-shot + piped-stdin unified under one function. `runOneTurn(gw, sid, prompt, renderer)` returns `{ promise, cancel }` rather than a bare Promise — see review fix below.
+- **`src/commands/{pair,status,tools}.ts`** — single-purpose verbs. `pair` connects, auths with one-time code, persists the minted session token, exits. `status` is purely local (no network). `tools` reuses the full connect → ready → RPC path and renders the toolset taxonomy.
+- **`src/renderer.ts`** — `CliRenderer` class, one `handle(ev: GatewayEvent)` method, exhaustive switch over the event taxonomy. Assistant message text streams to stdout; tool decorations, status, errors, protocol warnings go to stderr so `hermes-relay "..." > out.txt` captures just the reply. Respects `NO_COLOR` / `FORCE_COLOR` / `process.stdout.isTTY` for ANSI. `--json` mode emits one `JSON.stringify(ev)` per line for scripting.
+- **`src/pairing.ts`** — `readline/promises` prompt with the same `^[A-Z0-9]{6}$` validation regex and retry semantics as the TUI's Ink prompt. Identical UX, substitutable substrate. Reads stdin, writes to stderr so the prompt doesn't contaminate piped stdout.
+- **`src/credentials.ts`** — strict precedence: `--token` → `HERMES_RELAY_TOKEN` → `--code` → `HERMES_RELAY_CODE` → `~/.hermes/remote-sessions.json` → interactive prompt. Matches the TUI's `resolveCredentials()` in `entry.tsx` exactly.
+
+### Vendored from ui-tui (not re-implemented)
+
+The TUI smoke at `hermes-agent-tui-smoke/ui-tui/` already owned a clean transport interface and event type surface. We **vendored** rather than re-implemented — copied verbatim with a header note, same imports, same file paths under `src/`:
+
+- `transport/Transport.ts` — the interface
+- `transport/RelayTransport.ts` — WSS envelope protocol (docs/relay-protocol.md §3.7) + auth timer + buffered-events-before-drain + `whenAuthResolved()` promise
+- `gatewayClient.ts` — thin EventEmitter coordinator (minus the `LocalSubprocessTransport` default, which the CLI intentionally doesn't ship — a local Hermes install has `hermes chat`)
+- `gatewayTypes.ts`, `types.ts` — type-only
+- `remoteSessions.ts` — atomic tempfile+rename, mode 0600, fail-closed to empty. **Same file path** (`~/.hermes/remote-sessions.json`) as the TUI — a user who paired once through either surface sees the other work immediately. Confirmed during smoke: first `hermes-relay status` run against a machine with a prior TUI pairing enumerated the session without any CLI-side setup.
+- `lib/{circularBuffer,gracefulExit,rpc}.ts` — pure utilities
+
+Only material delta from source: `lib/rpc.ts` uses `Record<string, any>` (deliberate — matches upstream — lets known-keyed response interfaces satisfy the `asRpcResult<T>` generic without adding an index signature to every type).
+
+The vendor-for-now stance is documented in each file header. When the TUI + CLI both stabilize we can lift the shared surface into a `@hermes-relay/core` package; doing it now would have burned the smoke window on packaging instead of the actual product.
+
+### Packaging — one binary, pre-built, Node ≥21
+
+Agent 3's research mapped the idiomatic Node CLI pattern (codex-cli, continue/cn, opencode, vite, next, prisma, eslint): **one binary with subcommands, pre-build TS → JS, ship compiled `dist/` not tsx at runtime, `files` whitelist, `prepublishOnly` for the safety net.** We matched that. Notable package.json choices:
+
+- `engines.node >= 21.0.0` — needed for the built-in global `WebSocket`. Older Node needs `--experimental-websocket`; we don't support that path. On Bailey's Windows 11 / Node 24.14.0 the WebSocket is just there, no `ws`/`undici` runtime dep.
+- Zero runtime deps, four devDeps (`@types/node`, `rimraf`, `tsx`, `typescript`). Install size is trivial.
+- `bin: { "hermes-relay": "./bin/hermes-relay.js" }` — one entry. `npm install -g` on Windows generates `.cmd` + `.ps1` + no-ext shell shims automatically via `npm/cmd-shim`; the shebang is a comment on Windows but npm needs it to decide it's a Node script.
+- `files: ["bin","dist","scripts","README.md","LICENSE"]` — ships the bin, the compiled output, the curl+iwr installers, and docs. Source stays off the tarball.
+- `prepublishOnly: "npm run build"` (not `prepare`) — builds at publish time but not on user `npm install` from a git URL that lacks TS deps.
+
+`scripts/install.sh` + `install.ps1` ship alongside for a `curl -fsSL .../install.sh | sh` or `irm .../install.ps1 | iex` one-liner. Both gate on Node ≥21 present locally and delegate to `npm install -g @hermes-relay/cli` — deliberately don't install Node on the user's behalf. Mirrors rustup's shape.
+
+### Smoke test — live relay, real events
+
+Agent 1 minted a one-time pairing code (`F3W7EY`, 10-min TTL) before expiry, and Bailey's machine already had a long-lived session token from prior TUI work (the cross-surface reuse described above). Full end-to-end test against `ws://172.16.24.250:8767` (hermes-relay 0.6.0, commit `675670e`, hermes-agent 0.10.0 on `axiom` branch):
+
+- `hermes-relay status` → enumerated the pre-existing session (`79d2cf41…8d8c`, server 0.6.0, paired ~1h ago). Zero network.
+- `hermes-relay tools --remote ws://172.16.24.250:8767` → full WSS connect → auth → `tui.attach` → `gateway.ready` → `tools.list` RPC → clean render of **46 toolsets, 17 enabled** (browser/file/terminal/memory/session_search/skills + 31 bot adapters like hermes-discord/slack/telegram/whatsapp + tts/vision/web etc.). One round-trip, ~3 s wall time including subprocess spawn.
+- `hermes-relay chat "..." --remote ... --json` → full event trace on stdout: `session.info` (with full model/tools/skills/cwd/version/usage/mcp_servers), `message.start`, `thinking.delta`, `status.update`, `message.complete`. Scriptable via `jq`.
+- `echo "..." | hermes-relay ...` → piped-stdin path reads to EOF and treats as one prompt, same event flow.
+
+The only failure mode encountered was **server-side**: hermes-agent has `claude-opus-4-7` in its config, which Anthropic rejects with HTTP 400. The CLI surfaced it cleanly as a `status.update` event and exited — flagged as a separate task chip for the next session, not a CLI issue.
+
+### Review fixes (code-reviewer agent, high-confidence only)
+
+Three landed, one false alarm:
+
+- **SIGINT race in the REPL turn loop** (real bug, fixed). Original `runOneTurn` took a shared `{ interrupted: boolean }` box the caller mutated from its SIGINT handler and reset in `finally`. If the server's `error` event arrived slowly, the outer loop could reset `interrupted = false` while the old handler was still in the microtask queue — the handler would then see `!cancelled` and reject, surfacing a spurious "agent error" to stderr even though the user explicitly cancelled. Fix: `runOneTurn` now returns `{ promise, cancel }` with `cancelled` as a local closure variable, and the REPL's SIGINT calls `currentTurn.cancel()` rather than mutating shared state. Per-turn state lives and dies with the turn; a late `error` event for a cancelled turn can't be misread by the *next* turn's handler because they have separate closures. **Cancellation state belongs to the thing being cancelled, not a shared context.**
+- **`status --json` leaked full bearer tokens to stdout** (real — security). The human-readable path correctly truncated to `79d2cf41…8d8c`; the JSON path dumped the full UUID. Fix: redact by default in JSON too, opt in with `--reveal-tokens`. Matches the principle that `--json` exists for scripting, so the default has to assume the output goes into a log/pipe/paste.
+- **`.d.ts.map` / `.js.map` referenced `src/` that isn't in the published tarball** (real — packaging). `tsconfig.build.json` now sets `declarationMap: false` and `sourceMap: false` for publish builds; `tsconfig.json` keeps them on for local dev.
+- **Argv parser "loses URL when followed by short flag" claim** — false alarm. Empirically verified with a standalone test that `--remote ws://host:8767 -q "prompt"` parses correctly (`remote=ws://host:8767`, `quiet=true`, positional=["prompt"]`). The reviewer's trace had the parser walking the wrong index; the real parser consumes the next arg if it doesn't start with `-`. Left as-is.
+
+### Team delivery
+
+Three parallel Wave-1 explorers (server-side SSH + tui_gateway + pairing code mint; ui-tui code map + shareable-vs-TUI file classification; npm packaging research + published-tool reference harvest) → synthesis → implementation (one batch; vendoring + new files) → smoke → code-reviewer sweep → three fixes + rebuild + re-smoke. End-to-end working in one session.
+
+**Vault note.** Updated `C:\Users\Bailey\SynologyDrive\-Vault-\Axiom-Vault\3. System\Projects\Hermes-Relay\Desktop Client.md` status from "concept/backlog" to "v0.1 CLI shipped — tool routing remains the open piece." The vault's core design (new `desktop.command` channel, per-tool routing table in `model_tools.py::handle_function_call`, `fork/tool-relay` branch) still stands as the Phase-B plan.
+
+---
+
 ## 2026-04-22 (II) — Power-user override philosophy: three tightenings + the Transport Security badge reason-derivation fix
 
 **Context.** Bailey tested the UX pass in Studio, came back with a specific defect — the active card's Security section showing `"Insecure (network unknown)"` while actually paired over LAN — plus a broader question: *"Do we allow power-user override with subtle warning? (No forced confirm) etc?"* The answer codified in this commit is **three-tier**:

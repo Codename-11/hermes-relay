@@ -1,0 +1,88 @@
+name: CI desktop CLI
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/ci-desktop.yml'
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/ci-desktop.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck-and-build:
+    name: Type-check + build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Type-check
+        run: npm run type-check
+
+      - name: Build (tsc → dist/)
+        run: npm run build
+
+      - name: Verify bin shim is executable
+        # The published tarball depends on bin/hermes-relay.js having a valid
+        # shebang + importing the freshly built dist/cli.js. Smoke the actual
+        # invocation so we catch broken imports, missing main export, or a
+        # prebuilt dist/ that references a source file that moved.
+        run: node bin/hermes-relay.js --version
+
+      - name: Upload dist/
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-dist
+          path: desktop/dist
+          retention-days: 7
+
+  smoke-help:
+    name: Smoke — --help + --version work on every target OS
+    needs: typecheck-and-build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: --version
+        run: node bin/hermes-relay.js --version
+
+      - name: --help
+        run: node bin/hermes-relay.js --help

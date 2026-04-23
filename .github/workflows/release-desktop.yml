@@ -1,0 +1,133 @@
+name: Release desktop CLI
+
+on:
+  push:
+    tags: ['desktop-v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build-binaries:
+    name: Build cross-platform binaries via Bun compile
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js (for npm ci + tsc)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.x'
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Type-check
+        run: npm run type-check
+
+      - name: Build dist/ (tsc)
+        run: npm run build
+
+      - name: Prepare binary output dir
+        run: mkdir -p dist/bin
+
+      - name: Build Windows x64
+        run: >
+          bun build --compile --minify --sourcemap --bytecode
+          --target=bun-windows-x64
+          src/cli.ts
+          --outfile dist/bin/hermes-relay-win-x64
+
+      - name: Build Linux x64
+        run: >
+          bun build --compile --minify --sourcemap --bytecode
+          --target=bun-linux-x64
+          src/cli.ts
+          --outfile dist/bin/hermes-relay-linux-x64
+
+      - name: Build macOS x64
+        run: >
+          bun build --compile --minify --sourcemap --bytecode
+          --target=bun-darwin-x64
+          src/cli.ts
+          --outfile dist/bin/hermes-relay-darwin-x64
+
+      - name: Build macOS arm64
+        run: >
+          bun build --compile --minify --sourcemap --bytecode
+          --target=bun-darwin-arm64
+          src/cli.ts
+          --outfile dist/bin/hermes-relay-darwin-arm64
+
+      - name: Size guard (<150 MB each)
+        run: |
+          set -e
+          for f in dist/bin/hermes-relay-*; do
+            sz=$(stat -c%s "$f")
+            mb=$(( sz / 1024 / 1024 ))
+            echo "  $f — ${mb} MB"
+            if [ "$sz" -gt 157286400 ]; then
+              echo "FAIL: $f exceeds 150 MB — Bun likely shipped a debug build or we added a large dep."
+              exit 1
+            fi
+          done
+
+      - name: Generate SHA256SUMS
+        working-directory: desktop/dist/bin
+        run: |
+          sha256sum hermes-relay-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+          fail_on_unmatched_files: true
+          body: |
+            # Hermes-Relay Desktop CLI — ${{ github.ref_name }}
+
+            **Experimental phase.** Binaries are unsigned — Windows SmartScreen and macOS Gatekeeper will warn on first launch. See the install scripts for the `Unblock-File` / `xattr -dr` escape hatches.
+
+            ## Install
+
+            **Windows (PowerShell):**
+            ```powershell
+            irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex
+            ```
+
+            **macOS / Linux:**
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.sh | sh
+            ```
+
+            Pin this specific release with `HERMES_RELAY_VERSION=${{ github.ref_name }}`.
+
+            ## Verify
+
+            ```
+            hermes-relay --version
+            hermes-relay pair --remote ws://<host>:8767
+            hermes-relay shell
+            ```
+
+            See [Desktop CLI docs](https://codename-11.github.io/hermes-relay/desktop/) for full usage.
+
+          files: |
+            desktop/dist/bin/hermes-relay-win-x64.exe
+            desktop/dist/bin/hermes-relay-linux-x64
+            desktop/dist/bin/hermes-relay-darwin-x64
+            desktop/dist/bin/hermes-relay-darwin-arm64
+            desktop/dist/bin/SHA256SUMS.txt
