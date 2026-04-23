@@ -21,9 +21,13 @@ function humanAge(seconds: number): string {
   return `${Math.floor(seconds / 86_400)}d`
 }
 
-function redactToken(token: string): string {
-  return token.length >= 12 ? `${token.slice(0, 8)}…${token.slice(-4)}` : '(redacted)'
-}
+/** Default redaction: emit the static string "(redacted)" — a prefix like
+ * `e35a85b2…fe2c` is copy-pasteable into issues and pairs with the URL as
+ * a stable session fingerprint, which is exactly the leakage class we want
+ * to avoid. Callers who need the token for scripting pass `--reveal-tokens`
+ * and take responsibility for the destination. Symmetric with the `devices`
+ * flow. */
+const REDACTED = '(redacted — pass --reveal-tokens to show)'
 
 export async function statusCommand(args: ParsedArgs): Promise<number> {
   const sessions = await listSessions()
@@ -33,13 +37,12 @@ export async function statusCommand(args: ParsedArgs): Promise<number> {
   if (args.flags.json) {
     // Bearer tokens are secrets — redact by default so `status --json > file`
     // or `| tee` doesn't splash them into shell history, CI logs, or pastes.
-    // Callers who actually need the token (scripting re-auth) must opt in.
     const out: Record<string, RemoteSessionRecord> = revealTokens
       ? sessions
       : Object.fromEntries(
           Object.entries(sessions).map(([url, rec]) => [
             url,
-            { ...rec, token: redactToken(rec.token) }
+            { ...rec, token: '(redacted)' }
           ])
         )
     process.stdout.write(JSON.stringify(out, null, 2) + '\n')
@@ -57,12 +60,11 @@ export async function statusCommand(args: ParsedArgs): Promise<number> {
   const now = Math.floor(Date.now() / 1000)
   for (const [url, rec] of entries) {
     const age = humanAge(Math.max(0, now - rec.pairedAt))
-    const tokPreview =
-      rec.token.length >= 12 ? `${rec.token.slice(0, 8)}…${rec.token.slice(-4)}` : '(short)'
+    const tokenDisplay = revealTokens ? rec.token : REDACTED
     process.stdout.write(`  ${url}\n`)
     process.stdout.write(`    server:   ${rec.serverVersion ?? '(unknown)'}\n`)
     process.stdout.write(`    paired:   ${age} ago\n`)
-    process.stdout.write(`    token:    ${tokPreview}\n`)
+    process.stdout.write(`    token:    ${tokenDisplay}\n`)
     process.stdout.write(`    expires:  ${humanExpiry(rec.ttlExpiresAt)}\n`)
     const role = parseRole(rec.endpointRole)
     if (role) {

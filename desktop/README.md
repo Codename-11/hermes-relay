@@ -14,7 +14,7 @@ The agent brain (LLM + tools + sessions + memory) runs on your Hermes host. This
 npm install -g @hermes-relay/cli
 ```
 
-### curl / irm
+### curl / irm (no Node required)
 
 ```sh
 # macOS / Linux
@@ -26,7 +26,9 @@ curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/deskt
 irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex
 ```
 
-Both installers check for Node >=21 and delegate to `npm install -g @hermes-relay/cli` — they do not install Node for you.
+Downloads a prebuilt single-file binary from GitHub Releases (Bun `--compile`, ~60–110 MB per platform) into `~/.hermes/bin/`. No Node.js install needed. SHA256 verified against `SHA256SUMS.txt` before install; version-aware so a re-install prints `upgrading X → Y`. Pin a specific release with `HERMES_RELAY_VERSION=desktop-v0.3.0-alpha.1`, override the install dir with `HERMES_RELAY_INSTALL_DIR=...`.
+
+> **Experimental.** Binaries are currently unsigned — Windows SmartScreen and macOS Gatekeeper may warn on first launch. The installers print the `Unblock-File` / `xattr -dr com.apple.quarantine` escape hatches. Code signing lands before v1.0.
 
 ### npx (no install)
 
@@ -80,8 +82,9 @@ If you previously paired, tokens remain in `~/.hermes/remote-sessions.json`. Del
 
 ### Requirements
 
-- **Node.js >=21** — needed for the built-in global `WebSocket` (added stable in Node 21). Older Node needs `--experimental-websocket`; we don't support that path.
-- A running `hermes-relay` server reachable over the network. See the [Hermes-Relay README](https://github.com/Codename-11/hermes-relay#readme) to stand one up.
+- **A running `hermes-relay` server** reachable over the network. See the [Hermes-Relay README](https://github.com/Codename-11/hermes-relay#readme) to stand one up.
+- **For the `curl | sh` / `irm | iex` binary install:** no runtime deps — the binary is self-contained. `~/.hermes/bin/` on PATH.
+- **For the `npm install -g` path** (experimental-phase note: not yet published; use the binary install for now): Node.js ≥21 — needed for the built-in global `WebSocket`. Older Node needs `--experimental-websocket`; we don't support that.
 
 ## First-time pairing
 
@@ -277,9 +280,16 @@ Precedence for credentials: `--token` → `HERMES_RELAY_TOKEN` → `--code` → 
 - **`RelayTransport: global WebSocket not available`** — your Node is too old. Need >=21.
 - **Hangs on a tool call that asks for approval** — v0.1 doesn't wire interactive approvals; the agent's approval request is surfaced to stderr but can't be answered. Turn off the offending toolset on the server or use `--verbose` to see the block.
 
-## What's next
+## Roadmap
 
-The current v0.1 covers remote chat, tool-event rendering, and pairing. Client-side tool routing (so `read_file` / `terminal` run locally against your machine while the agent brain stays remote) is the follow-on work — see [Desktop Client architecture](../docs/) for the plan.
+What's shipped in `desktop-v0.3.0-alpha.1`: remote chat + tool-event rendering, one-time pairing (including multi-endpoint QR with strict-priority probe), interactive PTY shell routing the full `hermes` CLI, client-side tool routing (`desktop_read_file` / `desktop_write_file` / `desktop_patch` / `desktop_terminal` / `desktop_search_files` handlers run locally against your machine while the agent brain stays remote — consent-gated per-URL), auto-reconnect with TOFU cert pinning, server-side session management (`devices`), headless `daemon` for always-on tool serving, and local diagnostics (`doctor`).
+
+What's next (see [ROADMAP.md](../ROADMAP.md#desktop-track) for the full track):
+
+- Service installers — `install-service-{win,linux,mac}` to register the daemon with `sc.exe` / systemd user unit / `launchd` so it auto-starts on login.
+- Multi-client server-side routing — today a connected desktop client is single-slot; allow laptop + home-desktop + work-box attached simultaneously with per-client tool dispatch via a new hermes-agent `ContextVar`.
+- Code signing — Windows EV cert + Apple Developer ID + notarization to silence SmartScreen/Gatekeeper.
+- `npm publish @hermes-relay/cli` — claim the scope and add the `npm install -g` path alongside `curl | sh` once v1.0 lands.
 
 ## Related
 
