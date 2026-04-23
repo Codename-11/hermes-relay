@@ -260,8 +260,17 @@ hermes-android/
 | `desktop/src/credentials.ts` | Precedence: `--token` → `--pair-qr` (probe+pair) → `--code` → stored → prompt; returns `Credentials{sessionToken?, pairingCode?, resolvedEndpoint?}` |
 | `desktop/src/transport/RelayTransport.ts` | Fork of ui-tui's transport + reconnect state machine (`idle/connecting/connected/reconnecting`, exp backoff 1→30s, 5min on 429, gate re-check post-sleep) + pre-WS TLS probe for TOFU |
 | `desktop/src/remoteSessions.ts` | Same file path as TUI (`~/.hermes/remote-sessions.json`, 0600); schema widened with `grants`, `ttlExpiresAt`, `endpointRole`, `toolsConsented`; `saveSession` back-compat overload |
-| `desktop/scripts/install.sh` / `install.ps1` | curl/iwr one-liner installers — gate on Node ≥21, delegate to `npm install -g` |
+| `desktop/src/commands/daemon.ts` | Headless WSS + tool router for always-on access; JSON-line logs; fails closed on missing consent unless `--allow-tools` with explicit `--token` |
+| `desktop/src/commands/doctor.ts` | Local-only diagnostic report — version / binary path / PATH / sessions / daemon detection; `--json` for support-paste; omits tokens entirely |
+| `desktop/src/relayUrlPrompt.ts` | First-run URL fallback — `resolveFirstRunUrl()` auto-picks single stored session, numbered picker for multiple, welcome banner for zero; throws on non-interactive + ambiguous |
+| `desktop/src/version.ts` | Build-time-generated constant (`npm run gen:version` before every build) — Bun compiled binaries can't read package.json via `__dirname` so version is embedded at build |
+| `desktop/scripts/install.sh` / `install.ps1` | curl/iwr one-liner installers — download prebuilt Bun binary (no Node required), SHA256-verified, API-resolver for `latest` that includes prereleases, version-aware pre/post-install readback |
+| `desktop/scripts/uninstall.sh` / `uninstall.ps1` | 3-tier removal — default (binary + PATH), `--purge` (also wipes `~/.hermes/remote-sessions.json`), `--service` (stub for future service installers); Windows iex-safe env-var fallback |
 | `desktop/README.md` | User-facing install + usage reference |
+| **Desktop CLI — dev iteration** | |
+| `npm run smoke` (in `desktop/`) | Builds Windows binary + runs `--version` / `--help` / `doctor`, fails loud on zero-output. Local pre-flight before cutting any tag. |
+| `npm run gen:version` | Regenerates `src/version.ts` from `package.json`. Runs automatically before every `build` / `build:bin:*`. |
+| `release-desktop.yml → Smoke-test Linux binary` step | CI-side equivalent: runs compiled Linux binary through the same 3-command check before uploading assets. Catches silent-exit-0 + segfault classes. |
 | **Server — Desktop tool routing (Phase B)** | |
 | `plugin/relay/channels/desktop.py` | Mirrors `bridge.py` — `desktop.command`/`desktop.response`/`desktop.status`, UUID-correlated futures, 30s timeout, single-client MVP, per-session advertised-tools set |
 | `plugin/tools/desktop_tool.py` | `desktop_read_file` / `_write_file` / `_terminal` / `_search_files` / `_patch` — registers with `tools.registry` under `desktop` toolset; `_check_requirements` pings `/desktop/_ping` for "is a client connected AND does it advertise this tool?" |
