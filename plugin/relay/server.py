@@ -50,6 +50,7 @@ from .auth import (
 )
 from .channels.bridge import BridgeError, BridgeHandler
 from .channels.chat import ChatHandler
+from .channels.desktop import DesktopChannel
 from .channels.notifications import NotificationsChannel
 from .channels.terminal import TerminalHandler
 from .config import RelayConfig
@@ -100,6 +101,10 @@ class RelayServer:
         # === PHASE3-notif-listener: notifications channel ===
         self.notifications = NotificationsChannel()
         # === END PHASE3-notif-listener ===
+        # Desktop CLI awareness channel — stashes workspace + active-editor
+        # hints per session (ephemeral; no persistence). Wired in alpha.6
+        # as the keystone for future prompt-injection plugin hooks.
+        self.desktop = DesktopChannel()
 
         # Connected clients: ws → session token
         self._clients: dict[web.WebSocketResponse, str] = {}
@@ -122,6 +127,7 @@ class RelayServer:
         await self.chat.close()
         await self.terminal.close()
         await self.bridge.close()
+        await self.desktop.close()
 
         # Close all WebSocket connections
         for ws in list(self._clients):
@@ -2938,6 +2944,13 @@ async def _on_message(
         task = asyncio.create_task(server.notifications.handle(ws, envelope))
         _track_task(server, ws, task)
     # === END PHASE3-notif-listener ===
+    elif channel == "desktop":
+        # Desktop CLI awareness — workspace + active-editor hints. Stashed
+        # on the session; never replied to. Dispatching as a tracked task
+        # keeps it consistent with other channels so disconnect-cancel
+        # works uniformly.
+        task = asyncio.create_task(server.desktop.handle(ws, envelope))
+        _track_task(server, ws, task)
     else:
         logger.warning("Unknown channel: %s", channel)
         await _send_system(
@@ -3023,6 +3036,10 @@ async def _on_disconnect(
     # the 30s timeout on every in-flight request_id.
     await server.bridge.detach_ws(ws, reason=f"client {remote_ip} disconnected")
     # === END PHASE3-bridge-server ===
+
+    # Desktop CLI context is per-ws and should not outlive the socket — the
+    # next client connect will re-advertise its workspace anyway.
+    await server.desktop.detach_ws(ws)
 
     # Cancel all in-flight tasks for this client
     for task in tasks:

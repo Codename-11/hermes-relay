@@ -22,8 +22,12 @@ import { setupGracefulExit } from '../lib/gracefulExit.js'
 import { asRpcResult, rpcErrorMessage } from '../lib/rpc.js'
 import { deleteSession, saveSession } from '../remoteSessions.js'
 import { CliRenderer } from '../renderer.js'
+import { fetchRecentSessions, pickSession } from '../sessionPicker.js'
 import { ensureToolsConsent } from '../tools/consent.js'
+import { clipboardReadHandler, clipboardWriteHandler } from '../tools/handlers/clipboard.js'
+import { openInEditorHandler } from '../tools/handlers/editor.js'
 import { readFileHandler, writeFileHandler, patchHandler } from '../tools/handlers/fs.js'
+import { screenshotHandler } from '../tools/handlers/screenshot.js'
 import { searchFilesHandler } from '../tools/handlers/search.js'
 import { terminalHandler } from '../tools/handlers/terminal.js'
 import { DesktopToolRouter } from '../tools/router.js'
@@ -244,9 +248,65 @@ function runOneTurn(
   return { promise, cancel }
 }
 
-async function createOrResumeSession(gw: GatewayClient, args: ParsedArgs): Promise<{ sessionId: string; model: string | null }> {
-  const cols = process.stdout.columns ?? 80
+/** Resolve the hermes-session id to use for this turn. Precedence:
+ *   1. --conversation <id>  (new explicit flag, unambiguous)
+ *   2. --session <id>       (back-compat — chat.ts has always resumed when
+ *                            this is set; the shell subcommand uses it for
+ *                            tmux session naming, which is a different thing)
+ *   3. --new                 force-fresh; skip the picker
+ *   4. one-shot / piped      skip the picker — non-REPL callers want a
+ *                            fresh session by default. Scripts that want
+ *                            resume pass --conversation <id>.
+ *   5. picker                prompt on TTY when recent sessions exist,
+ *                            returning an id, 'new', or 'cancel'
+ *   6. fresh                 falls through to session.create
+ */
+async function resolveHermesSessionId(
+  gw: GatewayClient,
+  args: ParsedArgs,
+  url: string,
+  opts: { skipPicker: boolean }
+): Promise<string | null | 'cancel'> {
+  const conv = flag(args, 'conversation')
+  if (conv) {
+    return conv
+  }
   const resumeId = flag(args, 'session')
+  if (resumeId) {
+    return resumeId
+  }
+  if (args.flags.new) {
+    return null
+  }
+  if (opts.skipPicker) {
+    return null
+  }
+
+  // Picker path — only when both flags are absent. Fetch fails gracefully to
+  // []; picker returns 'new' silently on non-TTY; invalid input → 'cancel'.
+  const recent = await fetchRecentSessions(gw, { limit: 10 })
+  // Single recent session would still show the picker per spec — the user
+  // asked for ≥2 behavior, but 1 and 2+ share the same code path here.
+  // Fresh/zero case returns 'new' from pickSession itself.
+  const nonInteractive = !!args.flags['non-interactive']
+  const pick = await pickSession(recent, {
+    nonInteractive,
+    serverLabel: url
+  })
+  if (pick === 'cancel') {
+    return 'cancel'
+  }
+  if (pick === 'new') {
+    return null
+  }
+  return pick
+}
+
+async function createOrResumeSession(
+  gw: GatewayClient,
+  resumeId: string | null
+): Promise<{ sessionId: string; model: string | null }> {
+  const cols = process.stdout.columns ?? 80
 
   if (resumeId) {
     const raw = await gw.request<SessionResumeResponse>('session.resume', { session_id: resumeId, cols })
@@ -309,12 +369,16 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
           desktop_write_file: writeFileHandler,
           desktop_patch: patchHandler,
           desktop_terminal: terminalHandler,
-          desktop_search_files: searchFilesHandler
+          desktop_search_files: searchFilesHandler,
+          desktop_clipboard_read: clipboardReadHandler,
+          desktop_clipboard_write: clipboardWriteHandler,
+          desktop_screenshot: screenshotHandler,
+          desktop_open_in_editor: openInEditorHandler
         }
       })
       toolRouter.attach(relay)
       process.stderr.write(
-        'Desktop tools: 5 handlers advertised (read_file, write_file, terminal, search_files, patch)\n'
+        'Desktop tools: 9 handlers advertised (read_file, write_file, terminal, search_files, patch, clipboard_read, clipboard_write, screenshot, open_in_editor)\n'
       )
     } else if (consent.reason) {
       process.stderr.write(`Desktop tools: disabled (${consent.reason})\n`)
@@ -363,9 +427,34 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
     }) + '\n'
   )
 
+  // Resolve which hermes session to use. --conversation / --session /
+  // --new bypass the picker; otherwise we prompt the user with recent
+  // sessions on a TTY. 'cancel' means the user hit q — bail cleanly.
+  // Skip picker on one-shot / piped invocations — a script running
+  // `hermes-relay "hi" --remote …` wants a fresh session, not a prompt.
+  const hasOneShot = args.positional.join(' ').trim().length > 0
+  const isPiped = !process.stdin.isTTY
+  const skipPickerForScript = hasOneShot || isPiped
+  let resumeId: string | null
+  try {
+    const picked = await resolveHermesSessionId(gw, args, url, {
+      skipPicker: skipPickerForScript
+    })
+    if (picked === 'cancel') {
+      process.stderr.write('bye\n')
+      tearDown()
+      return 0
+    }
+    resumeId = picked
+  } catch (e) {
+    process.stderr.write(`error: ${rpcErrorMessage(e)}\n`)
+    tearDown()
+    return 1
+  }
+
   let session: { sessionId: string; model: string | null }
   try {
-    session = await createOrResumeSession(gw, args)
+    session = await createOrResumeSession(gw, resumeId)
   } catch (e) {
     process.stderr.write(`error: ${rpcErrorMessage(e)}\n`)
     tearDown()

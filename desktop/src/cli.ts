@@ -11,6 +11,9 @@ import { pairCommand } from './commands/pair.js'
 import { shellCommand } from './commands/shell.js'
 import { statusCommand } from './commands/status.js'
 import { toolsCommand } from './commands/tools.js'
+import { updateCommand } from './commands/update.js'
+import { workspaceCommand } from './commands/workspace.js'
+import { finalizePendingUpdate } from './updater.js'
 import { VERSION } from './version.js'
 
 /** Read the embedded build-time version. src/version.ts is regenerated
@@ -47,7 +50,11 @@ const BOOLEAN_FLAGS = new Set([
   'no-tools',
   'log-human',
   'log-json',
-  'allow-tools'
+  'allow-tools',
+  'check',
+  'yes',
+  'new',
+  'watch-editor'
 ])
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -114,6 +121,8 @@ const KNOWN_COMMANDS = new Set([
   'shell',
   'status',
   'tools',
+  'update',
+  'workspace',
   'help'
 ])
 
@@ -129,6 +138,8 @@ Usage:
   hermes-relay devices             List / revoke / extend server-side paired devices
   hermes-relay daemon              Run headless — expose desktop tools even when no shell is open
   hermes-relay doctor              Diagnostic report: version, paths, sessions, daemon status
+  hermes-relay update              Check for and install the latest desktop-v* release
+  hermes-relay workspace           Print local workspace context (cwd, git, editor, shell) — --json for scripting
   hermes-relay help                Show this help
   hermes-relay --version           Print version and exit
 
@@ -139,9 +150,13 @@ Flags:
   --pair-qr <payload>    Full QR payload (multi-endpoint pairing, ADR 24;
                          probes endpoints and picks highest-priority reachable)
                                                        (env: HERMES_RELAY_PAIR_QR)
-  --session <id>         chat: resume session; shell: tmux session name
+  --session <id>         chat: resume session (legacy alias for --conversation);
+                         shell: tmux session name (distinct — tmux, not hermes)
+  --conversation <id>    chat/shell: resume a specific hermes conversation; bypasses picker
+  --new                  chat/shell: force a fresh conversation; bypasses picker
   --exec <cmd>           shell: command to exec inside tmux (default: hermes)
   --raw                  shell: skip auto-exec; drop into bare tmux/bash
+  --watch-editor         shell/chat: poll tmux/$VSCODE and send active_editor hints every 5s
   --no-tools             chat/shell: disable local tool handlers (fs, exec, search)
   --log-human            daemon: human-readable log lines (default: auto on TTY)
   --log-json             daemon: force JSON-line logs even on a TTY
@@ -180,6 +195,11 @@ Config files:
 `
 
 export async function main(argv = process.argv): Promise<number> {
+  // Windows cooperative self-update swap: if a previous `update` run staged
+  // a <target>.new.exe next to the running binary, rename it into place
+  // before we dispatch. No-op on POSIX and when running via node/tsx.
+  await finalizePendingUpdate()
+
   const args = parseArgs(argv)
 
   if (args.flags.version) {
@@ -228,6 +248,10 @@ export async function main(argv = process.argv): Promise<number> {
       return statusCommand(args)
     case 'tools':
       return toolsCommand(args)
+    case 'update':
+      return updateCommand(args)
+    case 'workspace':
+      return workspaceCommand(args)
     default:
       process.stderr.write(`unknown command: ${args.command}\n`)
       process.stderr.write(HELP)

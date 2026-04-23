@@ -28,6 +28,8 @@ irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scri
 
 Downloads a prebuilt single-file binary from GitHub Releases (Bun `--compile`, ~60–110 MB per platform) into `~/.hermes/bin/`. No Node.js install needed. SHA256 verified against `SHA256SUMS.txt` before install; version-aware so a re-install prints `upgrading X → Y`. Pin a specific release with `HERMES_RELAY_VERSION=desktop-v0.3.0-alpha.1`, override the install dir with `HERMES_RELAY_INSTALL_DIR=...`.
 
+After install, either `hermes-relay <prompt>` or the short alias `hermes <prompt>` works — the installer drops a `hermes` symlink (POSIX) / `hermes.cmd` shim (Windows) next to the binary for muscle-memory parity with the upstream hermes-agent CLI. Collision-safe: if a `hermes` already exists in the install dir (e.g. from a local hermes-agent install), the installer leaves it untouched and prints a skip notice.
+
 > **Experimental.** Binaries are currently unsigned — Windows SmartScreen and macOS Gatekeeper may warn on first launch. The installers print the `Unblock-File` / `xattr -dr com.apple.quarantine` escape hatches. Code signing lands before v1.0.
 
 ### npx (no install)
@@ -64,7 +66,7 @@ $env:HERMES_RELAY_UNINSTALL_PURGE=1; irm https://raw.githubusercontent.com/Coden
 
 | Flag              | What it removes                                                                                               |
 |-------------------|---------------------------------------------------------------------------------------------------------------|
-| *(default)*       | `~/.hermes/bin/hermes-relay[.exe]` and the Windows user-PATH entry. Preserves `~/.hermes/remote-sessions.json`. |
+| *(default)*       | `~/.hermes/bin/hermes-relay[.exe]` plus the `hermes` / `hermes.cmd` alias (only if it points at our binary) and the Windows user-PATH entry. Preserves `~/.hermes/remote-sessions.json`. |
 | `--purge`         | Also deletes `~/.hermes/remote-sessions.json` — bearer tokens, cert pins, tools-consent flag.                 |
 | `--service`       | Stub. Prints the commands to remove a manually-installed systemd unit / launchd plist / Windows service.      |
 

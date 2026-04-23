@@ -41,10 +41,18 @@ export type ToolResponsePayload =
  * per-call overrides (e.g. terminalHandler's own `cwd` arg) still apply
  * inside the handler — this is just the router-level default. `abortSignal`
  * fires on transport teardown or 30s handler timeout; handlers should
- * honor it wherever they spawn children / do long I/O. */
+ * honor it wherever they spawn children / do long I/O.
+ *
+ * `interactive` tells handlers whether they may prompt on stdin/stderr.
+ * The patch approval flow (see `patchApproval.ts`) auto-rejects when this
+ * is false so the daemon can't silently apply agent-proposed edits. It's
+ * computed once at router-construction time from isTTY + daemon marker,
+ * not re-probed per call — a daemon that foregrounds briefly shouldn't
+ * flip the semantics of an in-flight tool invocation. */
 export interface ToolContext {
   cwd: string
   abortSignal: AbortSignal
+  interactive: boolean
 }
 
 /** A tool handler. Throws → router responds with `{ok:false, error}`. */
@@ -62,6 +70,12 @@ export interface DesktopToolRouterOpts {
   /** If false, `attach()` logs a warning and does nothing. Wire chat.ts /
    * shell.ts to this so --no-tools or missing consent refuses cleanly. */
   consentGranted?: boolean
+  /** Whether this router is running under an interactive TTY (shell / chat)
+   * or headless (daemon, piped). Forwarded to handlers via ToolContext so
+   * the patch-approval prompt can auto-reject in non-interactive mode
+   * instead of hanging on stdin that no human will ever type into.
+   * Default detection: stdin.isTTY && !HERMES_RELAY_DAEMON env var. */
+  interactive?: boolean
 }
 
 /** Heartbeat cadence — matches server-side `DesktopHandler` expectation.
@@ -88,10 +102,23 @@ function isToolCallPayload(x: unknown): x is ToolCallPayload {
   )
 }
 
+/** Default interactive detection — true iff stdin is a TTY AND we're not
+ * flagged as the daemon subcommand. The daemon command sets
+ * HERMES_RELAY_DAEMON=1 in its own process.env before constructing the
+ * router; that's cheaper than threading a flag through every call site
+ * and survives future callers (test harness, smoke, etc.) by default. */
+function detectInteractive(): boolean {
+  if (process.env.HERMES_RELAY_DAEMON === '1') {
+    return false
+  }
+  return !!process.stdin.isTTY
+}
+
 export class DesktopToolRouter {
   private readonly handlers: Record<string, ToolHandler>
   private readonly advertisedTools: string[]
   private readonly consentGranted: boolean
+  private readonly interactive: boolean
   private relay: RelayTransport | null = null
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
   private attached = false
@@ -100,6 +127,10 @@ export class DesktopToolRouter {
     this.handlers = opts.handlers
     this.advertisedTools = opts.advertisedTools ?? Object.keys(opts.handlers)
     this.consentGranted = opts.consentGranted ?? false
+    // Explicit opts.interactive wins; otherwise detect from env/TTY. We
+    // capture it once at construct time so a short shell session that
+    // happens to get its stdin redirected mid-flight doesn't flip mode.
+    this.interactive = opts.interactive ?? detectInteractive()
   }
 
   /** Install the `onChannel('desktop')` listener and start heartbeats.
@@ -196,7 +227,8 @@ export class DesktopToolRouter {
 
     const ctx: ToolContext = {
       cwd: process.cwd(),
-      abortSignal: controller.signal
+      abortSignal: controller.signal,
+      interactive: this.interactive
     }
 
     try {

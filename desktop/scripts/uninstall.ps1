@@ -69,6 +69,22 @@ if (Test-Path -LiteralPath $target) {
   Say "-> no binary at $target (already removed?)"
 }
 
+# Remove the `hermes.cmd` alias too, but only if it points at our binary.
+# If the user has a different `hermes.cmd` (e.g. from upstream hermes-agent),
+# leave it alone — the install.ps1 side mirrors this guard.
+$hermesShim = Join-Path $dir 'hermes.cmd'
+if (Test-Path -LiteralPath $hermesShim) {
+  $content = Get-Content -LiteralPath $hermesShim -Raw -ErrorAction SilentlyContinue
+  if ($content -match 'hermes-relay\.exe') {
+    try {
+      Remove-Item -LiteralPath $hermesShim -Force
+      Say "-> removed hermes.cmd alias"
+    } catch {
+      # Non-fatal; main binary is gone.
+    }
+  }
+}
+
 # Remove install dir if empty — never touch user-created content.
 if (Test-Path -LiteralPath $dir) {
   $leftover = @(Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue)

@@ -1,6 +1,6 @@
 {
   "name": "@hermes-relay/cli",
-  "version": "0.3.0-alpha.5",
+  "version": "0.3.0-alpha.6",
   "description": "Thin-client CLI for Hermes-Relay — talk to a remote Hermes agent over WSS with pairing auth, stream-renders tool calls and responses to plain stdout.",
   "type": "module",
   "bin": {
@@ -31,7 +31,7 @@
     "build:bin:mac-x64": "npm run gen:version && bun build --compile --minify --sourcemap --target=bun-darwin-x64 src/cli.ts --outfile dist/bin/hermes-relay-darwin-x64",
     "build:bin:mac-arm": "npm run gen:version && bun build --compile --minify --sourcemap --target=bun-darwin-arm64 src/cli.ts --outfile dist/bin/hermes-relay-darwin-arm64",
     "build:sums": "cd dist/bin && sha256sum hermes-relay-* > SHA256SUMS.txt",
-    "smoke": "npm run build:bin:win && node -e \"const{execFileSync}=require('child_process');const bin='./dist/bin/hermes-relay-win-x64.exe';for(const a of [['--version'],['--help'],['doctor']]){const out=execFileSync(bin,a,{encoding:'utf8'});if(!out||out.length<10)throw new Error('smoke FAIL: '+bin+' '+a.join(' ')+' produced no output');console.log('smoke OK: '+a.join(' ')+' ('+out.split('\\n')[0]+')')}\"",
+    "smoke": "npm run build:bin:win && node -e \"const{execFileSync}=require('child_process');const bin='./dist/bin/hermes-relay-win-x64.exe';const pkg=require('./package.json');for(const a of [['--version'],['--help'],['doctor'],['workspace']]){const out=execFileSync(bin,a,{encoding:'utf8'});if(!out||out.length<10)throw new Error('smoke FAIL: '+bin+' '+a.join(' ')+' produced no output');console.log('smoke OK: '+a.join(' ')+' ('+out.split('\\n')[0]+')')}const updOut=execFileSync(bin,['update','--check','--json'],{encoding:'utf8'});const parsed=JSON.parse(updOut);if(parsed.current!==pkg.version)throw new Error('smoke FAIL: update --check --json current='+parsed.current+' != package.json version='+pkg.version);console.log('smoke OK: update --check --json (current='+parsed.current+', up_to_date='+parsed.up_to_date+')')\"",
     "prepublishOnly": "npm run build",
     "dev": "tsx src/cli.ts",
     "type-check": "tsc --noEmit -p tsconfig.json",
