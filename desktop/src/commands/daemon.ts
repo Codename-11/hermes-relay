@@ -33,7 +33,10 @@
 import type { ParsedArgs } from '../cli.js'
 import { rpcErrorMessage } from '../lib/rpc.js'
 import { getSession } from '../remoteSessions.js'
+import { clipboardReadHandler, clipboardWriteHandler } from '../tools/handlers/clipboard.js'
+import { openInEditorHandler } from '../tools/handlers/editor.js'
 import { readFileHandler, writeFileHandler, patchHandler } from '../tools/handlers/fs.js'
+import { screenshotHandler } from '../tools/handlers/screenshot.js'
 import { searchFilesHandler } from '../tools/handlers/search.js'
 import { terminalHandler } from '../tools/handlers/terminal.js'
 import { DesktopToolRouter } from '../tools/router.js'
@@ -199,16 +202,28 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     transport: relay.authMeta?.transportHint ?? null
   })
 
+  // Signal downstream handlers that we're running headless. The router
+  // also checks this env var in its detectInteractive() fallback, so any
+  // future code path that constructs a router from the daemon without
+  // passing `interactive: false` explicitly still gets the right default.
+  process.env.HERMES_RELAY_DAEMON = '1'
+
   // Wire the desktop tool router. consentGranted is true by this point —
   // we gated on stored consent (or --allow-tools override) above.
+  // interactive:false so patch approval auto-rejects (no TTY to prompt on).
   const router = new DesktopToolRouter({
     consentGranted: true,
+    interactive: false,
     handlers: {
       desktop_read_file: readFileHandler,
       desktop_write_file: writeFileHandler,
       desktop_patch: patchHandler,
       desktop_terminal: terminalHandler,
-      desktop_search_files: searchFilesHandler
+      desktop_search_files: searchFilesHandler,
+      desktop_clipboard_read: clipboardReadHandler,
+      desktop_clipboard_write: clipboardWriteHandler,
+      desktop_screenshot: screenshotHandler,
+      desktop_open_in_editor: openInEditorHandler
     }
   })
   router.attach(relay)
@@ -220,7 +235,11 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
       'desktop_write_file',
       'desktop_patch',
       'desktop_terminal',
-      'desktop_search_files'
+      'desktop_search_files',
+      'desktop_clipboard_read',
+      'desktop_clipboard_write',
+      'desktop_screenshot',
+      'desktop_open_in_editor'
     ]
   })
 

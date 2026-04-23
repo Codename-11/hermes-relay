@@ -11,6 +11,7 @@
 import { promises as fs } from 'node:fs'
 import * as path from 'node:path'
 
+import { approveOrReject } from '../patchApproval.js'
 import type { ToolContext, ToolHandler } from '../router.js'
 
 const DEFAULT_MAX_BYTES = 1_000_000
@@ -215,8 +216,22 @@ function applyHunk(srcLines: string[], hunk: Hunk): string[] {
 
 /** desktop_patch
  *   args: { path: string, patch: string }
- *   returns: { ok: true, hunks_applied: number, path: string }
- * Strict: any context mismatch aborts the whole patch — no partial writes. */
+ *   returns: { ok: true, hunks_applied: number, path: string,
+ *              approved?: 'auto' | 'user' | 'edited' }
+ * Strict: any context mismatch aborts the whole patch — no partial writes.
+ *
+ * Approval flow (ADR: 2026-04-23 alpha.6 row 3+4):
+ *   - Parse the diff FIRST so a malformed patch never reaches the prompt
+ *     (saves the user from confirming something that can't apply).
+ *   - In interactive mode (shell/chat with TTY), render the diff + prompt
+ *     y/n/e/r via patchApproval.approveOrReject. `e` may return an edited
+ *     patch — we re-parse before applying.
+ *   - In non-interactive mode (daemon, piped stdin) the approver auto-
+ *     rejects. The handler throws with a clear "interactive required"
+ *     message so the agent can either fall back to write_file or surface
+ *     it to the user.
+ *   - The router's ctx.interactive flag controls this — see
+ *     DesktopToolRouter.attach() / cli.ts for how it's set. */
 export const patchHandler: ToolHandler = async (args, ctx) => {
   const abs = resolvePath(ctx, args.path)
   const patchText = argString(args.patch, 'patch')
@@ -227,6 +242,28 @@ export const patchHandler: ToolHandler = async (args, ctx) => {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     throw new Error(`patch did not apply cleanly: ${msg}`)
+  }
+
+  // Interactive gate. The approver returns a decision — accepted or
+  // rejected with a reason — and never throws. If the user edited the
+  // diff we re-parse the edited version (strict; still no fuzz).
+  const decision = await approveOrReject(patchText, {
+    targetFile: abs,
+    interactive: ctx.interactive
+  })
+  if (!decision.accepted) {
+    const reason = decision.reason ?? 'user rejected patch'
+    throw new Error(`patch rejected: ${reason}`)
+  }
+  let approvalTag: 'auto' | 'user' | 'edited' = 'user'
+  if (decision.editedPatch && decision.editedPatch !== patchText) {
+    try {
+      hunks = parseUnifiedDiff(decision.editedPatch)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      throw new Error(`edited patch did not parse: ${msg}`)
+    }
+    approvalTag = 'edited'
   }
 
   const original = await fs.readFile(abs, 'utf8')
@@ -257,5 +294,5 @@ export const patchHandler: ToolHandler = async (args, ctx) => {
   const joined = working.join('\n') + (hadTrailingNewline ? '\n' : '')
   await fs.writeFile(abs, joined, 'utf8')
 
-  return { ok: true, hunks_applied: hunks.length, path: abs }
+  return { ok: true, hunks_applied: hunks.length, path: abs, approved: approvalTag }
 }

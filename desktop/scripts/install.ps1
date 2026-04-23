@@ -153,6 +153,30 @@ try {
   New-Item -ItemType Directory -Force -Path $dir | Out-Null
   Copy-Item -Force (Join-Path $tmp $asset) $target
 
+  # Create a `hermes.cmd` alias so muscle memory from the upstream hermes-agent
+  # CLI (also called `hermes`) just works. Using a .cmd shim (not a symlink)
+  # because Windows symlinks require admin or Developer Mode. .cmd also works
+  # from any shell — cmd.exe, PowerShell, Git Bash, WSL interop — whereas a
+  # .ps1 shim would only fire from PowerShell.
+  $hermesShim = Join-Path $dir 'hermes.cmd'
+  $existingShim = $null
+  if (Test-Path $hermesShim) {
+    $existingShim = Get-Content $hermesShim -Raw -ErrorAction SilentlyContinue
+  }
+  if (-not (Test-Path $hermesShim) -or ($existingShim -match 'hermes-relay\.exe')) {
+    # NB: the closing '@ of a PowerShell here-string MUST sit at column 0.
+    # Indenting it is a parse error, so we pull the here-string flush-left
+    # and scope-hide it in a subexpression.
+$shimBody = @'
+@echo off
+"%~dp0hermes-relay.exe" %*
+'@
+    Set-Content -Path $hermesShim -Value $shimBody -Encoding ASCII -Force
+    Say "-> created hermes.cmd -> hermes-relay.exe alias"
+  } else {
+    Say "-> hermes.cmd already exists at $hermesShim (skipped alias creation)"
+  }
+
   # Post-install: confirm the NEW binary reports a sensible version. Don't
   # fail the install on mismatch — the user may have pinned to a pre-release
   # whose version_name differs slightly from the tag.
@@ -194,6 +218,6 @@ if ($installedVersion) {
 } else {
   Say 'Installed. Try:'
 }
-Say '  hermes-relay --help'
+Say '  hermes-relay --help       # (or the short alias: hermes --help)'
 Say '  hermes-relay pair --remote ws://<host>:8767'
 Say ''

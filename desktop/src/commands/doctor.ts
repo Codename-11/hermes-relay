@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url'
 import { humanExpiry } from '../banner.js'
 import type { ParsedArgs } from '../cli.js'
 import { listSessions } from '../remoteSessions.js'
+import { detectWorkspaceContext, type WorkspaceContext } from '../workspaceContext.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -133,6 +134,10 @@ interface DoctorReport {
   sessions_count: number
   daemon_detected: boolean
   daemon_note: string | null
+  /** Local workspace context — same payload the CLI advertises over WSS
+   * as `desktop.workspace`. Surfacing it here lets support triage answer
+   * "which repo / branch were they in?" from a single `doctor --json`. */
+  workspace: WorkspaceContext
 }
 
 async function gather(): Promise<DoctorReport> {
@@ -164,6 +169,7 @@ async function gather(): Promise<DoctorReport> {
   }))
 
   const daemon = detectDaemon()
+  const workspace = await detectWorkspaceContext()
 
   return {
     version: readVersion(),
@@ -179,7 +185,8 @@ async function gather(): Promise<DoctorReport> {
     sessions,
     sessions_count: sessions.length,
     daemon_detected: daemon.detected,
-    daemon_note: daemon.note
+    daemon_note: daemon.note,
+    workspace
   }
 }
 
@@ -236,6 +243,34 @@ function renderHuman(report: DoctorReport): string {
     lines.push(`  daemon:        not installed  (${report.daemon_note})`)
   } else {
     lines.push(`  daemon:        not installed`)
+  }
+
+  // Workspace block — what the CLI advertises to the relay on connect.
+  // Kept compact (one line per field) to match the rest of `doctor`;
+  // the full payload is available via `hermes-relay doctor --json` or
+  // `hermes-relay workspace`.
+  const ws = report.workspace
+  lines.push(`  workspace:`)
+  lines.push(`    cwd:         ${ws.cwd}`)
+  if (ws.git_root) {
+    lines.push(`    repo:        ${ws.repo_name ?? '(unknown)'}  (${ws.git_root})`)
+    if (ws.git_branch) {
+      lines.push(`    branch:      ${ws.git_branch}`)
+    }
+    if (ws.git_status_summary) {
+      const s = ws.git_status_summary
+      const tracking: string[] = []
+      if (s.ahead !== undefined) tracking.push(`${s.ahead} ahead`)
+      if (s.behind !== undefined) tracking.push(`${s.behind} behind`)
+      const base = `${s.staged} staged, ${s.modified} modified, ${s.untracked} untracked`
+      lines.push(`    status:      ${tracking.length > 0 ? `${base} (${tracking.join(', ')})` : base}`)
+    }
+  } else {
+    lines.push(`    repo:        (not a git repo)`)
+  }
+  lines.push(`    host:        ${ws.hostname}`)
+  if (ws.active_shell) {
+    lines.push(`    shell:       ${ws.active_shell}`)
   }
 
   if (hints.length > 0) {

@@ -72,6 +72,15 @@ else
   say "-> no binary at $target (already removed?)"
 fi
 
+# Remove the `hermes` alias too, but only if it's our symlink. If the user
+# has a different `hermes` (e.g. the upstream hermes-agent CLI), leave it
+# alone — the install.sh side mirrors this guard.
+hermes_target="$INSTALL_DIR/hermes"
+if [ -L "$hermes_target" ] && [ "$(readlink "$hermes_target")" = "hermes-relay" ]; then
+  rm -f "$hermes_target"
+  say "-> removed hermes alias"
+fi
+
 # Clean up an empty install dir we created, but never touch user-created content.
 if [ -d "$INSTALL_DIR" ]; then
   if [ -z "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]; then

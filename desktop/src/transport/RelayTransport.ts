@@ -123,6 +123,18 @@ export interface RelayTransportConfig {
    * Returning false aborts reconnect — used for credential-purge races
    * (e.g. user ran `hermes-relay pair --reset` mid-session). */
   reconnectGate?: () => boolean
+  /** When set false, suppress the `desktop.workspace` advertisement
+   * fired on first auth.ok. Default: true — every connection sends a
+   * one-shot workspace envelope (cwd / git state / hostname). One-shot
+   * or hostile-on-slow-disk callers can disable this to skip the git
+   * shell-outs, but it costs <100ms and send errors are swallowed, so
+   * most callers should leave it on. */
+  emitWorkspaceEnvelope?: boolean
+  /** When true, after auth resolves, start an `ActiveEditor` poller that
+   * advertises tmux/VSCode hints as `desktop.active_editor` envelopes
+   * every 5 s (deduped by value). Stopped on `kill()`. Default: false —
+   * opt-in via the top-level `--watch-editor` flag. */
+  watchEditor?: boolean
 }
 
 /**
@@ -169,6 +181,14 @@ export class RelayTransport extends EventEmitter implements Transport {
    * `tui` channel uses. If a channel has no listener, frames fall through to
    * the existing log-and-drop path so unknown channels stay non-fatal. */
   private channelListeners = new Map<string, (type: string, payload: Record<string, unknown>) => void>()
+
+  // Workspace / editor awareness — fired after each successful auth.ok.
+  // `workspaceAdvertised` prevents duplicate sends on reconnect (the
+  // server already knows the workspace; reconnects just resume session
+  // scope, and the git tree has probably not changed). `editorStop` is
+  // the teardown for the active-editor poller.
+  private workspaceAdvertised = false
+  private editorStop: (() => void) | null = null
 
   // Reconnect state ------------------------------------------------------
   private state: ReconnectState = 'idle'
@@ -629,6 +649,28 @@ export class RelayTransport extends EventEmitter implements Transport {
         rows: process.stdout.rows ?? 24
       })
 
+      // Fire-and-forget: advertise the local workspace to the relay so
+      // downstream tooling (agent prompt-hook, session stickiness) can
+      // answer "which repo is the user in?" without a round-trip. We
+      // don't block auth completion on this. First connect only — on
+      // reconnects the server-side session already has the context and
+      // the git tree likely hasn't changed. If auto-reconnect is off
+      // (one-shot commands like pair / tools list), this still fires
+      // but is equally cheap to ignore server-side.
+      // Default-on: the workspace envelope is a small best-effort hint
+      // and the server drops unknown fields gracefully. Callers can set
+      // `emitWorkspaceEnvelope: false` to suppress for ultra-short ops.
+      if (this.cfg.emitWorkspaceEnvelope !== false && !this.workspaceAdvertised) {
+        this.workspaceAdvertised = true
+        void this.advertiseWorkspace()
+      }
+      // Start the editor poller on first auth.ok — survives reconnects
+      // (ws reference re-captured per send via sendEnvelope). Guarded so
+      // a dropped + resumed socket doesn't double-start the interval.
+      if (this.cfg.watchEditor && !this.editorStop) {
+        void this.startEditorPollerSafely()
+      }
+
       if (isReconnect) {
         // Clear any stale buffered events from the pre-drop socket — they'd
         // confuse the caller post-reconnect (e.g. a dangling tool.started
@@ -795,6 +837,18 @@ export class RelayTransport extends EventEmitter implements Transport {
     }
     this.tornDown = true
     this.state = 'idle'
+
+    // Stop the editor poller — it's the only interval the transport owns
+    // directly, and leaving it running would keep the process alive past
+    // a clean exit.
+    if (this.editorStop) {
+      try {
+        this.editorStop()
+      } catch {
+        /* ignore */
+      }
+      this.editorStop = null
+    }
 
     if (this.authTimer) {
       clearTimeout(this.authTimer)
@@ -994,6 +1048,48 @@ export class RelayTransport extends EventEmitter implements Transport {
   }
 
   kill() {
+    if (this.editorStop) {
+      try {
+        this.editorStop()
+      } catch {
+        /* ignore */
+      }
+      this.editorStop = null
+    }
     this.teardownFinal(null, 'kill')
+  }
+
+  /** Detect the local workspace and send it as a single
+   * `desktop.workspace` envelope. Errors are swallowed — the relay may
+   * not recognize the envelope yet (alpha.6 ships the client side; the
+   * server-side stash is additive), and a detection failure should not
+   * take down the transport. */
+  private async advertiseWorkspace(): Promise<void> {
+    try {
+      // Lazy import to avoid paying the git-shellout cost on short-lived
+      // one-shots (pair, tools list) that never opt-in via
+      // `emitWorkspaceEnvelope`.
+      const { detectWorkspaceContext } = await import('../workspaceContext.js')
+      const ctx = await detectWorkspaceContext()
+      this.sendEnvelope('desktop', 'workspace', ctx as unknown as Record<string, unknown>)
+      this.pushLog(`[workspace] advertised repo=${ctx.repo_name ?? '(none)'} branch=${ctx.git_branch ?? '(none)'}`)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      this.pushLog(`[workspace] advertise failed: ${msg}`)
+    }
+  }
+
+  private async startEditorPollerSafely(): Promise<void> {
+    try {
+      const { startEditorPoller } = await import('../activeEditor.js')
+      // The poller emits `desktop.active_editor` envelopes via
+      // `sendChannel`, which short-circuits when the ws is null — so a
+      // transient drop + reconnect just has one wasted tick.
+      this.editorStop = startEditorPoller(this, 5000)
+      this.pushLog(`[workspace] active-editor poller started`)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      this.pushLog(`[workspace] editor poller failed to start: ${msg}`)
+    }
   }
 }

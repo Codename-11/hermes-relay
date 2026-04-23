@@ -43,12 +43,18 @@
 import { buildConnectBanner } from '../banner.js'
 import type { ParsedArgs } from '../cli.js'
 import { resolveCredentials } from '../credentials.js'
+import { GatewayClient } from '../gatewayClient.js'
+import type { GatewayEvent } from '../gatewayTypes.js'
 import { setupGracefulExit } from '../lib/gracefulExit.js'
 import { rpcErrorMessage } from '../lib/rpc.js'
 import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
 import { deleteSession, getSession, saveSession } from '../remoteSessions.js'
+import { fetchRecentSessions, pickSession } from '../sessionPicker.js'
 import { ensureToolsConsent } from '../tools/consent.js'
+import { clipboardReadHandler, clipboardWriteHandler } from '../tools/handlers/clipboard.js'
+import { openInEditorHandler } from '../tools/handlers/editor.js'
 import { readFileHandler, writeFileHandler, patchHandler } from '../tools/handlers/fs.js'
+import { screenshotHandler } from '../tools/handlers/screenshot.js'
 import { searchFilesHandler } from '../tools/handlers/search.js'
 import { terminalHandler } from '../tools/handlers/terminal.js'
 import { DesktopToolRouter } from '../tools/router.js'
@@ -200,13 +206,98 @@ function canRawMode(): boolean {
   return typeof anyStdin.setRawMode === 'function' && !!process.stdin.isTTY
 }
 
+const READY_TIMEOUT_MS = 60_000
+
+/** Same waitForReady helper used by chat.ts — the tui_gateway emits
+ * `gateway.ready` once it's past startup and able to serve `session.list`.
+ * We need to wait for it before fetching recent sessions, otherwise the
+ * RPC will race and either time out or return stale data. */
+function waitForGatewayReady(gw: GatewayClient): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      gw.off('event', handler)
+      reject(new Error(`gateway.ready timeout after ${READY_TIMEOUT_MS}ms`))
+    }, READY_TIMEOUT_MS)
+
+    const handler = (ev: GatewayEvent) => {
+      if (ev.type === 'gateway.ready') {
+        clearTimeout(timer)
+        gw.off('event', handler)
+        resolve()
+      }
+    }
+
+    gw.on('event', handler)
+  })
+}
+
+/** Resolve the hermes conversation id to resume inside tmux, or null for
+ * a fresh session. Precedence:
+ *   1. --conversation <id>   explicit flag, skips the picker
+ *   2. --new                 explicit fresh, skips the picker
+ *   3. picker                prompts when ≥1 recent session exists on a TTY
+ *   4. null                  no pick / non-interactive / empty → fresh
+ *
+ * NOTE: `--session <name>` on shell is the **tmux** session name, not the
+ * hermes conversation id. We deliberately don't reuse it — the two are
+ * different concepts and conflating them made `hermes-relay shell
+ * --session foo` ambiguous. See README for the flag split. */
+async function resolveHermesConversationId(
+  relay: import('../transport/RelayTransport.js').RelayTransport,
+  args: ParsedArgs,
+  url: string
+): Promise<string | null | 'cancel'> {
+  const convArg = typeof args.flags.conversation === 'string' ? args.flags.conversation : null
+  if (convArg) {
+    return convArg
+  }
+  if (args.flags.new) {
+    return null
+  }
+
+  // Picker path. Spin up a short-lived GatewayClient over the existing
+  // authed relay, wait for gateway.ready, RPC `session.list`, render the
+  // picker, tear the gw down (the terminal channel below doesn't use the
+  // tui wrapper — the same relay socket keeps running).
+  const gw = new GatewayClient(relay)
+  gw.start()
+  gw.drain()
+  try {
+    await waitForGatewayReady(gw)
+  } catch {
+    // If gateway.ready never comes (server without tui_gateway, stripped
+    // build, etc.) we silently fall through to a fresh session — the
+    // picker is a nice-to-have, not a hard dependency.
+    return null
+  }
+
+  const nonInteractive = !!args.flags['non-interactive']
+  const recent = await fetchRecentSessions(gw, { limit: 10 })
+  const pick = await pickSession(recent, { nonInteractive, serverLabel: url })
+  // We intentionally do NOT gw.kill() here — that would tear down the WSS
+  // socket we're about to attach the terminal channel to. GatewayClient is
+  // a thin re-emitter around the same relay, so dropping our reference is
+  // enough. The `tui.rpc.*` subscription stays idle for the rest of the
+  // shell session; it's harmless.
+
+  if (pick === 'cancel') {
+    return 'cancel'
+  }
+  if (pick === 'new') {
+    return null
+  }
+  return pick
+}
+
 export async function shellCommand(args: ParsedArgs): Promise<number> {
   const sessionNameArg = typeof args.flags.session === 'string' ? args.flags.session : undefined
   const raw = !!args.flags.raw
   const execOverride = typeof args.flags.exec === 'string' ? args.flags.exec : null
   // Default: exec the full hermes CLI after the tmux shell settles.
   // --raw disables this (plain bash/tmux). --exec overrides the command.
-  const postAttachExec: string | null = raw ? null : (execOverride ?? 'hermes')
+  // The picker (below, post-auth) may append `--resume <id>` to this so
+  // tmux launches `hermes --resume <id>` instead of a fresh `hermes`.
+  let postAttachExec: string | null = raw ? null : (execOverride ?? 'hermes')
 
   if (!canRawMode()) {
     process.stderr.write(
@@ -240,6 +331,33 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
     }) + '\n'
   )
 
+  // Conversation picker — runs on a TTY when the user didn't pass
+  // --conversation / --new, and the default exec is still `hermes` (so
+  // we're actually about to launch the CLI, not a custom --exec target).
+  // We append `--resume <id>` to the exec command when the user picks
+  // one; 'cancel' exits cleanly; 'new' leaves the exec command alone.
+  // --raw / --exec-override / --new all skip the picker entirely.
+  const skipPicker = raw || execOverride !== null || !!args.flags.new
+  if (!skipPicker) {
+    const picked = await resolveHermesConversationId(relay, args, url)
+    if (picked === 'cancel') {
+      process.stderr.write('bye\n')
+      try {
+        relay.kill()
+      } catch {
+        /* ignore */
+      }
+      return 0
+    }
+    if (picked && postAttachExec === 'hermes') {
+      // Shell-quote defensively — session ids are typically [a-z0-9-] but
+      // we can't assume, and the tmux shell will bash-eval the exec line.
+      const safeId = picked.replace(/'/g, "'\\''")
+      postAttachExec = `hermes --resume '${safeId}'`
+      process.stderr.write(`Resuming conversation ${picked.slice(0, 8)}…\n`)
+    }
+  }
+
   // Wire desktop tool handlers BEFORE the terminal attach hands the TTY
   // over to raw-mode PTY forwarding. The consent prompt (if shown) uses
   // readline on stdin/stderr and needs a cooked TTY.
@@ -255,12 +373,16 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
           desktop_write_file: writeFileHandler,
           desktop_patch: patchHandler,
           desktop_terminal: terminalHandler,
-          desktop_search_files: searchFilesHandler
+          desktop_search_files: searchFilesHandler,
+          desktop_clipboard_read: clipboardReadHandler,
+          desktop_clipboard_write: clipboardWriteHandler,
+          desktop_screenshot: screenshotHandler,
+          desktop_open_in_editor: openInEditorHandler
         }
       })
       toolRouter.attach(relay)
       process.stderr.write(
-        'Desktop tools: 5 handlers advertised (read_file, write_file, terminal, search_files, patch)\n'
+        'Desktop tools: 9 handlers advertised (read_file, write_file, terminal, search_files, patch, clipboard_read, clipboard_write, screenshot, open_in_editor)\n'
       )
     } else if (consent.reason) {
       process.stderr.write(`Desktop tools: disabled (${consent.reason})\n`)

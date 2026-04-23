@@ -159,6 +159,22 @@ say "   ok"
 mkdir -p "$INSTALL_DIR"
 install -m 0755 "$asset" "$target"
 
+# Create a `hermes` alias next to `hermes-relay` so muscle memory from the
+# upstream hermes-agent CLI (also called `hermes`) just works. Don't clobber
+# a local hermes install: only create the symlink if nothing is there yet,
+# or if an existing symlink already points at our binary. `-e` returns false
+# for dangling symlinks — we want to overwrite those, so the `[ ! -e ]`
+# branch will recreate when readlink resolves to a missing target.
+hermes_target="$INSTALL_DIR/hermes"
+if [ ! -e "$hermes_target" ]; then
+  ln -sf "$(basename "$target")" "$hermes_target"
+  say "-> created hermes -> hermes-relay alias"
+elif [ -L "$hermes_target" ] && [ "$(readlink "$hermes_target")" = "hermes-relay" ]; then
+  : # already points at us, no-op
+else
+  say "-> hermes already exists at $hermes_target (skipped alias creation)"
+fi
+
 # Post-install: confirm the NEW binary reports a sensible version. Don't
 # fail the install on mismatch — the user may have pinned to a pre-release
 # whose version_name differs slightly from the tag.
@@ -211,6 +227,6 @@ if [ -n "$installed_version" ]; then
 else
   say "Installed. Try:"
 fi
-say "  hermes-relay --help"
+say "  hermes-relay --help       # (or the short alias: hermes --help)"
 say "  hermes-relay pair --remote ws://<host>:8767"
 say ""
