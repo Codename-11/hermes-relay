@@ -1,6 +1,6 @@
 {
   "name": "@hermes-relay/cli",
-  "version": "0.3.0-alpha.1",
+  "version": "0.3.0-alpha.2",
   "description": "Thin-client CLI for Hermes-Relay — talk to a remote Hermes agent over WSS with pairing auth, stream-renders tool calls and responses to plain stdout.",
   "type": "module",
   "bin": {
@@ -25,10 +25,10 @@
     "build": "tsc -p tsconfig.build.json",
     "build:watch": "tsc -p tsconfig.build.json --watch",
     "build:bin": "npm run build:bin:win && npm run build:bin:linux && npm run build:bin:mac-x64 && npm run build:bin:mac-arm",
-    "build:bin:win": "bun build --compile --minify --sourcemap --bytecode --target=bun-windows-x64 src/cli.ts --outfile dist/bin/hermes-relay-win-x64",
-    "build:bin:linux": "bun build --compile --minify --sourcemap --bytecode --target=bun-linux-x64 src/cli.ts --outfile dist/bin/hermes-relay-linux-x64",
-    "build:bin:mac-x64": "bun build --compile --minify --sourcemap --bytecode --target=bun-darwin-x64 src/cli.ts --outfile dist/bin/hermes-relay-darwin-x64",
-    "build:bin:mac-arm": "bun build --compile --minify --sourcemap --bytecode --target=bun-darwin-arm64 src/cli.ts --outfile dist/bin/hermes-relay-darwin-arm64",
+    "build:bin:win": "bun build --compile --minify --sourcemap --target=bun-windows-x64 src/cli.ts --outfile dist/bin/hermes-relay-win-x64",
+    "build:bin:linux": "bun build --compile --minify --sourcemap --target=bun-linux-x64 src/cli.ts --outfile dist/bin/hermes-relay-linux-x64",
+    "build:bin:mac-x64": "bun build --compile --minify --sourcemap --target=bun-darwin-x64 src/cli.ts --outfile dist/bin/hermes-relay-darwin-x64",
+    "build:bin:mac-arm": "bun build --compile --minify --sourcemap --target=bun-darwin-arm64 src/cli.ts --outfile dist/bin/hermes-relay-darwin-arm64",
     "build:sums": "cd dist/bin && sha256sum hermes-relay-* > SHA256SUMS.txt",
     "prepublishOnly": "npm run build",
     "dev": "tsx src/cli.ts",
