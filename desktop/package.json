@@ -1,6 +1,6 @@
 {
   "name": "@hermes-relay/cli",
-  "version": "0.3.0-alpha.4",
+  "version": "0.3.0-alpha.5",
   "description": "Thin-client CLI for Hermes-Relay — talk to a remote Hermes agent over WSS with pairing auth, stream-renders tool calls and responses to plain stdout.",
   "type": "module",
   "bin": {
@@ -22,7 +22,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "gen:version": "node -e \"require('fs').writeFileSync('src/version.ts', '// Regenerated from package.json by `npm run gen:version`.\\nexport const VERSION = ' + JSON.stringify(require('./package.json').version) + ' as const\\n')\"",
+    "gen:version": "node -e \"require('fs').writeFileSync('src/version.ts', '// Regenerated from package.json by gen:version script. Do not edit by hand.\\nexport const VERSION = ' + JSON.stringify(require('./package.json').version) + ' as const\\n')\"",
     "build": "npm run gen:version && tsc -p tsconfig.build.json",
     "build:watch": "tsc -p tsconfig.build.json --watch",
     "build:bin": "npm run build:bin:win && npm run build:bin:linux && npm run build:bin:mac-x64 && npm run build:bin:mac-arm",
