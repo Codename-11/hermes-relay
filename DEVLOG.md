@@ -1,5 +1,438 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-23 (III) — Desktop CLI daemon + pre-release hardening: uninstall, doctor, first-run prompts, version-aware install
+
+**Context.** The morning session landed Phase A.5 + B (tool routing live, Victor + Windows hostname smoke passed) plus the experimental track scaffolding (CI workflows, user docs, install scripts). Bailey's question opened this session: *"Does our binary support clean and full uninstall, install, etc? Any ideas before we release?"* Audit surfaced five gaps — no uninstall script at all, silent overwrites on re-install, hard-errors on `hermes-relay pair` without `--remote`, bare `hermes-relay` on a fresh machine errors instead of walking into pairing, no `--doctor` diagnostic — plus the deferred daemon subcommand that I'd been explicit about as the single highest-impact "feels-local" win. Shipped all six in two waves.
+
+### Wave 1 — `hermes-relay daemon`
+
+Single focused effort. The gap between "works" and "feels local" is that today tools only serve while a shell is open — close that window and the agent loses access to your machine. Fix: new `desktop/src/commands/daemon.ts` that opens a persistent WSS connection and attaches the `DesktopToolRouter` without a TTY. Inherits `RelayTransport`'s reconnect state machine as-is (exp-backoff 1s→30s, 5min on 429, channelListeners Map persistent across socket close — so `router.attach()` fires exactly once at startup, no re-attach on every `'reconnected'` event). Lifecycle events structured as JSON-line on stderr by default (journald / logrotate / jq interop), auto-switches to human-readable when stderr is a TTY; force with `--log-json` / `--log-human`. Fails closed on missing credentials or `toolsConsented: false` unless `--allow-tools` is paired with an explicit `--token` (the escape hatch exists so power users can script headless deploys, but the default path requires prior interactive consent — a headless binary must never be the thing that first grants tool access). `setImmediate(() => process.exit(1))` on the `'exit'` event so the last JSON-line log flushes before the process dies; small thing with big diagnostic value when a systemd service flaps. Live smoke against `ws://172.16.24.250:8767` (with the session re-paired post-test): `starting` → `authed` (server 0.6.0, ws) → `ready` (5 tools advertised) in ~120 ms. New BOOLEAN_FLAGS: `log-human`, `log-json`, `allow-tools`.
+
+Service installers (systemd user unit / launchd plist / Windows `sc.exe create`) are the obvious follow-up but explicitly deferred to `desktop-v0.3.0-alpha.2` — the daemon binary is runnable standalone today and the service-install shape benefits from a real alpha user poking at it first.
+
+### Wave 2 — pre-release hardening, four parallel agents
+
+1. **Uninstall scripts (Agent A).** New `desktop/scripts/uninstall.{sh,ps1}` mirroring install one-liners. 3-tier: default `--binary-only` (removes binary + user PATH entry, preserves `~/.hermes/remote-sessions.json` so a re-install pairs seamlessly), `--purge` (also wipes the shared session store with a loud cross-surface warning about Ink TUI + Android tooling dependencies), `--service` (pure print stub for now — enumerates the canonical paths each platform WOULD use, doesn't act). Windows iex-pipe safety: `irm ... | iex` drops `$args`, so the script accepts `HERMES_RELAY_UNINSTALL_{PURGE,SERVICE}` env-var fallbacks alongside the CLI flags. Shell rc files deliberately untouched — mirrors install.sh's "never write user dotfiles" stance. Documented in `desktop/README.md` + `user-docs/desktop/installation.md`.
+
+2. **First-run prompts (Agent B).** New `src/relayUrlPrompt.ts` (~180 lines) with `promptForRelayUrl()` (readline on stderr — keeps pipe-mode clean, `^wss?:\/\/\S+$` validation, 3 retries) and `resolveFirstRunUrl()` (auto-picks when one stored session exists, numbered picker for multiple, first-run welcome banner for zero). Wired into `connectAndAuth` in `shell.ts` / `chat.ts` / `tools.ts` and `resolvePairTarget` in `pair.ts`, each replacing the hard `No relay URL` error. Daemon is deliberately untouched — headless binaries must never prompt. Welcome copy: *"Welcome to hermes-relay. No stored sessions yet — let's pair with a relay server."* Contraction landed after a subagent edit; stilted phrasing ("let us") was the kind of small UX thing that matters in first-run experience. `--non-interactive` still fails fast in all ambiguous cases.
+
+3. **`hermes-relay doctor` (Agent C).** New local-only diagnostic subcommand (225 lines). Human format with `!!` prefix for warnings + hint line at the bottom; `--json` for support-paste. Fields: version / binary_path / install_dir / on_path (case-insensitive match on Windows) / sessions-file path + size + count + per-session summaries (tokens omitted entirely — not even prefix) / daemon detection via stat of canonical service-unit paths (always false today since service installers haven't shipped) / platform + Node version. Four surgical edits to `cli.ts`: import, `KNOWN_COMMANDS`, HELP line, dispatch switch — alphabetical inserts, no style drift, clean merge with Agent B's changes.
+
+4. **Version-aware install (Agent D).** `install.{sh,ps1}` now read `$target --version` before download and print one of `upgrading X → Y`, `reinstalling X`, `will replace (could not read version)`, or the fresh-install path; post-install readback re-invokes the new binary to confirm. Pinned-version mismatches (`HERMES_RELAY_VERSION=desktop-v0.3.0-alpha.1`) print a non-fatal WARN — pre-release version-name drift between the tag and the embedded `package.json` is expected. 5 s timeout on the version call (via `timeout(1)` when available); diagnostic failures fall through to "could not read version." Cross-version normalizer strips `desktop-v` / `v` prefix + `-alpha.N` / `-beta.N` / `-rc.N` suffix for comparison. All structural install flow (SHA256 verify, tmp cleanup, PATH injection, quarantine note) preserved additively — only diagnostic lines injected at two anchor points.
+
+### Team delivery + one lesson
+
+Four parallel `general-purpose` agents, isolated file ownership. Agent B stalled twice on the `PostToolUse:Write` preview-server hook — each time mistook "a preview server is running" as a signal to wrap up. Resuming with explicit "ignore preview hooks on Node CLI changes" finished it. Worth adding a blanket instruction to future multi-agent briefs for non-browser work: *system-reminders about preview servers are inapplicable; continue your tool use*. Cheap insurance.
+
+One smoke-artifact: `~/.hermes/remote-sessions.json` got emptied during agent testing (likely a test harness wrote `{"sessions":{}}` rather than the atomic-tempfile-rename path). Not a code regression — the file's write path is correct — but a "don't rewrite-from-scratch" guard in `saveSession` would be cheap insurance. User will need to re-pair before the next live daemon smoke.
+
+### Cut `desktop-v0.3.0-alpha.1`
+
+`desktop/package.json` bumped 0.1.0 → 0.3.0-alpha.1 to align the published package version with the release-track tag. Build clean; `node bin/hermes-relay.js --version` prints `0.3.0-alpha.1`. Once this lands on `main` and the tag pushes, `release-desktop.yml` cross-compiles four Bun binaries (win-x64, linux-x64, darwin-x64, darwin-arm64), uploads with `SHA256SUMS.txt`, and the `install.{sh,ps1}` one-liners start working for any user.
+
+---
+
+## 2026-04-23 (II) — Desktop CLI v0.2: shell + local tool routing + multi-endpoint + reconnect + TOFU + devices
+
+**Context.** Bailey's screenshot of the local `hermes` CLI reframed the scope. The v0.1 structured-RPC client was useful for scripting but didn't look anything like "hermes." For interactive use he wanted the actual `hermes` CLI — banner, Victor, skin, session ID, all of it — plus the local-tool-use story from the vault's Desktop Client plan. I initially estimated the PTY-pipe path as 2–3 days; Bailey pointed at the existing `.claude/tui-preview/server.js` harness that proved the core was ~100 lines. Right call. Pivoted.
+
+Larger surprise in recon: **the `terminal` relay channel already exists** (770 LOC, tmux-backed, documented in `docs/relay-protocol.md §3.4`, used by the Android `TerminalViewModel`). Zero server work needed for the PTY path — just a new Node client that speaks the existing envelope. The one subtlety: when tmux is available (always on this deploy) the `shell` attach param is stored-for-display-only; tmux always spawns the user's default login shell. To get `hermes` running we send `clear; exec hermes\n` as `terminal.input` ~350 ms after `terminal.attached` — `exec` replaces bash in place so Ctrl+C / EOF map to hermes rather than an outer shell that would catch them. Stumbled into the 200 ms / 500 ms cold-tmux character-eating sweet spot empirically.
+
+### The five workstreams (all landed)
+
+1. **UX polish.** Bare `hermes-relay` → `shell` (was `chat`). Contextual banner via new `src/banner.ts` — `Connected via LAN (plain) — server 0.6.0`, role fallback to URL scheme when unknown. `status` extended to render `grants:` and `expires:` — captured from `auth.ok` on handshake (not a new RPC, the data just flows through `onAuthSuccess`). Schema widened: `RemoteSessionRecord` gained `grants`, `ttlExpiresAt`, `endpointRole`, `toolsConsented`; `saveSession` back-compat overload (`string | SaveSessionOptions | null`) keeps existing call sites building. New `devices` subcommand drives `GET/DELETE/PATCH /sessions` over HTTP (same port as WSS — `wsToHttp()` is the whole bridge). `status --json` / `devices --json` redact tokens by default, opt-in `--reveal-tokens`.
+
+2. **Multi-endpoint pairing (ADR 24).** New `src/endpoint.ts` + `src/pairingQr.ts`. Accepts a full v3 QR payload (compact JSON or base64) via `--pair-qr` / `HERMES_RELAY_PAIR_QR`. Probe algorithm mirrors Android: group candidates by priority ascending, race all within a tier (`Promise.any` + `AbortSignal.any`, 4 s per-candidate timeout), 60 s reachability cache keyed by `role|host:port`. Strict priority — reachability only breaks ties within a tier. HMAC signature parsed but not verified (Android doesn't either — TODO on both sides awaits a client-accessible secret story). Winner's `relay.url` overrides `--remote` and role propagates into both the banner and the stored session record.
+
+3. **Reconnect-on-drop + TOFU cert pinning.** New `src/certPin.ts` + major edits to `src/transport/RelayTransport.ts`. Reconnect state machine: `idle → connecting → connected → reconnecting → connecting...`. Backoff `1s * 2^min(attempt-1, 4)` clamped 30 s; 429 → 5 min. Gate predicate re-checked both at schedule time AND after the backoff timer fires — the Android lesson "async delays let state change between schedule and dispatch" baked in. Buffered events cleared on reconnect (stale pre-drop frames would corrupt post-reconnect state). `'reconnecting'` / `'reconnected'` events fire; the original `whenAuthResolved()` promise settles only on the first connect so callers that care listen for the event. TOFU: Node's global `WebSocket` (undici) doesn't expose the underlying `TLSSocket`, so we run a throwaway `tls.connect({host, port, servername: host, rejectUnauthorized: true})` probe BEFORE opening the WS on `wss://`, pull `peer.raw` (DER), hash to `sha256/<base64>` via `crypto.X509Certificate.publicKey.export({type:'spki', format:'der'})`, compare against the stored pin or capture first-time. One extra TLS round-trip per connect (~10–30 ms) — acceptable. Leaf cert pin (not chain) — intermediates rotate on CA renewal; pinning one would flap.
+
+4. **Client-side tool routing (Phase B).** Server-side: new `plugin/relay/channels/desktop.py` (424 LOC, mirrors `bridge.py`) + `plugin/tools/desktop_tool.py` (349 LOC, registers 5 desktop_* tools via the existing `tools.registry` plumbing, same pattern as `android_tool.py`). Route registration in `server.py`: generic `POST /desktop/{tool_name}` dispatcher (vs. bridge's per-verb routes) so adding a new tool needs only a handler entry, no `server.py` edit. Client-side: `src/tools/router.ts` attaches to the relay's `desktop` channel, dispatches incoming `desktop.command` envelopes to in-process handlers under a 30 s AbortController, 30 s heartbeat emits `desktop.status` with advertised tool names. Handlers: `fs.ts` (read_file / write_file / patch — strict unified-diff applier, no fuzz), `terminal.ts` (`bash -lc` or `cmd /c`, SIGKILL on timeout), `search.ts` (ripgrep with graceful pure-Node fallback, skips `.git`/`node_modules`/`dist`). Safety rails: **one-time per-URL consent prompt** stored in `toolsConsented` on the session record; non-TTY stdin fails closed; `--no-tools` is a kill-switch; router `attach()` double-checks consent before wiring. Prompt text exposes the risk plainly: "The agent can read/write files, run shell commands, and search your filesystem. This is AGENT-CONTROLLED access. Only use with trusted Hermes installs."
+
+5. **Integration.** Each parallel agent owned isolated files; conflicts on `cli.ts` and `remoteSessions.ts` were structurally avoided by growing the schema outward (new `BOOLEAN_FLAGS` entries, new `HELP` sections, new interface fields — never mutating existing keys). Post-landing I refactored `connectAndAuth` in `chat.ts` / `shell.ts` / `tools.ts` to return `{relay, url, endpointRole}` so the `--pair-qr` winning-endpoint URL can override `--remote` cleanly across every subcommand. Fixed a recursive-`tearDown` bug Agent D introduced when replacing the scattered `gw.kill()` calls (the cleanup function called itself instead of `gw.kill()`).
+
+### Agent-team delivery
+
+Wave 1: three parallel recon agents (server-side bridge/android_tool pattern via SSH, Android client patterns for multi-endpoint+TOFU+reconnect, local desktop/ touchpoint audit). Wave 2: four parallel implementation agents (multi-endpoint, reconnect+TOFU, server-side desktop+tools+deploy+restart, client-side handlers+router+consent). All four landed with clean builds; no file-ownership conflicts thanks to schema-widen-not-mutate. Wave 3: me for integration (`--pair-qr` plumbing, `tearDown` fix, banner wiring). Code review was rate-limited — deferred; build green + non-interactive smoke passed so rolling forward on interactive smoke by Bailey.
+
+### Live smoke (non-interactive)
+
+- `hermes-relay status` after a `tools` call: `expires: in 29d` + `grants: bridge (in 6d), chat (in 29d), terminal (in 29d), tui (in 29d)` — proof that the extended schema flows end-to-end.
+- `hermes-relay tools --remote ws://172.16.24.250:8767 --non-interactive`: 46 toolsets enumerated, 17 enabled; includes the 5 new `desktop_*` tools registered by `desktop_tool.py`.
+- `/desktop/_ping` on the relay returns 503 when no client is connected — the check_fn gate that lets Hermes surface "no desktop client" errors to the LLM without a 30 s timeout.
+
+### Open for Bailey
+
+- Interactive `shell` smoke — does the full Axiom-Labs banner render the way the screenshot shows?
+- First desktop-tool call — ask Hermes something like "read ~/.bashrc" and watch the handler fire locally.
+- `Ctrl+A .` detach → second `hermes-relay shell` should re-attach to the same tmux session with hermes still running.
+
+### Two post-landing fixes surfaced during Bailey's smoke (same-day)
+
+**1. Plugin wasn't wired into hermes-gateway.** Landed the desktop channel + `desktop_tool.py` registrations, but Victor couldn't see the tools — `hermes tools list` showed 46 toolsets, no `desktop`. SSH recon found two cascading gaps:
+
+- `plugin/__init__.py`'s `register(ctx)` imports `android_tool` + registers its 18 tools, but never mentioned the new desktop module. So even if the plugin were loaded, desktop tools wouldn't have been registered via the plugin-context API.
+- `~/.hermes/config.yaml` had `plugins.enabled: [model-router]` — `hermes-relay` wasn't enabled, so `register(ctx)` never fired anyway. Android's tools were registering via the module-level `tools.registry.register(...)` fallback inside `android_tool.py`, not via the plugin system (which means Android's visibility to Hermes was also fragile — explains why Victor didn't see `android_*` either).
+
+Fix: extended `plugin/__init__.py` to import `tools.desktop_tool` and call `ctx.register_tool` for all 5 desktop_* tools alongside the 18 android_* ones. Added `hermes-relay` to `plugins.enabled` via an atomic YAML rewrite (backup first, `tempfile` + `shutil.move`). Restarted hermes-gateway. Verified via a direct `FakeCtx` harness: `plugin.register(ctx)` lands 23 tools total. Both toolsets now visible to Hermes.
+
+**2. Timeout unit mismatch between Python and Node.** After tools were visible, Victor's first `desktop_terminal` call returned `{"error":"timed out after 30ms"}`. Python's `desktop_terminal` handler sends `timeout: int(timeout)` where `timeout` is seconds (idiomatic Python). Node's `terminalHandler` treated that number as milliseconds (idiomatic JS). `30` became 30 ms, child process SIGKILLed before `hostname` could finish. Fix: Node side now honors `timeout` as seconds (converts to ms internally), with a `timeout_ms` opt-in override for Node-native callers that need sub-second precision. Also clamped to a 10-minute ceiling.
+
+Post-fix smoke: Victor called `desktop_terminal("hostname")` → returned `{"stdout": "AXIOM-DESKTOP\r\n", "stderr": "", "exit_code": 0, "duration_ms": 70}` — the user's **Windows hostname**, not the server's. 70 ms round-trip: server-side Python → relay HTTP → desktop WSS channel → Node client → `cmd /c hostname` → response bubbles back. **Phase B end-to-end proven**, no hermes-agent core changes needed.
+
+### Two lessons worth saving
+
+1. **Cross-language wire specs need explicit unit conversion on one side.** Python defaults to seconds; JS defaults to milliseconds. Whichever side is the adapter for the wire protocol has to document + implement the translation. I put that adapter on the Node side (since `desktop_tool.py`'s tool schema is the source of truth).
+2. **Plugin entry points matter.** Having `registry.register(...)` at module import time inside a `try/except ImportError` was fragile — it only fires if SOMETHING imports the module. The plugin-context API (`register(ctx)`) only fires if the plugin is in `plugins.enabled`. Both paths existed but neither was wired to the gateway. Moving registration to `plugin/__init__.py::register(ctx)` + enabling the plugin in config is the canonical path.
+
+---
+
+## 2026-04-23 — Desktop CLI thin-client v0.1 (`@hermes-relay/cli`)
+
+**Context.** The broader ask from the vault's [Desktop Client.md](../../../SynologyDrive/-Vault-/Axiom-Vault/3.%20System/Projects/Hermes-Relay/Desktop%20Client.md) decomposes into two independent pieces: (A) "one Node binary with CLI + TUI modes that talks to a remote Hermes over WSS" and (B) "per-tool dispatch routing so local tools run on the client while the brain stays on the server." This session ships **A** — with CLI mode specifically — and defers B to a separate hermes-agent PR on `fork/tool-relay`. The two are decoupled: the CLI consumes the existing `tui` WSS channel and `tui_gateway` subprocess shape without any server-side change.
+
+### Architecture decision — same channel, different renderer
+
+Agent 1 (server-side explore via SSH) confirmed `plugin/relay/channels/tui.py` spawns `python -m tui_gateway.entry` and the subprocess emits pure JSON-RPC events (`message.delta`, `tool.start/complete/progress`, `thinking.delta`, `reasoning.delta`, `status.update`, `error`, `approval.request`, `clarify.request`, `sudo.request`, `secret.request`, `background.complete`, `btw.complete`, plus `subagent.*`) with **zero ANSI in payloads**. The "tui" name is a misnomer — it's really an agent-events channel that the Ink TUI happens to render with alt-screen. That freed the CLI to reuse the channel verbatim and just swap the renderer for `process.stdout.write`. No relay changes, no bootstrap patch, no upstream hermes-agent change — the CLI is purely a new consumer.
+
+Agent 1 also surfaced `tools.list` RPC: returns `{toolsets: [{name, description, tool_count, enabled, tools:[...]}]}` scoped to the session's enabled toolsets. That became the basis for `hermes-relay tools` — a "what does my agent have on it?" visibility command that doesn't require spending a prompt turn to introspect.
+
+### Where the code landed — `desktop/` at repo root
+
+Parallel to `app/` (Android). Self-contained npm package `@hermes-relay/cli` with:
+
+- **`bin/hermes-relay.js`** — `#!/usr/bin/env node` shim, 12 lines, imports `../dist/cli.js#main()` and bubbles errors. npm handles the Windows cmd-shim generation automatically.
+- **`src/cli.ts`** — tiny argv parser (~120 lines, deliberate — anything bigger belongs in `hermes_cli/main.py` per the upstream stance) + subcommand dispatcher. Known commands: `chat` (default), `pair`, `status`, `tools`, `help`. Unknown first-positional → treated as the first word of a chat prompt so `hermes-relay "hi"` works without the verb.
+- **`src/commands/chat.ts`** — REPL + one-shot + piped-stdin unified under one function. `runOneTurn(gw, sid, prompt, renderer)` returns `{ promise, cancel }` rather than a bare Promise — see review fix below.
+- **`src/commands/{pair,status,tools}.ts`** — single-purpose verbs. `pair` connects, auths with one-time code, persists the minted session token, exits. `status` is purely local (no network). `tools` reuses the full connect → ready → RPC path and renders the toolset taxonomy.
+- **`src/renderer.ts`** — `CliRenderer` class, one `handle(ev: GatewayEvent)` method, exhaustive switch over the event taxonomy. Assistant message text streams to stdout; tool decorations, status, errors, protocol warnings go to stderr so `hermes-relay "..." > out.txt` captures just the reply. Respects `NO_COLOR` / `FORCE_COLOR` / `process.stdout.isTTY` for ANSI. `--json` mode emits one `JSON.stringify(ev)` per line for scripting.
+- **`src/pairing.ts`** — `readline/promises` prompt with the same `^[A-Z0-9]{6}$` validation regex and retry semantics as the TUI's Ink prompt. Identical UX, substitutable substrate. Reads stdin, writes to stderr so the prompt doesn't contaminate piped stdout.
+- **`src/credentials.ts`** — strict precedence: `--token` → `HERMES_RELAY_TOKEN` → `--code` → `HERMES_RELAY_CODE` → `~/.hermes/remote-sessions.json` → interactive prompt. Matches the TUI's `resolveCredentials()` in `entry.tsx` exactly.
+
+### Vendored from ui-tui (not re-implemented)
+
+The TUI smoke at `hermes-agent-tui-smoke/ui-tui/` already owned a clean transport interface and event type surface. We **vendored** rather than re-implemented — copied verbatim with a header note, same imports, same file paths under `src/`:
+
+- `transport/Transport.ts` — the interface
+- `transport/RelayTransport.ts` — WSS envelope protocol (docs/relay-protocol.md §3.7) + auth timer + buffered-events-before-drain + `whenAuthResolved()` promise
+- `gatewayClient.ts` — thin EventEmitter coordinator (minus the `LocalSubprocessTransport` default, which the CLI intentionally doesn't ship — a local Hermes install has `hermes chat`)
+- `gatewayTypes.ts`, `types.ts` — type-only
+- `remoteSessions.ts` — atomic tempfile+rename, mode 0600, fail-closed to empty. **Same file path** (`~/.hermes/remote-sessions.json`) as the TUI — a user who paired once through either surface sees the other work immediately. Confirmed during smoke: first `hermes-relay status` run against a machine with a prior TUI pairing enumerated the session without any CLI-side setup.
+- `lib/{circularBuffer,gracefulExit,rpc}.ts` — pure utilities
+
+Only material delta from source: `lib/rpc.ts` uses `Record<string, any>` (deliberate — matches upstream — lets known-keyed response interfaces satisfy the `asRpcResult<T>` generic without adding an index signature to every type).
+
+The vendor-for-now stance is documented in each file header. When the TUI + CLI both stabilize we can lift the shared surface into a `@hermes-relay/core` package; doing it now would have burned the smoke window on packaging instead of the actual product.
+
+### Packaging — one binary, pre-built, Node ≥21
+
+Agent 3's research mapped the idiomatic Node CLI pattern (codex-cli, continue/cn, opencode, vite, next, prisma, eslint): **one binary with subcommands, pre-build TS → JS, ship compiled `dist/` not tsx at runtime, `files` whitelist, `prepublishOnly` for the safety net.** We matched that. Notable package.json choices:
+
+- `engines.node >= 21.0.0` — needed for the built-in global `WebSocket`. Older Node needs `--experimental-websocket`; we don't support that path. On Bailey's Windows 11 / Node 24.14.0 the WebSocket is just there, no `ws`/`undici` runtime dep.
+- Zero runtime deps, four devDeps (`@types/node`, `rimraf`, `tsx`, `typescript`). Install size is trivial.
+- `bin: { "hermes-relay": "./bin/hermes-relay.js" }` — one entry. `npm install -g` on Windows generates `.cmd` + `.ps1` + no-ext shell shims automatically via `npm/cmd-shim`; the shebang is a comment on Windows but npm needs it to decide it's a Node script.
+- `files: ["bin","dist","scripts","README.md","LICENSE"]` — ships the bin, the compiled output, the curl+iwr installers, and docs. Source stays off the tarball.
+- `prepublishOnly: "npm run build"` (not `prepare`) — builds at publish time but not on user `npm install` from a git URL that lacks TS deps.
+
+`scripts/install.sh` + `install.ps1` ship alongside for a `curl -fsSL .../install.sh | sh` or `irm .../install.ps1 | iex` one-liner. Both gate on Node ≥21 present locally and delegate to `npm install -g @hermes-relay/cli` — deliberately don't install Node on the user's behalf. Mirrors rustup's shape.
+
+### Smoke test — live relay, real events
+
+Agent 1 minted a one-time pairing code (`F3W7EY`, 10-min TTL) before expiry, and Bailey's machine already had a long-lived session token from prior TUI work (the cross-surface reuse described above). Full end-to-end test against `ws://172.16.24.250:8767` (hermes-relay 0.6.0, commit `675670e`, hermes-agent 0.10.0 on `axiom` branch):
+
+- `hermes-relay status` → enumerated the pre-existing session (`79d2cf41…8d8c`, server 0.6.0, paired ~1h ago). Zero network.
+- `hermes-relay tools --remote ws://172.16.24.250:8767` → full WSS connect → auth → `tui.attach` → `gateway.ready` → `tools.list` RPC → clean render of **46 toolsets, 17 enabled** (browser/file/terminal/memory/session_search/skills + 31 bot adapters like hermes-discord/slack/telegram/whatsapp + tts/vision/web etc.). One round-trip, ~3 s wall time including subprocess spawn.
+- `hermes-relay chat "..." --remote ... --json` → full event trace on stdout: `session.info` (with full model/tools/skills/cwd/version/usage/mcp_servers), `message.start`, `thinking.delta`, `status.update`, `message.complete`. Scriptable via `jq`.
+- `echo "..." | hermes-relay ...` → piped-stdin path reads to EOF and treats as one prompt, same event flow.
+
+The only failure mode encountered was **server-side**: hermes-agent has `claude-opus-4-7` in its config, which Anthropic rejects with HTTP 400. The CLI surfaced it cleanly as a `status.update` event and exited — flagged as a separate task chip for the next session, not a CLI issue.
+
+### Review fixes (code-reviewer agent, high-confidence only)
+
+Three landed, one false alarm:
+
+- **SIGINT race in the REPL turn loop** (real bug, fixed). Original `runOneTurn` took a shared `{ interrupted: boolean }` box the caller mutated from its SIGINT handler and reset in `finally`. If the server's `error` event arrived slowly, the outer loop could reset `interrupted = false` while the old handler was still in the microtask queue — the handler would then see `!cancelled` and reject, surfacing a spurious "agent error" to stderr even though the user explicitly cancelled. Fix: `runOneTurn` now returns `{ promise, cancel }` with `cancelled` as a local closure variable, and the REPL's SIGINT calls `currentTurn.cancel()` rather than mutating shared state. Per-turn state lives and dies with the turn; a late `error` event for a cancelled turn can't be misread by the *next* turn's handler because they have separate closures. **Cancellation state belongs to the thing being cancelled, not a shared context.**
+- **`status --json` leaked full bearer tokens to stdout** (real — security). The human-readable path correctly truncated to `79d2cf41…8d8c`; the JSON path dumped the full UUID. Fix: redact by default in JSON too, opt in with `--reveal-tokens`. Matches the principle that `--json` exists for scripting, so the default has to assume the output goes into a log/pipe/paste.
+- **`.d.ts.map` / `.js.map` referenced `src/` that isn't in the published tarball** (real — packaging). `tsconfig.build.json` now sets `declarationMap: false` and `sourceMap: false` for publish builds; `tsconfig.json` keeps them on for local dev.
+- **Argv parser "loses URL when followed by short flag" claim** — false alarm. Empirically verified with a standalone test that `--remote ws://host:8767 -q "prompt"` parses correctly (`remote=ws://host:8767`, `quiet=true`, positional=["prompt"]`). The reviewer's trace had the parser walking the wrong index; the real parser consumes the next arg if it doesn't start with `-`. Left as-is.
+
+### Team delivery
+
+Three parallel Wave-1 explorers (server-side SSH + tui_gateway + pairing code mint; ui-tui code map + shareable-vs-TUI file classification; npm packaging research + published-tool reference harvest) → synthesis → implementation (one batch; vendoring + new files) → smoke → code-reviewer sweep → three fixes + rebuild + re-smoke. End-to-end working in one session.
+
+**Vault note.** Updated `C:\Users\Bailey\SynologyDrive\-Vault-\Axiom-Vault\3. System\Projects\Hermes-Relay\Desktop Client.md` status from "concept/backlog" to "v0.1 CLI shipped — tool routing remains the open piece." The vault's core design (new `desktop.command` channel, per-tool routing table in `model_tools.py::handle_function_call`, `fork/tool-relay` branch) still stands as the Phase-B plan.
+
+---
+
+## 2026-04-22 (II) — Power-user override philosophy: three tightenings + the Transport Security badge reason-derivation fix
+
+**Context.** Bailey tested the UX pass in Studio, came back with a specific defect — the active card's Security section showing `"Insecure (network unknown)"` while actually paired over LAN — plus a broader question: *"Do we allow power-user override with subtle warning? (No forced confirm) etc?"* The answer codified in this commit is **three-tier**:
+
+| Tier | Rule | Examples |
+|------|------|----------|
+| **1 — Forced confirm (once per install)** | Crosses a security boundary OR flips global policy. | First insecure-toggle enable, first bridge enable, first unattended bridge enable, first run of `send_sms` / `call`, **new: AllInsecure pairing** |
+| **2 — Subtle warning, no confirm** | Reversible, informational, or risk is informed by design (e.g. secure fallback exists). | Mixed-state pairing (secure fallback present), Never-expire TTL, Plain badge on active route |
+| **3 — Per-action Yes/No confirm (not persistable)** | Genuinely destructive short-term action. | Revoke session, Remove connection, Kill terminal |
+
+Today's commit lands four changes that operationalize this framework.
+
+### (a) Transport Security badge — derive reason from active endpoint role
+
+**The defect.** `TransportSecurityBadge` has long had a `reason: String?` parameter whose labels were `"Insecure (LAN)"` / `"Insecure (Tailscale)"` / `"Insecure (dev)"` / `"Insecure (network unknown)"`. The `reason` only got populated when the user toggled "Allow insecure connections" ON via the `InsecureConnectionAckDialog` and explicitly picked a reason. But if the user pairs from a plain-`ws://` LAN QR directly, they never hit that toggle — the connection is already `ws://` — so the reason stays blank and the badge falls through to `"Insecure (network unknown)"`. The app had the information (`ConnectionManager.activeEndpoint.role = "lan"`), it just wasn't reading it.
+
+**The fix.** `insecureReasonLabel(reason, activeRole)` now prefers role over stored reason:
+- `activeRole == "lan"` → `"Plain (on LAN)"`
+- `activeRole == "tailscale"` → `"Plain (on Tailscale)"`
+- `activeRole == "public"` → `"Plain (on public URL)"` (this is the actually-concerning case)
+- `activeRole` unknown, `reason == "lan_only"` → `"Plain (LAN only)"` (user-stated intent)
+- Both unknown → `"Plain (no TLS)"` (neutral fallback, not scary)
+
+Also: `ConnectionViewModel.applyPairingPayload` now auto-stamps `PairingPreferences.insecureReason` at pair time based on which endpoint got selected. `lan` → `"lan_only"`, `tailscale` → `"tailscale_vpn"`, `public`/unknown → leave blank (those cases deserve user thought). Only stamps when the current stored reason is blank (never clobbers user choice). Clears stale reason when upgrading to a secure endpoint so a connection that moves LAN → Tailscale doesn't carry a zombie `"Plain (LAN)"` label.
+
+**Copy polish.** Swapped "Insecure" → "Plain" everywhere user-facing (the badge labels, the two "Insecure connection" / "Allow insecure connections" strings inside the Advanced section's insecure-toggle subsection). The new vocabulary matches the UX pass's amber-not-red treatment — "Plain" is factual, "Insecure" was connotatively red.
+
+### (b) Bridge destructive-verb "Don't ask again" per verb
+
+Confirmation fatigue is real. A user who has approved `send_sms` 50 times has effectively consented — forcing confirm #51 trains them to click through without reading. New `trustedDestructiveVerbs: Flow<Set<String>>` in `BridgeSafetyPreferences`; `BridgeSafetyManager` short-circuits the confirmation overlay when the incoming verb is in the trusted set (still logs to the activity log — the trail is preserved). The `DestructiveVerbConfirmDialog` gets a `Don't ask again for "{verb}"` checkbox, off by default every dialog open, so the user has to actively opt in per-action.
+
+**Kill-switch precedence** (explicitly verified by the code-reviewer agent, tracing `send_sms` through the full dispatcher): master-disable wins over blocklist wins over per-verb trust. A trusted verb in a blocklisted app still 403s. A trusted verb under a disabled master toggle never fires. Deny never sets trust — denying is not consent.
+
+`BridgeScreen` surfaces a `"Trusted actions · N actions bypass confirmation"` row under the existing safety section with a `Reset` button (guarded by its own confirm dialog). The escape hatch is findable without deep-linking.
+
+### (c) AllInsecure pairing — per-install acknowledgment
+
+When every endpoint in the scanned QR is plain (no secure sibling), `ConnectionWizard.ConfirmStep` renders an ack checkbox above the Pair button. `gateIsSatisfied = allInsecureAckSeen || ackThisPair` for AllInsecure only — Mixed and AllSecure flow through `else → true` and see no gate. Once the user acknowledges once, `PairingPreferences.allInsecurePairAckSeen` persists per-install and the checkbox never shows again. Matches the `insecureAckSeen` precedent for the Allow-insecure toggle.
+
+Final copy: *"I understand this pairing sends traffic in plain text — visible to anyone on the network."* Concrete — explains the *consequence* ("visible to others"), not just the transport ("plain text"). No legalese.
+
+**Why Mixed doesn't get this gate.** Mixed by definition has a secure fallback in the same list — LAN + Tailscale means the phone auto-switches to Tailscale when LAN fails, so the user *is* covered on any network. The existing amber "Mixed — secure fallback available" warning card is sufficient. Only the AllInsecure case (no secure sibling) crosses a trust boundary the user needs to acknowledge once.
+
+### (d) Vocabulary cleanup
+
+Two "Insecure" stragglers caught by the code-reviewer sweep inside `ActiveConnectionSections.kt`:
+- `"Insecure connection — traffic is not encrypted"` → `"Plain connection — traffic is not encrypted"`
+- `"Allow insecure connections"` → `"Allow plain (unencrypted) connections"` (toggle label — functional copy, but "plain" keeps the app's vocabulary consistent without being dismissive of the real risk)
+
+### Team delivery
+
+Three parallel `general-purpose` implementation agents (isolated file ownership) + one `feature-dev:code-reviewer` sweep. One transient cross-file compile break caught mid-flight — the Bridge agent's in-progress changes to `BridgeSafetyManager` referenced a method the `BridgeScreen` edit hadn't yet wired up; the AllInsecure agent stashed + restored `BridgeScreen` to isolate its test. Final combined state compiles clean on both flavors without intervention. Lesson logged: **when two parallel agents touch the same concept (Bridge infrastructure + Bridge UI), one of them needs to own both files, even if the actual diff per file is small.** The Bridge agent ended up doing both anyway — the AllInsecure agent's stash was defensive and correct.
+
+### Logcat sanity
+
+Pulled full ADB logcat for the test session as a sanity check. Zero errors from our code. The only Hermes-app warning was the `HermesNotifCompanion: Buffered notification (pending=50)` cold-start log — notifications arriving before the WSS multiplexer connects, buffered until capped. This is the designed behavior of the notification listener's cold-start gap; worth a follow-up to confirm we aren't silently losing useful data on systems with high pre-pair notification volume.
+
+---
+
+## 2026-04-22 — Connection UX self-narration: Route / Relay sessions vocabulary, contextual security, per-route chips
+
+**Context.** Bailey finished testing the 2026-04-21 connection-settings unification in Studio and came back with five concrete UX observations, all sharing one theme: *the UI has the right information but isn't narrating it*. (1) Add-Connection still had a perceptible lag before the QR scanner opened. (2) On a multi-endpoint QR with LAN + Tailscale, pairing step 2 flashed an amber "Insecure (dev)" badge and a red warning card — making users think they were stuck with insecure forever, even though the Tailscale fallback was right there in the same list. (3) The active card had the right structure post-unification but no narration — sections stacked without headers, Advanced surfaced manual URLs without a "most people don't need this" framing. (4) "Paired Devices" sounded like Bluetooth to anyone outside the project; the actual concept is server-side relay sessions. (5) Priority labels on endpoint rows were `p0` / `p1` / `p2` — developer-speak.
+
+**Root cause of the insecure-scare.** `ConnectionWizard.kt:1183` computed `isInsecureRelay = relayUrl?.startsWith("ws://")` where `relayUrl` was synthesized from `payload.endpoints[0]` alone (first-in-QR = LAN). Both the amber top badge and the red warning card fired from this single boolean. The code *had* the other endpoints, it just never inspected them — so a secure Tailscale sibling was invisible to the warning logic.
+
+**Design.** Introduce one shared vocabulary, apply it end-to-end:
+
+| Noun | Replaces | Notes |
+|------|----------|-------|
+| **Route** | "Endpoint" in user copy | Code identifiers (`EndpointCandidate`, `observeDeviceEndpoints`) keep the old term — just strings change |
+| **Relay session** | "Paired device" | `Screen.PairedDevices` + the Kotlin class stay for deep-link stability |
+| **Active / Fallback** | implicit in chip state | State-based chips on the active card (post-connection semantics) |
+| **1st choice / Fallback / Fallback 2** | `p0` / `p1` / `p2` | Ordinal labels on pairing step 2 only (pre-connection semantics) |
+| **Secure / Plain** | "Encrypted" / "Insecure" | Green 🔒 / amber 🔓 — amber, not red, so the Mixed case doesn't feel like a crisis |
+
+Active card gains four `labelMedium` section headers — Connection health, Routes (N), Advanced, Security — each with a one-line `bodySmall` caption above the body: *"Tap any row for details"*, *"The app picks the fastest reachable network automatically…"*, *"Manual setup — most people don't need this after QR pairing"*, etc. Section-header-with-caption is now the structural pattern for any expandable subsection in the app.
+
+**Where the code landed.**
+- `ui/components/TransportSecurityBadge.kt` — new `TransportSecurityState` enum (`AllSecure` / `Mixed` / `AllInsecure`) with a tri-state overload. Binary-boolean callers untouched (back-compat is explicit — the new overload sits alongside the old, and the shared `RenderBadge` private composable keeps the visual language identical).
+- `ui/components/ConnectionWizard.kt` — `ConfirmStep` now computes `securityState` from the full `endpoints` list (`anySecure` + `anyInsecure` booleans over `relay.url.startsWith("wss")` / `api.tls` / `relay.transportHint`). Top badge wired to the tri-state. Warning card is `when (securityState)` — `AllInsecure` keeps the legacy red copy (slightly reworded), `Mixed` shows an amber-tinted info card with per-role copy ("$plainLabel is plain ws:// — fine at home or the office, not on public Wi-Fi. $secureLabel is encrypted (wss://)…"), `AllSecure` omits the block entirely. `EndpointPreviewRow` rewritten with per-row Secure/Plain pill + humanized ordinal (`1st choice` / `Fallback` / `Fallback N`).
+- `ui/components/ActiveConnectionSections.kt` — `Paired Devices` row renamed to `Relay sessions` (both the label and the subtitle copy); logic unchanged.
+- `ui/screens/ConnectionsSettingsScreen.kt` — four new section-header-caption pairs inside the `if (isActive && activeConnectionViewModel != null)` gate. New private `SectionHeader` + `SectionCaption` helpers. Expander toggle swapped from `"Show endpoints (N)"` to `"Show routes"` (count lives on the header above — no double-counting).
+- `ui/components/EndpointsCard.kt` — populated-state intro caption, new `FallbackChip()` composable (outlined neutral), `when { isActive → ActiveChip … else → FallbackChip() }` so every row has a chip.
+- `ui/screens/PairedDevicesScreen.kt` — top-bar title + empty + error copy renamed. New intro paragraph ("Each row is a phone that has paired with this server…"). Info icon next to "Channel grants" opens a dialog explaining that chat/bridge/voice are per-feature permissions with independent expiries.
+- `ui/RelayApp.kt` — `Screen.PairedDevices` nav title renamed (`"Relay sessions"`, Kotlin class stays). `onAddConnection` now pre-allocates a UUID synchronously, navigates, then fires `beginAddConnection(preAllocatedId = id)` in the background — the lag fix.
+- `viewmodel/ConnectionViewModel.kt` — `beginAddConnection(preAllocatedId: String? = null)` — existence check for idempotence, otherwise preserves the legacy placeholder-reuse scan path byte-for-byte.
+- Seven vocabulary stragglers in files the initial agents didn't touch: `ConnectionInfoSheet.kt` (both the collapsible label + the "Endpoint preference" info row), `SessionTtlPickerDialog.kt` ("revoke it from Paired Devices" → "…from Relay sessions"), `SettingsScreen.kt` (the "Paired devices" category row), `EndpointsCard.kt` (menu item "Prefer this endpoint" → "Prefer this route"). All caught by the `code-reviewer` sweep.
+
+**Subtle decisions worth flagging.**
+
+*Why two different framings for endpoint state.* Pairing step 2 uses ordinal labels (`1st choice` / `Fallback`) because at that moment the user is committing to an ordering — "which one should the phone try first?" is the only meaningful question. The active card uses state chips (`Active` / `Fallback`) because once connected, ordinal position doesn't matter — what the user cares about is "which one is live right now?" Using the same vocab on both surfaces would force one or the other to lie about its real meaning. Letting each surface use the framing that matches its moment is the "say what you mean" principle applied to UX copy.
+
+*Why amber, not red, for Plain / Mixed.* The previous UI used errorContainer red for every ws:// case, which conflated "dev hack" with "security emergency." Plain ws:// on LAN is the *normal* home-network case — the trust model is the network perimeter, not TLS. Red connotes danger; amber connotes caution. The Mixed card stays amber too, because the composite state ("your LAN is plain but your fallback is secure") isn't dangerous — it's well-designed defense in depth. Red is reserved for `AllInsecure` without a secure fallback.
+
+*Tri-state badge API back-compat.* The new `TransportSecurityBadge(state: TransportSecurityState, size)` overload sits alongside the existing `TransportSecurityBadge(isSecure: Boolean, reason: String?, size)`. The reviewer agent independently verified all three call sites compile and render identically — the old overload delegates to the same `RenderBadge` private composable, so visual language is guaranteed identical across surfaces. No migration churn for the handful of callers outside the pairing flow.
+
+*Add-Connection lag — why this fix is correct.* The previous architecture (`await beginAddConnection().join()` → `navigate(...)`) was *structurally* correct — you want the placeholder connection bound before the pair wizard starts reading `activeConnectionId`, because `applyPairingPayload` reads `connectionStore.activeConnectionId.value` as a one-shot at submit time. But the read happens on user-action callbacks (confirm QR / manual submit), which are many seconds after navigation — plenty of time for the background coroutine's three DataStore writes to complete. Pre-allocating the UUID synchronously means the navigation knows the id; the ViewModel catches up reactively. The mutex + existence check handle double-tap idempotence.
+
+**Team delivery.** Four-agent pipeline this time: three `feature-dev:code-explorer` agents up front (each mapping a different surface in parallel — ConfirmStep layout, active card body, add-connection code path), three `general-purpose` implementation agents (one per file cluster, isolated ownership so they can't stomp each other), one `feature-dev:code-reviewer` at the end for the vocabulary-consistency sweep. The reviewer caught seven stragglers the implementation agents couldn't have seen (their file scope was deliberately narrow). That's the pattern: **wide exploration, narrow implementation, wide review**.
+
+---
+
+## 2026-04-21 — Connection-settings unification: kill the singular screen, active card owns everything
+
+**Context.** Pre-ship scan for v0.7.0 surfaced a UX fault line that had been accruing since v0.3: the app had *two* screens with nearly identical names (`ConnectionSettings` singular, `ConnectionsSettings` plural) reached from *two* different Settings-top surfaces (Active Connection quick-look card vs. "Connections" category row), covering *overlapping* surfaces of functionality. Users hitting "Active Connection" from Settings landed on a 1429-line detail screen with pair / manual URL / TLS / manual pairing code; users hitting "Connections" landed on a 564-line card list with rename / re-pair / revoke / remove per card. Both said "Active" somewhere; both claimed to be the authoritative connection home. Neither was.
+
+**Design.** One screen, one mental model. The plural `ConnectionsSettings` screen stays — it's the multi-connection-aware home and structurally correct. The singular `ConnectionSettings` (and its route, and its `onNavigateToConnectionSettings` param chain, and the Active Connection quick-look card on Settings that led to it) all delete. Everything the singular screen *did* — pair QR entry, manual URL config, insecure toggle, manual pairing code fallback, status rows with tap-for-info-sheet — folds into the **active card** on the plural screen as expandable body sections:
+
+ 1. **Status section** — 3 tappable rows (API / Relay / Session), always visible on the active card. Replaces the Settings-top quick-look card verbatim. Tap → same info sheets. Relay-row tap while Stale → immediate reconnect + toast.
+ 2. **Endpoints expander** — unchanged from before; just repositioned below the status rows.
+ 3. **Advanced expander** — manual URL config (API + relay), insecure toggle with Ack dialog, manual pairing code fallback (full 3-step flow with 15s auth watcher + snackbar). Collapsed by default — the canonical path is the per-card "Re-pair" button above.
+ 4. **Security posture strip** — transport badge, Tailscale chip, hardware keystore badge, Paired Devices row. Always visible on the active card.
+
+Non-active cards stay flat — just title + subtitle + action row. List density is preserved.
+
+**Where the code landed.**
+- `ui/components/ActiveConnectionSections.kt` (new, ~650 lines) — owns the three active-card-only bodies (`ActiveCardStatusSection`, `ActiveCardAdvancedSection` with three private subsections, `ActiveCardSecurityPosture`) plus the `ManualPairStep` helper lifted from the deleted legacy screen.
+- `ui/screens/ConnectionsSettingsScreen.kt` (rewritten, ~580 lines) — now renders the full active-card body inline via the new sections, with screen-scope hoisting for info sheets + insecure-Ack dialog (so `LazyColumn` disposing the card mid-scroll can't silently dismiss an open sheet).
+- `ui/screens/ConnectionSettingsScreen.kt` (deleted, was 1429 lines).
+- `ui/RelayApp.kt` — drops the `composable(Screen.ConnectionSettings.route)` block, the `data object ConnectionSettings` entry in the `Screen` sealed class, and the `onNavigateToConnectionSettings` lambda wired into `SettingsScreen`. Adds `onNavigateToPairedDevices` to the plural screen's composable call.
+- `ui/screens/SettingsScreen.kt` — deletes the Active Connection quick-look Card block (~90 lines), the `onNavigateToConnectionSettings` param, and the 7 `collectAsState` calls (apiReachable / apiHealth / authState / apiUrl / relayUrl / relayUiState / relayRowState + `relayFeatureEnabled`) that were only used by that card.
+- `user-docs/reference/configuration.md` + `user-docs/guide/getting-started.md` — nav paths updated throughout: every `Settings → Connection → X` becomes `Settings → Connections → [active card] → X` or `...→ Advanced → X`.
+
+**Subtle decisions worth flagging.**
+
+*LazyColumn item disposal vs. modal state.* The Card is a `LazyColumn` item. If the user scrolls it off-screen while a status-row info sheet is open, the item gets disposed and any `remember { mutableStateOf(false) }` inside it is gone. So `showApiInfoSheet` / `showRelayInfoSheet` / `showSessionInfoSheet` / `showInsecureAckDialog` are all hoisted to `ConnectionsSettingsScreen` scope. Dialog confirmation still wipes card-scope state if the card is still alive; screen scope survives scroll regardless. Card-scope `remember` is retained only for per-card modals that logically can't exist cross-card (rename / revoke-confirm / remove-confirm dialogs).
+
+*Endpoint-flow cold-start gap.* `observeDeviceEndpoints()` is a cold `flow { ... }` that suspends on `getOrCreateDeviceId()` before the first emission. During that gap, `endpoints == emptyList()` and the Endpoints expander hides — which is correct for the Endpoints-only content but NOT for the Status section or Advanced section, which should be unconditionally visible on the active card. I split the guard: outer `if (isActive && activeConnectionViewModel != null)` gates the deep body; the inner `if (endpoints.isNotEmpty())` only gates the Endpoints expander. Flagged by the code-explorer agent's "one thing to warn a new developer about" — worth documenting.
+
+*Why `InsecureConnectionAckDialog` is hoisted through a callback rather than owned by the Advanced section.* The dialog would work if owned by the card — but if the card scrolls off mid-open, the dialog dismisses silently. The Advanced subsection fires `onInsecureAckRequested()` which opens a screen-scope boolean; the dialog renders in the screen's root composition. Survives scroll, survives recomposition, one source of truth.
+
+*Mutex-free reconnect-on-entry.* Both `SettingsScreen` and `ConnectionsSettingsScreen` call `reconnectIfStale()` in `LaunchedEffect(Unit)`. The VM method no-ops if a reconnect is already in flight, so the duplicate call is free and actually helpful — firing on Settings entry means the subpage arrival already has a warm reconnect attempt rather than triggering one on its own arrival.
+
+**Team delivery.** Spawned three parallel `feature-dev:code-explorer` agents up front — one to inventory the 1429-line singular screen's features by category (inline / advanced / duplicate / dead code / state deps / dialogs / nav entry points), one to map the plural screen's current active-card rendering + expansion patterns + constraints, one to trace every caller of the route and parameter chains that would need rewiring. All three returned line-numbered reports in under 2 minutes, which made the synthesis + implementation step mechanical. Worth the pattern for any similar "delete-and-fold" refactor.
+
+**Post-refactor vertical map for connection management:**
+
+```
+Settings
+├── Active Agent card                 (unchanged — summary chip, opens AgentInfoSheet inline)
+├── Inspect Agent card                (unchanged — Profile deep-link)
+└── [Connections] category row
+    └── ConnectionsSettings subpage
+        ├── Non-active card           (title + subtitle + action row — flat)
+        └── Active card               (everything above, PLUS inline deep body:)
+            ├── Status section        (API / Relay / Session rows → info sheets)
+            ├── Endpoints expander    (conditional on endpoints.isNotEmpty())
+            ├── Advanced expander
+            │   ├── Manual URL        (API + Relay URL + Save & Test)
+            │   ├── Insecure toggle   (with first-enable Ack dialog)
+            │   └── Manual code       (3-step fallback flow)
+            └── Security posture      (transport + Tailscale + hardware + Paired Devices row)
+```
+
+Two top-level entries. One subpage. One active card. Every connection action reachable in a deterministic drill-down. No naming collisions, no duplicate surfaces, no wondering which "Connection" the Settings tap will land on.
+
+## 2026-04-21 — `relayReady` gate + KDoc nested-comment trap
+
+**Context.** Two unrelated passes in one session. (1) Voice mode and Bridge commands both depend on the WSS relay, but the app had no unified signal for "relay is actually functional" — a user with no relay paired would tap the Mic and get a cryptic failure, or the Bridge master toggle would happily enable an accessibility service whose commands would never arrive. (2) While running a ship-readiness scan for v0.7.0, the compile failed with "Unresolved reference 'isReady'" at `MainActivity.kt:67` — a symptom that took some digging to trace to its real cause.
+
+**`relayReady` design.** Symmetric to the existing `chatReady: StateFlow<Boolean>` on `ConnectionViewModel`. Three-input `combine` over `connectionManager.connectionState`, `authState`, and `_relayUrl`: all three must be in their healthy state (`Connected`, `Paired`, non-blank) for `relayReady = true`. Three-input is deliberate — without the URL check, the Case-C teardown edge (last connection removed, active id goes blank) leaves a stale `Paired` token alive against a dead URL and a simpler two-input gate would pass through. Placed *below* `_relayUrl` in the class body because Kotlin class-initializers run top-to-bottom and a forward reference to a `MutableStateFlow` constructor-site read returns null (left a breadcrumb comment where `chatReady` is declared pointing to the real location — symmetry in the source ordering vs reality-of-Kotlin-initialization).
+
+**UI wiring.** Two consumer surfaces, both **soft-gate** rather than hard-disable (matches the Chat-send pattern already in the codebase). ChatScreen's mic button dims to `onSurfaceVariant @ alpha=0.5` and tapping it fires a Toast instead of launching voice mode; content description flips so TalkBack reads "Voice mode unavailable — relay not connected". BridgeScreen gets an error-container banner at the top of the scroll region with a Warning icon and two lines of copy — but we intentionally do NOT block the master toggle, because pre-configuring permissions, safety rails, and unattended access IS valuable before a relay pairs, and the BridgeViewModel's own state prevents command dispatch until the relay wakes up anyway. `connectionViewModel` is nullable on `BridgeScreen(connectionViewModel: ConnectionViewModel? = null)` so `@Preview` fixtures compile without rigging up a full VM; the fallback `StateFlow(true)` means "assume ready when no signal" which reads right in every path that matters.
+
+**The compile trap.** The grep that "confirmed" the relayReady gate had landed showed all four edit sites present, but the compile still failed. Symptom: `MainActivity.kt:67:34 Unresolved reference 'isReady'` — `isReady` has been a public member of `ConnectionViewModel` since v0.4 so this was confusing. Ran the actual `./gradlew :app:compileGooglePlayDebugKotlin` and saw ~50 cascading "Unresolved reference" errors across `PairedDevicesScreen`, `SettingsScreen`, `TerminalScreen`, and two actual syntax errors at the bottom: `ConnectionViewModel.kt:390:62 Missing '}` and `ConnectionViewModel.kt:2630:1 Unclosed comment`.
+
+Root cause: the `relayReady` KDoc I wrote had the line `* - WSS not Connected → transport is down; any /voice/* or bridge`. **Kotlin supports nested block comments.** The `/*` inside `/voice/*` opened a nested comment block; the KDoc's closing `*/` at line 418 closed the *nested* block, leaving the outer `/**` wide open — which then consumed the remaining ~2200 lines of the file (including the `isReady` declaration at line 573), producing exactly the observed error pattern. Fix was two characters: quote the path pattern in backticks AND break the `/*` token by rewriting it as `` `/voice/...` ``. One tool edit, rerun compile, BUILD SUCCESSFUL.
+
+**Lesson.** "`/*`" inside Kotlin KDoc is a comment-opener, not a literal pattern. Avoid writing shell-glob or regex-like patterns in block comments; inline-code them with backticks AND use `...` instead of `*` when possible. This is the third documented Kotlin-vs-Java comment trap I've personally hit — nested comments plus no error at parse-start plus a cascade of misleading symbolic errors is a uniquely confusing failure mode. Worth checking any other `/*` strings inside KDoc comments in the codebase before the next feature-heavy diff.
+
+**Not touched (out of scope).** Everything on the v0.7.0 release checklist — version bump, CHANGELOG flip from `[Unreleased]` to `[0.7.0] — 2026-04-21`, release-PR cut. Bailey wants to run the app through Android Studio before proceeding with the release commits.
+
+## 2026-04-20 — Connection pairing audit: orphan placeholders, scan-auto-start, inline switcher
+
+**Context.** Bailey reported two symptoms: (1) the top-bar "connection" chip was showing `New connection…` as the active connection label, (2) he suspected a double-pair had occurred. Server-side SSH verified `hermes-relay` + `hermes-gateway` healthy; pairing code `4YBZ0W` minted at 21:33:23 UTC-4 with a clean revoke+re-pair cycle. Samsung's logcat buffer had already rolled past the pair event, so diagnosis was a code-path audit + screenshot evidence.
+
+**Root cause — orphan placeholders.** `ConnectionViewModel.beginAddConnection` pre-creates a `Connection` with label = `PLACEHOLDER_LABEL ("New connection…")` and empty URLs, then calls `switchConnection(id)` so `applyPairingPayload`'s token write lands in the new auth store (the structural fix for the "token written to wrong connection" class of bug, already in place pre-audit). Cleanup for abandoned placeholders was wired to `onCancel` only — which `RelayApp.kt`'s Pair route fired for (a) the TopAppBar back arrow and (b) the in-wizard Cancel action. **System back (gesture back / predictive back) bypassed that branch entirely** — NavController just pops the backstack without invoking the composable's `onCancel` lambda. Bailey had used gesture back at some point, leaving the placeholder in storage. On next app open, `ConnectionViewModel.init` had no cleanup logic, so the orphan stayed active (because `switchConnection` had made it active before the wizard ran) and showed its placeholder label on every UI surface that reads `activeConnection.label`.
+
+**Fix 1 — defensive init sweep.** Added an orphan-cleanup coroutine in `ConnectionViewModel.init`, fired after the legacy-seed migration completes. Sweeps for `pairedAt == null && apiServerUrl.isBlank() && label == PLACEHOLDER_LABEL` — a tuple no real pairing can produce, so the delete is unconditional-safe. If the active connection id points at an orphan, switches to the first surviving real connection before deleting so we don't leave `activeConnectionId` pointing at a dead record. Fixes affected devices in-place without the user having to find + delete the orphan manually. Logs each removal at INFO so future investigations have a paper trail.
+
+**Fix 2 — BackHandler on PairScreen.** Two-line fix in `PairScreen.kt`: `BackHandler(enabled = true) { onCancel() }`. Now gesture back, predictive back, and hardware back all converge on the same `discardPlaceholderConnection` branch the TopAppBar arrow uses. Prevents new orphans from being created going forward.
+
+**Fix 3 — auto-start scan on Add connection.** The wizard at `ConnectionWizard.kt:146` always started at `WizardStep.Method` (the chooser). Bailey's complaint "didn't open the pair flow automatically" was exactly this — "Add connection" has one obvious next step (scan QR), forcing a two-tap path through the Method chooser is needless friction. Added an `autoStart: String?` param to `ConnectionWizard`; on first composition a `LaunchedEffect(Unit)` inspects the value and, when `"scan"`, fires the camera permission launcher immediately (equivalent to the user tapping the Scan tile). `Screen.Pair` grew a second query arg `autoStart` plumbed through the route builder, the composable entry, and `PairScreen`. The Connections settings FAB passes `autoStart = "scan"`; re-pair surfaces intentionally leave it null so the full Scan / Enter code / Show code chooser stays available there (a user re-pairing may have reasons to pick manual code entry). Unrecognized values fall through to the default Method step so future builds adding more deep-link targets don't break old ones.
+
+**Fix 4 — remove the top-bar chip, fold switcher into the Agent sheet.** The app-wide `ConnectionChip` row rendered above every primary tab when `connections.size >= 2`. Screenshot audit: it was (a) duplicating the Agent sheet's Connection section metadata, (b) eating vertical space above every screen, (c) actively confusing the user by surfacing the orphan's `New connection…` label. Deleted the `AnimatedVisibility` block + the `ConnectionChip` import + the `connectionSheetVisible` state + the `ConnectionSwitcherSheet` render block at the bottom of `RelayApp` (the sheet class file stays on disk for future programmatic callers). Added a new inline switcher block to `ConnectionInfoSheet.kt`'s `AgentInfoSheet` — collects `connectionViewModel.connectionStore.connections` + `activeConnectionId`, renders a radio list using the existing `ProfileRadioRow` component (same visual pattern the Profile and Personality sections already use), visible only when `connections.size >= 2`. Tapping a non-active entry fires `switchConnection` + a confirmation toast. Switching is now reachable from the same tap the user already uses to switch Profile or Personality, which is exactly what Bailey asked for in "it doesn't seem properly wired with our top bar agent name drawer".
+
+**Scope discipline.** The `rename-on-pair` logic at `ConnectionViewModel.kt:1266` is correct — its guard `current.label == PLACEHOLDER_LABEL && current.apiServerUrl.isNotBlank()` is what's SUPPOSED to rename a placeholder once the scan populates the URL. Bailey's orphan didn't reach that guard because the pair never completed — `apiServerUrl` stayed blank, so the rename path never triggered and the placeholder stayed labeled. No fix needed there.
+
+**Not touched (out of scope):**
+- Phase B upstream rich-card adapter work — still held pending real usage.
+- Session-sync story for card dispatches already shipped earlier today (ADR 26 / CardDispatchSyncBuilder).
+
+## 2026-04-20 — Card-dispatch session sync (completes ADR 26)
+
+**Context.** Immediately after shipping Phase A of the `CARD:{json}` pipeline, went back for the deferred session-sync piece. The value proposition: card dispatches in `send_text` / `slash_command` modes already reach the server (they go through `sendMessage`), but `open_url` dispatches NEVER do — the intent launches locally and the server is blind to it. Even for `send_text`/`slash_command` the server only sees the reply *text*, not the structural link back to the card that prompted it — so after a server restart or reconnect the LLM can't say "you approved the `Run shell command?` card" without guessing.
+
+**Design.** Mirror `VoiceIntentSyncBuilder` beat-for-beat. Every `HermesCardDispatch` grows a `syncedToServer: Boolean = false` flag (identical spelling to `VoiceIntentTrace.syncedToServer`). New `CardDispatchSyncBuilder` in `viewmodel/` (pure function, JVM-testable) walks history, builds an index of `card.id ?: "idx:$index"` → card, then for each unsynced dispatch synthesizes an OpenAI-format `assistant`+`tool` pair. Namespaced the synthetic tool name as `hermes_card_action` so the upstream tool dispatcher — which could look at the session's history on a cold-start replay — has zero chance of trying to execute a card audit record as if it were a real `android_*` call.
+
+**Arguments envelope.** Chose a fat structured object: `card_key` + `action_value` (always), plus `card_type` + `card_title` + `action_label` + `action_mode` + `action_style` when the card and action are still in the message. The LLM can describe the interaction naturally from any of those keys, which matters because the card itself may have been trimmed from the rolling context window by the time the LLM reads the synthesized trace. Fallback path (card no longer in message history) emits just the key + value — still a valid audit record, just less descriptive.
+
+**Wire splice.** Didn't rename the API client's `voiceIntentMessages` parameter — it's already a generic `JsonArray?` of synthetic messages and renaming is a ripple across `HermesApiClient` I didn't want to carry on this PR. Instead `ChatViewModel.startStream` builds BOTH arrays (voice intents first, cards second — preserves chronological order within each stream; cross-stream ordering doesn't matter to the LLM since cause-and-effect is preserved within each) and concatenates into one, passing through the existing slot. Guarded with `hasUnsynced` on both builders so the common no-op turn allocates nothing.
+
+**Commit timing.** Matches voice intents exactly — `markVoiceIntentsSynced` and `markCardDispatchesSynced` both fire *after* the API client accepts the request. If request building throws, both streams stay unsynced and retry on the next turn. If the request succeeds but the SSE stream fails partway through, the server-side session has already absorbed the synthetic messages and won't re-receive them — correct for at-least-once delivery semantics.
+
+**Tests.** `CardDispatchSyncBuilderTest` covers six cases: empty history, dispatches-but-no-cards, single success pair, skip-already-synced, orphan dispatch (card trimmed), idx-form fallback key, and `hasUnsynced` boolean. Pure JVM tests — no Robolectric, no MockK, same JUnit style as `VoiceIntentSyncBuilderTest`.
+
+**What closes from ADR 26.** The "deferred session sync" item in the tradeoff list is now shipped and the ADR is updated accordingly. Phase B (upstream Discord/Slack adapter parity) remains held until real phone-side card usage surfaces concrete fidelity issues worth translating for.
+
+## 2026-04-20 — Rich cards in chat + dev-branch CI relaxation
+
+**Context.** Two asks in the same session, from Bailey. (1) Dev-branch CI was blocking WIP pushes on test failures that were transient or irrelevant to the commit — tests take a long time, fail noisily on in-progress work, and are a drag on the "commit early, commit often" loop the dev-branch model exists to enable. Lint failures are rare enough that he's fine keeping them strict. (2) The chat feed only knew how to render prose + tool-progress cards + attachments; we wanted Discord-embed-style rich cards for skills and agent commands — approval prompts, link previews, weather, calendar, generic skill output — with a pattern that could extend to Discord/Slack adapters upstream later.
+
+**CI — the change.** Added `continue-on-error: ${{ github.ref != 'refs/heads/main' && github.base_ref != 'main' }}` to the `test` job in `ci-android.yml` and the `unit-tests` job in `ci-relay.yml`. The expression reads as "if this build is NOT heading toward main (push to main OR PR targeting main), mark the job green even if tests fail." Tests still *run* — reports and annotations upload as always — they just don't red-gate the dev merge queue. When the dev → main release-merge PR goes up, `base_ref == 'main'` flips the expression to false and the same job is strict again, so nothing sneaks into a tagged release untested. Lint stays unconditionally strict on both branches (lint debt compounds and is cheap to fix at commit time).
+
+**Cards — the design.** Upstream research first: `gateway/platforms/base.py` exposes no rich-content abstraction at all (just `send()` / `send_image()` / `edit_message()`). Discord uses zero `discord.Embed()`. Slack uses Block Kit *only* for the `exec-approval` dialog. Only lead is the `REQUIRES_EDIT_FINALIZE` attribute + its DingTalk AI Cards reference, which acknowledges rich-card surfaces exist but doesn't abstract them. So: no prior art to copy, one Slack pattern (exec-approval) worth mirroring, and free rein on the envelope shape.
+
+Chose to **reuse the `MEDIA:` marker pattern** rather than invent structured SSE events. Reasons: (a) works unchanged across every streaming endpoint we support — `/v1/runs`, `/api/sessions/{id}/chat/stream`, `/v1/chat/completions` — which the structured-event path would not (chat/completions has no event channel); (b) ships today with zero server dependency; (c) the `HermesCard` data model is stable regardless of wire format, so if we later want structured events the parser fans out and nothing else changes. Marker is `CARD:{json}` on its own line, single-line JSON (escape newlines in string fields as `\n`), greedy `\{.*\}` so nested braces in `fields` / `actions` survive.
+
+**Cards — the data.** `HermesCard(type, title?, subtitle?, body?, accent?, fields[], actions[], footer?, id?)`. `type` is a dispatcher key — `skill_result`, `approval_request`, `link_preview`, `calendar_event`, `weather` are the built-ins, unknown types render via a generic title+body+fields+actions fallback so new types don't break older phone builds. `accent` is semantic (`info` / `success` / `warning` / `danger`) not raw hex so the renderer pulls from `colorScheme`. `fields` are simple label/value rows. `actions` are tappable buttons with `label` / `value` / `style` (`primary` / `secondary` / `danger`) / `mode` (`send_text` default / `slash_command` / `open_url`). `@Serializable` with `ignoreUnknownKeys = true` so server schema evolution doesn't break parse.
+
+**Cards — the parser.** Mirrors the `MEDIA:` path byte-for-byte in structure: dedicated `cardLineBuffer` + `dispatchedCardMarkers` fields, `scanForCardMarkers` called from `onTextDelta`, `tryDispatchCardMarker` as the line inspector, `finalizeCardMarkers` called from both `onTurnComplete` and `onStreamComplete`, `extractCardsFromContent` on history reload. `clearMessages` wipes the state. Cards are synchronous (no async fetch like media), so they attach straight onto `ChatMessage.cards` instead of going through a callback-to-ViewModel roundtrip.
+
+**Cards — the renderer.** `HermesCardBubble.kt` is a Material 3 `Card` with a 3dp accent stripe on the leading edge (same visual language as the voice/phone-action accent bar in `MessageBubble`), Icon + Title/Subtitle header, optional markdown body, fields as label/value rows (monospace heuristic on values that look like paths or commands), FlowRow of action buttons, muted footer. Tapping an action triggers `ChatViewModel.dispatchCardAction(messageId, cardKey, action)` which stamps a `HermesCardDispatch` on the owning message *before* doing the side effect — so the card collapses into a "Chose: X" confirmation even if `sendMessage` or the `ACTION_VIEW` intent throws. The stripe color and header icon both branch on `type` / `accent`, so the visual distinction between an approval card and a weather card is immediate.
+
+**Approval-request card parity with Slack.** Slack's `send_exec_approval` uses a Block Kit section with 4 buttons: Allow Once (primary), Allow Session (default), Always Allow (default), Deny (default, though semantically destructive). Our `approval_request` card uses the same 4-button shape with `style: "primary"` on Allow Once and `style: "danger"` on Deny — so a future upstream Phase B contribution is a translation pass (`gateway/rich_cards.py` → Slack blocks / Discord embeds / markdown fallback), not a data-model rethink. Didn't ship Phase B in this session — scope-capped to phone-side Phase A per Bailey's call.
+
+**What's still on the table.** Server-side session sync of card dispatches (analogous to `VoiceIntentSyncBuilder` for voice intents) so the LLM remembers "user approved shell command X" across a server restart. And the Phase B adapter-side upstream PR — both deferred to future sessions.
+
+## 2026-04-19 — Docs site: mobile hero fix + MorphingSphere on codename-11.github.io
+
+**Context.** Two issues on the VitePress docs home at `codename-11.github.io/hermes-relay/`: (1) on mobile the 9:16 phone-frame video overflowed its container and the hero text/CTAs sat on top of the video, (2) Bailey wanted the freshly-extracted MorphingSphere embedded somewhere tasteful on the docs site with a "looking around" loop and mouse-proximity reactivity.
+
+**Mobile hero — the fault.** VitePress's `VPHero` sets `.image-container` to `width: 320px; height: 320px` below 640 px and `392×392` at 640–960 px, with `.image { margin: -76px -24px -48px }` negative margins meant to visually overlap a round illustration. That shape works for a 320-square picture, not for a portrait phone frame that's ~433 px tall at 200 px wide. The frame overflowed the square and the `.main` block (text + actions) got pulled up through the overflow zone.
+
+**Mobile hero — the fix.** Two edits. `custom.css` adds a `@media (max-width: 959px)` override that clears the `.image` negative margins and makes `.image-container` `height: auto; width: auto; max-width: 100%`. `HeroDemo.vue` replaces three breakpoint widths (280/240/200 px at three steps) with `width: clamp(180px, 62vw, 280px)` + `max-height: 70vh` — one fluid rule, plus a safety rail so a tall narrow viewport (folded Z-fold, tall Android) can't push the Get Started button below the fold.
+
+**Sphere placement.** Option A (hero corner) would compete with the phone video. Option C (nav logo) is subtle but a tiny 32×32 canvas can't show enough detail to read as "alive." First pass went with option B — a dedicated band between hero and features (`home-features-before` slot) at 56×26 / 720×220 px. Second pass moved it **directly above the "Install in 30 seconds" block** by collapsing both slots into `home-hero-after: () => [h(SphereMark), h(InstallSection)]`. Third pass (same session, after Bailey saw the first render): the 9:16 phone-shape frame put a tiny sphere inside a tall envelope — the algorithm's baseRadius = 0.60 × min(rows/2, cols×charAspect/2) means the sphere was only ~20% of canvas width by design, leaving 200+ px of dead space above and below the visible blob. Fix: keep the 58×34 mobile density but switch the canvas aspect to **1:1 square** with `clamp(280px, 48vw, 420px)` width. At square, the charAspect (34/58 ≈ 0.586) makes `maxRadiusFromRows == maxRadiusFromCols`, so the sphere fills both axes equally and the data ring extends to ~93% of the frame. Gap killed, sphere is now the focal object of the band.
+
+**Gaze without bounce.** First pass translated the whole canvas toward the cursor via `ctx.translate(offsetX, offsetY)` — effective as a "tracking" cue but Bailey correctly called it a *bounce*: the sphere body should stay anchored, only the eye should move. Cleaner fix required algorithmic access to the light direction, so added three new `SphereFrame` fields to `MorphingSphereCore.kt`: `lightAngleBiasX`, `lightAngleBiasY`, `lightAngleBlend` (all default 0f). The light-angle computation now blends between the natural `t * lightSpeedX + noise` rotation (`blend = 0`) and the caller's bias (`blend = 1`). Mirrored into `sphere.js` with `?? 0` coalescing. Defaults preserve byte-identical behavior for existing callers — the Android composable, the parity test (`MorphingSphereCoreParityTest`), and the JS parity harness (`parity-check.mjs`) all stay green because none of them set the new fields.
+
+**Gaze math.** The algorithm computes `lx = sin(lightAngle1) * 0.65` and `ly = cos(lightAngle2) * 0.65`. To make the bright spot face a direction (cursorDx, cursorDy) normalized to the unit circle, solve: `lightAngle1 = asin(cursorDx)`, `lightAngle2 = acos(cursorDy)`. `SphereMark.vue` computes these per frame from the cursor vector, blends with a slow fbm wander for idle gaze, and ramps `lightAngleBlend` from 0.35 (idle wander) up to 0.90 (cursor near). The 0.35 floor is deliberate — below it, the autonomous fbm barely registers as gaze because natural light rotation drowns it out; at 0.35 the bias owns enough of the angle that the eye reads as *looking around* rather than *being illuminated randomly*.
+
+**Fourth pass — jitter fix.** First draft fed raw pointer inputs straight into asin/acos every frame. Hovering felt jerky because (a) `pointermove` fires at event-driven cadence with big gaps between events, not once per animation frame, and (b) `asin'(x) = 1 / √(1 − x²)` blows up as `x → ±1`, so small input steps near the edges produced disproportionately large angle jumps. Fix: two EMAs on the raw inputs before they hit the trig — 180 ms time constant on `lookVx` / `lookVy`, 280 ms on `proximity` (proximity wants a bit more hang-time so rapid hover-in/hover-out doesn't thrash the state machine). The `alpha = 1 − exp(−dt/tau)` form is frame-rate-independent — same responsiveness on a 144 Hz monitor as 30 fps. Also capped the asin/acos inputs at ±0.9 to stay off the asymptotic slope at the boundaries; effective gaze range drops from `lx ∈ ±0.65` to `±0.585`, an imperceptible loss for a large smoothness win.
+
+**Fifth pass — scroll-watching + rectangular detection.** Bailey wanted (a) the detection field to cover the full page width at the container's height (rectangular band, not circle), and (b) the sphere to watch the reader scroll toward install when they haven't interacted yet — "looking straight down at install" when the install section is in view. Implementation:
+- Added a `userHasInteracted` flag, flipped on the first `pointermove`. Once true it stays true for the session.
+- **Scroll-watching mode** (not interacted yet): compute `scrollOffsetY = viewportH/2 − sphereCenterY` in viewport coordinates. When the reader scrolls down, the sphere rises in the viewport and `scrollOffsetY` grows positive — feeding `rawLookVy = scrollOffsetY / (viewportH * 0.6)` into the gaze math rotates the bright spot to the bottom of the sphere. Proximity locked to 0.75 so the smoothed gazeBlend settles at 0.35 + 0.55·0.75 ≈ 0.76 — enough to read as intentional gaze without slamming into full Listening-state intensity. Horizontal component held at 0 so the eye doesn't drift left/right while watching scroll.
+- **Cursor-tracking mode** (post-interaction): gaze direction is still the unit vector from sphere center to cursor. Proximity is now purely **vertical band-based** — 1.0 when `|mdy| ≤ containerHeight/2`, falling off linearly over 0.6 × containerHeight beyond each edge. No horizontal falloff at all — cursor anywhere from x = 0 to x = viewportWidth in the vertical band gets full proximity. That matches Bailey's "fill width" spec and feels natural because the eye already targets cursor direction regardless of distance; proximity just gates intensity / state / blend strength.
+- **Drift fallback** (interacted + pointer off the page): both mode blocks skip, raw inputs stay at 0, smoothed EMA relaxes toward 0, autonomous fbm drift provides the gaze. The sphere effectively "loses track" and wanders.
+
+The three modes compose cleanly because they all feed through the same smoothed-EMA → asin/acos → `lightAngleBias` pipeline. Transitions between modes just change the raw targets; EMA + tweens handle everything else.
+
+**Sixth pass — unified target + install-anchored scroll.** Ultrathink pass: the scroll reference point was wrong, and the cursor↔drift mode flip at the band boundary was causing visible eye freakout when hovering near the edge. Two changes:
+
+- **Unified target pipeline.** Dropped the `userHasInteracted` flag and the fbm-drift fallback mode. Scroll-tracking is now the always-on baseline; cursor-tracking overlays on top via `cursorWeight`. `rawLookVy = cursorVy × cursorWeight + scrollVy × (1 − cursorWeight)` — one coherent target, no two sources competing for the EMA to smooth. The boundary freakout was fundamentally a *discontinuous target function*: two signals with possibly opposite directions feeding a single smoother only looks smooth if they agree at the transition. They didn't. Now there's only one target curve, and the EMA just smooths motion along it.
+- **Install-anchored scroll reference.** Replaced `viewportH/2 − sphereCenterY` with an Install-element anchor via `document.querySelector('.install-section')`. `installGap = installRect.top − viewportH` is the runway until install enters view; scrollVy ramps linearly from 0 (install still more than 50 % viewport-height below the fold) to 1 (install just touching viewport bottom). By the time install *first* becomes visible, the eye is *already* looking straight down at it — the animation leads the scroll rather than chasing it. With the old viewport-center reference, scrollVy only saturated to ±1 when the sphere was nearly off-screen, which meant "fully looking down" happened after the sphere had already scrolled away. Fallback when the install element isn't on the page (other routes) uses viewport-center so the gaze still follows scroll.
+- **Widened the cursor falloff** from 0.6 × container height to 1.0 × height. Over 180 ms EMA with a narrow falloff, the crossfade from cursor to scroll target happens inside the EMA's bandwidth and reads as a jump; widening it to 1.0 × height spreads the mathematical transition over enough cursor travel that the EMA can smooth it out fully.
+
+**Seventh pass — eye legibility.** Gaze tracking worked but the bright spot wasn't standing out as the *eye*. Analyzed the math: `brightness = (1 - li) · distBrightness + li · directionalLight + heartbeatFx`. For Idle, `lightInfluence = 0.35`, so 65% of sphere brightness comes from *position* (pearl shading, bright at center, dim at edges) and only 35% from the *light direction*. Worse, at the sphere's geometric center the surface normal is (0, 0, 1) so `directionalLight ≈ lz`, and `lz = √(1 − lx² − ly²)` is always positive — the center stays bright regardless of where the eye is pointing, which visually flattens the eye-to-shadow contrast. Fix: new `shadowStrength` field on `SphereFrame` (mirror in sphere.js, default 0). Multiplies `distBrightness` by `(1 − shadowStrength · (1 − directionalLight))` — lit side (`directionalLight = 1`) scales by 1.0, shadow side (`directionalLight = 0`) scales by `1 − shadowStrength`. Picked the factor to act on `distBrightness` rather than `directionalLight` because boosting the light side's directional term (or gamma-sharpening it) would flatten the 3D pearl shading everywhere — the shadow-side multiplier dims only the unlit hemisphere, keeping the shading on the lit side intact while doubling eye-to-shadow contrast. Docs `SphereMark.vue` uses 0.6 (dark side at 40% of legacy distBrightness). Android composable doesn't set it — legacy pearl shading preserved byte-for-byte, parity test stays green.
+
+**Sphere reuse — no duplication.** The Vue component imports directly from `../../../../preview/web/sphere.js`. Vite resolves the relative path through the repo root; `sphere.js` is pure (no DOM, no side effects) so SSR doesn't choke. This keeps `MorphingSphereCore.kt` → `sphere.js` as the single algorithm seam — same math on Android, preview harness, and docs site. No mirror, no copy to sync.
+
+**"Looking around" + mouse reaction.** Two behaviors layered onto the existing `SphereFrame` inputs without touching the core algorithm:
+- **Autonomous drift.** Low-frequency fbm noise (`nowSec * 0.05 + 2.1`, same fbm the core uses for its light jitter) produces a (dx, dy) in ±1 range. Applied as a canvas `translate()` of up to 14 px. Gives a subtle gaze loop that never repeats visibly.
+- **Proximity.** Pointer tracked on `window`; distance from mouse to canvas center normalized against a 320 px "reach radius" → proximity ∈ [0, 1]. Blends cursor-pull with autonomous drift (cursor dominates near, drift dominates far), ramps `intensity` tween (0 → 0.7), and retargets state Idle → Listening above 0.35 proximity, back to Idle below 0.15 (hysteresis band prevents flicker). Listening's params have higher `lightInfluence` and tighter core — reads as "the agent is paying attention."
+
+**Perf / a11y.** `IntersectionObserver` pauses the fillText loop when the band is scrolled off-screen (still advances time so state tweens stay in sync on re-enter — cheaper than rebuilding state but skips the expensive draw). `prefers-reduced-motion` freezes `t` and zeroes the gaze offset so the band stays readable but static. `aria-hidden` on the canvas — the sphere is decorative, no screen reader value.
+
+**VitePress SSR — `<ClientOnly>` was the wrong tool.** First attempt wrapped the component in `<ClientOnly>` as "SSR defense." Turned out to be the bug: `<ClientOnly>` only mounts its children after its own `onMounted` fires, which is later than the parent component's `onMounted` — so `canvasEl.value` and `containerEl.value` were `null` when we tried to start the rAF loop. The first render call bailed early without scheduling the next frame, killing the loop permanently. Fix: drop the wrapper (a `<canvas>` tag is inert on SSR, no side effects) and make `render()` re-schedule itself whenever refs or canvas dimensions aren't ready yet. One transient null no longer turns into a dead loop.
+
 ## 2026-04-19 — MorphingSphere: pure-core extraction + browser preview + runtime parity proof
 
 **Context.** The sphere had grown into a 494-line Compose file with Android `Paint` + `Typeface` + `nativeCanvas.drawText` wired into the same function that did the math. That made it impossible to iterate on the algorithm without building to a device — and blocked any future port to a non-Android surface (user site, Hermes TUI, Compose Desktop). Branch `claude/ui-dev-preview-exploration-vKvzr` split the file into a pure algorithm + a Compose renderer and added a zero-dep browser harness; this session added the parity proof.

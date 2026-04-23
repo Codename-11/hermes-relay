@@ -413,7 +413,7 @@ class ConnectionManager(
         _connectionState.value = ConnectionState.Disconnected
         _isInsecureConnection.value = false
         // ADR 24: clear manual override on explicit disconnect — the
-        // Endpoints card's "Prefer this endpoint" contract is that it lasts
+        // Routes card's "Prefer this route" menu contract is that it lasts
         // until the user disconnects, then resets to resolver-picked.
         manualRoleOverride = null
         _activeEndpoint.value = null

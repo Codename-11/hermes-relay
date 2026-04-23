@@ -40,7 +40,9 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -64,6 +66,7 @@ import com.hermesandroid.relay.ui.components.BridgePermissionChecklist
 import com.hermesandroid.relay.ui.components.UnattendedAccessRow
 // === END v0.4.1 unattended-access ===
 import com.hermesandroid.relay.viewmodel.BridgeViewModel
+import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.launch
 
 /**
@@ -92,6 +95,13 @@ import kotlinx.coroutines.launch
 @Composable
 fun BridgeScreen(
     viewModel: BridgeViewModel = viewModel(),
+    // Relay dependency — Bridge commands arrive over the WSS relay, so
+    // surfacing the relay-connected state on this screen lets the user
+    // see "why is my bridge not responding" before the first missed
+    // command, not after. Optional (default null) so legacy call sites
+    // / preview fixtures that don't have a ConnectionViewModel still
+    // compile; the nag banner simply hides when it's absent.
+    connectionViewModel: ConnectionViewModel? = null,
     // === PHASE3-safety-rails: safety summary card ===
     onNavigateToBridgeSafety: () -> Unit = {},
     // === END PHASE3-safety-rails ===
@@ -100,6 +110,13 @@ fun BridgeScreen(
     val permissionStatus by viewModel.permissionStatus.collectAsState()
     val bridgeStatus by viewModel.bridgeStatus.collectAsState()
     val activityLog by viewModel.activityLog.collectAsState()
+    // Relay-ready signal for the dependency banner. Falls back to `true`
+    // (hides the banner) when connectionViewModel is null — lets the
+    // @Preview fixture + any future caller-without-VM path render
+    // cleanly without a stale warning.
+    val relayReady by (connectionViewModel?.relayReady
+        ?: remember { kotlinx.coroutines.flow.MutableStateFlow(true) })
+        .collectAsState()
     // === v0.4.1 unattended-access ===
     val unattendedEnabled by viewModel.unattendedEnabled.collectAsState()
     val unattendedWarningSeen by viewModel.unattendedWarningSeen.collectAsState()
@@ -156,6 +173,12 @@ fun BridgeScreen(
     val autoDisableAtMs by (safetyManager?.autoDisableAtMs
         ?: remember { kotlinx.coroutines.flow.MutableStateFlow<Long?>(null) })
         .collectAsState()
+    // Trusted-verb set — drives the "Trusted actions" row below the safety
+    // summary. Empty-set fallback when safetyManager is null so previews
+    // / test harnesses render cleanly.
+    val trustedVerbs by (safetyManager?.trustedDestructiveVerbs
+        ?: remember { kotlinx.coroutines.flow.MutableStateFlow<Set<String>>(emptySet()) })
+        .collectAsState()
     // === END PHASE3-safety-rails ===
 
     // Re-run permission + system-status probes whenever the screen resumes.
@@ -188,6 +211,56 @@ fun BridgeScreen(
                 .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            // Relay-not-connected banner. Bridge commands arrive over the
+            // relay's WSS — when relay is Unpaired / Disconnected / URL
+            // blank, the AccessibilityService + foreground service will
+            // come up on master-toggle but will never receive commands
+            // from the agent. Surface that dependency at the top of the
+            // page so users don't assume "Bridge is on = bridge is
+            // working". Matches the soft-gate pattern used by
+            // TerminalScreen's "relay disconnected" subtitle.
+            //
+            // Banner renders whenever connectionViewModel is provided AND
+            // relay isn't ready. We intentionally do NOT block the master
+            // toggle here — letting users pre-configure permissions /
+            // safety rails before a relay pairs is valuable, and the
+            // BridgeViewModel's own state won't fire commands until the
+            // relay connects anyway.
+            if (connectionViewModel != null && !relayReady) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Warning,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        Column {
+                            Text(
+                                text = "Relay not connected",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                            Text(
+                                text = "Bridge commands travel over the relay. " +
+                                    "Pair a relay in Settings → Connection for " +
+                                    "the bridge to actually do anything.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                        }
+                    }
+                }
+            }
+
             // === PHASE3-safety-rails-followup: overlay-permission nag banner ===
             // Bridge is enabled but the user hasn't granted Display Over Other
             // Apps. Without that permission, the destructive-verb confirmation
@@ -335,6 +408,18 @@ fun BridgeScreen(
                     autoDisableAtMs = autoDisableAtMs,
                     onManage = onNavigateToBridgeSafety,
                 )
+
+                // 5b. Trusted actions — "Don't ask again" escape hatch.
+                //     Sits next to the safety summary so users who change
+                //     their minds can find it without digging into
+                //     developer options. Only shown when the safety
+                //     manager is wired (same gate as the summary).
+                if (safetyManager != null) {
+                    TrustedActionsRow(
+                        trustedCount = trustedVerbs.size,
+                        onReset = { safetyManager.clearTrustedDestructiveVerbs() },
+                    )
+                }
             }
 
             // 6. Activity log — goes last because it's a history view,
@@ -426,6 +511,104 @@ private fun OverlayPermissionNagCard(onTap: () -> Unit) {
                 )
             }
         }
+    }
+}
+
+/**
+ * "Trusted actions" row. Shows how many destructive verbs the user has
+ * marked "don't ask again" for, plus a Reset button (gated on a confirm
+ * dialog) that clears the set so every destructive action prompts again.
+ *
+ * Copy choices:
+ *  - Empty state says "Every action still prompts" — deliberately
+ *    reassuring instead of promotional. We don't want to nudge users
+ *    into bypassing their own safety rails by advertising the feature
+ *    here; it's surfaced at the point of use inside the confirmation
+ *    dialog itself.
+ *  - Non-empty count is stated factually ("{N} actions bypass
+ *    confirmation") so the state is visible at a glance without opening
+ *    a sub-screen.
+ *
+ * Reset flow is double-gated (button + AlertDialog) because a single tap
+ * shouldn't un-do weeks of "don't ask again" decisions by accident.
+ * Reset is disabled when count == 0 to avoid dead-tap confusion in the
+ * safe default.
+ */
+@Composable
+private fun TrustedActionsRow(
+    trustedCount: Int,
+    onReset: () -> Unit,
+) {
+    var showConfirm by remember { mutableStateOf(false) }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Trusted actions",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = if (trustedCount == 0) {
+                        "Every action still prompts"
+                    } else {
+                        "$trustedCount action${if (trustedCount == 1) "" else "s"} " +
+                            "bypass confirmation"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            androidx.compose.material3.TextButton(
+                onClick = { showConfirm = true },
+                enabled = trustedCount > 0,
+            ) {
+                Text("Reset")
+            }
+        }
+    }
+    if (showConfirm) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showConfirm = false },
+            title = { Text("Reset trusted actions?") },
+            text = {
+                Text(
+                    "After reset, every destructive action will prompt " +
+                        "for confirmation again. You can re-enable " +
+                        "\"Don't ask again\" from any future confirmation dialog."
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        onReset()
+                        showConfirm = false
+                    },
+                ) {
+                    Text("Reset")
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = { showConfirm = false },
+                ) {
+                    Text("Cancel")
+                }
+            },
+        )
     }
 }
 

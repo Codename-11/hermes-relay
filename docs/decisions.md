@@ -1171,3 +1171,49 @@ after PR #8556.
 - `install.sh` — optional step [7/7]
 - `plugin/pair.py` — `--mode auto` integration
 - `docs/remote-access.md` (new) — operator-facing setup guide
+
+---
+
+## ADR 26 — Rich cards via inline `CARD:{json}` line markers
+
+**Status:** Accepted (v0.7.x) — phone-side Phase A. Upstream adapter parity is a separate follow-up (Phase B).
+
+**Context.** The chat feed needed a way to surface structured content — skill results, approval prompts, link previews, calendar entries, weather — as discrete Material 3 cards instead of drowning them in markdown. Upstream `hermes-agent` has zero rich-content abstraction in its platform adapters (`gateway/platforms/base.py` exposes `send()` + `send_image()` + `edit_message()` with no blocks or embeds). Discord uses no `discord.Embed()` at all, Slack uses Block Kit only for the `exec-approval` dialog, and the base class only hints at rich surfaces via the `REQUIRES_EDIT_FINALIZE` attribute for DingTalk AI Cards.
+
+We already had a working precedent: the `MEDIA:` marker in assistant text gives the LLM a lightweight way to attach files that works identically across every streaming endpoint we support (`/v1/runs` + `/api/sessions/{id}/chat/stream` + `/v1/chat/completions`). Cards follow the same recipe.
+
+**Decision.**
+
+1. **Wire format — `CARD:{json}` on its own line.** Parser in `network/handlers/ChatHandler.kt` mirrors the media-marker path: dedicated line buffer, dedupe set, single-line regex, finalize pass on turn/stream complete, reload pass in `loadMessageHistory`. Multi-line JSON is disallowed so the line-buffer strategy stays trivial; escape newlines in string fields as `\n`.
+
+2. **Data model (`data/HermesCard.kt`).** `@Serializable` with `ignoreUnknownKeys = true` so newer agents emitting fields the phone build doesn't know about never crash the parser. Unknown `type` values render via a generic fallback (title + body + fields + actions), so the surface degrades gracefully when we add new built-ins server-side.
+
+3. **Built-in types (Phase A).** `skill_result`, `approval_request`, `link_preview`, `calendar_event`, `weather`. `approval_request` intentionally mirrors the Slack `exec-approval` 4-button pattern (Allow / Allow Session / Always Allow / Deny → map to actions with `style: "primary"` / `"secondary"` / `"danger"`) so future upstream parity (Phase B) is just adapter-side translation, not a data-model rethink.
+
+4. **Accent vocabulary.** `info` / `success` / `warning` / `danger` — semantic, not raw hex, so the renderer pulls from `colorScheme` and dark/light themes stay coherent.
+
+5. **Action dispatch.** `mode` is one of `send_text` (default), `slash_command`, `open_url`. All three route through `ChatViewModel.dispatchCardAction`, which records a `HermesCardDispatch` stamp on the owning message before forwarding — so the card collapses into a "Chose: X" confirmation even if the side effect (browser launch, server round-trip) throws. `open_url` resolves at the UI layer (needs `Context`); the other two reuse `sendMessage` because slash commands are plain text to the server.
+
+**Why markers and not structured SSE events.** A `card.available` event alongside `tool.completed` would be cleaner on the wire but would require a server patch upfront and would NOT work on `/v1/chat/completions` — which is the one endpoint every upstream deployment supports. The marker approach ships today across every endpoint with zero server dependency. If/when we decide structured events are worth the bootstrap cost, the parser can fan out; the `HermesCard` data model stays.
+
+**Why `CARD:` not `<hermes-card>...</hermes-card>`.** Matches the existing `MEDIA:` shape exactly — LLMs have an easier time producing consistent markers when every rich-content construct uses the same grammar. A future delimiter swap (e.g. fenced code blocks) is easy if the flat marker turns out to be fragile in practice.
+
+**Tradeoffs accepted.**
+- Marker leakage: if the LLM gets confused mid-turn the raw `CARD:{...}` line can appear in a bubble. We mitigate by leaving unparseable lines in the content (visible artifact beats silent drop) and by including the marker contract in the same section of `prompt_builder.py` as `MEDIA:`.
+
+**Server-side session sync (shipped alongside Phase A).**
+
+Each [com.hermesandroid.relay.data.HermesCardDispatch] carries a `syncedToServer` flag. On the next chat send, `CardDispatchSyncBuilder.buildSyntheticMessages` materializes every unsynced dispatch into an OpenAI-format `assistant` (with `tool_calls`) + `tool` (with `tool_call_id`) pair under a synthetic tool name `hermes_card_action` — a namespaced name the upstream dispatcher will never try to execute, it's a historical audit record only. The arguments object carries `card_key` / `action_value` / `card_type` / `card_title` / `action_label` / `action_mode` / `action_style` so the LLM has enough context to describe the interaction even if the card itself gets trimmed from rolling window memory. Pairs are spliced into the same request-body slot as voice-intent synthetic messages (`voiceIntentMessages` param — name is historical, the param accepts any synthetic-message JsonArray); once the API client accepts the request, `ChatHandler.markCardDispatchesSynced` flips every dispatch's flag so subsequent turns don't re-emit. Commit-timing matches the voice-intent path exactly (post-handoff) so a thrown request-building exception leaves dispatches unsynced for the next try.
+
+**Phase B (deferred — not v0.7.x).**
+
+Contribute a `gateway/rich_cards.py` helper upstream + Discord/Slack adapter translations. Discord gains its first real embed usage; Slack reuses the existing Block Kit path. Plain-text platforms (Signal, SMS) fall back to a markdown render of the same card. Same playbook as the `hermes_relay_bootstrap/` → upstream PR #8556 pipeline. Held until real phone-side card usage surfaces concrete fidelity issues worth translating for.
+
+**Key Files:**
+- `app/src/main/kotlin/com/hermesandroid/relay/data/HermesCard.kt` (new)
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/components/HermesCardBubble.kt` (new)
+- `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/CardDispatchSyncBuilder.kt` (new)
+- `app/src/test/kotlin/com/hermesandroid/relay/viewmodel/CardDispatchSyncBuilderTest.kt` (new)
+- `app/src/main/kotlin/com/hermesandroid/relay/network/handlers/ChatHandler.kt` (+`scanForCardMarkers` / `tryDispatchCardMarker` / `finalizeCardMarkers` / `extractCardsFromContent` / `recordCardDispatch` / `markCardDispatchesSynced`)
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/components/MessageBubble.kt` (+`onCardAction` plumb-through)
+- `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/ChatViewModel.kt` (+`dispatchCardAction`, sync splice in `startStream`)

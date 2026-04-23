@@ -34,7 +34,7 @@ The landing tab. Shows:
 
 - **Relay version + uptime + health** — served by the relay's `/relay/info` endpoint. Green dot = reachable, red = `relay unreachable at 127.0.0.1:8767` (the gateway can't see your relay process; check `systemctl --user status hermes-relay`).
 - **Paired devices list** — one row per active session. Columns: device name (from the phone's `PairedDeviceInfo`), token prefix (first 8 chars — full tokens are never sent), created-at, last-seen, expires-at, per-channel grants (bridge / terminal / chat), transport hint (`wss` / `ws`).
-- **Revoke button** per row — live. Click to pop a native browser confirm; on OK the button calls `DELETE /api/plugins/hermes-relay/sessions/{prefix}` which the plugin proxy forwards to the relay, and the list auto-reloads on success. Same effect as revoking from the Android app's Settings → Paired Devices or running `hermes-pair --revoke <prefix>` on the server.
+- **Revoke button** per row — live. Click to pop a native browser confirm; on OK the button calls `DELETE /api/plugins/hermes-relay/sessions/{prefix}` which the plugin proxy forwards to the relay, and the list auto-reloads on success. Same effect as revoking from the Android app's Settings → Relay sessions or running `hermes-pair --revoke <prefix>` on the server.
 - **Pair new device** — button in the card header opens the [PairDialog](#pairing-a-new-device) described below.
 
 <!-- TODO: replace with real screenshot — dashboard Relay Management tab with a paired device row -->

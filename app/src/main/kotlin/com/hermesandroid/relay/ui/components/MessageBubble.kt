@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hermesandroid.relay.data.ChatMessage
+import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.ui.theme.leftEdgeGlow
 import java.text.SimpleDateFormat
@@ -64,7 +65,16 @@ fun MessageBubble(
      * Invoked when the user taps a LOADING+"Tap to download" placeholder
      * (the cellular deferral case).
      */
-    onAttachmentManualFetch: (messageId: String, attachmentIndex: Int) -> Unit = { _, _ -> }
+    onAttachmentManualFetch: (messageId: String, attachmentIndex: Int) -> Unit = { _, _ -> },
+    /**
+     * Invoked when the user taps an action button on an inline
+     * [com.hermesandroid.relay.data.HermesCard]. Routed through
+     * [com.hermesandroid.relay.viewmodel.ChatViewModel.dispatchCardAction]
+     * by the owning screen — that path records the dispatch stamp (so the
+     * card collapses) and forwards the action value per its mode.
+     * Defaults to no-op so legacy callers / tests don't have to wire it.
+     */
+    onCardAction: (messageId: String, cardKey: String, action: HermesCardAction) -> Unit = { _, _, _ -> }
 ) {
     val isUser = message.role == MessageRole.USER
     val isSystem = message.role == MessageRole.SYSTEM
@@ -202,6 +212,29 @@ fun MessageBubble(
                                 textColor = textColor
                             )
                         }
+                    }
+                }
+
+                // Rich cards — rendered between the markdown body and
+                // attachments so the reading order stays: narration → card
+                // → attached file. Each card gets a stable key built from
+                // its optional id or falling back to its positional index,
+                // so a reload-from-history doesn't lose "I already chose X"
+                // state tracked in [ChatMessage.cardDispatches].
+                if (!isUser && !isSystem && message.cards.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    message.cards.forEachIndexed { index, card ->
+                        val cardKey = card.id ?: "idx:$index"
+                        HermesCardBubble(
+                            card = card,
+                            cardKey = cardKey,
+                            dispatches = message.cardDispatches,
+                            onActionTap = { key, action ->
+                                onCardAction(message.id, key, action)
+                            },
+                            maxWidth = maxBubbleWidth - 24.dp,
+                            modifier = Modifier.padding(vertical = 2.dp),
+                        )
                     }
                 }
 

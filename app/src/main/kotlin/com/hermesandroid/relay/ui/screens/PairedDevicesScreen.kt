@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -119,7 +121,7 @@ fun PairedDevicesScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Paired Devices") },
+                title = { Text("Relay sessions") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -366,7 +368,7 @@ private fun ErrorState(message: String, onRetry: () -> Unit) {
         )
         Spacer(Modifier.height(16.dp))
         Text(
-            text = "Couldn't load paired devices",
+            text = "Couldn't load relay sessions",
             style = MaterialTheme.typography.titleMedium
         )
         Spacer(Modifier.height(4.dp))
@@ -399,7 +401,7 @@ private fun EmptyState(onRequestRepair: () -> Unit) {
         )
         Spacer(Modifier.height(16.dp))
         Text(
-            text = "No paired devices (yet)",
+            text = "No relay sessions (yet)",
             style = MaterialTheme.typography.titleMedium
         )
         Spacer(Modifier.height(4.dp))
@@ -425,10 +427,30 @@ private fun DeviceList(
     myEndpoints: List<EndpointCandidate>,
     activeEndpoint: EndpointCandidate?,
 ) {
+    // Channel-grants explainer sheet — shared across all DeviceCard rows
+    // since the explanation is identical per row. Hoisted here instead of
+    // per-card so repeated taps on different rows reuse one dialog.
+    var showChannelInfoSheet by remember { mutableStateOf(false) }
+
     LazyColumn(
         contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        // Header paragraph — orients the user before the device list so
+        // the revoke / channel-grant vocabulary isn't load-bearing without
+        // context. `bodyMedium` + `onSurfaceVariant` keeps it subordinate
+        // to the device cards below.
+        item {
+            Text(
+                text = "Each row is a phone that has paired with this server.\n" +
+                    "Channel grants are per-feature authorizations (chat, bridge, voice) " +
+                    "that can expire independently.\n" +
+                    "Revoke a session to cut off that phone's access without affecting others.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 0.dp, vertical = 0.dp),
+            )
+        }
         items(devices, key = { it.tokenPrefix }) { device ->
             val isCurrent = device.isCurrent ||
                 (currentToken?.startsWith(device.tokenPrefix) == true)
@@ -440,6 +462,7 @@ private fun DeviceList(
                 // === PER-CHANNEL-REVOKE: forward to card ===
                 onRevokeChannel = { channel -> onRevokeChannel(device, channel) },
                 // === END PER-CHANNEL-REVOKE ===
+                onOpenChannelInfo = { showChannelInfoSheet = true },
                 // ADR 24 — endpoints only render under the current-device
                 // row because the store is phone-local. Other devices get
                 // the unchanged single-row treatment.
@@ -447,6 +470,30 @@ private fun DeviceList(
                 activeEndpoint = activeEndpoint.takeIf { isCurrent },
             )
         }
+    }
+
+    if (showChannelInfoSheet) {
+        AlertDialog(
+            onDismissRequest = { showChannelInfoSheet = false },
+            title = { Text("About channel grants") },
+            text = {
+                Text(
+                    text = "Channel grants are per-feature permissions.\n\n" +
+                        "• Chat controls sent/received messages.\n" +
+                        "• Bridge controls accessibility actions.\n" +
+                        "• Voice controls microphone + TTS.\n\n" +
+                        "Each grant has its own expiry, so a phone can keep chat " +
+                        "access long after bridge access has lapsed — or you can " +
+                        "revoke one channel without ending the whole session.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showChannelInfoSheet = false }) {
+                    Text("Got it")
+                }
+            },
+        )
     }
 }
 
@@ -460,6 +507,7 @@ private fun DeviceCard(
     // === PER-CHANNEL-REVOKE: per-chip revoke callback ===
     onRevokeChannel: (String) -> Unit,
     // === END PER-CHANNEL-REVOKE ===
+    onOpenChannelInfo: () -> Unit,
     endpoints: List<EndpointCandidate> = emptyList(),
     activeEndpoint: EndpointCandidate? = null,
 ) {
@@ -508,12 +556,16 @@ private fun DeviceCard(
                 else -> null
             }
             if (transportSecure != null) {
+                // Prefer the live active-endpoint role (ADR 24) when this is
+                // the current device; otherwise let the neutral fallback
+                // ("Plain (no TLS)") render. The old hardcoded "lan_only"
+                // lied for Tailscale/public rows.
+                val rowRole = if (isCurrent) activeEndpoint?.role else null
                 TransportSecurityBadge(
                     isSecure = transportSecure,
-                    // We don't have per-row reason on server-returned data —
-                    // fall back to the generic "LAN/dev" label when insecure.
-                    reason = if (transportSecure) null else "lan_only",
-                    size = TransportSecuritySize.Row
+                    reason = null,
+                    size = TransportSecuritySize.Row,
+                    activeRole = rowRole,
                 )
             }
 
@@ -532,11 +584,27 @@ private fun DeviceCard(
 
             // Per-channel grant chips
             if (device.grants.isNotEmpty()) {
-                Text(
-                    text = "Channel grants",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(
+                        text = "Channel grants",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    IconButton(
+                        onClick = onOpenChannelInfo,
+                        modifier = Modifier.size(20.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Info,
+                            contentDescription = "About channel grants",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                }
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -747,7 +815,7 @@ private fun EndpointsSubList(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
-            text = "Endpoints",
+            text = "Routes",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

@@ -69,6 +69,8 @@ When the agent uses tools (terminal commands, web search, file operations), tool
 
 In Detailed mode, tool cards auto-expand while the tool is running and auto-collapse when complete. Tap to expand/collapse manually.
 
+Alongside tool-progress cards, assistant messages can also render **rich cards** — structured Material cards for approval prompts, link previews, calendar entries, weather, and other skill output. Tap a card action (Allow / Deny / Open, etc.) to respond; the button row collapses into a confirmation once chosen, and your interaction is synced into the agent's session memory so follow-up turns can reference it. See [Markdown Rendering → Rich Cards](/features/markdown#rich-cards) for the full visual vocabulary.
+
 ## Agent Sheet — Profile + Personality
 
 Tap the agent name in the middle of the Chat top bar to open the **agent sheet** — a scrollable bottom sheet that holds Profile selection, Personality selection, and session info + analytics for the current conversation (message count, tokens in/out, avg TTFT).

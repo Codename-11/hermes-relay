@@ -184,11 +184,22 @@ class BridgeStatusOverlay(context: Context) : ConfirmationOverlayHost {
                         method = request.method,
                         verb = request.verb,
                         fullText = request.text,
-                        onAllow = {
+                        onAllow = { trustVerb ->
+                            // Persist the "don't ask again" choice BEFORE
+                            // dismissing so a slow write can't race a
+                            // follow-up command that arrives while we're
+                            // still tearing down the overlay. trustVerb is
+                            // already gated by the dialog on verb.isNotBlank,
+                            // so passing it through straight is safe.
+                            if (trustVerb && request.verb.isNotBlank()) {
+                                BridgeSafetyManager.peek()
+                                    ?.trustDestructiveVerb(request.verb)
+                            }
                             onResult(true)
                             dismissConfirmation(request.id)
                         },
                         onDeny = {
+                            // Deny never writes trust — denying isn't consent.
                             onResult(false)
                             dismissConfirmation(request.id)
                         },

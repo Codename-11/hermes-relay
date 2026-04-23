@@ -563,6 +563,44 @@ class ChatViewModel : ViewModel() {
         )
     }
 
+    /**
+     * Handle a tap on a rich card action button. Records the dispatch so
+     * the card collapses into its "chose: X" state, then routes the
+     * action value per [com.hermesandroid.relay.data.HermesCardAction.mode]:
+     *
+     *  - [com.hermesandroid.relay.data.HermesCardAction.Modes.SEND_TEXT]
+     *    (default): sends [action.value] as a new user message. For an
+     *    `approval_request` card with `value = "approve"`, the agent sees
+     *    the literal "approve" in its next turn and reacts accordingly.
+     *  - [com.hermesandroid.relay.data.HermesCardAction.Modes.SLASH_COMMAND]:
+     *    still routes through `sendMessage` — slash commands are plain
+     *    text to the server (`/approve` is just text starting with a `/`),
+     *    so there's no separate code path to carve out.
+     *  - [com.hermesandroid.relay.data.HermesCardAction.Modes.OPEN_URL]:
+     *    handled at the UI layer via
+     *    [com.hermesandroid.relay.ui.components.handleCardActionExternally]
+     *    because launching an Intent needs a Context. The UI layer
+     *    records the dispatch via this method BEFORE launching the URL,
+     *    so the card collapses even if the browser launch fails.
+     */
+    fun dispatchCardAction(
+        messageId: String,
+        cardKey: String,
+        action: com.hermesandroid.relay.data.HermesCardAction,
+    ) {
+        val handler = chatHandler ?: return
+        handler.recordCardDispatch(messageId, cardKey, action.value)
+        when (action.mode) {
+            com.hermesandroid.relay.data.HermesCardAction.Modes.OPEN_URL -> {
+                // UI layer launched the intent — nothing further to send
+                // to the server. If we later want the LLM to SEE that the
+                // user followed the link, the caller can pass a tiny
+                // synthetic text on its own.
+            }
+            else -> sendMessage(action.value)
+        }
+    }
+
     fun clearQueue() {
         _queuedMessages.value = emptyList()
     }
@@ -799,18 +837,42 @@ class ChatViewModel : ViewModel() {
             _queuedMessages.value = emptyList()
         }
 
-        // === v0.4.1 voice-intent → server session sync ===
+        // === v0.4.1 voice-intent + v0.7.x card-dispatch session sync ===
         // Synthesize OpenAI-format `assistant` (with tool_calls) + `tool`
-        // pairs from any unsynced phone-local voice intents in chat history.
-        // The server-side session absorbs them so the LLM sees prior voice
-        // actions in its memory the next time the user follows up via text.
-        // [hasUnsynced] short-circuits the empty-array allocation on the
-        // common-case turn where no voice intents fired.
+        // pairs from any unsynced phone-local voice intents AND rich-card
+        // action dispatches in chat history. Server-side session absorbs
+        // both streams so the LLM sees prior voice actions and card
+        // interactions in its memory the next time the user follows up
+        // via text. [hasUnsynced] on each builder short-circuits the
+        // empty-array allocation on the common-case turn where no
+        // synthetic traces fired.
+        //
+        // Both builders produce the same OpenAI message shape, so we
+        // concatenate them into one JsonArray and splice through the
+        // API client's single `voiceIntentMessages` parameter (name is
+        // historical — param accepts any synthetic-message array now).
+        // Order within each stream is preserved chronologically; between
+        // streams, voice intents come first since that was the original
+        // consumer. The LLM doesn't depend on cross-stream ordering —
+        // cause-and-effect is preserved within each stream and the user's
+        // actual turn follows both.
         val historySnapshot = handler.messages.value
-        val voiceIntentMessages = if (VoiceIntentSyncBuilder.hasUnsynced(historySnapshot)) {
-            VoiceIntentSyncBuilder.buildSyntheticMessages(historySnapshot)
-        } else null
-        // === END v0.4.1 voice-intent sync ===
+        val hasVoiceIntents = VoiceIntentSyncBuilder.hasUnsynced(historySnapshot)
+        val hasCardDispatches = CardDispatchSyncBuilder.hasUnsynced(historySnapshot)
+        val voiceIntentMessages = when {
+            hasVoiceIntents && hasCardDispatches -> {
+                val voice = VoiceIntentSyncBuilder.buildSyntheticMessages(historySnapshot)
+                val cards = CardDispatchSyncBuilder.buildSyntheticMessages(historySnapshot)
+                kotlinx.serialization.json.buildJsonArray {
+                    voice.forEach { add(it) }
+                    cards.forEach { add(it) }
+                }
+            }
+            hasVoiceIntents -> VoiceIntentSyncBuilder.buildSyntheticMessages(historySnapshot)
+            hasCardDispatches -> CardDispatchSyncBuilder.buildSyntheticMessages(historySnapshot)
+            else -> null
+        }
+        // === END session sync ===
 
         // Resolve the active agent-profile pick to a `modelOverride` string
         // for this send. `null` (or blank) means "no override — let the
@@ -867,16 +929,19 @@ class ChatViewModel : ViewModel() {
             )
         }
 
-        // Flip syncedToServer=true on every voice-intent trace now that the
-        // API client owns the request. Idempotent — markVoiceIntentsSynced
-        // skips traces that were already true. Done after the API client
-        // owns the request so a thrown exception during request building
-        // would not falsely mark traces as synced (no API call would have
-        // been made). Both API-client paths above either succeed or throw
-        // synchronously; the SSE callbacks fire asynchronously and never
-        // block this point.
+        // Flip syncedToServer=true on every voice-intent trace AND every
+        // card dispatch now that the API client owns the request.
+        // Idempotent — the handler methods skip already-synced records.
+        // Done after the API client owns the request so a thrown
+        // exception during request building would not falsely mark
+        // traces as synced (no API call would have been made). Both
+        // API-client paths above either succeed or throw synchronously;
+        // the SSE callbacks fire asynchronously and never block this
+        // point. Guarded per-stream so we only do the work when the
+        // corresponding synthetic messages were actually sent.
         if (voiceIntentMessages != null) {
-            handler.markVoiceIntentsSynced()
+            if (hasVoiceIntents) handler.markVoiceIntentsSynced()
+            if (hasCardDispatches) handler.markCardDispatchesSynced()
         }
     }
 

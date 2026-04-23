@@ -102,14 +102,44 @@ Already have Hermes-Relay installed? The same recipe is auto-loaded as a Hermes 
 
 ## What It Does
 
-Talk to your Hermes agent from anywhere. Direct API streaming, session history, tool visualization — all native on Android.
+Talk to your Hermes agent from anywhere. Direct API streaming, session history, tool visualization — all native on Android, now also on the desktop command line.
 
-| Channel | What | Status |
-|---------|------|--------|
-| **Chat** | Stream conversations to Hermes via HTTP/SSE | Available |
-| **Voice** | Real-time voice conversation via relay TTS/STT | Available |
-| **Bridge** | Agent reads the screen and performs UI actions (tap, long-press, drag, type, clipboard, media, macros, events) | Available |
-| **Terminal** | Secure remote shell via tmux | Phase 2 |
+| Client | Channel | What | Status |
+|--------|---------|------|--------|
+| Android | **Chat** | Stream conversations to Hermes via HTTP/SSE | Available |
+| Android | **Voice** | Real-time voice conversation via relay TTS/STT | Available |
+| Android | **Bridge** | Agent reads the screen and performs UI actions (tap, long-press, drag, type, clipboard, media, macros, events) | Available |
+| Android | **Terminal** | Secure remote shell via tmux | Phase 2 |
+| **Desktop CLI** | **Shell / Chat / Tools** | Full Hermes TUI over PTY + structured-event chat + **local tool routing** (agent reads/writes/execs on YOUR machine) over the same relay. Windows/macOS/Linux binaries, curl-install. | **Experimental** (see [`desktop/`](desktop/)) |
+
+## Experimental: Desktop CLI
+
+Early-preview command-line client for remote Hermes sessions. Pipes the full Hermes TUI over a PTY, or streams structured chat events for scripting, AND — uniquely — lets the remote agent execute tools (`desktop_read_file`, `desktop_write_file`, `desktop_terminal`, `desktop_search_files`, `desktop_patch`) **on your local machine**, routed over the same WSS relay the Android client uses. One pair, three modes, no `ssh`.
+
+**Install** (Windows PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex
+```
+
+**Install** (macOS / Linux):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.sh | sh
+```
+
+```bash
+hermes-relay pair --remote ws://<host>:8767   # once
+hermes-relay                                   # interactive Hermes TUI
+hermes-relay "summarize the last commit"       # one-shot
+hermes-relay --json "..." | jq                 # structured events for scripting
+```
+
+**Binaries are unsigned** during experimental phase — SmartScreen/Gatekeeper warnings are expected; the install scripts show the one-line escape hatches. Daemon mode, multi-client routing, and signed releases land with v1.0.
+
+- **Docs**: [Desktop CLI guide](https://codename-11.github.io/hermes-relay/desktop/) · [`desktop/README.md`](desktop/README.md)
+- **Release track**: tagged `desktop-v*`, [separate from Android](https://github.com/Codename-11/hermes-relay/releases)
+- **AI-agent setup recipe**: `/hermes-relay-desktop-setup` (the agent can run `desktop_terminal` on your machine to diagnose install/pair issues live)
 
 ## What's new in v0.6.0
 
@@ -190,6 +220,7 @@ scripts/dev.bat relay      # Start relay server (dev, no TLS)
 ```
 hermes-relay/
 ├── app/                       # Android app (Kotlin + Jetpack Compose)
+├── desktop/                   # Node thin-client CLI (@hermes-relay/cli)
 ├── relay_server/              # WSS relay server (Python + aiohttp)
 ├── plugin/                    # Hermes agent plugin (18 android_* tools + pair module)
 ├── skills/                    # Hermes agent skills

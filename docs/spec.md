@@ -547,6 +547,58 @@ MEDIA:hermes-relay://<url-safe-16-byte-token>
 - **`MediaCacheWriter`** (Android) — FileProvider-backed LRU cache in `cacheDir/hermes-media/`
 - **`InboundAttachmentCard`** (Android) — single Compose component dispatched on `(state × renderMode)`, handles both inbound and outbound attachments
 
+### 6.2b Rich Cards (Agent → Phone structured UI, ADR 26)
+
+Agents and skills can surface structured content — approval prompts, link previews, calendar entries, weather, generic skill output — as inline Compose cards in the chat feed, using the same "inline line marker" recipe as `MEDIA:`. No server patch is required; the marker rides the existing streaming text so it works unchanged on `/v1/runs`, `/api/sessions/{id}/chat/stream`, and `/v1/chat/completions`. See [docs/decisions.md ADR 26](decisions.md) for the full design + Phase B roadmap.
+
+**Wire format:**
+```
+CARD:{"type":"approval_request","title":"Run shell command?","body":"`rm -rf /tmp/cache`","accent":"warning","actions":[{"label":"Allow","value":"/approve","style":"primary","mode":"slash_command"},{"label":"Deny","value":"/deny","style":"danger"}]}
+```
+
+Constraints:
+- The marker MUST live on its own line.
+- The JSON payload MUST be single-line — escape newlines in string fields as `\n`. Nested braces in `fields` / `actions` arrays are fine; the parser's `\{.*\}` body capture is greedy.
+- Invalid JSON is logged and the line is left in the rendered content as a visible hint, not silently dropped.
+
+**Envelope schema:**
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `type` | string | yes | Dispatcher key. Built-ins: `skill_result`, `approval_request`, `link_preview`, `calendar_event`, `weather`. Unknown values render via generic fallback. |
+| `title` | string | no | Header line; rendered in `titleSmall` / SemiBold. |
+| `subtitle` | string | no | Muted line under the title. |
+| `body` | string | no | Markdown — same renderer as message bubbles. |
+| `accent` | enum | no | `info` (default), `success`, `warning`, `danger`. Semantic → `colorScheme` token. |
+| `fields` | `[{label, value}]` | no | Rendered as label/value rows. `value` is markdown; values that look like paths / commands / URLs auto-mono-font via a heuristic. |
+| `actions` | `[{label, value, style?, mode?}]` | no | Tappable buttons. See below. |
+| `footer` | string | no | Muted `labelSmall` text at bottom. |
+| `id` | string | no | Stable id for dispatch tracking across session reload. Falls back to `idx:N` position in the message's `cards` list when absent. |
+
+**Actions:**
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `label` | string | Button text. |
+| `value` | string | Action payload — see `mode` for interpretation. |
+| `style` | enum | `primary` (filled), `secondary` (outlined, default), `danger` (outlined, error color). |
+| `mode` | enum | `send_text` (default — sends `value` as a new user message), `slash_command` (still routes through `sendMessage` — server interprets the leading `/`), `open_url` (launches `ACTION_VIEW` locally; `value` is the URL). |
+
+**Phone:** parse → render → dispatch → sync:
+1. `ChatHandler.scanForCardMarkers()` runs on every `onTextDelta`, unconditionally (not gated on `parseToolAnnotations`). Matches `^\s*CARD:(\{.*\})\s*$` per line, parses the JSON with `ignoreUnknownKeys = true`, and appends the decoded `HermesCard` to the message's `cards` list. A per-session `dispatchedCardMarkers` set dedupes real-time streaming scans against the post-stream `finalizeCardMarkers` reconciliation pass.
+2. `loadMessageHistory` re-runs a mirror parser (`extractCardsFromContent`) on server-stored content so cards survive the wholesale state replace that fires at every `session_end reload`. The matched marker line is stripped from the rendered content so the user sees the card, never the literal JSON.
+3. `HermesCardBubble` renders the card: accent stripe + type icon + title/subtitle + markdown body + fields table + `FlowRow` of action buttons + footer. Tapping an action fires `ChatViewModel.dispatchCardAction(messageId, cardKey, action)`, which stamps a `HermesCardDispatch` on the owning message **before** the side effect, so the card collapses into a "Chose: X" confirmation even if the side effect throws.
+4. Dispatch side effect: `send_text` and `slash_command` both route through `sendMessage(action.value)` (slash is plain text server-side). `open_url` launches an `ACTION_VIEW` intent from the UI layer via `handleCardActionExternally`.
+5. Server-side session sync runs on the next chat send: `CardDispatchSyncBuilder` materializes every unsynced `HermesCardDispatch` into an OpenAI-format `assistant`+`tool` pair under a namespaced synthetic tool name `hermes_card_action` (never dispatched — audit record only) and splices them into the request body. `ChatHandler.markCardDispatchesSynced` flips the `syncedToServer` flag post-handoff. Same idempotency pattern as `VoiceIntentSyncBuilder` (§6.2a).
+
+**Key classes:**
+- **`HermesCard`** / **`HermesCardField`** / **`HermesCardAction`** / **`HermesCardDispatch`** (`data/HermesCard.kt`) — `@Serializable`, `ignoreUnknownKeys = true` on the parser
+- **`ChatHandler.scanForCardMarkers` / `tryDispatchCardMarker` / `finalizeCardMarkers` / `extractCardsFromContent` / `recordCardDispatch` / `markCardDispatchesSynced`** — line-oriented streaming parser + history extractor + idempotency flag flipper
+- **`HermesCardBubble`** (`ui/components/HermesCardBubble.kt`) — Material 3 renderer; `handleCardActionExternally` top-level helper for URL launch
+- **`CardDispatchSyncBuilder`** (`viewmodel/CardDispatchSyncBuilder.kt`) — pure function, JVM-testable; emits `hermes_card_action` synthetic messages for LLM session memory
+
+**Known gap — multi-line JSON payloads.** Today the parser assumes single-line JSON so the line-buffer strategy stays simple. If a future built-in type needs very large payloads that stretch readability, a fenced `<hermes-card>...</hermes-card>` alternative syntax can be layered on without breaking the flat marker.
+
 ### 6.3 Terminal Channel
 
 ```python

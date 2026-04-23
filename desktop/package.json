@@ -1,0 +1,71 @@
+{
+  "name": "@hermes-relay/cli",
+  "version": "0.3.0-alpha.1",
+  "description": "Thin-client CLI for Hermes-Relay — talk to a remote Hermes agent over WSS with pairing auth, stream-renders tool calls and responses to plain stdout.",
+  "type": "module",
+  "bin": {
+    "hermes-relay": "./bin/hermes-relay.js"
+  },
+  "main": "./dist/cli.js",
+  "types": "./dist/cli.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/cli.d.ts",
+      "default": "./dist/cli.js"
+    }
+  },
+  "files": [
+    "bin",
+    "dist",
+    "scripts",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "build:watch": "tsc -p tsconfig.build.json --watch",
+    "build:bin": "npm run build:bin:win && npm run build:bin:linux && npm run build:bin:mac-x64 && npm run build:bin:mac-arm",
+    "build:bin:win": "bun build --compile --minify --sourcemap --bytecode --target=bun-windows-x64 src/cli.ts --outfile dist/bin/hermes-relay-win-x64",
+    "build:bin:linux": "bun build --compile --minify --sourcemap --bytecode --target=bun-linux-x64 src/cli.ts --outfile dist/bin/hermes-relay-linux-x64",
+    "build:bin:mac-x64": "bun build --compile --minify --sourcemap --bytecode --target=bun-darwin-x64 src/cli.ts --outfile dist/bin/hermes-relay-darwin-x64",
+    "build:bin:mac-arm": "bun build --compile --minify --sourcemap --bytecode --target=bun-darwin-arm64 src/cli.ts --outfile dist/bin/hermes-relay-darwin-arm64",
+    "build:sums": "cd dist/bin && sha256sum hermes-relay-* > SHA256SUMS.txt",
+    "prepublishOnly": "npm run build",
+    "dev": "tsx src/cli.ts",
+    "type-check": "tsc --noEmit -p tsconfig.json",
+    "clean": "rimraf dist"
+  },
+  "engines": {
+    "node": ">=21.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Codename-11/hermes-relay.git",
+    "directory": "desktop"
+  },
+  "homepage": "https://github.com/Codename-11/hermes-relay/tree/main/desktop#readme",
+  "bugs": {
+    "url": "https://github.com/Codename-11/hermes-relay/issues"
+  },
+  "keywords": [
+    "hermes",
+    "hermes-agent",
+    "hermes-relay",
+    "agent",
+    "cli",
+    "thin-client",
+    "tui",
+    "wss",
+    "remote"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "rimraf": "^5.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

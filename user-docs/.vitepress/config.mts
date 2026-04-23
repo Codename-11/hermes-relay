@@ -49,6 +49,7 @@ export default defineConfig({
     nav: [
       { text: 'Guide', link: '/guide/' },
       { text: 'Features', link: '/features/' },
+      { text: 'Desktop CLI', link: '/desktop/' },
       { text: 'Architecture', link: '/architecture/' },
       { text: 'Reference', link: '/reference/api' },
       { text: 'GitHub', link: 'https://github.com/Codename-11/hermes-relay' },
@@ -103,6 +104,22 @@ export default defineConfig({
           items: [
             { text: 'Hermes API', link: '/reference/api' },
             { text: 'Configuration', link: '/reference/configuration' },
+          ],
+        },
+      ],
+      '/desktop/': [
+        {
+          // Sidebar header carries the experimental marker so it's visible
+          // on every page in the section, not just the overview.
+          text: 'Desktop CLI · Experimental',
+          items: [
+            { text: 'Overview', link: '/desktop/' },
+            { text: 'Installation', link: '/desktop/installation' },
+            { text: 'Pairing', link: '/desktop/pairing' },
+            { text: 'Subcommands', link: '/desktop/subcommands' },
+            { text: 'Local tool routing', link: '/desktop/tools' },
+            { text: 'Troubleshooting', link: '/desktop/troubleshooting' },
+            { text: 'FAQ', link: '/desktop/faq' },
           ],
         },
       ],

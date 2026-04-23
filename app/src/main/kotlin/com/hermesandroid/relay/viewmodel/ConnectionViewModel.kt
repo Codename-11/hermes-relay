@@ -61,6 +61,8 @@ import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 class ConnectionViewModel(application: Application) : AndroidViewModel(application) {
@@ -376,10 +378,53 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val chatReady: StateFlow<Boolean> = combine(_apiClient, _apiServerReachable) { client, reachable ->
         client != null && reachable
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    // NOTE: [relayReady] — symmetric to [chatReady] for the voice + bridge
+    // surfaces — is declared below the [_relayUrl] MutableStateFlow,
+    // further down this file, because Kotlin class-body initializers run
+    // top-to-bottom and a forward reference to _relayUrl here would read
+    // a null backing field at construction time. Look for the `val
+    // relayReady:` declaration near [_relayUrl].
 
     // --- Relay URL ---
     private val _relayUrl = MutableStateFlow(DEFAULT_RELAY_URL)
     val relayUrl: StateFlow<String> = _relayUrl.asStateFlow()
+
+    /**
+     * Relay is ready when we have a configured URL, the WSS socket is
+     * Connected, AND the AuthManager is in a Paired state. All three
+     * matter:
+     *  - URL blank → nothing to connect to (post-teardown state after
+     *    removing the last connection).
+     *  - WSS not Connected → transport is down; any `/voice/...` or
+     *    bridge command send would throw immediately.
+     *  - authState not Paired → the server would reject the voice/bridge
+     *    call at its bearer-token check, so even a live socket won't help.
+     *
+     * Consumers:
+     *  - BridgeScreen — surfaces a "Relay not connected" nag banner so
+     *    the user doesn't flip the master toggle on expecting commands
+     *    to flow.
+     *  - ChatScreen — greys out the Mic button + tooltip on tap, since
+     *    voice mode's `/voice/transcribe` + `/voice/synthesize` both
+     *    live on the relay.
+     *
+     * Symmetric in shape to [chatReady] above so call sites read
+     * consistently; intentionally does NOT collapse with chatReady
+     * because the two features have orthogonal network dependencies —
+     * Chat runs over direct HTTP to the API server, Voice+Bridge ride
+     * the relay WSS. A phone that's reachable to the API but has no
+     * relay configured is valid state for Chat and invalid for the
+     * other two.
+     */
+    val relayReady: StateFlow<Boolean> = combine(
+        connectionManager.connectionState,
+        authState,
+        _relayUrl,
+    ) { connState, auth, url ->
+        url.isNotBlank() &&
+            connState == ConnectionState.Connected &&
+            auth is AuthState.Paired
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     // Backward compat: expose as serverUrl for any remaining references
     @Deprecated("Use relayUrl or apiServerUrl", replaceWith = ReplaceWith("relayUrl"))
@@ -916,7 +961,95 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * wizard must invoke [discardPlaceholderConnection] to remove
      * the empty record.
      */
-    suspend fun beginAddConnection(): String {
+    /**
+     * Serializes concurrent `Add connection` flows. Without this, a fast
+     * double-tap on the Connections FAB (two `connectionSwitchScope.launch`
+     * blocks in [ui.RelayApp]) would create two placeholders and switch
+     * to the second one, leaving the first as a blank orphan — which the
+     * `init`-time orphan sweep would only pick up on the NEXT app launch.
+     *
+     * The mutex also enables the in-body "reuse existing placeholder"
+     * short-circuit below — two racing callers share the same id instead
+     * of each creating their own.
+     */
+    private val addConnectionMutex = Mutex()
+
+    /**
+     * @param preAllocatedId when non-null, use this id for the placeholder
+     *   instead of generating a fresh UUID. Lets the caller navigate to
+     *   [ui.screens.PairScreen] synchronously with a known id and run the
+     *   DataStore-heavy placeholder creation + switch in the background —
+     *   the Pair wizard's reactive state picks up the active connection
+     *   by the time the user has framed a QR.
+     *
+     *   When a connection with this id already exists (re-entry from a
+     *   double-tap racing the first call), this call becomes a no-op
+     *   switch and returns the same id — safe to invoke twice for the
+     *   same pre-allocated id.
+     *
+     *   When null, falls back to the original placeholder-reuse scan
+     *   (for any legacy caller that still wants the old behavior).
+     */
+    suspend fun beginAddConnection(preAllocatedId: String? = null): String = addConnectionMutex.withLock {
+        // Fast path for the pre-allocated-id caller (RelayApp's
+        // onAddConnection). If a connection with this id already exists
+        // in the store, we're the second call of a double-tap — just
+        // ensure the switch landed and return. Otherwise create the
+        // placeholder under the caller-supplied id so navigation and
+        // persistence converge on the same handle.
+        if (preAllocatedId != null) {
+            val existing = connectionStore.connections.value.firstOrNull { it.id == preAllocatedId }
+            if (existing != null) {
+                android.util.Log.i(
+                    "ConnectionViewModel",
+                    "beginAddConnection: pre-allocated id=$preAllocatedId already exists, ensuring switch",
+                )
+                if (connectionStore.activeConnectionId.value != existing.id) {
+                    switchConnection(existing.id).join()
+                }
+                return@withLock existing.id
+            }
+
+            val placeholder = Connection(
+                id = preAllocatedId,
+                label = PLACEHOLDER_LABEL,
+                apiServerUrl = "",
+                relayUrl = "",
+                tokenStoreKey = Connection.buildTokenStoreKey(preAllocatedId),
+                pairedAt = null,
+                lastActiveSessionId = null,
+                transportHint = null,
+                expiresAt = null,
+            )
+            connectionStore.addConnection(placeholder)
+            switchConnection(preAllocatedId).join()
+            return@withLock preAllocatedId
+        }
+
+        // Legacy path: reuse an existing unpaired placeholder from a
+        // prior aborted attempt if one is lying around. Cheaper than
+        // creating a second placeholder + expecting the init-time
+        // orphan sweep to clean it up later, and correctly idempotent
+        // under rapid double-tap: both callers converge on the same
+        // id, the second `switchConnection` is a no-op (coordinator
+        // short-circuits when id == activeConnectionId), and we
+        // return the same string both times.
+        val existing = connectionStore.connections.value.firstOrNull { c ->
+            c.pairedAt == null &&
+                c.apiServerUrl.isBlank() &&
+                c.label == PLACEHOLDER_LABEL
+        }
+        if (existing != null) {
+            android.util.Log.i(
+                "ConnectionViewModel",
+                "beginAddConnection: reusing existing placeholder id=${existing.id}",
+            )
+            if (connectionStore.activeConnectionId.value != existing.id) {
+                switchConnection(existing.id).join()
+            }
+            return@withLock existing.id
+        }
+
         val id = java.util.UUID.randomUUID().toString()
         val placeholder = Connection(
             id = id,
@@ -935,7 +1068,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // could fire against the outgoing auth store if the user scans
         // faster than the switch coroutine completes.
         switchConnection(id).join()
-        return id
+        id
     }
 
     /**
@@ -1055,9 +1188,54 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 // the old manager's in-flight init/hydrate coroutine could
                 // fault reading a file that was just deleted.
                 switchConnection(other.id).join()
+            } else {
+                // No successor to switch into — the removed connection
+                // WAS the last one. Before the teardown was wired here,
+                // `removeConnection` in this branch only cleared the
+                // store entry, which left the API client, the WSS socket,
+                // and the reachable/health flags alive and pointed at
+                // the just-removed URL: status chips kept saying "Paired
+                // · Reachable" for a ghost connection.
+                //
+                // teardownActive() runs the transport half of
+                // switchConnection (stream cancel → voice stop → WSS
+                // disconnect → switch-event emit) against the active
+                // coordinator mutex, so a concurrent Add-connection flow
+                // from the UI serialises cleanly.
+                connectionSwitchCoordinator.teardownActive().join()
+
+                // Clear the in-memory AuthManager state for the
+                // about-to-be-removed connection. Without this the
+                // Session row keeps reading `AuthState.Paired(token)`
+                // (which the ConnectionManager.disconnect() call inside
+                // teardownActive doesn't touch — it only wipes the WSS
+                // socket) and the UI shows a green "Paired" dot for a
+                // ghost connection. `clearSession()` also nulls
+                // `currentPairedSession`, which the relay UI state
+                // resolver needs in order to flip its row off
+                // Connected.
+                authManager.clearSession()
+
+                // URL flows + persisted DataStore entries point at the
+                // removed URL. Blank them out so the 30 s periodic
+                // health probes (which only run when `_apiClient.value
+                // != null` and `_relayUrl.value.isNotBlank()`) stop
+                // firing, and cold relaunch doesn't re-seed connection
+                // 0 from stale legacy keys.
+                _apiServerUrl.value = ""
+                _relayUrl.value = ""
+                getApplication<Application>().relayDataStore.edit { prefs ->
+                    prefs[KEY_API_SERVER_URL] = ""
+                    prefs[KEY_RELAY_URL] = ""
+                }
+                // rebuildApiClient() with blank URL nulls _apiClient,
+                // flips _apiServerReachable / _apiServerHealth /
+                // _chatMode / _serverCapabilities to their disconnected
+                // poses (see the `else` branch of rebuildApiClient).
+                // This is what actually drives the status badges back
+                // to "Not configured".
+                rebuildApiClient()
             }
-            // If no other connection exists, ConnectionStore.removeConnection
-            // will clear the active pointer on its own.
         }
         connectionStore.removeConnection(connectionId)
         // Clear the persisted profile selection for the removed connection
@@ -1246,6 +1424,32 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     val current = connectionStore.connections.value
                         .firstOrNull { it.id == connId } ?: return@collect
                     if (current.pairedAt != null) return@collect
+                    // Stale-emission guard: during a connection switch,
+                    // `currentPairedSession` can briefly carry the OUTGOING
+                    // connection's session while `activeConnectionId` has
+                    // already flipped to the incoming id (flatMapLatest re-
+                    // subscribes asynchronously). Without this check we'd
+                    // `markPaired` the new placeholder connection using the
+                    // old connection's session data — stamping pairedAt on
+                    // a Connection that still has blank URLs, which then
+                    // locks out the real rename-on-pair path below because
+                    // current.pairedAt is no longer null.
+                    //
+                    // A real pair payload writes the API URL (via
+                    // `applyPairingPayload` → per-Connection store mirror)
+                    // BEFORE the WSS handshake that emits auth.ok, so by
+                    // the time a genuine session lands, apiServerUrl is
+                    // always populated. A blank URL here therefore implies
+                    // a premature/stale fire — safe to ignore.
+                    if (current.apiServerUrl.isBlank()) {
+                        android.util.Log.d(
+                            "ConnectionVM",
+                            "pair-success watcher: skipping stale emission " +
+                                "(connId=$connId has blank apiServerUrl — " +
+                                "likely cross-connection flow leak during switch)",
+                        )
+                        return@collect
+                    }
                     connectionStore.markPaired(
                         connectionId = connId,
                         pairedAtMillis = System.currentTimeMillis(),
@@ -1256,22 +1460,87 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                         expiresAtMillis = paired.expiresAt?.let { it * 1000L },
                     )
 
+                    // Duplicate-server merge. Pairing to a server the user
+                    // already has a connection to (e.g. `Add connection` →
+                    // scan the same QR twice across different sessions)
+                    // would otherwise produce two cards on the Connections
+                    // screen pointing at the same API URL. The new pair is
+                    // authoritative (fresh session token + TTL), so we
+                    // collapse by deleting the older duplicate.
+                    //
+                    // Deferred to AFTER markPaired rather than folded into
+                    // `applyPairingPayload`'s URL-mirror step on purpose:
+                    // if the WSS handshake had failed between the URL
+                    // write and auth.ok, an applyPairingPayload-side merge
+                    // would have already deleted the user's working
+                    // connection and replaced it with an unpaired ghost.
+                    // Running here guarantees the new session is good
+                    // before we touch the old record.
+                    //
+                    // Label carry-over: if the old duplicate had a
+                    // user-customized label (i.e. not the placeholder),
+                    // prefer it over the host-derived default the rename
+                    // path would otherwise pick. Preserves user intent
+                    // across a re-scan of the same server. Resolved into
+                    // `carriedLabel` so the rename block below can fall
+                    // through to a single `updateConnection` call.
+                    var carriedLabel: String? = null
+                    val duplicates = connectionStore.connections.value
+                        .filter { other ->
+                            other.id != connId &&
+                                other.apiServerUrl.isNotBlank() &&
+                                other.apiServerUrl == current.apiServerUrl
+                        }
+                    for (duplicate in duplicates) {
+                        // Take the first custom label we encounter. If
+                        // several duplicates all have custom labels (would
+                        // indicate the user has been renaming same-URL
+                        // entries for a while), we pick the first in
+                        // store order rather than trying to reconcile —
+                        // a one-line snackbar on the caller could surface
+                        // this if it turns out to be a real footgun later.
+                        if (carriedLabel == null && duplicate.label != PLACEHOLDER_LABEL) {
+                            carriedLabel = duplicate.label
+                        }
+                        android.util.Log.i(
+                            "ConnectionVM",
+                            "pair-success dedupe: merging duplicate " +
+                                "id=${duplicate.id} (same apiServerUrl as active " +
+                                "connId=$connId) — preserveLabel=$carriedLabel",
+                        )
+                        // Direct store call rather than the public
+                        // ConnectionViewModel.removeConnection — the latter
+                        // does a switch-first if the target is active,
+                        // which would thrash here since the duplicate is
+                        // by construction NOT the active connection. Also
+                        // clears the per-connection profile pick so the
+                        // removed connection's EncryptedPrefs + profile
+                        // pointer go together.
+                        connectionStore.removeConnection(duplicate.id)
+                        profileSelectionStore.clear(duplicate.id)
+                    }
+
                     // Auto-rename the placeholder label created by
                     // [beginAddConnection]. We only touch the label when
                     // it's still the exact placeholder string — if the
                     // user typed a custom name during pairing we leave
-                    // it alone. Derived label is the API host (matches
-                    // Connection.extractDefaultLabel used elsewhere for
-                    // default-label generation).
+                    // it alone. Label source preference:
+                    //   1. [carriedLabel] from a de-duped predecessor, so
+                    //      a re-pair to the same server keeps the user's
+                    //      prior custom name.
+                    //   2. Otherwise the host-derived default — same
+                    //      formula as [Connection.extractDefaultLabel]
+                    //      used for legacy-seeded connections.
                     if (current.label == PLACEHOLDER_LABEL &&
                         current.apiServerUrl.isNotBlank()
                     ) {
-                        val derivedLabel = Connection.extractDefaultLabel(current.apiServerUrl)
+                        val newLabel = carriedLabel
+                            ?: Connection.extractDefaultLabel(current.apiServerUrl)
                         val refreshed = connectionStore.connections.value
                             .firstOrNull { it.id == connId }
                         if (refreshed != null) {
                             connectionStore.updateConnection(
-                                refreshed.copy(label = derivedLabel),
+                                refreshed.copy(label = newLabel),
                             )
                         }
                     }
@@ -1320,6 +1589,58 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 android.util.Log.w(
                     "ConnectionViewModel",
                     "migrateLegacyConnectionIfNeeded failed: ${e.message}",
+                )
+            }
+        }
+
+        // Defensive: sweep orphaned placeholders left behind by a prior
+        // "Add connection" flow the user abandoned via system back / gesture
+        // back (the pre-fix code path only cleaned up on explicit Cancel).
+        // An orphan is an unpaired connection with no URL ever written AND
+        // the exact PLACEHOLDER_LABEL — that tuple cannot be produced by any
+        // real pairing, so it's safe to delete unconditionally.
+        //
+        // Runs once on VM init AFTER the legacy migration completes so a
+        // freshly-seeded connection (which also has pairedAt == null until
+        // its first auth.ok) isn't misidentified — legacy seed uses the
+        // host-derived default label, never PLACEHOLDER_LABEL.
+        //
+        // If the currently-active id points at a placeholder we're about to
+        // remove, switch to whichever real connection comes first in the
+        // list before deleting so we don't leave activeConnectionId pointing
+        // at a dead record.
+        viewModelScope.launch {
+            try {
+                // Let the legacy seed land first — it's a short
+                // writeMutex-guarded path, typically < 50ms.
+                val connections = connectionStore.connections.first()
+                val orphans = connections.filter {
+                    it.pairedAt == null &&
+                        it.apiServerUrl.isBlank() &&
+                        it.label == PLACEHOLDER_LABEL
+                }
+                if (orphans.isEmpty()) return@launch
+
+                val activeId = connectionStore.activeConnectionId.value
+                if (activeId != null && orphans.any { it.id == activeId }) {
+                    val successor = connections.firstOrNull {
+                        it.id != activeId && it !in orphans
+                    }
+                    if (successor != null) {
+                        switchConnection(successor.id).join()
+                    }
+                }
+                for (orphan in orphans) {
+                    android.util.Log.i(
+                        "ConnectionViewModel",
+                        "Removing orphan placeholder connection id=${orphan.id}",
+                    )
+                    connectionStore.removeConnection(orphan.id)
+                }
+            } catch (e: Exception) {
+                android.util.Log.w(
+                    "ConnectionViewModel",
+                    "Orphan placeholder sweep failed: ${e.message}",
                 )
             }
         }
@@ -1621,6 +1942,91 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 updateRelayUrl(relay.url)
                 if (relay.url.startsWith("ws://")) {
                     setInsecureMode(true)
+                }
+            }
+
+            // ADR 24 — auto-stamp / clear PairingPreferences.insecureReason
+            // based on the resolved endpoint's role so the Transport Security
+            // badge reads correctly even when the user paired from a plain
+            // LAN QR directly (and thus never had to toggle the insecure-ack
+            // dialog that would otherwise be the only writer of this key).
+            //
+            //  - Secure (wss/https) → clear any stale stored reason so a
+            //    post-Tailscale-upgrade connection doesn't keep showing
+            //    "Insecure (LAN)" from a prior plain-LAN pair.
+            //  - Plain + role=lan       → stamp "lan_only"
+            //  - Plain + role=tailscale → stamp "tailscale_vpn" (rare — usually
+            //    wss on Tailscale, but possible)
+            //  - Plain + role=public / other / absent → leave blank; the user
+            //    should consciously ack via the insecure dialog for those.
+            //
+            // Only overwrite when the stored reason is currently blank so we
+            // never clobber a user-selected choice.
+            run {
+                val ctx = getApplication<Application>()
+                val relayUrl = payload.relay?.url
+                val isSecure = relayUrl?.let {
+                    it.startsWith("wss://") || it.startsWith("https://")
+                } ?: false
+                if (isSecure) {
+                    // Clear any stale "Insecure (LAN)" stamp left over from
+                    // a prior plain pair on the same Connection.
+                    if (insecureReason.value.isNotBlank()) {
+                        PairingPreferences.setInsecureReason(ctx, "")
+                    }
+                } else if (relayUrl != null && insecureReason.value.isBlank()) {
+                    // Find the candidate whose relay.url matches what we're
+                    // about to connect to; fall back to the first candidate
+                    // (priority-0) if the payload has endpoints but none
+                    // match exactly.
+                    val matched = payload.endpoints?.firstOrNull {
+                        it.relay.url == relayUrl
+                    } ?: payload.endpoints?.firstOrNull()
+                    val autoReason = when (matched?.role?.lowercase()) {
+                        "lan" -> "lan_only"
+                        "tailscale" -> "tailscale_vpn"
+                        else -> null // public / unknown / absent → let user ack
+                    }
+                    if (autoReason != null) {
+                        PairingPreferences.setInsecureReason(ctx, autoReason)
+                    }
+                }
+            }
+
+            // Mirror the just-applied URLs into the active Connection's
+            // store entry. [updateApiServerUrl] / [updateRelayUrl] above
+            // only touch the APP-WIDE flows (_apiServerUrl, _relayUrl) +
+            // the legacy relayDataStore keys — they do NOT write
+            // Connection.apiServerUrl / Connection.relayUrl in the
+            // ConnectionStore. Without this mirror:
+            //   - connections list renders "New connection…" + blank
+            //     endpoints forever (the rename-on-pair guard at the
+            //     markPaired site checks current.apiServerUrl.isNotBlank
+            //     and fails silently since the per-Connection field is
+            //     still "");
+            //   - a subsequent switch-away + switch-back reads
+            //     Connection.apiServerUrl back into _apiServerUrl (step 8
+            //     of ConnectionSwitchCoordinator) and clobbers the live
+            //     URL with an empty string, breaking chat.
+            // Must happen BEFORE connectRelay below so the auth.ok that
+            // lands from that handshake sees populated URLs when the
+            // pair-success watcher reconciles.
+            val activeId = connectionStore.activeConnectionId.value
+            if (activeId != null) {
+                val current = connectionStore.connections.value
+                    .firstOrNull { it.id == activeId }
+                if (current != null) {
+                    val newRelayUrl = payload.relay?.url ?: current.relayUrl
+                    val needsUpdate = current.apiServerUrl != payload.serverUrl ||
+                        current.relayUrl != newRelayUrl
+                    if (needsUpdate) {
+                        connectionStore.updateConnection(
+                            current.copy(
+                                apiServerUrl = payload.serverUrl,
+                                relayUrl = newRelayUrl,
+                            )
+                        )
+                    }
                 }
             }
 

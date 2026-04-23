@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -74,8 +75,8 @@ fun EndpointsCard(
 ) {
     if (endpoints.isEmpty()) {
         Text(
-            text = "No endpoint candidates stored for this device yet. " +
-                "Scan a v3 pairing QR (Hermes 0.4.2+) to enable multi-endpoint " +
+            text = "No route candidates stored for this device yet. " +
+                "Scan a v3 pairing QR (Hermes 0.4.2+) to enable multi-route " +
                 "switching — LAN + Tailscale + public URLs.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -84,6 +85,11 @@ fun EndpointsCard(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = "Tap a route for details.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         endpoints.forEachIndexed { index, candidate ->
             if (index > 0) HorizontalDivider()
             EndpointRow(
@@ -153,6 +159,8 @@ private fun EndpointRow(
                         ActiveChip()
                     } else if (isPreferred) {
                         PreferredChip()
+                    } else {
+                        FallbackChip()
                     }
                     if (!candidate.isKnownRole()) {
                         // Show the raw role for custom-VPN entries so users
@@ -191,7 +199,7 @@ private fun EndpointRow(
                     onDismissRequest = { menuOpen = false },
                 ) {
                     DropdownMenuItem(
-                        text = { Text("Prefer this endpoint") },
+                        text = { Text("Prefer this route") },
                         onClick = {
                             menuOpen = false
                             onPrefer()
@@ -274,6 +282,33 @@ private fun PreferredChip() {
             text = "Preferred",
             style = MaterialTheme.typography.labelSmall,
             color = Color(0xFFB26A00),
+        )
+    }
+}
+
+/**
+ * Outlined neutral chip rendered on non-active, non-preferred routes so
+ * every row states its standing explicitly (mirror of [ActiveChip] /
+ * [PreferredChip]). No background fill — just a 1dp border so it reads
+ * as "available fallback" not "something is happening here".
+ */
+@Composable
+private fun FallbackChip() {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                shape = RoundedCornerShape(8.dp),
+            )
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    ) {
+        Text(
+            text = "Fallback",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

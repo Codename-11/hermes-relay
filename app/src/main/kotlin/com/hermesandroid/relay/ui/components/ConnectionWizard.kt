@@ -37,9 +37,11 @@ import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.PhonelinkLock
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -64,6 +66,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
@@ -73,6 +76,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.ClipEntry
 import com.hermesandroid.relay.auth.AuthState
+import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.displayLabel
@@ -132,6 +136,16 @@ fun ConnectionWizard(
     onCancel: () -> Unit,
     showSkip: Boolean = false,
     modifier: Modifier = Modifier,
+    /**
+     * Deep-link into a specific pair method on first composition.
+     * Currently only `"scan"` is honored — jumps directly into camera-
+     * permission-request → scanner, skipping the Method chooser. Null
+     * keeps the default Method step so users can still pick Scan / Enter
+     * code / Show code manually. The "Add connection" FAB sets this to
+     * `"scan"` because the single-purpose entry deserves a single-purpose
+     * flow; re-pair surfaces leave it null so the chooser stays available.
+     */
+    autoStart: String? = null,
 ) {
     val context = LocalContext.current
 
@@ -150,6 +164,24 @@ fun ConnectionWizard(
     var showQrScanner by remember { mutableStateOf(false) }
     var verifyError by remember { mutableStateOf<String?>(null) }
     var verifyAttempt by remember { mutableStateOf(0) }
+
+    // Pre-pair duplicate detection. When the user is about to pair to an
+    // API URL that already has a connection in the store, we stop the
+    // wizard at this prompt instead of silently creating a second entry
+    // (which would just get merged away by the post-pair dedupe in
+    // ConnectionViewModel — confusing UX, since the user's custom label
+    // on the existing entry is what "wins"). The prompt lets them
+    // explicitly opt into the re-pair, or cancel out.
+    //
+    // Held as a Connection to preserve label/id for the dialog copy;
+    // null means "no prompt active, proceed normally".
+    var duplicatePrompt by remember { mutableStateOf<Connection?>(null) }
+    // When the manual flow triggers the duplicate prompt, remember the
+    // code the user typed / was issued so the confirm branch can finish
+    // the pair without the user re-entering anything. Null for scan
+    // path (which uses [pendingPayload] instead).
+    var pendingManualCode by remember { mutableStateOf<String?>(null) }
+    val wizardScope = rememberCoroutineScope()
 
     // Manual-path field state. Pre-fill from whatever the VM already knows
     // so re-pair from Settings keeps the previously-configured URLs.
@@ -170,6 +202,24 @@ fun ConnectionWizard(
                 "Camera permission needed to scan QR codes",
                 Toast.LENGTH_SHORT
             ).show()
+        }
+    }
+
+    // Deep-link: when the caller passed autoStart="scan" (currently only the
+    // "Add connection" FAB does), fire the permission launcher on first
+    // composition. Equivalent to the user tapping the Scan tile in the
+    // Method step — sets chosenMethod and bounces through the camera
+    // permission gate into the scanner. Only runs once per wizard mount
+    // (keyed on Unit); unrecognized autoStart values fall through silently
+    // so a future build that adds more deep-link targets can ignore old
+    // args without crashing.
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        when (autoStart) {
+            "scan" -> {
+                chosenMethod = PairMethod.Scan
+                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+            }
+            else -> Unit
         }
     }
 
@@ -235,18 +285,42 @@ fun ConnectionWizard(
         }
     }
 
+    // Look up an existing connection pointing at [serverUrl] — excluding
+    // the active one, which during the Add-connection flow is the blank
+    // placeholder we pre-created in [ConnectionViewModel.beginAddConnection].
+    // Re-pair flows from Settings → Connections switch to the target BEFORE
+    // entering the wizard, so during those the active id IS the target
+    // and the filter correctly returns null (no pointless self-prompt).
+    val findDuplicateFor: (String) -> Connection? = { serverUrl ->
+        val activeId = connectionViewModel.activeConnectionId.value
+        connectionViewModel.connectionStore.connections.value.firstOrNull { c ->
+            c.id != activeId &&
+                c.apiServerUrl.isNotBlank() &&
+                c.apiServerUrl == serverUrl
+        }
+    }
+
     // Shared launcher for the manual paths — persists URLs, applies the
     // server-issued code, drops any stale session, and reconnects. Used by
     // both ManualEntry (typed code) and ShowCode (phone-generated code).
+    //
+    // Runs the pre-pair duplicate check first: if another connection
+    // already has this API URL, surface the prompt and stall the wizard
+    // on Method/ManualEntry/ShowCode until the user confirms or cancels.
+    // Dialog confirm re-invokes via [applyManualPair] (below) which
+    // bypasses the check so we don't loop.
     val launchManualPair: (String) -> Unit = { code ->
-        connectionViewModel.updateApiServerUrl(manualApiUrl.trim())
-        connectionViewModel.updateRelayUrl(manualRelayUrl.trim())
-        connectionViewModel.authManager
-            .applyServerIssuedCodeAndReset(code.trim().uppercase())
-        connectionViewModel.disconnectRelay()
-        connectionViewModel.connectRelay(manualRelayUrl.trim())
-        step = WizardStep.Verify
-        verifyAttempt += 1
+        val trimmedApi = manualApiUrl.trim()
+        val existing = findDuplicateFor(trimmedApi)
+        if (existing != null) {
+            // Remember what to re-run when the user confirms.
+            pendingManualCode = code
+            duplicatePrompt = existing
+        } else {
+            applyManualPair(connectionViewModel, trimmedApi, manualRelayUrl.trim(), code)
+            step = WizardStep.Verify
+            verifyAttempt += 1
+        }
     }
 
     Column(
@@ -305,12 +379,27 @@ fun ConnectionWizard(
                                 // role — otherwise Retry would drop the user's
                                 // "Prefer" choice on every failure.
                                 pendingPayload = reorderedPayload
-                                connectionViewModel.applyPairingPayload(
-                                    reorderedPayload,
-                                    ttlSeconds,
+                                // Pre-pair duplicate check — stops the flow
+                                // on the Confirm screen if the scanned
+                                // serverUrl already matches an existing
+                                // connection. User can then re-pair that
+                                // existing entry in place (see the
+                                // DuplicateConnectionDialog at the bottom
+                                // of this composable) or cancel out. If no
+                                // duplicate, proceed to Verify as before.
+                                val existing = findDuplicateFor(
+                                    reorderedPayload.serverUrl,
                                 )
-                                step = WizardStep.Verify
-                                verifyAttempt += 1
+                                if (existing != null) {
+                                    duplicatePrompt = existing
+                                } else {
+                                    connectionViewModel.applyPairingPayload(
+                                        reorderedPayload,
+                                        ttlSeconds,
+                                    )
+                                    step = WizardStep.Verify
+                                    verifyAttempt += 1
+                                }
                             },
                         )
                     }
@@ -381,6 +470,167 @@ fun ConnectionWizard(
             onDismiss = { showQrScanner = false },
         )
     }
+
+    // Pre-pair duplicate prompt. Renders over whichever wizard step is
+    // currently visible. Confirm = switch to the existing connection,
+    // discard the placeholder [ConnectionViewModel.beginAddConnection]
+    // pre-created for this flow (if any), then re-run the pair against
+    // the existing connection so the new session replaces the old one.
+    // Dismiss = clear the prompt and return the user to the step they
+    // came from (Confirm for scan, ManualEntry/ShowCode for manual), so
+    // they can re-read the URL they just entered or scan a different QR.
+    duplicatePrompt?.let { existing ->
+        DuplicateConnectionDialog(
+            existing = existing,
+            onUpdate = {
+                val prompt = existing
+                duplicatePrompt = null
+                wizardScope.launch {
+                    // Snapshot the placeholder id before we switch away —
+                    // after switchConnection returns, activeConnectionId
+                    // points at the EXISTING connection and we'd lose the
+                    // reference to the blank placeholder we need to delete.
+                    val placeholderId = connectionViewModel.activeConnectionId.value
+                        ?.takeIf { it != prompt.id }
+
+                    // 1. Switch to the existing connection so all subsequent
+                    //    applyPairingPayload / applyServerIssuedCodeAndReset
+                    //    calls land in ITS auth store, not the placeholder's.
+                    //    join() ensures the AuthManager swap has finished
+                    //    before we apply the payload.
+                    connectionViewModel.switchConnection(prompt.id).join()
+
+                    // 2. Remove the placeholder we pre-created. Safe no-op
+                    //    if it was never a placeholder (pairedAt != null)
+                    //    thanks to discardPlaceholderConnection's own
+                    //    guard. Also safe if placeholderId is null (which
+                    //    would mean the user entered the wizard from a
+                    //    re-pair flow on the target itself — no cleanup
+                    //    needed).
+                    if (placeholderId != null) {
+                        connectionViewModel.discardPlaceholderConnection(placeholderId)
+                    }
+
+                    // 3. Apply the pair, now targeting the existing
+                    //    connection's auth store. Scan path uses
+                    //    pendingPayload; manual paths replay through the
+                    //    existing `applyManualPair` sequence.
+                    when (chosenMethod) {
+                        PairMethod.Scan -> {
+                            val payload = pendingPayload
+                            if (payload != null) {
+                                connectionViewModel.applyPairingPayload(
+                                    payload,
+                                    ttlSeconds,
+                                )
+                                step = WizardStep.Verify
+                                verifyAttempt += 1
+                            }
+                        }
+                        PairMethod.EnterCode, PairMethod.ShowCode -> {
+                            val code = pendingManualCode
+                            if (code != null) {
+                                applyManualPair(
+                                    connectionViewModel,
+                                    manualApiUrl.trim(),
+                                    manualRelayUrl.trim(),
+                                    code,
+                                )
+                                pendingManualCode = null
+                                step = WizardStep.Verify
+                                verifyAttempt += 1
+                            }
+                        }
+                    }
+                }
+            },
+            onDismiss = {
+                duplicatePrompt = null
+                pendingManualCode = null
+                // Scan path: kick back to the Confirm step so the user
+                // can either re-confirm (which will re-trigger the prompt)
+                // or hit Back to scan a different QR. Manual paths: the
+                // user is still on ManualEntry/ShowCode, the step hasn't
+                // advanced, so no navigation change needed.
+            },
+        )
+    }
+}
+
+/**
+ * Bypass version of the manual pair launcher — does NOT run the duplicate
+ * check. Called from two sites:
+ *  - [launchManualPair] inside [ConnectionWizard] when no duplicate is
+ *    found (the common happy path).
+ *  - The duplicate-prompt confirm handler, which has already switched to
+ *    the existing connection and explicitly wants to apply the pairing
+ *    there.
+ */
+private fun applyManualPair(
+    vm: ConnectionViewModel,
+    apiUrl: String,
+    relayUrl: String,
+    code: String,
+) {
+    vm.updateApiServerUrl(apiUrl)
+    vm.updateRelayUrl(relayUrl)
+    vm.authManager.applyServerIssuedCodeAndReset(code.trim().uppercase())
+    vm.disconnectRelay()
+    vm.connectRelay(relayUrl)
+}
+
+/**
+ * Two-button confirmation dialog shown by [ConnectionWizard] when the user
+ * is about to pair against an API URL that already matches an existing
+ * [Connection] in the store. Prevents the "two cards to the same server"
+ * class of bug at the wizard layer — the post-pair dedupe in
+ * [ConnectionViewModel] is still there as a safety net, but this prompt
+ * lets the user understand what's about to happen and carry their custom
+ * label forward without a silent merge.
+ */
+@Composable
+private fun DuplicateConnectionDialog(
+    existing: Connection,
+    onUpdate: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Update existing connection?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "You already have a connection to this server:",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    text = existing.label,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = existing.apiServerUrl,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontFamily = FontFamily.Monospace,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Pair with it again to refresh the session. " +
+                        "Your existing label and any saved preferences " +
+                        "will be kept.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = onUpdate) { Text("Update") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }
 
 private val PairingPreferencesDefault: Long =
@@ -930,6 +1180,21 @@ private fun ConfirmStep(
     onBack: () -> Unit,
     onConfirm: (HermesPairingPayload) -> Unit,
 ) {
+    val context = LocalContext.current
+    val confirmScope = rememberCoroutineScope()
+    // Per-install acknowledgment for the AllInsecure pair gate
+    // ([PairingPreferences.allInsecurePairAckSeen]). Once true, the
+    // checkbox below is not rendered at all on subsequent pairings —
+    // the user has consented to plain-text pairs and shouldn't keep
+    // seeing friction for an already-made choice.
+    val allInsecureAckSeen by com.hermesandroid.relay.data.PairingPreferences
+        .allInsecurePairAckSeen(context)
+        .collectAsState(initial = false)
+    // Transient, per-pair tick. Resets every time ConfirmStep is composed
+    // for a fresh payload — we don't want a stale tick from a previous
+    // scan to carry forward.
+    var ackThisPair by remember(payload) { mutableStateOf(false) }
+
     val transportHint = payload.relay?.transportHint
     val relayUrl = payload.relay?.url
     val isInsecureRelay = relayUrl?.startsWith("ws://") == true
@@ -938,6 +1203,39 @@ private fun ConfirmStep(
     // always non-null + non-empty after parseHermesPairingQr, but we still
     // null-safe on the orEmpty() path for defense in depth.
     val endpoints = payload.endpoints.orEmpty()
+
+    // Tri-state security posture across the full endpoint set. A multi-
+    // endpoint QR with LAN (ws://) + Tailscale (wss://) is *Mixed* — the
+    // app auto-falls back to the secure one, so a blanket "Insecure (dev)"
+    // badge from endpoint[0] alone would lie to the user.
+    val anySecure = endpoints.any { c ->
+        c.relay.url.startsWith("wss://") || c.api.tls ||
+            c.relay.transportHint.equals("wss", ignoreCase = true)
+    }
+    val anyInsecure = endpoints.any { c ->
+        c.relay.url.startsWith("ws://") || !c.api.tls ||
+            c.relay.transportHint.equals("ws", ignoreCase = true)
+    }
+    val securityState = when {
+        endpoints.isEmpty() ->
+            if (isInsecureRelay) TransportSecurityState.AllInsecure
+            else TransportSecurityState.AllSecure
+        anySecure && anyInsecure -> TransportSecurityState.Mixed
+        anySecure -> TransportSecurityState.AllSecure
+        else -> TransportSecurityState.AllInsecure
+    }
+    // Pick the first secure endpoint's label for user-facing copy in the
+    // Mixed case ("Tailscale is encrypted..." vs "Public is encrypted...").
+    val firstSecureLabel = endpoints
+        .firstOrNull { c ->
+            c.relay.url.startsWith("wss://") || c.api.tls ||
+                c.relay.transportHint.equals("wss", ignoreCase = true)
+        }?.displayLabel()
+    val firstInsecureLabel = endpoints
+        .firstOrNull { c ->
+            c.relay.url.startsWith("ws://") ||
+                c.relay.transportHint.equals("ws", ignoreCase = true)
+        }?.displayLabel()
     val distinctRoles = endpoints.map { it.role }.distinct()
     var preferRole by remember(payload) { mutableStateOf<String?>(null) }
     var preferMenuOpen by remember { mutableStateOf(false) }
@@ -987,8 +1285,7 @@ private fun ConfirmStep(
                 }
                 Spacer(Modifier.height(2.dp))
                 TransportSecurityBadge(
-                    isSecure = !isInsecureRelay,
-                    reason = if (isInsecureRelay) "local_dev" else null,
+                    state = securityState,
                     size = TransportSecuritySize.Row,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -1011,13 +1308,13 @@ private fun ConfirmStep(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        text = "Endpoints (${endpoints.size})",
+                        text = "Routes (${endpoints.size})",
                         style = MaterialTheme.typography.titleSmall,
                     )
                     Text(
-                        text = "The phone tries these in priority order and picks " +
-                            "the first reachable one. Switches automatically when " +
-                            "your network changes.",
+                        text = "Your phone tries these routes in order and uses " +
+                            "the first one it can reach. It switches automatically " +
+                            "as you change networks.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1025,6 +1322,7 @@ private fun ConfirmStep(
                         if (index > 0) HorizontalDivider()
                         EndpointPreviewRow(
                             candidate = candidate,
+                            index = index,
                             isPreferred = preferRole?.equals(
                                 candidate.role,
                                 ignoreCase = true,
@@ -1130,26 +1428,102 @@ private fun ConfirmStep(
             }
         }
 
-        if (isInsecureRelay) {
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
-                ),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text(
-                        text = "This relay uses plain ws:// — traffic is not encrypted.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                    )
-                    Text(
-                        text = "Only continue if you trust the network (LAN, Tailscale, VPN).",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                    )
+        when (securityState) {
+            TransportSecurityState.AllInsecure -> {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                            .copy(alpha = 0.4f),
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = "This relay uses plain ws:// \u2014 traffic is " +
+                                "not encrypted.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        Text(
+                            text = "Only continue if you trust the network on any " +
+                                "connection (LAN, Tailscale, VPN).",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    }
+                }
+                // Per-install Tier-1 gate: only render the checkbox when the
+                // user has never acknowledged an AllInsecure pair on this
+                // install. Once they have, we never show it again — the
+                // warning card above stays, but the gate is lifted.
+                if (!allInsecureAckSeen) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Checkbox(
+                            checked = ackThisPair,
+                            onCheckedChange = { ackThisPair = it },
+                        )
+                        Text(
+                            text = "I understand this pairing sends traffic in " +
+                                "plain text — visible to anyone on the network.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(start = 4.dp),
+                        )
+                    }
                 }
             }
+            TransportSecurityState.Mixed -> {
+                // Amber-tinted informational card. The secure route is the
+                // safety net — spell that out explicitly so users stop
+                // reading "some plain" as "all plain".
+                val plainLabel = firstInsecureLabel ?: "LAN"
+                val secureLabel = firstSecureLabel ?: "Tailscale"
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color(0xFFF9A825).copy(alpha = 0.12f),
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            text = "$plainLabel is plain ws:// \u2014 fine at home or " +
+                                "the office, not on public Wi-Fi.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            text = "$secureLabel is encrypted (wss://) and the app " +
+                                "uses it automatically when $plainLabel is unreachable.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            text = "You're safe on any network.",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+            }
+            TransportSecurityState.AllSecure -> {
+                // No warning block — every route is TLS.
+            }
+        }
+
+        // Gate for the absolute-boundary AllInsecure case only. Mixed and
+        // AllSecure stay one-tap. Satisfied when either (a) the user has
+        // previously ack'd an AllInsecure pair on this install (per-install,
+        // never expires), or (b) they've ticked the checkbox for this pair.
+        val gateIsSatisfied = when (securityState) {
+            TransportSecurityState.AllInsecure -> allInsecureAckSeen || ackThisPair
+            else -> true
         }
 
         Row(
@@ -1164,11 +1538,24 @@ private fun ConfirmStep(
             }
             Button(
                 onClick = {
+                    // Persist the per-install ack the first time an
+                    // AllInsecure pair goes through via the checkbox path.
+                    // Future AllInsecure pairs skip the checkbox entirely.
+                    if (securityState == TransportSecurityState.AllInsecure &&
+                        ackThisPair &&
+                        !allInsecureAckSeen
+                    ) {
+                        confirmScope.launch {
+                            com.hermesandroid.relay.data.PairingPreferences
+                                .setAllInsecurePairAckSeen(context, true)
+                        }
+                    }
                     val effective = preferRole
                         ?.let { reorderByPreferredRole(payload, it) }
                         ?: payload
                     onConfirm(effective)
                 },
+                enabled = gateIsSatisfied,
                 modifier = Modifier.weight(1f),
             ) {
                 Text("Pair")
@@ -1282,11 +1669,23 @@ private fun LabeledLine(label: String, value: String, hint: String? = null) {
 @Composable
 private fun EndpointPreviewRow(
     candidate: EndpointCandidate,
+    index: Int,
     isPreferred: Boolean,
 ) {
+    // Per-row security derived from the same three signals as the overall
+    // securityState computation — scheme, tls flag, transportHint.
+    val isSecure = candidate.relay.url.startsWith("wss://") ||
+        candidate.api.tls ||
+        candidate.relay.transportHint.equals("wss", ignoreCase = true)
+    val ordinalLabel = when (index) {
+        0 -> "1st choice"
+        1 -> "Fallback"
+        else -> "Fallback $index"
+    }
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.weight(1f)) {
@@ -1298,33 +1697,54 @@ private fun EndpointPreviewRow(
                     text = candidate.displayLabel(),
                     style = MaterialTheme.typography.bodyMedium,
                 )
+                SoftPill(
+                    text = if (isSecure) "Secure" else "Plain",
+                    fg = if (isSecure) Color(0xFF2E7D32) else Color(0xFFF9A825),
+                )
                 if (isPreferred) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
-                    ) {
-                        Text(
-                            text = "Preferred",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                        )
-                    }
+                    SoftPill(
+                        text = "Preferred",
+                        fg = MaterialTheme.colorScheme.primary,
+                    )
                 }
             }
             Text(
                 text = "${candidate.api.host}:${candidate.api.port}" +
-                    (candidate.relay.transportHint?.let { " · $it" } ?: ""),
+                    (candidate.relay.transportHint?.let { " \u00b7 $it" } ?: ""),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontFamily = FontFamily.Monospace,
             )
         }
+        // Ordinal chip pinned to the right — "1st choice" / "Fallback" /
+        // "Fallback N" replaces the raw `p0/p1/p2` from the old UI.
+        SoftPill(
+            text = ordinalLabel,
+            fg = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * Compact pill used by [EndpointPreviewRow] — matches the "Preferred" soft
+ * chip style so the row reads as a row of related chips rather than a mix
+ * of primary + secondary visual weights.
+ */
+@Composable
+private fun SoftPill(
+    text: String,
+    fg: Color,
+) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = fg.copy(alpha = 0.14f),
+    ) {
         Text(
-            text = "p${candidate.priority}",
+            text = text,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontFamily = FontFamily.Monospace,
+            color = fg,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
         )
     }
 }
