@@ -85,16 +85,31 @@ case "$os-$arch" in
   *) die "unsupported platform: $os/$arch (supported: linux-x64/arm64, darwin-x64/arm64)" ;;
 esac
 
+# Resolve "latest" to a concrete tag. GitHub's /releases/latest/download/ URL
+# always skips prereleases, which breaks install during any all-alpha window.
+# Walk the releases API (newest first) and pick the first `desktop-v*` tag,
+# prerelease or not. Pinned versions skip this and use the tag directly.
+resolved_version="$VERSION"
 if [ "$VERSION" = "latest" ]; then
-  base="https://github.com/$REPO/releases/latest/download"
-else
-  base="https://github.com/$REPO/releases/download/$VERSION"
+  say "-> resolving latest desktop-v* release..."
+  api_body=$(curl -fsSL "https://api.github.com/repos/$REPO/releases" 2>/dev/null) \
+    || die "could not query GitHub Releases API"
+  # Extract the first desktop-v* tag_name. Each "tag_name": entry is on its
+  # own line in GitHub's JSON output, so line-oriented tooling is sufficient
+  # and avoids a jq dependency.
+  resolved_version=$(printf '%s\n' "$api_body" \
+    | grep -E '"tag_name": *"desktop-v' \
+    | head -1 \
+    | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
+  [ -n "$resolved_version" ] || die "no desktop-v* releases found on $REPO"
+  say "   $resolved_version"
 fi
+base="https://github.com/$REPO/releases/download/$resolved_version"
 
 say "Hermes-Relay desktop CLI installer"
 say "  platform : $os/$arch"
 say "  asset    : $asset"
-say "  version  : $VERSION"
+say "  version  : $resolved_version"
 say "  install  : $INSTALL_DIR"
 say ""
 
@@ -106,7 +121,10 @@ cd "$tmp"
 # reinstall vs overwrite-after-corruption, instead of the install going
 # silent and requiring a follow-up `hermes-relay --version` to find out.
 target="$INSTALL_DIR/hermes-relay"
-expected_new_version="$(normalize_pinned_version "$VERSION")"
+# Normalize the RESOLVED tag (same as VERSION for pins, or the API-resolved
+# tag when VERSION=latest) so the pre- and post-install version compares
+# are accurate even when `latest` resolved to a prerelease tag.
+expected_new_version="$(normalize_pinned_version "$resolved_version")"
 existing_version=""
 if [ -e "$target" ]; then
   if existing_version="$(read_installed_version "$target")" && [ -n "$existing_version" ]; then
@@ -148,7 +166,7 @@ installed_version="$(read_installed_version "$target" || true)"
 if [ -n "$installed_version" ]; then
   say "-> installed $installed_version at $target"
   if [ -n "$expected_new_version" ] && [ "$installed_version" != "$expected_new_version" ]; then
-    say "   WARN: expected version $expected_new_version from pin ($VERSION), got $installed_version"
+    say "   WARN: expected version $expected_new_version from tag ($resolved_version), got $installed_version"
     say "   (pre-release tags can diverge from package version — this is usually fine)"
   fi
 else

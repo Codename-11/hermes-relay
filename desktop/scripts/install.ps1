@@ -72,13 +72,31 @@ if (-not [Environment]::Is64BitOperatingSystem) {
 
 $arch  = 'x64'  # No ARM64 build yet; add hermes-relay-win-arm64 when cross-compile target lands.
 $asset = "hermes-relay-win-$arch.exe"
-$base  = if ($version -eq 'latest') { "https://github.com/$repo/releases/latest/download" }
-         else                       { "https://github.com/$repo/releases/download/$version" }
+
+# Resolve "latest" to a concrete tag. GitHub's /releases/latest/download/ URL
+# always skips prereleases, which breaks install during any all-alpha window.
+# Walk the releases API (newest first) and pick the first `desktop-v*` tag,
+# prerelease or not. Pinned versions (HERMES_RELAY_VERSION=desktop-v...) skip
+# this and use the tag directly.
+$resolvedVersion = $version
+if ($version -eq 'latest') {
+  Say "-> resolving latest desktop-v* release..."
+  try {
+    $releases = Invoke-RestMethod -UseBasicParsing "https://api.github.com/repos/$repo/releases"
+    $pick = $releases | Where-Object { $_.tag_name -like 'desktop-v*' } | Select-Object -First 1
+    if (-not $pick) { Die "no desktop-v* releases found on $repo" }
+    $resolvedVersion = $pick.tag_name
+    Say "   $resolvedVersion$(if ($pick.prerelease) { ' (prerelease)' } else { '' })"
+  } catch {
+    Die "could not query GitHub Releases API: $($_.Exception.Message)"
+  }
+}
+$base = "https://github.com/$repo/releases/download/$resolvedVersion"
 
 Say "Hermes-Relay desktop CLI installer"
 Say "  platform : win-$arch"
 Say "  asset    : $asset"
-Say "  version  : $version"
+Say "  version  : $resolvedVersion"
 Say "  install  : $dir"
 Say ""
 
@@ -88,7 +106,10 @@ try {
   # reinstall vs overwrite-after-corruption, instead of the install going
   # silent and requiring a follow-up `hermes-relay --version` to find out.
   $target             = Join-Path $dir 'hermes-relay.exe'
-  $expectedNewVersion = Get-NormalizedPin $version
+  # Use the RESOLVED tag (same as $version for pins, or the API-resolved
+  # tag when $version = 'latest') so version compares stay accurate when
+  # `latest` resolved to a prerelease.
+  $expectedNewVersion = Get-NormalizedPin $resolvedVersion
   $existingVersion    = $null
   if (Test-Path $target) {
     $existingVersion = Read-InstalledVersion $target
@@ -139,7 +160,7 @@ try {
   if ($installedVersion) {
     Say "-> installed $installedVersion at $target"
     if ($expectedNewVersion -and ($installedVersion -ne $expectedNewVersion)) {
-      Say "   WARN: expected version $expectedNewVersion from pin ($version), got $installedVersion"
+      Say "   WARN: expected version $expectedNewVersion from tag ($resolvedVersion), got $installedVersion"
       Say '   (pre-release tags can diverge from package version — this is usually fine)'
     }
   } else {
