@@ -38,36 +38,27 @@ jobs:
       - name: Build dist/ (tsc)
         run: npm run build
 
+      - name: Print Bun version (diagnostics)
+        run: bun --version
+
       - name: Prepare binary output dir
         run: mkdir -p dist/bin
 
+      # NOTE: delegate to the package.json scripts so there's a single source
+      # of truth for Bun compile flags. Previously these steps inlined their
+      # own flag list, which silently diverged from `npm run build:bin:*` and
+      # made the "drop --bytecode" fix ineffective on desktop-v0.3.0-alpha.2.
       - name: Build Windows x64
-        run: >
-          bun build --compile --minify --sourcemap --bytecode
-          --target=bun-windows-x64
-          src/cli.ts
-          --outfile dist/bin/hermes-relay-win-x64
+        run: npm run build:bin:win
 
       - name: Build Linux x64
-        run: >
-          bun build --compile --minify --sourcemap --bytecode
-          --target=bun-linux-x64
-          src/cli.ts
-          --outfile dist/bin/hermes-relay-linux-x64
+        run: npm run build:bin:linux
 
       - name: Build macOS x64
-        run: >
-          bun build --compile --minify --sourcemap --bytecode
-          --target=bun-darwin-x64
-          src/cli.ts
-          --outfile dist/bin/hermes-relay-darwin-x64
+        run: npm run build:bin:mac-x64
 
       - name: Build macOS arm64
-        run: >
-          bun build --compile --minify --sourcemap --bytecode
-          --target=bun-darwin-arm64
-          src/cli.ts
-          --outfile dist/bin/hermes-relay-darwin-arm64
+        run: npm run build:bin:mac-arm
 
       - name: Size guard (<150 MB each)
         run: |
