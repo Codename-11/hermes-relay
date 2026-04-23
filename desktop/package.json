@@ -1,6 +1,6 @@
 {
   "name": "@hermes-relay/cli",
-  "version": "0.3.0-alpha.3",
+  "version": "0.3.0-alpha.4",
   "description": "Thin-client CLI for Hermes-Relay — talk to a remote Hermes agent over WSS with pairing auth, stream-renders tool calls and responses to plain stdout.",
   "type": "module",
   "bin": {
@@ -22,14 +22,16 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "gen:version": "node -e \"require('fs').writeFileSync('src/version.ts', '// Regenerated from package.json by `npm run gen:version`.\\nexport const VERSION = ' + JSON.stringify(require('./package.json').version) + ' as const\\n')\"",
+    "build": "npm run gen:version && tsc -p tsconfig.build.json",
     "build:watch": "tsc -p tsconfig.build.json --watch",
     "build:bin": "npm run build:bin:win && npm run build:bin:linux && npm run build:bin:mac-x64 && npm run build:bin:mac-arm",
-    "build:bin:win": "bun build --compile --minify --sourcemap --target=bun-windows-x64 src/cli.ts --outfile dist/bin/hermes-relay-win-x64",
-    "build:bin:linux": "bun build --compile --minify --sourcemap --target=bun-linux-x64 src/cli.ts --outfile dist/bin/hermes-relay-linux-x64",
-    "build:bin:mac-x64": "bun build --compile --minify --sourcemap --target=bun-darwin-x64 src/cli.ts --outfile dist/bin/hermes-relay-darwin-x64",
-    "build:bin:mac-arm": "bun build --compile --minify --sourcemap --target=bun-darwin-arm64 src/cli.ts --outfile dist/bin/hermes-relay-darwin-arm64",
+    "build:bin:win": "npm run gen:version && bun build --compile --minify --sourcemap --target=bun-windows-x64 src/cli.ts --outfile dist/bin/hermes-relay-win-x64",
+    "build:bin:linux": "npm run gen:version && bun build --compile --minify --sourcemap --target=bun-linux-x64 src/cli.ts --outfile dist/bin/hermes-relay-linux-x64",
+    "build:bin:mac-x64": "npm run gen:version && bun build --compile --minify --sourcemap --target=bun-darwin-x64 src/cli.ts --outfile dist/bin/hermes-relay-darwin-x64",
+    "build:bin:mac-arm": "npm run gen:version && bun build --compile --minify --sourcemap --target=bun-darwin-arm64 src/cli.ts --outfile dist/bin/hermes-relay-darwin-arm64",
     "build:sums": "cd dist/bin && sha256sum hermes-relay-* > SHA256SUMS.txt",
+    "smoke": "npm run build:bin:win && node -e \"const{execFileSync}=require('child_process');const bin='./dist/bin/hermes-relay-win-x64.exe';for(const a of [['--version'],['--help'],['doctor']]){const out=execFileSync(bin,a,{encoding:'utf8'});if(!out||out.length<10)throw new Error('smoke FAIL: '+bin+' '+a.join(' ')+' produced no output');console.log('smoke OK: '+a.join(' ')+' ('+out.split('\\n')[0]+')')}\"",
     "prepublishOnly": "npm run build",
     "dev": "tsx src/cli.ts",
     "type-check": "tsc --noEmit -p tsconfig.json",
