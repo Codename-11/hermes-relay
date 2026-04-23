@@ -3,10 +3,6 @@
 // lands in hermes_cli/main.py — the proper home for a full CLI") but with
 // subcommands because a thin client has actual verbs (pair, status, tools).
 
-import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-
 import { chatCommand } from './commands/chat.js'
 import { daemonCommand } from './commands/daemon.js'
 import { devicesCommand } from './commands/devices.js'
@@ -15,18 +11,15 @@ import { pairCommand } from './commands/pair.js'
 import { shellCommand } from './commands/shell.js'
 import { statusCommand } from './commands/status.js'
 import { toolsCommand } from './commands/tools.js'
+import { VERSION } from './version.js'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-
+/** Read the embedded build-time version. src/version.ts is regenerated
+ * from package.json by `npm run gen:version` before every build, which
+ * makes the version available to Bun-compiled binaries where reading
+ * package.json at runtime via __dirname fails (the binary has no real
+ * filesystem layout). */
 function readVersion(): string {
-  // dist/cli.js lives at <pkg>/dist/cli.js; package.json is one dir up.
-  try {
-    const pkgPath = join(__dirname, '..', 'package.json')
-    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { version?: string }
-    return pkg.version ?? '0.0.0'
-  } catch {
-    return '0.0.0'
-  }
+  return VERSION
 }
 
 export interface ParsedArgs {
@@ -243,14 +236,20 @@ export async function main(argv = process.argv): Promise<number> {
 }
 
 // Auto-invoke when this module is the process entry point — covers
-// `tsx src/cli.ts <args>`, `npm run dev -- <args>`, and `node dist/cli.js`.
-// The bin shim at `bin/hermes-relay.js` imports { main } explicitly and
-// runs it itself; the guard prevents a double invocation there because
-// process.argv[1] points at the shim, not at this file. Tests that do
-// `import { main } from '../src/cli.ts'` also escape this branch because
-// argv[1] points at the test runner.
-const entryPath = process.argv[1] ? fileURLToPath(import.meta.url) === process.argv[1] : false
-if (entryPath) {
+// `tsx src/cli.ts`, `npm run dev`, `node dist/cli.js`, and `bun --compile`
+// binaries. `import.meta.main` is truthy only in the entry module, which
+// handles all four paths uniformly:
+//   - Bun --compile binary: the compiled entry sets main=true.
+//   - bin/hermes-relay.js shim: cli.js is imported, not the entry, so
+//     main=false here and the shim's explicit `.main()` call is the only
+//     invocation (no double-fire).
+//   - tsx / node direct: cli is the entry, main=true.
+//   - Tests importing { main }: cli is not the entry, main=false.
+// The older `fileURLToPath(import.meta.url) === process.argv[1]` check
+// failed specifically in Bun compiled binaries because their entry module
+// has a synthetic URL that doesn't match the .exe path — the binary would
+// exit 0 silently. See CHANGELOG alpha.4.
+if (import.meta.main) {
   main()
     .then((code) => process.exit(code ?? 0))
     .catch((err) => {

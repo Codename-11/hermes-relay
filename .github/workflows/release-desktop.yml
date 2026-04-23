@@ -73,6 +73,28 @@ jobs:
             fi
           done
 
+      # Smoke-test the Linux binary (runner platform) before publishing.
+      # Catches the two failure modes we've burned alpha tags on:
+      #   - startup segfault (exit != 0, no output)
+      #   - silent exit 0 with zero output (main() never invoked)
+      # We can only smoke the Linux target without a cross-platform matrix;
+      # Windows/macOS smoke would need their own runners — tracked as an
+      # alpha.5+ hardening item.
+      - name: Smoke-test Linux binary
+        run: |
+          set -e
+          chmod +x dist/bin/hermes-relay-linux-x64
+          for cmd in --version --help doctor; do
+            out=$(./dist/bin/hermes-relay-linux-x64 "$cmd" 2>&1 || true)
+            exit_code=$?
+            if [ -z "$out" ] || [ ${#out} -lt 10 ]; then
+              echo "SMOKE FAIL: './hermes-relay-linux-x64 $cmd' produced no output (exit=$exit_code)"
+              echo "Raw output was: [$out]"
+              exit 1
+            fi
+            echo "  smoke OK: $cmd → $(echo "$out" | head -1)"
+          done
+
       - name: Generate SHA256SUMS
         working-directory: desktop/dist/bin
         run: |
