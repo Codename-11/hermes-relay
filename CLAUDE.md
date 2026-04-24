@@ -239,6 +239,7 @@ hermes-android/
 | **Desktop CLI** | |
 | `desktop/package.json` | `@hermes-relay/cli` package manifest — Node ≥21, one `hermes-relay` bin, pre-built dist |
 | `desktop/bin/hermes-relay.js` | Tiny shim: `import('../dist/cli.js').then(m => m.main())` + error surfacing |
+| `desktop/src/chatAttach.ts` | captureClipboardImage / captureScreenshot / readImageFile; ships base64 to server via `image.attach.bytes` RPC before next prompt.submit |
 | `desktop/src/cli.ts` | argv parser + subcommand dispatcher — bare → `shell` (PTY), positional-only → `chat` |
 | `desktop/src/commands/chat.ts` | REPL + one-shot + piped-stdin; `runOneTurn` returns `{promise, cancel}` for safe SIGINT; auto-wires `DesktopToolRouter` when consented |
 | `desktop/src/commands/shell.ts` | Pipes the `terminal` relay channel to raw-mode stdin/stdout; post-attach `exec hermes` 350ms after tmux settles; `Ctrl+A .` detach / `Ctrl+A k` kill / `Ctrl+A Ctrl+A` literal |
