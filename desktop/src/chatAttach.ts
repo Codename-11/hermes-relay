@@ -347,7 +347,9 @@ export async function captureClipboardImage(): Promise<AttachPayload | null> {
  * minimal ToolContext — the handler only consults `cwd` for `save_to`, which
  * we never pass. `abortSignal` is required by the type but never fires here
  * (the handler's own CAPTURE_TIMEOUT_MS keeps things bounded). */
-export async function captureScreenshot(opts?: { display?: number }): Promise<AttachPayload> {
+export async function captureScreenshot(opts?: { display?: number | string }): Promise<AttachPayload> {
+  // screenshotHandler defaults to display=-1 (all monitors) when args.display
+  // is omitted. Callers pass `display: 'primary'` / 0 / 1 / … to narrow.
   const args: Record<string, unknown> = {}
   if (opts?.display !== undefined) {
     args.display = opts.display

@@ -339,8 +339,14 @@ async function resolveSlashAttach(line: string): Promise<AttachPayload | null> {
   if (line === '/paste') {
     return captureClipboardImage()
   }
+  // /screenshot defaults to all monitors (virtual screen); /screenshot primary
+  // or /screenshot 0 | 1 | 2 ... narrows to a specific monitor.
   if (line === '/screenshot') {
     return captureScreenshot()
+  }
+  if (line.startsWith('/screenshot ')) {
+    const arg = line.slice('/screenshot '.length).trim()
+    return captureScreenshot({ display: arg })
   }
   if (line.startsWith('/image ')) {
     return readImageFile(line.slice('/image '.length).trim())
@@ -352,11 +358,13 @@ async function resolveSlashAttach(line: string): Promise<AttachPayload | null> {
  * top) so the strings sit next to the dispatcher that routes them. */
 const SLASH_HELP = [
   'Slash commands:',
-  '  /paste          — attach clipboard image to next message',
-  '  /screenshot     — capture primary display, attach to next message',
-  '  /image <path>   — attach image file (png/jpg/jpeg/webp/gif) to next message',
-  '  /quit /exit :q  — exit',
-  '  /help           — this list'
+  '  /paste               — attach clipboard image to next message',
+  '  /screenshot          — capture ALL monitors (virtual screen), attach',
+  '  /screenshot primary  — capture primary monitor only',
+  '  /screenshot <N>      — capture monitor N (0 = primary, 1+ = secondary)',
+  '  /image <path>        — attach image file (png/jpg/jpeg/webp/gif)',
+  '  /quit /exit :q       — exit',
+  '  /help                — this list'
 ].join('\n')
 
 async function readAllStdin(): Promise<string> {
@@ -585,6 +593,7 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
     if (
       trimmed === '/paste' ||
       trimmed === '/screenshot' ||
+      trimmed.startsWith('/screenshot ') ||
       trimmed.startsWith('/image ')
     ) {
       try {

@@ -17,9 +17,21 @@
 // `save_to` absent → capture to an OS tempfile, return base64 + size, and
 // delete the tempfile. `save_to` set → keep the file, return its path.
 //
-// `display` is accepted but only wired on Windows (and even there it just
-// picks the matching Screen from AllScreens; default 0 = PrimaryScreen).
-// macOS/Linux capture the primary display — document in the tool schema.
+// `display` semantics (alpha.8):
+//   -1 / 'all'     — full virtual screen (stitch all monitors; DEFAULT)
+//    0 / 'primary' — Windows PrimaryScreen, macOS/Linux default (usually primary)
+//    N (1, 2, …)   — specific monitor by index
+//
+// Windows: 'all' uses SystemInformation.VirtualScreen bounds to capture the
+// union rect; indexed uses Screen.AllScreens[N].
+// macOS: screencapture captures the primary display by default; `-D N` picks
+// display N (1-indexed); `-D 0` equivalent to no flag. 'all' capture on macOS
+// requires writing multiple files or using screencapture's -R rect — we accept
+// 'all' as an alias for 'primary' on macOS with a note in the response.
+// Linux: grim with no args captures ALL outputs (stitched); `-o <name>` picks
+// a specific one (not wired here — alpha.8 MVP treats 'all' as default and
+// indexed as unsupported on Linux). scrot + import capture the full X screen
+// which on multi-head is already stitched.
 //
 // 10 s hard timeout on capture, 50 MB hard cap on PNG size.
 
@@ -108,30 +120,29 @@ function tryRun(
   })
 }
 
-/** Build the PowerShell capture script. `display` picks an index into
- * AllScreens; -1 (or out of range) falls back to PrimaryScreen. We write
- * this to a .ps1 temp file rather than `-Command` because:
- *   (a) Add-Type strings with brackets and commas survive quoting poorly
- *   (b) .ps1 matches ExecutionPolicy Bypass via `-ExecutionPolicy Bypass`
- *       which is the idiomatic non-interactive invocation
- *   (c) debuggable — we can `type` the file if capture fails in prod */
+/** Build the PowerShell capture script.
+ *   display === -1 → capture the full virtual screen (all monitors stitched)
+ *                    via SystemInformation.VirtualScreen — origin (x,y) can
+ *                    be negative when monitors are arranged left of primary,
+ *                    and CopyFromScreen honors the sign.
+ *   display >= 0   → index into AllScreens; out-of-range falls back to
+ *                    PrimaryScreen so a user typo doesn't hard-fail. */
 function windowsCaptureScript(outputPath: string, display: number): string {
-  // Use Out-Null on Dispose() calls so stdout stays clean — the caller
-  // only cares about the file. The JSON-quoted output path dodges path
-  // separator issues on Windows.
   const psPath = JSON.stringify(outputPath)
   return `
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
-$screens = [System.Windows.Forms.Screen]::AllScreens
-$target = $null
-if (${display} -ge 0 -and ${display} -lt $screens.Length) {
-    $target = $screens[${display}]
+if (${display} -lt 0) {
+    $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
 } else {
-    $target = [System.Windows.Forms.Screen]::PrimaryScreen
+    $screens = [System.Windows.Forms.Screen]::AllScreens
+    if (${display} -lt $screens.Length) {
+        $bounds = $screens[${display}].Bounds
+    } else {
+        $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    }
 }
-$bounds = $target.Bounds
 $bmp = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
 $graphics = [System.Drawing.Graphics]::FromImage($bmp)
 $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
@@ -159,8 +170,19 @@ async function captureWindows(outputPath: string, display: number): Promise<Spaw
   }
 }
 
-async function captureMac(outputPath: string): Promise<SpawnExit> {
-  return tryRun('screencapture', ['-x', '-t', 'png', outputPath], CAPTURE_TIMEOUT_MS)
+async function captureMac(outputPath: string, display: number): Promise<SpawnExit> {
+  // display === -1 ('all'): rely on screencapture's default, which captures
+  //   the main display only. Genuine multi-display stitching on macOS needs
+  //   -R rect math we don't have here. We accept 'all' as a synonym for
+  //   default and note the limitation in the tool schema.
+  // display === 0 ('primary'): same as default (main display).
+  // display >= 1: screencapture -D <n> targets monitor n (1-indexed).
+  const args = ['-x', '-t', 'png']
+  if (display >= 1) {
+    args.push('-D', String(display))
+  }
+  args.push(outputPath)
+  return tryRun('screencapture', args, CAPTURE_TIMEOUT_MS)
 }
 
 /** Try grim → scrot → import, in that order. Return the first one that
@@ -205,10 +227,25 @@ function argOptionalString(v: unknown): string | null {
 }
 
 function argNumber(v: unknown, fallback: number): number {
-  if (typeof v === 'number' && Number.isFinite(v) && v >= 0) {
+  if (typeof v === 'number' && Number.isFinite(v)) {
     return Math.floor(v)
   }
   return fallback
+}
+
+/** Accept numbers (-1/0/1/…) OR strings ('all', 'primary') for `display`.
+ * Returns -1 for 'all' / virtual-screen, >=0 otherwise. Default when args.display
+ * is omitted is -1 (all monitors) — multi-monitor-aware-by-default per alpha.8. */
+function resolveDisplay(v: unknown): number {
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase()
+    if (s === 'all' || s === 'virtual' || s === 'full') return -1
+    if (s === 'primary' || s === 'main' || s === '0') return 0
+    const parsed = Number.parseInt(s, 10)
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed
+    return -1 // unknown string → treat as 'all' rather than fail
+  }
+  return argNumber(v, -1)
 }
 
 /** desktop_screenshot
@@ -223,7 +260,9 @@ function argNumber(v: unknown, fallback: number): number {
  * the primary display in this revision — document in tool schema. */
 export const screenshotHandler: ToolHandler = async (args, ctx) => {
   const saveTo = argOptionalString(args.save_to)
-  const display = argNumber(args.display, 0)
+  // Default -1 ('all'): multi-monitor capture out of the box. Users can pass
+  // display: 0 or display: 'primary' for primary-only.
+  const display = resolveDisplay(args.display)
 
   // Resolve output path. If save_to is set, we honor it verbatim
   // (resolved against ctx.cwd for relative paths so the user's expected
@@ -251,7 +290,7 @@ export const screenshotHandler: ToolHandler = async (args, ctx) => {
   if (platform === 'win32') {
     result = await captureWindows(outputPath, display)
   } else if (platform === 'darwin') {
-    result = await captureMac(outputPath)
+    result = await captureMac(outputPath, display)
   } else if (platform === 'linux') {
     const linuxResult = await captureLinux(outputPath)
     attempted = linuxResult.attempted
