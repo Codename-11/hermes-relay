@@ -6,6 +6,12 @@
 import { createInterface } from 'node:readline/promises'
 
 import { buildConnectBanner } from '../banner.js'
+import {
+  captureClipboardImage,
+  captureScreenshot,
+  readImageFile,
+  type AttachPayload
+} from '../chatAttach.js'
 import type { ParsedArgs } from '../cli.js'
 import { resolveCredentials } from '../credentials.js'
 import { GatewayClient } from '../gatewayClient.js'
@@ -325,6 +331,34 @@ async function createOrResumeSession(
   return { sessionId: r.session_id, model: r.info?.model ?? null }
 }
 
+/** Dispatch a REPL slash-command line to the right AttachPayload source.
+ * Returns null when the line is /paste and the clipboard holds no image —
+ * the caller handles that as a non-error fall-through hint. Throws on
+ * /image read errors and on unexpected tokens. */
+async function resolveSlashAttach(line: string): Promise<AttachPayload | null> {
+  if (line === '/paste') {
+    return captureClipboardImage()
+  }
+  if (line === '/screenshot') {
+    return captureScreenshot()
+  }
+  if (line.startsWith('/image ')) {
+    return readImageFile(line.slice('/image '.length).trim())
+  }
+  return null
+}
+
+/** Slash commands printed by `/help`. Kept here (not a constant at module
+ * top) so the strings sit next to the dispatcher that routes them. */
+const SLASH_HELP = [
+  'Slash commands:',
+  '  /paste          — attach clipboard image to next message',
+  '  /screenshot     — capture primary display, attach to next message',
+  '  /image <path>   — attach image file (png/jpg/jpeg/webp/gif) to next message',
+  '  /quit /exit :q  — exit',
+  '  /help           — this list'
+].join('\n')
+
 async function readAllStdin(): Promise<string> {
   const chunks: Buffer[] = []
   for await (const chunk of process.stdin) {
@@ -499,7 +533,9 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
   }
 
   // REPL mode.
-  process.stderr.write('\nType a message. Ctrl+C to interrupt a turn, /quit to exit.\n')
+  process.stderr.write(
+    '\nType a message. Ctrl+C to interrupt a turn, /help for slash commands, /quit to exit.\n'
+  )
 
   const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: true })
 
@@ -534,6 +570,57 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
     }
     if (trimmed === '/quit' || trimmed === '/exit' || trimmed === ':q') {
       break
+    }
+
+    // /help — list available slash commands and loop back to the prompt.
+    if (trimmed === '/help') {
+      process.stderr.write(SLASH_HELP + '\n')
+      continue
+    }
+
+    // Image-attach slash commands — ship bytes to the server, then loop
+    // back without consuming a turn. The NEXT message the user types is
+    // the one the agent sees (with the attached image auto-enriched
+    // server-side by the parallel image.attach.bytes RPC).
+    if (
+      trimmed === '/paste' ||
+      trimmed === '/screenshot' ||
+      trimmed.startsWith('/image ')
+    ) {
+      try {
+        const attach = await resolveSlashAttach(trimmed)
+        if (!attach) {
+          // Only /paste with an empty clipboard lands here — /screenshot
+          // always returns a payload (or throws), /image rejects invalid
+          // paths with a throw, so a null here is narrowly "no image".
+          process.stderr.write('[no image on clipboard — type your message then Enter]\n')
+          continue
+        }
+        const attachParams: Record<string, unknown> = {
+          session_id: session.sessionId,
+          format: attach.format,
+          bytes_base64: attach.bytes_base64
+        }
+        if (attach.filename_hint) {
+          attachParams.filename_hint = attach.filename_hint
+        }
+        await gw.request('image.attach.bytes', attachParams)
+        const hint =
+          attach.source === 'clipboard'
+            ? 'clipboard'
+            : attach.source === 'screenshot'
+              ? 'screenshot'
+              : 'file'
+        const sizeKb = Math.round(attach.size_bytes / 1024)
+        const dims =
+          attach.width && attach.height ? ` ${attach.width}x${attach.height}` : ''
+        process.stderr.write(
+          `[attached ${hint}${dims}, ${sizeKb} KB — will ship with your next message]\n`
+        )
+      } catch (e) {
+        process.stderr.write(`[attach failed: ${rpcErrorMessage(e)}]\n`)
+      }
+      continue
     }
 
     const turn = runOneTurn(gw, session.sessionId, trimmed, renderer)
