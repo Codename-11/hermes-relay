@@ -87,6 +87,54 @@ Your terminal's bracketed paste mode wasn't respected by readline. Options:
 
 The CLI disables bracketed paste before the readline prompt and strips ANSI defensively — but some terminals (older WezTerm, certain PowerShell+Windows-Terminal combos, Claude Desktop's embedded terminal) ignore the disable flag.
 
+## `Win+Shift+S` then `/paste` says "no image found"
+
+Windows's `Win+Shift+S` snipping tool stages the screenshot in the clipboard, but on first capture some PowerShell environments don't see it immediately because of the **`-STA`** flag requirement. Two fixes — pick whichever is most cohesive:
+
+- **In a `hermes-relay shell` session**: just press `Ctrl+A v`. The chord reads your clipboard with the right STA flag, ships it to the server inbox via `/clipboard/inbox`, and auto-types `/paste` into the TUI for you. One keystroke, no leaving the shell.
+- **From outside the shell**: run `hermes-relay paste` (one-shot) — same plumbing as the chord, exits when done.
+- **In `hermes-relay chat` REPL**: just type `/paste`. Same code path.
+
+If `/paste` still says no image found after either of the above, see the `-STA` note below — your custom PowerShell invocation may have lost the flag.
+
+## PowerShell `Add-Type` / `Get-Clipboard -Format Image` returns null
+
+Almost always missing the `-STA` flag. `powershell.exe -Command` defaults to MTA (Multi-Threaded Apartment), and `[System.Windows.Forms.Clipboard]::GetImage()` only returns a valid image from STA threads — from MTA it silently returns null, indistinguishable from "no image present."
+
+The CLI uses `-STA` everywhere it shells out to PowerShell (fixed in alpha.10 — `desktop-v0.3.0-alpha.7` through `alpha.9` were affected). If you've wrapped the binary in your own PowerShell invocation that calls one of the same paths, make sure your wrapper passes `-STA`:
+
+```powershell
+powershell.exe -NoProfile -NonInteractive -STA -Command "<your script>"
+```
+
+## Drag-drop a file onto the terminal window
+
+Drag-dropping a file from File Explorer onto Windows Terminal pastes its path; the server-side `input.detect_drop` handler picks up the path on the next prompt and attaches it as an image (or other supported type). Useful when `/paste` and `Ctrl+A v` aren't applicable — e.g. attaching a file you've already saved to disk.
+
+## `hermes-relay update` says "Up to date" but I know there's a newer alpha
+
+Fixed in alpha.11. Pre-alpha.11 builds picked the wrong "latest" release because GitHub's `/repos/.../releases` API returns rows ordered by `created_at`, not by SemVer of the tag — and `created_at` shifts whenever a release row is touched (re-tag, manual edit, asset replacement). All three resolvers (`updater.ts`, `install.sh`, `install.ps1`) blindly took `[0]`.
+
+**Bootstrap onto alpha.11+ via the install one-liner once:**
+
+::: code-group
+
+```powershell [Windows]
+irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex
+```
+
+```bash [macOS / Linux]
+curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.sh | sh
+```
+
+:::
+
+Both install scripts have been updated with the SemVer-max picker (`sort -V | tail -1` on bash; a custom `Sort-Object` comparator on PowerShell that packs (Major, Minor, Patch, PrereleaseRank, PrereleaseNum) into a sortable string). After re-installing, `hermes-relay update --check` will see new releases correctly.
+
+## Install scripts truncated the prerelease suffix in the upgrade line
+
+Fixed in alpha.12. Pre-alpha.12 `install.sh` and `install.ps1` printed lines like `existing install detected: 0.3.0-alpha.9 — upgrading to 0.3.` (truncated mid-token) because both normalizers stripped everything after the first `-`, including `-alpha.N`. The strip used to be defensive (binary's `--version` reported only the bare semver), but since alpha.4 the binary reports the full tail via the embedded `gen:version` constant — so the strip became lossy. Removed in both normalizers; full `0.3.0-alpha.14` now round-trips correctly.
+
 ## `timed out after 30ms` (or any millisecond-range timeout on a desktop tool)
 
 You're running a pre-fix desktop CLI build. The Python side sends `timeout` in seconds; early Node builds treated it as milliseconds — `30` seconds became 30 ms, and every shell command SIGKILL'd instantly.

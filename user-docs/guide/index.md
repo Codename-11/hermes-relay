@@ -1,4 +1,10 @@
-# What is Hermes-Relay?
+# Hermes-Relay — Android
+
+This section covers the **Android client** for [Hermes Agent](https://hermes-agent.nousresearch.com) — the native phone-control app: chat, voice, the agent reads your screen and acts on it, notifications.
+
+::: tip Looking for the desktop CLI?
+The desktop terminal client (Windows / macOS / Linux) lives in its own section: **[Desktop CLI →](/desktop/)**. Both clients pair against the same Hermes-Relay server and share `~/.hermes/remote-sessions.json` — pair once from either, both work.
+:::
 
 Hermes-Relay is a native Android app for [Hermes Agent](https://hermes-agent.nousresearch.com). Chat with your agent, manage sessions, and — in future phases — control your phone via the device bridge and access a remote terminal.
 

@@ -4,11 +4,13 @@ import { withBase } from 'vitepress'
 
 const installCommand = 'curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash'
 const pairCommand = 'hermes-pair'
+const desktopInstallShell = 'curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.sh | sh'
+const desktopInstallPwsh = 'irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex'
 
 // Copy-paste prompt block for AI agents (Claude, GPT, etc.) — points the
 // agent at the canonical SKILL.md raw URL, no inline recipe duplication.
 // Single source of truth lives at skills/devops/hermes-relay-self-setup/SKILL.md.
-const agentPrompt = `You are helping me install and maintain Hermes-Relay (https://github.com/Codename-11/hermes-relay), a native Android client + Python plugin for the Hermes AI agent platform.
+const agentPrompt = `You are helping me install and maintain Hermes-Relay (https://github.com/Codename-11/hermes-relay) — a native Android client + a desktop CLI + a Python plugin for the Hermes AI agent platform.
 
 Read the canonical setup recipe before acting:
   https://raw.githubusercontent.com/Codename-11/hermes-relay/main/skills/devops/hermes-relay-self-setup/SKILL.md
@@ -16,7 +18,7 @@ Read the canonical setup recipe before acting:
 Then guide me through:
 - Verifying hermes-agent is already installed (it's a prerequisite — Hermes-Relay is a plugin, not standalone)
 - Running the install one-liner: \`curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash\`
-- Pairing my phone via \`hermes-pair\` or \`/hermes-relay-pair\`
+- Pairing my phone via \`hermes-pair\` or \`/hermes-relay-pair\` (Android), or my laptop via the \`hermes-relay\` desktop CLI (binary one-liner: \`curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.sh | sh\` or \`irm .../install.ps1 | iex\` on Windows)
 - Verifying with \`hermes-status\`
 
 Always confirm before running shell commands. Never restart hermes-gateway without asking. If any step fails, consult the Troubleshooting section in the SKILL.md and ask me for the exact error.`
@@ -42,7 +44,7 @@ async function copy(key: string, text: string) {
   <section class="install-section">
     <h2>Install in 30 seconds</h2>
     <p class="install-tagline">
-      One line installs the server plugin into your Hermes agent. After restarting hermes, run <code>hermes-pair</code> (or type <code>/hermes-relay-pair</code> in any Hermes chat surface) to generate a QR code the Android app can scan.
+      Step 1 — install the server plugin into your Hermes agent. After restarting hermes, run <code>hermes-pair</code> (or type <code>/hermes-relay-pair</code> in any Hermes chat surface) to generate a QR / 6-char code that either the <a :href="withBase('/guide/getting-started')">Android app</a> or the <a :href="withBase('/desktop/')">desktop CLI</a> can use to pair.
     </p>
 
     <div class="install-code">
@@ -60,7 +62,7 @@ async function copy(key: string, text: string) {
       </button>
     </div>
 
-    <p class="install-then">Then:</p>
+    <p class="install-then">Then mint a pairing code:</p>
 
     <div class="install-code">
       <div class="install-code-scroll">
@@ -78,30 +80,62 @@ async function copy(key: string, text: string) {
     </div>
 
     <p class="install-note">
-      Installs the 14 <code>android_*</code> device control tools, the <code>/hermes-relay-pair</code> skill, and a <code>hermes-pair</code> shell shim. Requires hermes-agent v0.8.0+ and Python 3.11+.
+      Installs the 18 <code>android_*</code> + 9 <code>desktop_*</code> tool surfaces, the <code>/hermes-relay-pair</code> skill, and a <code>hermes-pair</code> shell shim. Requires hermes-agent v0.8.0+ and Python 3.11+.
     </p>
 
     <p class="install-cta">
-      <a :href="withBase('/guide/getting-started')" class="install-cta-link">Full setup guide →</a>
+      <a :href="withBase('/guide/getting-started')" class="install-cta-link">Android setup →</a>
+      <a :href="withBase('/desktop/')" class="install-cta-link">Desktop CLI setup →</a>
     </p>
 
     <div class="install-extras">
       <div class="install-extra-card">
-        <h3>Sideload the APK</h3>
+        <h3>Step 2 — your client</h3>
         <p>
-          Prefer not to use Google Play? Grab the file ending in <code>-sideload-release.apk</code> from the latest GitHub Release and install it directly — that's the full-featured "Hermes Dev" build. Any <code>.aab</code> file is a Google Play bundle format and won't install directly — always pick the <code>.apk</code>.
+          Pair the <strong>Android app</strong> (sideload the file ending in <code>-sideload-release.apk</code> from the latest GitHub Release for the full-featured build, or wait for Google Play), <strong>or</strong> install the <strong>desktop CLI</strong> binary with one of the one-liners below — same pair, either client. Bun-compiled binary, no Node required.
         </p>
+
+        <div class="install-code">
+          <div class="install-code-scroll">
+            <pre><code>{{ desktopInstallShell }}</code></pre>
+          </div>
+          <button
+            type="button"
+            class="copy-btn"
+            :class="{ copied: copiedKey === 'desktop-shell' }"
+            :aria-label="copiedKey === 'desktop-shell' ? 'Copied' : 'Copy desktop install (sh)'"
+            @click="copy('desktop-shell', desktopInstallShell)"
+          >
+            <span class="copy-btn-label">{{ copiedKey === 'desktop-shell' ? 'Copied!' : 'Copy' }}</span>
+          </button>
+        </div>
+
+        <div class="install-code">
+          <div class="install-code-scroll">
+            <pre><code>{{ desktopInstallPwsh }}</code></pre>
+          </div>
+          <button
+            type="button"
+            class="copy-btn"
+            :class="{ copied: copiedKey === 'desktop-pwsh' }"
+            :aria-label="copiedKey === 'desktop-pwsh' ? 'Copied' : 'Copy desktop install (pwsh)'"
+            @click="copy('desktop-pwsh', desktopInstallPwsh)"
+          >
+            <span class="copy-btn-label">{{ copiedKey === 'desktop-pwsh' ? 'Copied!' : 'Copy' }}</span>
+          </button>
+        </div>
+
         <p class="install-extra-actions">
           <a
             href="https://github.com/Codename-11/hermes-relay/releases/latest"
             class="install-cta-link"
             target="_blank"
             rel="noopener"
-          >Download APK →</a>
+          >Android APK →</a>
           <a
-            :href="withBase('/guide/getting-started') + '#sideload-apk'"
+            :href="withBase('/desktop/')"
             class="install-extra-secondary"
-          >Sideload guide</a>
+          >Desktop CLI guide</a>
         </p>
       </div>
 

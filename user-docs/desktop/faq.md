@@ -1,5 +1,19 @@
 # FAQ <ExperimentalBadge />
 
+## Can I use this with hermes installed locally instead of remotely?
+
+You don't need to. Native local-Hermes already has the same `/paste`, `/image <path>`, drag-drop a file from Explorer, and `Alt+V` paths — they ship in upstream hermes-agent and the Ink TUI directly. Hermes-Relay is specifically for the **remote-server** case: when you want to use a Hermes that lives somewhere else (a home server, a GPU box, a cloud VM) from your laptop, with the same UX as a local install. If everything's already on the same machine, run `hermes` directly and skip the relay.
+
+The two paths are complements, not alternatives. You'd use Hermes-Relay's desktop CLI when:
+- The agent's compute, models, or secrets need to live somewhere other than your daily-driver laptop.
+- You want the same agent / sessions / memory accessible from multiple devices.
+- You're sharing a GPU or model API key across machines.
+
+You'd use a native local Hermes install when:
+- Single machine.
+- Willing to manage Python venv + model API keys locally.
+- No cross-device session continuity needed.
+
 ## Is this just SSH?
 
 No. It's closer to **"give the agent on my server a set of hands on my local machine"**. Three differences from SSH:
