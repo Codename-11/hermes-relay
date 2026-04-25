@@ -119,7 +119,15 @@ function runCapture(
 
 /** Windows: ask PowerShell to dump the clipboard image as base64 PNG. Empty
  * stdout means "no image on clipboard" — the idiomatic success-but-null
- * signal. Non-empty means base64 PNG bytes we can round-trip. */
+ * signal. Non-empty means base64 PNG bytes we can round-trip.
+ *
+ * `-STA` is load-bearing. powershell.exe's default for `-Command` is MTA
+ * (Multi-Threaded Apartment), and `[System.Windows.Forms.Clipboard]::
+ * GetImage()` only returns a valid image from an STA thread — from MTA it
+ * silently returns null, indistinguishable from "clipboard has no image."
+ * Added in alpha.10 after Bailey reported clipboard reads always coming
+ * back empty even when an image was clearly on the clipboard.
+ */
 async function captureClipboardWindows(): Promise<AttachPayload | null> {
   const ps = [
     "Add-Type -AssemblyName System.Windows.Forms;",
@@ -134,7 +142,7 @@ async function captureClipboardWindows(): Promise<AttachPayload | null> {
 
   const r = await runCapture(
     'powershell',
-    ['-NoProfile', '-NonInteractive', '-Command', ps],
+    ['-NoProfile', '-NonInteractive', '-STA', '-Command', ps],
     CLIPBOARD_TIMEOUT_MS
   )
   if (!r.ran || r.timedOut || r.exitCode !== 0) {
