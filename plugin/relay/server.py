@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
+import binascii
 import json
 import logging
 import math
@@ -854,6 +856,116 @@ async def handle_sessions_extend(request: web.Request) -> web.Response:
                 for k, v in updated.grants.items()
             },
         }
+    )
+
+
+# ── Clipboard inbox (remote paste rendezvous) ───────────────────────────────
+
+
+# Magic-byte sniffer — same shape as tui_gateway/server.py::image.attach.bytes.
+# We accept the same five formats the upstream TUI's /paste accepts. Magic-byte
+# verification prevents a misformatted Authorization or a bytes-claim-png-but-
+# is-something-else from polluting the inbox.
+_IMAGE_MAGIC = {
+    "png": (b"\x89PNG\r\n\x1a\n",),
+    "jpg": (b"\xff\xd8\xff",),
+    "jpeg": (b"\xff\xd8\xff",),
+    "webp": (b"RIFF",),  # RIFF + WEBP at offset 8 — verify both
+    "gif": (b"GIF87a", b"GIF89a"),
+}
+_INBOX_MAX_BYTES = 25 * 1024 * 1024  # mirror tui_gateway image.attach.bytes
+_INBOX_DIR = Path.home() / ".hermes" / "images" / "inbox"
+
+
+async def handle_clipboard_inbox(request: web.Request) -> web.Response:
+    """Stage an image from a remote client into the local paste-inbox.
+
+    POST /clipboard/inbox  Authorization: Bearer <session_token>
+      Body: {"format": "png", "bytes_base64": "...", "filename_hint"?: "clip"}
+      → 200 {"ok": true, "path": "/home/.../inbox/<file>", "size_bytes": N}
+      → 400 invalid format / base64 / magic-byte mismatch / empty payload
+      → 401 missing or invalid bearer
+      → 413 payload exceeds 25 MB cap
+      → 500 disk write failure
+
+    The hermes CLI's ``/paste`` (and Alt+V) consult this inbox first via
+    ``hermes_cli.clipboard._inbox_freshest`` (axiom-fork patch). Files older
+    than 5 minutes are ignored as stale; the consumer unlinks on save so
+    pastes are one-shot.
+
+    Bearer-protected so a random LAN host can't fill the inbox; only a
+    paired client with a valid session token can stage paste data.
+    """
+    server, _session = _require_bearer_session(request)
+    del server  # acknowledged; we don't need the server reference for inbox
+
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 — aiohttp raises a varied set
+        raise web.HTTPBadRequest(text="invalid JSON body")
+
+    fmt = str(body.get("format", "")).strip().lower()
+    bytes_b64 = body.get("bytes_base64", "")
+    filename_hint = str(body.get("filename_hint", "") or "").strip()
+
+    if not fmt or not isinstance(bytes_b64, str):
+        raise web.HTTPBadRequest(text="format and bytes_base64 are required")
+    if fmt not in _IMAGE_MAGIC:
+        raise web.HTTPBadRequest(
+            text=f"unsupported format {fmt!r} — expected one of "
+            + ", ".join(sorted(_IMAGE_MAGIC.keys()))
+        )
+
+    try:
+        data = base64.b64decode(bytes_b64, validate=True)
+    except (binascii.Error, ValueError):
+        raise web.HTTPBadRequest(text="invalid base64 payload")
+    if not data:
+        raise web.HTTPBadRequest(text="empty payload")
+    if len(data) > _INBOX_MAX_BYTES:
+        return web.json_response(
+            {"ok": False, "error": f"payload exceeds {_INBOX_MAX_BYTES // 1024 // 1024} MB cap"},
+            status=413,
+        )
+
+    # Magic-byte check — exempt only WEBP which has a 12-byte signature.
+    magics = _IMAGE_MAGIC[fmt]
+    if fmt == "webp":
+        ok = data[:4] == b"RIFF" and len(data) >= 12 and data[8:12] == b"WEBP"
+    else:
+        ok = any(data.startswith(m) for m in magics)
+    if not ok:
+        raise web.HTTPBadRequest(
+            text=f"format mismatch — body does not look like {fmt}"
+        )
+
+    # Sanitize filename hint: only [A-Za-z0-9_-], cap 40 chars. Same policy
+    # as tui_gateway/server.py::image.attach.bytes.
+    hint = "".join(c for c in filename_hint if c.isalnum() or c in "_-")[:40]
+    ext = "jpeg" if fmt == "jpg" else fmt
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    suffix = f"_{hint}" if hint else ""
+    target = _INBOX_DIR / f"clip_{ts}_{os.getpid()}{suffix}.{ext}"
+
+    try:
+        _INBOX_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        tmp.write_bytes(data)
+        os.replace(tmp, target)
+    except OSError as exc:
+        logger.warning("clipboard inbox write failed: %s", exc)
+        return web.json_response(
+            {"ok": False, "error": f"disk write failed: {exc}"},
+            status=500,
+        )
+
+    logger.info(
+        "/clipboard/inbox: staged %d bytes -> %s",
+        len(data),
+        target.name,
+    )
+    return web.json_response(
+        {"ok": True, "path": str(target), "size_bytes": len(data)}
     )
 
 
@@ -3097,6 +3209,11 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_get("/sessions", handle_sessions_list)
     app.router.add_delete("/sessions/{token_prefix}", handle_sessions_revoke)
     app.router.add_patch("/sessions/{token_prefix}", handle_sessions_extend)
+    # Clipboard inbox — remote-client paste rendezvous for the upstream
+    # hermes CLI's /paste / Alt+V. Bearer-protected. Pairs with the
+    # axiom-fork patch in hermes_cli/clipboard.py that consults the inbox
+    # before native platform clipboard.
+    app.router.add_post("/clipboard/inbox", handle_clipboard_inbox)
     app.router.add_post("/media/register", handle_media_register)
     # === PHASE3-bridge-server-followup: /media/upload ===
     app.router.add_post("/media/upload", handle_media_upload)

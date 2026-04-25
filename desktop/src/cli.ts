@@ -8,6 +8,7 @@ import { daemonCommand } from './commands/daemon.js'
 import { devicesCommand } from './commands/devices.js'
 import { doctorCommand } from './commands/doctor.js'
 import { pairCommand } from './commands/pair.js'
+import { pasteCommand } from './commands/paste.js'
 import { shellCommand } from './commands/shell.js'
 import { statusCommand } from './commands/status.js'
 import { toolsCommand } from './commands/tools.js'
@@ -117,6 +118,7 @@ const KNOWN_COMMANDS = new Set([
   'daemon',
   'devices',
   'doctor',
+  'paste',
   'pair',
   'shell',
   'status',
@@ -133,6 +135,7 @@ Usage:
   hermes-relay chat [<prompt>]     Structured-event chat (REPL or one-shot, scriptable)
   hermes-relay "<prompt>"          One-shot structured chat (shortcut for chat "...")
   hermes-relay pair [CODE]         Pair with the relay and store a session token
+  hermes-relay paste               Stage clipboard image for /paste in the TUI
   hermes-relay status              Show stored sessions + grants + TTL
   hermes-relay tools               List tools available on the server
   hermes-relay devices             List / revoke / extend server-side paired devices
@@ -242,6 +245,8 @@ export async function main(argv = process.argv): Promise<number> {
       return doctorCommand(args)
     case 'pair':
       return pairCommand(args)
+    case 'paste':
+      return pasteCommand(args)
     case 'shell':
       return shellCommand(args)
     case 'status':
