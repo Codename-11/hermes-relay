@@ -55,6 +55,7 @@ from .channels.chat import ChatHandler
 from .channels.desktop import DesktopChannel
 from .channels.notifications import NotificationsChannel
 from .channels.terminal import TerminalHandler
+from .channels.tui import TuiHandler
 from .config import RelayConfig
 from .media import MediaRegistrationError, MediaRegistry, validate_media_path
 from .voice import VoiceHandler
@@ -100,6 +101,7 @@ class RelayServer:
         self.chat = ChatHandler(webapi_url=config.webapi_url)
         self.terminal = TerminalHandler(default_shell=config.terminal_shell)
         self.bridge = BridgeHandler()
+        self.tui = TuiHandler()
         # === PHASE3-notif-listener: notifications channel ===
         self.notifications = NotificationsChannel()
         # === END PHASE3-notif-listener ===
@@ -130,6 +132,7 @@ class RelayServer:
         await self.terminal.close()
         await self.bridge.close()
         await self.desktop.close()
+        await self.tui.close()
 
         # Close all WebSocket connections
         for ws in list(self._clients):
@@ -3051,6 +3054,9 @@ async def _on_message(
     elif channel == "bridge":
         task = asyncio.create_task(server.bridge.handle(ws, envelope))
         _track_task(server, ws, task)
+    elif channel == "tui":
+        task = asyncio.create_task(server.tui.handle(ws, envelope))
+        _track_task(server, ws, task)
     # === PHASE3-notif-listener: notifications channel dispatch ===
     elif channel == "notifications":
         task = asyncio.create_task(server.notifications.handle(ws, envelope))
@@ -3152,6 +3158,11 @@ async def _on_disconnect(
     # Desktop CLI context is per-ws and should not outlive the socket — the
     # next client connect will re-advertise its workspace anyway.
     await server.desktop.detach_ws(ws)
+
+    # Kill any tui_gateway subprocess this client had spawned so it doesn't
+    # linger after the WSS drops. Safe to call unconditionally — it no-ops
+    # when the client never attached on the tui channel.
+    await server.tui.detach_ws(ws, reason=f"client {remote_ip} disconnected")
 
     # Cancel all in-flight tasks for this client
     for task in tasks:
