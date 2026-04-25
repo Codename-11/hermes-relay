@@ -94,13 +94,19 @@ if [ "$VERSION" = "latest" ]; then
   say "-> resolving latest desktop-v* release..."
   api_body=$(curl -fsSL "https://api.github.com/repos/$REPO/releases" 2>/dev/null) \
     || die "could not query GitHub Releases API"
-  # Extract the first desktop-v* tag_name. Each "tag_name": entry is on its
-  # own line in GitHub's JSON output, so line-oriented tooling is sufficient
-  # and avoids a jq dependency.
+  # Extract every desktop-v* tag_name and pick the SemVer-max. Don't trust
+  # the API's first-element ordering — GitHub orders by the release row's
+  # created_at which shifts when the row is edited or re-tagged, so a
+  # touched alpha.9 row can outrank a freshly-tagged alpha.10. `sort -V`
+  # handles SemVer-ish ordering well enough for our purposes; we reverse
+  # and take the top. Each "tag_name": entry is on its own line in
+  # GitHub's JSON output, so line-oriented tooling is sufficient and
+  # avoids a jq dependency.
   resolved_version=$(printf '%s\n' "$api_body" \
     | grep -E '"tag_name": *"desktop-v' \
-    | head -1 \
-    | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
+    | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/' \
+    | sort -V \
+    | tail -1)
   [ -n "$resolved_version" ] || die "no desktop-v* releases found on $REPO"
   say "   $resolved_version"
 fi

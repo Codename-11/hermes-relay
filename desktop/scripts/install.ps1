@@ -83,8 +83,37 @@ if ($version -eq 'latest') {
   Say "-> resolving latest desktop-v* release..."
   try {
     $releases = Invoke-RestMethod -UseBasicParsing "https://api.github.com/repos/$repo/releases"
-    $pick = $releases | Where-Object { $_.tag_name -like 'desktop-v*' } | Select-Object -First 1
-    if (-not $pick) { Die "no desktop-v* releases found on $repo" }
+    # Don't trust the API's first-element ordering — GitHub orders by the
+    # release row's created_at which shifts when the row is touched (re-tag,
+    # edit). Sort by parsed version components explicitly so a touched
+    # alpha.9 row can't outrank a freshly-tagged alpha.10. Pack as a
+    # zero-padded sortable string: MAJOR.MINOR.PATCH.PRERANK.PRENUM where
+    # PRERANK is 1=alpha, 2=beta, 3=rc, 999=stable (semver §11: stable >
+    # any prerelease) and PRENUM is the prerelease number (so alpha.10 >
+    # alpha.9).
+    $candidates = $releases | Where-Object { $_.tag_name -like 'desktop-v*' }
+    if (-not $candidates) { Die "no desktop-v* releases found on $repo" }
+    $pick = $candidates | Sort-Object @{Expression = {
+        $v = $_.tag_name -replace '^desktop-v', ''
+        $core, $pre = ($v -split '-', 2)
+        $parts = $core -split '\.'
+        $major = [int]$parts[0]; $minor = [int]$parts[1]; $patch = [int]$parts[2]
+        $preRank = 999
+        $preNum = 0
+        if ($pre) {
+            $preParts = $pre -split '\.'
+            switch -regex ($preParts[0]) {
+                '^alpha$' { $preRank = 1 }
+                '^beta$'  { $preRank = 2 }
+                '^rc$'    { $preRank = 3 }
+                default   { $preRank = 0 }
+            }
+            if ($preParts.Length -gt 1 -and $preParts[1] -match '^\d+$') {
+                $preNum = [int]$preParts[1]
+            }
+        }
+        '{0:D5}.{1:D5}.{2:D5}.{3:D5}.{4:D5}' -f $major, $minor, $patch, $preRank, $preNum
+    }} | Select-Object -Last 1
     $resolvedVersion = $pick.tag_name
     Say "   $resolvedVersion$(if ($pick.prerelease) { ' (prerelease)' } else { '' })"
   } catch {
