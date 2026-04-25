@@ -1,6 +1,6 @@
 # Pairing <ExperimentalBadge />
 
-Pairing exchanges a one-time 6-character code for a long-lived session token, stored at `~/.hermes/remote-sessions.json` (mode 0600). This is the same file the [Android client](../guide/getting-started.md) uses — **pair once from either, both work**.
+Pairing exchanges a one-time 6-character code for a long-lived session token, stored at `~/.hermes/remote-sessions.json` (mode 0600). This is the same file the [Android client](../guide/getting-started.md) uses — **pair once from either, both work**. The token survives reboots, picks up automatic reconnects with TOFU cert pinning on `wss://`, and is revocable from any other paired client (see [`hermes-relay devices`](./subcommands.md#hermes-relay-devices)).
 
 ## Step 1 — mint a code on the server
 
@@ -69,7 +69,7 @@ hermes-relay pair F3W7EY --remote ws://<host>:8767
 
 ## Multi-endpoint pairing (ADR 24)
 
-If your Hermes server is reachable from multiple routes — LAN + Tailscale + public URL — the host can mint a **single QR payload** containing all of them. The CLI probes endpoints in priority order, picks the first reachable one, and records which route it picked so the banner shows "Connected via LAN (plain)" or "Connected via Tailscale (secure)" on reconnect.
+If your Hermes server is reachable from multiple routes — LAN + Tailscale + public URL — the host can mint a **single QR payload** containing all of them. The CLI probes endpoints in priority order (LAN → Tailscale → public), picks the first reachable one, and records which route it picked so the banner shows "Connected via LAN (plain)" or "Connected via Tailscale (secure)" on reconnect. On every network change, the client re-probes — moving from home Wi-Fi to a coffee shop transparently fails over to Tailscale or the public URL.
 
 On the server:
 
