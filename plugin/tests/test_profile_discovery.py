@@ -13,8 +13,9 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from plugin.relay.config import _load_profiles
+from plugin.relay.config import _load_profiles, _read_proc_start_time
 
 
 class ProfileDiscoveryTests(unittest.TestCase):
@@ -25,6 +26,24 @@ class ProfileDiscoveryTests(unittest.TestCase):
         self.root_config = self.hermes_dir / "config.yaml"
         self.profiles_dir = self.hermes_dir / "profiles"
         self.profiles_dir.mkdir(parents=True, exist_ok=True)
+
+        # `_probe_gateway_running` cross-checks /proc/<pid>/comm + /proc/<pid>/cmdline
+        # for "hermes" or "gateway" to defend against PID reuse. The test process
+        # is `python3` and won't match — patch the comm/cmdline check to True so
+        # the gateway-running probe degrades to "PID exists + start_time matches"
+        # for these tests. Both predicates remain enforced in production code.
+        self._comm_patcher = patch(
+            "plugin.relay.config._pid_matches_hermes",
+            return_value=True,
+        )
+        self._comm_patcher.start()
+        self.addCleanup(self._comm_patcher.stop)
+
+    def _real_start_time(self) -> int | None:
+        """Return the live test process's /proc start_time (clock ticks since
+        boot). On non-Linux hosts this is None and the probe degrades to
+        os.kill-alone — which still passes for os.getpid()."""
+        return _read_proc_start_time(os.getpid())
 
     # ── helpers ─────────────────────────────────────────────────────────
 
@@ -243,10 +262,16 @@ class ProfileDiscoveryTests(unittest.TestCase):
             config_body="model:\n  default: x\n",
             soul=None,
         )
+        # Probe compares pid-file's start_time against /proc/<pid>/stat field 22
+        # to defend against PID reuse. Use the live test pid's actual start_time
+        # so the probe ratifies the file as fresh. On non-Linux hosts
+        # _real_start_time() is None and the probe skips this check entirely.
+        st_value = self._real_start_time()
+        st_field = (', "start_time": ' + str(st_value)) if st_value is not None else ""
         payload = (
             '{"pid": ' + str(os.getpid()) +
-            ', "kind": "hermes-gateway", "argv": ["main.py"], '
-            '"start_time": 12345}'
+            ', "kind": "hermes-gateway", "argv": ["main.py"]'
+            + st_field + '}'
         )
         (pdir / "gateway.pid").write_text(payload, encoding="utf-8")
 
