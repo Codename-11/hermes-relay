@@ -39,6 +39,7 @@
 //                    server's /clipboard/inbox, then type `/paste\r`
 //                    into the PTY — cohesive in-session paste, no
 //                    leaving tmux
+//   Ctrl+A ?         re-print the chord-help banner (also Ctrl+A h)
 //   Ctrl+A Ctrl+A    forward a literal Ctrl+A (for nested tmux)
 // Anything else after Ctrl+A is swallowed with a one-line hint so the
 // user isn't guessing. Ctrl+C is NOT intercepted — it passes through as
@@ -68,6 +69,18 @@ import { RelayTransport } from '../transport/RelayTransport.js'
 
 const ATTACH_TIMEOUT_MS = 30_000
 const CTRL_A = 0x01
+
+/** The chord-help banner shown once on attach AND on `Ctrl+A ?`. Kept as
+ * a constant so both call sites can't drift. The `?` chord is the
+ * "show me the bindings again" mnemonic — useful when the attach banner
+ * has scrolled off-screen, or when you're on a fresh tmux pane and
+ * forgot the verb list. */
+const CHORD_HELP =
+  'Escape: Ctrl+A then . (detach, preserves tmux) · ' +
+  'Ctrl+A then k (kill tmux) · ' +
+  'Ctrl+A then v (paste clipboard image → /paste) · ' +
+  'Ctrl+A then ? (show this help) · ' +
+  'Ctrl+A Ctrl+A (literal Ctrl+A)'
 /** Time between `terminal.attached` and the auto-`exec` we inject. tmux
  * needs a beat to settle the new-session → login-shell prompt; if we
  * blast `exec hermes` in too fast, the shell sees it before the prompt
@@ -432,7 +445,7 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
   const reattachMsg = attached.reattach ? ' — re-attached to existing session' : ''
   process.stderr.write(
     `Attached${attached.tmuxAvailable ? ` (tmux session "${sessionName}")` : ''}${reattachMsg}.\n` +
-      `Escape: Ctrl+A then . (detach, preserves tmux) · Ctrl+A then k (kill tmux) · Ctrl+A then v (paste clipboard image → /paste) · Ctrl+A Ctrl+A (literal Ctrl+A)\n\n`
+      `${CHORD_HELP}\n\n`
   )
 
   // Swap handler from attach-waiter to steady-state output pump. Re-registering
@@ -567,8 +580,16 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
           void pasteFromClipboardChord()
           continue
         }
+        if (b === 0x3f /* '?' */ || b === 0x68 /* 'h' */) {
+          // Ctrl+A ? (or Ctrl+A h) → re-print the chord-help banner.
+          // Useful when the attach banner has scrolled off and the user
+          // forgets the verb list mid-session. Goes to stderr (not the
+          // PTY) so it doesn't appear inside the TUI's input buffer.
+          process.stderr.write(`\n\x1b[90m${CHORD_HELP}\x1b[0m\n`)
+          continue
+        }
         process.stderr.write(
-          `\n\x1b[90m[shell] escape: . detach · k kill · v paste · Ctrl+A literal\x1b[0m\n`
+          `\n\x1b[90m[shell] escape: . detach · k kill · v paste · ? help · Ctrl+A literal\x1b[0m\n`
         )
         continue
       }
