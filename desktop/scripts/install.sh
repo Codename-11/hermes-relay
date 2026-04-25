@@ -41,9 +41,14 @@ read_installed_version() {
   printf '%s' "$line" | awk '{print $2}'
 }
 
-# Strip the `desktop-v` tag prefix and any `-alpha.N` / `-beta.N` / `-rc.N`
-# suffix so we can compare against the post-install --version output (which
-# reports the bare package.json semver).
+# Strip the `desktop-v` tag prefix to get the bare semver (KEEPS the
+# prerelease suffix — `0.3.0-alpha.11`, not `0.3.0`). The binary's
+# `--version` output has reported the full semver since alpha.4 (when
+# `gen:version` started embedding the full string from package.json), so
+# the comparison is full-semver vs full-semver. Stripping the prerelease
+# here used to be defensive when the binary reported bare `0.3.0`, but
+# now it just produces `upgrading to 0.3.0` instead of `upgrading to
+# 0.3.0-alpha.11` in the user-facing message.
 normalize_pinned_version() {
   local v="$1"
   # Empty or "latest" → unknown; caller decides.
@@ -52,8 +57,6 @@ normalize_pinned_version() {
   v="${v#desktop-v}"
   # Strip leading `v` just in case someone pinned `v0.3.0`.
   v="${v#v}"
-  # Strip -alpha.N / -beta.N / -rc.N / any other pre-release tail.
-  v="${v%%-*}"
   printf '%s' "$v"
 }
 

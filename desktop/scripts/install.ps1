@@ -46,17 +46,20 @@ function Read-InstalledVersion {
   }
 }
 
-# Strip the `desktop-v` tag prefix and any `-alpha.N` / `-beta.N` / `-rc.N`
-# tail so the pinned tag can be compared to the post-install --version
-# output (which reports the bare package.json semver).
+# Strip the `desktop-v` tag prefix to get the bare semver (KEEPS the
+# prerelease suffix — `0.3.0-alpha.11`, not `0.3.0`). The binary's
+# `--version` output has reported the full semver since alpha.4 (when
+# `gen:version` started embedding the full string from package.json), so
+# the comparison is full-semver vs full-semver. Stripping the prerelease
+# here used to be defensive when the binary reported bare `0.3.0`, but
+# now it just produces "upgrading to 0.3.0" instead of "upgrading to
+# 0.3.0-alpha.11" in the user-facing message.
 function Get-NormalizedPin {
   param([string]$Pin)
   if (-not $Pin -or $Pin -eq 'latest') { return '' }
   $v = $Pin
   if ($v.StartsWith('desktop-v')) { $v = $v.Substring('desktop-v'.Length) }
   elseif ($v.StartsWith('v'))     { $v = $v.Substring(1) }
-  $dash = $v.IndexOf('-')
-  if ($dash -ge 0) { $v = $v.Substring(0, $dash) }
   return $v
 }
 
