@@ -3,7 +3,7 @@ import { defineConfig } from 'vitepress'
 export default defineConfig({
   base: '/hermes-relay/',
   title: 'Hermes-Relay',
-  description: 'Android app for Hermes Agent — chat, control, and connect from your phone',
+  description: 'Hermes-Relay — Android phone control + desktop terminal client for the Hermes agent platform',
 
   head: [
     // Favicon — base path is NOT auto-applied to head entries in VitePress,
@@ -17,22 +17,22 @@ export default defineConfig({
     // Open Graph — crawlers (Facebook, Messenger, Slack, Discord, LinkedIn) need absolute URLs
     ['meta', { property: 'og:type', content: 'website' }],
     ['meta', { property: 'og:site_name', content: 'Hermes-Relay' }],
-    ['meta', { property: 'og:title', content: 'Hermes-Relay — Android App for Hermes Agent' }],
-    ['meta', { property: 'og:description', content: 'Chat, control, and connect — a native Android app for Hermes Agent. Direct API streaming, session management, tool visualization.' }],
+    ['meta', { property: 'og:title', content: 'Hermes-Relay — Phone control + desktop terminal for Hermes Agent' }],
+    ['meta', { property: 'og:description', content: 'Two surfaces for one Hermes agent: a native Android app for phone control + a desktop CLI that lets you use a server-deployed Hermes from your laptop as if it were local.' }],
     ['meta', { property: 'og:url', content: 'https://codename-11.github.io/hermes-relay/' }],
     ['meta', { property: 'og:image', content: 'https://codename-11.github.io/hermes-relay/og-image.png' }],
     ['meta', { property: 'og:image:secure_url', content: 'https://codename-11.github.io/hermes-relay/og-image.png' }],
     ['meta', { property: 'og:image:type', content: 'image/png' }],
     ['meta', { property: 'og:image:width', content: '1024' }],
     ['meta', { property: 'og:image:height', content: '500' }],
-    ['meta', { property: 'og:image:alt', content: 'Hermes-Relay — Your AI agent, in your pocket. Chat, Terminal, Bridge.' }],
+    ['meta', { property: 'og:image:alt', content: 'Hermes-Relay — Phone control + desktop terminal for Hermes Agent.' }],
 
     // Twitter / X Card
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
-    ['meta', { name: 'twitter:title', content: 'Hermes-Relay — Android App for Hermes Agent' }],
-    ['meta', { name: 'twitter:description', content: 'Chat, control, and connect — a native Android app for Hermes Agent.' }],
+    ['meta', { name: 'twitter:title', content: 'Hermes-Relay — Phone control + desktop terminal for Hermes Agent' }],
+    ['meta', { name: 'twitter:description', content: 'Android remote-control app + desktop CLI for the Hermes agent platform — one pair, two surfaces.' }],
     ['meta', { name: 'twitter:image', content: 'https://codename-11.github.io/hermes-relay/og-image.png' }],
-    ['meta', { name: 'twitter:image:alt', content: 'Hermes-Relay — Your AI agent, in your pocket.' }],
+    ['meta', { name: 'twitter:image:alt', content: 'Hermes-Relay — Phone control + desktop terminal for Hermes Agent.' }],
 
     // Theme
     ['meta', { name: 'theme-color', content: '#000000' }],
@@ -47,9 +47,14 @@ export default defineConfig({
     logo: '/logo.svg',
 
     nav: [
-      { text: 'Guide', link: '/guide/' },
+      {
+        text: 'Surfaces',
+        items: [
+          { text: 'Android (phone control)', link: '/guide/' },
+          { text: 'Desktop CLI (terminal)', link: '/desktop/' },
+        ],
+      },
       { text: 'Features', link: '/features/' },
-      { text: 'Desktop CLI', link: '/desktop/' },
       { text: 'Architecture', link: '/architecture/' },
       { text: 'Reference', link: '/reference/api' },
       { text: 'GitHub', link: 'https://github.com/Codename-11/hermes-relay' },
@@ -59,14 +64,20 @@ export default defineConfig({
     sidebar: {
       '/guide/': [
         {
-          text: 'Getting Started',
+          text: 'Android (phone control)',
           items: [
-            { text: 'What is Hermes-Relay?', link: '/guide/' },
+            { text: 'Overview', link: '/guide/' },
             { text: 'Installation & Setup', link: '/guide/getting-started' },
             { text: 'Release tracks', link: '/guide/release-tracks' },
             { text: 'Chat', link: '/guide/chat' },
             { text: 'Sessions', link: '/guide/sessions' },
             { text: 'Troubleshooting', link: '/guide/troubleshooting' },
+          ],
+        },
+        {
+          text: 'Looking for the desktop CLI?',
+          items: [
+            { text: 'Desktop CLI overview', link: '/desktop/' },
           ],
         },
       ],
@@ -111,7 +122,7 @@ export default defineConfig({
         {
           // Sidebar header carries the experimental marker so it's visible
           // on every page in the section, not just the overview.
-          text: 'Desktop CLI · Experimental',
+          text: 'Desktop CLI (terminal) · Experimental',
           items: [
             { text: 'Overview', link: '/desktop/' },
             { text: 'Installation', link: '/desktop/installation' },
@@ -120,6 +131,12 @@ export default defineConfig({
             { text: 'Local tool routing', link: '/desktop/tools' },
             { text: 'Troubleshooting', link: '/desktop/troubleshooting' },
             { text: 'FAQ', link: '/desktop/faq' },
+          ],
+        },
+        {
+          text: 'Looking for the Android app?',
+          items: [
+            { text: 'Android overview', link: '/guide/' },
           ],
         },
       ],

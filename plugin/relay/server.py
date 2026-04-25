@@ -862,6 +862,66 @@ async def handle_sessions_extend(request: web.Request) -> web.Response:
     )
 
 
+# ── Desktop tool dispatch (loopback HTTP shim for desktop_tool.py) ──────────
+
+
+async def handle_desktop_ping(request: web.Request) -> web.Response:
+    """GET /desktop/_ping?tool=<name>
+      → 200 {"ok": true}      a desktop client is connected AND advertises
+                              the queried tool (or `tool` was omitted).
+      → 503 {"ok": false}     no client connected, OR client connected but
+                              hasn't advertised this specific tool.
+
+    Loopback-only — the only legitimate caller is `plugin/tools/desktop_tool.py`
+    running inside hermes-gateway on the same host. Phone bridges have their
+    own auth model; desktop is mediated by the agent.
+    """
+    _require_loopback(request)
+    server: RelayServer = request.app["server"]
+    tool = request.query.get("tool", "").strip()
+    if not server.desktop.is_client_connected():
+        return web.json_response(
+            {"ok": False, "error": "no desktop client connected"},
+            status=503,
+        )
+    if tool and not server.desktop.has_client_for(tool):
+        return web.json_response(
+            {"ok": False, "error": f"client connected but does not advertise tool {tool!r}"},
+            status=503,
+        )
+    return web.json_response({"ok": True})
+
+
+async def handle_desktop_dispatch(request: web.Request) -> web.Response:
+    """POST /desktop/{tool_name}
+      Body: {... tool args ...}
+      → 200 {response payload from client}
+      → 502 client error / not connected / not advertised
+      → 504 client took longer than RESPONSE_TIMEOUT to respond
+
+    Loopback-only — see handle_desktop_ping.
+    """
+    _require_loopback(request)
+    server: RelayServer = request.app["server"]
+    tool_name = request.match_info["tool_name"]
+    try:
+        args = await request.json()
+        if not isinstance(args, dict):
+            args = {}
+    except Exception:  # noqa: BLE001
+        args = {}
+    try:
+        result = await server.desktop.handle_command(tool_name, args)
+        return web.json_response(result)
+    except Exception as exc:  # DesktopError or asyncio.TimeoutError
+        msg = str(exc) or exc.__class__.__name__
+        # Map timeout to 504; everything else to 502 — the agent's tool
+        # framework distinguishes "transient/retry" (504) from "tool error"
+        # (502) on HTTP status alone.
+        status = 504 if "timeout" in msg.lower() or isinstance(exc, asyncio.TimeoutError) else 502
+        return web.json_response({"ok": False, "error": msg}, status=status)
+
+
 # ── Clipboard inbox (remote paste rendezvous) ───────────────────────────────
 
 
@@ -3253,6 +3313,17 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_get("/sessions", handle_sessions_list)
     app.router.add_delete("/sessions/{token_prefix}", handle_sessions_revoke)
     app.router.add_patch("/sessions/{token_prefix}", handle_sessions_extend)
+    # Desktop tool dispatch — HTTP shim called by `plugin/tools/desktop_tool.py`
+    # running inside hermes-gateway. Both endpoints loopback-only.
+    # `/desktop/_ping` is the availability check the agent's check_fn uses
+    # to fail-fast when no desktop client is connected. `/desktop/{tool_name}`
+    # forwards the tool call to the connected DesktopHandler client and returns
+    # its response. Order matters: fixed `/desktop/_ping` must come BEFORE the
+    # wildcard `/desktop/{tool_name}` or aiohttp swallows `_ping` as a tool
+    # literal and 502s.
+    app.router.add_get("/desktop/_ping", handle_desktop_ping)
+    app.router.add_post("/desktop/{tool_name}", handle_desktop_dispatch)
+
     # Clipboard inbox — remote-client paste rendezvous for the upstream
     # hermes CLI's /paste / Alt+V. Bearer-protected. Pairs with the
     # axiom-fork patch in hermes_cli/clipboard.py that consults the inbox
