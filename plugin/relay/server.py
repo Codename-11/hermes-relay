@@ -878,6 +878,33 @@ _IMAGE_MAGIC = {
 }
 _INBOX_MAX_BYTES = 25 * 1024 * 1024  # mirror tui_gateway image.attach.bytes
 _INBOX_DIR = Path.home() / ".hermes" / "images" / "inbox"
+# Mirror hermes_cli/clipboard.py::_INBOX_TTL_SECONDS — pastes older than this
+# are considered abandoned and won't be picked up by /paste anyway, so the
+# write path opportunistically deletes them to keep the inbox dir from
+# growing unbounded over time.
+_INBOX_TTL_SECONDS = 300
+
+
+def _sweep_inbox_stale() -> int:
+    """Delete inbox files older than the TTL. Best-effort — exceptions
+    swallowed so an inbox-write doesn't fail because of a sweep glitch.
+    Returns the count of files unlinked, for the log line. Cost: one
+    listdir + one stat per file in the inbox; tiny in steady state."""
+    swept = 0
+    try:
+        if not _INBOX_DIR.is_dir():
+            return 0
+        cutoff = time.time() - _INBOX_TTL_SECONDS
+        for path in _INBOX_DIR.iterdir():
+            try:
+                if path.is_file() and path.stat().st_mtime < cutoff:
+                    path.unlink(missing_ok=True)
+                    swept += 1
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return swept
 
 
 async def handle_clipboard_inbox(request: web.Request) -> web.Response:
@@ -962,13 +989,19 @@ async def handle_clipboard_inbox(request: web.Request) -> web.Response:
             status=500,
         )
 
+    # Opportunistic sweep — keep the inbox from accumulating abandoned
+    # pastes. Runs AFTER the new write so a sweep failure can't damage
+    # the just-staged file.
+    swept = _sweep_inbox_stale()
+
     logger.info(
-        "/clipboard/inbox: staged %d bytes -> %s",
+        "/clipboard/inbox: staged %d bytes -> %s%s",
         len(data),
         target.name,
+        f" (swept {swept} stale)" if swept else "",
     )
     return web.json_response(
-        {"ok": True, "path": str(target), "size_bytes": len(data)}
+        {"ok": True, "path": str(target), "size_bytes": len(data), "swept_stale": swept}
     )
 
 
