@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Desktop CLI alpha.14 — `Ctrl+A ?` chord re-displays the chord-help banner.** The attach-time banner scrolls off as soon as anything writes to the terminal, so users mid-session forgot the verb list and had to detach + re-attach (or guess). New `Ctrl+A ?` (and `Ctrl+A h` synonym) reprints the banner to stderr without leaving the session. Banner text refactored into a single `CHORD_HELP` constant so the attach-time print, the `?` chord, and the unknown-chord hint can't drift out of sync. Unknown-chord hint now also lists `?` as one of the known verbs.
+
 - **Desktop CLI alpha.13 — `Ctrl+A v` chord in `hermes-relay shell` for in-session paste.** Bailey: *"This isn't cohesive — we have to exit hermes-relay shell to run `hermes-relay paste`. Can we leverage a tmux hook?"* Tmux runs on the Linux server with no path back to the Windows clipboard, so server-side hooks can't help — but the existing client-side chord state machine (`Ctrl+A .` detach, `Ctrl+A k` kill, `Ctrl+A Ctrl+A` literal) is the right place. Added `Ctrl+A v`: client reads its own clipboard image (same `captureClipboardImage()` path as the `/paste` REPL command), POSTs to `/clipboard/inbox` via the new shared `stageClipboardImageToInbox(url, token)` helper exported from `commands/paste.ts`, then types `/paste\r` into the PTY so the upstream Hermes TUI consumes it in the same flow the user would have typed by hand. Status line goes to stderr so it doesn't pollute the PTY stream: `[shell] pasted 1920×1080 (245 KB) → /paste`. Reentrancy guard prevents double-stage on a fast double-press. Banner help and chord doc-comment updated to list the new verb.
 
 ### Fixed
