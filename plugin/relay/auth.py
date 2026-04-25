@@ -77,6 +77,7 @@ DEFAULT_TTL_SECONDS: float = 30 * 24 * 3600  # 30 days
 # never outlive the session itself.
 DEFAULT_TERMINAL_CAP: float = 30 * 24 * 3600  # 30 days
 DEFAULT_BRIDGE_CAP: float = 7 * 24 * 3600  # 7 days
+DEFAULT_TUI_CAP: float = 30 * 24 * 3600  # 30 days (desktop TUI — Phase 1 MVP)
 
 # Pairing codes still expire after 10 minutes regardless of session TTL.
 _PAIRING_CODE_TTL = 600.0
@@ -101,15 +102,18 @@ def _default_grants(ttl_seconds: float, now: float) -> dict[str, float]:
             "chat": math.inf,
             "terminal": math.inf,
             "bridge": math.inf,
+            "tui": math.inf,
         }
 
     chat_exp = now + ttl_seconds
     terminal_exp = now + min(ttl_seconds, DEFAULT_TERMINAL_CAP)
     bridge_exp = now + min(ttl_seconds, DEFAULT_BRIDGE_CAP)
+    tui_exp = now + min(ttl_seconds, DEFAULT_TUI_CAP)
     return {
         "chat": chat_exp,
         "terminal": terminal_exp,
         "bridge": bridge_exp,
+        "tui": tui_exp,
     }
 
 
