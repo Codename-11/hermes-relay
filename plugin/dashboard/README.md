@@ -1,9 +1,10 @@
 # Hermes-Relay Dashboard Plugin — Frontend
 
-Four-tab React UI that runs inside the hermes-agent dashboard via the upstream
-Plugin SDK. The build output (`dist/index.js`) is **committed to git** because
-the dashboard `<script src=...>` loads it verbatim — operators never run the
-build.
+React UI that runs inside the hermes-agent dashboard via the upstream Plugin
+SDK. It covers paired sessions, pairing QR generation, bridge activity, media
+inspection, and remote-access setup. The build output (`dist/index.js`) is
+**committed to git** because the dashboard `<script src=...>` loads it verbatim
+— operators never run the build.
 
 ## Requirements
 
@@ -79,7 +80,27 @@ All proxied by `plugin_api.py` under `/api/plugins/hermes-relay/`:
 - `GET /sessions` — paired device list
 - `GET /bridge-activity?limit=N` — ring buffer of recent bridge commands
 - `GET /media?include_expired=true|false` — MediaRegistry snapshot
-- `GET /push` — FCM configuration stub
+- `POST /pairing` — mint a pairing code and signed QR payload
+- `DELETE /sessions/{token_prefix}` — revoke a paired session
+- `GET /remote-access/status` — Tailscale/public URL status
+- `GET /remote-access/public-url` — read the pinned public relay URL
+- `PUT /remote-access/public-url` — pin or clear the public relay URL
+- `POST /remote-access/probe` — probe candidate relay endpoints
+- `POST /remote-access/tailscale/enable` — enable Tailscale serving
+- `POST /remote-access/tailscale/disable` — disable Tailscale serving
+
+## Hackathon submission / demo
+
+Submission repo: `Codename-11/hermes-relay`
+Plugin path: `plugin/dashboard/`
+
+Suggested screenshot set after deploying the pushed branch:
+
+- Management tab with paired Android and desktop sessions
+- Pairing dialog with QR code and endpoint controls
+- Bridge Activity command stream
+- Media Inspector token list
+- Remote Access endpoint setup and probe results
 
 ## Auto-refresh cadence
 
@@ -87,16 +108,17 @@ All proxied by `plugin_api.py` under `/api/plugins/hermes-relay/`:
 |-----|---------------|-------|
 | Management | 10s | `/overview` + `/sessions` |
 | Activity | 5s | `/bridge-activity` |
-| Push | — | No poll (stub) |
 | Media | 15s | `/media`; TTL countdown ticks every 1s independently |
+| Remote Access | 15s | `/remote-access/status`; endpoint probes run on demand |
 
 Toggle persists to `localStorage['hermes-relay-autorefresh']` (default: on).
 When off, each tab surfaces a manual "Refresh" button.
 
 ## Notes
 
-- Session revocation from the dashboard is a **placeholder** — it requires
-  re-pairing from the phone. Wiring a real proxy route is a future ticket.
+- Session revocation calls the dashboard backend's
+  `DELETE /sessions/{token_prefix}` proxy route and asks for operator
+  confirmation before sending the destructive request.
 - Every tab handles loading / empty / error states. The error state shows the
   backend's 502 detail verbatim so "relay unreachable" is debuggable without
   opening devtools.

@@ -4,7 +4,6 @@ const { useState, useEffect, useCallback } = SDK.hooks;
 
 import RelayManagement from "./tabs/RelayManagement.jsx";
 import BridgeActivity from "./tabs/BridgeActivity.jsx";
-import PushConsole from "./tabs/PushConsole.jsx";
 import MediaInspector from "./tabs/MediaInspector.jsx";
 import RemoteAccess from "./tabs/RemoteAccess.jsx";
 import { Switch } from "./lib/ui-shims.jsx";
@@ -16,7 +15,6 @@ const AUTO_REFRESH_KEY = "hermes-relay-autorefresh";
 const TABS = [
   { key: "management", label: "Management" },
   { key: "activity", label: "Activity" },
-  { key: "push", label: "Push" },
   { key: "media", label: "Media" },
   { key: "remote", label: "Remote Access" },
 ];
@@ -71,7 +69,7 @@ function RelayPluginRoot() {
         <div>
           <h1 className="text-2xl font-semibold">Relay</h1>
           <p className="text-sm text-muted-foreground">
-            Paired devices, bridge activity, push, and media for hermes-relay.
+            Paired devices, bridge activity, media, and remote access for hermes-relay.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -99,7 +97,6 @@ function RelayPluginRoot() {
       <div className="mt-4">
         {tab === "management" && <RelayManagement autoRefresh={autoRefresh} />}
         {tab === "activity" && <BridgeActivity autoRefresh={autoRefresh} />}
-        {tab === "push" && <PushConsole />}
         {tab === "media" && <MediaInspector autoRefresh={autoRefresh} />}
         {tab === "remote" && <RemoteAccess autoRefresh={autoRefresh} />}
       </div>
