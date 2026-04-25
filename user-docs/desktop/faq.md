@@ -47,7 +47,7 @@ If your Hermes host is reachable via **multiple** routes (LAN + Tailscale + publ
 
 ## What happens when my laptop goes to sleep / network drops?
 
-- **In `shell` mode**: the tmux session persists on the server. The WSS disconnects when the network goes away. When you wake up and re-run `hermes-relay shell`, it re-attaches to the same tmux session with the hermes process still running.
+- **In shell mode** (bare `hermes-relay`, the default): the tmux session persists on the server. The WSS disconnects when the network goes away. When you wake up and re-run `hermes-relay`, it re-attaches to the same tmux session with the hermes process still running.
 - **In `chat` mode**: the in-flight turn gets torn down; the server's session state persists. Next `hermes-relay chat` resumes cleanly.
 - **Tool calls that were in-flight when the drop happened**: the handler's AbortController fires, the child process is SIGKILL'd, and the relay-side Python handler sees a disconnect error.
 
@@ -123,7 +123,7 @@ v1.0. Tracked in [ROADMAP.md](https://github.com/Codename-11/hermes-relay/blob/m
 - Advertise desktop tools so the agent can reach you anytime you're on the machine.
 - Install as a Windows service / systemd user unit / launchd plist so it auto-starts on login.
 
-Until then: keep a `hermes-relay shell` open in a spare terminal tab for the agent to dispatch tool calls into.
+Until then: keep a `hermes-relay` session open in a spare terminal tab for the agent to dispatch tool calls into.
 
 ## Can multiple people use the same Hermes host from different desktop CLIs?
 

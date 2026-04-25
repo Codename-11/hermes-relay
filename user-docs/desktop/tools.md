@@ -24,7 +24,7 @@ The router heartbeats `desktop.status` every 30 s, advertising the full handler-
 
 ## How it works
 
-1. You pair + connect via `hermes-relay shell` or `hermes-relay chat`.
+1. You pair + connect via `hermes-relay` (bare = shell/TUI mode by default) or `hermes-relay chat`.
 2. On connect, the CLI's `DesktopToolRouter` attaches to the relay's `desktop` channel and heartbeats every 30 s with the list of advertised tools.
 3. Hermes's Python-side `desktop_tool.py` handlers register with `tools.registry` (same pattern as `android_tool.py`) — the agent sees `desktop_read_file` as just another tool.
 4. When the agent calls a `desktop_*` tool, the Python handler HTTP-POSTs to `localhost:8767/desktop/<tool_name>` on the host.
