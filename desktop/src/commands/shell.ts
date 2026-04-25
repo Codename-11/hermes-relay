@@ -31,14 +31,19 @@
 //   error    (s→c)  { channel:'terminal', type:'terminal.error',
 //                     payload:{ message } }
 //
-// Client-side escape: Ctrl+A as a prefix (tmux-style). `Ctrl+A .` detaches
-// (closes the WSS cleanly but preserves the tmux session on the server, so
-// the next `hermes-relay shell` re-attaches to the same hermes instance).
-// `Ctrl+A Ctrl+A` sends a literal Ctrl+A. `Ctrl+A k` kills the tmux session
-// for real (destructive, bypasses tmux persistence). Anything else after
-// Ctrl+A is swallowed with a one-line hint so the user isn't guessing.
-// Ctrl+C is NOT intercepted — it passes through as byte 0x03 to interrupt
-// whatever's running on the remote side, which is what the user expects.
+// Client-side escape: Ctrl+A as a prefix (tmux-style).
+//   Ctrl+A .         clean detach (tmux preserved on server; next
+//                    `hermes-relay shell` re-attaches to the same hermes)
+//   Ctrl+A k         destructive kill (tmux session destroyed for real)
+//   Ctrl+A v         read this machine's clipboard image, stage to the
+//                    server's /clipboard/inbox, then type `/paste\r`
+//                    into the PTY — cohesive in-session paste, no
+//                    leaving tmux
+//   Ctrl+A Ctrl+A    forward a literal Ctrl+A (for nested tmux)
+// Anything else after Ctrl+A is swallowed with a one-line hint so the
+// user isn't guessing. Ctrl+C is NOT intercepted — it passes through as
+// byte 0x03 to interrupt whatever's running on the remote side, which is
+// what the user expects.
 
 import { buildConnectBanner } from '../banner.js'
 import type { ParsedArgs } from '../cli.js'
@@ -49,6 +54,7 @@ import { setupGracefulExit } from '../lib/gracefulExit.js'
 import { rpcErrorMessage } from '../lib/rpc.js'
 import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
 import { deleteSession, getSession, saveSession } from '../remoteSessions.js'
+import { stageClipboardImageToInbox } from './paste.js'
 import { fetchRecentSessions, pickSession } from '../sessionPicker.js'
 import { ensureToolsConsent } from '../tools/consent.js'
 import { clipboardReadHandler, clipboardWriteHandler } from '../tools/handlers/clipboard.js'
@@ -426,7 +432,7 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
   const reattachMsg = attached.reattach ? ' — re-attached to existing session' : ''
   process.stderr.write(
     `Attached${attached.tmuxAvailable ? ` (tmux session "${sessionName}")` : ''}${reattachMsg}.\n` +
-      `Escape: Ctrl+A then . (detach, preserves tmux) · Ctrl+A then k (kill tmux) · Ctrl+A Ctrl+A (literal Ctrl+A)\n\n`
+      `Escape: Ctrl+A then . (detach, preserves tmux) · Ctrl+A then k (kill tmux) · Ctrl+A then v (paste clipboard image → /paste) · Ctrl+A Ctrl+A (literal Ctrl+A)\n\n`
   )
 
   // Swap handler from attach-waiter to steady-state output pump. Re-registering
@@ -472,9 +478,49 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
   process.stdin.resume()
 
   let escapePending = false
+  /** Reentrancy guard for `Ctrl+A v` so a fast double-press doesn't race two
+   * staging requests at once (the server'd then attach two images on /paste). */
+  let pasteInFlight = false
 
   const sendInput = (data: string) => {
     relay.sendChannel('terminal', 'terminal.input', { session_name: sessionName, data })
+  }
+
+  /** Ctrl+A v handler: read this machine's clipboard image, ship it to the
+   * relay's /clipboard/inbox, then type `/paste\r` into the PTY so the
+   * upstream Hermes TUI's /paste handler consumes the inbox file in the
+   * same flow the user would type by hand. Status line goes to stderr so
+   * it doesn't pollute the PTY stream. */
+  const pasteFromClipboardChord = async () => {
+    if (pasteInFlight) {
+      process.stderr.write('\n\x1b[90m[shell] paste already in flight — ignoring\x1b[0m\n')
+      return
+    }
+    pasteInFlight = true
+    try {
+      const rec = await getSession(url)
+      if (!rec) {
+        process.stderr.write(
+          '\n\x1b[90m[shell] paste: no stored session for ' + url + '\x1b[0m\n'
+        )
+        return
+      }
+      const result = await stageClipboardImageToInbox(url, rec.token)
+      if (!result.ok) {
+        const what = result.noImage ? 'no image on clipboard' : (result.error ?? 'unknown error')
+        process.stderr.write(`\n\x1b[90m[shell] paste: ${what}\x1b[0m\n`)
+        return
+      }
+      // Stage succeeded — type /paste\r into the PTY so the TUI consumes it.
+      // Carriage-return alone (\r) is the standard "submit" key; \n would
+      // emit a literal newline in some TUIs.
+      sendInput('/paste\r')
+      process.stderr.write(
+        `\n\x1b[90m[shell] pasted ${result.dims} (${result.sizeKb} KB) → /paste\x1b[0m\n`
+      )
+    } finally {
+      pasteInFlight = false
+    }
   }
 
   const forwardInput = (chunk: Buffer) => {
@@ -511,8 +557,18 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
           out.push(CTRL_A)
           continue
         }
+        if (b === 0x76 /* 'v' */) {
+          // Ctrl+A v → read this machine's clipboard image, stage to the
+          // server's inbox, then type `/paste\r` into the PTY so the TUI
+          // consumes it. Async — fire and forget; the in-flight guard
+          // inside pasteFromClipboardChord prevents double-staging on a
+          // fast repeat press. No need to flush `out` first because Ctrl+A
+          // already consumed; nothing buffered for this byte.
+          void pasteFromClipboardChord()
+          continue
+        }
         process.stderr.write(
-          `\n\x1b[90m[shell] escape: . detach · k kill · Ctrl+A literal\x1b[0m\n`
+          `\n\x1b[90m[shell] escape: . detach · k kill · v paste · Ctrl+A literal\x1b[0m\n`
         )
         continue
       }
