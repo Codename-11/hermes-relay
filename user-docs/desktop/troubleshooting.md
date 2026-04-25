@@ -91,8 +91,8 @@ The CLI disables bracketed paste before the readline prompt and strips ANSI defe
 
 Windows's `Win+Shift+S` snipping tool stages the screenshot in the clipboard, but on first capture some PowerShell environments don't see it immediately because of the **`-STA`** flag requirement. Two fixes — pick whichever is most cohesive:
 
-- **In a `hermes-relay shell` session**: just press `Ctrl+A v`. The chord reads your clipboard with the right STA flag, ships it to the server inbox via `/clipboard/inbox`, and auto-types `/paste` into the TUI for you. One keystroke, no leaving the shell.
-- **From outside the shell**: run `hermes-relay paste` (one-shot) — same plumbing as the chord, exits when done.
+- **Inside `hermes-relay`** (the default shell/TUI mode): just press `Ctrl+A v`. The chord reads your clipboard with the right STA flag, ships it to the server inbox via `/clipboard/inbox`, and auto-types `/paste` into the TUI for you. One keystroke, no leaving the session.
+- **From a separate terminal**: run `hermes-relay paste` (one-shot) — same plumbing as the chord, exits when done.
 - **In `hermes-relay chat` REPL**: just type `/paste`. Same code path.
 
 If `/paste` still says no image found after either of the above, see the `-STA` note below — your custom PowerShell invocation may have lost the flag.
@@ -166,7 +166,7 @@ Two layers — check them in order:
 curl -s "http://127.0.0.1:8767/desktop/_ping?tool=desktop_terminal"
 ```
 
-**If `connected: false`**: no desktop CLI is attached. Start `hermes-relay shell` or `chat`; make sure you didn't pass `--no-tools`; make sure you consented on the first-run prompt.
+**If `connected: false`**: no desktop CLI is attached. Run `hermes-relay` (bare = shell/TUI mode by default) or `hermes-relay chat`; make sure you didn't pass `--no-tools`; make sure you consented on the first-run prompt.
 
 **If `connected: true`** but Hermes still can't see the tools: the plugin isn't loaded by the gateway, or the `desktop` toolset isn't enabled for your session.
 

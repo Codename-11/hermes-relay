@@ -10,11 +10,11 @@ Binaries are unsigned (SmartScreen / Gatekeeper warnings are expected — the in
 
 ## The killer demo — paste a screenshot in your TUI
 
-This is the experience that earns the "feels-native" claim. You are inside `hermes-relay shell`, talking to your remote Hermes the same way you would a local one.
+This is the experience that earns the "feels-native" claim. You are inside `hermes-relay` (bare invocation drops you straight into the Hermes Ink TUI over a PTY — no subcommand needed), talking to your remote Hermes the same way you would a local one.
 
 ```text
 Win+Shift+S          # Windows snipping tool — screenshot goes to the clipboard
-                     # (still inside the same hermes-relay shell session)
+                     # (still inside the same hermes-relay session)
 Ctrl+A v             # Client reads YOUR clipboard, ships the image to the
                      # server's inbox, types `/paste` into the TUI for you.
                      #   [shell] pasted 1920×1080 (245 KB) → /paste
@@ -39,11 +39,11 @@ The same chord set works on macOS (`Cmd+Shift+4` → screenshot to clipboard →
 
 ### In-shell chord set
 
-While inside `hermes-relay shell` (the default mode), `Ctrl+A` is the prefix for client-side actions. Everything else passes straight through to the remote `hermes` CLI.
+While inside the shell/TUI session (bare `hermes-relay`, the default mode), `Ctrl+A` is the prefix for client-side actions. Everything else passes straight through to the remote `hermes` CLI.
 
 | Chord | Action |
 |-------|--------|
-| `Ctrl+A .` | Detach cleanly. tmux session persists on the server; next `hermes-relay shell` re-attaches with full state. |
+| `Ctrl+A .` | Detach cleanly. tmux session persists on the server; next `hermes-relay` re-attaches with full state. |
 | `Ctrl+A k` | Destroy the tmux session. Fresh hermes on next run. |
 | `Ctrl+A v` | [Stage clipboard image to server inbox + auto-type `/paste`](#the-killer-demo-paste-a-screenshot-in-your-tui). |
 | `Ctrl+A ?` (or `Ctrl+A h`) | Re-print the chord-help banner. The attach-time banner scrolls off as soon as anything writes — this is the way back. |

@@ -24,7 +24,7 @@ metadata:
 | If this surface is connected | The agent can call |
 |---|---|
 | **Android phone** (paired via `hermes-relay-pair`) | `android_*` toolset — `android_tap`, `android_type`, `android_screenshot`, `android_open_app`, `android_notifications`, etc. |
-| **Desktop CLI** (`hermes-relay shell` running) | `desktop_*` toolset — `desktop_read_file`, `desktop_write_file`, `desktop_terminal`, `desktop_search_files`, `desktop_patch`, `desktop_open_in_editor`, `desktop_screenshot`, `desktop_clipboard_read`/`_write` |
+| **Desktop CLI** (user has `hermes-relay` running — bare invocation drops into shell/TUI mode by default) | `desktop_*` toolset — `desktop_read_file`, `desktop_write_file`, `desktop_terminal`, `desktop_search_files`, `desktop_patch`, `desktop_open_in_editor`, `desktop_screenshot`, `desktop_clipboard_read`/`_write` |
 | **Either (clipboard inbox)** | `/paste` and `Alt+V` in the upstream Hermes TUI consume images from `~/.hermes/images/inbox/`, staged by the desktop client's `Ctrl+A v` chord or the `hermes-relay paste` subcommand. |
 
 ## Quick check (use this when the user asks about access)
@@ -42,7 +42,7 @@ curl -s -o /dev/null -w "desktop: HTTP %{http_code}\n" http://127.0.0.1:8767/des
 curl -s http://127.0.0.1:8767/bridge/status | head -3
 ```
 
-If desktop returns 200, you have `desktop_*` tools available — go ahead and read files, run commands, take screenshots, etc. on the user's machine. If 503, tell them to start `hermes-relay shell` (the client side establishes the channel).
+If desktop returns 200, you have `desktop_*` tools available — go ahead and read files, run commands, take screenshots, etc. on the user's machine. If 503, tell them to run `hermes-relay` in any terminal (bare invocation = shell/TUI mode by default; that's what attaches the desktop client and establishes the channel).
 
 [Hermes-Relay](https://github.com/Codename-11/hermes-relay) is a native Android client for Hermes. This skill prints a snapshot of the phone currently paired to the local relay: whether it's connected, recent device telemetry (battery, screen, foreground app), which bridge permissions have been granted on the Android side, and what safety rails (blocklist, destructive-verb confirmation, auto-disable timer) are configured. It's the read-only counterpart to `/hermes-relay-pair`.
 
