@@ -1,12 +1,19 @@
 """
-hermes-relay plugin — registers android_* tools and the `hermes pair`
-CLI sub-command into hermes-agent via the v0.3.0+ plugin system.
+hermes-relay plugin — registers android_* + desktop_* tools and the
+`hermes pair` + `hermes relay` CLI sub-commands into hermes-agent via the
+v0.3.0+ plugin system.
 
-Drop this folder into ~/.hermes/plugins/hermes-relay and restart hermes.
-Run `hermes pair` to generate a QR code for pairing the Hermes-Relay app.
+Drop this folder into ~/.hermes/plugins/hermes-relay and add `hermes-relay`
+to `plugins.enabled` in ~/.hermes/config.yaml, then restart hermes.
+Run `hermes pair` to generate a QR code for pairing clients.
 """
 
 from .android_tool import _SCHEMAS, _HANDLERS, _check_requirements
+from .tools.desktop_tool import (
+    _SCHEMAS as _DESKTOP_SCHEMAS,
+    _HANDLERS as _DESKTOP_HANDLERS,
+    _check_tool as _desktop_check_tool,
+)
 
 
 def register(ctx):
@@ -21,9 +28,26 @@ def register(ctx):
             check_fn=(lambda: True) if tool_name == "android_setup" else _check_requirements,
         )
 
+    # Register 5 desktop_* tools (Phase B client-side tool routing).
+    # Per-tool check_fn closure so the relay ping is scoped to THIS tool,
+    # not the whole toolset — matches the pattern in desktop_tool.py module
+    # level registration (which is a no-op fallback for non-plugin-context
+    # imports like smoke tests).
+    for tool_name, schema in _DESKTOP_SCHEMAS.items():
+        def _make_desktop_check(name: str):
+            return lambda: _desktop_check_tool(name)
+
+        ctx.register_tool(
+            name=tool_name,
+            toolset="desktop",
+            schema=schema,
+            handler=_DESKTOP_HANDLERS[tool_name],
+            check_fn=_make_desktop_check(tool_name),
+        )
+
     # Register CLI sub-commands: hermes pair + hermes relay (v0.8.0+)
     # Wrapped in try/except so the plugin still works on older hermes-agent
-    # versions that don't expose register_cli_command.
+    # versions that do not expose register_cli_command.
     try:
         from .cli import (
             register_cli,
@@ -57,5 +81,5 @@ def register(ctx):
         )
     except (AttributeError, ImportError):
         # Older hermes-agent (v0.7.0 and earlier) — CLI commands not registered.
-        # The 14 tools above still work; users can fall back to `python -m plugin.relay`.
+        # The tools above still work; users can fall back to `python -m plugin.relay`.
         pass
