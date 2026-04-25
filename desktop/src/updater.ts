@@ -187,10 +187,17 @@ export async function checkForUpdate(opts: { repo?: string } = {}): Promise<Upda
   const repo = opts.repo ?? DEFAULT_REPO
   const releases = await fetchReleases(repo)
 
-  // Filter to desktop-v* tags. They're already returned newest-first.
+  // Filter to desktop-v* tags. NOTE: GitHub orders the response by the release
+  // row's created_at, NOT by SemVer of the tag — and "created_at" can shift
+  // when the row is touched (re-tag, manual edit). Don't trust [0]; pick the
+  // SemVer-maximum tag explicitly so a touched alpha.9 row can't outrank a
+  // freshly-tagged alpha.10. Caught by Bailey on 2026-04-25 — `update --check`
+  // reported "up to date" on alpha.9 because the API listed alpha.9 first.
   const desktop = releases.filter((r) => r.tag_name.startsWith('desktop-v'))
-  const pick = desktop[0]
-  if (!pick) return null
+  if (desktop.length === 0) return null
+  const pick = desktop.reduce((max, r) =>
+    compareVersions(r.tag_name, max.tag_name) > 0 ? r : max
+  )
 
   const latestVersion = pick.tag_name.slice('desktop-v'.length)
   const current = VERSION
