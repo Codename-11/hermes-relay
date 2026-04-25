@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Desktop CLI alpha.13 — `Ctrl+A v` chord in `hermes-relay shell` for in-session paste.** Bailey: *"This isn't cohesive — we have to exit hermes-relay shell to run `hermes-relay paste`. Can we leverage a tmux hook?"* Tmux runs on the Linux server with no path back to the Windows clipboard, so server-side hooks can't help — but the existing client-side chord state machine (`Ctrl+A .` detach, `Ctrl+A k` kill, `Ctrl+A Ctrl+A` literal) is the right place. Added `Ctrl+A v`: client reads its own clipboard image (same `captureClipboardImage()` path as the `/paste` REPL command), POSTs to `/clipboard/inbox` via the new shared `stageClipboardImageToInbox(url, token)` helper exported from `commands/paste.ts`, then types `/paste\r` into the PTY so the upstream Hermes TUI consumes it in the same flow the user would have typed by hand. Status line goes to stderr so it doesn't pollute the PTY stream: `[shell] pasted 1920×1080 (245 KB) → /paste`. Reentrancy guard prevents double-stage on a fast double-press. Banner help and chord doc-comment updated to list the new verb.
+
 ### Fixed
 
 - **Desktop CLI alpha.12 — install scripts truncated the prerelease suffix in the "upgrading X → Y" line.** Bailey saw `existing install detected: 0.3.0-alpha.9 — upgrading to 0.3.` (literally truncated mid-token). Root cause: `normalize_pinned_version` (bash) and `Get-NormalizedPin` (PowerShell) stripped everything after the first `-`, including `-alpha.N`. Comment claimed this was "for comparison against the bare semver the binary reports" — but since alpha.4, the binary's `--version` reports the FULL semver (via the embedded `gen:version` constant), so the strip is no longer defensive, just lossy. Removed the suffix-strip from both normalizers; both now produce `0.3.0-alpha.11` from `desktop-v0.3.0-alpha.11`. The equality compare at line 138 still works because both sides include the prerelease tail.
