@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Desktop CLI alpha.10 — `hermes-relay paste` always returned "No image on clipboard" on Windows even when an image was present.** Root cause: the PowerShell invocation in `captureClipboardWindows` (`src/chatAttach.ts`) was missing the `-STA` flag. `powershell.exe -Command` defaults to MTA (Multi-Threaded Apartment), and `[System.Windows.Forms.Clipboard]::GetImage()` only returns a valid image from STA threads — from MTA it silently returns null, indistinguishable from "no image present." Also affects the `chat` REPL's `/paste` command which routes through the same Windows code path. Fix: added `-STA` to the powershell args list (now `['-NoProfile', '-NonInteractive', '-STA', '-Command', ps]`). Live verification: empty clipboard returns null; a cyan 100×80 PNG placed via `[System.Windows.Forms.Clipboard]::SetImage` returns the expected 305-byte capture with correct dimensions. Affects `desktop-v0.3.0-alpha.7` through `desktop-v0.3.0-alpha.9`.
+
 ### Changed
 
 - **Desktop CLI alpha.8 — `/screenshot` is multi-monitor aware by default.** The alpha.6/alpha.7 `screenshotHandler` / `captureScreenshot` captured only the primary display on Windows and treated `display` as a number-only param. alpha.8 changes the default to `-1` (all monitors stitched) and accepts string aliases so both the agent tool call and the `/screenshot` slash command can say `'all'` / `'primary'` / `'1'` / `'2'` etc. Windows path uses `System.Windows.Forms.SystemInformation.VirtualScreen` for the union rect (handles negative coordinates when monitors are arranged left-of-primary). macOS path uses `screencapture -D N` for 1-indexed per-display capture. Linux path relies on grim/scrot/import's inherent whole-X-screen behavior. REPL `/screenshot` defaults to all monitors; `/screenshot primary` or `/screenshot 0 | 1 | 2` narrow. Live smoke on a multi-monitor Windows box: all = 1.6 MB stitched, primary = 405 KB — 4× size ratio confirms virtual-screen path. Zero server changes; `image.attach.bytes` RPC consumes whatever bytes the client sends.
