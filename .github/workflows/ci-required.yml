@@ -1,0 +1,49 @@
+# Required-checks sentinel — always runs on every PR + push to main/dev so
+# branch protection on `main` has a check name it can rely on, regardless
+# of which paths the PR touches.
+#
+# Why this exists. The other CI workflows (`ci-android.yml`, `ci-relay.yml`,
+# `ci-desktop.yml`) are scoped via `paths:` filters so a docs-only or
+# desktop-only PR doesn't spin up the Android toolchain. Branch protection's
+# "required status checks" treat a check that doesn't run as failing — so
+# any PR that didn't touch the protected paths was blocked from merging,
+# even with all the relevant gates green. We were admin-overriding every
+# desktop-only PR. Same for relay-touching PRs (the protection rule named
+# `Relay Check (Python)` didn't even match any actual job — broken since
+# day one).
+#
+# This sentinel + claude-review become the only required checks. The
+# path-filtered workflows still run when relevant and surface their
+# results on the PR — visible, clickable, but advisory rather than
+# blocking. Reviewers (human + claude-review) eyeball them. This is the
+# standard pattern for monorepos with path-filtered CI.
+#
+# Trade-off acknowledged: a broken Android build on an Android-touching
+# PR could merge if the reviewer ignores the failing CI badge. Mitigation:
+# claude-review reads CI conclusions in its review prompt + the project's
+# release-merge cadence catches issues before they reach a tag. If a
+# stricter gate is later wanted, fold it into this workflow as a job that
+# fans out to the path-filtered work — but the simplest version (just an
+# `echo`) is what's needed to make branch protection useful again today.
+
+name: Required checks
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+# Cancel in-progress runs for the same branch/PR. Doesn't matter much for
+# a 5-second job, but matches every other workflow's concurrency shape.
+concurrency:
+  group: ci-required-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
+
+jobs:
+  guard:
+    name: Required checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: OK
+        run: echo "Required-checks sentinel — see ci-required.yml header for context."
