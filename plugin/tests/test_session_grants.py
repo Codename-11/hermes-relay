@@ -8,6 +8,7 @@ plumbing.
 from __future__ import annotations
 
 import math
+import tempfile
 import time
 import unittest
 
@@ -132,6 +133,29 @@ class SessionTtlTests(unittest.TestCase):
             "dev", "id-1", transport_hint="wss"
         )
         self.assertEqual(session.transport_hint, "wss")
+
+    def test_optional_client_metadata_defaults_unknown(self) -> None:
+        mgr = SessionManager()
+        session = mgr.create_session("dev", "id-1")
+        self.assertEqual(session.client_surface, "unknown")
+        self.assertEqual(session.device_form_factor, "unknown")
+
+    def test_optional_client_metadata_persists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = f"{tmp}/sessions.json"
+            mgr = SessionManager(persistence_path=path)
+            created = mgr.create_session(
+                "quest",
+                "id-xr",
+                client_surface="quest",
+                device_form_factor="xr",
+            )
+
+            loaded = SessionManager(persistence_path=path).get_session(created.token)
+            self.assertIsNotNone(loaded)
+            assert loaded is not None
+            self.assertEqual(loaded.client_surface, "quest")
+            self.assertEqual(loaded.device_form_factor, "xr")
 
     def test_channel_is_expired_for_unknown_channel(self) -> None:
         """Unknown channel names are reported as expired — safer default."""
