@@ -243,7 +243,7 @@ hermes-android/
 | `desktop/src/cli.ts` | argv parser + subcommand dispatcher — bare → `shell` (PTY), positional-only → `chat` |
 | `desktop/src/commands/chat.ts` | REPL + one-shot + piped-stdin; `runOneTurn` returns `{promise, cancel}` for safe SIGINT; auto-wires `DesktopToolRouter` when consented |
 | `desktop/src/commands/shell.ts` | Pipes the `terminal` relay channel to raw-mode stdin/stdout; post-attach `exec hermes` 350ms after tmux settles; `Ctrl+A .` detach / `Ctrl+A k` kill / `Ctrl+A Ctrl+A` literal |
-| `desktop/src/commands/pair.ts` | Either 6-char code + `--remote`, or full v3 QR via `--pair-qr` — probes + picks endpoint, records role |
+| `desktop/src/commands/pair.ts` | Either 6-char code + `--remote`, or full v3 QR via `--pair-qr` — probes + picks endpoint, records role; `--grant-tools` (TTY prompt) / `--auto-grant-tools` (silent) stamp `toolsConsented` so `daemon` works without a `shell` round-trip |
 | `desktop/src/commands/tools.ts` | `tools.list` RPC → enabled/available toolsets; `--verbose` lists individual tools |
 | `desktop/src/commands/status.ts` | Local read of `~/.hermes/remote-sessions.json`; renders `grants:` + `expires:` + `route:`; `--json` redacts tokens, `--reveal-tokens` opts in |
 | `desktop/src/commands/devices.ts` | Server-side session management — `GET/DELETE/PATCH /sessions` via `fetch` over http(s)://host:port; `list` / `revoke <prefix>` / `extend <prefix> --ttl <s>` |

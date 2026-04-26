@@ -110,6 +110,27 @@ hermes-relay pair --remote ws://172.16.24.250:8767
 
 Now subsequent `hermes-relay ...` calls reuse the stored session token. Tokens live at `~/.hermes/remote-sessions.json` (mode 0600) — same file the Ink TUI uses, so pairing once from either surface works for both.
 
+### Pair + grant tools in one shot (CLI-only daemon bring-up)
+
+If you plan to run `daemon` (headless tool serving), tack `--grant-tools` onto `pair` to capture the per-URL desktop-tool consent in the same step. That removes the historical `pair` → `shell` (consent prompt) → `daemon` dance:
+
+```sh
+hermes-relay pair   --remote ws://172.16.24.250:8767 --grant-tools
+# ...prompts for code, then prompts for tool consent, stamps it on the stored session.
+
+hermes-relay daemon --remote ws://172.16.24.250:8767
+# ...starts headless; consent gate already satisfied.
+```
+
+For non-interactive provisioning (CI, install scripts, automated boxes) use `--auto-grant-tools` — same effect, no prompt:
+
+```sh
+HERMES_RELAY_CODE=F3W7EY hermes-relay pair \
+  --remote ws://172.16.24.250:8767 --auto-grant-tools --non-interactive
+```
+
+The two flags are deliberately separate so consent is never implicit — `--grant-tools` means "ask me", `--auto-grant-tools` means "I've already decided". Plain `pair` (no flag) leaves consent untouched, matching the original behavior.
+
 ## Usage
 
 ```
@@ -179,7 +200,11 @@ Type 'yes' to enable, or rerun with --no-tools to disable.
 > yes
 ```
 
-Consent is stored per-URL in `~/.hermes/remote-sessions.json`. `--no-tools` suppresses the router entirely. Non-TTY stdin fails closed. The server-side plugin (`plugin/tools/desktop_tool.py`) registers `desktop_*` tools with Hermes so the agent discovers them naturally; `check_fn` returns 503 when no client is connected so the LLM learns which tools it currently has.
+Consent is stored per-URL in `~/.hermes/remote-sessions.json`. `--no-tools` suppresses the router entirely. Non-TTY stdin fails closed.
+
+You can also grant consent up front during pairing — `hermes-relay pair --grant-tools` (TTY prompt) or `--auto-grant-tools` (no prompt). Useful when you only intend to run `daemon` and don't want the interactive `shell` round-trip. See [Pair + grant tools in one shot](#pair--grant-tools-in-one-shot-cli-only-daemon-bring-up) above.
+
+The server-side plugin (`plugin/tools/desktop_tool.py`) registers `desktop_*` tools with Hermes so the agent discovers them naturally; `check_fn` returns 503 when no client is connected so the LLM learns which tools it currently has.
 
 ### Devices — server-side session management
 
