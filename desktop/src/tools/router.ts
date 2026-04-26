@@ -21,7 +21,11 @@
 // `~/.hermes/remote-sessions.json` and driven by chat.ts / shell.ts —
 // this module just honors the flag.
 
+import * as os from 'node:os'
+
 import type { RelayTransport } from '../transport/RelayTransport.js'
+
+import { VERSION } from '../version.js'
 
 /** The payload shape server → client for a single tool invocation. */
 export interface ToolCallPayload {
@@ -122,6 +126,14 @@ export class DesktopToolRouter {
   private relay: RelayTransport | null = null
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
   private attached = false
+  /** Wall-clock time the router was constructed. Surfaced in the heartbeat
+   * so the relay (and a `desktop_health` introspection tool) can report how
+   * long the desktop client has been live. */
+  private readonly startedAtMs: number = Date.now()
+  /** Last error string from a tool dispatch (any cause: handler throw,
+   * timeout, abort). Surfaced in the heartbeat so an agent or the dashboard
+   * can ask "is this client healthy?" without parsing transcript history. */
+  private lastError: { message: string; tool: string; ts: number } | null = null
 
   constructor(opts: DesktopToolRouterOpts) {
     this.handlers = opts.handlers
@@ -188,15 +200,30 @@ export class DesktopToolRouter {
   }
 
   /** Broadcast the advertised-tools heartbeat. Safe to call when detached
-   * — just no-ops. */
+   * — just no-ops. Now enriched with host/platform/version/uptime/last_error
+   * so a `desktop_health` introspection tool can answer "what client is
+   * connected, since when, and is it healthy?" without round-tripping. */
   private sendHeartbeat(): void {
     if (!this.relay) {
       return
     }
     try {
-      this.relay.sendChannel('desktop', 'desktop.status', {
-        advertised_tools: this.advertisedTools
-      })
+      const payload: Record<string, unknown> = {
+        advertised_tools: this.advertisedTools,
+        host: os.hostname(),
+        platform: process.platform,
+        arch: process.arch,
+        node: process.version,
+        version: VERSION,
+        pid: process.pid,
+        started_at_ms: this.startedAtMs,
+        uptime_ms: Date.now() - this.startedAtMs,
+        interactive: this.interactive
+      }
+      if (this.lastError) {
+        payload.last_error = this.lastError
+      }
+      this.relay.sendChannel('desktop', 'desktop.status', payload)
     } catch {
       // Heartbeat failures are non-fatal; next cycle retries.
     }
@@ -248,6 +275,11 @@ export class DesktopToolRouter {
         : e instanceof Error
           ? e.message
           : String(e)
+      // Stamp into lastError so the next heartbeat surfaces it to the
+      // server's status snapshot — desktop_health uses this to answer
+      // "is the connected client throwing on every dispatch?" without
+      // grep'ing through journal logs.
+      this.lastError = { message, tool, ts: Date.now() }
       this.sendResponse({ request_id, ok: false, error: message })
     }
   }

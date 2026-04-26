@@ -1,5 +1,53 @@
 # Hermes-Relay — Dev Log
 
+## 2026-04-25 (II) — Remote-PC ergonomics pass: PowerShell / process / job / transfer / health tools
+
+**Context.** Bailey shipped a feedback list from a real remote-PC session: `desktop_terminal` was 502'ing on long-lived launches, no process-management primitives (had to `netstat | taskkill` manually), no bulk file sync, PowerShell echoing instead of executing, and no daemon-health introspection. The biggest single ask was "detached job/process API with persistent logs." Explicit no-go: program-specific shortcuts (no ComfyUI helper).
+
+**Surface added (all routed through the existing `desktop` channel — no new channels, no hermes-agent core changes):**
+
+- **`desktop_powershell`** — script text fed to `pwsh`/`powershell.exe` via `-Command -` over stdin. Bypasses the `cmd /c "powershell -Command \"...\""` quoting hellscape that was causing scripts to echo instead of execute. Probes `pwsh` first, falls back to Windows PowerShell on win32; non-Windows hosts without `pwsh` fail loud rather than degrade silently.
+- **Process tools** — `desktop_spawn_detached` (returns within ~10ms with `{pid, log_path}`, child unref'd + `detached:true` so it survives the relay's 30s RPC ceiling), `desktop_list_processes` (substring filter), `desktop_kill_process` (pid or name + force=KILL), `desktop_find_pid_by_port` (cross-platform via netstat/lsof/ss). Tasklist defaults to `/FO CSV` *without* `/V` — verbose mode reads window titles which can take 30+s on a host with many GUI windows, the same latency landmine that was making `desktop_terminal` time out.
+- **Job API** (`desktop_job_*`) — start / status / logs / cancel / list. On-disk layout `~/.hermes/desktop-jobs/<id>/{stdout.log, stderr.log, meta.json}` is the source of truth across daemon restarts. `desktop_job_logs` supports `offset` + `limit` (negative offset → from-end) so the agent can paginate forward through a long log without re-reading. Cancel uses `taskkill /T` on Windows so build trees (npm → node, gradle → java) die fully, not just the immediate shell child.
+- **File-transfer tools** — `desktop_copy_directory` (Node's `fs.cp({recursive:true})` — no `xcopy`/`cp -r` shell-out so behavior is uniform), `desktop_zip` / `desktop_unzip` (probe + dispatch order: `tar` > `zip`/`unzip` > PowerShell `Compress-Archive`/`Expand-Archive`; Windows 10+ ships `tar` so the same code path works on every platform), `desktop_checksum` (streamed sha256/sha1/md5 — handles arbitrary file sizes).
+- **`desktop_health`** — connected client name, host, platform, uptime, advertised tools, last error, recent commands. Answered by a new `GET /desktop/health` route on the relay — does NOT round-trip through the desktop channel — so it remains callable when the client is wedged on a long tool call. Heartbeat enriched with `host/platform/arch/version/pid/uptime_ms` and a sticky `last_error` snapshot stamped from `DesktopToolRouter.dispatch`'s catch arm.
+
+**Drift-prevention.** `chat.ts`, `shell.ts`, `daemon.ts` all constructed their own copies of the handler map. Replaced with single import from `tools/handlerSet.ts` (`DESKTOP_HANDLERS` + `DESKTOP_ADVERTISED_TOOLS`). Adding the next tool is a one-file change instead of three.
+
+**Tests + smoke.**
+- `plugin/tests/test_desktop_health.py` (3 tests) covers the new relay endpoint: 200/connected:false when no client, full surface when a `desktop.status` envelope has been received, 403 on non-loopback. Full Python suite still green (692 passing).
+- `desktop/scripts/smoke-tools.mjs` exercises PowerShell (with literal `"quotes"` and `$dollar` to prove the cmd-quote-bypass works), process listing, sha256 checksum, and the full job lifecycle in-process. PS smoke confirmed `pwsh` selected, exit 0, output untouched. Job lifecycle: start → wait → status → logs → list, all green.
+- `npm run type-check` + `npm run build` clean. The bin shim (`hermes-relay --version` / `--help`) still works; new tools enumerate in the help block via the shared advertise list.
+
+**Why no client roundtrip for `desktop_health`.** It's the diagnostic — needs to work when other tools don't. Routing it as a `desktop.command` would gate it behind the very condition it's meant to inspect. Same pattern as `/desktop/_ping`: relay-only, loopback-required, sub-2s.
+
+**What's deliberately excluded.** Program-specific shortcuts (e.g. `restart_comfyui`) — Bailey rejected them mid-session; the generic `desktop_job_*` + `desktop_powershell` already cover that surface without coupling the relay to one app's quirks. ComfyUI users (or anyone else) can wrap a local `.ps1` and `desktop_job_start` it.
+
+**Touchpoints.** `desktop/src/tools/handlers/{powershell,process,jobs,transfer}.ts` (new), `desktop/src/tools/handlerSet.ts` (new), `desktop/src/tools/router.ts` (heartbeat enrichment + `lastError` stamping), `desktop/src/commands/{chat,shell,daemon}.ts` (consume `DESKTOP_HANDLERS`), `plugin/tools/desktop_tool.py` (rewrite — adds 14 new schemas / handlers / dispatch entries, adds `_get` for relay-only tools, adds `_RELAY_ONLY_TOOLS` to skip the per-tool `_check_tool` ping for `desktop_health`), `plugin/relay/server.py` (`handle_desktop_health` + route registration before the wildcard), `plugin/tests/test_desktop_health.py` (new).
+
+---
+
+## 2026-04-25 — `pair --grant-tools` / `--auto-grant-tools`: collapse the `pair → shell → daemon` dance to two commands
+
+**Context.** Bailey wanted a CLI-only path from "I just installed the binary" to "Hermes can RC my PC." The historical flow was three commands (`pair` → `shell` to capture consent → `daemon`), and the middle step was a permanent papercut: a fresh user installs via the iwr/iex one-liner, runs `pair`, runs `daemon`, gets a `consent_missing` error pointing at the interactive `shell` command they hadn't asked for. The gate exists for good reason — a headless binary must never be the surface that first grants tool access — but the gap between *that constraint* and *the user's mental model* lived in the wrong place.
+
+**Fix.** Two new opt-in flags on `pair`, both deliberately explicit so consent is never implicit:
+
+- `--grant-tools` — after a successful pair, runs `ensureToolsConsent(url)` (the same helper `shell` has always used). TTY prompt with the standard "AGENT-CONTROLLED access" warning, persists `toolsConsented: true` on the stored session if the user types `yes`. Pair still succeeds even if consent is declined; the user just gets a hint to rerun on a TTY.
+- `--auto-grant-tools` — folds `toolsConsented: true` into the same `saveSession` call that writes the token, no prompt. For CI / provisioning scripts where the operator has decided in writing that this URL is trusted. Auto wins if both flags are passed (no point prompting after the user already committed).
+
+Daemon stays unchanged structurally — its consent gate already accepts `toolsConsented: true` from the stored session, which is exactly what the new flags write. Only diff in `daemon.ts` is the error message: the `consent_missing` path now points users at `pair --grant-tools` instead of suggesting they run `shell` for a consent grant they never asked to capture interactively.
+
+**Why split into two flags rather than one.** A single `--grant-tools` flag would have to decide "prompt or not" from ambient context (TTY detection), and security-sensitive consent should never be implicit. `--grant-tools` = "ask me," `--auto-grant-tools` = "I already decided" — neither path is silent, and a malicious shell history that runs `pair` without flags can't broaden tool access. The boundary the original `pair`/`shell` split protected (scriptable token mint vs. interactive consent capture) is preserved; users who care about that boundary keep getting it, users who don't can opt into the shortcut.
+
+**One subtle thing in `saveSession`.** It already implements a merge-onto-prev pattern for grants/ttl/endpointRole/certPin/toolsConsented (line 161–173 of `remoteSessions.ts`), so calling it a second time with just `{ toolsConsented: true }` from `ensureToolsConsent` is non-destructive. That's why the interactive `--grant-tools` path doesn't need to thread the consent flag through `pair`'s mainline `saveSession` — it can let `ensureToolsConsent` write its own follow-up save with no risk of clobbering the token, route, or grant set. Only the `--auto-grant-tools` path folds into the first call (atomic, no race window where the token exists without the consent stamp).
+
+**Touchpoints.** `desktop/src/commands/pair.ts` (parse flags + post-pair grant step), `desktop/src/cli.ts` (BOOLEAN_FLAGS + HELP block + new two-command-bring-up example), `desktop/src/commands/daemon.ts` (sharper error messages pointing at the new shortcut), `desktop/README.md` (new "Pair + grant tools in one shot" subsection under First-time pairing + cross-link from Local-tool-access section), `CLAUDE.md` Key Files row for `pair.ts`. Type-check clean. Smoke-only verification because there's no test harness in `desktop/` yet — the only automated check is `npm run smoke` which is a Bun-compile + 4-command exec; manual `tsx src/cli.ts --help` confirmed the new flags + example render correctly.
+
+**Not done in this session.** No new tests (Bun harness still pending). No service-installer scripts (still deferred to a later alpha — daemon is runnable standalone). The `--grant-tools` prompt copy is verbatim `CONSENT_PROMPT` from `tools/consent.ts` ("rerun with --no-tools to disable") which is slightly off-context when invoked from `pair` rather than `shell`/`chat` — defensible (declining is still valid, user can rerun without the flag) but a context-aware variant would be a small future polish.
+
+---
+
 ## 2026-04-23 (III) — Desktop CLI daemon + pre-release hardening: uninstall, doctor, first-run prompts, version-aware install
 
 **Context.** The morning session landed Phase A.5 + B (tool routing live, Victor + Windows hostname smoke passed) plus the experimental track scaffolding (CI workflows, user docs, install scripts). Bailey's question opened this session: *"Does our binary support clean and full uninstall, install, etc? Any ideas before we release?"* Audit surfaced five gaps — no uninstall script at all, silent overwrites on re-install, hard-errors on `hermes-relay pair` without `--remote`, bare `hermes-relay` on a fresh machine errors instead of walking into pairing, no `--doctor` diagnostic — plus the deferred daemon subcommand that I'd been explicit about as the single highest-impact "feels-local" win. Shipped all six in two waves.
