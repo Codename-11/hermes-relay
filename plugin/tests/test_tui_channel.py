@@ -36,6 +36,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 from plugin.relay.channels.tui import TuiHandler
 
+_SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
+
 
 class _FakeWs:
     """Minimal stand-in for ``aiohttp.web.WebSocketResponse``."""
@@ -112,8 +114,8 @@ class _FakeProcess:
 
     def kill(self) -> None:
         self.killed = True
-        self.sent_signals.append(signal.SIGKILL)
-        self._exit(-signal.SIGKILL)
+        self.sent_signals.append(_SIGKILL)
+        self._exit(-_SIGKILL)
 
     def _exit(self, code: int) -> None:
         if self.returncode is None:
@@ -401,7 +403,7 @@ class TuiHandlerTeardownTests(unittest.TestCase):
                 tui_mod.SHUTDOWN_GRACE_SECONDS = original
 
             self.assertIn(signal.SIGTERM, proc.sent_signals)
-            self.assertIn(signal.SIGKILL, proc.sent_signals)
+            self.assertIn(_SIGKILL, proc.sent_signals)
             self.assertTrue(proc.killed)
 
         _run(run())
