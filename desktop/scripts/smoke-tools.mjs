@@ -60,11 +60,39 @@ async function main() {
     throw new Error('computer-use tools should advertise with explicit opt-in')
   }
   const computer = await import(pathToFileURL(path.join(distRoot, 'computer.js')).href)
-  const action = await computer.computerActionHandler({ action: 'left_click' }, ctx)
+  const invalidAction = await computer.computerActionHandler({ action: 'left_click' }, ctx)
+  console.log(`COMPUTER invalid action code=${invalidAction.code}`)
+  if (invalidAction.ok !== false || invalidAction.code !== 'invalid_request') {
+    throw new Error(`expected invalid_request before grant, got ${JSON.stringify(invalidAction)}`)
+  }
+  const action = await computer.computerActionHandler({ action: 'wait', duration_ms: 1 }, ctx)
   console.log(`COMPUTER action code=${action.code}`)
   if (action.ok !== false || action.code !== 'grant_required') {
     throw new Error(`expected grant_required fail-closed action, got ${JSON.stringify(action)}`)
   }
+  const grants = await import(pathToFileURL(path.join(distRoot, '..', 'computerGrants.js')).href)
+  grants.configureComputerUseRuntime({
+    url: 'smoke',
+    computerUseConsented: true,
+    consentSource: 'override'
+  })
+  const grant = await computer.computerGrantRequestHandler({
+    mode: 'assist',
+    duration_seconds: 30,
+    reason: 'smoke test'
+  }, ctx)
+  if (grant.ok !== true) {
+    throw new Error(`expected assist grant with runtime consent, got ${JSON.stringify(grant)}`)
+  }
+  const nonInteractiveAction = await computer.computerActionHandler(
+    { action: 'wait', duration_ms: 1 },
+    ctx
+  )
+  console.log(`COMPUTER granted action code=${nonInteractiveAction.code}`)
+  if (nonInteractiveAction.ok !== false || nonInteractiveAction.code !== 'not_interactive') {
+    throw new Error(`expected not_interactive fail-closed action, got ${JSON.stringify(nonInteractiveAction)}`)
+  }
+  await computer.computerCancelHandler({ reason: 'smoke cleanup' }, ctx)
 
   // ── Job lifecycle ──────────────────────────────────────────────────────
   const jobs = await import(pathToFileURL(path.join(distRoot, 'jobs.js')).href)

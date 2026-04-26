@@ -325,6 +325,10 @@ class DesktopHandler:
         # Fail-closed on tools the client hasn't advertised. This is what
         # lets the agent side's ``check_fn`` tell Hermes "this tool isn't
         # available right now" without even attempting a round-trip.
+        if method.startswith("desktop_computer_") and not self.advertised_tools:
+            raise DesktopError(
+                f"Desktop client has not advertised experimental computer-use tool {method!r}"
+            )
         if self.advertised_tools and method not in self.advertised_tools:
             raise DesktopError(
                 f"Desktop client does not advertise tool {method!r}"
@@ -491,6 +495,8 @@ class DesktopHandler:
         advertise take the strict path.
         """
         if not self.is_client_connected():
+            return False
+        if tool_name.startswith("desktop_computer_") and not self.advertised_tools:
             return False
         if not self.advertised_tools:
             # Client hasn't advertised yet — assume it can handle the call.

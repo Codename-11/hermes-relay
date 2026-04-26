@@ -66,6 +66,54 @@ class DesktopComputerUseToolTests(unittest.TestCase):
         )
         self.assertEqual(json.loads(raw)["result"]["code"], "grant_required")
 
+    def test_other_wrappers_forward_expected_payloads(self) -> None:
+        calls: list[tuple[str, dict[str, Any]]] = []
+
+        def fake_post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
+            calls.append((path, payload))
+            return {"ok": True, "result": {"ok": True}}
+
+        original = desktop_tool._post
+        desktop_tool._post = fake_post
+        try:
+            desktop_tool.desktop_computer_status(include_recent=True)
+            desktop_tool.desktop_computer_screenshot(display="primary", save_to="shot.png")
+            desktop_tool.desktop_computer_grant_request(
+                "assist",
+                scope={"display": "primary"},
+                duration_seconds=60,
+                reason="test",
+            )
+            desktop_tool.desktop_computer_cancel("done")
+        finally:
+            desktop_tool._post = original
+
+        self.assertEqual(
+            calls,
+            [
+                ("/desktop/desktop_computer_status", {"include_recent": True}),
+                (
+                    "/desktop/desktop_computer_screenshot",
+                    {
+                        "display": "primary",
+                        "include_cursor": True,
+                        "redact_sensitive": True,
+                        "save_to": "shot.png",
+                    },
+                ),
+                (
+                    "/desktop/desktop_computer_grant_request",
+                    {
+                        "mode": "assist",
+                        "duration_seconds": 60,
+                        "reason": "test",
+                        "scope": {"display": "primary"},
+                    },
+                ),
+                ("/desktop/desktop_computer_cancel", {"reason": "done"}),
+            ],
+        )
+
     def test_grant_request_schema_only_requires_mode(self) -> None:
         schema = desktop_tool._SCHEMAS["desktop_computer_grant_request"]
         self.assertEqual(schema["parameters"]["required"], ["mode"])
@@ -73,6 +121,22 @@ class DesktopComputerUseToolTests(unittest.TestCase):
             schema["parameters"]["properties"]["mode"]["enum"],
             ["observe", "assist", "control"],
         )
+        self.assertEqual(
+            schema["parameters"]["properties"]["duration_seconds"]["maximum"],
+            3600,
+        )
+
+    def test_action_schema_has_bounded_coordinate_and_scroll_shapes(self) -> None:
+        params = desktop_tool._SCHEMAS["desktop_computer_action"]["parameters"]
+        coordinate = params["properties"]["coordinate"]
+        self.assertEqual(coordinate["minItems"], 2)
+        self.assertEqual(coordinate["maxItems"], 2)
+        self.assertFalse(params["additionalProperties"])
+        self.assertFalse(params["properties"]["scroll"]["additionalProperties"])
+
+    def test_computer_use_tools_are_not_relay_only(self) -> None:
+        for name in COMPUTER_TOOLS:
+            self.assertNotIn(name, desktop_tool._RELAY_ONLY_TOOLS)
 
 
 if __name__ == "__main__":  # pragma: no cover

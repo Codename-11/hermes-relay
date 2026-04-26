@@ -38,8 +38,8 @@ Tools registered (Phase B + remote-PC ergonomics, alpha.7):
   Experimental computer-use (observe-first):
     - desktop_computer_status          local display/grant/permission summary
     - desktop_computer_screenshot      screenshot wrapper with coordinate metadata
-    - desktop_computer_action          fails closed; no host input in Phase 1
-    - desktop_computer_grant_request   observe-only grant stub
+    - desktop_computer_action          gated Windows input with local approval
+    - desktop_computer_grant_request   task-scoped observe/assist/control grant
     - desktop_computer_cancel          revoke in-memory computer-use grant
 
 Architecture mirrors ``android_tool.py``:
@@ -445,10 +445,9 @@ def desktop_health() -> str:
 def desktop_computer_status(include_recent: bool = False) -> str:
     """[EXPERIMENTAL] Report desktop computer-use status.
 
-    Phase 1 is observe-first: the connected desktop client reports display
-    metadata, local grant state, and the fact that host input is not
-    implemented. This is intentionally separate from broad desktop tool
-    consent.
+    The connected desktop client reports display metadata, local grant state,
+    consent state, and whether local per-action approval can run. This is
+    intentionally separate from broad desktop tool consent.
     """
     data = _post(
         "/desktop/desktop_computer_status",
@@ -481,9 +480,9 @@ def desktop_computer_screenshot(
 def desktop_computer_action(action: str, **kwargs: Any) -> str:
     """[EXPERIMENTAL] Request a bounded computer action.
 
-    Phase 1 deliberately does not implement mouse/keyboard automation. The
-    client returns a structured grant_required/not_implemented result instead
-    of silently controlling the host.
+    Host input requires durable computer-use consent, an active assist/control
+    grant, and a local per-action approval prompt. Non-interactive clients fail
+    closed instead of silently controlling the host.
     """
     payload: dict[str, Any] = {"action": action}
     payload.update(kwargs)
@@ -499,8 +498,8 @@ def desktop_computer_grant_request(
 ) -> str:
     """[EXPERIMENTAL] Request a local computer-use grant.
 
-    The Phase 1 desktop client only grants observe mode. Assist/control grants
-    fail closed until a visible overlay or per-action confirmation path exists.
+    Grants are in-memory and time-limited. Assist/control grants still require
+    local per-action approval before host input can execute.
     """
     payload: dict[str, Any] = {
         "mode": mode,
@@ -919,6 +918,7 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
             "[EXPERIMENTAL] Capture a desktop screenshot for observe-mode "
             "computer-use. Wraps the existing desktop screenshot backend and "
             "returns PNG bytes or a saved path plus coordinate metadata. "
+            "Requires an active observe/assist/control grant. "
             "Sensitive-window redaction and cursor inclusion are planned fields "
             "and are reported honestly when unavailable."
         ),
@@ -926,12 +926,24 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
             "type": "object",
             "properties": {
                 "display": {
+                    "oneOf": [
+                        {"type": "string", "enum": ["primary", "all"]},
+                        {"type": "integer", "minimum": 0},
+                    ],
                     "description": "Display selector: primary, all, or a numeric index.",
                     "default": "primary",
                 },
                 "region": {
                     "type": "object",
-                    "description": "Planned crop rectangle; Phase 1 rejects region capture.",
+                    "description": "Planned crop rectangle; current clients reject region capture.",
+                    "properties": {
+                        "x": {"type": "integer", "minimum": 0},
+                        "y": {"type": "integer", "minimum": 0},
+                        "width": {"type": "integer", "minimum": 1},
+                        "height": {"type": "integer", "minimum": 1},
+                    },
+                    "required": ["x", "y", "width", "height"],
+                    "additionalProperties": False,
                 },
                 "include_cursor": {"type": "boolean", "default": True},
                 "redact_sensitive": {"type": "boolean", "default": True},
@@ -945,10 +957,10 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
     "desktop_computer_action": {
         "name": "desktop_computer_action",
         "description": (
-            "[EXPERIMENTAL] Request a single bounded desktop action. Phase 1 "
-            "does not implement mouse or keyboard automation; this tool returns "
-            "a structured grant_required/not_implemented failure instead of "
-            "silently controlling the host."
+            "[EXPERIMENTAL] Request a single bounded desktop action. Host input "
+            "requires durable computer-use consent, an active assist/control "
+            "grant, and a local per-action approval prompt. Non-interactive "
+            "clients fail closed."
         ),
         "parameters": {
             "type": "object",
@@ -957,24 +969,50 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
                     "type": "string",
                     "enum": [
                         "left_click",
+                        "click",
                         "right_click",
                         "double_click",
                         "mouse_move",
+                        "move",
                         "scroll",
                         "key",
+                        "hotkey",
                         "type",
+                        "type_text",
                         "wait",
                     ],
                 },
                 "coordinate": {
                     "type": "array",
                     "items": {"type": "number"},
-                    "description": "Planned [x, y] screen coordinate.",
+                    "minItems": 2,
+                    "maxItems": 2,
+                    "description": "[x, y] screen coordinate for pointer actions.",
                 },
+                "x": {"type": "number"},
+                "y": {"type": "number"},
                 "text": {"type": "string"},
+                "key": {"type": "string"},
                 "keys": {"type": "string"},
-                "scroll": {"type": "object"},
-                "display": {"description": "Display selector."},
+                "scroll": {
+                    "type": "object",
+                    "properties": {
+                        "dx": {"type": "number"},
+                        "dy": {"type": "number"},
+                        "x": {"type": "number"},
+                        "y": {"type": "number"},
+                    },
+                    "additionalProperties": False,
+                },
+                "delta_y": {"type": "number"},
+                "duration_ms": {"type": "integer", "minimum": 0, "maximum": 10000},
+                "display": {
+                    "oneOf": [
+                        {"type": "string", "enum": ["primary", "all"]},
+                        {"type": "integer", "minimum": 0},
+                    ],
+                    "description": "Display selector.",
+                },
                 "return_screenshot": {"type": "boolean", "default": False},
                 "intent": {
                     "type": "string",
@@ -982,15 +1020,16 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
                 },
             },
             "required": ["action"],
+            "additionalProperties": False,
         },
     },
     "desktop_computer_grant_request": {
         "name": "desktop_computer_grant_request",
         "description": (
-            "[EXPERIMENTAL] Request a local computer-use grant. The Phase 1 "
-            "client grants observe mode only. Assist/control requests fail "
-            "closed until a visible overlay or per-action confirmation path "
-            "exists."
+            "[EXPERIMENTAL] Request a local computer-use grant. Observe grants "
+            "permit screenshots. Assist/control grants are short-lived and "
+            "still require local per-action approval before mouse/keyboard "
+            "input executes."
         ),
         "parameters": {
             "type": "object",
@@ -1004,10 +1043,16 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
                         "folder": {"type": "string"},
                     },
                 },
-                "duration_seconds": {"type": "integer", "default": 900},
+                "duration_seconds": {
+                    "type": "integer",
+                    "default": 900,
+                    "minimum": 1,
+                    "maximum": 3600,
+                },
                 "reason": {"type": "string"},
             },
             "required": ["mode"],
+            "additionalProperties": False,
         },
     },
     "desktop_computer_cancel": {

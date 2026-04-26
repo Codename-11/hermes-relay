@@ -30,6 +30,10 @@ export interface RemoteSessionRecord {
    * → tools attached silently; false → tools suppressed even if set via
    * `--no-tools` override later. See desktop/src/tools/router.ts. */
   toolsConsented?: boolean
+  /** Separate per-URL consent for experimental desktop computer-use. This is
+   * not a task grant and does not by itself permit mouse/keyboard input; it
+   * only lets the client advertise the desktop_computer_* tool surface. */
+  computerUseConsented?: boolean
 }
 
 interface StoredRecord {
@@ -43,6 +47,7 @@ interface StoredRecord {
   ttl_expires_at?: number | null
   endpoint_role?: string | null
   tools_consented?: boolean
+  computer_use_consented?: boolean
 }
 
 interface StoredFile {
@@ -73,7 +78,8 @@ const toRecord = (raw: StoredRecord): RemoteSessionRecord => ({
   grants: raw.grants ?? null,
   ttlExpiresAt: raw.ttl_expires_at ?? null,
   endpointRole: raw.endpoint_role ?? null,
-  toolsConsented: raw.tools_consented ?? false
+  toolsConsented: raw.tools_consented ?? false,
+  computerUseConsented: raw.computer_use_consented ?? false
 })
 
 const fromRecord = (r: RemoteSessionRecord): StoredRecord => ({
@@ -84,7 +90,8 @@ const fromRecord = (r: RemoteSessionRecord): StoredRecord => ({
   grants: r.grants ?? null,
   ttl_expires_at: r.ttlExpiresAt ?? null,
   endpoint_role: r.endpointRole ?? null,
-  tools_consented: r.toolsConsented ?? false
+  tools_consented: r.toolsConsented ?? false,
+  computer_use_consented: r.computerUseConsented ?? false
 })
 
 const readFile = async (): Promise<StoredFile> => {
@@ -140,6 +147,7 @@ export interface SaveSessionOptions {
   ttlExpiresAt?: number | null
   endpointRole?: string | null
   toolsConsented?: boolean
+  computerUseConsented?: boolean
 }
 
 export const saveSession = async (
@@ -169,7 +177,11 @@ export const saveSession = async (
       toolsConsented:
         options.toolsConsented !== undefined
           ? options.toolsConsented
-          : (prev?.tools_consented ?? false)
+          : (prev?.tools_consented ?? false),
+      computerUseConsented:
+        options.computerUseConsented !== undefined
+          ? options.computerUseConsented
+          : (prev?.computer_use_consented ?? false)
     })
     await writeFile(file)
   } catch {

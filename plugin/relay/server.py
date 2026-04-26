@@ -936,6 +936,7 @@ async def handle_desktop_health(request: web.Request) -> web.Response:
         "started_at_ms": cs.get("started_at_ms"),
         "interactive": cs.get("interactive"),
         "last_error": cs.get("last_error"),
+        "computer_use": cs.get("computer_use"),
         "recent_commands": server.desktop.get_recent(limit=20),
     }
     return web.json_response(out)

@@ -39,6 +39,7 @@ import {
   advertisedDesktopTools,
   shouldAdvertiseComputerUse
 } from '../tools/handlerSet.js'
+import { configureComputerUseRuntime } from '../tools/computerGrants.js'
 import { DesktopToolRouter } from '../tools/router.js'
 import { RelayTransport } from '../transport/RelayTransport.js'
 import { setupGracefulExit } from '../lib/gracefulExit.js'
@@ -227,7 +228,26 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   // Wire the desktop tool router. consentGranted is true by this point —
   // we gated on stored consent (or --allow-tools override) above.
   // interactive:false so patch approval auto-rejects (no TTY to prompt on).
-  const computerUseEnabled = shouldAdvertiseComputerUse(args.flags)
+  let computerUseEnabled = shouldAdvertiseComputerUse(args.flags)
+  const allowComputerUseFlag = !!args.flags['allow-computer-use']
+  if (computerUseEnabled && stored?.computerUseConsented !== true && !allowComputerUseFlag) {
+    log.warn({
+      event: 'computer_use_consent_missing',
+      url,
+      message:
+        'experimental computer-use requested but not consented for this URL. Run interactive chat/shell with --experimental-computer-use first, or pass --allow-computer-use for this daemon invocation.'
+    })
+    computerUseEnabled = false
+  }
+  configureComputerUseRuntime({
+    url,
+    computerUseConsented: computerUseEnabled,
+    consentSource: computerUseEnabled
+      ? stored?.computerUseConsented === true
+        ? 'stored'
+        : 'override'
+      : 'none'
+  })
   const advertisedTools = advertisedDesktopTools({ computerUse: computerUseEnabled })
   const router = new DesktopToolRouter({
     consentGranted: true,

@@ -54,6 +54,7 @@ const BOOLEAN_FLAGS = new Set([
   'log-human',
   'log-json',
   'allow-tools',
+  'allow-computer-use',
   'experimental-computer-use',
   'check',
   'yes',
@@ -172,8 +173,12 @@ Flags:
   --log-json             daemon: force JSON-line logs even on a TTY
   --allow-tools          daemon: skip stored-consent gate (use only with --token; implies trust)
   --experimental-computer-use
-                         chat/shell/daemon: advertise observe-first desktop_computer_* tools.
-                         Experimental; host input still fails closed in this release.
+                         chat/shell/daemon: advertise experimental desktop_computer_* tools
+                         after separate computer-use consent. Host input requires
+                         task grant plus local per-action approval.
+  --allow-computer-use   daemon: one-run override for stored computer-use consent.
+                         Does not bypass per-action approval; daemon actions still
+                         fail closed because there is no TTY.
   --json                 chat: emit events as JSON lines (scripting)
   --verbose              Include thinking/reasoning + transport stderr
   --quiet, -q            Suppress status lines and tool decorations

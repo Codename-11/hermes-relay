@@ -4,18 +4,26 @@ import {
   cancelComputerGrant,
   getActiveComputerGrant,
   getComputerGrantSummary,
+  getComputerUseRuntimeSummary,
   hasComputerInputGrant,
+  hasComputerObserveGrant,
   requestComputerGrant,
   type ComputerGrantMode
 } from '../computerGrants.js'
+import { approveComputerAction } from '../computerActionApproval.js'
+import {
+  runComputerInputAction,
+  summarizeComputerAction,
+  validateComputerAction
+} from '../computerInput.js'
 import type { ToolHandler } from '../router.js'
 import { screenshotHandler } from './screenshot.js'
 
 const STATUS_TIMEOUT_MS = 5_000
 const EXPERIMENTAL_META = Object.freeze({
   experimental: true,
-  phase: 'phase_1_observe_first',
-  control_model: 'fail_closed_without_task_scoped_grant'
+  phase: 'phase_2_cli_approval',
+  control_model: 'durable_consent_plus_task_grant_plus_per_action_local_approval'
 })
 
 interface SpawnOutput {
@@ -220,36 +228,53 @@ function parseGrantMode(value: unknown): ComputerGrantMode | null {
   return null
 }
 
-export const computerStatusHandler: ToolHandler = async () => {
+export const computerStatusHandler: ToolHandler = async (_args, ctx) => {
   const grant = getActiveComputerGrant()
+  const runtime = getComputerUseRuntimeSummary()
+  const inputReady = runtime.consented === true && ctx.interactive && process.platform === 'win32'
   return {
     ok: true,
     ...EXPERIMENTAL_META,
     platform: process.platform,
     displays: await getDisplays(),
+    runtime,
     permissions: {
-      screenshot: 'available',
-      input: grant?.mode === 'assist' || grant?.mode === 'control' ? 'granted' : 'not_granted',
+      screenshot: grant ? 'granted' : 'grant_required',
+      input: grant?.mode === 'assist' || grant?.mode === 'control'
+        ? inputReady
+          ? 'granted_pending_per_action_approval'
+          : 'grant_active_but_local_approval_unavailable'
+        : 'not_granted',
       accessibility: 'not_implemented'
     },
     grant: getComputerGrantSummary(),
     overlay: {
-      visible: false,
-      state: grant ? 'cli_observe' : 'not_available',
-      message: 'Native overlay/tray UI is not implemented in Phase 1.'
+      visible: ctx.interactive,
+      state: ctx.interactive ? 'cli_prompt_available' : 'not_available',
+      message: ctx.interactive
+        ? 'CLI per-action approval prompts are available. Native overlay/tray UI is still planned.'
+        : 'Native overlay/tray UI is not implemented and this client is non-interactive.'
     },
     safety: {
-      host_input: 'not_implemented',
-      action_policy: 'desktop_computer_action fails closed without an assist/control grant'
+      host_input: process.platform === 'win32' ? 'windows_only_with_local_approval' : 'unsupported_platform',
+      action_policy:
+        'desktop_computer_action requires durable computer-use consent, an assist/control grant, and local per-action approval'
     }
   }
 }
 
 export const computerScreenshotHandler: ToolHandler = async (args, ctx) => {
+  if (!hasComputerObserveGrant()) {
+    return failure(
+      'grant_required',
+      'Screenshot observe mode requires an active observe/assist/control grant. Call desktop_computer_grant_request first.'
+    )
+  }
+
   if (args.region !== undefined && args.region !== null) {
     return failure(
       'not_implemented',
-      'Region capture/cropping is planned but not implemented in Phase 1. Capture a full display instead.'
+      'Region capture/cropping is planned but not implemented yet. Capture a full display instead.'
     )
   }
 
@@ -288,29 +313,67 @@ export const computerScreenshotHandler: ToolHandler = async (args, ctx) => {
     redaction: {
       requested: argBool(args.redact_sensitive, true),
       applied: false,
-      reason: 'Sensitive-window redaction is planned but not implemented in Phase 1.'
+      reason: 'Sensitive-window redaction is planned but not implemented yet.'
     },
     grant: getComputerGrantSummary()
   }
 }
 
-export const computerActionHandler: ToolHandler = async (args) => {
+export const computerActionHandler: ToolHandler = async (args, ctx) => {
   const action = argString(args.action).trim()
   if (!action) {
     return failure('invalid_request', 'desktop_computer_action requires an action name.')
   }
+  const displays = await getDisplays()
+  const validation = validateComputerAction(args, displays)
+  if (!validation.ok) {
+    return failure(validation.code, validation.message, { action })
+  }
+
   if (!hasComputerInputGrant()) {
     return failure(
       'grant_required',
-      'Host input is disabled. Requesting or using assist/control requires a visible local overlay or per-action confirmation, which is not implemented in Phase 1.',
+      'Host input is disabled. Request an assist/control grant first; every action also requires local per-action approval.',
       { action }
     )
   }
-  return failure(
-    'not_implemented',
-    'Mouse/keyboard automation is deliberately not implemented in Phase 1.',
-    { action }
-  )
+
+  const normalized = validation.action
+  if (!ctx.interactive) {
+    return failure(
+      'not_interactive',
+      'Computer input requires a local per-action approval prompt. This desktop client is running non-interactively.',
+      { action: normalized.action }
+    )
+  }
+
+  const approval = await approveComputerAction({
+    action: normalized.action,
+    summary: summarizeComputerAction(normalized),
+    intent: normalized.intent,
+    interactive: ctx.interactive
+  })
+  if (!approval.approved) {
+    return failure('rejected', approval.reason, { action: normalized.action })
+  }
+
+  const started = Date.now()
+  const inputResult = await runComputerInputAction(normalized, ctx.abortSignal)
+  const response: Record<string, unknown> = {
+    ok: true,
+    ...EXPERIMENTAL_META,
+    action: normalized.action,
+    status: 'executed',
+    performed_at: new Date().toISOString(),
+    duration_ms: Date.now() - started,
+    input_backend: inputResult.backend,
+    platform: inputResult.platform,
+    grant: getComputerGrantSummary()
+  }
+  if (normalized.returnScreenshot) {
+    response.after_screenshot = await computerScreenshotHandler({ display: args.display ?? 'primary' }, ctx)
+  }
+  return response
 }
 
 export const computerGrantRequestHandler: ToolHandler = async (args) => {

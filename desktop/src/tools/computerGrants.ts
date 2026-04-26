@@ -15,7 +15,18 @@ export interface ComputerGrant {
   expires_at: string
 }
 
+export interface ComputerUseRuntime {
+  url: string | null
+  computerUseConsented: boolean
+  consentSource: 'stored' | 'prompted' | 'override' | 'none'
+}
+
 let activeGrant: ComputerGrant | null = null
+let runtime: ComputerUseRuntime = {
+  url: null,
+  computerUseConsented: false,
+  consentSource: 'none'
+}
 
 function nowMs(): number {
   return Date.now()
@@ -77,6 +88,21 @@ export function getComputerGrantSummary(): Record<string, unknown> {
   }
 }
 
+export function configureComputerUseRuntime(next: Partial<ComputerUseRuntime>): void {
+  runtime = {
+    ...runtime,
+    ...next
+  }
+}
+
+export function getComputerUseRuntimeSummary(): Record<string, unknown> {
+  return {
+    url: runtime.url,
+    consented: runtime.computerUseConsented,
+    consent_source: runtime.consentSource
+  }
+}
+
 export interface RequestComputerGrantInput {
   mode: ComputerGrantMode
   scope?: unknown
@@ -95,12 +121,12 @@ export function requestComputerGrant(input: RequestComputerGrantInput): Record<s
       ? Math.max(1, Math.min(Math.floor(input.duration_seconds), 3600))
       : 900
 
-  if (mode !== 'observe') {
+  if (mode !== 'observe' && !runtime.computerUseConsented) {
     return {
       ok: false,
-      code: 'not_implemented',
+      code: 'computer_use_consent_required',
       message:
-        'Assist/control grants require a visible local overlay or per-action prompt. The CLI-only Phase 1 implementation only grants observe mode.',
+        'Assist/control grants require durable local computer-use consent for this relay URL before task-scoped input grants can be created.',
       grant: getComputerGrantSummary()
     }
   }
@@ -119,7 +145,10 @@ export function requestComputerGrant(input: RequestComputerGrantInput): Record<s
   return {
     ok: true,
     grant: getComputerGrantSummary(),
-    message: 'Observe grant active. Screenshot/status tools may run; host input remains unavailable.'
+    message:
+      mode === 'observe'
+        ? 'Observe grant active. Screenshot/status tools may run.'
+        : 'Input grant active. Host input still requires local per-action approval.'
   }
 }
 
@@ -138,4 +167,8 @@ export function cancelComputerGrant(reason = 'cancelled'): Record<string, unknow
 export function hasComputerInputGrant(): boolean {
   const grant = getActiveComputerGrant()
   return grant?.mode === 'assist' || grant?.mode === 'control'
+}
+
+export function hasComputerObserveGrant(): boolean {
+  return getActiveComputerGrant() !== null
 }

@@ -29,7 +29,8 @@ import { asRpcResult, rpcErrorMessage } from '../lib/rpc.js'
 import { deleteSession, saveSession } from '../remoteSessions.js'
 import { CliRenderer } from '../renderer.js'
 import { fetchRecentSessions, pickSession } from '../sessionPicker.js'
-import { ensureToolsConsent } from '../tools/consent.js'
+import { ensureComputerUseConsent, ensureToolsConsent } from '../tools/consent.js'
+import { configureComputerUseRuntime } from '../tools/computerGrants.js'
 import {
   DESKTOP_HANDLERS,
   advertisedDesktopTools,
@@ -400,11 +401,26 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
   // behind a one-time consent prompt stored per-URL in remote-sessions.json.
   let toolRouter: DesktopToolRouter | null = null
   const toolsDisabled = !!args.flags['no-tools']
-  const computerUseEnabled = shouldAdvertiseComputerUse(args.flags)
-  const advertisedTools = advertisedDesktopTools({ computerUse: computerUseEnabled })
+  let computerUseEnabled = shouldAdvertiseComputerUse(args.flags)
+  let computerUseConsentSource: 'stored' | 'prompted' | 'override' | 'none' = 'none'
   if (!toolsDisabled) {
     const consent = await ensureToolsConsent(url)
     if (consent.consented) {
+      if (computerUseEnabled) {
+        const computerConsent = await ensureComputerUseConsent(url)
+        if (computerConsent.consented) {
+          computerUseConsentSource = computerConsent.source ?? 'prompted'
+        } else {
+          computerUseEnabled = false
+          process.stderr.write(`Desktop computer-use: disabled (${computerConsent.reason})\n`)
+        }
+      }
+      configureComputerUseRuntime({
+        url,
+        computerUseConsented: computerUseEnabled,
+        consentSource: computerUseEnabled ? computerUseConsentSource : 'none'
+      })
+      const advertisedTools = advertisedDesktopTools({ computerUse: computerUseEnabled })
       toolRouter = new DesktopToolRouter({
         consentGranted: true,
         handlers: DESKTOP_HANDLERS,
@@ -413,7 +429,7 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
       toolRouter.attach(relay)
       process.stderr.write(
         `Desktop tools: ${advertisedTools.length} handlers advertised${
-          computerUseEnabled ? ' (experimental computer-use observe-first enabled)' : ''
+          computerUseEnabled ? ' (experimental computer-use enabled; input requires local approval)' : ''
         }\n`
       )
     } else if (consent.reason) {
