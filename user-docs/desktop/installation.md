@@ -7,7 +7,7 @@ One-liner installs on Windows / macOS / Linux. The installer downloads a prebuil
 - A running Hermes-Relay server reachable from this machine. `curl -s http://<host>:8767/health` should return `{"status":"ok"}`.
 - That's it. The binary is self-contained (Bun-compiled, ~60–110 MB, depending on platform).
 
-If you'd rather install from source or via npm, see the [Source / npm](#install-from-source-node-21) section below — but the binary is the recommended path.
+If you'd rather install from source, see the [source install](#install-from-source-node-21) section below — but the binary is the recommended path.
 
 ## Windows — PowerShell one-liner
 
@@ -151,15 +151,7 @@ npx tsx src/cli.ts --help
 npx tsx src/cli.ts pair --remote ws://<host>:8767
 ```
 
-## Install via npm (coming soon)
-
-Once we publish to npm (after the experimental phase wraps), it'll be:
-
-```bash
-npm install -g @hermes-relay/cli
-```
-
-For now, the binary or source paths are the way.
+The package name in `desktop/package.json` is local workspace metadata today. The desktop CLI is not published to npm; use GitHub Release binaries or a local clone with `npm link`.
 
 ## Uninstall
 

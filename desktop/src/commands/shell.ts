@@ -59,8 +59,9 @@ import { stageClipboardImageToInbox } from './paste.js'
 import { fetchRecentSessions, pickSession } from '../sessionPicker.js'
 import { ensureToolsConsent } from '../tools/consent.js'
 import {
-  DESKTOP_ADVERTISED_TOOLS,
-  DESKTOP_HANDLERS
+  DESKTOP_HANDLERS,
+  advertisedDesktopTools,
+  shouldAdvertiseComputerUse
 } from '../tools/handlerSet.js'
 import { DesktopToolRouter } from '../tools/router.js'
 import { RelayTransport } from '../transport/RelayTransport.js'
@@ -380,16 +381,21 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
   // readline on stdin/stderr and needs a cooked TTY.
   let toolRouter: DesktopToolRouter | null = null
   const toolsDisabled = !!args.flags['no-tools']
+  const computerUseEnabled = shouldAdvertiseComputerUse(args.flags)
+  const advertisedTools = advertisedDesktopTools({ computerUse: computerUseEnabled })
   if (!toolsDisabled) {
     const consent = await ensureToolsConsent(url)
     if (consent.consented) {
       toolRouter = new DesktopToolRouter({
         consentGranted: true,
-        handlers: DESKTOP_HANDLERS
+        handlers: DESKTOP_HANDLERS,
+        advertisedTools: [...advertisedTools]
       })
       toolRouter.attach(relay)
       process.stderr.write(
-        `Desktop tools: ${DESKTOP_ADVERTISED_TOOLS.length} handlers advertised\n`
+        `Desktop tools: ${advertisedTools.length} handlers advertised${
+          computerUseEnabled ? ' (experimental computer-use observe-first enabled)' : ''
+        }\n`
       )
     } else if (consent.reason) {
       process.stderr.write(`Desktop tools: disabled (${consent.reason})\n`)

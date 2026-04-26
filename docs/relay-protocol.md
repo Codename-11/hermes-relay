@@ -263,7 +263,23 @@ Sources: `plugin/relay/channels/notifications.py`, `app/src/main/kotlin/.../noti
 |------|-----------|-------|
 | `profiles.updated` | Server → Client | Hoists `profiles` array to top-level JSON (see §2.1 escape hatch) |
 
-### 3.7 TUI *(new, being added — see `docs/plans/2026-04-22-desktop-tui-mvp.md`)*
+### 3.7 Desktop Tool Routing
+
+**Purpose:** Route agent desktop tools to the connected desktop CLI/daemon.
+**Direction:** Server → Client for `desktop.command`; Client → Server for status and responses.
+**Handler:** `DesktopHandler` (server, `plugin/relay/channels/desktop.py`), `DesktopToolRouter` (client, `desktop/src/tools/router.ts`).
+
+| Type | Direction | Payload |
+|------|-----------|---------|
+| `desktop.command` | Server → Client | `{request_id, tool, args}` |
+| `desktop.response` | Client → Server | `{request_id, ok: true, result}` or `{request_id, ok: false, error}` |
+| `desktop.status` | Client → Server | `{advertised_tools, host, platform, version, computer_use?}` |
+| `desktop.workspace` | Client → Server | Workspace context snapshot |
+| `desktop.active_editor` | Client → Server | Active editor hint |
+
+Experimental computer-use tools use the same channel. The client only advertises `desktop_computer_*` names when explicitly enabled with `--experimental-computer-use` or `HERMES_RELAY_EXPERIMENTAL_COMPUTER_USE=1`. Phase 1 is observe-first: screenshots/status are allowed by the handler surface, while host input returns structured `grant_required` or `not_implemented` results.
+
+### 3.8 TUI *(new, being added — see `docs/plans/2026-04-22-desktop-tui-mvp.md`)*
 
 **Purpose:** Remote desktop TUI — pipes JSON-RPC between the Node TUI client and a remote `tui_gateway` subprocess on the server.
 **Direction:** Bidirectional.

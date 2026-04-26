@@ -54,6 +54,7 @@ const BOOLEAN_FLAGS = new Set([
   'log-human',
   'log-json',
   'allow-tools',
+  'experimental-computer-use',
   'check',
   'yes',
   'new',
@@ -170,6 +171,9 @@ Flags:
   --log-human            daemon: human-readable log lines (default: auto on TTY)
   --log-json             daemon: force JSON-line logs even on a TTY
   --allow-tools          daemon: skip stored-consent gate (use only with --token; implies trust)
+  --experimental-computer-use
+                         chat/shell/daemon: advertise observe-first desktop_computer_* tools.
+                         Experimental; host input still fails closed in this release.
   --json                 chat: emit events as JSON lines (scripting)
   --verbose              Include thinking/reasoning + transport stderr
   --quiet, -q            Suppress status lines and tool decorations

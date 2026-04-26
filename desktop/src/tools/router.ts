@@ -26,6 +26,7 @@ import * as os from 'node:os'
 import type { RelayTransport } from '../transport/RelayTransport.js'
 
 import { VERSION } from '../version.js'
+import { getComputerGrantSummary } from './computerGrants.js'
 
 /** The payload shape server → client for a single tool invocation. */
 export interface ToolCallPayload {
@@ -219,6 +220,20 @@ export class DesktopToolRouter {
         started_at_ms: this.startedAtMs,
         uptime_ms: Date.now() - this.startedAtMs,
         interactive: this.interactive
+      }
+      if (this.advertisedTools.some(name => name.startsWith('desktop_computer_'))) {
+        payload.computer_use = {
+          stage: 'experimental',
+          protocol_version: 1,
+          enabled: true,
+          capabilities: ['status', 'screenshot', 'grant_request', 'cancel'],
+          input: 'not_implemented',
+          grant: getComputerGrantSummary(),
+          overlay: {
+            visible: false,
+            state: 'not_available'
+          }
+        }
       }
       if (this.lastError) {
         payload.last_error = this.lastError

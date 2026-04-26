@@ -49,6 +49,23 @@ async function main() {
     throw new Error(`algo mismatch: ${sum.algorithm}`)
   }
 
+  // ── Experimental computer-use advertisement and fail-closed action ───
+  const handlerSet = await import(pathToFileURL(path.join(distRoot, '..', 'handlerSet.js')).href)
+  const defaultAdvertised = handlerSet.advertisedDesktopTools()
+  const experimentalAdvertised = handlerSet.advertisedDesktopTools({ computerUse: true })
+  if (defaultAdvertised.includes('desktop_computer_action')) {
+    throw new Error('computer-use tools should not advertise by default')
+  }
+  if (!experimentalAdvertised.includes('desktop_computer_action')) {
+    throw new Error('computer-use tools should advertise with explicit opt-in')
+  }
+  const computer = await import(pathToFileURL(path.join(distRoot, 'computer.js')).href)
+  const action = await computer.computerActionHandler({ action: 'left_click' }, ctx)
+  console.log(`COMPUTER action code=${action.code}`)
+  if (action.ok !== false || action.code !== 'grant_required') {
+    throw new Error(`expected grant_required fail-closed action, got ${JSON.stringify(action)}`)
+  }
+
   // ── Job lifecycle ──────────────────────────────────────────────────────
   const jobs = await import(pathToFileURL(path.join(distRoot, 'jobs.js')).href)
   const cmd =

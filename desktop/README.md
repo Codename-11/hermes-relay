@@ -8,13 +8,7 @@ The agent brain (LLM + tools + sessions + memory) runs on your Hermes host. This
 
 ## Install
 
-### npm (recommended)
-
-```sh
-npm install -g @hermes-relay/cli
-```
-
-### curl / irm (no Node required)
+### GitHub Release binary (recommended, no Node required)
 
 ```sh
 # macOS / Linux
@@ -32,13 +26,19 @@ After install, either `hermes-relay <prompt>` or the short alias `hermes <prompt
 
 > **Experimental.** Binaries are currently unsigned — Windows SmartScreen and macOS Gatekeeper may warn on first launch. The installers print the `Unblock-File` / `xattr -dr com.apple.quarantine` escape hatches. Code signing lands before v1.0.
 
-### npx (no install)
+### Local clone + npm link
+
+For development builds:
 
 ```sh
-npx @hermes-relay/cli --help
+git clone https://github.com/Codename-11/hermes-relay
+cd hermes-relay/desktop
+npm install
+npm run build
+npm link
 ```
 
-First run downloads and caches ~2 MB.
+The package name in `package.json` is workspace metadata only today. The desktop CLI is not published to npm.
 
 ## Uninstall
 
@@ -74,19 +74,11 @@ Tiers combine: `--purge --service` runs both.
 
 **Heads-up about `--purge`:** `remote-sessions.json` is shared with the Ink TUI and Android desktop tooling. Wiping it signs those surfaces out too. Use `--purge` when giving the machine away — not for routine cleanup.
 
-### npm
-
-```sh
-npm uninstall -g @hermes-relay/cli
-```
-
-If you previously paired, tokens remain in `~/.hermes/remote-sessions.json`. Delete it manually if you want a full wipe.
-
 ### Requirements
 
 - **A running `hermes-relay` server** reachable over the network. See the [Hermes-Relay README](https://github.com/Codename-11/hermes-relay#readme) to stand one up.
 - **For the `curl | sh` / `irm | iex` binary install:** no runtime deps — the binary is self-contained. `~/.hermes/bin/` on PATH.
-- **For the `npm install -g` path** (experimental-phase note: not yet published; use the binary install for now): Node.js ≥21 — needed for the built-in global `WebSocket`. Older Node needs `--experimental-websocket`; we don't support that.
+- **For local clone + `npm link`:** Node.js ≥21 — needed for the built-in global `WebSocket`. Older Node needs `--experimental-websocket`; we don't support that.
 
 ## First-time pairing
 
@@ -316,7 +308,7 @@ What's next (see [ROADMAP.md](../ROADMAP.md#desktop-track) for the full track):
 - Service installers — `install-service-{win,linux,mac}` to register the daemon with `sc.exe` / systemd user unit / `launchd` so it auto-starts on login.
 - Multi-client server-side routing — today a connected desktop client is single-slot; allow laptop + home-desktop + work-box attached simultaneously with per-client tool dispatch via a new hermes-agent `ContextVar`.
 - Code signing — Windows EV cert + Apple Developer ID + notarization to silence SmartScreen/Gatekeeper.
-- `npm publish @hermes-relay/cli` — claim the scope and add the `npm install -g` path alongside `curl | sh` once v1.0 lands.
+- npm registry publication — future v1.0 distribution work. Until then, use GitHub Release binaries or a local clone with `npm link`.
 
 ## Related
 

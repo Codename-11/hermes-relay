@@ -35,6 +35,13 @@ Tools registered (Phase B + remote-PC ergonomics, alpha.7):
     - desktop_health           connected client name, uptime, advertised tools,
                                 last error — answered by the relay (no client RTT)
 
+  Experimental computer-use (observe-first):
+    - desktop_computer_status          local display/grant/permission summary
+    - desktop_computer_screenshot      screenshot wrapper with coordinate metadata
+    - desktop_computer_action          fails closed; no host input in Phase 1
+    - desktop_computer_grant_request   observe-only grant stub
+    - desktop_computer_cancel          revoke in-memory computer-use grant
+
 Architecture mirrors ``android_tool.py``:
 
     Tools ──HTTP──> Unified Relay (localhost:8767) ──WSS desktop channel──> Desktop CLI
@@ -432,6 +439,86 @@ def desktop_health() -> str:
     return json.dumps(data)
 
 
+# ── Experimental computer-use ────────────────────────────────────────────────
+
+
+def desktop_computer_status(include_recent: bool = False) -> str:
+    """[EXPERIMENTAL] Report desktop computer-use status.
+
+    Phase 1 is observe-first: the connected desktop client reports display
+    metadata, local grant state, and the fact that host input is not
+    implemented. This is intentionally separate from broad desktop tool
+    consent.
+    """
+    data = _post(
+        "/desktop/desktop_computer_status",
+        {"include_recent": bool(include_recent)},
+    )
+    return json.dumps(data)
+
+
+def desktop_computer_screenshot(
+    display: Any = "primary",
+    region: Optional[dict[str, Any]] = None,
+    include_cursor: bool = True,
+    redact_sensitive: bool = True,
+    save_to: Optional[str] = None,
+) -> str:
+    """[EXPERIMENTAL] Capture a desktop screenshot in observe mode."""
+    payload: dict[str, Any] = {
+        "display": display,
+        "include_cursor": bool(include_cursor),
+        "redact_sensitive": bool(redact_sensitive),
+    }
+    if region is not None:
+        payload["region"] = region
+    if save_to is not None:
+        payload["save_to"] = save_to
+    data = _post("/desktop/desktop_computer_screenshot", payload)
+    return json.dumps(data)
+
+
+def desktop_computer_action(action: str, **kwargs: Any) -> str:
+    """[EXPERIMENTAL] Request a bounded computer action.
+
+    Phase 1 deliberately does not implement mouse/keyboard automation. The
+    client returns a structured grant_required/not_implemented result instead
+    of silently controlling the host.
+    """
+    payload: dict[str, Any] = {"action": action}
+    payload.update(kwargs)
+    data = _post("/desktop/desktop_computer_action", payload)
+    return json.dumps(data)
+
+
+def desktop_computer_grant_request(
+    mode: str,
+    scope: Optional[dict[str, Any]] = None,
+    duration_seconds: int = 900,
+    reason: str = "",
+) -> str:
+    """[EXPERIMENTAL] Request a local computer-use grant.
+
+    The Phase 1 desktop client only grants observe mode. Assist/control grants
+    fail closed until a visible overlay or per-action confirmation path exists.
+    """
+    payload: dict[str, Any] = {
+        "mode": mode,
+        "duration_seconds": int(duration_seconds),
+        "reason": reason,
+    }
+    if scope is not None:
+        payload["scope"] = scope
+    data = _post("/desktop/desktop_computer_grant_request", payload)
+    return json.dumps(data)
+
+
+def desktop_computer_cancel(reason: str = "cancelled by tool request") -> str:
+    """[EXPERIMENTAL] Cancel/revoke the active local computer-use grant."""
+    data = _post("/desktop/desktop_computer_cancel", {"reason": reason})
+    return json.dumps(data)
+
+
 # ── Schemas ────────────────────────────────────────────────────────────────────
 
 
@@ -806,6 +893,136 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
         ),
         "parameters": {"type": "object", "properties": {}},
     },
+    # ── Experimental computer-use ───────────────────────────────────────
+    "desktop_computer_status": {
+        "name": "desktop_computer_status",
+        "description": (
+            "[EXPERIMENTAL] Report observe-first desktop computer-use status. "
+            "Returns platform/display metadata, local grant state, overlay "
+            "availability, and explicit safety flags. This tool does not grant "
+            "host input and does not imply mouse/keyboard control."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "include_recent": {
+                    "type": "boolean",
+                    "description": "Reserved for future relay-side recent action summaries.",
+                    "default": False,
+                },
+            },
+        },
+    },
+    "desktop_computer_screenshot": {
+        "name": "desktop_computer_screenshot",
+        "description": (
+            "[EXPERIMENTAL] Capture a desktop screenshot for observe-mode "
+            "computer-use. Wraps the existing desktop screenshot backend and "
+            "returns PNG bytes or a saved path plus coordinate metadata. "
+            "Sensitive-window redaction and cursor inclusion are planned fields "
+            "and are reported honestly when unavailable."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "display": {
+                    "description": "Display selector: primary, all, or a numeric index.",
+                    "default": "primary",
+                },
+                "region": {
+                    "type": "object",
+                    "description": "Planned crop rectangle; Phase 1 rejects region capture.",
+                },
+                "include_cursor": {"type": "boolean", "default": True},
+                "redact_sensitive": {"type": "boolean", "default": True},
+                "save_to": {
+                    "type": "string",
+                    "description": "Optional path on the desktop client to save the PNG instead of returning bytes.",
+                },
+            },
+        },
+    },
+    "desktop_computer_action": {
+        "name": "desktop_computer_action",
+        "description": (
+            "[EXPERIMENTAL] Request a single bounded desktop action. Phase 1 "
+            "does not implement mouse or keyboard automation; this tool returns "
+            "a structured grant_required/not_implemented failure instead of "
+            "silently controlling the host."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": [
+                        "left_click",
+                        "right_click",
+                        "double_click",
+                        "mouse_move",
+                        "scroll",
+                        "key",
+                        "type",
+                        "wait",
+                    ],
+                },
+                "coordinate": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "description": "Planned [x, y] screen coordinate.",
+                },
+                "text": {"type": "string"},
+                "keys": {"type": "string"},
+                "scroll": {"type": "object"},
+                "display": {"description": "Display selector."},
+                "return_screenshot": {"type": "boolean", "default": False},
+                "intent": {
+                    "type": "string",
+                    "description": "Human-readable reason for the requested action.",
+                },
+            },
+            "required": ["action"],
+        },
+    },
+    "desktop_computer_grant_request": {
+        "name": "desktop_computer_grant_request",
+        "description": (
+            "[EXPERIMENTAL] Request a local computer-use grant. The Phase 1 "
+            "client grants observe mode only. Assist/control requests fail "
+            "closed until a visible overlay or per-action confirmation path "
+            "exists."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "mode": {"type": "string", "enum": ["observe", "assist", "control"]},
+                "scope": {
+                    "type": "object",
+                    "properties": {
+                        "display": {"type": "string"},
+                        "app": {"type": "string"},
+                        "folder": {"type": "string"},
+                    },
+                },
+                "duration_seconds": {"type": "integer", "default": 900},
+                "reason": {"type": "string"},
+            },
+            "required": ["mode"],
+        },
+    },
+    "desktop_computer_cancel": {
+        "name": "desktop_computer_cancel",
+        "description": (
+            "[EXPERIMENTAL] Cancel or revoke the active local computer-use "
+            "grant. Safe to call even when no grant is active."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reason": {"type": "string", "default": "cancelled by tool request"},
+            },
+        },
+    },
 }
 
 
@@ -839,6 +1056,12 @@ _HANDLERS: dict[str, Any] = {
     "desktop_checksum":       lambda args, **kw: desktop_checksum(**args),
     # Diagnostics — answered by the relay directly, no client round-trip.
     "desktop_health": lambda args, **kw: desktop_health(),
+    # Experimental computer-use — observe-first, fail-closed for input.
+    "desktop_computer_status":        lambda args, **kw: desktop_computer_status(**args),
+    "desktop_computer_screenshot":    lambda args, **kw: desktop_computer_screenshot(**args),
+    "desktop_computer_action":        lambda args, **kw: desktop_computer_action(**args),
+    "desktop_computer_grant_request": lambda args, **kw: desktop_computer_grant_request(**args),
+    "desktop_computer_cancel":        lambda args, **kw: desktop_computer_cancel(**args),
 }
 
 

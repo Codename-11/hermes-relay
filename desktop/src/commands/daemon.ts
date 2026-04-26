@@ -35,8 +35,9 @@ import { rpcErrorMessage } from '../lib/rpc.js'
 import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
 import { getSession } from '../remoteSessions.js'
 import {
-  DESKTOP_ADVERTISED_TOOLS,
-  DESKTOP_HANDLERS
+  DESKTOP_HANDLERS,
+  advertisedDesktopTools,
+  shouldAdvertiseComputerUse
 } from '../tools/handlerSet.js'
 import { DesktopToolRouter } from '../tools/router.js'
 import { RelayTransport } from '../transport/RelayTransport.js'
@@ -226,16 +227,20 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   // Wire the desktop tool router. consentGranted is true by this point —
   // we gated on stored consent (or --allow-tools override) above.
   // interactive:false so patch approval auto-rejects (no TTY to prompt on).
+  const computerUseEnabled = shouldAdvertiseComputerUse(args.flags)
+  const advertisedTools = advertisedDesktopTools({ computerUse: computerUseEnabled })
   const router = new DesktopToolRouter({
     consentGranted: true,
     interactive: false,
-    handlers: DESKTOP_HANDLERS
+    handlers: DESKTOP_HANDLERS,
+    advertisedTools: [...advertisedTools]
   })
   router.attach(relay)
 
   log.info({
     event: 'ready',
-    advertised_tools: [...DESKTOP_ADVERTISED_TOOLS]
+    advertised_tools: [...advertisedTools],
+    experimental_computer_use: computerUseEnabled
   })
 
   // Graceful shutdown: detach router (stops heartbeats), kill transport
