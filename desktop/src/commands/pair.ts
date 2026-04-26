@@ -20,6 +20,7 @@ import {
 import { payloadToCandidates, probeCandidatesByPriority } from '../pairingQr.js'
 import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
 import { saveSession } from '../remoteSessions.js'
+import { ensureToolsConsent } from '../tools/consent.js'
 import { RelayTransport } from '../transport/RelayTransport.js'
 
 function resolveRemote(args: ParsedArgs): string | null {
@@ -117,6 +118,15 @@ export async function pairCommand(args: ParsedArgs): Promise<number> {
     return 1
   }
 
+  // Tool-consent shortcuts — let users go straight from `pair` to `daemon`
+  // without the interactive `shell` round-trip. Two flavors so the consent
+  // act is never implicit: `--grant-tools` prompts on TTY, `--auto-grant-tools`
+  // stamps without prompting (explicit non-interactive opt-in for scripts).
+  // Auto wins if both are passed — no point prompting after the user already
+  // committed in writing.
+  const autoGrant = !!args.flags['auto-grant-tools']
+  const promptGrant = !!args.flags['grant-tools'] && !autoGrant
+
   process.stderr.write(`Pairing with ${target.url}...\n`)
 
   const relay = new RelayTransport({
@@ -129,10 +139,14 @@ export async function pairCommand(args: ParsedArgs): Promise<number> {
   const outcome = await relay.whenAuthResolved()
 
   if (outcome.ok) {
+    // Fold --auto-grant-tools into the initial save so the consent flag and
+    // the token land atomically. The interactive --grant-tools path runs
+    // ensureToolsConsent() below, which writes its own follow-up save.
     await saveSession(target.url, outcome.token, outcome.serverVersion, {
       grants: outcome.meta.grants,
       ttlExpiresAt: outcome.meta.ttlExpiresAt,
-      endpointRole: target.endpointRole
+      endpointRole: target.endpointRole,
+      ...(autoGrant ? { toolsConsented: true } : {})
     })
     process.stdout.write(`✓ Paired. Token stored in ~/.hermes/remote-sessions.json\n`)
     process.stdout.write(`  Server: ${outcome.serverVersion ?? '?'}\n`)
@@ -140,6 +154,21 @@ export async function pairCommand(args: ParsedArgs): Promise<number> {
     if (target.endpointRole) {
       process.stdout.write(`  Route:  ${target.endpointRole}\n`)
     }
+
+    if (autoGrant) {
+      process.stdout.write(`✓ Desktop tool consent granted (--auto-grant-tools).\n`)
+    } else if (promptGrant) {
+      const result = await ensureToolsConsent(target.url)
+      if (result.consented) {
+        process.stdout.write(`✓ Desktop tool consent granted.\n`)
+      } else {
+        process.stderr.write(
+          `! Tool consent not granted: ${result.reason ?? 'declined'}\n` +
+            `  Pair succeeded; rerun \`hermes-relay pair --remote ${target.url} --grant-tools\` on a TTY to grant.\n`
+        )
+      }
+    }
+
     try {
       relay.kill()
     } catch {

@@ -173,6 +173,8 @@ class Session:
     expires_at: float = 0.0
     grants: dict[str, float] = field(default_factory=dict)
     transport_hint: str = "unknown"
+    client_surface: str = "unknown"
+    device_form_factor: str = "unknown"
     first_seen: float = 0.0
 
     def __post_init__(self) -> None:
@@ -377,6 +379,8 @@ def _session_to_json(session: Session) -> dict[str, Any]:
         "expires_at": _norm(session.expires_at),
         "grants": {k: _norm(v) for k, v in session.grants.items()},
         "transport_hint": session.transport_hint,
+        "client_surface": session.client_surface,
+        "device_form_factor": session.device_form_factor,
         "first_seen": session.first_seen,
     }
 
@@ -409,6 +413,8 @@ def _session_from_json(payload: dict[str, Any]) -> Session | None:
                 elif isinstance(value, (int, float)) and not isinstance(value, bool):
                     grants[channel] = float(value)
         transport_hint = str(payload.get("transport_hint", "unknown"))
+        client_surface = str(payload.get("client_surface", "unknown"))
+        device_form_factor = str(payload.get("device_form_factor", "unknown"))
         first_seen = float(payload.get("first_seen", created_at))
     except (KeyError, TypeError, ValueError):
         return None
@@ -422,6 +428,8 @@ def _session_from_json(payload: dict[str, Any]) -> Session | None:
         expires_at=expires_at,
         grants=grants,
         transport_hint=transport_hint,
+        client_surface=client_surface,
+        device_form_factor=device_form_factor,
         first_seen=first_seen,
     )
 
@@ -632,6 +640,8 @@ class SessionManager:
         ttl_seconds: float | None = None,
         grants: dict[str, float] | None = None,
         transport_hint: str = "unknown",
+        client_surface: str = "unknown",
+        device_form_factor: str = "unknown",
     ) -> Session:
         """Create a new session for an authenticated device.
 
@@ -649,6 +659,13 @@ class SessionManager:
         transport_hint:
             Recorded for the Paired Devices UI. Pass ``"wss"``, ``"ws"``,
             or ``"unknown"``.
+        client_surface:
+            Optional client family metadata (``"android"``, ``"desktop"``,
+            ``"quest"``, or ``"unknown"``). Missing/unknown values are
+            accepted for back-compat.
+        device_form_factor:
+            Optional device class metadata (``"phone"``, ``"desktop"``,
+            ``"xr"``, or ``"unknown"``).
         """
         if ttl_seconds is None:
             ttl_seconds = DEFAULT_TTL_SECONDS
@@ -671,17 +688,21 @@ class SessionManager:
             expires_at=expires_at,
             grants=resolved_grants,
             transport_hint=transport_hint,
+            client_surface=client_surface,
+            device_form_factor=device_form_factor,
             first_seen=now,
         )
         self._sessions[token] = session
         logger.info(
-            "Created session for device %s (%s), expires %s, transport=%s",
+            "Created session for device %s (%s), expires %s, transport=%s, surface=%s, form_factor=%s",
             device_name,
             device_id,
             "never" if _is_never(expires_at) else time.strftime(
                 "%Y-%m-%d %H:%M", time.localtime(expires_at)
             ),
             transport_hint,
+            client_surface,
+            device_form_factor,
         )
         self._save_to_disk()
         return session

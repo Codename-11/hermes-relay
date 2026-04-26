@@ -49,6 +49,8 @@ const BOOLEAN_FLAGS = new Set([
   'reveal-tokens',
   'raw',
   'no-tools',
+  'grant-tools',
+  'auto-grant-tools',
   'log-human',
   'log-json',
   'allow-tools',
@@ -161,6 +163,10 @@ Flags:
   --raw                  shell: skip auto-exec; drop into bare tmux/bash
   --watch-editor         shell/chat: poll tmux/$VSCODE and send active_editor hints every 5s
   --no-tools             chat/shell: disable local tool handlers (fs, exec, search)
+  --grant-tools          pair: prompt for desktop-tool consent during pairing (TTY required;
+                         lets you go straight from \`pair\` to \`daemon\` with no \`shell\` round-trip)
+  --auto-grant-tools     pair: stamp tool consent without prompting — explicit non-interactive
+                         opt-in (e.g. CI / provisioning scripts; implies trust in the relay)
   --log-human            daemon: human-readable log lines (default: auto on TTY)
   --log-json             daemon: force JSON-line logs even on a TTY
   --allow-tools          daemon: skip stored-consent gate (use only with --token; implies trust)
@@ -192,6 +198,10 @@ Examples:
   # Run the tool router headless so the agent can reach you without an open shell
   hermes-relay daemon --remote ws://172.16.24.250:8767
   # ...writes JSON-line lifecycle events to stderr; redirect or pipe to jq
+
+  # Two-command bring-up: pair with consent, then run headless. No \`shell\` round-trip.
+  hermes-relay pair   --remote ws://172.16.24.250:8767 --grant-tools
+  hermes-relay daemon --remote ws://172.16.24.250:8767
 
 Config files:
   ~/.hermes/remote-sessions.json   session tokens (mode 0600)

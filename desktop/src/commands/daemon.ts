@@ -145,7 +145,9 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
       event: 'consent_missing',
       url,
       message:
-        'tools not consented for this URL. Run `hermes-relay shell --remote <url>` once to grant, or pass --allow-tools to override.'
+        'tools not consented for this URL. Re-pair with `hermes-relay pair --remote <url> --grant-tools` ' +
+        '(prompts on TTY) or `--auto-grant-tools` (no prompt). `hermes-relay shell` also works. ' +
+        '`--allow-tools` overrides this gate when invoking with --token directly.'
     })
     return 1
   }
@@ -154,7 +156,8 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
       event: 'consent_missing',
       url,
       message:
-        'no stored consent for this URL. Pass --allow-tools to override, or pair interactively first.'
+        'no stored consent for this URL. Pass --allow-tools to override, or pair first with ' +
+        '`hermes-relay pair --remote <url> --grant-tools`.'
     })
     return 1
   }

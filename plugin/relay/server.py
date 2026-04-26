@@ -614,6 +614,8 @@ def _session_to_dict(session: Session, current_token: str | None) -> dict[str, A
         "expires_at": _norm(session.expires_at),
         "grants": grants_out,
         "transport_hint": session.transport_hint,
+        "client_surface": session.client_surface,
+        "device_form_factor": session.device_form_factor,
         "is_current": current_token is not None and session.token == current_token,
     }
 
@@ -3022,6 +3024,8 @@ def _build_auth_ok_payload(
         "expires_at": _norm(session.expires_at),
         "grants": {k: _norm(v) for k, v in session.grants.items()},
         "transport_hint": session.transport_hint,
+        "client_surface": session.client_surface,
+        "device_form_factor": session.device_form_factor,
     }
 
 
@@ -3067,6 +3071,8 @@ async def _authenticate(
     session_token_attempt = payload.get("session_token", "")
     device_name = payload.get("device_name", "Unknown device")
     device_id = payload.get("device_id", "unknown")
+    client_surface = str(payload.get("client_surface", "unknown") or "unknown")
+    device_form_factor = str(payload.get("device_form_factor", "unknown") or "unknown")
 
     # The phone MAY send ttl_seconds / grants in its auth envelope, but
     # if the operator pre-registered the code with metadata on the host
@@ -3116,6 +3122,8 @@ async def _authenticate(
                 ttl_seconds=ttl_seconds,
                 grants=grants,
                 transport_hint=transport_hint,
+                client_surface=client_surface,
+                device_form_factor=device_form_factor,
             )
             server.rate_limiter.record_success(remote_ip)
             await _send_system(
