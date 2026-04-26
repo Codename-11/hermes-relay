@@ -251,10 +251,15 @@ hermes-android/
 | `desktop/src/endpoint.ts` | `EndpointCandidate` / `EndpointRole` types + `displayLabel()` — mirrors Android `data/Endpoint.kt` |
 | `desktop/src/pairingQr.ts` | `decodePairingPayload` (JSON or base64), `payloadToCandidates` (v3 verbatim / v1–v2 synthesized), `probeCandidatesByPriority` (`Promise.any` within tier, `AbortSignal.any`, 4s timeout, 60s cache) |
 | `desktop/src/certPin.ts` | `extractSpkiSha256(der)` via `crypto.X509Certificate` + `publicKey.export({type:'spki'})`; `pinKey(url)`, `comparePins()`, `isSecureUrl()` |
-| `desktop/src/tools/router.ts` | `DesktopToolRouter.attach(relay)` — installs `onChannel('desktop')`, dispatches `desktop.command` under 30s `AbortController`, 30s heartbeat via `desktop.status` advertising handler names |
+| `desktop/src/tools/router.ts` | `DesktopToolRouter.attach(relay)` — `onChannel('desktop')` dispatch under 30s `AbortController`; heartbeat enriched with host/platform/version/uptime_ms + sticky `last_error` for `desktop_health` |
+| `desktop/src/tools/handlerSet.ts` | Single source of truth for the desktop tool map — `DESKTOP_HANDLERS` + `DESKTOP_ADVERTISED_TOOLS`; consumed by `chat.ts` / `shell.ts` / `daemon.ts` so adding a tool is a one-file change |
 | `desktop/src/tools/consent.ts` | `ensureToolsConsent(url)` — stored per-URL in `toolsConsented`; TTY prompt; non-TTY fails closed |
 | `desktop/src/tools/handlers/fs.ts` | `readFileHandler` / `writeFileHandler` / `patchHandler` — strict unified-diff applier, no fuzz |
 | `desktop/src/tools/handlers/terminal.ts` | `bash -lc` / `cmd /c`, SIGKILL on timeout or abort, returns `{stdout, stderr, exit_code, duration_ms}` |
+| `desktop/src/tools/handlers/powershell.ts` | Spawns `pwsh`/`powershell` directly with `-Command -`, script piped via stdin — no cmd.exe quote-mangling; auto-picks pwsh > powershell |
+| `desktop/src/tools/handlers/process.ts` | `spawn_detached` (unref'd, returns pid+log_path), `list_processes` (tasklist /FO CSV — no /V to dodge window-title latency), `kill_process`, `find_pid_by_port` (netstat/lsof/ss) |
+| `desktop/src/tools/handlers/jobs.ts` | Job API — `~/.hermes/desktop-jobs/<id>/{stdout.log, stderr.log, meta.json}` is source of truth across daemon restarts; `taskkill /T` on Windows so build trees die fully |
+| `desktop/src/tools/handlers/transfer.ts` | `copy_directory` via `fs.cp`, `zip`/`unzip` via tar > zip > PowerShell probe, `checksum` streamed (sha256/sha1/md5) |
 | `desktop/src/tools/handlers/search.ts` | ripgrep with pure-Node fallback, skips `.git`/`node_modules`/`dist`/`.next`/`.cache` |
 | `desktop/src/renderer.ts` | Streams `message.delta` → stdout, tool events → decorated lines; NO_COLOR / --json / --quiet aware |
 | `desktop/src/pairing.ts` | readline-based 6-char prompt (`A-Z0-9`); headless mirror of TUI's Ink prompt; `validatePairingPayloadString` discriminated-union wrapper |
@@ -274,7 +279,7 @@ hermes-android/
 | `release-desktop.yml → Smoke-test Linux binary` step | CI-side equivalent: runs compiled Linux binary through the same 3-command check before uploading assets. Catches silent-exit-0 + segfault classes. |
 | **Server — Desktop tool routing (Phase B)** | |
 | `plugin/relay/channels/desktop.py` | Mirrors `bridge.py` — `desktop.command`/`desktop.response`/`desktop.status`, UUID-correlated futures, 30s timeout, single-client MVP, per-session advertised-tools set |
-| `plugin/tools/desktop_tool.py` | `desktop_read_file` / `_write_file` / `_terminal` / `_search_files` / `_patch` — registers with `tools.registry` under `desktop` toolset; `_check_requirements` pings `/desktop/_ping` for "is a client connected AND does it advertise this tool?" |
+| `plugin/tools/desktop_tool.py` | 24 `desktop_*` tools (fs/shell/powershell/process/jobs/transfer/health) — registers with `tools.registry` under `desktop` toolset; per-tool `check_fn` pings `/desktop/_ping?tool=<name>`; `desktop_health` is `_RELAY_ONLY` and pings `/desktop/health` so it works even when the client is wedged |
 
 ## What NOT to Do
 
@@ -392,6 +397,7 @@ See [RELEASE.md](RELEASE.md) for the full recipe.
 | Desktop CLI devices | HTTP `GET/DELETE/PATCH /sessions` on the relay's same port | Wrapped by `hermes-relay devices list | revoke <prefix> | extend <prefix> --ttl <s>`; bearer token from stored session; token prefix only (never full token) |
 | Desktop tool routing (Phase B) | WSS `desktop.command` (s→c) + `desktop.response` (c→s) + `desktop.status` (c→s heartbeat) | New channel. Hermes calls `desktop_read_file(path)` → Python handler POSTs to `/desktop/desktop_read_file` → relay forwards over `desktop.command` → Node client's `DesktopToolRouter` runs the handler locally → response bubbles back. Mirror of Android's `bridge.command` pattern. |
 | Desktop tool check_fn | HTTP `GET /desktop/_ping?tool=<name>` | Returns 200 if a client is connected AND advertises this tool; 503 otherwise. Hermes uses this to fail the tool quickly when no desktop client is live, instead of waiting 30s for the dispatch timeout. |
+| Desktop health | HTTP `GET /desktop/health` | Returns full status snapshot — connected/host/platform/version/pid/uptime/advertised_tools/last_error/recent_commands. Loopback-only. Backs the `desktop_health` agent tool, which intentionally does NOT round-trip through the client so it remains callable when other tools are wedged. |
 
 ## Upstream References
 

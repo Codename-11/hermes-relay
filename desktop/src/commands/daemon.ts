@@ -33,12 +33,10 @@
 import type { ParsedArgs } from '../cli.js'
 import { rpcErrorMessage } from '../lib/rpc.js'
 import { getSession } from '../remoteSessions.js'
-import { clipboardReadHandler, clipboardWriteHandler } from '../tools/handlers/clipboard.js'
-import { openInEditorHandler } from '../tools/handlers/editor.js'
-import { readFileHandler, writeFileHandler, patchHandler } from '../tools/handlers/fs.js'
-import { screenshotHandler } from '../tools/handlers/screenshot.js'
-import { searchFilesHandler } from '../tools/handlers/search.js'
-import { terminalHandler } from '../tools/handlers/terminal.js'
+import {
+  DESKTOP_ADVERTISED_TOOLS,
+  DESKTOP_HANDLERS
+} from '../tools/handlerSet.js'
 import { DesktopToolRouter } from '../tools/router.js'
 import { RelayTransport } from '../transport/RelayTransport.js'
 import { setupGracefulExit } from '../lib/gracefulExit.js'
@@ -214,33 +212,13 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   const router = new DesktopToolRouter({
     consentGranted: true,
     interactive: false,
-    handlers: {
-      desktop_read_file: readFileHandler,
-      desktop_write_file: writeFileHandler,
-      desktop_patch: patchHandler,
-      desktop_terminal: terminalHandler,
-      desktop_search_files: searchFilesHandler,
-      desktop_clipboard_read: clipboardReadHandler,
-      desktop_clipboard_write: clipboardWriteHandler,
-      desktop_screenshot: screenshotHandler,
-      desktop_open_in_editor: openInEditorHandler
-    }
+    handlers: DESKTOP_HANDLERS
   })
   router.attach(relay)
 
   log.info({
     event: 'ready',
-    advertised_tools: [
-      'desktop_read_file',
-      'desktop_write_file',
-      'desktop_patch',
-      'desktop_terminal',
-      'desktop_search_files',
-      'desktop_clipboard_read',
-      'desktop_clipboard_write',
-      'desktop_screenshot',
-      'desktop_open_in_editor'
-    ]
+    advertised_tools: [...DESKTOP_ADVERTISED_TOOLS]
   })
 
   // Graceful shutdown: detach router (stops heartbeats), kill transport

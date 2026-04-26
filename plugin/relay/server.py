@@ -892,6 +892,53 @@ async def handle_desktop_ping(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def handle_desktop_health(request: web.Request) -> web.Response:
+    """GET /desktop/health
+      → 200 {
+          connected: bool,
+          host?, platform?, arch?, node?, version?, pid?,
+          uptime_ms?, started_at_ms?,
+          advertised_tools: [...],
+          pending_commands: int,
+          last_seen_at?: float,
+          last_error?: {message, tool, ts},
+          recent_commands: [...]   # last 20
+        }
+
+    Loopback-only — same surface as ``/desktop/_ping``, but returns the full
+    snapshot (client metadata, advertised tools, recent activity) for the
+    ``desktop_health`` agent tool and the dashboard. This route exists so
+    a daemon-style desktop client can be inspected without round-tripping
+    through ``desktop.command``: the latest ``desktop.status`` heartbeat
+    already carries everything we need.
+    """
+    _require_loopback(request)
+    server: RelayServer = request.app["server"]
+    snap = server.desktop.status_snapshot()
+    cs = snap.get("client_status") or {}
+    out = {
+        "connected": snap.get("connected", False),
+        "advertised_tools": snap.get("advertised_tools") or [],
+        "pending_commands": snap.get("pending_commands", 0),
+        "last_seen_at": snap.get("last_seen_at"),
+        # Surface every interesting field the client heartbeat provides;
+        # missing keys just become None in the response, which the agent
+        # tool handles gracefully.
+        "host": cs.get("host"),
+        "platform": cs.get("platform"),
+        "arch": cs.get("arch"),
+        "node": cs.get("node"),
+        "version": cs.get("version"),
+        "pid": cs.get("pid"),
+        "uptime_ms": cs.get("uptime_ms"),
+        "started_at_ms": cs.get("started_at_ms"),
+        "interactive": cs.get("interactive"),
+        "last_error": cs.get("last_error"),
+        "recent_commands": server.desktop.get_recent(limit=20),
+    }
+    return web.json_response(out)
+
+
 async def handle_desktop_dispatch(request: web.Request) -> web.Response:
     """POST /desktop/{tool_name}
       Body: {... tool args ...}
@@ -3322,6 +3369,10 @@ def create_app(config: RelayConfig) -> web.Application:
     # wildcard `/desktop/{tool_name}` or aiohttp swallows `_ping` as a tool
     # literal and 502s.
     app.router.add_get("/desktop/_ping", handle_desktop_ping)
+    # `/desktop/health` is the JSON-rich diagnostic — full status snapshot
+    # plus the recent-commands ring. Like `_ping`, it must come before the
+    # wildcard route or aiohttp swallows it.
+    app.router.add_get("/desktop/health", handle_desktop_health)
     app.router.add_post("/desktop/{tool_name}", handle_desktop_dispatch)
 
     # Clipboard inbox — remote-client paste rendezvous for the upstream

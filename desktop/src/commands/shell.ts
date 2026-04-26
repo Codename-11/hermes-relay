@@ -58,12 +58,10 @@ import { deleteSession, getSession, saveSession } from '../remoteSessions.js'
 import { stageClipboardImageToInbox } from './paste.js'
 import { fetchRecentSessions, pickSession } from '../sessionPicker.js'
 import { ensureToolsConsent } from '../tools/consent.js'
-import { clipboardReadHandler, clipboardWriteHandler } from '../tools/handlers/clipboard.js'
-import { openInEditorHandler } from '../tools/handlers/editor.js'
-import { readFileHandler, writeFileHandler, patchHandler } from '../tools/handlers/fs.js'
-import { screenshotHandler } from '../tools/handlers/screenshot.js'
-import { searchFilesHandler } from '../tools/handlers/search.js'
-import { terminalHandler } from '../tools/handlers/terminal.js'
+import {
+  DESKTOP_ADVERTISED_TOOLS,
+  DESKTOP_HANDLERS
+} from '../tools/handlerSet.js'
 import { DesktopToolRouter } from '../tools/router.js'
 import { RelayTransport } from '../transport/RelayTransport.js'
 
@@ -387,21 +385,11 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
     if (consent.consented) {
       toolRouter = new DesktopToolRouter({
         consentGranted: true,
-        handlers: {
-          desktop_read_file: readFileHandler,
-          desktop_write_file: writeFileHandler,
-          desktop_patch: patchHandler,
-          desktop_terminal: terminalHandler,
-          desktop_search_files: searchFilesHandler,
-          desktop_clipboard_read: clipboardReadHandler,
-          desktop_clipboard_write: clipboardWriteHandler,
-          desktop_screenshot: screenshotHandler,
-          desktop_open_in_editor: openInEditorHandler
-        }
+        handlers: DESKTOP_HANDLERS
       })
       toolRouter.attach(relay)
       process.stderr.write(
-        'Desktop tools: 9 handlers advertised (read_file, write_file, terminal, search_files, patch, clipboard_read, clipboard_write, screenshot, open_in_editor)\n'
+        `Desktop tools: ${DESKTOP_ADVERTISED_TOOLS.length} handlers advertised\n`
       )
     } else if (consent.reason) {
       process.stderr.write(`Desktop tools: disabled (${consent.reason})\n`)
