@@ -32,6 +32,7 @@
 
 import type { ParsedArgs } from '../cli.js'
 import { rpcErrorMessage } from '../lib/rpc.js'
+import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
 import { getSession } from '../remoteSessions.js'
 import {
   DESKTOP_ADVERTISED_TOOLS,
@@ -89,13 +90,26 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   const human = humanFlag || (!args.flags['log-json'] && !!process.stderr.isTTY)
   const log = makeLogger(human)
 
-  const url = resolveRemoteOrNull(args)
+  // URL resolution mirrors chat/shell — explicit --remote / HERMES_RELAY_URL
+  // win, otherwise fall back to a stored session. resolveFirstRunUrl with
+  // nonInteractive:true auto-picks when exactly one session exists, throws a
+  // clear error when zero or many. Lets `hermes-relay daemon` with no flags
+  // Just Work for the common case (one paired server) — same UX as `hermes-relay`
+  // bare invocation and `chat` first-run.
+  let url = resolveRemoteOrNull(args)
   if (!url) {
-    log.error({
-      event: 'config_missing',
-      message: 'daemon requires --remote <url> or HERMES_RELAY_URL'
-    })
-    return 1
+    try {
+      url = await resolveFirstRunUrl({ nonInteractive: true })
+    } catch (e) {
+      log.error({
+        event: 'config_missing',
+        message:
+          'daemon: ' +
+          (e instanceof Error ? e.message : String(e)) +
+          ' Pass --remote <url>, set HERMES_RELAY_URL, or pair first with `hermes-relay pair`.'
+      })
+      return 1
+    }
   }
 
   // Resolve credentials: daemon takes ONLY --token or stored session. No
