@@ -207,6 +207,7 @@ async function copy(key: string, text: string) {
 .install-code {
   position: relative;
   max-width: 720px;
+  min-width: 0;
   margin: 1rem auto;
   background: var(--vp-c-bg-alt);
   border: 1px solid var(--vp-c-divider);
@@ -216,6 +217,7 @@ async function copy(key: string, text: string) {
    button stays pinned to the visible top-right corner of .install-code,
    instead of scrolling out of view with the overflowing command text. */
 .install-code-scroll {
+  min-width: 0;
   overflow-x: auto;
   padding: 14px 58px 14px 18px;
 }
@@ -295,21 +297,27 @@ async function copy(key: string, text: string) {
 }
 .install-extras {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
   gap: 1rem;
   max-width: 720px;
   margin: 2.5rem auto 0;
 }
 @media (min-width: 720px) {
   .install-extras {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 }
 .install-extra-card {
+  min-width: 0;
+  align-self: start;
   background: var(--vp-c-bg-alt);
   border: 1px solid var(--vp-c-divider);
   border-radius: 8px;
   padding: 1.25rem 1.25rem 1rem;
+}
+.install-extra-card .install-code {
+  max-width: 100%;
 }
 .install-extra-card h3 {
   margin: 0 0 0.5rem;

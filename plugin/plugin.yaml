@@ -1,5 +1,5 @@
 name: hermes-relay
-version: 0.5.0
+version: 0.6.1
 description: "Hermes-Relay plugin — remote Android device control + QR pairing. Read screen, tap, type, open apps, take screenshots via the Hermes-Relay app. Includes `hermes pair` and `hermes relay` CLI commands."
 author: Axiom Labs
 requires_env: []

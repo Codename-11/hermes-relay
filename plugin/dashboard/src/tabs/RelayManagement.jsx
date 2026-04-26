@@ -3,7 +3,7 @@ const { React } = SDK;
 const { useState, useEffect, useCallback } = SDK.hooks;
 
 import { getOverview, getSessions, revokeSession } from "../lib/api.js";
-import { relativeTime, uptime, shortToken } from "../lib/formatters.js";
+import { relativeTime, ttlCountdown, uptime, shortToken } from "../lib/formatters.js";
 import PairDialog from "../components/PairDialog.jsx";
 import {
   Alert,
@@ -27,6 +27,123 @@ const {
   Badge,
 } = SDK.components;
 
+function valueText(value) {
+  if (value === null || value === undefined) return "";
+  if (Array.isArray(value)) return value.join(" ");
+  if (typeof value === "object") return Object.keys(value).join(" ");
+  return String(value);
+}
+
+function extractGrants(session) {
+  const raw = session && session.grants;
+  if (Array.isArray(raw)) {
+    return raw
+      .map((entry) => {
+        if (typeof entry === "string") return { name: entry, detail: "" };
+        if (!entry || typeof entry !== "object") return null;
+        const name = entry.name || entry.channel || entry.grant || entry.scope;
+        if (!name) return null;
+        return {
+          name: String(name),
+          detail: entry.expires_at
+            ? ttlCountdown(entry.expires_at)
+            : formatGrantValue(entry.ttl_seconds ?? entry.ttl ?? entry.seconds),
+        };
+      })
+      .filter(Boolean);
+  }
+  if (raw && typeof raw === "object") {
+    return Object.entries(raw).map(([name, value]) => ({
+      name,
+      detail:
+        value && typeof value === "object"
+          ? value.expires_at || value.expiresAt || value.until
+            ? ttlCountdown(value.expires_at || value.expiresAt || value.until)
+            : formatGrantValue(value.ttl_seconds ?? value.ttl ?? value.seconds)
+          : formatGrantValue(value),
+    }));
+  }
+  return [];
+}
+
+function formatGrantValue(value) {
+  if (value === null || value === undefined || value === "" || value === true) return "";
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return "";
+  return seconds > 1e9 ? ttlCountdown(seconds) : formatDuration(seconds);
+}
+
+function formatDuration(value) {
+  if (value === null || value === undefined || value === "" || value === true) return "";
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return "";
+  if (seconds < 60) return `${Math.floor(seconds)}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remMinutes = minutes % 60;
+  if (hours < 24) return remMinutes ? `${hours}h ${remMinutes}m` : `${hours}h`;
+  const days = Math.floor(hours / 24);
+  const remHours = hours % 24;
+  return remHours ? `${days}d ${remHours}h` : `${days}d`;
+}
+
+function classifySession(session, grants) {
+  const haystack = [
+    session.device_type,
+    session.client_type,
+    session.platform,
+    session.device_name,
+    session.device_label,
+    session.client_name,
+    session.label,
+    session.transport,
+    session.transport_hint,
+    session.channel,
+    valueText(session.capabilities),
+    grants.map((g) => g.name).join(" "),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  if (/\bandroid\b|\bmobile\b|\bphone\b|hermes-relay-android/.test(haystack)) {
+    return "Android";
+  }
+  if (/\btui\b|terminal-ui|textual/.test(haystack)) {
+    return "Desktop TUI";
+  }
+  if (/\bcli\b|terminal|shell|desktop|tool|powershell|bash|cmd\.exe/.test(haystack)) {
+    return "Desktop CLI";
+  }
+  if (/\bweb\b|\bbrowser\b|\bdashboard\b/.test(haystack)) {
+    return "Dashboard";
+  }
+  return "Client";
+}
+
+function sessionTransport(session) {
+  return (
+    session.transport_hint ||
+    session.transport ||
+    session.channel ||
+    session.connection ||
+    session.protocol ||
+    ""
+  );
+}
+
+function sessionTokenPrefix(session) {
+  const raw = session.token || session.session_token || "";
+  return (
+    session.token_prefix ||
+    session.prefix ||
+    session.tokenPrefix ||
+    session.session_prefix ||
+    (raw ? String(raw).slice(0, 12) : "")
+  );
+}
+
 function StatCard({ label, value, hint }) {
   return (
     <Card>
@@ -48,6 +165,7 @@ export default function RelayManagement({ autoRefresh }) {
   const [error, setError] = useState(null);
   const [pairOpen, setPairOpen] = useState(false);
   const [revoking, setRevoking] = useState(null);
+  const [copied, setCopied] = useState(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -90,6 +208,21 @@ export default function RelayManagement({ autoRefresh }) {
       setRevoking(null);
     }
   }, [load]);
+
+  const onCopyPrefix = useCallback(async (prefix) => {
+    if (!prefix) return;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(prefix);
+      } else {
+        window.prompt("Copy token prefix", prefix);
+      }
+      setCopied(prefix);
+      window.setTimeout(() => setCopied(null), 1500);
+    } catch (_err) {
+      window.prompt("Copy token prefix", prefix);
+    }
+  }, []);
 
   if (loading) {
     return <div className="text-sm text-muted-foreground">Loading overview…</div>;
@@ -157,55 +290,94 @@ export default function RelayManagement({ autoRefresh }) {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Label</TableHead>
+                  <TableHead>Device</TableHead>
+                  <TableHead>Type</TableHead>
                   <TableHead>Last seen</TableHead>
+                  <TableHead>TTL</TableHead>
                   <TableHead>Grants</TableHead>
-                  <TableHead>Expires</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {list.map((s, idx) => {
-                  const token = s.token || s.token_prefix || s.prefix || "";
-                  const label = s.label || s.device_label || shortToken(token);
-                  const lastSeen = s.last_seen || s.last_activity || s.last_seen_at;
-                  // The relay returns grants as a {channel: ttl_seconds} object,
-                  // not an array — wrapping that dict in a 1-element array then
-                  // rendering `{g}` inside a Badge tripped React error #31
-                  // ("objects are not valid as a React child"). Extract channel
-                  // names so each Badge child is a string.
-                  const grants = Array.isArray(s.grants)
-                    ? s.grants
-                    : s.grants && typeof s.grants === "object"
-                    ? Object.keys(s.grants)
-                    : [];
+                  const tokenPrefix = sessionTokenPrefix(s);
+                  const label =
+                    s.device_name ||
+                    s.device_label ||
+                    s.client_name ||
+                    s.label ||
+                    shortToken(tokenPrefix);
+                  const lastSeen =
+                    s.last_seen ||
+                    s.last_activity ||
+                    s.last_seen_at ||
+                    s.last_activity_at ||
+                    s.updated_at ||
+                    s.paired_at;
+                  const expiresAt = s.expires_at || s.expiresAt || s.expires;
+                  const ttl = expiresAt ? ttlCountdown(expiresAt) : "never";
+                  const grants = extractGrants(s);
+                  const type = classifySession(s, grants);
+                  const transport = sessionTransport(s);
                   return (
-                    <TableRow key={token || idx}>
-                      <TableCell className="font-medium">{label}</TableCell>
+                    <TableRow key={tokenPrefix || idx}>
+                      <TableCell className="font-medium">
+                        <div>{label}</div>
+                        <div className="font-mono text-xs font-normal text-muted-foreground">
+                          {tokenPrefix ? shortToken(tokenPrefix, 12) : "no token prefix"}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col gap-1">
+                          <Badge variant="outline" className="w-fit text-xs">
+                            {type}
+                          </Badge>
+                          {transport ? (
+                            <span className="text-xs text-muted-foreground">{transport}</span>
+                          ) : null}
+                        </div>
+                      </TableCell>
                       <TableCell>{relativeTime(lastSeen)}</TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={ttl === "expired" ? "destructive" : "secondary"}
+                          className="text-xs"
+                        >
+                          {ttl}
+                        </Badge>
+                      </TableCell>
                       <TableCell>
                         <div className="flex flex-wrap gap-1">
                           {grants.length === 0 ? (
                             <span className="text-xs text-muted-foreground">—</span>
                           ) : (
                             grants.map((g) => (
-                              <Badge key={g} variant="secondary" className="text-xs">
-                                {g}
+                              <Badge key={`${g.name}:${g.detail}`} variant="secondary" className="text-xs">
+                                {g.detail ? `${g.name} ${g.detail}` : g.name}
                               </Badge>
                             ))
                           )}
                         </div>
                       </TableCell>
-                      <TableCell>{s.expires_at ? relativeTime(s.expires_at) : "never"}</TableCell>
                       <TableCell className="text-right">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={revoking === token || !token}
-                          onClick={() => onRevoke(token, label)}
-                        >
-                          {revoking === token ? "Revoking…" : "Revoke"}
-                        </Button>
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={!tokenPrefix}
+                            onClick={() => onCopyPrefix(tokenPrefix)}
+                          >
+                            {copied === tokenPrefix ? "Copied" : "Copy prefix"}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={revoking === tokenPrefix || !tokenPrefix}
+                            onClick={() => onRevoke(tokenPrefix, label)}
+                          >
+                            {revoking === tokenPrefix ? "Revoking…" : "Revoke"}
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   );
