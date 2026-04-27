@@ -446,8 +446,7 @@ def desktop_computer_status(include_recent: bool = False) -> str:
     """[EXPERIMENTAL] Report desktop computer-use status.
 
     The connected desktop client reports display metadata, local grant state,
-    consent state, and whether local per-action approval can run. This is
-    intentionally separate from broad desktop tool consent.
+    desktop-tool consent state, and whether local per-action approval can run.
     """
     data = _post(
         "/desktop/desktop_computer_status",
@@ -480,7 +479,7 @@ def desktop_computer_screenshot(
 def desktop_computer_action(action: str, **kwargs: Any) -> str:
     """[EXPERIMENTAL] Request a bounded computer action.
 
-    Host input requires durable computer-use consent, an active assist/control
+    Host input requires desktop-tool consent, an active assist/control
     grant, and a local per-action approval prompt. Non-interactive clients fail
     closed instead of silently controlling the host.
     """
@@ -958,7 +957,7 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
         "name": "desktop_computer_action",
         "description": (
             "[EXPERIMENTAL] Request a single bounded desktop action. Host input "
-            "requires durable computer-use consent, an active assist/control "
+            "requires desktop-tool consent, an active assist/control "
             "grant, and a local per-action approval prompt. Non-interactive "
             "clients fail closed."
         ),

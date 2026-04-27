@@ -45,9 +45,9 @@ import {
 import type { ToolHandler } from './router.js'
 
 /** Experimental computer-use tools are registered in the local handler map
- * but not heartbeat-advertised unless explicitly enabled. That lets the
- * Python plugin publish schemas while the relay still fails closed for
- * clients that have not opted into the observe-first surface. */
+ * and heartbeat-advertised with the rest of the desktop tools after normal
+ * desktop-tool consent. Host input still fails closed unless a task-scoped
+ * grant exists and a local per-action prompt is approved. */
 export const DESKTOP_COMPUTER_USE_TOOLS: readonly string[] = Object.freeze([
   'desktop_computer_status',
   'desktop_computer_screenshot',
@@ -112,31 +112,24 @@ export interface DesktopAdvertiseOptions {
   computerUse?: boolean
 }
 
-function envEnablesComputerUse(): boolean {
-  const raw = process.env.HERMES_RELAY_EXPERIMENTAL_COMPUTER_USE
-  if (!raw) {
-    return false
-  }
-  return !['0', 'false', 'no', 'off'].includes(raw.trim().toLowerCase())
-}
-
 export function shouldAdvertiseComputerUse(
-  flags?: Record<string, string | true>
+  _flags?: Record<string, string | true>
 ): boolean {
-  return flags?.['experimental-computer-use'] === true || envEnablesComputerUse()
+  return true
 }
 
 /** Stable list of advertised tool names — what the heartbeat claims to
- * service. Computer-use tools are omitted unless an explicit experimental
- * opt-in is present. */
+ * service. Computer-use tools are included by default with the rest of the
+ * desktop tool surface; callers may pass `computerUse:false` only for tests
+ * or a future explicit disable path. */
 export function advertisedDesktopTools(
   opts: DesktopAdvertiseOptions = {}
 ): readonly string[] {
-  if (opts.computerUse) {
-    return Object.freeze(Object.keys(DESKTOP_HANDLERS))
+  if (opts.computerUse === false) {
+    const experimental = new Set(DESKTOP_COMPUTER_USE_TOOLS)
+    return Object.freeze(Object.keys(DESKTOP_HANDLERS).filter(name => !experimental.has(name)))
   }
-  const experimental = new Set(DESKTOP_COMPUTER_USE_TOOLS)
-  return Object.freeze(Object.keys(DESKTOP_HANDLERS).filter(name => !experimental.has(name)))
+  return Object.freeze(Object.keys(DESKTOP_HANDLERS))
 }
 
 export const DESKTOP_ADVERTISED_TOOLS: readonly string[] = advertisedDesktopTools()

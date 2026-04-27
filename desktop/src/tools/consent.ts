@@ -29,7 +29,7 @@ Experimental desktop computer-use tools are about to be exposed.
 The agent may request screenshots and task-scoped mouse/keyboard actions.
 Mouse/keyboard actions still require a local grant and a visible per-action
 approval prompt before anything is sent to the OS.
-Type 'ALLOW COMPUTER USE' to enable for this relay URL, or press Enter to keep it disabled.
+Type 'yes' to enable for this relay URL, or press Enter to keep it disabled.
 `
 
 export interface EnsureConsentResult {
@@ -108,10 +108,10 @@ export async function ensureToolsConsent(url: string): Promise<EnsureConsentResu
   return { consented: true, source: 'prompted' }
 }
 
-/** Separate durable consent for the experimental computer-use tool surface.
- * This does not create a task grant and does not permit silent host input;
- * action handlers still require an in-memory assist/control grant plus local
- * per-action approval. */
+/** Legacy separate consent helper for the experimental computer-use tool
+ * surface. Current chat/shell/daemon paths use broad desktop-tool consent
+ * plus task grants and per-action approval; this remains for compatibility
+ * with older callers and accepts the same "yes" answer as desktop tools. */
 export async function ensureComputerUseConsent(url: string): Promise<EnsureConsentResult> {
   const existing = await getSession(url)
   if (existing?.computerUseConsented === true) {
@@ -122,12 +122,12 @@ export async function ensureComputerUseConsent(url: string): Promise<EnsureConse
     return {
       consented: false,
       reason:
-        'desktop computer-use requires interactive consent; rerun on a TTY or omit --experimental-computer-use'
+        'desktop computer-use requires interactive consent; rerun on a TTY'
     }
   }
 
-  const answer = await promptForAnswer(COMPUTER_USE_CONSENT_PROMPT)
-  if (answer !== 'ALLOW COMPUTER USE') {
+  const answer = (await promptForAnswer(COMPUTER_USE_CONSENT_PROMPT)).toLowerCase()
+  if (answer !== 'yes' && answer !== 'y' && answer !== 'allow computer use') {
     return { consented: false, reason: 'user declined computer-use consent' }
   }
 

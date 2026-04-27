@@ -12,6 +12,20 @@ export interface ComputerActionApprovalDecision {
   reason: string
 }
 
+export type ComputerActionPromptCoordinator = <T>(runPrompt: () => Promise<T>) => Promise<T>
+
+let promptCoordinator: ComputerActionPromptCoordinator = runPrompt => runPrompt()
+
+export function setComputerActionPromptCoordinator(
+  next: ComputerActionPromptCoordinator | null
+): () => void {
+  const previous = promptCoordinator
+  promptCoordinator = next ?? (runPrompt => runPrompt())
+  return () => {
+    promptCoordinator = previous
+  }
+}
+
 function cleanAnswer(raw: string): string {
   return raw
     .replaceAll(/\x1b\[[?\d;]*[a-zA-Z~]/g, '')
@@ -32,12 +46,18 @@ export async function approveComputerAction(
     }
   }
 
+  return promptCoordinator(() => promptForComputerAction(request))
+}
+
+async function promptForComputerAction(
+  request: ComputerActionApprovalRequest
+): Promise<ComputerActionApprovalDecision> {
   process.stderr.write(
     '\nHermes computer-use action requested:\n' +
       `  Action: ${request.action}\n` +
       `  Details: ${request.summary}\n` +
       `  Intent: ${request.intent?.trim() || 'not provided'}\n\n` +
-      'Type ALLOW to run this one action, n to reject, or r to reject with reason.\n' +
+      'Type yes to run this one action, n to reject, or r to reject with reason.\n' +
       '\x1b[?2004l'
   )
 
@@ -49,21 +69,22 @@ export async function approveComputerAction(
 
   try {
     while (true) {
-      const answer = cleanAnswer(await rl.question('  Run action? [ALLOW/n/r] > '))
-      if (answer === 'ALLOW') {
+      const answer = cleanAnswer(await rl.question('  Run action? [yes/n/r] > '))
+      const normalized = answer.toLowerCase()
+      if (normalized === 'yes' || normalized === 'y' || answer === 'ALLOW') {
         return { approved: true, reason: '' }
       }
-      if (answer.toLowerCase() === 'n' || answer.toLowerCase() === 'no' || answer === '') {
+      if (normalized === 'n' || normalized === 'no' || answer === '') {
         return { approved: false, reason: 'user rejected computer action' }
       }
-      if (answer.toLowerCase() === 'r') {
+      if (normalized === 'r') {
         const reason = cleanAnswer(await rl.question('  Reason: '))
         return {
           approved: false,
           reason: reason || 'user rejected computer action'
         }
       }
-      process.stderr.write('  unrecognized; answer with ALLOW, n, or r\n')
+      process.stderr.write('  unrecognized; answer with yes, n, or r\n')
     }
   } finally {
     try {

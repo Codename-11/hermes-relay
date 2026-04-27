@@ -23,7 +23,7 @@ const STATUS_TIMEOUT_MS = 5_000
 const EXPERIMENTAL_META = Object.freeze({
   experimental: true,
   phase: 'phase_2_cli_approval',
-  control_model: 'durable_consent_plus_task_grant_plus_per_action_local_approval'
+  control_model: 'desktop_tool_consent_plus_task_grant_plus_per_action_local_approval'
 })
 
 interface SpawnOutput {
@@ -258,7 +258,7 @@ export const computerStatusHandler: ToolHandler = async (_args, ctx) => {
     safety: {
       host_input: process.platform === 'win32' ? 'windows_only_with_local_approval' : 'unsupported_platform',
       action_policy:
-        'desktop_computer_action requires durable computer-use consent, an assist/control grant, and local per-action approval'
+        'desktop_computer_action requires desktop-tool consent, an assist/control grant, and local per-action approval'
     }
   }
 }

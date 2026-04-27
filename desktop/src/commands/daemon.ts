@@ -7,9 +7,10 @@
 // any time of day, not just when they have a shell attached.
 //
 // Design contract:
-//   - Fails closed if no stored session or consent isn't already true.
+//   - Fails closed if no stored session or desktop-tool consent isn't already true.
 //     A headless binary must never be the thing that grants tool access;
-//     the user must have previously consented via interactive `shell`.
+//     the user must have previously consented via interactive `shell`/`chat`
+//     or `pair --grant-tools`.
 //   - Inherits RelayTransport's reconnect state machine as-is. No custom
 //     retry loop here — the transport's exp-backoff-to-30s + auth-resolve
 //     semantics are already daemon-appropriate. Terminal auth failures
@@ -36,8 +37,7 @@ import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
 import { getSession } from '../remoteSessions.js'
 import {
   DESKTOP_HANDLERS,
-  advertisedDesktopTools,
-  shouldAdvertiseComputerUse
+  advertisedDesktopTools
 } from '../tools/handlerSet.js'
 import { configureComputerUseRuntime } from '../tools/computerGrants.js'
 import { DesktopToolRouter } from '../tools/router.js'
@@ -227,31 +227,19 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
 
   // Wire the desktop tool router. consentGranted is true by this point —
   // we gated on stored consent (or --allow-tools override) above.
-  // interactive:false so patch approval auto-rejects (no TTY to prompt on).
-  let computerUseEnabled = shouldAdvertiseComputerUse(args.flags)
-  const allowComputerUseFlag = !!args.flags['allow-computer-use']
-  if (computerUseEnabled && stored?.computerUseConsented !== true && !allowComputerUseFlag) {
-    log.warn({
-      event: 'computer_use_consent_missing',
-      url,
-      message:
-        'experimental computer-use requested but not consented for this URL. Run interactive chat/shell with --experimental-computer-use first, or pass --allow-computer-use for this daemon invocation.'
-    })
-    computerUseEnabled = false
-  }
+  // A foreground daemon with a real TTY may show approval prompts; a service
+  // or redirected daemon still fails host input closed because no visible
+  // local approval prompt can run.
+  const interactive = !!process.stdin.isTTY && !!process.stderr.isTTY
   configureComputerUseRuntime({
     url,
-    computerUseConsented: computerUseEnabled,
-    consentSource: computerUseEnabled
-      ? stored?.computerUseConsented === true
-        ? 'stored'
-        : 'override'
-      : 'none'
+    computerUseConsented: true,
+    consentSource: consented ? 'stored' : 'override'
   })
-  const advertisedTools = advertisedDesktopTools({ computerUse: computerUseEnabled })
+  const advertisedTools = advertisedDesktopTools()
   const router = new DesktopToolRouter({
     consentGranted: true,
-    interactive: false,
+    interactive,
     handlers: DESKTOP_HANDLERS,
     advertisedTools: [...advertisedTools]
   })
@@ -260,7 +248,8 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   log.info({
     event: 'ready',
     advertised_tools: [...advertisedTools],
-    experimental_computer_use: computerUseEnabled
+    experimental_computer_use: true,
+    interactive
   })
 
   // Graceful shutdown: detach router (stops heartbeats), kill transport

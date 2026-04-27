@@ -10,7 +10,9 @@ Two jobs over the same WSS ``desktop`` envelope stream:
    locally and returns ``desktop.response``, which bubbles back as the
    HTTP response. Single-client MVP — the most recent client wins
    ``self.client_ws``. ``self.pending`` is asyncio-locked so concurrent
-   add/remove can't drop futures. 30 s timeout (matches bridge).
+   add/remove can't drop futures. Normal desktop tools keep the bridge-like
+   30 s timeout; computer-use calls get a longer timeout because they may
+   wait on a visible human approval prompt.
 
 2. **Workspace awareness (alpha.6).** The desktop CLI advertises its
    local workspace once per auth.ok and optionally polls an
@@ -46,6 +48,7 @@ logger = logging.getLogger(__name__)
 
 
 RESPONSE_TIMEOUT = 30.0  # seconds — matches bridge.RESPONSE_TIMEOUT
+COMPUTER_USE_RESPONSE_TIMEOUT = 180.0  # seconds — allows human approval prompts
 
 # Keys whose values must never appear in the ring buffer. Matched
 # case-insensitively against the full key name.
@@ -314,7 +317,7 @@ class DesktopHandler:
         Returns the parsed ``desktop.response`` payload
         ``{request_id, status, result}``. Raises :class:`DesktopError` if
         no client is connected, the send fails, or the client doesn't
-        respond within :data:`RESPONSE_TIMEOUT` seconds.
+        respond within the tool-specific response timeout.
         """
         ws = self.client_ws
         if ws is None or ws.closed:
@@ -370,20 +373,25 @@ class DesktopHandler:
             logger.error("desktop: failed to send command: %s", exc)
             raise DesktopError(f"Failed to send command to client: {exc}") from exc
 
+        timeout = (
+            COMPUTER_USE_RESPONSE_TIMEOUT
+            if method.startswith("desktop_computer_")
+            else RESPONSE_TIMEOUT
+        )
         try:
-            return await asyncio.wait_for(future, timeout=RESPONSE_TIMEOUT)
+            return await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError:
             async with self._lock:
                 self.pending.pop(request_id, None)
             record.decision = "timeout"
-            record.error = f"Desktop client did not respond within {RESPONSE_TIMEOUT:.0f}s"
+            record.error = f"Desktop client did not respond within {timeout:.0f}s"
             logger.warning(
                 "desktop: client did not respond within %.0fs for %s",
-                RESPONSE_TIMEOUT,
+                timeout,
                 method,
             )
             raise DesktopError(
-                f"Desktop client did not respond within {RESPONSE_TIMEOUT:.0f}s"
+                f"Desktop client did not respond within {timeout:.0f}s"
             ) from None
 
     # ── Inbound response routing ────────────────────────────────────────

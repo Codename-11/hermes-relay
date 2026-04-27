@@ -52,12 +52,12 @@ async function main() {
   // ── Experimental computer-use advertisement and fail-closed action ───
   const handlerSet = await import(pathToFileURL(path.join(distRoot, '..', 'handlerSet.js')).href)
   const defaultAdvertised = handlerSet.advertisedDesktopTools()
-  const experimentalAdvertised = handlerSet.advertisedDesktopTools({ computerUse: true })
-  if (defaultAdvertised.includes('desktop_computer_action')) {
-    throw new Error('computer-use tools should not advertise by default')
+  const explicitlyDisabled = handlerSet.advertisedDesktopTools({ computerUse: false })
+  if (!defaultAdvertised.includes('desktop_computer_action')) {
+    throw new Error('computer-use tools should advertise with normal desktop tools')
   }
-  if (!experimentalAdvertised.includes('desktop_computer_action')) {
-    throw new Error('computer-use tools should advertise with explicit opt-in')
+  if (explicitlyDisabled.includes('desktop_computer_action')) {
+    throw new Error('computer-use tools should be removable for explicit disable/test paths')
   }
   const computer = await import(pathToFileURL(path.join(distRoot, 'computer.js')).href)
   const invalidAction = await computer.computerActionHandler({ action: 'left_click' }, ctx)

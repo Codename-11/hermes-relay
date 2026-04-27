@@ -126,7 +126,7 @@ export function requestComputerGrant(input: RequestComputerGrantInput): Record<s
       ok: false,
       code: 'computer_use_consent_required',
       message:
-        'Assist/control grants require durable local computer-use consent for this relay URL before task-scoped input grants can be created.',
+        'Assist/control grants require local desktop-tool consent for this relay URL before task-scoped input grants can be created.',
       grant: getComputerGrantSummary()
     }
   }

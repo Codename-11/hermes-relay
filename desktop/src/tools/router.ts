@@ -92,6 +92,10 @@ const HEARTBEAT_MS = 30_000
  * signal fires and we send `{ok:false, error:'aborted'}`. 30s matches the
  * Android bridge's timeout for the same class of request/response RPCs. */
 const HANDLER_TIMEOUT_MS = 30_000
+/** Computer-use actions may be waiting on a human reading and approving a
+ * visible local prompt, so they get a longer deadline without changing the
+ * existing desktop tool latency contract. */
+const COMPUTER_USE_HANDLER_TIMEOUT_MS = 180_000
 
 function isToolCallPayload(x: unknown): x is ToolCallPayload {
   if (!x || typeof x !== 'object') {
@@ -251,7 +255,7 @@ export class DesktopToolRouter {
     }
   }
 
-  /** Look up the handler, run it under a 30s AbortController, and reply.
+  /** Look up the handler, run it under a tool-specific AbortController, and reply.
    * Always sends a response — even unknown-tool, timeout, and thrown-error
    * paths — so the server's pending-request map never hangs. */
   private async dispatch(cmd: ToolCallPayload): Promise<void> {
@@ -267,9 +271,12 @@ export class DesktopToolRouter {
     }
 
     const controller = new AbortController()
+    const timeoutMs = tool.startsWith('desktop_computer_')
+      ? COMPUTER_USE_HANDLER_TIMEOUT_MS
+      : HANDLER_TIMEOUT_MS
     const timeoutTimer = setTimeout(() => {
       controller.abort()
-    }, HANDLER_TIMEOUT_MS)
+    }, timeoutMs)
     // Timeout fires abort, which the handler should honor. Timer itself
     // is unref'd so it doesn't keep the process alive.
     timeoutTimer.unref?.()

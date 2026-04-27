@@ -165,6 +165,9 @@ Flags:
   --raw                  shell: skip auto-exec; drop into bare tmux/bash
   --watch-editor         shell/chat: poll tmux/$VSCODE and send active_editor hints every 5s
   --no-tools             chat/shell: disable local tool handlers (fs, exec, search)
+                         Computer-use tools are experimental but ride with normal
+                         desktop tools; host input still requires task grant plus
+                         a visible local yes/no approval prompt.
   --grant-tools          pair: prompt for desktop-tool consent during pairing (TTY required;
                          lets you go straight from \`pair\` to \`daemon\` with no \`shell\` round-trip)
   --auto-grant-tools     pair: stamp tool consent without prompting — explicit non-interactive
@@ -172,13 +175,6 @@ Flags:
   --log-human            daemon: human-readable log lines (default: auto on TTY)
   --log-json             daemon: force JSON-line logs even on a TTY
   --allow-tools          daemon: skip stored-consent gate (use only with --token; implies trust)
-  --experimental-computer-use
-                         chat/shell/daemon: advertise experimental desktop_computer_* tools
-                         after separate computer-use consent. Host input requires
-                         task grant plus local per-action approval.
-  --allow-computer-use   daemon: one-run override for stored computer-use consent.
-                         Does not bypass per-action approval; daemon actions still
-                         fail closed because there is no TTY.
   --json                 chat: emit events as JSON lines (scripting)
   --verbose              Include thinking/reasoning + transport stderr
   --quiet, -q            Suppress status lines and tool decorations

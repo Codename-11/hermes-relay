@@ -21,13 +21,13 @@ Ship an observe-first tool surface behind an explicit experimental opt-in:
 - `desktop_computer_grant_request`
 - `desktop_computer_cancel`
 
-The desktop client registers handlers for all five names, but the heartbeat only advertises them when either `--experimental-computer-use` is passed or `HERMES_RELAY_EXPERIMENTAL_COMPUTER_USE=1` is set. Without that opt-in, the relay check endpoint fails closed because the client does not advertise the tools.
+The desktop client registers handlers for all five names and advertises them with the normal desktop tool surface after desktop-tool consent. The relay check endpoint still fails closed for older clients because `desktop_computer_*` tools must be explicitly advertised before the server routes calls to them.
 
 ## Phase 2 Scope
 
 Add the smallest practical control path:
 
-- durable per-URL computer-use consent separate from broad desktop tool consent
+- durable per-URL desktop-tool consent
 - in-memory observe/assist/control grants
 - local per-action CLI approval
 - Windows-only bounded input actions through a temporary PowerShell/User32 backend
@@ -40,7 +40,7 @@ Add the smallest practical control path:
 - platform and display metadata
 - experimental protocol marker
 - local in-memory computer-use grant state
-- local computer-use consent state
+- local desktop-tool consent state
 - CLI approval availability
 - host input state (`available_with_per_action_cli_approval`, `blocked_headless`, or unsupported)
 
@@ -48,8 +48,8 @@ Add the smallest practical control path:
 
 `desktop_computer_action` performs bounded Windows input only when all gates pass:
 
-- the client is launched with `--experimental-computer-use` or `HERMES_RELAY_EXPERIMENTAL_COMPUTER_USE=1`
-- durable per-URL computer-use consent exists
+- the client is launched with desktop tools enabled
+- durable per-URL desktop-tool consent exists
 - an in-memory assist/control grant is active
 - the desktop client is interactive and can show a local per-action approval prompt
 - the user types the one-action approval phrase
@@ -74,7 +74,7 @@ Current desktop computer-use slices are accepted when:
 - desktop TypeScript build passes
 - Python plugin tests for the desktop schemas pass
 - existing desktop tools remain advertised by default
-- computer-use tools are marked experimental and hidden unless explicitly enabled
+- computer-use tools are marked experimental and exposed only after normal desktop-tool consent
 - action/input requests fail closed without task-scoped assist/control grant
 - input requests fail closed in daemon/non-interactive mode
 - `/desktop/health` exposes the computer-use heartbeat state for server-side debugging
