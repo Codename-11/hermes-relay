@@ -1,0 +1,44 @@
+entities:
+  com.meta.models.Scene:
+    - components:
+        com.meta.components.Name:
+          name: HermesQuestScene
+        com.meta.components.Scene:
+          nodes:
+            - ref:TerminalPanel
+      tag: Scene
+  com.meta.models.SceneNode:
+    - components:
+        com.meta.components.Animatable:
+          {}
+        com.meta.components.Name:
+          name: TerminalPanel
+        com.meta.components.PointerNodeInverseComponent:
+          {}
+        com.meta.components.SceneNode:
+          rotation.data:
+            - 3.14159274
+            - 0
+            - 3.14159274
+            - 0
+          rotation.format: Euler
+          scale:
+            - 1.72
+            - 0.98
+            - 1
+          translation:
+            - 0
+            - 1.22
+            - -1.85
+          componentVersion: 1
+        com.meta.components.Visibility:
+          visible: true
+        com.meta.spatial.toolkit.Grabbable:
+          {}
+        com.meta.spatial.toolkit.Panel:
+          panel: "@id/quest_terminal_panel"
+        com.meta.spatial.toolkit.PanelDimensions:
+          {}
+      tag: TerminalPanel
+metadata:
+  version: 1.34

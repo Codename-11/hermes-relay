@@ -1,0 +1,15 @@
+<resources>
+    <style name="Theme.HermesQuest" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#57D68D</item>
+    </style>
+
+    <style name="PanelAppThemeTransparent" parent="Theme.HermesQuest">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:colorAccent">#57D68D</item>
+    </style>
+</resources>
