@@ -227,22 +227,25 @@ export class DesktopToolRouter {
       }
       if (this.advertisedTools.some(name => name.startsWith('desktop_computer_'))) {
         const runtime = getComputerUseRuntimeSummary()
+        const grant = getComputerGrantSummary()
+        const inputGrantActive =
+          grant.active === true && (grant.mode === 'assist' || grant.mode === 'control')
         payload.computer_use = {
           stage: 'experimental',
           protocol_version: 2,
           enabled: true,
           capabilities: ['status', 'screenshot', 'grant_request', 'cancel', 'action'],
           input:
-            runtime.consented === true && this.interactive && process.platform === 'win32'
-              ? 'available_with_per_action_cli_approval'
+            runtime.consented === true && inputGrantActive && process.platform === 'win32'
+              ? 'available_until_grant_expiry'
               : this.interactive
-                ? 'unsupported_platform_or_missing_consent'
+                ? 'grant_approval_prompt_available'
                 : 'blocked_headless',
-          grant: getComputerGrantSummary(),
+          grant,
           runtime,
           overlay: {
             visible: this.interactive,
-            state: this.interactive ? 'cli_prompt_available' : 'not_available'
+            state: this.interactive ? 'cli_grant_prompt_available' : 'not_available'
           }
         }
       }

@@ -396,7 +396,7 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
       })
       toolRouter.attach(relay)
       process.stderr.write(
-        `Desktop tools: ${advertisedTools.length} handlers advertised (computer-use experimental; input requires local approval)\n`
+        `Desktop tools: ${advertisedTools.length} handlers advertised (computer-use experimental; control requires grant approval)\n`
       )
     } else if (consent.reason) {
       process.stderr.write(`Desktop tools: disabled (${consent.reason})\n`)

@@ -229,7 +229,7 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   // we gated on stored consent (or --allow-tools override) above.
   // A foreground daemon with a real TTY may show approval prompts; a service
   // or redirected daemon still fails host input closed because no visible
-  // local approval prompt can run.
+  // local grant approval prompt can run.
   const interactive = !!process.stdin.isTTY && !!process.stderr.isTTY
   configureComputerUseRuntime({
     url,

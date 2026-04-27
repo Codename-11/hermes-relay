@@ -38,8 +38,8 @@ Tools registered (Phase B + remote-PC ergonomics, alpha.7):
   Experimental computer-use (observe-first):
     - desktop_computer_status          local display/grant/permission summary
     - desktop_computer_screenshot      screenshot wrapper with coordinate metadata
-    - desktop_computer_action          gated Windows input with local approval
-    - desktop_computer_grant_request   task-scoped observe/assist/control grant
+    - desktop_computer_action          gated Windows input under an approved grant
+    - desktop_computer_grant_request   task-scoped observe/assist/control grant approval
     - desktop_computer_cancel          revoke in-memory computer-use grant
 
 Architecture mirrors ``android_tool.py``:
@@ -446,7 +446,7 @@ def desktop_computer_status(include_recent: bool = False) -> str:
     """[EXPERIMENTAL] Report desktop computer-use status.
 
     The connected desktop client reports display metadata, local grant state,
-    desktop-tool consent state, and whether local per-action approval can run.
+    desktop-tool consent state, and whether local grant approval can run.
     """
     data = _post(
         "/desktop/desktop_computer_status",
@@ -479,8 +479,8 @@ def desktop_computer_screenshot(
 def desktop_computer_action(action: str, **kwargs: Any) -> str:
     """[EXPERIMENTAL] Request a bounded computer action.
 
-    Host input requires desktop-tool consent, an active assist/control
-    grant, and a local per-action approval prompt. Non-interactive clients fail
+    Host input requires desktop-tool consent and an active assist/control
+    grant approved from a visible local prompt. Non-interactive clients fail
     closed instead of silently controlling the host.
     """
     payload: dict[str, Any] = {"action": action}
@@ -497,8 +497,8 @@ def desktop_computer_grant_request(
 ) -> str:
     """[EXPERIMENTAL] Request a local computer-use grant.
 
-    Grants are in-memory and time-limited. Assist/control grants still require
-    local per-action approval before host input can execute.
+    Grants are in-memory and time-limited. Assist/control grants require one
+    visible local approval; actions then run until the grant expires or is canceled.
     """
     payload: dict[str, Any] = {
         "mode": mode,
@@ -957,8 +957,8 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
         "name": "desktop_computer_action",
         "description": (
             "[EXPERIMENTAL] Request a single bounded desktop action. Host input "
-            "requires desktop-tool consent, an active assist/control "
-            "grant, and a local per-action approval prompt. Non-interactive "
+            "requires desktop-tool consent and an active assist/control "
+            "grant approved from a visible local prompt. Non-interactive "
             "clients fail closed."
         ),
         "parameters": {
@@ -1027,8 +1027,8 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
         "description": (
             "[EXPERIMENTAL] Request a local computer-use grant. Observe grants "
             "permit screenshots. Assist/control grants are short-lived and "
-            "still require local per-action approval before mouse/keyboard "
-            "input executes."
+            "require one visible local approval; mouse/keyboard input then "
+            "runs until the grant expires or is canceled."
         ),
         "parameters": {
             "type": "object",

@@ -30,9 +30,9 @@ export interface RemoteSessionRecord {
    * → tools attached silently; false → tools suppressed even if set via
    * `--no-tools` override later. See desktop/src/tools/router.ts. */
   toolsConsented?: boolean
-  /** Separate per-URL consent for experimental desktop computer-use. This is
-   * not a task grant and does not by itself permit mouse/keyboard input; it
-   * only lets the client advertise the desktop_computer_* tool surface. */
+  /** Legacy separate per-URL consent for experimental desktop computer-use.
+   * Current clients expose the surface with normal desktop-tool consent and
+   * gate mouse/keyboard input on visible task-scoped grant approval. */
   computerUseConsented?: boolean
 }
 

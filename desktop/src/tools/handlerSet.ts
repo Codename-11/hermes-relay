@@ -47,7 +47,7 @@ import type { ToolHandler } from './router.js'
 /** Experimental computer-use tools are registered in the local handler map
  * and heartbeat-advertised with the rest of the desktop tools after normal
  * desktop-tool consent. Host input still fails closed unless a task-scoped
- * grant exists and a local per-action prompt is approved. */
+ * grant exists and was approved from a visible local prompt. */
 export const DESKTOP_COMPUTER_USE_TOOLS: readonly string[] = Object.freeze([
   'desktop_computer_status',
   'desktop_computer_screenshot',

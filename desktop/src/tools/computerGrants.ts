@@ -54,6 +54,22 @@ function parseScope(value: unknown): ComputerGrantScope {
   return scope
 }
 
+export function normalizeComputerGrantScope(value: unknown): ComputerGrantScope {
+  return parseScope(value)
+}
+
+export function normalizeComputerGrantReason(value: unknown): string {
+  return typeof value === 'string' && value.trim()
+    ? value.trim()
+    : 'No reason provided.'
+}
+
+export function normalizeComputerGrantDurationSeconds(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(1, Math.min(Math.floor(value), 3600))
+    : 900
+}
+
 function expireIfNeeded(): void {
   if (!activeGrant) {
     return
@@ -112,14 +128,8 @@ export interface RequestComputerGrantInput {
 
 export function requestComputerGrant(input: RequestComputerGrantInput): Record<string, unknown> {
   const mode = input.mode
-  const reason =
-    typeof input.reason === 'string' && input.reason.trim()
-      ? input.reason.trim()
-      : 'No reason provided.'
-  const durationSeconds =
-    typeof input.duration_seconds === 'number' && Number.isFinite(input.duration_seconds)
-      ? Math.max(1, Math.min(Math.floor(input.duration_seconds), 3600))
-      : 900
+  const reason = normalizeComputerGrantReason(input.reason)
+  const durationSeconds = normalizeComputerGrantDurationSeconds(input.duration_seconds)
 
   if (mode !== 'observe' && !runtime.computerUseConsented) {
     return {
@@ -148,7 +158,7 @@ export function requestComputerGrant(input: RequestComputerGrantInput): Record<s
     message:
       mode === 'observe'
         ? 'Observe grant active. Screenshot/status tools may run.'
-        : 'Input grant active. Host input still requires local per-action approval.'
+        : 'Input grant active. Host input may run without per-action prompts until the grant expires or is canceled.'
   }
 }
 

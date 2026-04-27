@@ -277,7 +277,7 @@ Sources: `plugin/relay/channels/notifications.py`, `app/src/main/kotlin/.../noti
 | `desktop.workspace` | Client → Server | Workspace context snapshot |
 | `desktop.active_editor` | Client → Server | Active editor hint |
 
-Experimental computer-use tools use the same channel and are advertised with the normal desktop tool surface after desktop-tool consent. The relay still treats `desktop_computer_*` names as strict-advertise tools so older clients fail closed. Screenshots require an in-memory observe/assist/control grant. Host input currently uses a Windows-only CLI approval path: desktop-tool consent, a task-scoped assist/control grant, and a local per-action `yes` prompt must all pass before input is sent. Daemon/non-interactive clients advertise blocked input state and reject actions with structured failures.
+Experimental computer-use tools use the same channel and are advertised with the normal desktop tool surface after desktop-tool consent. The relay still treats `desktop_computer_*` names as strict-advertise tools so older clients fail closed. Screenshots require an in-memory observe/assist/control grant. Host input currently uses a Windows-only CLI approval path: desktop-tool consent plus one visible local `yes` prompt for a task-scoped assist/control grant. Actions then run without per-action prompts until that grant expires or is canceled. Headless/non-interactive clients advertise blocked grant state and reject assist/control grant requests with structured failures.
 
 ### 3.8 TUI *(new, being added — see `docs/plans/2026-04-22-desktop-tui-mvp.md`)*
 

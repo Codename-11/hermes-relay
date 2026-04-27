@@ -81,16 +81,21 @@ async function main() {
     duration_seconds: 30,
     reason: 'smoke test'
   }, ctx)
-  if (grant.ok !== true) {
-    throw new Error(`expected assist grant with runtime consent, got ${JSON.stringify(grant)}`)
+  if (grant.ok !== false || grant.code !== 'not_interactive') {
+    throw new Error(`expected non-interactive grant approval failure, got ${JSON.stringify(grant)}`)
   }
-  const nonInteractiveAction = await computer.computerActionHandler(
+  grants.requestComputerGrant({
+    mode: 'assist',
+    duration_seconds: 30,
+    reason: 'smoke direct grant'
+  })
+  const grantedAction = await computer.computerActionHandler(
     { action: 'wait', duration_ms: 1 },
     ctx
   )
-  console.log(`COMPUTER granted action code=${nonInteractiveAction.code}`)
-  if (nonInteractiveAction.ok !== false || nonInteractiveAction.code !== 'not_interactive') {
-    throw new Error(`expected not_interactive fail-closed action, got ${JSON.stringify(nonInteractiveAction)}`)
+  console.log(`COMPUTER granted action status=${grantedAction.status}`)
+  if (grantedAction.ok !== true || grantedAction.status !== 'executed') {
+    throw new Error(`expected granted action execution, got ${JSON.stringify(grantedAction)}`)
   }
   await computer.computerCancelHandler({ reason: 'smoke cleanup' }, ctx)
 

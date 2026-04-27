@@ -27,8 +27,8 @@ Type 'yes' to enable, or rerun with --no-tools to disable.
 export const COMPUTER_USE_CONSENT_PROMPT = `
 Experimental desktop computer-use tools are about to be exposed.
 The agent may request screenshots and task-scoped mouse/keyboard actions.
-Mouse/keyboard actions still require a local grant and a visible per-action
-approval prompt before anything is sent to the OS.
+Mouse/keyboard actions still require a visible, task-scoped grant approval
+before anything is sent to the OS.
 Type 'yes' to enable for this relay URL, or press Enter to keep it disabled.
 `
 
@@ -110,8 +110,8 @@ export async function ensureToolsConsent(url: string): Promise<EnsureConsentResu
 
 /** Legacy separate consent helper for the experimental computer-use tool
  * surface. Current chat/shell/daemon paths use broad desktop-tool consent
- * plus task grants and per-action approval; this remains for compatibility
- * with older callers and accepts the same "yes" answer as desktop tools. */
+ * plus visible task-grant approval; this remains for compatibility with
+ * older callers and accepts the same "yes" answer as desktop tools. */
 export async function ensureComputerUseConsent(url: string): Promise<EnsureConsentResult> {
   const existing = await getSession(url)
   if (existing?.computerUseConsented === true) {

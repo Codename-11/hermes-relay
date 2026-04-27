@@ -1,6 +1,6 @@
 # Desktop Computer Use MVP
 
-Status: experimental implementation plan, Phase 2 CLI-control slice started 2026-04-26.
+Status: experimental implementation plan, Phase 3 task-grant approval slice started 2026-04-26.
 
 This plan converts the Obsidian draft at `~/obsidian-vault/3. System/Projects/Hermes-Relay/Plans/Desktop Control - Computer Use + Overlay.md` into repo-local implementation scope.
 
@@ -29,7 +29,7 @@ Add the smallest practical control path:
 
 - durable per-URL desktop-tool consent
 - in-memory observe/assist/control grants
-- local per-action CLI approval
+- local CLI approval when creating assist/control grants
 - Windows-only bounded input actions through a temporary PowerShell/User32 backend
 - daemon/non-interactive fail-closed behavior
 
@@ -41,8 +41,8 @@ Add the smallest practical control path:
 - experimental protocol marker
 - local in-memory computer-use grant state
 - local desktop-tool consent state
-- CLI approval availability
-- host input state (`available_with_per_action_cli_approval`, `blocked_headless`, or unsupported)
+- CLI grant approval availability
+- host input state (`available_until_grant_expiry`, `grant_approval_prompt_available`, `blocked_headless`, or unsupported)
 
 `desktop_computer_screenshot` wraps the existing `desktop_screenshot` backend and returns PNG bytes or a saved path plus coordinate metadata. Region capture, cursor certainty, and sensitive-window redaction are reported as planned or unavailable rather than silently claimed.
 
@@ -51,12 +51,11 @@ Add the smallest practical control path:
 - the client is launched with desktop tools enabled
 - durable per-URL desktop-tool consent exists
 - an in-memory assist/control grant is active
-- the desktop client is interactive and can show a local per-action approval prompt
-- the user types the one-action approval phrase
+- the assist/control grant was approved from a visible local prompt
 
 If any gate is missing, the tool returns a structured failure such as `grant_required`, `computer_use_consent_required`, `not_interactive`, `rejected`, or `unsupported_platform`.
 
-`desktop_computer_grant_request` accepts `observe`, `assist`, and `control`. Grants are in-memory, time-limited, and do not replace per-action approval.
+`desktop_computer_grant_request` accepts `observe`, `assist`, and `control`. Grants are in-memory and time-limited. Observe grants can be created under desktop-tool consent. Assist/control grants require the local desktop client to show a visible prompt; once approved, actions run without per-action prompts until the grant expires or is canceled.
 
 `desktop_computer_cancel` revokes the active in-memory computer-use grant and is safe to call when no grant exists.
 
@@ -76,5 +75,5 @@ Current desktop computer-use slices are accepted when:
 - existing desktop tools remain advertised by default
 - computer-use tools are marked experimental and exposed only after normal desktop-tool consent
 - action/input requests fail closed without task-scoped assist/control grant
-- input requests fail closed in daemon/non-interactive mode
+- assist/control grant requests fail closed in daemon/non-interactive mode when no visible prompt is available
 - `/desktop/health` exposes the computer-use heartbeat state for server-side debugging

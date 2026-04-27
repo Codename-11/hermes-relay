@@ -7,13 +7,15 @@ import {
   getComputerUseRuntimeSummary,
   hasComputerInputGrant,
   hasComputerObserveGrant,
+  normalizeComputerGrantDurationSeconds,
+  normalizeComputerGrantReason,
+  normalizeComputerGrantScope,
   requestComputerGrant,
   type ComputerGrantMode
 } from '../computerGrants.js'
-import { approveComputerAction } from '../computerActionApproval.js'
+import { approveComputerGrant } from '../computerActionApproval.js'
 import {
   runComputerInputAction,
-  summarizeComputerAction,
   validateComputerAction
 } from '../computerInput.js'
 import type { ToolHandler } from '../router.js'
@@ -22,8 +24,8 @@ import { screenshotHandler } from './screenshot.js'
 const STATUS_TIMEOUT_MS = 5_000
 const EXPERIMENTAL_META = Object.freeze({
   experimental: true,
-  phase: 'phase_2_cli_approval',
-  control_model: 'desktop_tool_consent_plus_task_grant_plus_per_action_local_approval'
+  phase: 'phase_3_task_grant_approval',
+  control_model: 'desktop_tool_consent_plus_task_grant_approval'
 })
 
 interface SpawnOutput {
@@ -231,7 +233,7 @@ function parseGrantMode(value: unknown): ComputerGrantMode | null {
 export const computerStatusHandler: ToolHandler = async (_args, ctx) => {
   const grant = getActiveComputerGrant()
   const runtime = getComputerUseRuntimeSummary()
-  const inputReady = runtime.consented === true && ctx.interactive && process.platform === 'win32'
+  const inputBackendReady = runtime.consented === true && process.platform === 'win32'
   return {
     ok: true,
     ...EXPERIMENTAL_META,
@@ -241,24 +243,24 @@ export const computerStatusHandler: ToolHandler = async (_args, ctx) => {
     permissions: {
       screenshot: grant ? 'granted' : 'grant_required',
       input: grant?.mode === 'assist' || grant?.mode === 'control'
-        ? inputReady
-          ? 'granted_pending_per_action_approval'
-          : 'grant_active_but_local_approval_unavailable'
+        ? inputBackendReady
+          ? 'granted_until_expiry'
+          : 'grant_active_but_input_backend_unavailable'
         : 'not_granted',
       accessibility: 'not_implemented'
     },
     grant: getComputerGrantSummary(),
     overlay: {
       visible: ctx.interactive,
-      state: ctx.interactive ? 'cli_prompt_available' : 'not_available',
+      state: ctx.interactive ? 'cli_grant_prompt_available' : 'not_available',
       message: ctx.interactive
-        ? 'CLI per-action approval prompts are available. Native overlay/tray UI is still planned.'
+        ? 'CLI grant approval prompts are available. Native overlay/tray UI is still planned.'
         : 'Native overlay/tray UI is not implemented and this client is non-interactive.'
     },
     safety: {
       host_input: process.platform === 'win32' ? 'windows_only_with_local_approval' : 'unsupported_platform',
       action_policy:
-        'desktop_computer_action requires desktop-tool consent, an assist/control grant, and local per-action approval'
+        'desktop_computer_action requires desktop-tool consent and an approved assist/control grant'
     }
   }
 }
@@ -333,30 +335,12 @@ export const computerActionHandler: ToolHandler = async (args, ctx) => {
   if (!hasComputerInputGrant()) {
     return failure(
       'grant_required',
-      'Host input is disabled. Request an assist/control grant first; every action also requires local per-action approval.',
+      'Host input is disabled. Request and locally approve an assist/control grant first.',
       { action }
     )
   }
 
   const normalized = validation.action
-  if (!ctx.interactive) {
-    return failure(
-      'not_interactive',
-      'Computer input requires a local per-action approval prompt. This desktop client is running non-interactively.',
-      { action: normalized.action }
-    )
-  }
-
-  const approval = await approveComputerAction({
-    action: normalized.action,
-    summary: summarizeComputerAction(normalized),
-    intent: normalized.intent,
-    interactive: ctx.interactive
-  })
-  if (!approval.approved) {
-    return failure('rejected', approval.reason, { action: normalized.action })
-  }
-
   const started = Date.now()
   const inputResult = await runComputerInputAction(normalized, ctx.abortSignal)
   const response: Record<string, unknown> = {
@@ -376,10 +360,36 @@ export const computerActionHandler: ToolHandler = async (args, ctx) => {
   return response
 }
 
-export const computerGrantRequestHandler: ToolHandler = async (args) => {
+export const computerGrantRequestHandler: ToolHandler = async (args, ctx) => {
   const mode = parseGrantMode(args.mode)
   if (!mode) {
     return failure('invalid_request', 'mode must be one of observe, assist, or control.')
+  }
+  if (mode !== 'observe') {
+    const runtime = getComputerUseRuntimeSummary()
+    if (runtime.consented !== true) {
+      return failure(
+        'computer_use_consent_required',
+        'Assist/control grants require local desktop-tool consent for this relay URL before task-scoped input grants can be created.'
+      )
+    }
+    if (!ctx.interactive) {
+      return failure(
+        'not_interactive',
+        'Assist/control grants require a visible local approval prompt. This desktop client is running non-interactively.',
+        { requested_mode: mode }
+      )
+    }
+    const approval = await approveComputerGrant({
+      mode,
+      durationSeconds: normalizeComputerGrantDurationSeconds(args.duration_seconds),
+      reason: normalizeComputerGrantReason(args.reason),
+      scope: normalizeComputerGrantScope(args.scope) as Record<string, unknown>,
+      interactive: ctx.interactive
+    })
+    if (!approval.approved) {
+      return failure('rejected', approval.reason, { requested_mode: mode })
+    }
   }
   return {
     ...requestComputerGrant({

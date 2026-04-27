@@ -460,7 +460,6 @@ export async function runComputerInputAction(
   if (action.action === 'wait') {
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(resolve, action.durationMs ?? 500)
-      timer.unref?.()
       signal.addEventListener('abort', () => {
         clearTimeout(timer)
         reject(new Error('aborted'))
