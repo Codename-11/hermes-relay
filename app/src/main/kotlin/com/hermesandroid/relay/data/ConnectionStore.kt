@@ -214,13 +214,24 @@ class ConnectionStore private constructor(
             }
             removed?.let { connection ->
                 context?.let { ctx ->
-                    try {
-                        ctx.deleteSharedPreferences(connection.tokenStoreKey)
-                    } catch (e: Exception) {
-                        Log.w(
-                            TAG,
-                            "deleteSharedPreferences(${connection.tokenStoreKey}) failed: ${e.message}",
-                        )
+                    val storeKeys = buildSet {
+                        add(connection.tokenStoreKey)
+                        if (connection.tokenStoreKey == Connection.LEGACY_TOKEN_STORE_KEY) {
+                            // Pre-StrongBox fallback path used this file. If
+                            // connection 0 is removed, scrub it alongside the
+                            // hardware-backed legacy filename.
+                            add("hermes_companion_auth")
+                        }
+                    }
+                    for (storeKey in storeKeys) {
+                        try {
+                            ctx.deleteSharedPreferences(storeKey)
+                        } catch (e: Exception) {
+                            Log.w(
+                                TAG,
+                                "deleteSharedPreferences($storeKey) failed: ${e.message}",
+                            )
+                        }
                     }
                 }
             }

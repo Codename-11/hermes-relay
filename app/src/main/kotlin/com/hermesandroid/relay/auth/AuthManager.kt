@@ -103,6 +103,27 @@ class AuthManager(
         const val CONNECTION_ID_LEGACY: String = "legacy"
 
         /**
+         * Best-effort read of a connection's stored device id without making
+         * that connection active. Used by the connection removal path so it
+         * can delete the per-device route list before deleting the token
+         * store backing file.
+         */
+        suspend fun readStoredDeviceId(context: Context, tokenStoreKey: String): String? =
+            withContext(Dispatchers.IO) {
+                val appContext = context.applicationContext
+                val primary = KeystoreTokenStore.tryCreate(appContext, tokenStoreKey)
+                    ?: LegacyEncryptedPrefsTokenStore(appContext, tokenStoreKey)
+                primary.getString(KEY_DEVICE_ID)
+                    ?: if (tokenStoreKey == Connection.LEGACY_TOKEN_STORE_KEY) {
+                        runCatching {
+                            LegacyEncryptedPrefsTokenStore(appContext).getString(KEY_DEVICE_ID)
+                        }.getOrNull()
+                    } else {
+                        null
+                    }
+            }
+
+        /**
          * Parse the `profiles` array from an `auth.ok` payload into a list of
          * [Profile] entries. Extracted out of [handleAuthOk] so it's
          * exercisable from a pure JVM unit test without constructing an
@@ -457,6 +478,9 @@ class AuthManager(
      * can re-attach the same shell across reconnects.
      */
     suspend fun getOrCreateDeviceId(): String = getDeviceId()
+
+    /** Existing device ID without creating a new one. */
+    suspend fun getExistingDeviceId(): String? = store().getString(KEY_DEVICE_ID)
 
     /**
      * Set the TTL the user picked at [SessionTtlPickerDialog]. `0` → never,

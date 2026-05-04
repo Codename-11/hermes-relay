@@ -479,12 +479,48 @@ private fun ConnectionCard(
                     HorizontalDivider()
                     SectionHeader(text = "Routes (${endpoints.size})")
                     SectionCaption(
-                        text = "The app picks the fastest reachable network " +
-                            "automatically and switches when you change networks.",
+                        text = "The app uses the highest-priority reachable route " +
+                            "and switches when Android reports a network change.",
                     )
 
-                    var preferredRole by remember {
+                    var preferredRole by remember(connection.id) {
                         mutableStateOf(activeConnectionViewModel.getPreferredEndpointRole())
+                    }
+                    val activeRouteLabel = activeEndpoint?.displayLabel() ?: "Resolving"
+                    val activeRouteHost = activeEndpoint?.let {
+                        "${it.api.host}:${it.api.port}"
+                    } ?: connection.relayUrl
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = "Current: $activeRouteLabel",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            text = activeRouteHost,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextButton(onClick = { activeConnectionViewModel.probeNow() }) {
+                            Text("Re-check")
+                        }
+                        if (preferredRole != null) {
+                            TextButton(
+                                onClick = {
+                                    activeConnectionViewModel.setPreferredEndpointRole(null)
+                                    preferredRole = null
+                                },
+                            ) {
+                                Text("Auto")
+                            }
+                        }
                     }
                     Row(
                         verticalAlignment = Alignment.CenterVertically,

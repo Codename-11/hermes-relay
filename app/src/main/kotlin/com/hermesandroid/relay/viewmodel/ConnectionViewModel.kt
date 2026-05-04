@@ -1317,7 +1317,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * renders "No connection" until the user adds one via Settings.
      */
     suspend fun removeConnection(connectionId: String) {
+        val removed = connectionStore.connections.value.firstOrNull { it.id == connectionId }
+            ?: return
         val wasActive = connectionId == activeConnectionId.value
+        val removedDeviceId = readStoredDeviceIdForRemoval(removed, wasActive)
         if (wasActive) {
             val other = connectionStore.connections.value.firstOrNull { it.id != connectionId }
             if (other != null) {
@@ -1378,6 +1381,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 rebuildApiClient()
             }
         }
+        scrubConnectionArtifacts(removed, removedDeviceId)
         connectionStore.removeConnection(connectionId)
         // Clear the persisted profile selection for the removed connection
         // AFTER the switch-away above has finished. Ordering matters: if
@@ -1386,6 +1390,36 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // ProfileSelectionStore is a separate DataStore file from
         // ConnectionStore's EncryptedSharedPrefs.
         profileSelectionStore.clear(connectionId)
+    }
+
+    private suspend fun readStoredDeviceIdForRemoval(
+        connection: Connection,
+        wasActive: Boolean,
+    ): String? {
+        if (wasActive) {
+            runCatching { authManager.getExistingDeviceId() }
+                .getOrNull()
+                ?.let { return it }
+        }
+        return runCatching {
+            AuthManager.readStoredDeviceId(getApplication(), connection.tokenStoreKey)
+        }.getOrNull()
+    }
+
+    private suspend fun scrubConnectionArtifacts(
+        connection: Connection,
+        deviceId: String?,
+    ) {
+        if (deviceId != null) {
+            runCatching {
+                PairingPreferences.removeDeviceEndpoints(getApplication(), deviceId)
+            }.onFailure {
+                android.util.Log.w(
+                    "ConnectionViewModel",
+                    "removeConnection: failed to remove endpoints for ${connection.id}: ${it.message}",
+                )
+            }
+        }
     }
 
     init {
@@ -1655,8 +1689,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                         // which would thrash here since the duplicate is
                         // by construction NOT the active connection. Also
                         // clears the per-connection profile pick so the
-                        // removed connection's EncryptedPrefs + profile
-                        // pointer go together.
+                        // removed connection's EncryptedPrefs + route list
+                        // + profile pointer go together.
+                        scrubConnectionArtifacts(
+                            duplicate,
+                            readStoredDeviceIdForRemoval(duplicate, wasActive = false),
+                        )
                         connectionStore.removeConnection(duplicate.id)
                         profileSelectionStore.clear(duplicate.id)
                     }

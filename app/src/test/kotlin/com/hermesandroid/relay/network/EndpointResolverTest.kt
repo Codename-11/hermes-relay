@@ -177,9 +177,9 @@ class EndpointResolverTest {
         val requestsAfterFirst = reachableServer.requestCount
 
         // Stage 2: server now 200, but our cached unreachable is still
-        // within the 30s TTL. No new probe should fire; winner stays null.
+        // within the TTL. No new probe should fire; winner stays null.
         reachableServer.dispatcher = healthDispatcher(statusCode = 200)
-        clockMillis.set(1_000L) // +1s, well within 30s
+        clockMillis.set(1_000L) // +1s, well within TTL
         val second = resolver.resolve(listOf(lan))
         assertNull("within TTL, cached unreachable wins → no new probe", second)
         assertEquals(
@@ -189,7 +189,7 @@ class EndpointResolverTest {
         )
 
         // Stage 3: advance past TTL + re-probe. Now the server's 200 lands.
-        clockMillis.set(35_000L)
+        clockMillis.set(EndpointResolver.CACHE_TTL_MS + 1_000L)
         val third = resolver.resolve(listOf(lan))
         assertNotNull("after TTL expiry, resolver re-probes and sees 200", third)
         assertTrue(
@@ -227,7 +227,7 @@ class EndpointResolverTest {
         // prove the probe actually ran against the live socket (cache
         // return would have stayed reachable).
         reachableServer.dispatcher = healthDispatcher(statusCode = 500)
-        clockMillis.set(40_000L)
+        clockMillis.set(EndpointResolver.CACHE_TTL_MS + 1_000L)
         val third = resolver.resolve(listOf(lan))
         assertNull("after TTL, fresh probe sees 500 → null", third)
         assertTrue(
@@ -258,6 +258,21 @@ class EndpointResolverTest {
             baselineCount,
             reachableServer.requestCount,
         )
+    }
+
+    @Test
+    fun markUnreachable_promotesLowerPriorityFallbackWithinTtl() = runTest {
+        val resolver = EndpointResolver(fastClient, clock = { clockMillis.get() })
+        val lan = candidate("lan", priority = 0, server = reachableServer)
+        val tail = candidate("tailscale", priority = 1, server = secondReachableServer)
+
+        clockMillis.set(0L)
+        resolver.markUnreachable(lan)
+
+        val winner = resolver.resolve(listOf(lan, tail))
+
+        assertNotNull(winner)
+        assertEquals("tailscale", winner!!.role)
     }
 
     // ---------------------------------------------------------------
