@@ -32,6 +32,9 @@ The app enforces HTTPS for all connections except localhost development:
 |---------|--------|
 | API Server | Bearer token (`Authorization: Bearer <key>`) |
 | Relay Server | Pairing code followed by session token |
+| Relay voice endpoints | Relay session token with `voice:*` grant, or Hermes API bearer token |
+
+The Hermes API bearer token is accepted only for `/voice/config`, `/voice/transcribe`, and `/voice/synthesize`. It is not accepted for sessions, media, clipboard, terminal, TUI, bridge, profile writes, or Android control routes. Non-loopback API-bearer voice requests require HTTPS by default; loopback plaintext is allowed for local clients. For temporary plain-LAN phone testing, a host-local operator can run `hermes relay insecure-api-key on` and later disable it with `hermes relay insecure-api-key off`.
 
 ## Relay Auth Flow
 

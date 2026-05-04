@@ -68,6 +68,7 @@ export default defineConfig({
           items: [
             { text: 'Overview', link: '/guide/' },
             { text: 'Installation & Setup', link: '/guide/getting-started' },
+            { text: 'Remote access', link: '/guide/remote-access' },
             { text: 'Release tracks', link: '/guide/release-tracks' },
             { text: 'Chat', link: '/guide/chat' },
             { text: 'Sessions', link: '/guide/sessions' },

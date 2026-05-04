@@ -40,7 +40,7 @@ Source: `plugin/relay/server.py:2649-2889` (`handle_ws`, `_authenticate`).
     "device_name": "Samsung Galaxy S25",
     "device_id": "android-device-uuid",
     "ttl_seconds": 2592000,
-    "grants": {"chat": 2592000, "terminal": 604800, "bridge": 604800},
+    "grants": {"chat": 2592000, "terminal": 604800, "bridge": 604800, "voice:stt": 2592000},
     "session_token": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
   }
 }
@@ -52,7 +52,7 @@ Source: `plugin/relay/server.py:2649-2889` (`handle_ws`, `_authenticate`).
 - `device_name` — display name on "Paired Devices" screen. Max 255 chars.
 - `device_id` — unique persistent identifier.
 - `ttl_seconds` — requested session lifetime; `0` means never expire. Ignored if pairing code carried pre-set metadata from host.
-- `grants` — per-channel seconds-from-now. Keys: `chat`, `terminal`, `bridge`, (soon) `tui`.
+- `grants` — per-channel seconds-from-now. Keys include `chat`, `terminal`, `bridge`, `tui`, `voice:config`, `voice:stt`, and `voice:tts`.
 
 Source: `plugin/relay/server.py:2804-2850`.
 
@@ -67,7 +67,7 @@ Source: `plugin/relay/server.py:2804-2850`.
     "session_token": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
     "server_version": "0.6.0",
     "expires_at": 1740000000,
-    "grants": {"chat": 1740000000, "terminal": 1739500000, "bridge": 1739200000},
+    "grants": {"chat": 1740000000, "terminal": 1739500000, "bridge": 1739200000, "voice:stt": 1740000000},
     "transport_hint": "wss",
     "profiles": [
       {"name": "default", "model": "gpt-4o", "description": "Default agent", "system_message": null},
@@ -78,7 +78,7 @@ Source: `plugin/relay/server.py:2804-2850`.
 ```
 
 **Fields:**
-- `session_token` — relay-minted UUID. Client stores for reconnection; bearer auth for all HTTP routes (`/media/{token}`, `/voice/transcribe`, etc.).
+- `session_token` — relay-minted UUID. Client stores for reconnection; bearer auth for Relay-protected HTTP routes (`/media/{token}`, `/sessions`, `/clipboard/inbox`, and `/voice/*`). Voice routes also accept a Hermes API bearer token as a narrow alternative; that API bearer is not a Relay session credential and does not authorize non-voice routes. Non-loopback API-bearer voice calls require HTTPS unless the operator enables `hermes relay insecure-api-key on` for local testing.
 - `server_version` — relay version. Informational; clients may warn on major version mismatch.
 - `expires_at` — epoch seconds or `null` (never expires; serialized from `math.inf`).
 - `grants` — per-channel expiry timestamps (epoch seconds or `null`). Each grant is clamped to `expires_at` — a channel cannot outlive the session.
@@ -350,6 +350,7 @@ Sources: `plugin/relay/server.py:2943-2948`, `plugin/relay/channels/bridge.py:64
 ### 5.1 Multi-Endpoint Pairing (ADR 24)
 
 QR payloads may include an `endpoints` array listing alternate connection candidates (LAN, Tailscale, public, custom). Clients re-probe on network change, picking the best available endpoint.
+Top-level `key` is the Hermes API bearer used for direct chat/session HTTP; the relay pairing code is only `relay.code`.
 
 ```json
 {
@@ -362,23 +363,38 @@ QR payloads may include an `endpoints` array listing alternate connection candid
     "url": "ws://172.16.24.250:8767",
     "code": "ABC123",
     "ttl_seconds": 604800,
-    "transport_hint": "ws",
-    "endpoints": [
-      {"type": "lan", "host": "192.168.1.100", "port": 8767, "tls": false},
-      {"type": "tailscale", "host": "hermes.fa0c2e.ts.net", "port": 8767, "tls": true},
-      {"type": "public", "host": "relay.example.com", "port": 443, "tls": true}
-    ]
-  }
+    "transport_hint": "ws"
+  },
+  "endpoints": [
+    {
+      "role": "lan",
+      "priority": 0,
+      "api": {"host": "192.168.1.100", "port": 8642, "tls": false},
+      "relay": {"url": "ws://192.168.1.100:8767", "transport_hint": "ws"}
+    },
+    {
+      "role": "tailscale",
+      "priority": 1,
+      "api": {"host": "hermes.fa0c2e.ts.net", "port": 8642, "tls": true},
+      "relay": {"url": "wss://hermes.fa0c2e.ts.net:8767", "transport_hint": "wss"}
+    },
+    {
+      "role": "public",
+      "priority": 2,
+      "api": {"host": "relay.example.com", "port": 443, "tls": true},
+      "relay": {"url": "wss://relay.example.com:8767", "transport_hint": "wss"}
+    }
+  ]
 }
 ```
 
 See `docs/decisions.md` ADR 24 for full rationale.
 
-Source: `plugin/relay/server.py:209-244`.
+Source: `plugin/pair.py`.
 
 ### 5.2 Tailscale Serve (ADR 25)
 
-Relay fronts via `tailscale serve --bg --https=<port>`, exposing loopback `:8767` on Tailscale's HTTPS surface. CLI: `hermes-relay-tailscale enable|disable|status`.
+The Tailscale helper fronts both loopback services with `tailscale serve`: relay `:8767` and Hermes API `:8642`. Serving only the relay makes pairing and terminal/bridge reachable but leaves chat, API-key voice auth, and API health probes broken off-LAN. CLI: `hermes-relay-tailscale enable|disable|status`; use `--relay-only` only for legacy relay-only deployments.
 
 Source: `plugin/relay/tailscale.py`.
 
@@ -421,7 +437,10 @@ Source: `plugin/relay/tailscale.py`.
 | `chat` | Session TTL (no separate cap) |
 | `terminal` | min(session TTL, 30 days) |
 | `bridge` | min(session TTL, 7 days) |
-| `tui` | min(session TTL, 30 days) *(proposed)* |
+| `tui` | min(session TTL, 30 days) |
+| `voice:config` | Session TTL (inherits chat grant for legacy sessions) |
+| `voice:stt` | Session TTL (inherits chat grant for legacy sessions) |
+| `voice:tts` | Session TTL (inherits chat grant for legacy sessions) |
 
 Users can override per-channel via TTL picker (Android) or `/pairing/register` metadata (host).
 
@@ -438,7 +457,7 @@ Sources: `plugin/relay/auth.py:88-91`, `plugin/relay/server.py:2750-2751`.
 ## 8. Pairing Flow Summary
 
 1. Host generates code (6 chars, 10 min TTL): `POST /pairing` → `{"code": "ABC123"}`.
-2. Code embedded in QR with relay URL, API server info, optional endpoints array.
+2. Code embedded in QR with relay URL, API server info, Hermes API bearer in top-level `key` when configured, and optional endpoints array. Dashboard-minted QRs get that bearer from host-local Hermes config unless `api_key` is explicitly supplied.
 3. Phone/desktop scans QR or accepts pasted code; extracts code + URL.
 4. Client connects WSS, sends `auth` with `pairing_code` + device info.
 5. Server consumes code (one-time), mints session, returns `auth.ok` with token + grants + profiles.

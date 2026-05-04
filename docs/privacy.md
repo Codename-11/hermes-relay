@@ -29,6 +29,7 @@ The app connects only to user-configured endpoints:
 
 - **HTTP/SSE** to your Hermes API server (default `localhost:8642`) for chat streaming
 - **WSS** to your relay server (default `localhost:8767`) for terminal and bridge channels
+- **HTTP(S)** to your relay server's `/voice/*` routes for voice settings, speech-to-text uploads, and text-to-speech audio when you use Voice mode
 - Cleartext (HTTP) is permitted for local/private network connections to user-configured servers; the app warns when using insecure connections
 - No DNS prefetching, no background pings to external services
 
@@ -39,8 +40,10 @@ The app connects only to user-configured endpoints:
 | `INTERNET` | Connect to your Hermes servers |
 | `ACCESS_NETWORK_STATE` | Detect connectivity changes for auto-reconnect |
 | `CAMERA` | QR code scanning for server pairing (declared as `required="false"`) |
+| `RECORD_AUDIO` | Voice mode microphone capture, requested at runtime when you tap the mic |
+| `MODIFY_AUDIO_SETTINGS` | Voice playback and audio-session behavior |
 
-The app does **not** request contacts, location, microphone, storage, or any other sensitive permissions. Camera is only used for the optional QR pairing feature and is not required for the app to function.
+The app does **not** request contacts, location, storage, or broad file access. Camera is only used for the optional QR pairing feature and is not required for the app to function. Microphone access is optional and only used after you enter Voice mode.
 
 ## Data Export & Reset
 

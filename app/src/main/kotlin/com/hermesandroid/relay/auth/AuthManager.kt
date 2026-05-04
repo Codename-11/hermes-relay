@@ -76,6 +76,12 @@ class AuthManager(
      * through.
      */
     private val connectionId: String = CONNECTION_ID_LEGACY,
+    /**
+     * Exact EncryptedSharedPreferences filename for this connection. New
+     * connections use the deterministic id-derived name, but the migrated
+     * legacy connection intentionally keeps [Connection.LEGACY_TOKEN_STORE_KEY].
+     */
+    private val tokenStoreKey: String? = null,
 ) : ChannelMultiplexer.ChannelHandler {
 
     companion object {
@@ -176,7 +182,7 @@ class AuthManager(
                 // keeps the pre-multi-connection install on its original file
                 // so the existing paired device keeps working with no
                 // migration.
-                val prefsName = if (connectionId == CONNECTION_ID_LEGACY) {
+                val prefsName = tokenStoreKey ?: if (connectionId == CONNECTION_ID_LEGACY) {
                     Connection.LEGACY_TOKEN_STORE_KEY
                 } else {
                     Connection.buildTokenStoreKey(connectionId)
@@ -818,11 +824,27 @@ class AuthManager(
                 ?: "Unknown error"
             val humanized = humanizeAuthFailReason(rawReason)
             Log.w(TAG, "handleAuthFail: raw=$rawReason humanized=$humanized")
+            clearPendingPairContextAfterAuthFailure(rawReason)
             _authState.value = AuthState.Failed(humanized)
         } catch (e: Exception) {
             Log.w(TAG, "handleAuthFail: exception parsing payload", e)
+            clearPendingPairContextAfterAuthFailure("parse failure")
             _authState.value = AuthState.Failed("Authentication failed")
         }
+    }
+
+    private fun clearPendingPairContextAfterAuthFailure(reason: String) {
+        if (serverIssuedCode == null) return
+        serverIssuedCode = null
+        pendingTtlSeconds = null
+        pendingGrants = null
+        pendingEndpoints = null
+        _pairingCode.value = generatePairingCode()
+        Log.i(
+            TAG,
+            "auth.fail consumed server-issued pairing code; " +
+                "cleared pending pair context so reconnects stop (reason=$reason)"
+        )
     }
 
     /**

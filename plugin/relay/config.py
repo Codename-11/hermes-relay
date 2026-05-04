@@ -73,6 +73,12 @@ class RelayConfig:
     # /media/register) is ALWAYS strict regardless of this flag.
     media_strict_sandbox: bool = False
 
+    # Voice Hermes API bearer transport guards. API bearer tokens can spend
+    # provider quota and carry microphone audio, so remote plaintext is
+    # rejected unless explicitly opted into for local LAN testing.
+    trust_proxy_headers: bool = False
+    allow_insecure_api_bearer: bool = False
+
     @classmethod
     def from_env(cls) -> RelayConfig:
         """Build config from environment variables, falling back to defaults."""
@@ -139,6 +145,16 @@ class RelayConfig:
         strict = os.getenv("RELAY_MEDIA_STRICT_SANDBOX", "").strip().lower()
         if strict in ("1", "true", "yes", "on"):
             config.media_strict_sandbox = True
+
+        trust_proxy = os.getenv("RELAY_TRUST_PROXY_HEADERS", "").strip().lower()
+        if trust_proxy in ("1", "true", "yes", "on"):
+            config.trust_proxy_headers = True
+
+        insecure_api_bearer = os.getenv(
+            "RELAY_ALLOW_INSECURE_API_BEARER", ""
+        ).strip().lower()
+        if insecure_api_bearer in ("1", "true", "yes", "on"):
+            config.allow_insecure_api_bearer = True
 
         config.profiles = _load_profiles(
             config.hermes_config_path,

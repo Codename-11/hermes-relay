@@ -332,12 +332,14 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
     relay block had no url/code for it to open a WSS against.
 
     POST /pairing/mint
-      body (all optional — fall back to RelayConfig defaults):
+      body (all optional — fall back to RelayConfig / local Hermes defaults):
         - host: "172.16.24.250"        API server host override (LAN IP)
         - port: 8642                    API server port override
         - tls: false                    API server TLS override
-        - api_key: "<token>"            API bearer token (goes in top-level
-                                        "key"; empty = open access)
+        - api_key: "<token>"            API bearer token override (goes in
+                                        top-level "key"; omitted = read the
+                                        same local config as hermes-pair,
+                                        explicit empty = open access)
         - ttl_seconds: <int>            Session TTL
         - transport_hint: "wss"|"ws"    Forwarded verbatim
         - grants: {...}                 Channel TTL map
@@ -359,7 +361,13 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
 
     server: RelayServer = request.app["server"]
 
-    from ..pair import build_payload, _relay_lan_base_url, _resolve_lan_ip
+    from ..pair import (
+        build_pairing_qr_payload,
+        build_relay_pairing_block,
+        read_server_config,
+        _relay_lan_base_url,
+        _resolve_lan_ip,
+    )
 
     # ── API server info (top-level of the QR payload) ────────────────────
     # Defaults come from ``RelayConfig.webapi_url`` (the Hermes API gateway
@@ -402,8 +410,18 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
     else:
         api_tls = default_api_url.scheme == "https"
 
-    api_key_raw = payload.get("api_key")
-    api_key = str(api_key_raw) if api_key_raw is not None else ""
+    if "api_key" in payload:
+        api_key_raw = payload.get("api_key")
+        api_key = str(api_key_raw) if api_key_raw is not None else ""
+    else:
+        try:
+            api_key = str(read_server_config().get("key") or "")
+        except Exception as exc:  # pragma: no cover - defensive config fallback
+            logger.warning(
+                "Pairing mint could not read Hermes API key from local config: %s",
+                exc,
+            )
+            api_key = ""
 
     # ── Pairing metadata ─────────────────────────────────────────────────
     ttl_seconds, grants, transport_hint, err = _parse_pairing_metadata(payload)
@@ -446,18 +464,15 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
     relay_url = _relay_lan_base_url(
         server.config.host, server.config.port, tls=relay_tls
     )
-    relay_block: dict[str, Any] = {
-        "url": relay_url,
-        "code": code,
-    }
-    if ttl_seconds is not None:
-        relay_block["ttl_seconds"] = ttl_seconds
-    if grants is not None:
-        relay_block["grants"] = grants
-    if transport_hint is not None:
-        relay_block["transport_hint"] = transport_hint
+    relay_block = build_relay_pairing_block(
+        relay_url=relay_url,
+        code=code,
+        ttl_seconds=ttl_seconds,
+        grants=grants,
+        transport_hint=transport_hint,
+    )
 
-    qr_payload = build_payload(
+    qr_payload = build_pairing_qr_payload(
         host=api_host,
         port=api_port,
         key=api_key,
@@ -488,11 +503,12 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
 
     logger.info(
         "Minted pairing code via /pairing/mint: %s "
-        "(api=%s://%s:%d relay=%s)",
+        "(api=%s://%s:%d api_key=%s relay=%s)",
         code,
         "https" if api_tls else "http",
         api_host,
         api_port,
+        "present" if api_key else "absent",
         relay_url,
     )
     mint_response: dict[str, Any] = {
@@ -1857,9 +1873,10 @@ async def handle_bridge_status(request: web.Request) -> web.Response:
 
 # ── Dashboard-plugin loopback routes ─────────────────────────────────────────
 #
-# Three loopback-only endpoints surfaced for the co-hosted dashboard
-# plugin. They expose relay state (bridge command ring buffer, media
-# registry snapshot, aggregate /relay/info) that upstream can't see.
+# Loopback-only endpoints surfaced for the co-hosted dashboard plugin and
+# local CLI. They expose relay state (bridge command ring buffer, media
+# registry snapshot, aggregate /relay/info, runtime security toggles) that
+# upstream can't see.
 # Loopback-gated because the dashboard runs inside the gateway process
 # on the same host; no bearer is needed.
 
@@ -1937,6 +1954,83 @@ async def handle_relay_info(request: web.Request) -> web.Response:
             "health": "ok",
         }
     )
+
+
+def _relay_security_payload(server: RelayServer) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "scope": "runtime",
+        "allow_insecure_api_bearer": bool(
+            server.config.allow_insecure_api_bearer
+        ),
+        "trust_proxy_headers": bool(server.config.trust_proxy_headers),
+    }
+
+
+async def handle_relay_security_get(request: web.Request) -> web.Response:
+    """Return runtime security toggles for local operators.
+
+    GET /relay/security
+      → 200 {allow_insecure_api_bearer, trust_proxy_headers, scope}
+      → 403 non-loopback caller
+    """
+    _require_loopback(request)
+
+    server: RelayServer = request.app["server"]
+    return web.json_response(_relay_security_payload(server))
+
+
+async def handle_relay_security_patch(request: web.Request) -> web.Response:
+    """Patch runtime security toggles for local operators.
+
+    PATCH /relay/security {"allow_insecure_api_bearer": true|false}
+      → 200 {allow_insecure_api_bearer, trust_proxy_headers, scope}
+      → 400 invalid body
+      → 403 non-loopback caller
+    """
+    _require_loopback(request)
+
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
+    if not isinstance(payload, dict):
+        return web.json_response(
+            {"ok": False, "error": "body must be a JSON object"},
+            status=400,
+        )
+
+    if "allow_insecure_api_bearer" not in payload:
+        return web.json_response(
+            {
+                "ok": False,
+                "error": "missing allow_insecure_api_bearer",
+            },
+            status=400,
+        )
+    value = payload["allow_insecure_api_bearer"]
+    if not isinstance(value, bool):
+        return web.json_response(
+            {
+                "ok": False,
+                "error": "allow_insecure_api_bearer must be a boolean",
+            },
+            status=400,
+        )
+
+    server: RelayServer = request.app["server"]
+    server.config.allow_insecure_api_bearer = value
+    if value:
+        logger.warning(
+            "Runtime security toggle enabled: Hermes API bearer voice auth "
+            "is allowed over non-loopback plaintext HTTP"
+        )
+    else:
+        logger.info(
+            "Runtime security toggle disabled: Hermes API bearer voice auth "
+            "requires HTTPS outside loopback"
+        )
+    return web.json_response(_relay_security_payload(server))
 
 
 # ── Profile-scoped read-only config + skills ────────────────────────────────
@@ -2847,11 +2941,11 @@ async def _profile_rescan_loop(app: web.Application) -> None:
 # ``android_notifications_recent`` tool to answer "what came in
 # recently?" questions during a chat turn.
 #
-# The trust model matches every other phone-facing relay HTTP endpoint
-# (``/media/*``, ``/sessions``, ``/voice/*``): a valid relay session
-# token in ``Authorization: Bearer ...`` is required, and the same
-# token serves as proof that the caller is one of the operator's
-# paired devices.
+# The trust model matches other phone-facing relay HTTP endpoints
+# (``/media/*``, ``/sessions``): a valid relay session token in
+# ``Authorization: Bearer ...`` is required, and the same token serves as
+# proof that the caller is one of the operator's paired devices. ``/voice/*``
+# has a narrow additional Hermes API bearer path in ``voice_auth``.
 
 
 async def handle_notifications_recent(request: web.Request) -> web.Response:
@@ -3399,7 +3493,7 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_get("/media/by-path", handle_media_by_path)
     app.router.add_get("/media/{token}", handle_media_get)
 
-    # Voice endpoints — TTS / STT bridge, bearer-auth'd like /media/*.
+    # Voice endpoints — TTS / STT bridge, bearer-auth'd by voice_auth.
     async def _voice_transcribe(request: web.Request) -> web.StreamResponse:
         s: RelayServer = request.app["server"]
         return await s.voice.handle_transcribe(request)
@@ -3469,6 +3563,8 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_get("/bridge/activity", handle_bridge_activity)
     app.router.add_get("/media/inspect", handle_media_inspect)
     app.router.add_get("/relay/info", handle_relay_info)
+    app.router.add_get("/relay/security", handle_relay_security_get)
+    app.router.add_patch("/relay/security", handle_relay_security_patch)
 
     # === PHASE3-notif-listener: notifications HTTP routes ===
     app.router.add_get("/notifications/recent", handle_notifications_recent)
@@ -3607,6 +3703,16 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--allow-insecure-api-key",
+        "--allow-insecure-api-bearer",
+        action="store_true",
+        dest="allow_insecure_api_bearer",
+        help=(
+            "Allow Hermes API-key voice auth over non-loopback plain HTTP "
+            "(local LAN testing only)."
+        ),
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"hermes-relay {__version__}",
@@ -3636,6 +3742,8 @@ def main() -> None:
     if args.no_ssl:
         config.ssl_cert = None
         config.ssl_key = None
+    if args.allow_insecure_api_bearer:
+        config.allow_insecure_api_bearer = True
 
     # Configure logging
     logging.basicConfig(

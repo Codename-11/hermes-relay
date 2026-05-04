@@ -1,16 +1,16 @@
 # Relay Server
 
-The relay server is a lightweight Python WSS service that enables **terminal** (remote shell) and **bridge** (agent-driven phone control) features in Hermes-Relay. Chat does not use the relay — it connects directly to the Hermes API Server.
+The relay server is a lightweight Python WSS/HTTP service that enables **terminal** (remote shell), **bridge** (agent-driven phone control), media, sessions, and voice routes in Hermes-Relay. Chat does not use the relay — it connects directly to the Hermes API Server.
 
 ## Do I Need It?
 
-| Feature | Relay required? |
-|---------|----------------|
-| Chat | No |
-| Voice Mode | Yes (for TTS/STT endpoints) |
-| Inbound media (screenshots from tools) | Yes |
-| Terminal | Yes |
-| Bridge (sideload track only) | Yes |
+| Feature | Relay required? | Auth path |
+|---------|-----------------|-----------|
+| Chat | No | Hermes API key direct to API server |
+| Voice Mode | Yes for TTS/STT endpoints; pairing optional when the API key is present | Hermes API bearer or relay session |
+| Inbound media (screenshots from tools) | Yes | Relay session |
+| Terminal | Yes | Relay session |
+| Bridge (sideload track only) | Yes | Relay session |
 
 ## Quick Start
 
@@ -97,10 +97,14 @@ All settings via environment variables:
 | `RELAY_WEBAPI_URL` | `http://localhost:8642` | Hermes API Server URL |
 | `RELAY_HERMES_CONFIG` | `~/.hermes/config.yaml` | Hermes config path |
 | `RELAY_LOG_LEVEL` | `INFO` | Logging level |
+| `RELAY_TRUST_PROXY_HEADERS` | `0` | Trust `X-Forwarded-Proto: https` from your own reverse proxy for Hermes API bearer auth on `/voice/*`. |
+| `RELAY_ALLOW_INSECURE_API_BEARER` | `0` | Dev-only escape hatch for non-loopback plaintext Hermes API bearer auth on `/voice/*`. Leave off for production. For a running relay, use `hermes relay insecure-api-key on` or the standalone `hermes-relay insecure-api-key on` shim instead of restarting with env. |
 | `RELAY_MEDIA_MAX_SIZE_MB` | `100` | Per-file size cap for `POST /media/register` (inbound media pipeline — see ADR 14) |
 | `RELAY_MEDIA_TTL_SECONDS` | `86400` | How long a registered media entry stays fetchable |
 | `RELAY_MEDIA_LRU_CAP` | `500` | Max entries in the in-memory media registry before LRU eviction |
 | `RELAY_MEDIA_ALLOWED_ROOTS` | — | Extra absolute-path roots allowed on register (`os.pathsep`-separated). Extends defaults (`tempfile.gettempdir()` + `HERMES_WORKSPACE`). |
+
+Voice endpoints accept either a Relay session token or the existing Hermes API bearer token. The Hermes API bearer path is limited to `/voice/config`, `/voice/transcribe`, and `/voice/synthesize`; pairing is still required for terminal, bridge, TUI, sessions, media, clipboard, profile writes, and Android control routes. Android derives a default Relay URL from the API URL by swapping `http(s)` to `ws(s)` and using port `8767`, then probes `/voice/config`; custom Relay URLs are still supported as an override. Non-loopback API-bearer voice calls require HTTPS by default. For temporary plain-LAN phone testing, run `hermes relay insecure-api-key on` or `hermes-relay insecure-api-key on` on the relay host; disable it with the matching `off` command.
 
 ## CLI Flags
 
@@ -114,6 +118,12 @@ hermes relay start [OPTIONS]          (or: python -m plugin.relay)
   --webapi-url URL   Hermes WebAPI base URL (default: http://localhost:8642)
   --log-level LEVEL  DEBUG, INFO, WARNING, ERROR
   --config PATH      Hermes config.yaml path (python -m plugin.relay only)
+  --allow-insecure-api-key
+                     Allow API-key voice auth over plain LAN HTTP at startup
+
+hermes relay insecure-api-key [status|on|off]
+hermes-relay insecure-api-key [status|on|off]
+                     Toggle plain-LAN API-key voice auth on the running relay
 ```
 
 ## HTTP Routes
@@ -131,11 +141,12 @@ hermes relay start [OPTIONS]          (or: python -m plugin.relay)
 | `/media/register` | POST | **Loopback only.** Register a host-local file with the `MediaRegistry` and receive an opaque token. Body: `{"path": "/abs/path", "content_type": "image/jpeg", "file_name": "screenshot.jpg"}`. Used by tools like `android_screenshot` so the agent can emit `MEDIA:hermes-relay://<token>` in chat and have the phone fetch bytes out-of-band. Path is sandboxed to `tempfile.gettempdir()` + `HERMES_WORKSPACE` + any `RELAY_MEDIA_ALLOWED_ROOTS`; symlink escape is rejected via `realpath`. Returns 400 on validation failure. See ADR 14. |
 | `/media/{token}` | GET | Stream the bytes of a previously-registered file. Requires `Authorization: Bearer <session_token>` — same token the WSS channel uses (validated against `SessionManager`). Response carries the registered `Content-Type` plus `Content-Disposition: inline; filename="..."` if a file name was provided at register time. The client only ever sees the opaque token — the path is never exposed. 401 without/with bad auth, 404 for unknown/expired tokens. |
 | `/media/by-path` | GET | Fetch a file **by absolute path** rather than by registry token — covers the case where the agent's LLM freeform-emits `MEDIA:/abs/path.ext` in its response text (upstream `prompt_builder.py` tells it to). Query: `path` (required), `content_type` (optional hint). Bearer auth identical to `/media/{token}`. Path is sandbox-validated against the same allowed roots as `/media/register` (`tempfile.gettempdir()` + `HERMES_WORKSPACE` + `RELAY_MEDIA_ALLOWED_ROOTS`). 400 missing `path`; 401 auth; 403 sandbox violation; 404 file not found. See ADR 14 for the bare-path-LLM rationale. |
-| `/voice/transcribe` | POST | Bearer-auth'd. `multipart/form-data` with an audio file → `{"text": "...", "provider": "openai", "success": true}`. Relay calls `tools.transcription_tools.transcribe_audio` from the hermes-agent venv. Provider is read from `stt:` in `~/.hermes/config.yaml` — the phone doesn't pass a provider name. See [Voice Mode](/features/voice) for the full story. |
-| `/voice/synthesize` | POST | Bearer-auth'd. JSON body `{"text": "..."}` (max 5000 chars) → `audio/mpeg` file. Relay calls `tools.tts_tool.text_to_speech_tool` which writes to `~/voice-memos/tts_<ts>.mp3` and serves it via `web.FileResponse`. Provider is read from `tts:` in `~/.hermes/config.yaml`. Streaming is client-side — the phone detects sentence boundaries in the chat SSE stream and POSTs one sentence at a time so playback starts within a sentence of the agent replying. |
-| `/voice/config` | GET | Bearer-auth'd. Returns `{"tts": {...}, "stt": {...}, "requirements": {...}}` describing what TTS/STT providers the relay's hermes-agent venv has configured. Used by the app's Voice Settings screen to show provider info and power the Test Voice button. |
+| `/voice/transcribe` | POST | Bearer-auth'd via either a Relay session token with active `voice:stt` grant or a valid Hermes API bearer token. Non-loopback API-bearer calls require HTTPS unless `RELAY_ALLOW_INSECURE_API_BEARER=1`. `multipart/form-data` with an audio file → `{"text": "...", "provider": "openai", "success": true}`. Relay calls `tools.transcription_tools.transcribe_audio` from the hermes-agent venv. Provider is read from `stt:` in `~/.hermes/config.yaml` — the phone doesn't pass a provider name. See [Voice Mode](/features/voice) for the full story. |
+| `/voice/synthesize` | POST | Bearer-auth'd via either a Relay session token with active `voice:tts` grant or a valid Hermes API bearer token. Non-loopback API-bearer calls require HTTPS unless `RELAY_ALLOW_INSECURE_API_BEARER=1`. JSON body `{"text": "..."}` (max 5000 chars) → `audio/mpeg` file. Relay calls `tools.tts_tool.text_to_speech_tool` which writes to `~/voice-memos/tts_<ts>.mp3` and serves it via `web.FileResponse`. Provider is read from `tts:` in `~/.hermes/config.yaml`. Streaming is client-side — the phone detects sentence boundaries in the chat SSE stream and POSTs one sentence at a time so playback starts within a sentence of the agent replying. |
+| `/voice/config` | GET | Bearer-auth'd via either a Relay session token with active `voice:config` grant or a valid Hermes API bearer token. Non-loopback API-bearer calls require HTTPS unless `RELAY_ALLOW_INSECURE_API_BEARER=1`. Returns `{"tts": {...}, "stt": {...}, "requirements": {...}}` describing what TTS/STT providers the relay's hermes-agent venv has configured. Used by the app's Voice Settings screen and API-token clients to show provider info. |
 | `/notifications/recent` | GET | Loopback callers skip bearer auth; remote callers need it. Returns the most recent entries from the bounded in-memory `NotificationsChannel` deque (default cap 100, wiped on relay restart). Backs the `android_notifications_recent(limit=20)` plugin tool. |
 | `/bridge/status` | GET | **Loopback only.** Structured `{"device": {...}, "bridge": {...}, "safety": {...}}` phone-status view used by `android_phone_status()`, the `hermes-status` shell shim, and the `/hermes-relay-status` skill. |
+| `/relay/security` | GET/PATCH | **Loopback only.** Runtime security toggles used by `hermes relay insecure-api-key` and `hermes-relay insecure-api-key`. `GET` reports the running relay's `allow_insecure_api_bearer` state; `PATCH {"allow_insecure_api_bearer": true}` enables plain-LAN API-key voice auth until the relay restarts. |
 
 ## Bridge HTTP Routes
 
@@ -206,6 +217,7 @@ curl http://localhost:8767/health
 - **QR has no relay block** — the pair command only embeds relay details if it can reach `localhost:RELAY_PORT/health` when it runs. Start the relay first, then re-run `hermes-pair`.
 - **TLS errors** — Use `--no-ssl` for local dev. Ensure cert paths are correct for production.
 - **Phone can't reach relay** — Check firewall rules for port 8767. Verify with `curl http://server-ip:8767/health` from another machine.
+- **Remote chat or API-key voice fails but relay pairs** — Verify the Hermes API route too: `curl http://server-ip:8642/health`, or `https://<tailnet-host>.ts.net:8642/health` when using Tailscale. Pairing can succeed through `:8767` while chat and API-key voice fail if `:8642` is not published.
 - **Service stops when you log out of SSH** — That's systemd's default for user services. Run `loginctl enable-linger $USER` once to fix it.
 
 ## Further Reading

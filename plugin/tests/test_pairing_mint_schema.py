@@ -14,7 +14,10 @@ found an empty relay block, then bailed during auth.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import unittest
+from unittest import mock
 
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase
@@ -24,6 +27,23 @@ from plugin.relay.server import create_app
 
 
 class PairingMintSchemaTests(AioHTTPTestCase):
+    async def asyncSetUp(self) -> None:
+        self._hermes_home = tempfile.TemporaryDirectory()
+        self._env_patch = mock.patch.dict(
+            os.environ,
+            {
+                "HERMES_HOME": self._hermes_home.name,
+                "API_SERVER_KEY": "",
+            },
+        )
+        self._env_patch.start()
+        await super().asyncSetUp()
+
+    async def asyncTearDown(self) -> None:
+        await super().asyncTearDown()
+        self._env_patch.stop()
+        self._hermes_home.cleanup()
+
     async def get_application(self) -> web.Application:
         config = RelayConfig(
             host="0.0.0.0",
@@ -71,12 +91,34 @@ class PairingMintSchemaTests(AioHTTPTestCase):
             "regression: minted code must not land at top-level key",
         )
 
+    async def test_api_key_defaults_from_server_config(self) -> None:
+        """Dashboard-minted QRs must include the chat API bearer by default."""
+        with mock.patch(
+            "plugin.pair.read_server_config",
+            return_value={"host": "10.0.0.42", "port": 8642, "key": "sk-config", "tls": False},
+        ):
+            result = await self._mint()
+        qr = json.loads(result["qr_payload"])
+
+        self.assertEqual(qr["key"], "sk-config")
+        self.assertNotEqual(qr["key"], result["code"])
+
     async def test_api_key_override_lands_at_top_level_key(self) -> None:
         result = await self._mint({"api_key": "sk-test-12345"})
         qr = json.loads(result["qr_payload"])
 
         self.assertEqual(qr["key"], "sk-test-12345")
         self.assertNotEqual(qr["key"], result["code"])
+
+    async def test_empty_api_key_override_allows_open_access_qr(self) -> None:
+        with mock.patch(
+            "plugin.pair.read_server_config",
+            return_value={"host": "10.0.0.42", "port": 8642, "key": "sk-config", "tls": False},
+        ):
+            result = await self._mint({"api_key": ""})
+        qr = json.loads(result["qr_payload"])
+
+        self.assertEqual(qr["key"], "")
 
     async def test_body_overrides_api_host_port_tls(self) -> None:
         result = await self._mint({

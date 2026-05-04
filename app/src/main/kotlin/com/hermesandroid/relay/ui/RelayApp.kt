@@ -368,9 +368,12 @@ fun RelayApp() {
                 .readTimeout(2, java.util.concurrent.TimeUnit.MINUTES)
                 .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                 .build(),
-            relayUrlProvider = { connectionViewModel.relayUrl.value },
+            relayUrlProvider = { connectionViewModel.effectiveRelayUrl.value },
             sessionTokenProvider = {
                 (connectionViewModel.authState.value as? AuthState.Paired)?.token
+            },
+            apiBearerTokenProvider = {
+                connectionViewModel.getApiKey()
             },
         )
     }
@@ -385,7 +388,7 @@ fun RelayApp() {
                 .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
                 .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                 .build(),
-            relayUrlProvider = { connectionViewModel.relayUrl.value },
+            relayUrlProvider = { connectionViewModel.effectiveRelayUrl.value },
             sessionTokenProvider = {
                 (connectionViewModel.authState.value as? AuthState.Paired)?.token
             },
@@ -1065,15 +1068,12 @@ fun RelayApp() {
                             }
                         },
                         onRepairConnection = { id ->
-                            // Re-pair targets the connection via the nav
-                            // arg — PairScreen onComplete reads it to
-                            // decide between new-connection add and
-                            // in-place re-pair. We still need
-                            // switchConnection here so the pairing-payload
-                            // apply lands on the right connection's auth
-                            // store.
-                            connectionViewModel.switchConnection(id)
-                            navController.navigate(Screen.Pair.route(id))
+                            connectionSwitchScope.launch {
+                                // Wait for the AuthManager swap before the
+                                // scanner can apply a QR payload.
+                                connectionViewModel.switchConnection(id).join()
+                                navController.navigate(Screen.Pair.route(id))
+                            }
                         },
                         onRevokeConnection = { id ->
                             connectionSwitchScope.launch {
@@ -1095,30 +1095,17 @@ fun RelayApp() {
                             }
                         },
                         onAddConnection = {
-                            // Perf: pre-allocate the id synchronously so we
-                            // can navigate immediately — the DataStore-heavy
-                            // placeholder creation + switch happens in the
-                            // background (still serialized by
-                            // addConnectionMutex). The Pair wizard observes
-                            // activeConnectionId reactively via collectAsState,
-                            // so by the time the user has framed a QR the
-                            // placeholder is active and applyPairingPayload
-                            // writes into the correct EncryptedSharedPrefs.
-                            //
-                            // autoStart=scan jumps straight to camera-perm →
-                            // scanner since "Add connection" has exactly one
-                            // obvious next step.
-                            //
-                            // Double-tap is safe: both invocations lock on
-                            // addConnectionMutex; the second sees the
-                            // placeholder already in the store and collapses
-                            // to a no-op switch.
-                            val id = java.util.UUID.randomUUID().toString()
-                            navController.navigate(
-                                Screen.Pair.route(connectionId = id, autoStart = "scan")
-                            )
                             connectionSwitchScope.launch {
-                                connectionViewModel.beginAddConnection(preAllocatedId = id)
+                                // Create and switch to the placeholder before
+                                // opening the camera. Otherwise a fast scan can
+                                // save the session token into the outgoing
+                                // connection's auth store.
+                                val id = connectionViewModel.beginAddConnection(
+                                    preAllocatedId = java.util.UUID.randomUUID().toString(),
+                                )
+                                navController.navigate(
+                                    Screen.Pair.route(connectionId = id, autoStart = "scan")
+                                )
                             }
                         },
                         onBack = { navController.popBackStack() },

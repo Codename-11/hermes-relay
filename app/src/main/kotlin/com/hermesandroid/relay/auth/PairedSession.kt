@@ -18,10 +18,11 @@ import kotlinx.serialization.Serializable
  * @property expiresAt epoch seconds at which the server says the session
  *           expires — or `null` when the user chose "never expire" at the
  *           TTL picker. `null` is a first-class value, not a missing field.
- * @property grants per-channel expiry map. Keys: `"chat"`, `"terminal"`,
- *           `"bridge"` (and any future channel the server adds). Values are
- *           epoch seconds or `null` for "never". Missing channels = server
- *           didn't grant that channel to this device.
+ * @property grants per-channel expiry map. Known keys include `"chat"`,
+ *           `"terminal"`, `"bridge"`, `"tui"`, `"voice:config"`,
+ *           `"voice:stt"`, and `"voice:tts"`; future server-defined keys are
+ *           tolerated. Values are epoch seconds or `null` for "never".
+ *           Missing channels = server didn't grant that channel to this device.
  * @property transportHint the transport the server advises the phone to
  *           use, for UX labeling only. `"wss"` / `"ws"` / `null` when the
  *           server didn't provide a hint.

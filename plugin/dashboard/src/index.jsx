@@ -64,7 +64,7 @@ function RelayPluginRoot() {
   }, [autoRefresh]);
 
   return (
-    <div className="space-y-4 p-4">
+    <div className="hermes-relay-plugin space-y-4 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Relay</h1>

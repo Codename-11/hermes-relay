@@ -322,6 +322,18 @@ class ConnectionManager(
     }
 
     /**
+     * Re-run endpoint resolution and publish the winner without forcing a
+     * WSS reconnect. Used by HTTP-only surfaces (chat/voice/relay HTTP)
+     * so they can follow LAN/Tailscale/VPN route changes even when the relay
+     * socket is currently disconnected or intentionally not paired.
+     */
+    suspend fun refreshActiveEndpoint(): EndpointCandidate? {
+        val resolved = resolveBestEndpointSafe()
+        _activeEndpoint.value = resolved
+        return resolved
+    }
+
+    /**
      * Pin a specific role as the preferred endpoint. Cleared on [disconnect]
      * per the Endpoints-card contract. No-op until the next connect / probe
      * cycle — call [probeAndReconnect] to apply immediately.
@@ -346,13 +358,13 @@ class ConnectionManager(
                     val resolved = resolveBestEndpointSafe()
                     val newUrl = resolved?.relay?.url ?: return@launch
                     val normalizedNew = normalizeRelayUrl(newUrl)
+                    _activeEndpoint.value = resolved
                     // Only swap if the winner actually differs from the
                     // currently-connected URL. Avoids dropping a healthy
                     // socket on a no-op network flap (Wi-Fi scan, cell
                     // handover that ends up on the same route, etc.).
                     if (normalizedNew != url) {
                         Log.i(TAG, "network change: swapping $url → $normalizedNew")
-                        _activeEndpoint.value = resolved
                         webSocket?.close(1000, "Network change — switching endpoint")
                         connectToUrlOnMainPath(newUrl)
                     }
@@ -505,6 +517,9 @@ class ConnectionManager(
                 val code = response?.code
                 Log.w(TAG, "onFailure: ${t.javaClass.simpleName}: ${t.message} (responseCode=$code)")
                 lastUpgradeResponseCode = code
+                if (response == null) {
+                    _activeEndpoint.value?.let { endpointResolver?.markUnreachable(it) }
+                }
                 _connectionState.value = ConnectionState.Disconnected
                 scheduleReconnect()
             }
@@ -546,7 +561,17 @@ class ConnectionManager(
             // expires, auth state may have changed (e.g., user hit Revoke
             // during the retry window).
             if (shouldReconnect && reconnectGate()) {
-                doConnect(url)
+                val resolved = resolveBestEndpointSafe()
+                val targetUrl = resolved?.relay?.url
+                if (resolved != null) {
+                    _activeEndpoint.value = resolved
+                }
+                if (targetUrl != null && normalizeRelayUrl(targetUrl) != url) {
+                    Log.i(TAG, "scheduleReconnect: switching $url → ${normalizeRelayUrl(targetUrl)}")
+                    connectToUrlOnMainPath(targetUrl)
+                } else {
+                    doConnect(url)
+                }
             } else if (!reconnectGate()) {
                 Log.i(TAG, "scheduleReconnect: gate turned false during backoff — aborting retry")
                 _connectionState.value = ConnectionState.Disconnected

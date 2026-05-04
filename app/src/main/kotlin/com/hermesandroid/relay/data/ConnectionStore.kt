@@ -370,6 +370,6 @@ class ConnectionStore private constructor(
         // from migrateLegacyConnectionIfNeeded() resolves to the same endpoints
         // a fresh install would.
         private const val DEFAULT_API_URL = "http://localhost:8642"
-        private const val DEFAULT_RELAY_URL = "wss://localhost:8767"
+        private const val DEFAULT_RELAY_URL = "ws://localhost:8767"
     }
 }

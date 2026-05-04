@@ -112,12 +112,12 @@ Connection lifecycle, auth, keepalive.
 | Field | Type | Meaning |
 |-------|------|---------|
 | `expires_at` | epoch seconds or `null` | Session lifetime. `null` means never-expire (user explicitly picked "Never" in the TTL picker). Server-side `math.inf` serializes as `null`. |
-| `grants` | `{ channel: epoch \| null }` | Per-channel expiries. Keys today: `chat`, `terminal`, `bridge`. Each grant is clamped to the session lifetime — a grant cannot outlive its session. `null` means the grant shares the session's never-expire. |
+| `grants` | `{ channel: epoch \| null }` | Per-channel expiries. Keys today: `chat`, `terminal`, `bridge`, `tui`, `voice:config`, `voice:stt`, and `voice:tts`. Each grant is clamped to the session lifetime — a grant cannot outlive its session. `null` means the grant shares the session's never-expire. |
 | `transport_hint` | `"wss"` / `"ws"` / `"unknown"` | What the server believes the phone is actually connected over. Drives the transport security badge and the TTL picker's default option on re-pair. |
 | `profiles` | `[{name, model, description, system_message}]` | **Added v0.6.0.** Relay-advertised list of upstream Hermes profiles discovered at `~/.hermes/profiles/*/`, plus a synthetic `"default"` entry for the root config. `system_message` carries the profile's `SOUL.md` content and may be `null`. Empty list when `RELAY_PROFILE_DISCOVERY_ENABLED=0`. See `docs/decisions.md` §21. |
 
 #### Channel: `chat`
-**Note:** Chat connects directly to the Hermes API Server via HTTP/SSE (see Section 6.2) — it does not traverse the relay. Voice, bridge, terminal, notifications, and inbound media DO go through the relay. The chat SSE event types are:
+**Note:** Chat connects directly to the Hermes API Server via HTTP/SSE (see Section 6.2) — it does not traverse the relay. Voice, bridge, terminal, notifications, and inbound media DO go through the relay. Voice HTTP routes accept either a Relay session token with an active `voice:config`, `voice:stt`, or `voice:tts` grant, depending on the route, or the Hermes API bearer token; that API bearer exception does not apply to bridge, terminal, TUI, sessions, media, clipboard, profile writes, or Android control routes. Non-loopback API-bearer voice calls require HTTPS unless the local operator enables the runtime dev toggle with `hermes relay insecure-api-key on`. The chat SSE event types are:
 
 | Event | Direction | Payload |
 |-------|-----------|---------|
@@ -290,7 +290,7 @@ Implementation references:
 | Pairing (host → phone) | `hermes-pair` / `/hermes-relay-pair` → `POST /pairing/register` (loopback-only) → QR embedded in operator's terminal or chat. |
 | Pairing (phone → host, Phase 3) | Stubbed at `POST /pairing/approve` — same wire shape, same loopback gate. Real UX pending bridge work. |
 | Session lifetime | User-selected at pair: 1d / 7d / 30d / 90d / 1y / **never**. Never is always selectable; operator intent is the trust model. |
-| Per-channel grants | One session token carries `{chat, terminal, bridge}` per-channel expiries. Terminal default cap 30d, bridge default cap 7d, both clamped to session lifetime. |
+| Per-channel grants | One session token carries per-channel expiries for `chat`, `terminal`, `bridge`, `tui`, and split voice grants (`voice:config`, `voice:stt`, `voice:tts`). Grants are clamped to session lifetime. |
 | Auth envelope | `{pairing_code, ttl_seconds, grants, device_name, device_id}` for pairing mode; `{session_token, device_name, device_id}` for session-mode re-auth. Host metadata wins over phone metadata when both are present. |
 | `auth.ok` response | `{session_token, expires_at, grants, transport_hint, profiles, server_version}`. `math.inf` expiries serialize as `null`. |
 | Rate limiting | 5 auth attempts / 60s → 5-min block. **`/pairing/register` clears all blocks on success** so legitimate re-pair after a relay restart works immediately. |
@@ -761,7 +761,7 @@ The `ActionResult.data` field indicates which tier succeeded (`"direct"` / `"par
 - [x] TLS support + TOFU certificate pinning (`CertPinStore` — SHA-256 SPKI fingerprints per `host:port`, wiped explicitly on re-pair via `applyServerIssuedCodeAndReset`; plain `ws://` short-circuits pinning)
 - [x] Android Keystore session token storage (`SessionTokenStore` — `KeystoreTokenStore` with StrongBox-preferred via `setRequestStrongBoxBacked`, `LegacyEncryptedPrefsTokenStore` TEE-backed fallback, one-shot lossless migration on first launch)
 - [x] User-chosen session TTL at pair time (`SessionTtlPickerDialog` — 1d / 7d / 30d / 90d / 1y / Never)
-- [x] Per-channel grants on one session token (`Session.grants` — chat / terminal / bridge, clamped to session lifetime)
+- [x] Per-channel grants on one session token (`Session.grants` — chat / terminal / bridge / TUI / split voice grants (`voice:config`, `voice:stt`, `voice:tts`), clamped to session lifetime)
 - [x] Paired Devices screen (`PairedDevicesScreen` + `GET /sessions` + `DELETE /sessions/{prefix}` + `PATCH /sessions/{prefix}` for extend)
 - [x] Transport security badge (`TransportSecurityBadge` — three states: secure / insecure-with-reason / insecure-unknown)
 - [x] First-time insecure-mode ack dialog with reason picker (`InsecureConnectionAckDialog`)

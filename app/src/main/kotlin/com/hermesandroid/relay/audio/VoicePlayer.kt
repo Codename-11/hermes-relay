@@ -75,10 +75,9 @@ class VoicePlayer(
     // polling the player from arbitrary threads.
     private val _isPlaying = MutableStateFlow(false)
 
-    // Mirrors ExoPlayer.getMediaItemCount() via the Player.Listener events
-    // that can mutate it (onMediaItemTransition for drain, explicit add/clear
-    // calls for growth). Kept as a StateFlow so awaitCompletion can reactively
-    // wait for queue-drained + idle without polling.
+    // Logical count of media items still owned by this playback turn. ExoPlayer
+    // retains played playlist items after STATE_ENDED, so this cannot mirror
+    // mediaItemCount blindly at end-of-queue.
     private val _queueCount = MutableStateFlow(0)
 
     private var visualizer: Visualizer? = null
@@ -110,10 +109,21 @@ class VoicePlayer(
             }
 
             override fun onPlaybackStateChanged(state: Int) {
-                if (state == Player.STATE_ENDED || state == Player.STATE_IDLE) {
-                    // ENDED fires when the full queue has been consumed;
-                    // sync queueCount so awaitCompletion can release.
-                    _queueCount.value = exoPlayer.mediaItemCount
+                when (state) {
+                    Player.STATE_ENDED -> {
+                        // Media3 keeps consumed playlist entries around. Clear
+                        // them here so awaitCompletion observes a true drain and
+                        // voice mode can leave Speaking when the last TTS chunk ends.
+                        exoPlayer.clearMediaItems()
+                        _queueCount.value = 0
+                        _isPlaying.value = false
+                        _amplitude.value = 0f
+                    }
+                    Player.STATE_IDLE -> {
+                        if (exoPlayer.mediaItemCount == 0) {
+                            _queueCount.value = 0
+                        }
+                    }
                 }
             }
         })
@@ -145,7 +155,7 @@ class VoicePlayer(
      *
      * **Semantic change from the old MediaPlayer implementation.** Previously
      * this returned when the *current file* completed. Now it returns when
-     * the entire queue has been consumed — i.e. `mediaItemCount == 0 &&
+     * the entire logical queue has been consumed — i.e. `_queueCount == 0 &&
      * !isPlaying`. This matches the gapless-playback model where adjacent
      * sentences play back-to-back from the same ExoPlayer, and it's exactly
      * what the V4 prefetch pipelining rewrite needs (synth worker can enqueue

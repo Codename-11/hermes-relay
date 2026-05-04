@@ -161,6 +161,7 @@ SKILLS_DIR_IN_REPO="$RELAY_HOME/skills"
 HERMES_CONFIG="$HERMES_HOME/config.yaml"
 SHIM_PATH="$HOME/.local/bin/hermes-pair"
 STATUS_SHIM_PATH="$HOME/.local/bin/hermes-status"
+RELAY_SHIM_PATH="$HOME/.local/bin/hermes-relay"
 UPDATE_SHIM_PATH="$HOME/.local/bin/hermes-relay-update"
 TS_SHIM_PATH="$HOME/.local/bin/hermes-relay-tailscale"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
@@ -469,8 +470,8 @@ else:
     print(f"  [ok] Added {target} to skills.external_dirs in {cfg_path}")
 PY
 
-# ── 5/7  Install hermes-pair + hermes-status + hermes-relay-update shims ──
-step 5 7 "Installing hermes-pair + hermes-status + hermes-relay-update shims"
+# ── 5/7  Install hermes-pair + hermes-status + hermes-relay shims ──
+step 5 7 "Installing hermes-pair + hermes-status + hermes-relay shims"
 mkdir -p "$(dirname "$SHIM_PATH")"
 cat > "$SHIM_PATH" <<SHIM
 #!/usr/bin/env bash
@@ -511,6 +512,45 @@ exec "\$HERMES_VENV_PY" -m plugin.status "\$@"
 SHIM
 chmod +x "$STATUS_SHIM_PATH"
 ok "Installed $STATUS_SHIM_PATH"
+
+cat > "$RELAY_SHIM_PATH" <<SHIM
+#!/usr/bin/env bash
+# Hermes-Relay management shim — routes to \`python -m plugin.cli\`
+# inside the hermes-agent venv where the hermes-relay plugin is installed.
+#
+# Usage:
+#   hermes-relay insecure-api-key status
+#   hermes-relay insecure-api-key on
+#   hermes-relay insecure-api-key off
+#
+# Override paths with \$HERMES_VENV_PY / \$HERMES_RELAY_HOME if needed.
+set -eu
+HERMES_RELAY_HOME="\${HERMES_RELAY_HOME:-\$HOME/.hermes/hermes-relay}"
+HERMES_VENV_PY="\${HERMES_VENV_PY:-}"
+if [ -z "\$HERMES_VENV_PY" ]; then
+    for candidate in "\$HOME/.hermes/hermes-agent/.venv/bin/python" "\$HOME/.hermes/hermes-agent/venv/bin/python"; do
+        if [ -x "\$candidate" ]; then
+            HERMES_VENV_PY="\$candidate"
+            break
+        fi
+    done
+fi
+if [ ! -x "\$HERMES_VENV_PY" ]; then
+    echo "hermes-relay: cannot find hermes venv python at \$HERMES_VENV_PY" >&2
+    echo "hermes-relay: set HERMES_VENV_PY or reinstall hermes-agent" >&2
+    exit 1
+fi
+if [ ! -d "\$HERMES_RELAY_HOME/plugin" ]; then
+    echo "hermes-relay: cannot find relay repo at \$HERMES_RELAY_HOME" >&2
+    echo "hermes-relay: set HERMES_RELAY_HOME or reinstall hermes-relay" >&2
+    exit 1
+fi
+cd "\$HERMES_RELAY_HOME"
+export PYTHONPATH="\$HERMES_RELAY_HOME\${PYTHONPATH:+:\$PYTHONPATH}"
+exec "\$HERMES_VENV_PY" -m plugin.cli "\$@"
+SHIM
+chmod +x "$RELAY_SHIM_PATH"
+ok "Installed $RELAY_SHIM_PATH"
 
 # hermes-relay-update — discoverable name for "update Hermes-Relay". Just
 # re-runs the canonical curl-pipe installer (which is idempotent and does
@@ -563,8 +603,8 @@ cat > "$TS_SHIM_PATH" <<SHIM
 #
 # Usage:
 #   hermes-relay-tailscale status
-#   hermes-relay-tailscale enable [--port N]
-#   hermes-relay-tailscale disable [--port N]
+#   hermes-relay-tailscale enable [--port N] [--api-port N] [--relay-only]
+#   hermes-relay-tailscale disable [--port N] [--api-port N] [--relay-only]
 #
 # Override the venv python path with \$HERMES_VENV_PY if needed.
 set -eu
@@ -651,8 +691,9 @@ fi
 
 # ── 7/7  Offer (don't force) Tailscale serve enablement ───────────────────
 # ADR 25 — first-class Tailscale helper. The relay stays loopback-bound on
-# :8767; `tailscale serve` terminates TLS + identity for the tailnet. This
-# step is fully optional:
+# :8767 and the Hermes API server commonly stays loopback-bound on :8642;
+# `tailscale serve` terminates TLS + identity for the tailnet. This step is
+# fully optional:
 #
 #   - Binary absent?                    → skip silently (no Tailscale = no offer)
 #   - TS_DECLINE=1 in env?              → skip silently (scripted opt-out)
@@ -682,9 +723,9 @@ if command -v tailscale >/dev/null 2>&1; then
             fi
         else
             printf "\n"
-            printf "    ${C_DIM}%s${C_RESET} %s\n" "$SYM_INFO" "Tailscale is installed. Publish the relay over your tailnet?"
-            printf "    ${C_DIM}%s${C_RESET} %s\n" "$SYM_INFO" "Runs: ${C_BOLD}tailscale serve --bg --https=8767 http://127.0.0.1:8767${C_RESET}"
-            printf "    ${C_DIM}%s${C_RESET} %s\n" "$SYM_INFO" "Relay stays loopback-bound; Tailscale handles TLS + identity."
+            printf "    ${C_DIM}%s${C_RESET} %s\n" "$SYM_INFO" "Tailscale is installed. Publish relay + API over your tailnet?"
+            printf "    ${C_DIM}%s${C_RESET} %s\n" "$SYM_INFO" "Runs tailscale serve for ${C_BOLD}:8767${C_RESET} (relay) and ${C_BOLD}:8642${C_RESET} (Hermes API)."
+            printf "    ${C_DIM}%s${C_RESET} %s\n" "$SYM_INFO" "Loopback services stay private; Tailscale handles TLS + identity."
             printf "\n    ${C_BOLD}Enable now?${C_RESET} ${C_DIM}[y/N]${C_RESET} "
             read -r ts_reply </dev/tty || ts_reply=""
             case "$ts_reply" in
@@ -694,8 +735,8 @@ if command -v tailscale >/dev/null 2>&1; then
         fi
 
         if [ -n "$ts_do" ]; then
-            if "$VENV_PY" -m plugin.relay.tailscale_cli enable --port 8767 >/dev/null 2>&1; then
-                ok "tailscale serve enabled on https://<your-tailnet-host>:8767"
+            if "$VENV_PY" -m plugin.relay.tailscale_cli enable --port 8767 --api-port 8642 >/dev/null 2>&1; then
+                ok "tailscale serve enabled on https://<your-tailnet-host>:8767 and :8642"
                 info "  Check:  ${C_BOLD}hermes-relay-tailscale status${C_RESET}"
                 info "  Revoke: ${C_BOLD}hermes-relay-tailscale disable${C_RESET}"
             else
@@ -767,7 +808,12 @@ printf "\n"
 printf "  ${C_BOLD}${C_CYAN}Pair your phone${C_RESET}\n"
 printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}/hermes-relay-pair${C_RESET}        ${C_DIM}# from any Hermes chat${C_RESET}\n" "$SYM_INFO"
 printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}hermes-pair${C_RESET}               ${C_DIM}# from any shell${C_RESET}\n" "$SYM_INFO"
+printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}hermes-pair --mode auto --prefer tailscale${C_RESET} ${C_DIM}# one QR for LAN + Tailscale${C_RESET}\n" "$SYM_INFO"
 printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}hermes-status${C_RESET}             ${C_DIM}# show live phone state${C_RESET}\n" "$SYM_INFO"
+printf "\n"
+printf "  ${C_BOLD}${C_CYAN}Remote access${C_RESET}\n"
+printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}hermes-relay-tailscale enable${C_RESET}   ${C_DIM}# publish relay :8767 + API :8642 on your tailnet${C_RESET}\n" "$SYM_INFO"
+printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}hermes-relay-tailscale status${C_RESET}   ${C_DIM}# show served Tailscale ports${C_RESET}\n" "$SYM_INFO"
 printf "\n"
 printf "  ${C_BOLD}${C_CYAN}Self-setup / troubleshoot${C_RESET}\n"
 printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}/hermes-relay-self-setup${C_RESET}  ${C_DIM}# agent walks you through verify, re-pair, fix${C_RESET}\n" "$SYM_INFO"

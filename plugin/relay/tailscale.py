@@ -1,9 +1,11 @@
 """Thin wrappers around the ``tailscale`` CLI.
 
 Implements ADR 25 — first-class Tailscale helper as optional hermes
-enhancement. The relay stays loopback-bound on ``127.0.0.1:8767``; this
-module lets operators front it with ``tailscale serve`` so the port is
-reachable over the tailnet with managed TLS + ACL-based identity.
+enhancement. The relay stays loopback-bound on ``127.0.0.1:8767`` and
+the Hermes API server commonly stays on ``127.0.0.1:8642``; this module
+lets operators front both with ``tailscale serve`` so pair-once routing
+works for relay WSS, chat/API, and voice HTTP calls over the tailnet with
+managed TLS + ACL-based identity.
 
 All public functions are **safe to call unconditionally** — they shell
 out to the ``tailscale`` CLI via ``subprocess.run(..., check=False)``
@@ -32,8 +34,11 @@ log = logging.getLogger(__name__)
 # hung ``tailscale`` daemon.
 _TIMEOUT_SECONDS = 5
 
-# Default relay port — matches plugin/relay/server.py binding.
-DEFAULT_PORT = 8767
+# Default ports — relay matches plugin/relay/server.py, API matches
+# hermes-agent's API server default used by plugin/pair.py.
+DEFAULT_RELAY_PORT = 8767
+DEFAULT_API_PORT = 8642
+DEFAULT_PORT = DEFAULT_RELAY_PORT
 
 
 def _run(argv: list[str]) -> tuple[int, str, str]:
@@ -203,6 +208,50 @@ def enable(port: int = DEFAULT_PORT, https: bool = True) -> dict[str, Any]:
     }
 
 
+def enable_stack(
+    relay_port: int = DEFAULT_RELAY_PORT,
+    api_port: int | None = DEFAULT_API_PORT,
+    https: bool = True,
+) -> dict[str, Any]:
+    """Publish the relay and Hermes API ports via ``tailscale serve``.
+
+    The pairing payload's Tailscale candidate contains both halves:
+    relay WSS on ``relay_port`` and direct Hermes API HTTP/SSE on
+    ``api_port``. Serving only the relay makes bridge/terminal work but
+    leaves chat, voice-with-API-key, and resolver ``/health`` probes pinned
+    to an unreachable API URL. This helper is the default CLI path; the
+    single-port :func:`enable` function remains available for explicit
+    relay-only deployments.
+    """
+    results: dict[str, dict[str, Any] | None] = {
+        "relay": enable(port=relay_port, https=https),
+        "api": None,
+    }
+    if api_port is not None and api_port != relay_port:
+        results["api"] = enable(port=api_port, https=https)
+
+    ok = all(
+        result is None or bool(result.get("ok"))
+        for result in results.values()
+    )
+    messages = [
+        f"{name}: {result.get('message')}"
+        for name, result in results.items()
+        if result is not None
+    ]
+    commands = [
+        result.get("command")
+        for result in results.values()
+        if result is not None
+    ]
+    return {
+        "ok": ok,
+        "message": "; ".join(messages),
+        "commands": commands,
+        **results,
+    }
+
+
 def disable(port: int = DEFAULT_PORT) -> dict[str, Any]:
     """Remove the ``tailscale serve`` publication for ``port``.
 
@@ -231,6 +280,40 @@ def disable(port: int = DEFAULT_PORT) -> dict[str, Any]:
         "ok": False,
         "message": (err or out).strip() or f"tailscale serve off exited {rc}",
         "command": command,
+    }
+
+
+def disable_stack(
+    relay_port: int = DEFAULT_RELAY_PORT,
+    api_port: int | None = DEFAULT_API_PORT,
+) -> dict[str, Any]:
+    """Remove relay and API ``tailscale serve`` publications."""
+    results: dict[str, dict[str, Any] | None] = {
+        "relay": disable(port=relay_port),
+        "api": None,
+    }
+    if api_port is not None and api_port != relay_port:
+        results["api"] = disable(port=api_port)
+
+    ok = all(
+        result is None or bool(result.get("ok"))
+        for result in results.values()
+    )
+    messages = [
+        f"{name}: {result.get('message')}"
+        for name, result in results.items()
+        if result is not None
+    ]
+    commands = [
+        result.get("command")
+        for result in results.values()
+        if result is not None
+    ]
+    return {
+        "ok": ok,
+        "message": "; ".join(messages),
+        "commands": commands,
+        **results,
     }
 
 
@@ -379,10 +462,14 @@ def canonical_upstream_present() -> bool:
 
 
 __all__ = [
+    "DEFAULT_API_PORT",
     "DEFAULT_PORT",
+    "DEFAULT_RELAY_PORT",
     "canonical_upstream_present",
     "disable",
+    "disable_stack",
     "enable",
+    "enable_stack",
     "funnel_url",
     "status",
 ]

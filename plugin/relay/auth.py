@@ -2,8 +2,9 @@
 
 v0.3.0 adds:
   * User-chosen session TTL (including "never expire" via ``math.inf``).
-  * Per-channel grants ({"chat", "terminal", "bridge"} → epoch seconds) so
-    blast-radius-heavy channels can get shorter expiries than plain chat.
+  * Per-channel grants ({"chat", "terminal", "bridge", "tui", "voice:*"}
+    → epoch seconds) so blast-radius-heavy channels can get shorter expiries
+    than plain chat.
   * ``transport_hint`` field recording the scheme the phone paired over
     (``"wss"`` / ``"ws"`` / ``"unknown"``) — purely informational, displayed
     on the phone's Paired Devices screen.
@@ -78,6 +79,7 @@ DEFAULT_TTL_SECONDS: float = 30 * 24 * 3600  # 30 days
 DEFAULT_TERMINAL_CAP: float = 30 * 24 * 3600  # 30 days
 DEFAULT_BRIDGE_CAP: float = 7 * 24 * 3600  # 7 days
 DEFAULT_TUI_CAP: float = 30 * 24 * 3600  # 30 days (desktop TUI — Phase 1 MVP)
+VOICE_GRANT_KEYS: tuple[str, ...] = ("voice:config", "voice:stt", "voice:tts")
 
 # Pairing codes still expire after 10 minutes regardless of session TTL.
 _PAIRING_CODE_TTL = 600.0
@@ -103,6 +105,9 @@ def _default_grants(ttl_seconds: float, now: float) -> dict[str, float]:
             "terminal": math.inf,
             "bridge": math.inf,
             "tui": math.inf,
+            "voice:config": math.inf,
+            "voice:stt": math.inf,
+            "voice:tts": math.inf,
         }
 
     chat_exp = now + ttl_seconds
@@ -114,7 +119,31 @@ def _default_grants(ttl_seconds: float, now: float) -> dict[str, float]:
         "terminal": terminal_exp,
         "bridge": bridge_exp,
         "tui": tui_exp,
+        "voice:config": chat_exp,
+        "voice:stt": chat_exp,
+        "voice:tts": chat_exp,
     }
+
+
+def _clamp_grant_to_session(expiry: float, session_expiry: float) -> float:
+    """Clamp a grant expiry so it cannot outlive its parent session."""
+    if _is_never(session_expiry):
+        return expiry
+    if _is_never(expiry):
+        return session_expiry
+    return min(expiry, session_expiry)
+
+
+def _backfill_voice_grants(grants: dict[str, float], session_expiry: float) -> None:
+    """Add explicit voice grants for sessions created before they existed.
+
+    Voice is chat/media-adjacent, so legacy sessions inherit the chat grant
+    expiry when present; otherwise they inherit the session lifetime.
+    """
+    fallback = grants.get("chat", session_expiry)
+    fallback = _clamp_grant_to_session(fallback, session_expiry)
+    for key in VOICE_GRANT_KEYS:
+        grants.setdefault(key, fallback)
 
 
 def _materialize_grants(
@@ -159,10 +188,8 @@ class Session:
 
     ``expires_at == math.inf`` means "never expires"; the ``is_expired``
     property returns False in that case. Per-channel grants live in
-    ``grants`` — keys include ``"chat"``, ``"terminal"``, ``"bridge"``. The
-    relay itself does not currently enforce grants on incoming traffic
-    (chat goes direct to the API server, not through the relay), but the
-    phone reads them for display and future Phase 2/3 gating.
+    ``grants`` — keys include ``"chat"``, ``"terminal"``, ``"bridge"``,
+    ``"tui"``, and explicit ``"voice:*"`` capabilities.
     """
 
     token: str
@@ -191,6 +218,7 @@ class Session:
             else:
                 ttl = max(0.0, self.expires_at - self.created_at)
             self.grants = _default_grants(ttl, self.created_at)
+        _backfill_voice_grants(self.grants, self.expires_at)
 
     @property
     def is_expired(self) -> bool:
@@ -731,6 +759,8 @@ class SessionManager:
             else:
                 ttl = max(0.0, session.expires_at - session.created_at)
             session.grants = _default_grants(ttl, session.created_at)
+        else:
+            _backfill_voice_grants(session.grants, session.expires_at)
         session.last_seen = time.time()
         return session
 
@@ -1117,6 +1147,7 @@ __all__ = [
     "DEFAULT_TTL_SECONDS",
     "DEFAULT_TERMINAL_CAP",
     "DEFAULT_BRIDGE_CAP",
+    "VOICE_GRANT_KEYS",
     "PairingManager",
     "PairingMetadata",
     "RateLimitConfig",

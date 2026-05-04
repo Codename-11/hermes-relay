@@ -193,42 +193,94 @@ class HermesApiClient(
         }
     }
 
-    // --- Session CRUD ---
-
-    suspend fun listSessions(limit: Int = 50): List<SessionItem> = withContext(Dispatchers.IO) {
+    suspend fun checkSessionsAuthDetailed(): HealthCheckResult = withContext(Dispatchers.IO) {
         try {
-            val request = authRequest("$baseUrl/api/sessions?limit=$limit").get().build()
+            val request = authRequest("$baseUrl/api/sessions?limit=1").get().build()
+
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext emptyList()
-                val body = response.body?.string() ?: return@withContext emptyList()
-                val parsed = json.decodeFromString<SessionListResponse>(body)
-                parsed.items ?: parsed.sessions ?: emptyList()
+                when {
+                    response.isSuccessful -> HealthCheckResult.Healthy
+                    response.code == 401 || response.code == 403 ->
+                        HealthCheckResult.Unhealthy("API reachable, but sessions auth failed - check your API key")
+                    response.code == 404 ->
+                        HealthCheckResult.Unhealthy("API reachable, but /api/sessions is unavailable")
+                    else ->
+                        HealthCheckResult.Unhealthy("Sessions check returned HTTP ${response.code}")
+                }
             }
+        } catch (e: javax.net.ssl.SSLException) {
+            if (baseUrl.startsWith("https://", ignoreCase = true)) {
+                HealthCheckResult.Unhealthy("TLS handshake failed - try http:// if your server doesn't use HTTPS")
+            } else {
+                HealthCheckResult.Unhealthy("SSL error: ${e.message}")
+            }
+        } catch (e: java.net.ConnectException) {
+            HealthCheckResult.Unhealthy("Connection refused - check the URL and port")
+        } catch (e: java.net.UnknownHostException) {
+            HealthCheckResult.Unhealthy("Server not found - check the hostname")
+        } catch (e: java.net.SocketTimeoutException) {
+            HealthCheckResult.Unhealthy("Connection timed out - is the server running?")
+        } catch (e: IOException) {
+            HealthCheckResult.Unhealthy("Connection failed: ${e.message ?: "I/O error"}")
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to list sessions: ${e.message}")
-            emptyList()
+            HealthCheckResult.Unhealthy("Unexpected error: ${e.message}")
         }
     }
 
-    suspend fun createSession(title: String? = null): SessionItem? = withContext(Dispatchers.IO) {
+    // --- Session CRUD ---
+
+    suspend fun listSessionsResult(limit: Int = 50): Result<List<SessionItem>> = withContext(Dispatchers.IO) {
+        try {
+            val request = authRequest("$baseUrl/api/sessions?limit=$limit").get().build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(apiFailure(response, "List sessions"))
+                }
+                val body = response.body.string()
+                if (body.isBlank()) {
+                    return@withContext Result.failure(IOException("List sessions returned an empty response"))
+                }
+                val parsed = json.decodeFromString<SessionListResponse>(body)
+                Result.success(parsed.items ?: parsed.sessions ?: emptyList())
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to list sessions: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    suspend fun listSessions(limit: Int = 50): List<SessionItem> =
+        listSessionsResult(limit).getOrElse { emptyList() }
+
+    suspend fun createSessionResult(title: String? = null): Result<SessionItem> = withContext(Dispatchers.IO) {
         try {
             val reqBody = json.encodeToString(CreateSessionRequest(title = title))
             val request = authRequest("$baseUrl/api/sessions")
                 .post(reqBody.toRequestBody(JSON_MEDIA))
                 .build()
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext null
-                val body = response.body?.string() ?: return@withContext null
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(apiFailure(response, "Create session"))
+                }
+                val body = response.body.string()
+                if (body.isBlank()) {
+                    return@withContext Result.failure(IOException("Create session returned an empty response"))
+                }
                 val parsed = json.decodeFromString<SessionResponse>(body)
-                parsed.session ?: parsed.id?.let {
+                val session = parsed.session ?: parsed.id?.let {
                     SessionItem(id = it, title = parsed.title, model = parsed.model)
                 }
+                session?.let { Result.success(it) }
+                    ?: Result.failure(IOException("Create session response missing session id"))
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to create session: ${e.message}")
-            null
+            Result.failure(e)
         }
     }
+
+    suspend fun createSession(title: String? = null): SessionItem? =
+        createSessionResult(title).getOrNull()
 
     suspend fun deleteSession(sessionId: String): Boolean = withContext(Dispatchers.IO) {
         try {
@@ -992,5 +1044,15 @@ class HermesApiClient(
             builder.header("Authorization", "Bearer $apiKey")
         }
         return builder
+    }
+
+    private fun apiFailure(response: Response, operation: String): IOException {
+        val detail = response.message.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()
+        val message = when (response.code) {
+            401, 403 -> "$operation unauthorized - check your API key"
+            in 500..599 -> "$operation failed - server error HTTP ${response.code}"
+            else -> "$operation failed - HTTP ${response.code}$detail"
+        }
+        return IOException(message)
     }
 }

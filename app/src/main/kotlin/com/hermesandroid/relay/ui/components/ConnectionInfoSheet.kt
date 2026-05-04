@@ -444,9 +444,9 @@ fun ApiServerInfoSheet(
                 onClick = {
                     testing = true
                     testResult = "Testing\u2026"
-                    connectionViewModel.testApiConnection { success ->
+                    connectionViewModel.testApiConnection { _success, message ->
                         testing = false
-                        testResult = if (success) "Connection OK" else "Connection failed"
+                        testResult = message
                     }
                 },
                 enabled = !testing,

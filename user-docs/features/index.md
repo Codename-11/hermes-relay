@@ -107,7 +107,7 @@ A **<span class="track-badge track-badge--sideload">Sideload only</span>** badge
 | Android Keystore session storage | StrongBox-preferred, TEE fallback |
 | TOFU cert pinning | Trust-on-first-use SHA-256 SPKI fingerprints |
 | Bearer token auth | Optional API key authentication |
-| Per-channel grants | Time-bound access for terminal/bridge channels |
+| Per-channel grants | Time-bound access for terminal, bridge, TUI, and voice channels |
 
 ## Choose your track
 

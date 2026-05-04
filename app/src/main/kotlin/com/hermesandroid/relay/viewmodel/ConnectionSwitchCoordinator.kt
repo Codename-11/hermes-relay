@@ -8,6 +8,7 @@ import com.hermesandroid.relay.data.ConnectionStore
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.ConnectionManager
 import com.hermesandroid.relay.network.HermesApiClient
+import com.hermesandroid.relay.network.RelayUrlDeriver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
@@ -249,6 +250,13 @@ class ConnectionSwitchCoordinator(
                 )
                 return@withLock
             }
+            val targetRelayUrl = if (
+                RelayUrlDeriver.isAutoManagedRelayUrl(target.relayUrl, target.apiServerUrl)
+            ) {
+                RelayUrlDeriver.deriveFromApiUrl(target.apiServerUrl) ?: target.relayUrl
+            } else {
+                target.relayUrl
+            }
 
             // 7 — swap the AuthManager. Factory-built instance re-registers
             // itself on the multiplexer in its own init block.
@@ -257,8 +265,8 @@ class ConnectionSwitchCoordinator(
 
             // 8 — point the URL flows at the new connection's endpoints.
             setApiServerUrl(target.apiServerUrl)
-            setRelayUrl(target.relayUrl)
-            runCatching { persistUrls(target.apiServerUrl, target.relayUrl) }
+            setRelayUrl(targetRelayUrl)
+            runCatching { persistUrls(target.apiServerUrl, targetRelayUrl) }
                 .onFailure { Log.w(TAG, "persistUrls failed: ${it.message}") }
 
             // 9 — rebuild the API client against the new URL + key.
@@ -302,7 +310,7 @@ class ConnectionSwitchCoordinator(
             }
 
             if (newAuth.hasPairContext) {
-                runCatching { connectionManager.connect(target.relayUrl) }
+                runCatching { connectionManager.connect(targetRelayUrl) }
                     .onFailure { Log.w(TAG, "connectionManager.connect failed: ${it.message}") }
             } else {
                 Log.i(

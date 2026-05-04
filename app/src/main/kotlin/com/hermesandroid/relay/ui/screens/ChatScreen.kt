@@ -233,10 +233,10 @@ fun ChatScreen(
     val isStreaming by chatViewModel.isStreaming.collectAsState()
     val chatReady by connectionViewModel.chatReady.collectAsState()
     // Voice mode's /voice/transcribe and /voice/synthesize calls both go
-    // over the relay — gate the Mic button on relayReady so we fail
-    // deterministically at the button instead of after recording, when
-    // the transcribe POST would have surfaced a cryptic network error.
-    val relayReady by connectionViewModel.relayReady.collectAsState()
+    // over the relay, but voice can authenticate with the saved Hermes API
+    // key or a paired Relay session. Gate the Mic button on voiceReady
+    // so chat+voice-only setups don't need the full pairing flow.
+    val voiceReady by connectionViewModel.voiceReady.collectAsState()
     val apiReachable by connectionViewModel.apiServerReachable.collectAsState()
     val chatMode by connectionViewModel.chatMode.collectAsState()
     val error by chatViewModel.error.collectAsState()
@@ -1432,21 +1432,18 @@ fun ChatScreen(
                             )
                         }
                     } else {
-                        // Gate on relayReady — voice mode calls
-                        // /voice/transcribe and /voice/synthesize which
-                        // only exist on the relay. Muted tint + toast on
-                        // tap mirrors Terminal's "relay disconnected"
-                        // subtitle pattern: we surface the dependency
-                        // at the button, not after the user has already
-                        // recorded an utterance.
+                        // Gate on voiceReady — voice mode needs a relay
+                        // route, but the app can derive it from the API URL
+                        // and authenticate with the saved Hermes API key or
+                        // a paired Relay session.
                         IconButton(
                             onClick = {
-                                if (relayReady) {
+                                if (voiceReady) {
                                     requestVoiceMode()
                                 } else {
                                     android.widget.Toast.makeText(
                                         context,
-                                        "Voice mode needs a relay connection",
+                                        "Voice needs API key or pairing, plus a reachable relay route",
                                         android.widget.Toast.LENGTH_SHORT,
                                     ).show()
                                 }
@@ -1454,12 +1451,12 @@ fun ChatScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.Mic,
-                                contentDescription = if (relayReady) {
+                                contentDescription = if (voiceReady) {
                                     "Voice mode"
                                 } else {
-                                    "Voice mode (relay disconnected)"
+                                    "Voice mode unavailable"
                                 },
-                                tint = if (relayReady) {
+                                tint = if (voiceReady) {
                                     MaterialTheme.colorScheme.primary
                                 } else {
                                     MaterialTheme.colorScheme.onSurfaceVariant

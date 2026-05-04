@@ -32,6 +32,15 @@ The API server has **optional** Bearer token auth:
 **The key is NOT required for local use.** Most setups don't set one.
 Only set it if the API server is exposed to the network.
 
+Hermes-Relay voice endpoints can reuse this same Bearer token. Relay validates
+API tokens by probing the protected `GET /v1/models` endpoint on
+`RELAY_WEBAPI_URL`, then allows the token only for `/voice/config`,
+`/voice/transcribe`, and `/voice/synthesize`. Relay session tokens are still
+required for sessions, media, clipboard, terminal, TUI, bridge, profile writes,
+and Android control routes. Non-loopback voice calls with the API bearer require
+HTTPS by default; for temporary plain-LAN testing, a local operator can run
+`hermes relay insecure-api-key on` against the running relay.
+
 ### For the Android App
 
 The settings screen should:

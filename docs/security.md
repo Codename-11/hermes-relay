@@ -11,6 +11,9 @@ Hermes-Relay gives a remote AI agent full control of an Android device via Acces
 - The phone and server must share this code to establish a connection.
 - Codes use the full `A-Z / 0-9` alphabet (36 chars). The earlier "no ambiguous 0/O/1/I" restriction was dropped when the pairing flow moved from "human retypes code from display" to "code flows phone ↔ server via QR + HTTP" (see `docs/decisions.md` §6a).
 - `POST /pairing/register` is gated to loopback callers only (`127.0.0.1` / `::1`) — only a process with host shell access on the relay machine can inject pairing codes. A LAN attacker cannot.
+- Relay session tokens carry per-channel grants. Voice routes require explicit `voice:config`, `voice:stt`, or `voice:tts` grants when called with a Relay session token.
+- `/voice/config`, `/voice/transcribe`, and `/voice/synthesize` may also accept the Hermes API bearer token used by API-server clients. The Android app uses this fallback for chat+voice-only setups when no Relay session is paired. This is a narrow exception for chat/media-adjacent voice features only; the API bearer token is not accepted for sessions, media, clipboard, terminal, TUI, bridge, profile writes, or Android control routes.
+- Hermes API bearer use on voice routes requires HTTPS for non-loopback callers by default. Loopback plaintext is allowed for local clients; reverse-proxy TLS is accepted only when `RELAY_TRUST_PROXY_HEADERS=1`, and plaintext LAN testing requires an explicit opt-in. Use `hermes relay insecure-api-key on` for a running relay, or `RELAY_ALLOW_INSECURE_API_BEARER=1` at startup.
 
 ### Rate Limiting
 - Failed WebSocket authentication attempts are rate-limited per IP
@@ -25,10 +28,12 @@ Hermes-Relay gives a remote AI agent full control of an Android device via Acces
 ## Known Limitations (Prototype)
 
 ### No Encryption
-WebSocket connections use `ws://` (plaintext), not `wss://` (TLS). This means:
+WebSocket connections may use `ws://` (plaintext) instead of `wss://` (TLS). This means:
 - Commands, screen content, and screenshots travel unencrypted
 - Anyone on the network path between phone and server can intercept traffic
 - **Mitigation**: Use over a trusted network, or set up a reverse proxy with TLS (nginx/caddy)
+
+Hermes API bearer tokens on `/voice/*` are stricter than the legacy WebSocket path: non-loopback API-bearer requests are rejected unless the request is HTTPS, comes through a trusted HTTPS reverse-proxy signal, or the operator has explicitly enabled the insecure dev escape hatch with `hermes relay insecure-api-key on` or the startup env var.
 
 ### Full Device Access
 Once paired, the agent has unrestricted access to:

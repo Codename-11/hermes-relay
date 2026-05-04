@@ -53,7 +53,7 @@ def register(ctx):
             register_cli,
             pair_command,
             register_relay_cli,
-            relay_start_command,
+            relay_command,
         )
 
         ctx.register_cli_command(
@@ -72,7 +72,7 @@ def register(ctx):
             name="relay",
             help="Run the Hermes-Relay WSS server (terminal + bridge channels)",
             setup_fn=register_relay_cli,
-            handler_fn=relay_start_command,
+            handler_fn=relay_command,
             description=(
                 "Runs the embedded WSS relay server that the Hermes-Relay Android "
                 "app connects to for the terminal and bridge channels. Chat still "

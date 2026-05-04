@@ -5,7 +5,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = SDK.hooks;
 import QRCode from "qrcode";
 import { mintPairingWithMode } from "../lib/api.js";
 
-const { Card, CardHeader, CardTitle, CardContent, Button, Badge, Input, Label } = SDK.components;
+const { Button, Badge, Input, Label } = SDK.components;
 
 // localStorage keys — per-browser, not per-user. Sensible defaults on first
 // open; stick with whatever the operator last used.
@@ -210,18 +210,25 @@ export default function PairDialog({ open, onClose }) {
   const blockForProxyConsent = hostLooksProxyFronted && !proxyConfirmed;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
-      <Card className="w-full max-w-xl max-h-[90vh] overflow-y-auto">
-        <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
+    <div
+      className="hermes-relay-plugin hr-modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="hr-pair-dialog-title"
+    >
+      <div className="hr-modal-card">
+        <div className="hr-modal-header">
           <div>
-            <CardTitle>Pair new device</CardTitle>
+            <h2 id="hr-pair-dialog-title" className="hr-modal-title">Pair new device</h2>
             <p className="text-sm text-muted-foreground mt-1">
               Scan from the Hermes-Relay Android app to pair.
             </p>
           </div>
-          <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
-        </CardHeader>
-        <CardContent className="space-y-3">
+          <Button variant="ghost" size="sm" className="hr-modal-close" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+        <div className="hr-modal-body space-y-3">
           {/* Mode + prefer controls — always visible, these are the
               primary inputs now. Multi-endpoint candidates get derived
               server-side from Tailscale + pinned Public URL. */}
@@ -302,7 +309,7 @@ export default function PairDialog({ open, onClose }) {
           )}
           {!blockForProxyConsent && state.status === "ok" && (
             <>
-              <div className="flex justify-center rounded-md border border-border bg-white p-3">
+              <div className="hr-qr-frame">
                 <canvas ref={canvasRef} className="block" />
               </div>
               <div className="flex items-center justify-between gap-2">
@@ -415,8 +422,8 @@ export default function PairDialog({ open, onClose }) {
               </div>
             )}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }

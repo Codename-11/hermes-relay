@@ -14,7 +14,7 @@ Hermes-Relay is a native Android app for [Hermes Agent](https://hermes-agent.nou
 curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
 ```
 
-This installs the server-side plugin. One command, full features — sessions browser, conversation history, personality picker, command palette, memory management, and the WSS relay for terminal/voice all work out of the box on any standard `hermes-agent` install. Grab the Android app from [GitHub Releases](https://github.com/Codename-11/hermes-relay/releases), then either type `/hermes-relay-pair` in any Hermes chat surface or run `hermes-pair` from a shell to generate a pairing QR. See [Installation & Setup](/guide/getting-started) for the full walkthrough.
+This installs the server-side plugin. One command, full features — sessions browser, conversation history, personality picker, command palette, memory management, relay WSS for terminal/control, and relay HTTP voice routes all work out of the box on any standard `hermes-agent` install. Grab the Android app from [GitHub Releases](https://github.com/Codename-11/hermes-relay/releases), then either type `/hermes-relay-pair` in any Hermes chat surface or run `hermes-pair` from a shell to generate a pairing QR. See [Installation & Setup](/guide/getting-started) for the full walkthrough.
 
 To uninstall later:
 
@@ -34,10 +34,10 @@ The uninstaller is idempotent and never touches state shared with other Hermes t
 
 ```
 Phone (HTTP/SSE) → Hermes API Server (:8642)   [chat — direct]
-Phone (WSS)      → Relay Server (:8767)          [bridge, terminal — future]
+Phone (WSS/HTTP) → Relay Server (:8767)        [bridge, terminal, TUI, media, voice]
 ```
 
-Chat connects directly to the Hermes API Server using the Sessions API with SSE streaming. The relay server handles bridge and terminal channels only.
+Chat connects directly to the Hermes API Server using the Sessions API with SSE streaming. The relay server handles bridge, terminal, TUI, media, Android-control, and `/voice/*` routes.
 
 ## Current Status — v0.4.0
 

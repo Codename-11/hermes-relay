@@ -59,6 +59,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.network.ConnectionState
+import com.hermesandroid.relay.network.RelayUrlDeriver
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.util.classifyError
@@ -248,6 +249,20 @@ private fun ManualUrlSubsection(
     var apiKeyVisible by remember { mutableStateOf(false) }
     var relayUrlInput by remember(relayUrl) { mutableStateOf(relayUrl) }
     var isTestingApi by remember { mutableStateOf(false) }
+    var apiVoiceSetupResult by remember {
+        mutableStateOf<ConnectionViewModel.ApiVoiceSetupResult?>(null)
+    }
+    var relayOverrideVisible by rememberSaveable(apiServerUrl) {
+        mutableStateOf(!RelayUrlDeriver.isAutoManagedRelayUrl(relayUrl, apiServerUrl))
+    }
+    val autoRelayUrl = RelayUrlDeriver.deriveFromApiUrl(apiUrlInput)
+
+    LaunchedEffect(apiUrlInput, relayOverrideVisible, autoRelayUrl) {
+        if (!relayOverrideVisible && autoRelayUrl != null && relayUrlInput != autoRelayUrl) {
+            relayUrlInput = autoRelayUrl
+            connectionViewModel.clearRelayReachableResult()
+        }
+    }
 
     OutlinedTextField(
         value = apiUrlInput,
@@ -301,16 +316,29 @@ private fun ManualUrlSubsection(
     ) {
         Button(
             onClick = {
-                connectionViewModel.updateApiServerUrl(apiUrlInput)
-                if (apiKeyInput.isNotBlank()) {
-                    connectionViewModel.updateApiKey(apiKeyInput)
-                }
                 isTestingApi = true
-                connectionViewModel.testApiConnection { success ->
+                apiVoiceSetupResult = null
+                val relayOverride = if (relayOverrideVisible) relayUrlInput else null
+                connectionViewModel.saveApiAndProbeVoice(
+                    apiUrl = apiUrlInput,
+                    apiKey = apiKeyInput,
+                    manualRelayUrlOverride = relayOverride,
+                ) { result ->
                     isTestingApi = false
+                    apiVoiceSetupResult = result
+                    if (!result.voiceConfigReachable && result.relayAutoDerived) {
+                        relayOverrideVisible = true
+                        result.relayUrl?.let { relayUrlInput = it }
+                    }
                     Toast.makeText(
                         context,
-                        if (success) "API server reachable" else "Cannot reach API server",
+                        when {
+                            result.apiReachable && result.voiceConfigReachable ->
+                                "API and voice relay reachable"
+                            result.apiReachable ->
+                                "API reachable; relay URL needs review"
+                            else -> "Cannot reach API server"
+                        },
                         Toast.LENGTH_SHORT,
                     ).show()
                 }
@@ -330,18 +358,73 @@ private fun ManualUrlSubsection(
     if (relayEnabled) {
         HorizontalDivider()
 
-        OutlinedTextField(
-            value = relayUrlInput,
-            onValueChange = {
-                relayUrlInput = it
-                // Stale reachability results belong to the prior URL.
-                connectionViewModel.clearRelayReachableResult()
-            },
-            label = { Text("Relay URL") },
-            placeholder = { Text("wss://your-server:8767") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                text = "Relay URL",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                text = if (autoRelayUrl != null && !relayOverrideVisible) {
+                    "Auto: $autoRelayUrl"
+                } else {
+                    "Manual override"
+                },
+                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = "Voice uses the relay's /voice routes. The app derives this from the API host unless a custom route is needed.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(
+                onClick = {
+                    relayOverrideVisible = !relayOverrideVisible
+                    if (!relayOverrideVisible) {
+                        relayUrlInput = autoRelayUrl.orEmpty()
+                    }
+                    connectionViewModel.clearRelayReachableResult()
+                },
+                contentPadding = PaddingValues(horizontal = 0.dp),
+            ) {
+                Text(if (relayOverrideVisible) "Use auto relay URL" else "Use custom relay URL")
+            }
+        }
+
+        if (relayOverrideVisible) {
+            OutlinedTextField(
+                value = relayUrlInput,
+                onValueChange = {
+                    relayUrlInput = it
+                    // Stale reachability results belong to the prior URL.
+                    connectionViewModel.clearRelayReachableResult()
+                },
+                label = { Text("Relay URL override") },
+                placeholder = { Text("wss://your-server:8767") },
+                singleLine = true,
+                supportingText = {
+                    Text("Only needed when Auto cannot reach /voice/config")
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+
+        apiVoiceSetupResult?.let { result ->
+            val color = if (result.voiceConfigReachable) {
+                Color(0xFF4CAF50)
+            } else {
+                MaterialTheme.colorScheme.error
+            }
+            Text(
+                text = if (result.voiceConfigReachable) {
+                    "Voice ready via ${result.relayUrl ?: "relay"}"
+                } else {
+                    "Relay URL required: ${result.voiceConfigError ?: "voice config probe failed"}"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = color,
+            )
+        }
 
         // Save & Test + Disconnect. Connect button intentionally absent
         // — it used to cause an unpaired-auth-then-rate-limited trap.
@@ -352,11 +435,15 @@ private fun ManualUrlSubsection(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Button(
-                onClick = { connectionViewModel.testRelayReachable(relayUrlInput) },
-                enabled = relayUrlInput.isNotBlank() &&
+                onClick = {
+                    connectionViewModel.testRelayReachable(
+                        if (relayOverrideVisible) relayUrlInput else autoRelayUrl.orEmpty(),
+                    )
+                },
+                enabled = (if (relayOverrideVisible) relayUrlInput else autoRelayUrl.orEmpty()).isNotBlank() &&
                     relayReachable !is ConnectionViewModel.RelayReachable.Probing,
             ) {
-                Text("Save & Test")
+                Text("Test Relay")
             }
             OutlinedButton(
                 onClick = { connectionViewModel.disconnectRelay() },

@@ -18,9 +18,12 @@ so walking out of the house onto LTE seamlessly hops from the LAN
 candidate to the Tailscale (or public) one. See `docs/decisions.md` §24
 for the wire format and priority semantics.
 
-**First-class Tailscale** (ADR 25) ships a thin helper that fronts
-`127.0.0.1:8767` with `tailscale serve` for managed TLS + tailnet-ACL
-identity — optional, auto-retires when upstream PR #9295 lands.
+**First-class Tailscale** (ADR 25) ships a thin helper that fronts the
+relay (`127.0.0.1:8767`) and Hermes API server (`127.0.0.1:8642`) with
+`tailscale serve` for managed TLS + tailnet-ACL identity. Both ports are
+needed for the full app: chat/API and API-key voice use the Hermes API
+auth path, while terminal, bridge, TUI, media/session management, and
+relay-token voice fallback use relay pairing.
 
 ## Decision matrix
 
@@ -53,21 +56,22 @@ That's the whole thing. Under the hood it shells out to:
 
 ```bash
 tailscale serve --bg --https=8767 http://127.0.0.1:8767
+tailscale serve --bg --https=8642 http://127.0.0.1:8642
 ```
 
-which publishes the loopback-bound relay port on the tailnet with a
-Tailscale-managed TLS cert (issued by Tailscale's internal CA —
-captured by the phone's TOFU pin on first connect, same mechanism as
-any other wss cert).
+which publishes the loopback-bound relay and API ports on the tailnet
+with Tailscale-managed TLS certs (issued by Tailscale's internal CA and
+captured by the phone's TOFU pin on first connect for WSS).
 
 Re-run `hermes-relay-pair` after enabling and the QR will include a
 `role: tailscale` endpoint candidate pointing at
-`wss://<your-tailnet-hostname>.ts.net:8767`, with auto-detection
-driven by `tailscale.status()` from the same module. Scan once and
-the phone gets both LAN and Tailscale targets.
+`https://<your-tailnet-hostname>.ts.net:8642` for the API side and
+`wss://<your-tailnet-hostname>.ts.net:8767` for the relay side, with
+auto-detection driven by `tailscale.status()` from the same module.
+Scan once and the phone gets both LAN and Tailscale targets.
 
-Disable later with `hermes-relay-tailscale disable` (takes a `--port N`
-if you used a non-default port). `hermes-relay-tailscale status`
+Disable later with `hermes-relay-tailscale disable` (takes `--port N`
+and `--api-port N` if you used non-default ports). `hermes-relay-tailscale status`
 prints the current Tailscale state + served ports.
 
 ### Caddy + Let's Encrypt
@@ -77,11 +81,15 @@ URL. Minimal `Caddyfile`:
 
 ```caddyfile
 hermes.example.com {
-    # Relay WSS — matches ACK 25's loopback-bound relay.
-    reverse_proxy /relay ws://127.0.0.1:8767
-    # API server — hermes-agent's direct HTTP/SSE surface.
-    reverse_proxy /api/* http://127.0.0.1:8642
-    reverse_proxy /v1/* http://127.0.0.1:8642
+    # Relay WSS/HTTP under /relay.
+    handle_path /relay* {
+        reverse_proxy http://127.0.0.1:8767
+    }
+
+    # API server at the public origin root for /health, /v1/*, /api/*, etc.
+    handle {
+        reverse_proxy http://127.0.0.1:8642
+    }
 }
 ```
 
@@ -90,7 +98,7 @@ the firewall, start Caddy, and the first request provisions the cert
 from Let's Encrypt. Pair with:
 
 ```bash
-hermes-relay-pair --mode auto --public-url https://hermes.example.com
+hermes-relay-pair --mode auto --public-url https://hermes.example.com/relay
 ```
 
 The QR will carry a `role: public` endpoint with
@@ -103,7 +111,7 @@ Works without a domain and without opening any inbound ports. Install
 `cloudflared`, then:
 
 ```bash
-# Quick-and-dirty free subdomain (good for testing).
+# Quick relay-only smoke test; full app use needs both relay and API routes.
 cloudflared tunnel --url http://localhost:8767
 # Outputs something like: https://random-words.trycloudflare.com
 ```
@@ -114,7 +122,7 @@ can front both ports — one tunnel per hostname, or one tunnel with
 ingress rules mapping paths to the relay (`:8767`) vs. the API
 server (`:8642`).
 
-Pair with `hermes-relay-pair --mode auto --public-url https://<your-trycloudflare-url>`.
+Pair with `hermes-relay-pair --mode auto --public-url https://<your-trycloudflare-url>/relay` when your tunnel maps relay traffic under `/relay` and leaves the API at the origin root.
 
 ### Self-hosted WireGuard
 
@@ -176,7 +184,7 @@ egress). If the operator put LAN at priority 0 they have a reason.
 Reachability only breaks ties between candidates that share a priority.
 
 The phone re-probes on every `ConnectivityManager.onAvailable` /
-`onLost`, with a 30s cache per candidate so rapid network flaps don't
+`onLost`, with a 60s cache per candidate so rapid network flaps don't
 hammer the network with `HEAD /health` probes.
 
 Force-override from the pair command: `--mode lan` (LAN only),
@@ -194,7 +202,7 @@ QR still embeds all detected candidates; only the probe order changes.
 
 ```bash
 # All three modes detected, but Tailscale probed first
-hermes-pair --mode auto --public-url https://hermes.example.com --prefer tailscale
+hermes-pair --mode auto --public-url https://hermes.example.com/relay --prefer tailscale
 ```
 
 Result: `[(0, tailscale), (1, lan), (2, public)]` — phone tries the
@@ -256,11 +264,13 @@ per candidate.
 **Tailscale serve not reaching phone.** Check tailnet ACLs —
 `tailscale serve` publishes to the tailnet, and by default tailnets
 allow all peers, but a locked-down ACL might block the phone from
-reaching the relay host. Verify from the phone by opening
+reaching the relay host. Verify both ports from the phone by opening
 `https://<your-tailnet-hostname>.ts.net:8767/health` in its browser;
-200 `{"status": "ok"}` means the tunnel is fine and the problem is
-the pairing payload. `hermes-relay-tailscale status` also prints the
-currently-served ports — if 8767 is missing, `enable` didn't succeed.
+200 `{"status": "ok"}` means the relay tunnel is fine. Also open
+`https://<your-tailnet-hostname>.ts.net:8642/health`; chat, voice with
+API-key auth, and endpoint reachability probes need that API route.
+`hermes-relay-tailscale status` prints the currently-served ports — if
+8767 or 8642 is missing, re-run `hermes-relay-tailscale enable`.
 
 **Public URL reachable from the dashboard but not from the phone.**
 Usually IPv6 or an egress firewall on the phone's network. Mobile
@@ -310,13 +320,12 @@ locally — looks like "pair succeeded, then silently dropped."
 **Fix options, in order of preference:**
 
 1. **Don't put the Hermes API behind forward-auth.** Keep the API
-   server on `127.0.0.1:8642` and front it *only* via the relay's
-   loopback plugin routes or via Tailscale Serve (identity at the
-   network edge, no HTTP-layer challenge). Forward-auth gateways are
-   the wrong tool for machine-to-machine traffic.
-2. **Use the relay's canonical remote path:** Tailscale Serve
-   (`hermes-relay-tailscale enable`) terminates TLS + identity inside
-   the tailnet ACL, so the phone never meets an SSO challenger.
+   server on `127.0.0.1:8642` and front it via Tailscale Serve
+   (identity at the network edge, no HTTP-layer challenge). Forward-auth
+   gateways are the wrong tool for machine-to-machine traffic.
+2. **Use the canonical remote path:** Tailscale Serve
+   (`hermes-relay-tailscale enable`) publishes both relay `:8767` and
+   API `:8642`, so the phone never meets an SSO challenger.
 3. **Bypass-auth rule for the phone's IP range.** Some forward-auth
    stacks (Traefik + Authelia `bypass` rules, Caddy
    `reverse_proxy` + access control) can whitelist the phone's

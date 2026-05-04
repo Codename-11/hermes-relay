@@ -248,6 +248,50 @@ def build_payload(
     return json.dumps(payload, separators=(",", ":"))
 
 
+def build_relay_pairing_block(
+    *,
+    relay_url: str,
+    code: str,
+    ttl_seconds: Any = None,
+    grants: Optional[dict] = None,
+    transport_hint: Optional[str] = None,
+) -> dict[str, Any]:
+    """Build the nested ``relay`` block used by all QR emitters."""
+    relay_block: dict[str, Any] = {
+        "url": relay_url,
+        "code": code,
+    }
+    if ttl_seconds is not None:
+        relay_block["ttl_seconds"] = ttl_seconds
+    if grants is not None:
+        relay_block["grants"] = grants
+    if transport_hint is not None:
+        relay_block["transport_hint"] = transport_hint
+    return relay_block
+
+
+def build_pairing_qr_payload(
+    *,
+    host: str,
+    port: int,
+    key: str,
+    tls: bool,
+    relay: Optional[dict] = None,
+    endpoints: Optional[list[dict]] = None,
+    sign: bool = True,
+) -> str:
+    """Build the Android pairing QR payload shared by CLI and dashboard mint."""
+    return build_payload(
+        host=host,
+        port=port,
+        key=key,
+        tls=tls,
+        relay=relay,
+        endpoints=endpoints,
+        sign=sign,
+    )
+
+
 # ── Endpoint candidate discovery (ADR 24) ────────────────────────────────────
 
 
@@ -1078,16 +1122,15 @@ def pair_command(args) -> None:
                 grants=grants_dict,
                 transport_hint=transport_hint,
             ):
-                relay_block = {
-                    "url": _relay_lan_base_url(
+                relay_block = build_relay_pairing_block(
+                    relay_url=_relay_lan_base_url(
                         relay_cfg["host"], relay_port, tls=relay_tls
                     ),
-                    "code": relay_code,
-                    "ttl_seconds": ttl_seconds,
-                    "transport_hint": transport_hint,
-                }
-                if grants_dict:
-                    relay_block["grants"] = grants_dict
+                    code=relay_code,
+                    ttl_seconds=ttl_seconds,
+                    grants=grants_dict,
+                    transport_hint=transport_hint,
+                )
             else:
                 print(
                     "  [warn] Relay is running but /pairing/register was "
@@ -1125,8 +1168,13 @@ def pair_command(args) -> None:
             print(f"  [error] --mode/--public-url: {exc}", file=sys.stderr)
             sys.exit(2)
 
-    payload = build_payload(
-        host, port, key, tls, relay=relay_block, endpoints=endpoints or None
+    payload = build_pairing_qr_payload(
+        host=host,
+        port=port,
+        key=key,
+        tls=tls,
+        relay=relay_block,
+        endpoints=endpoints or None,
     )
 
     # Always show text block — works in any terminal including Hermes TUI
