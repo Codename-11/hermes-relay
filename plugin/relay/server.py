@@ -3128,7 +3128,7 @@ def _build_auth_ok_payload(
     # snake_case dicts with ``name``, ``model``, ``description``, and
     # ``system_message`` (which may be ``None``). The Kotlin client
     # deserializes into PairedDeviceInfo.profiles.
-    return {
+    payload: dict[str, Any] = {
         "session_token": session.token,
         "server_version": __version__,
         "profiles": server.config.profiles,
@@ -3138,6 +3138,9 @@ def _build_auth_ok_payload(
         "client_surface": session.client_surface,
         "device_form_factor": session.device_form_factor,
     }
+    if session.refresh_token:
+        payload["refresh_token"] = session.refresh_token
+    return payload
 
 
 async def _authenticate(
@@ -3180,6 +3183,7 @@ async def _authenticate(
     payload = envelope.get("payload", {})
     pairing_code = payload.get("pairing_code", "")
     session_token_attempt = payload.get("session_token", "")
+    refresh_token_attempt = str(payload.get("refresh_token", "") or "").strip()
     device_name = payload.get("device_name", "Unknown device")
     device_id = payload.get("device_id", "unknown")
     client_surface = str(payload.get("client_surface", "unknown") or "unknown")
@@ -3198,6 +3202,33 @@ async def _authenticate(
     # Try session token first (reconnection)
     if session_token_attempt:
         session = server.sessions.get_session(session_token_attempt)
+        if session is not None:
+            if (
+                not refresh_token_attempt
+                and device_id
+                and not server.sessions.has_trusted_device(session.device_id)
+            ):
+                server.sessions.issue_refresh_token_for_session(session)
+            server.rate_limiter.record_success(remote_ip)
+            await _send_system(
+                ws, "auth.ok", _build_auth_ok_payload(session, server)
+            )
+            return session.token
+
+    # If the short session token was lost, revoked during an update, or reset
+    # on a stateless deployment, a trusted-device refresh token can recover
+    # without forcing a new QR scan. The refresh credential is rotated on
+    # success and the replacement session is returned through the normal
+    # auth.ok shape.
+    if refresh_token_attempt:
+        session = server.sessions.refresh_session(
+            refresh_token_attempt,
+            device_name=device_name,
+            device_id=device_id,
+            transport_hint=detected_transport,
+            client_surface=client_surface,
+            device_form_factor=device_form_factor,
+        )
         if session is not None:
             server.rate_limiter.record_success(remote_ip)
             await _send_system(
@@ -3235,6 +3266,7 @@ async def _authenticate(
                 transport_hint=transport_hint,
                 client_surface=client_surface,
                 device_form_factor=device_form_factor,
+                issue_refresh_token=True,
             )
             server.rate_limiter.record_success(remote_ip)
             await _send_system(
@@ -3252,6 +3284,9 @@ async def _authenticate(
     # attempts genuinely failed.
     recorded = False
     if session_token_attempt:
+        server.rate_limiter.record_session_failure(remote_ip)
+        recorded = True
+    if refresh_token_attempt:
         server.rate_limiter.record_session_failure(remote_ip)
         recorded = True
     if pairing_code:

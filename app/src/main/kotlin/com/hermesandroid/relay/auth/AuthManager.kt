@@ -87,6 +87,7 @@ class AuthManager(
     companion object {
         private const val TAG = "AuthManager"
         private const val KEY_SESSION_TOKEN = "session_token"
+        private const val KEY_REFRESH_TOKEN = "refresh_token"
         private const val KEY_DEVICE_ID = "device_id"
         private const val KEY_API_KEY = "api_server_key"
         private const val KEY_PAIRED_META = "paired_session_meta_json"
@@ -237,7 +238,13 @@ class AuthManager(
             return
         }
 
-        val keysToMigrate = listOf(KEY_SESSION_TOKEN, KEY_DEVICE_ID, KEY_API_KEY, KEY_PAIRED_META)
+        val keysToMigrate = listOf(
+            KEY_SESSION_TOKEN,
+            KEY_REFRESH_TOKEN,
+            KEY_DEVICE_ID,
+            KEY_API_KEY,
+            KEY_PAIRED_META,
+        )
         var migrated = false
         for (k in keysToMigrate) {
             val existing = legacy.getString(k) ?: continue
@@ -538,12 +545,17 @@ class AuthManager(
             val deviceId = getDeviceId()
             val payload = when (currentState) {
                 is AuthState.Paired -> {
+                    val refreshToken = store().getString(KEY_REFRESH_TOKEN)
                     Log.i(
                         TAG,
-                        "authenticate: sending session_token (state=Paired, token=${currentState.token.take(8)}…)"
+                        "authenticate: sending session_token (state=Paired, token=${currentState.token.take(8)}…, " +
+                            "refresh=${!refreshToken.isNullOrBlank()})"
                     )
                     buildJsonObject {
                         put("session_token", currentState.token)
+                        if (!refreshToken.isNullOrBlank()) {
+                            put("refresh_token", refreshToken)
+                        }
                         put("device_id", deviceId)
                         put("device_name", android.os.Build.MODEL)
                     }
@@ -627,6 +639,7 @@ class AuthManager(
         scope.launch {
             val s = store()
             s.remove(KEY_SESSION_TOKEN)
+            s.remove(KEY_REFRESH_TOKEN)
             s.remove(KEY_PAIRED_META)
             if (relayUrl != null) {
                 certPinStore.removePinFor(relayUrl)
@@ -699,6 +712,7 @@ class AuthManager(
         scope.launch {
             val s = store()
             s.remove(KEY_SESSION_TOKEN)
+            s.remove(KEY_REFRESH_TOKEN)
             s.remove(KEY_PAIRED_META)
             _authState.value = AuthState.Unpaired
             _currentPairedSession.value = null
@@ -747,6 +761,14 @@ class AuthManager(
                 if (token != null) {
                     val s = store()
                     s.putString(KEY_SESSION_TOKEN, token)
+                    val refreshToken = payload["refresh_token"]
+                        ?.jsonPrimitive
+                        ?.contentOrNull
+                        ?.takeIf { it.isNotBlank() }
+                    if (refreshToken != null) {
+                        s.putString(KEY_REFRESH_TOKEN, refreshToken)
+                        Log.i(TAG, "handleAuthOk: stored rotated refresh token")
+                    }
                     _authState.value = AuthState.Paired(token)
                     Log.i(TAG, "handleAuthOk: Paired(token=${token.take(8)}…)")
                     // Server-issued code is one-shot — drop it once the
