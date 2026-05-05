@@ -364,6 +364,7 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
     from ..pair import (
         build_pairing_qr_payload,
         build_relay_pairing_block,
+        normalize_endpoint_candidates,
         read_server_config,
         _relay_lan_base_url,
         _resolve_lan_ip,
@@ -429,9 +430,10 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": err}, status=400)
 
     # Optional v3 multi-endpoint array (ADR 24). The caller (dashboard
-    # "pair new device" UI) composes this; the server just stores and
-    # mirrors it. Shape is validated on the phone — any server-side
-    # normalization would break HMAC round-tripping.
+    # "pair new device" UI) composes this; the relay validates only the
+    # outer array shape here. Server-owned normalization happens below,
+    # immediately before QR signing, so the signed payload and response
+    # still round-trip consistently.
     endpoints_raw = payload.get("endpoints")
     if endpoints_raw is not None and not isinstance(endpoints_raw, list):
         return web.json_response(
@@ -464,6 +466,20 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
     relay_url = _relay_lan_base_url(
         server.config.host, server.config.port, tls=relay_tls
     )
+    if endpoints_list is not None:
+        normalized_endpoints = normalize_endpoint_candidates(
+            endpoints_list,
+            api_port=api_port,
+            relay_port=server.config.port,
+            api_tls=api_tls,
+            relay_tls=relay_tls,
+        )
+        if normalized_endpoints != endpoints_list:
+            logger.info(
+                "Normalized pairing endpoint candidates before QR signing",
+            )
+        endpoints_list = normalized_endpoints
+
     relay_block = build_relay_pairing_block(
         relay_url=relay_url,
         code=code,

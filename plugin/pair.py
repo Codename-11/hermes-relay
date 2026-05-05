@@ -363,10 +363,10 @@ def _tailscale_endpoint(
     The helper contract (ADR 25) hands back something shaped roughly
     like ``{"hostname": "hermes.tail-scale.ts.net", "tailscale_ip":
     "100.64.0.1", "serve_ports": [...]}``. When Tailscale Serve is active
-    for the API or relay port, emit the MagicDNS hostname with TLS. When
-    Serve is not active, prefer the raw 100.x Tailscale IP and direct
-    port schemes so Android installs without MagicDNS resolution can still
-    pair and fail over on the tailnet.
+    for both the API and relay ports, emit the MagicDNS hostname with TLS.
+    When Serve is not active for the full pair, prefer the raw 100.x
+    Tailscale IP and direct port schemes so Android installs without
+    MagicDNS resolution can still pair and fail over on the tailnet.
     """
     hostname = status.get("hostname") or status.get("dns_name") or status.get("host")
     if isinstance(hostname, str):
@@ -393,7 +393,7 @@ def _tailscale_endpoint(
     use_serve_tls = (
         bool(explicit_tls)
         if explicit_tls is not None
-        else api_port in serve_ports or relay_port in serve_ports
+        else api_port in serve_ports and relay_port in serve_ports
     )
 
     if use_serve_tls:
@@ -422,6 +422,103 @@ def _tailscale_endpoint(
             "transport_hint": relay_scheme,
         },
     }
+
+
+def normalize_endpoint_candidates(
+    endpoints: Optional[list[Any]],
+    *,
+    api_port: Optional[int] = None,
+    relay_port: Optional[int] = None,
+    api_tls: Optional[bool] = None,
+    relay_tls: Optional[bool] = None,
+) -> Optional[list[Any]]:
+    """Normalize server-owned endpoint candidates before QR signing.
+
+    Dashboard/plugin callers may be long-running processes with an older
+    ``plugin.pair`` module cached. If they hand the relay a stale Tailscale
+    MagicDNS+TLS candidate while Tailscale Serve is not active, rewrite that
+    candidate to the direct 100.x tailnet route before the relay signs the QR.
+
+    Non-Tailscale roles and malformed records pass through unchanged.
+    """
+    if endpoints is None:
+        return None
+
+    normalized: list[Any] = []
+    status_loaded = False
+    status: Optional[dict[str, Any]] = None
+
+    def _int_or(value: Any, fallback: int) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return fallback
+
+    for index, candidate in enumerate(endpoints):
+        if not isinstance(candidate, dict):
+            normalized.append(candidate)
+            continue
+        if str(candidate.get("role") or "").strip().lower() != "tailscale":
+            normalized.append(candidate)
+            continue
+
+        if not status_loaded:
+            status = _tailscale_status()
+            status_loaded = True
+        if status is None:
+            normalized.append(candidate)
+            continue
+
+        api = candidate.get("api")
+        api_dict = api if isinstance(api, dict) else {}
+        relay = candidate.get("relay")
+        relay_dict = relay if isinstance(relay, dict) else {}
+
+        relay_url = str(relay_dict.get("url") or "")
+        parsed_relay = urlparse(relay_url) if relay_url else None
+
+        effective_api_port = _int_or(
+            api_dict.get("port"),
+            api_port if api_port is not None else 8642,
+        )
+        effective_relay_port = _int_or(
+            parsed_relay.port if parsed_relay is not None else None,
+            relay_port if relay_port is not None else 8767,
+        )
+        effective_api_tls = (
+            bool(api_tls) if api_tls is not None else bool(api_dict.get("tls"))
+        )
+        effective_relay_tls = (
+            bool(relay_tls)
+            if relay_tls is not None
+            else relay_url.startswith("wss://")
+            or str(relay_dict.get("transport_hint") or "").lower() == "wss"
+        )
+        priority = _int_or(candidate.get("priority"), index)
+
+        replacement = _tailscale_endpoint(
+            status,
+            api_port=effective_api_port,
+            relay_port=effective_relay_port,
+            api_tls=effective_api_tls,
+            relay_tls=effective_relay_tls,
+            priority=priority,
+        )
+        if replacement is None:
+            normalized.append(candidate)
+            continue
+
+        merged = dict(candidate)
+        merged_api = dict(api_dict)
+        merged_api.update(replacement["api"])
+        merged_relay = dict(relay_dict)
+        merged_relay.update(replacement["relay"])
+        merged["priority"] = replacement["priority"]
+        merged["api"] = merged_api
+        merged["relay"] = merged_relay
+        normalized.append(merged)
+
+    return normalized
 
 
 def _public_endpoint(

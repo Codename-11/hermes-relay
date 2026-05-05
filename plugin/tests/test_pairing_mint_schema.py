@@ -189,7 +189,8 @@ class PairingMintSchemaTests(AioHTTPTestCase):
                 },
             },
         ]
-        result = await self._mint({"endpoints": endpoints})
+        with mock.patch("plugin.pair._tailscale_status", return_value=None):
+            result = await self._mint({"endpoints": endpoints})
         qr = json.loads(result["qr_payload"])
 
         self.assertEqual(qr["hermes"], 3, "endpoints present → version 3")
@@ -197,6 +198,53 @@ class PairingMintSchemaTests(AioHTTPTestCase):
         self.assertEqual(qr["endpoints"], endpoints)
         # Mint body also mirrors it for the dashboard round-trip.
         self.assertEqual(result.get("endpoints"), endpoints)
+
+    async def test_mint_normalizes_tailscale_magic_dns_when_serve_off(self) -> None:
+        """Stale dashboard processes cannot sign a broken .ts.net HTTPS route."""
+        endpoints = [
+            {
+                "role": "lan",
+                "priority": 0,
+                "api": {"host": "172.16.24.250", "port": 8642, "tls": False},
+                "relay": {
+                    "url": "ws://172.16.24.250:8767",
+                    "transport_hint": "ws",
+                },
+            },
+            {
+                "role": "tailscale",
+                "priority": 1,
+                "api": {
+                    "host": "docker-server.tail6f460.ts.net",
+                    "port": 8642,
+                    "tls": True,
+                },
+                "relay": {
+                    "url": "wss://docker-server.tail6f460.ts.net:8767",
+                    "transport_hint": "wss",
+                },
+            },
+        ]
+
+        with mock.patch(
+            "plugin.pair._tailscale_status",
+            return_value={
+                "available": True,
+                "hostname": "docker-server.tail6f460.ts.net",
+                "tailscale_ip": "100.71.8.56",
+                "serve_ports": [],
+            },
+        ):
+            result = await self._mint({"endpoints": endpoints})
+        qr = json.loads(result["qr_payload"])
+        tailscale = qr["endpoints"][1]
+
+        self.assertEqual(qr["hermes"], 3)
+        self.assertEqual(tailscale["api"]["host"], "100.71.8.56")
+        self.assertFalse(tailscale["api"]["tls"])
+        self.assertEqual(tailscale["relay"]["url"], "ws://100.71.8.56:8767")
+        self.assertEqual(tailscale["relay"]["transport_hint"], "ws")
+        self.assertEqual(result.get("endpoints"), qr["endpoints"])
 
     async def test_mint_with_endpoints_signature_verifies(self) -> None:
         """ADR 24: the HMAC over a v3 payload must verify unchanged."""
@@ -352,6 +400,24 @@ class BuildEndpointCandidatesPreferTests(unittest.TestCase):
         self.assertTrue(tailscale["api"]["tls"])
         self.assertEqual(tailscale["relay"]["url"], "wss://test.tail-xyz.ts.net:8767")
         self.assertEqual(tailscale["relay"]["transport_hint"], "wss")
+
+    def test_tailscale_uses_raw_ip_when_only_relay_serve_is_active(self) -> None:
+        endpoints = self._build(
+            mode="tailscale",
+            public_url=None,
+            tailscale_status={
+                "available": True,
+                "hostname": "test.tail-xyz.ts.net",
+                "tailscale_ip": "100.64.0.1",
+                "serve_ports": [8767],
+            },
+        )
+        tailscale = next(c for c in endpoints if c["role"] == "tailscale")
+
+        self.assertEqual(tailscale["api"]["host"], "100.64.0.1")
+        self.assertFalse(tailscale["api"]["tls"])
+        self.assertEqual(tailscale["relay"]["url"], "ws://100.64.0.1:8767")
+        self.assertEqual(tailscale["relay"]["transport_hint"], "ws")
 
 
 if __name__ == "__main__":
