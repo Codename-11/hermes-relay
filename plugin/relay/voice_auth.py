@@ -18,7 +18,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from ipaddress import ip_address
+from ipaddress import ip_address, ip_network
 from typing import Literal
 
 import aiohttp
@@ -35,6 +35,7 @@ _VALIDATION_CACHE_TTL_SECONDS = 60.0
 _VALIDATION_TIMEOUT_SECONDS = 5.0
 _VALIDATION_CACHE: dict[tuple[str, str], float] = {}
 _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
+_TAILSCALE_CGNAT = ip_network("100.64.0.0/10")
 
 
 @dataclass(frozen=True)
@@ -91,6 +92,20 @@ def _is_loopback_remote(request: web.Request) -> bool:
         return False
 
 
+def _is_tailnet_remote(request: web.Request) -> bool:
+    """Return true for direct Tailscale/WireGuard CGNAT peer addresses."""
+    remote = (request.remote or "").strip().lower()
+    if not remote:
+        return False
+    remote = remote.strip("[]")
+    if remote.startswith("::ffff:"):
+        remote = remote.removeprefix("::ffff:")
+    try:
+        return ip_address(remote) in _TAILSCALE_CGNAT
+    except ValueError:
+        return False
+
+
 def _trusted_forwarded_https(request: web.Request) -> bool:
     if not _request_config_enabled(
         request,
@@ -105,6 +120,8 @@ def _trusted_forwarded_https(request: web.Request) -> bool:
 
 def _request_is_secure_enough_for_api_bearer(request: web.Request) -> bool:
     if _is_loopback_remote(request):
+        return True
+    if _is_tailnet_remote(request):
         return True
     if _request_config_enabled(
         request,
@@ -187,7 +204,7 @@ async def require_voice_auth(
         raise web.HTTPForbidden(
             text=(
                 "Hermes API bearer token requires HTTPS outside loopback "
-                "or RELAY_ALLOW_INSECURE_API_BEARER=1"
+                "or Tailscale, or RELAY_ALLOW_INSECURE_API_BEARER=1"
             ),
         )
 

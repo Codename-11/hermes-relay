@@ -494,6 +494,25 @@ class VoiceRoutesTests(AioHTTPTestCase):
         body = await resp.text()
         self.assertIn("HTTPS", body)
 
+    async def test_voice_config_accepts_tailnet_plaintext_api_bearer(
+        self,
+    ) -> None:
+        calls = self._stub_api_token_validator({"api-token"})
+        self._patch_voice_auth("_is_loopback_remote", lambda request: False)
+        self._patch_voice_auth("_is_tailnet_remote", lambda request: True)
+        sys.modules["tools.tts_tool"]._load_tts_config = lambda: {}
+        sys.modules["tools.transcription_tools"]._load_stt_config = lambda: {}
+        sys.modules["tools.voice_mode"].check_voice_requirements = lambda: {
+            "ok": True,
+        }
+
+        resp = await self.client.get(
+            "/voice/config", headers=self._bearer("api-token")
+        )
+
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(calls, [("http://localhost:8642", "api-token")])
+
     async def test_voice_config_accepts_trusted_proxy_https_api_bearer(
         self,
     ) -> None:
