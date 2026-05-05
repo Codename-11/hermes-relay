@@ -309,6 +309,7 @@ private fun ConnectionCard(
     onInsecureAckRequested: () -> Unit,
     onNavigateToPairedDevices: () -> Unit,
 ) {
+    val context = LocalContext.current
     var showRenameDialog by remember { mutableStateOf(false) }
     var showRevokeConfirm by remember { mutableStateOf(false) }
     var showRemoveConfirm by remember { mutableStateOf(false) }
@@ -336,6 +337,12 @@ private fun ConnectionCard(
         ep
     } else {
         null
+    }
+    val isTailscaleDetected: Boolean = if (activeConnectionViewModel != null) {
+        val detected by activeConnectionViewModel.isTailscaleDetected.collectAsState()
+        detected
+    } else {
+        false
     }
 
     Card(
@@ -486,6 +493,20 @@ private fun ConnectionCard(
                     var preferredRole by remember(connection.id) {
                         mutableStateOf(activeConnectionViewModel.getPreferredEndpointRole())
                     }
+                    val hasTailscaleRoute = endpoints.any {
+                        it.role.equals("tailscale", ignoreCase = true)
+                    }
+                    val tailscalePreferred =
+                        preferredRole?.equals("tailscale", ignoreCase = true) == true
+                    val routeNeedsAttention =
+                        activeEndpoint == null && liveState != RelayUiState.Connected
+                    val showTailscaleUnavailableHint =
+                        hasTailscaleRoute &&
+                            !isTailscaleDetected &&
+                            (tailscalePreferred || routeNeedsAttention)
+                    val tailscaleLaunchIntent = remember(context) {
+                        context.packageManager.getLaunchIntentForPackage("com.tailscale.ipn")
+                    }
                     val activeRouteLabel = activeEndpoint?.displayLabel() ?: "Resolving"
                     val activeRouteHost = activeEndpoint?.let {
                         "${it.api.host}:${it.api.port}"
@@ -503,6 +524,58 @@ private fun ConnectionCard(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
+                    }
+                    if (showTailscaleUnavailableHint) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.tertiaryContainer,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Text(
+                                    text = "Tailscale route is not active on this phone",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                )
+                                Text(
+                                    text = "Connect this phone in Tailscale, then re-check routes.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                )
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    if (tailscaleLaunchIntent != null) {
+                                        TextButton(
+                                            onClick = {
+                                                runCatching {
+                                                    context.startActivity(tailscaleLaunchIntent)
+                                                }
+                                            },
+                                            contentPadding =
+                                                androidx.compose.foundation.layout.PaddingValues(
+                                                    horizontal = 0.dp,
+                                                ),
+                                        ) {
+                                            Text("Open Tailscale")
+                                        }
+                                    }
+                                    TextButton(
+                                        onClick = { activeConnectionViewModel.probeNow() },
+                                        contentPadding =
+                                            androidx.compose.foundation.layout.PaddingValues(
+                                                horizontal = 0.dp,
+                                            ),
+                                    ) {
+                                        Text("Re-check")
+                                    }
+                                }
+                            }
+                        }
                     }
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),

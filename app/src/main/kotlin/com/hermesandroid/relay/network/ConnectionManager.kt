@@ -368,7 +368,11 @@ class ConnectionManager(
         if (endpointResolver == null) return
         val current = serverUrl ?: return
         scope.launch {
-            val resolved = resolveBestEndpointSafe() ?: return@launch
+            val resolved = resolveBestEndpointSafe()
+            if (resolved == null) {
+                _activeEndpoint.value = null
+                return@launch
+            }
             val newUrl = resolved.relay.url
             val normalizedNew = normalizeRelayUrl(newUrl)
             _activeEndpoint.value = resolved
@@ -397,7 +401,13 @@ class ConnectionManager(
                 val url = serverUrl ?: return
                 scope.launch {
                     val resolved = resolveBestEndpointSafe()
-                    val newUrl = resolved?.relay?.url ?: return@launch
+                    val newUrl = resolved?.relay?.url
+                    if (newUrl == null) {
+                        if (_connectionState.value != ConnectionState.Connected) {
+                            _activeEndpoint.value = null
+                        }
+                        return@launch
+                    }
                     val normalizedNew = normalizeRelayUrl(newUrl)
                     _activeEndpoint.value = resolved
                     // Only swap if the winner actually differs from the
@@ -421,6 +431,7 @@ class ConnectionManager(
         try {
             val request = NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
                 .build()
             cm.registerNetworkCallback(request, callback)
             networkCallback = callback
@@ -606,6 +617,8 @@ class ConnectionManager(
                 val targetUrl = resolved?.relay?.url
                 if (resolved != null) {
                     _activeEndpoint.value = resolved
+                } else {
+                    _activeEndpoint.value = null
                 }
                 if (targetUrl != null && normalizeRelayUrl(targetUrl) != url) {
                     Log.i(TAG, "scheduleReconnect: switching $url → ${normalizeRelayUrl(targetUrl)}")
