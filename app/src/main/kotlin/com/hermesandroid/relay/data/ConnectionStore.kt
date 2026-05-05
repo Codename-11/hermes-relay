@@ -327,8 +327,12 @@ class ConnectionStore private constructor(
                     // Already migrated or already has user-created connections.
                     return@edit
                 }
-                val apiUrl = legacyApiServerUrl ?: DEFAULT_API_URL
-                val relayUrl = legacyRelayUrl ?: DEFAULT_RELAY_URL
+                if (legacyApiServerUrl.isNullOrBlank() && legacyRelayUrl.isNullOrBlank()) {
+                    Log.i(TAG, "migrateLegacyConnectionIfNeeded: no legacy URLs to seed")
+                    return@edit
+                }
+                val apiUrl = legacyApiServerUrl?.takeIf { it.isNotBlank() } ?: DEFAULT_API_URL
+                val relayUrl = legacyRelayUrl?.takeIf { it.isNotBlank() } ?: DEFAULT_RELAY_URL
                 val id = java.util.UUID.randomUUID().toString()
                 val seed = Connection(
                     id = id,

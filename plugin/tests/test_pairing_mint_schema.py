@@ -261,8 +261,13 @@ class PairingMintSchemaTests(AioHTTPTestCase):
 class BuildEndpointCandidatesPreferTests(unittest.TestCase):
     """Direct tests for the `prefer` reorder path (ADR 24, 2026-04-19)."""
 
-    def _build(self, mode: str = "auto", prefer: str | None = None,
-               public_url: str | None = "https://example.com") -> list[dict]:
+    def _build(
+        self,
+        mode: str = "auto",
+        prefer: str | None = None,
+        public_url: str | None = "https://example.com",
+        tailscale_status: dict | None = None,
+    ) -> list[dict]:
         from plugin.pair import build_endpoint_candidates
 
         # Inject a synthetic Tailscale status so the test doesn't depend on
@@ -270,7 +275,7 @@ class BuildEndpointCandidatesPreferTests(unittest.TestCase):
         from plugin.relay import tailscale as ts_mod
         import unittest.mock as mock
 
-        fake_status = {
+        fake_status = tailscale_status or {
             "available": True,
             "hostname": "test.tail-xyz.ts.net",
             "tailscale_ip": "100.64.0.1",
@@ -320,6 +325,33 @@ class BuildEndpointCandidatesPreferTests(unittest.TestCase):
         endpoints = self._build(prefer="lan")
         self.assertEqual([c["role"] for c in endpoints], ["lan", "tailscale", "public"])
         self.assertEqual([c["priority"] for c in endpoints], [0, 1, 2])
+
+    def test_tailscale_uses_raw_ip_for_direct_tailnet_ports(self) -> None:
+        endpoints = self._build(mode="tailscale", public_url=None)
+        tailscale = next(c for c in endpoints if c["role"] == "tailscale")
+
+        self.assertEqual(tailscale["api"]["host"], "100.64.0.1")
+        self.assertFalse(tailscale["api"]["tls"])
+        self.assertEqual(tailscale["relay"]["url"], "ws://100.64.0.1:8767")
+        self.assertEqual(tailscale["relay"]["transport_hint"], "ws")
+
+    def test_tailscale_uses_magic_dns_tls_when_serve_is_active(self) -> None:
+        endpoints = self._build(
+            mode="tailscale",
+            public_url=None,
+            tailscale_status={
+                "available": True,
+                "hostname": "test.tail-xyz.ts.net",
+                "tailscale_ip": "100.64.0.1",
+                "serve_ports": [8642, 8767],
+            },
+        )
+        tailscale = next(c for c in endpoints if c["role"] == "tailscale")
+
+        self.assertEqual(tailscale["api"]["host"], "test.tail-xyz.ts.net")
+        self.assertTrue(tailscale["api"]["tls"])
+        self.assertEqual(tailscale["relay"]["url"], "wss://test.tail-xyz.ts.net:8767")
+        self.assertEqual(tailscale["relay"]["transport_hint"], "wss")
 
 
 if __name__ == "__main__":

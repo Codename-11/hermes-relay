@@ -1371,6 +1371,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 getApplication<Application>().relayDataStore.edit { prefs ->
                     prefs[KEY_API_SERVER_URL] = ""
                     prefs[KEY_RELAY_URL] = ""
+                    prefs.remove(KEY_LAST_SESSION_ID)
                 }
                 // rebuildApiClient() with blank URL nulls _apiClient,
                 // flips _apiServerReachable / _apiServerHealth /
@@ -2152,6 +2153,29 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 updateRelayUrl(relay.url)
                 if (relay.url.startsWith("ws://")) {
                     setInsecureMode(true)
+                }
+            }
+
+            // Persist route candidates before the first WSS attempt. On a
+            // no-LAN pair, waiting until auth.ok means the socket tries the
+            // LAN relay URL from the QR, never receives auth.ok, and therefore
+            // never stores the Tailscale fallback it needed to connect.
+            payload.endpoints?.takeIf { it.isNotEmpty() }?.let { endpoints ->
+                try {
+                    val ctx = getApplication<Application>()
+                    val deviceId = authManager.getOrCreateDeviceId()
+                    PairingPreferences.setDeviceEndpoints(ctx, deviceId, endpoints)
+                    android.util.Log.i(
+                        "ConnectionVM",
+                        "applyPairingPayload: pre-persisted ${endpoints.size} endpoint(s) " +
+                            "for device=$deviceId roles=${endpoints.map { it.role }}"
+                    )
+                } catch (e: Exception) {
+                    android.util.Log.w(
+                        "ConnectionVM",
+                        "applyPairingPayload: endpoint pre-persist failed; " +
+                            "initial connect will use relay.url (${e.message})"
+                    )
                 }
             }
 

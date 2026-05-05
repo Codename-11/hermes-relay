@@ -354,40 +354,72 @@ def _tailscale_endpoint(
     status: dict[str, Any],
     api_port: int,
     relay_port: int,
+    api_tls: bool,
+    relay_tls: bool,
     priority: int,
 ) -> Optional[dict[str, Any]]:
     """Materialize a ``role: tailscale`` candidate from a helper status dict.
 
     The helper contract (ADR 25) hands back something shaped roughly
-    like ``{"hostname": "hermes.tail-scale.ts.net", "https": True}``.
-    We're defensive about shape — if the hostname is missing or doesn't
-    look like a Tailscale magic-DNS record we skip the candidate rather
-    than emit a broken one. Tailscale's ``serve --https`` terminates TLS
-    so the api side is https by default; the relay is reached over wss
-    on the same hostname.
+    like ``{"hostname": "hermes.tail-scale.ts.net", "tailscale_ip":
+    "100.64.0.1", "serve_ports": [...]}``. When Tailscale Serve is active
+    for the API or relay port, emit the MagicDNS hostname with TLS. When
+    Serve is not active, prefer the raw 100.x Tailscale IP and direct
+    port schemes so Android installs without MagicDNS resolution can still
+    pair and fail over on the tailnet.
     """
     hostname = status.get("hostname") or status.get("dns_name") or status.get("host")
-    if not isinstance(hostname, str) or not hostname.strip():
+    if isinstance(hostname, str):
+        hostname = hostname.strip().rstrip(".")
+    else:
+        hostname = None
+
+    tailscale_ip = status.get("tailscale_ip") or status.get("ip") or status.get("address")
+    if isinstance(tailscale_ip, str):
+        tailscale_ip = tailscale_ip.strip()
+    else:
+        tailscale_ip = None
+
+    serve_ports_raw = status.get("serve_ports")
+    serve_ports: set[int] = set()
+    if isinstance(serve_ports_raw, list):
+        for port in serve_ports_raw:
+            try:
+                serve_ports.add(int(port))
+            except (TypeError, ValueError):
+                continue
+
+    explicit_tls = status.get("tls")
+    use_serve_tls = (
+        bool(explicit_tls)
+        if explicit_tls is not None
+        else api_port in serve_ports or relay_port in serve_ports
+    )
+
+    if use_serve_tls:
+        if not hostname or not hostname.endswith(".ts.net"):
+            return None
+        host = hostname
+        api_tls_effective = True
+        relay_scheme = "wss"
+    else:
+        host = tailscale_ip or hostname
+        if not isinstance(host, str) or not host.strip():
+            return None
+        api_tls_effective = api_tls
+        relay_scheme = "wss" if relay_tls else "ws"
+
+    host = host.strip().rstrip(".")
+    if not host:
         return None
-    hostname = hostname.strip().rstrip(".")
-    if not hostname.endswith(".ts.net"):
-        # Could be ipv4/ipv6 CGNAT-only; that's still a valid Tailscale
-        # endpoint but we only auto-detect .ts.net magic-DNS to avoid
-        # accidentally emitting a candidate pointing at a non-routable
-        # raw address. Operators wanting the ip path can pass a custom
-        # endpoint via the dashboard's /pairing/mint body.
-        return None
-    # Tailscale serve defaults to https; the helper can override via
-    # `tls: False` if the operator set up plain http (uncommon).
-    tls = bool(status.get("tls", True))
-    scheme = "wss" if tls else "ws"
+    url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
     return {
         "role": "tailscale",
         "priority": priority,
-        "api": {"host": hostname, "port": api_port, "tls": tls},
+        "api": {"host": host, "port": api_port, "tls": api_tls_effective},
         "relay": {
-            "url": f"{scheme}://{hostname}:{relay_port}",
-            "transport_hint": scheme,
+            "url": f"{relay_scheme}://{url_host}:{relay_port}",
+            "transport_hint": relay_scheme,
         },
     }
 
@@ -519,6 +551,8 @@ def build_endpoint_candidates(
                     status,
                     api_port=api_port,
                     relay_port=relay_port,
+                    api_tls=api_tls,
+                    relay_tls=relay_tls,
                     priority=next_priority,
                 )
             )
