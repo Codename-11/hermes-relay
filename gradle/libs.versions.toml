@@ -20,7 +20,7 @@ haze = "1.7.2"
 mlkit-barcode = "17.3.0"
 camera = "1.6.0"
 play-publisher = "4.0.0"
-media3 = "1.9.3"
+media3 = "1.10.0"
 androidVad = "2.0.10"
 spatialsdk = "0.12.0"
 
