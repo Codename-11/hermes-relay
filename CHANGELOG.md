@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-05-06
+
 ### Added
 
 - **Android bridge media sharing and MMS handoff.** New `android_share_media` and `android_send_mms` tools expose full file/attachment support through the relay media registry and Android `FileProvider` `content://` grants. Host-local paths are registered with `/media/register`, phones fetch bytes with their paired relay session, and the sideload app opens Android's native share or MMS compose UI after on-device confirmation. Relay HTTP now includes `/share_media` and `/send_mms`, and docs spell out that direct `android_send_sms` remains text-only `{to, body}`.
