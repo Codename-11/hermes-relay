@@ -1,0 +1,135 @@
+name: Release Relay server
+
+on:
+  push:
+    tags:
+      - "relay-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    name: Validate Relay release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/relay-v}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify Relay version sync
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+          import tomllib
+
+          tag_version = os.environ["TAG_VERSION"]
+          pyproject = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
+          package_version = pyproject["project"]["version"]
+          init_text = pathlib.Path("plugin/relay/__init__.py").read_text()
+          match = re.search(r'^__version__\s*=\s*"([^"]+)"', init_text, re.M)
+          if not match:
+              raise SystemExit("plugin/relay/__init__.py has no __version__")
+          runtime_version = match.group(1)
+          print(f"Tag version: {tag_version}")
+          print(f"pyproject.toml version: {package_version}")
+          print(f"plugin/relay/__init__.py version: {runtime_version}")
+          if tag_version != package_version or tag_version != runtime_version:
+              raise SystemExit("relay-v* tag does not match Relay version metadata")
+          PY
+        env:
+          TAG_VERSION: ${{ steps.version.outputs.version }}
+
+  test:
+    name: Test Relay package
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: |
+          pip install -r relay_server/requirements.txt
+          pip install pytest responses
+
+      - name: Syntax check
+        run: |
+          python -m py_compile plugin/relay/server.py
+          python -m py_compile plugin/relay/voice_auth.py
+          python -m py_compile plugin/tools/android_tool.py
+          python -m py_compile plugin/tools/desktop_tool.py
+          python -m py_compile relay_server/__init__.py relay_server/__main__.py
+
+      - name: Run focused Relay tests
+        run: |
+          python -m pytest \
+            plugin/tests/test_relay_security.py \
+            plugin/tests/test_voice_routes.py \
+            plugin/tests/test_session_grants.py
+
+  package:
+    name: Build and publish Relay package
+    needs: [validate, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Build wheel and sdist
+        run: |
+          pip install build
+          python -m build
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: relay-v${{ needs.validate.outputs.version }}
+          tag_name: relay-v${{ needs.validate.outputs.version }}
+          prerelease: ${{ contains(needs.validate.outputs.version, '-') }}
+          fail_on_unmatched_files: true
+          body: |
+            # Hermes-Relay server/Python package - relay-v${{ needs.validate.outputs.version }}
+
+            This release contains the Relay server and Python plugin package.
+            Android app releases use `v*` tags. Desktop CLI releases use
+            `desktop-v*` tags.
+
+            ## Install
+
+            ```bash
+            pip install hermes-relay==${{ needs.validate.outputs.version }}
+            ```
+
+            ## Verify
+
+            ```bash
+            python -m relay_server --help
+            ```
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/SHA256SUMS.txt

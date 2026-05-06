@@ -3,7 +3,7 @@
 > The full recipe for cutting a new release. Read this end-to-end before
 > tagging your first release.
 
-## Versioning
+## Release Tracks And Versioning
 
 Hermes-Relay follows [SemVer](https://semver.org/): `MAJOR.MINOR.PATCH`,
 with optional prerelease identifiers.
@@ -12,6 +12,20 @@ with optional prerelease identifiers.
 - `MINOR` — new features, backwards compatible
 - `PATCH` — bug fixes, backwards compatible
 - Prerelease suffixes: `-alpha`, `-beta`, `-rc.N` (e.g. `0.2.0-beta.1`)
+
+Hermes-Relay now ships three independently versioned surfaces:
+
+| Surface | Tag prefix | Version source | Bump script | Release workflow |
+|---|---|---|---|---|
+| Android app | `v*` | `gradle/libs.versions.toml` | `scripts/bump-android-version.sh` | `.github/workflows/release.yml` |
+| Relay server / Python package | `relay-v*` | `pyproject.toml` + `plugin/relay/__init__.py` | `scripts/bump-relay-version.sh` | `.github/workflows/release-relay.yml` |
+| Desktop CLI | `desktop-v*` | `desktop/package.json` | `npm version` or manual package bump | `.github/workflows/release-desktop.yml` |
+
+This split is intentional. The Relay server now carries features for both
+Android and desktop, so Relay fixes can ship without forcing an Android app
+versionCode bump, and desktop CLI alphas can continue on their own cadence.
+
+### Android app versioning
 
 **Source of truth:** `gradle/libs.versions.toml`
 
@@ -44,30 +58,33 @@ Never decrement `appVersionCode` — Play Console rejects any upload whose
 code is lower than or equal to a previous upload on the same track. Confirm
 current values with `scripts\dev.bat version`.
 
-### The three version sources (MUST stay in lockstep)
-
-There are **three** places the version lives, and they MUST all match on
-every release commit. Drift is silent and painful — we chased a "why does
-/health say 0.2.0" bug for hours on 2026-04-12 because `pyproject.toml`
-had drifted to `0.5.0` speculatively and `plugin/relay/__init__.py` was
-still at a stale `0.2.0`.
-
-| File | Line | Written by |
-|---|---|---|
-| `gradle/libs.versions.toml` | `appVersionName = "…"` | You (canonical) |
-| `pyproject.toml` | `version = "…"` | You (Python package) |
-| `plugin/relay/__init__.py` | `__version__ = "…"` | You (runtime, reported by `/health`) |
-
-**Always bump them atomically via `scripts/bump-version.sh`**:
+Always bump Android releases via:
 
 ```bash
-bash scripts/bump-version.sh 0.3.0
+bash scripts/bump-android-version.sh 0.6.2
 ```
 
-The script validates SemVer, bumps `appVersionCode` monotonically, rewrites
-all three files, runs a post-bump sanity grep, prints the diff, and tells
-you the next steps. It deliberately does NOT commit, tag, or touch
-`CHANGELOG.md` / `RELEASE_NOTES.md` — those need human prose.
+`scripts/bump-version.sh` remains as a backward-compatible alias for the
+Android script.
+
+### Relay server / Python package versioning
+
+Relay version metadata lives in two places and must stay in lockstep:
+
+| File | Line | Purpose |
+|---|---|---|
+| `pyproject.toml` | `version = "..."` | Python package metadata |
+| `plugin/relay/__init__.py` | `__version__ = "..."` | runtime version reported by `/health` |
+
+Always bump Relay releases via:
+
+```bash
+bash scripts/bump-relay-version.sh 0.6.2
+```
+
+The `relay-v*` release workflow validates the tag against both files,
+runs Relay tests, builds a wheel and sdist, generates checksums, and
+publishes a GitHub Release with the package artifacts.
 
 ## Branching policy
 
@@ -125,16 +142,17 @@ Squash merges lose that detail and are **not** the house style.
 ### Version bumps happen at release-prep on `dev`, NOT on feature branches
 
 Feature branches **never** touch `gradle/libs.versions.toml`,
-`pyproject.toml`, or `plugin/relay/__init__.py`. If two feature branches
-both bumped the version, they'd collide on `appVersionCode` (which must
-be monotonic) and you'd hit a merge conflict for no good reason.
+`pyproject.toml`, `plugin/relay/__init__.py`, or `desktop/package.json`.
+If two feature branches both bumped a release version, they'd collide on
+version files and, for Android, on `appVersionCode` (which must be
+monotonic).
 
-The version-bump commit lives on `dev`, created via
-`scripts/bump-version.sh`, as the last commit of the release-prep work.
-It's a dedicated commit with the message `release: vX.Y.Z` that also
-lands the CHANGELOG and RELEASE_NOTES updates. A release PR then merges
-`dev` → `main` with `--no-ff`, and the `v<version>` tag is cut from the
-resulting `main` tip.
+Version-bump commits live on `dev` as the last commit of release-prep
+work. Android commits use `release: vX.Y.Z`; Relay commits use
+`release(relay): relay-vX.Y.Z`; desktop commits use the existing
+`release: desktop-vX.Y.Z` convention. A release PR then merges `dev` →
+`main` with `--no-ff`, and the matching tag is cut from the resulting
+`main` tip.
 
 ### Branch protection
 
@@ -261,7 +279,8 @@ to Play Console. Manual UI uploads work without this.
 ### 4. GitHub Actions secrets
 
 In the repo: **Settings > Secrets and variables > Actions > New repository
-secret.** Add all four (see the table in "Required GitHub Secrets" below).
+secret.** Add all four (see the table in "Required Android Release Secrets"
+below).
 
 If `HERMES_KEYSTORE_BASE64` is missing, CI release builds fall back to
 debug signing and print a warning in the workflow summary — those
@@ -294,15 +313,14 @@ the unstable build.
 
 ## Release Process
 
-### 1. Bump the version (atomic across all three sources)
+### 1. Bump the Android app version
 
-Use `scripts/bump-version.sh` — it rewrites `libs.versions.toml`,
-`pyproject.toml`, AND `plugin/relay/__init__.py::__version__` in lockstep,
-increments `appVersionCode` monotonically, and runs a sanity check. Don't
-edit the files by hand; drift is silent and painful.
+Use `scripts/bump-android-version.sh`. It rewrites
+`gradle/libs.versions.toml`, increments `appVersionCode` monotonically,
+and runs a sanity check. Don't edit the Android version files by hand.
 
 ```bash
-bash scripts/bump-version.sh 0.3.0
+bash scripts/bump-android-version.sh 0.6.2
 ```
 
 Confirm the bump:
@@ -311,8 +329,8 @@ Confirm the bump:
 scripts\dev.bat version
 ```
 
-The script's diff output should show exactly three files changed and all
-three carrying the new version string.
+The script's diff output should show `gradle/libs.versions.toml` carrying
+the new app version and a higher `appVersionCode`.
 
 ### 2. Update release notes and changelog
 
@@ -374,28 +392,53 @@ resulting merge commit on `main`:
 git checkout dev
 git pull --ff-only origin dev
 
-git add gradle/libs.versions.toml pyproject.toml plugin/relay/__init__.py \
-        RELEASE_NOTES.md CHANGELOG.md \
+git add gradle/libs.versions.toml RELEASE_NOTES.md CHANGELOG.md \
         app/src/main/assets/whats_new.txt docs/play-store-listing.md
-git commit -m "release: v0.3.0"
+git commit -m "release: v0.6.2"
 git push origin dev
 
 # Open the release PR (dev -> main) and merge with --no-ff.
 # After merge, tag from the new main tip:
 git checkout main
 git pull --ff-only origin main
-git tag v0.3.0
-git push origin v0.3.0
+git tag v0.6.2
+git push origin v0.6.2
 ```
 
 Pushing a tag matching `v*` triggers `.github/workflows/release.yml`,
 which builds, signs, checksums, and creates a GitHub Release. Watch the
 run under the **Actions** tab.
 
-> **Why all three files in the commit?** See "The three version sources"
-> above — `bump-version.sh` rewrites them atomically, so they must be
-> staged + committed atomically too. Missing one creates the same drift
-> the script was built to prevent.
+Relay/Python version files are intentionally not part of an Android app
+release unless the Relay package itself is also being released.
+
+### Relay server / Python package release
+
+Use this when Relay server behavior changes independently of Android app
+delivery, for example desktop channel support, bridge routes, pairing
+server fixes, voice auth, or packaging changes.
+
+```bash
+git checkout dev
+git pull --ff-only origin dev
+
+bash scripts/bump-relay-version.sh 0.6.2
+git add pyproject.toml plugin/relay/__init__.py CHANGELOG.md
+git commit -m "release(relay): relay-v0.6.2"
+git push origin dev
+
+# Open the release PR (dev -> main) and merge with --no-ff.
+# After merge, tag from the new main tip:
+git checkout main
+git pull --ff-only origin main
+git tag relay-v0.6.2
+git push origin relay-v0.6.2
+```
+
+Pushing `relay-v*` triggers `.github/workflows/release-relay.yml`, which
+validates `pyproject.toml` and `plugin/relay/__init__.py`, runs Relay
+tests, builds a wheel and sdist, generates `SHA256SUMS.txt`, and creates
+a GitHub Release for the Relay package.
 
 ### 5. Upload to Play Console
 
@@ -462,14 +505,20 @@ Promote via the Play Console UI or `gradlew promoteReleaseArtifact`.
 
 ## CI Behavior
 
+Android, Relay, dashboard, and desktop now have separate CI/release lanes.
+This keeps a dashboard CSS fix from running the full Relay suite, and keeps
+Relay server changes from forcing an Android app `versionCode` bump.
+
 On every push of a tag matching `v*`, `.github/workflows/release.yml`:
 
 1. Validates the tag matches `appVersionName` in
    `gradle/libs.versions.toml` (mismatches fail the workflow).
-2. Runs `./gradlew assembleDebug` and `./gradlew test`.
+2. Runs the Android debug build and the stable sideload pairing/connection
+   regression slice with explicit timeouts.
 3. Decodes `HERMES_KEYSTORE_BASE64` into `$RUNNER_TEMP/release.keystore`
    and exports `HERMES_KEYSTORE_PATH` (skipped if the secret is unset).
-4. Builds both artifacts: `./gradlew bundleRelease assembleRelease`.
+4. Builds both Android release artifacts:
+   `./gradlew bundleRelease assembleRelease`.
 5. Generates `SHA256SUMS.txt` covering both.
 6. Creates a GitHub Release named `v<version>` with `RELEASE_NOTES.md` as
    the body. Attaches the APK, AAB, and `SHA256SUMS.txt`. Tags any version
@@ -478,7 +527,25 @@ On every push of a tag matching `v*`, `.github/workflows/release.yml`:
    succeeded. If `HERMES_KEYSTORE_BASE64` is missing, the summary warns
    that the artifacts are debug-signed and unsuitable for Play Store.
 
-## Required GitHub Secrets
+On every push of a tag matching `relay-v*`,
+`.github/workflows/release-relay.yml`:
+
+1. Validates the tag matches both `pyproject.toml` and
+   `plugin/relay/__init__.py`.
+2. Runs Relay syntax checks and the focused route/auth/session test slice.
+3. Builds the Python wheel and sdist with `python -m build`.
+4. Generates `dist/SHA256SUMS.txt`.
+5. Creates a GitHub Release named `relay-v<version>` with the wheel,
+   sdist, and checksum file attached.
+
+On every push of a tag matching `desktop-v*`,
+`.github/workflows/release-desktop.yml` builds and publishes the desktop
+CLI binaries. Dashboard-only changes are covered by
+`.github/workflows/ci-dashboard.yml`, which builds the dashboard plugin,
+runs the dashboard API tests, and verifies the modal CSS markers are present
+in the built bundle.
+
+## Required Android Release Secrets
 
 | Secret                      | Purpose                             | How to populate                                  |
 |-----------------------------|-------------------------------------|--------------------------------------------------|
@@ -490,23 +557,31 @@ On every push of a tag matching `v*`, `.github/workflows/release.yml`:
 ## Hotfix Recipe
 
 When production has a bug and you need to ship a fix without picking up
-unreleased work from `dev`:
+unreleased work from `dev`, branch from the affected release tag and only
+bump the version source for the surface you are shipping.
 
-1. `git checkout -b fix/short-name v0.1.0` — branch from the released
-   tag (not from `main` or `dev`).
+For an Android app hotfix:
+
+1. `git checkout -b fix/short-name v0.6.1` — branch from the released
+   Android tag (not from `main` or `dev`).
 2. Apply the fix, add a test, commit.
-3. Bump `appVersionName` and `appVersionCode` in
-   `gradle/libs.versions.toml` (and the other two version sources via
-   `scripts/bump-version.sh`).
-4. Update `RELEASE_NOTES.md` and `CHANGELOG.md`.
+3. Run `bash scripts/bump-android-version.sh 0.6.2` to update
+   `gradle/libs.versions.toml`.
+4. Update `RELEASE_NOTES.md`, `CHANGELOG.md`, in-app What's New, and Play
+   listing notes as needed.
 5. Open a PR from `fix/short-name` into `main`, merge with `--no-ff`.
-6. `git tag v0.1.1` from the new `main` tip and `git push origin v0.1.1`
-   — CI builds and publishes.
+6. `git tag v0.6.2` from the new `main` tip and `git push origin v0.6.2`
+   so Android release CI builds and publishes.
 7. Upload to Play Console as normal.
 8. Merge `main` back into `dev` (`git checkout dev && git merge --no-ff main`)
-   so `dev` picks up the hotfix and the version bumps. Without this,
-   `dev`'s `appVersionCode` lags behind `main` and the next release
+   so `dev` picks up the hotfix and the versionCode bump. Without this,
+   `dev`'s `appVersionCode` lags behind `main` and the next app release
    bump collides.
+
+For a Relay server hotfix, branch from the affected `relay-v*` tag, apply
+the fix, run `bash scripts/bump-relay-version.sh <next-version>`, merge to
+`main`, and tag `relay-v<next-version>`. Do not touch
+`gradle/libs.versions.toml` unless an Android app release is also shipping.
 
 ## Troubleshooting
 

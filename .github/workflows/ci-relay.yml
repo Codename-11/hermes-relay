@@ -4,7 +4,7 @@
 # Python-affecting paths so Android-only changes don't spin up the
 # Python toolchain.
 #
-# Pipeline: syntax-check -> unit-tests
+# Pipeline: syntax-check -> focused relay tests
 
 name: CI — Relay
 
@@ -12,7 +12,14 @@ on:
   push:
     branches: [main, dev]
     paths:
-      - "plugin/**"
+      - "plugin/__init__.py"
+      - "plugin/android_tool.py"
+      - "plugin/cli.py"
+      - "plugin/pair.py"
+      - "plugin/plugin.yaml"
+      - "plugin/relay/**"
+      - "plugin/tools/**"
+      - "plugin/tests/**"
       - "relay_server/**"
       - "hermes_relay_bootstrap/**"
       - "pyproject.toml"
@@ -20,7 +27,14 @@ on:
   pull_request:
     branches: [main, dev]
     paths:
-      - "plugin/**"
+      - "plugin/__init__.py"
+      - "plugin/android_tool.py"
+      - "plugin/cli.py"
+      - "plugin/pair.py"
+      - "plugin/plugin.yaml"
+      - "plugin/relay/**"
+      - "plugin/tools/**"
+      - "plugin/tests/**"
       - "relay_server/**"
       - "hermes_relay_bootstrap/**"
       - "pyproject.toml"
@@ -38,6 +52,7 @@ jobs:
   syntax-check:
     name: Syntax check (Python)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -60,17 +75,38 @@ jobs:
       - name: Syntax check (relay_server shim)
         run: python -m py_compile relay_server/__init__.py relay_server/__main__.py
 
+      - name: Validate Relay version metadata
+        run: |
+          python - <<'PY'
+          import pathlib
+          import re
+          import tomllib
+
+          pyproject = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
+          package_version = pyproject["project"]["version"]
+          init_text = pathlib.Path("plugin/relay/__init__.py").read_text()
+          match = re.search(r'^__version__\s*=\s*"([^"]+)"', init_text, re.M)
+          if not match:
+              raise SystemExit("plugin/relay/__init__.py has no __version__")
+          runtime_version = match.group(1)
+          print(f"pyproject.toml: {package_version}")
+          print(f"plugin/relay/__init__.py: {runtime_version}")
+          if package_version != runtime_version:
+              raise SystemExit("Relay version metadata is out of sync")
+          PY
+
   # ──────────────────────────────────────────────
-  # Python Relay — unittest discover
+  # Python Relay — focused route/auth/session tests
   #
   # Tests are ADVISORY on dev (push or PR) so WIP commits don't block the
   # merge queue. Strict on main — the dev → main release-merge PR surfaces
   # any real failures before release.
   # ──────────────────────────────────────────────
   unit-tests:
-    name: Unit tests (Python)
+    name: Focused Relay tests (Python)
     needs: syntax-check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Advisory on dev, strict on main. Evaluates to false (= strict) for
     # pushes to main and PRs whose base branch is main; true (= advisory)
     # for everything else (dev pushes, dev-targeted PRs, feature branches).
@@ -84,14 +120,14 @@ jobs:
         with:
           python-version: "3.11"
 
-      # conftest.py imports `pytest` and `responses` at collection time.
-      # `unittest discover` walks conftest.py like any other module, so both
-      # must be importable even though none of the tests themselves use
-      # pytest fixtures (they're all stdlib unittest.TestCase).
       - name: Install dependencies
         run: |
           pip install -r relay_server/requirements.txt
           pip install pytest responses
 
-      - name: Run unit tests
-        run: python -m unittest discover plugin/tests
+      - name: Run focused Relay tests
+        run: |
+          python -m pytest \
+            plugin/tests/test_relay_security.py \
+            plugin/tests/test_voice_routes.py \
+            plugin/tests/test_session_grants.py

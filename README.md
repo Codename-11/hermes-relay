@@ -239,7 +239,8 @@ Chat from the Android app connects directly to the Hermes API Server with the He
 | [API Reference](https://codename-11.github.io/hermes-relay/reference/api.html) | Hermes API endpoints used by both surfaces |
 | [Specification](docs/spec.md) | Full spec — protocol, UI, phases, dependencies |
 | [Architecture Decisions](docs/decisions.md) | ADRs — framework, channels, auth, terminal |
-| [Changelog](CHANGELOG.md) | Release history (Android `v*` and desktop `desktop-v*`) |
+| [Upstream Integration Sync](docs/upstream-integration-sync.md) | Supported Hermes extension points vs relay-owned compatibility layers |
+| [Changelog](CHANGELOG.md) | Release history (Android `v*`, Relay `relay-v*`, and desktop `desktop-v*`) |
 
 ---
 
