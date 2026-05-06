@@ -1,7 +1,7 @@
 [versions]
 appVersionName = "0.6.1"
 appVersionCode = "8"
-agp = "8.13.2"
+agp = "9.2.1"
 kotlin = "2.3.20"
 compose-bom = "2026.03.01"
 navigation-compose = "2.9.7"
