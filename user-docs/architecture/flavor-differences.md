@@ -96,12 +96,12 @@ The googlePlay build has a **fail-closed whitelist** in `BridgeCommandHandler`. 
 
 ```
 /ping, /screen, /current_app, /get_apps, /apps,
-/clipboard (GET only), /return_to_hermes, /setup, /events
+/clipboard (GET only), /return_to_hermes
 ```
 
 Every new route added to the `when` block defaults to sideload-only on the Play flavor unless explicitly added to this set. This prevents future routes from accidentally widening the Play APK's capability surface.
 
-Additionally, the four Tier C tools (`/location`, `/search_contacts`, `/call`, `/send_sms`) have individual `BuildFlavor.isSideload` gates that return `403` with the same `sideload_only` error code, even though they'd also be blocked by the whitelist. Belt and braces.
+Additionally, the sideload-only phone utility routes (`/location`, `/search_contacts`, `/call`, `/send_sms`, `/share_media`, `/send_mms`) have individual `BuildFlavor.isSideload` gates that return `403` with the same `sideload_only` error code, even though they'd also be blocked by the whitelist. Belt and braces.
 
 Clipboard write (`POST /clipboard`) has its own secondary gate inside the `/clipboard` handler because both GET and POST share a path -- the whitelist lets `/clipboard` through for read, and the handler blocks write on googlePlay.
 
@@ -158,4 +158,4 @@ Most call sites use `BuildFlavor.isSideload` for simple checks. The `bridgeTier1
 
 The `android_*` tool registrations in `plugin/android_tool.py` and `plugin/tools/android_tool.py` carry trust-model and denial-retry guidance in their description strings regardless of flavor. The plugin runs server-side and has no compile-time awareness of which flavor the phone is running. When a tool call hits a flavor gate at runtime, the phone returns a `403` with `error_code: sideload_only` and a human-readable message the agent can relay to the user.
 
-This means the agent may attempt to call `android_send_sms` on a googlePlay phone. The structured error response tells the agent the tool isn't available on this build and suggests falling back to driving the Messages app UI -- but that fallback is also gated by the play route whitelist, so the agent will get a second `sideload_only` error if it tries `android_tap_text` to press "Send". The result is fail-safe: sideload-only capabilities can't leak through alternate tool paths on the Play build.
+This means the agent may attempt to call `android_send_sms`, `android_share_media`, or `android_send_mms` on a googlePlay phone. The structured error response tells the agent the tool isn't available on this build. It should not try to work around the denial by driving the Messages app UI, because those action routes are also gated by the Play route whitelist and return `sideload_only`. The result is fail-safe: sideload-only capabilities can't leak through alternate tool paths on the Play build.

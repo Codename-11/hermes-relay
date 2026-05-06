@@ -1627,10 +1627,11 @@ async def _bridge_dispatch(
 # close over the path string here. One adapter per endpoint keeps the
 # route registration self-documenting at the call site.
 #
-# Endpoint inventory mirrors ``plugin/tools/android_tool.py``'s 15 tools:
+# Endpoint inventory mirrors ``plugin/tools/android_tool.py``'s bridge tools:
 #   GET  /ping, /screen, /screenshot, /get_apps, /current_app
 #   POST /tap, /tap_text, /type, /swipe, /open_app, /press_key,
-#        /scroll, /describe_node, /wait, /setup
+#        /scroll, /describe_node, /wait, /setup, /return_to_hermes,
+#        /share_media, /send_mms
 #
 # NOTE: the legacy relay used ``/apps`` for list apps but the Android app
 # expects ``/get_apps`` and the tool at line ~230 of android_tool.py calls
@@ -1696,6 +1697,10 @@ async def handle_bridge_drag(request: web.Request) -> web.Response:
 
 async def handle_bridge_open_app(request: web.Request) -> web.Response:
     return await _bridge_dispatch(request, "/open_app")
+
+
+async def handle_bridge_return_to_hermes(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/return_to_hermes")
 
 
 async def handle_bridge_press_key(request: web.Request) -> web.Response:
@@ -1806,6 +1811,14 @@ async def handle_bridge_call(request: web.Request) -> web.Response:
 
 async def handle_bridge_send_sms(request: web.Request) -> web.Response:
     return await _bridge_dispatch(request, "/send_sms")
+
+
+async def handle_bridge_share_media(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/share_media")
+
+
+async def handle_bridge_send_mms(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/send_mms")
 
 
 # === END PHASE3-bridge-server ===
@@ -3578,6 +3591,7 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_post("/swipe", handle_bridge_swipe)
     app.router.add_post("/drag", handle_bridge_drag)
     app.router.add_post("/open_app", handle_bridge_open_app)
+    app.router.add_post("/return_to_hermes", handle_bridge_return_to_hermes)
     app.router.add_post("/press_key", handle_bridge_press_key)
     app.router.add_post("/scroll", handle_bridge_scroll)
     app.router.add_post("/describe_node", handle_bridge_describe_node)  # A4
@@ -3604,6 +3618,8 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_post("/search_contacts", handle_bridge_search_contacts)
     app.router.add_post("/call", handle_bridge_call)
     app.router.add_post("/send_sms", handle_bridge_send_sms)
+    app.router.add_post("/share_media", handle_bridge_share_media)
+    app.router.add_post("/send_mms", handle_bridge_send_mms)
     # === END PHASE3-bridge-server ===
 
     # === PHASE3-status: loopback-gated structured phone status ===

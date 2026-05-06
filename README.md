@@ -272,7 +272,7 @@ hermes-relay/
 ├── relay_server/              # WSS relay server (Python + aiohttp; thin shim → plugin/relay)
 ├── plugin/                    # Hermes agent plugin
 │   ├── relay/                 #   - canonical relay (server.py, channels/, media, voice, desktop tools)
-│   ├── tools/                 #   - 18 android_* + 9 desktop_* tool handlers
+│   ├── tools/                 #   - android_* bridge + desktop_* tool handlers
 │   └── pair.py                #   - QR pairing CLI + multi-endpoint payload builder
 ├── skills/                    # Hermes agent skills
 │   └── devops/

@@ -8,7 +8,7 @@ to `plugins.enabled` in ~/.hermes/config.yaml, then restart hermes.
 Run `hermes pair` to generate a QR code for pairing clients.
 """
 
-from .android_tool import _SCHEMAS, _HANDLERS, _check_requirements
+from .tools.android_tool import _SCHEMAS, _HANDLERS, _check_requirements
 from .tools.desktop_tool import (
     _SCHEMAS as _DESKTOP_SCHEMAS,
     _HANDLERS as _DESKTOP_HANDLERS,

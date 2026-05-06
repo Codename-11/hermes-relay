@@ -1,5 +1,6 @@
 import json
 import os
+from unittest import mock
 import responses
 import pytest
 
@@ -213,10 +214,12 @@ class TestScreenshot:
         responses.add(
             responses.GET,
             f"{bridge_url}/screenshot",
-            json={"image": "base64data", "width": 1080, "height": 1920},
+            json={"image": "aGVsbG8=", "width": 1080, "height": 1920},
         )
-        result = json.loads(android_screenshot())
-        assert "image" in result
+        with mock.patch("plugin.relay.client.register_media", return_value="shot-token"):
+            result = android_screenshot()
+        assert "Screenshot captured (1080x1920)" in result
+        assert "MEDIA:hermes-relay://shot-token" in result
 
 
 class TestScroll:

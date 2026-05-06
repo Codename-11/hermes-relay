@@ -913,6 +913,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         multiplexer = multiplexer,
         scope = viewModelScope,
         screenCapture = screenCapture,
+        relayHttpClient = relayHttpClient,
+        mediaCacheWriter = mediaCacheWriter,
         // === PHASE3-safety-rails: safety enforcement ===
         safetyManager = bridgeSafetyManager,
         // === END PHASE3-safety-rails ===

@@ -1,6 +1,9 @@
 package com.hermesandroid.relay.network.handlers
 
+import android.content.ActivityNotFoundException
+import android.content.ClipData
 import android.content.Intent
+import android.net.Uri
 import android.util.Log
 import com.hermesandroid.relay.accessibility.ActionExecutor
 import com.hermesandroid.relay.accessibility.HermesAccessibilityService
@@ -21,15 +24,20 @@ import kotlinx.serialization.json.booleanOrNull
 import com.hermesandroid.relay.data.BuildFlavor
 // === END PHASE3-tier-C ===
 import com.hermesandroid.relay.network.ChannelMultiplexer
+import com.hermesandroid.relay.network.RelayHttpClient
 import com.hermesandroid.relay.network.models.Envelope
+import com.hermesandroid.relay.util.MediaCacheWriter
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -103,6 +111,10 @@ import kotlinx.serialization.json.contentOrNull
  *  - `/setup` → 200 no-op (host-side helper, phone has no setup work)
  *  - `/clipboard` (GET) → returns `{text: "..."}` (empty string = nothing copied)
  *  - `/clipboard` (POST) body `{text}` → returns `{success: true}`
+ *  - `/share_media` body `{attachments?, media?, path?, text?, package?}` →
+ *    launches Android's native share UI with FileProvider `content://` URIs
+ *  - `/send_mms` body `{to, body?, attachments?, media?, path?, package?}` →
+ *    opens a user-mediated MMS compose/share handoff
  *  - `/describe_node` body `{nodeId}` — A4: full property bag for a node
  *
  * # nodeId semantics (A4)
@@ -127,6 +139,8 @@ class BridgeCommandHandler(
     private val multiplexer: ChannelMultiplexer,
     private val scope: CoroutineScope,
     private val screenCapture: ScreenCapture? = null,
+    private val relayHttpClient: RelayHttpClient? = null,
+    private val mediaCacheWriter: MediaCacheWriter? = null,
     // === PHASE3-safety-rails: safety enforcement ===
     // Safety manager is optional so older tests that construct this handler
     // without the full DI graph still compile; in production ConnectionViewModel
@@ -207,14 +221,15 @@ class BridgeCommandHandler(
     //
     // Intentionally narrow — only commands that are PRIMARILY about
     // launching / switching to another app. /send_sms on sideload uses
-    // SmsManager and doesn't shift foreground; it does on googlePlay
-    // where the tool falls back to opening Messages, but that's already
-    // covered by android_send_sms's own `android_return_to_hermes`
-    // prompting in plugin/android_tool.py. Keep the allowlist minimal
-    // and extend only when a concrete need surfaces.
+    // SmsManager and doesn't shift foreground. /share_media and /send_mms
+    // intentionally open native Android share/compose surfaces, so they
+    // participate in the same auto-return bookkeeping as /open_app and
+    // /send_intent.
     private val foregroundShiftingPaths: Set<String> = setOf(
         "/open_app",
         "/send_intent",
+        "/share_media",
+        "/send_mms",
     )
 
     private data class PendingActivity(
@@ -222,6 +237,19 @@ class BridgeCommandHandler(
         val method: String,
         val summary: String,
         val timestampMs: Long,
+    )
+
+    private data class ShareAttachmentRef(
+        val media: String? = null,
+        val path: String? = null,
+        val contentType: String? = null,
+        val fileName: String? = null,
+    )
+
+    private data class CachedShareAttachment(
+        val uri: Uri,
+        val contentType: String,
+        val fileName: String?,
     )
 
     private val pendingActivities =
@@ -1325,6 +1353,9 @@ class BridgeCommandHandler(
                         requestId, 400,
                         buildJsonObject {
                             put("error", "missing 'to' or 'body' in body")
+                            put("status", "failed")
+                            put("reason", "invalid_schema")
+                            put("expected_schema", "{ \"to\": \"<phone>\", \"body\": \"<text>\" }")
                         }
                     )
                     return
@@ -1340,6 +1371,8 @@ class BridgeCommandHandler(
                         requestId, 503,
                         buildJsonObject {
                             put("error", "safety manager not initialized — refusing destructive action")
+                            put("status", "failed")
+                            put("reason", "safety_manager_missing")
                         }
                     )
                     return
@@ -1357,6 +1390,70 @@ class BridgeCommandHandler(
                     return
                 }
                 respondFromResult(requestId, executor.sendSms(to, smsBody))
+            }
+
+            "/share_media", "/send_mms" -> {
+                if (!BuildFlavor.isSideload) {
+                    respond(
+                        requestId, 403,
+                        buildJsonObject {
+                            put("error", "$path is only available on the sideload flavor of Hermes Relay. This build is googlePlay.")
+                            put("error_code", "sideload_only")
+                            put("flavor", "googlePlay")
+                        }
+                    )
+                    return
+                }
+                if (safetyManager == null) {
+                    respond(
+                        requestId, 503,
+                        buildJsonObject {
+                            put("error", "safety manager not initialized — refusing media share action")
+                            put("status", "failed")
+                            put("reason", "safety_manager_missing")
+                        }
+                    )
+                    return
+                }
+                val targetPkg = body["package"]?.jsonPrimitive?.contentOrNull
+                val targetAllowed = safetyManager.checkPackageAllowed(targetPkg)
+                if (!targetAllowed) {
+                    respond(
+                        requestId, 403,
+                        buildJsonObject {
+                            put("error", "blocked package ${targetPkg ?: "unknown"}")
+                            put("status", "blocked")
+                            put("reason", "blocked_package")
+                        }
+                    )
+                    return
+                }
+
+                val attachmentCount = extractShareAttachmentRefs(body).size
+                val to = body["to"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                val text = body["text"]?.jsonPrimitive?.contentOrNull
+                    ?: body["body"]?.jsonPrimitive?.contentOrNull
+                    ?: ""
+                val confirmText = if (path == "/send_mms") {
+                    val target = if (to.isBlank()) "the selected recipient" else to
+                    "Send MMS compose to $target with $attachmentCount attachment(s)?"
+                } else if (attachmentCount > 0) {
+                    "Share $attachmentCount attachment(s) from Hermes Relay?"
+                } else {
+                    "Share text from Hermes Relay?"
+                }
+                val allowed = safetyManager.awaitConfirmation(path, confirmText)
+                if (!allowed) {
+                    respond(
+                        requestId, 403,
+                        userDeniedResponse(
+                            "The user denied the media share action via the " +
+                                "on-device confirmation modal.",
+                        )
+                    )
+                    return
+                }
+                respondFromResult(requestId, shareMediaFromBody(path, body, service))
             }
             // === END PHASE3-tier-C ===
 
@@ -1623,6 +1720,303 @@ class BridgeCommandHandler(
         return if (out.isEmpty()) null else out
     }
 
+    private fun extractShareAttachmentRefs(body: JsonObject): List<ShareAttachmentRef> {
+        val refs = mutableListOf<ShareAttachmentRef>()
+
+        fun stringField(obj: JsonObject, key: String): String? =
+            (obj[key] as? JsonPrimitive)?.contentOrNull
+
+        fun stringValue(element: JsonElement): String? =
+            (element as? JsonPrimitive)?.contentOrNull
+
+        fun addRef(
+            media: String? = null,
+            path: String? = null,
+            contentType: String? = null,
+            fileName: String? = null,
+        ) {
+            val normalizedMedia = media?.trim()?.takeIf { it.isNotBlank() }
+            val normalizedPath = path?.trim()?.takeIf { it.isNotBlank() }
+            if (normalizedMedia == null && normalizedPath == null) return
+            refs.add(
+                ShareAttachmentRef(
+                    media = normalizedMedia,
+                    path = normalizedPath,
+                    contentType = contentType?.trim()?.takeIf { it.isNotBlank() },
+                    fileName = fileName?.trim()?.takeIf { it.isNotBlank() },
+                )
+            )
+        }
+
+        val contentType = stringField(body, "content_type")
+        val fileName = stringField(body, "file_name")
+        addRef(path = stringField(body, "path"), contentType = contentType, fileName = fileName)
+        addRef(media = stringField(body, "media"), contentType = contentType, fileName = fileName)
+        addRef(media = stringField(body, "media_token"), contentType = contentType, fileName = fileName)
+
+        (body["paths"] as? JsonArray)?.forEach { element ->
+            addRef(path = stringValue(element))
+        }
+        (body["media_tokens"] as? JsonArray)?.forEach { element ->
+            addRef(media = stringValue(element))
+        }
+        (body["attachments"] as? JsonArray)?.forEach { element: JsonElement ->
+            val obj = element as? JsonObject ?: return@forEach
+            val refContentType = stringField(obj, "content_type")
+            val refFileName = stringField(obj, "file_name")
+            val media = stringField(obj, "media")
+                ?: stringField(obj, "media_token")
+                ?: stringField(obj, "token")
+            addRef(
+                media = media,
+                path = stringField(obj, "path"),
+                contentType = refContentType,
+                fileName = refFileName,
+            )
+        }
+
+        return refs
+    }
+
+    private suspend fun shareMediaFromBody(
+        path: String,
+        body: JsonObject,
+        service: HermesAccessibilityService,
+    ): ActionExecutor.ActionResult {
+        val isMms = path == "/send_mms"
+        fun stringField(key: String): String? =
+            (body[key] as? JsonPrimitive)?.contentOrNull
+
+        val to = stringField("to").orEmpty()
+        val text = stringField("text")
+            ?: stringField("body")
+            ?: ""
+        val title = stringField("title")
+            ?: if (isMms) "Send MMS" else "Share with"
+        val explicitTargetPkg = stringField("package")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+
+        if (isMms && to.isBlank()) {
+            return ActionExecutor.ActionResult.failure(
+                "send_mms requires non-blank 'to'",
+                mapOf("status" to "failed", "reason" to "invalid_schema"),
+            )
+        }
+
+        val attachmentRefs = extractShareAttachmentRefs(body)
+        if (attachmentRefs.isEmpty() && text.isBlank()) {
+            return ActionExecutor.ActionResult.failure(
+                "$path requires at least one attachment or non-blank text",
+                mapOf("status" to "failed", "reason" to "invalid_schema"),
+            )
+        }
+
+        val cached = mutableListOf<CachedShareAttachment>()
+        if (attachmentRefs.isNotEmpty()) {
+            val client = relayHttpClient
+                ?: return ActionExecutor.ActionResult.failure(
+                    "relay HTTP client not initialized — cannot fetch media",
+                    mapOf("status" to "failed", "reason" to "relay_http_client_missing"),
+                )
+            val writer = mediaCacheWriter
+                ?: return ActionExecutor.ActionResult.failure(
+                    "media cache writer not initialized — cannot prepare attachment",
+                    mapOf("status" to "failed", "reason" to "media_cache_writer_missing"),
+                )
+
+            for (ref in attachmentRefs) {
+                val fetchResult = fetchShareAttachment(client, ref)
+                if (fetchResult.isFailure) {
+                    return ActionExecutor.ActionResult.failure(
+                        fetchResult.exceptionOrNull()?.message ?: "media fetch failed",
+                        mapOf("status" to "failed", "reason" to "media_fetch_failed"),
+                    )
+                }
+                val fetched = fetchResult.getOrThrow()
+                val contentType = ref.contentType
+                    ?: fetched.contentType.takeIf { it.isNotBlank() }
+                    ?: "application/octet-stream"
+                val fileName = ref.fileName ?: fetched.fileName
+                val uri = runCatching {
+                    writer.cache(fetched.bytes, contentType, fileName)
+                }.getOrElse { t ->
+                    return ActionExecutor.ActionResult.failure(
+                        "media cache failed: ${t.message}",
+                        mapOf("status" to "failed", "reason" to "media_cache_failed"),
+                    )
+                }
+                cached.add(
+                    CachedShareAttachment(
+                        uri = uri,
+                        contentType = contentType,
+                        fileName = fileName,
+                    )
+                )
+            }
+        }
+
+        val targetPkg = explicitTargetPkg
+            ?: if (isMms) {
+                runCatching {
+                    android.provider.Telephony.Sms.getDefaultSmsPackage(service)
+                }.getOrNull()
+            } else {
+                null
+            }
+
+        val intent = buildShareIntent(
+            isMms = isMms,
+            to = to,
+            text = text,
+            attachments = cached,
+            targetPkg = targetPkg,
+        )
+
+        val launchIntent = if (targetPkg.isNullOrBlank()) {
+            Intent.createChooser(intent, title).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                intent.clipData?.let { clipData = it }
+            }
+        } else {
+            intent
+        }
+
+        return try {
+            withContext(Dispatchers.Main) {
+                service.applicationContext.startActivity(launchIntent)
+            }
+            ActionExecutor.ActionResult.ok(
+                mapOf(
+                    "ok" to true,
+                    "status" to if (isMms) "compose_opened" else "share_opened",
+                    "mode" to if (isMms) "user_confirmed_mms_handoff" else "user_confirmed_share",
+                    "to" to if (isMms) to else null,
+                    "attachments" to cached.size,
+                    "content_types" to cached.map { it.contentType },
+                    "package" to targetPkg,
+                    "summary" to if (isMms) {
+                        "Opened MMS compose for $to with ${cached.size} attachment(s)"
+                    } else {
+                        "Opened share UI with ${cached.size} attachment(s)"
+                    },
+                )
+            )
+        } catch (e: ActivityNotFoundException) {
+            ActionExecutor.ActionResult.failure(
+                "No Android app can handle this ${if (isMms) "MMS" else "share"} request",
+                mapOf("status" to "failed", "reason" to "activity_not_found"),
+            )
+        } catch (e: SecurityException) {
+            ActionExecutor.ActionResult.failure(
+                "Android denied attachment URI grant: ${e.message}",
+                mapOf("status" to "failed", "reason" to "uri_permission_denied"),
+            )
+        } catch (t: Throwable) {
+            ActionExecutor.ActionResult.failure(
+                "share launch failed: ${t.message}",
+                mapOf("status" to "failed", "reason" to "android_exception"),
+            )
+        }
+    }
+
+    private suspend fun fetchShareAttachment(
+        client: RelayHttpClient,
+        ref: ShareAttachmentRef,
+    ): Result<RelayHttpClient.FetchedMedia> {
+        val media = ref.media?.trim().orEmpty()
+        val path = ref.path?.trim().orEmpty()
+        return when {
+            media.startsWith("MEDIA:hermes-relay://") -> {
+                client.fetchMedia(media.removePrefix("MEDIA:hermes-relay://"))
+            }
+            media.startsWith("hermes-relay://") -> {
+                client.fetchMedia(media.removePrefix("hermes-relay://"))
+            }
+            media.startsWith("MEDIA:/") || media.startsWith("MEDIA:\\") -> {
+                client.fetchMediaByPath(media.removePrefix("MEDIA:"), ref.contentType)
+            }
+            media.startsWith("MEDIA:") -> {
+                client.fetchMedia(media.removePrefix("MEDIA:"))
+            }
+            media.isNotBlank() -> client.fetchMedia(media)
+            path.isNotBlank() -> client.fetchMediaByPath(path, ref.contentType)
+            else -> Result.failure(IllegalArgumentException("attachment missing media token or path"))
+        }
+    }
+
+    private fun buildShareIntent(
+        isMms: Boolean,
+        to: String,
+        text: String,
+        attachments: List<CachedShareAttachment>,
+        targetPkg: String?,
+    ): Intent {
+        val intent = when {
+            isMms && attachments.isEmpty() -> Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$to"))
+            attachments.size > 1 -> Intent(Intent.ACTION_SEND_MULTIPLE)
+            else -> Intent(Intent.ACTION_SEND)
+        }
+
+        if (!(isMms && attachments.isEmpty())) {
+            intent.type = commonContentType(attachments).ifBlank { "text/plain" }
+        }
+        if (!targetPkg.isNullOrBlank()) {
+            intent.setPackage(targetPkg)
+        }
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+
+        if (text.isNotBlank()) {
+            intent.putExtra(Intent.EXTRA_TEXT, text)
+            if (isMms) {
+                intent.putExtra("sms_body", text)
+            }
+        }
+        if (isMms) {
+            intent.putExtra("address", to)
+        }
+
+        if (attachments.size == 1) {
+            intent.putExtra(Intent.EXTRA_STREAM, attachments.first().uri)
+        } else if (attachments.size > 1) {
+            intent.putParcelableArrayListExtra(
+                Intent.EXTRA_STREAM,
+                ArrayList<Uri>(attachments.map { it.uri }),
+            )
+        }
+        attachClipData(intent, attachments, serviceLabel = if (isMms) "mms attachment" else "attachment")
+        return intent
+    }
+
+    private fun commonContentType(attachments: List<CachedShareAttachment>): String {
+        if (attachments.isEmpty()) return "text/plain"
+        val normalized = attachments
+            .map { it.contentType.substringBefore(';').trim().lowercase() }
+            .filter { it.isNotBlank() }
+        if (normalized.isEmpty()) return "application/octet-stream"
+        val distinct = normalized.toSet()
+        if (distinct.size == 1) return distinct.first()
+        val majors = normalized.map { it.substringBefore('/') }.toSet()
+        return if (majors.size == 1) "${majors.first()}/*" else "*/*"
+    }
+
+    private fun attachClipData(
+        intent: Intent,
+        attachments: List<CachedShareAttachment>,
+        serviceLabel: String,
+    ) {
+        if (attachments.isEmpty()) return
+        val first = attachments.first()
+        val clip = ClipData.newRawUri(
+            first.fileName ?: serviceLabel,
+            first.uri,
+        )
+        attachments.drop(1).forEach { attachment ->
+            clip.addItem(ClipData.Item(attachment.uri))
+        }
+        intent.clipData = clip
+    }
+
     private suspend fun respondFromResult(requestId: String, result: ActionExecutor.ActionResult) {
         val status = if (result.ok) 200 else 400
         val payload = buildJsonObject {
@@ -1646,6 +2040,10 @@ class BridgeCommandHandler(
             } else {
                 val err = result.error ?: "unknown error"
                 put("error", err)
+                for ((k, v) in result.data) {
+                    if (v == null) continue
+                    put(k, anyToJsonElement(v))
+                }
                 // M2: structured error code for the LLM tool-calling path.
                 // ActionExecutor returns free-text errors like "Grant contacts
                 // permission in Settings..." which LLMs CAN interpret, but
@@ -1772,6 +2170,8 @@ class BridgeCommandHandler(
                 "re-attempt.",
         )
         put("error_code", "user_denied")
+        put("status", "blocked")
+        put("android_result", "user_denied")
         put("reason", "confirmation_denied_or_timeout")
         put("final", true)
         put(
@@ -1911,8 +2311,16 @@ class BridgeCommandHandler(
                 ?: ""
             "/press_key" -> body["key"]?.jsonPrimitive?.content ?: ""
             "/send_sms" -> {
-                val to = body["number"]?.jsonPrimitive?.content ?: "?"
+                val to = body["to"]?.jsonPrimitive?.content ?: "?"
+                "-> $to"
+            }
+            "/send_mms" -> {
+                val to = body["to"]?.jsonPrimitive?.content ?: "?"
                 "→ $to"
+            }
+            "/share_media" -> {
+                val count = extractShareAttachmentRefs(body).size
+                if (count > 0) "$count attachment(s)" else "text"
             }
             "/call" -> body["number"]?.jsonPrimitive?.content?.let { "→ $it" } ?: ""
             "/search_contacts" -> body["query"]?.jsonPrimitive?.content?.let { "\"$it\"" } ?: ""

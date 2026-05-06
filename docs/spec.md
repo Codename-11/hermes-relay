@@ -419,7 +419,7 @@ hermes-android/
 │   ├── channels/
 │   │   ├── chat.py            # proxies to Hermes WebAPI
 │   │   ├── terminal.py        # PTY-backed shell handler (Phase 2)
-│   │   └── bridge.py          # existing bridge protocol (stub)
+│   │   └── bridge.py          # WSS bridge command dispatch + response correlation
 │   └── __main__.py            # `python -m plugin.relay`
 └── relay_server/              # thin shim → plugin.relay (legacy entrypoint)
 ```
@@ -432,6 +432,7 @@ HTTP routes registered by `create_app()` in `plugin/relay/server.py`:
 | `/health` | GET | Health check — returns `{status, version, clients, sessions}` |
 | `/pairing` | POST | Generate a new relay-side pairing code |
 | `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code. Used by the pair command (`/hermes-relay-pair` skill or `hermes-pair` shim) to inject codes that will appear in QR payloads. Request: `{"code": "ABCD12"}`. Rejects non-loopback peers with HTTP 403. |
+| `/pairing/mint` | POST | **Loopback only.** Mint a fresh pairing code and signed QR payload for the dashboard pair/repair flow. |
 | `/api/profiles/{name}/config` | GET | Profile-scoped read-only config. Returns `{profile, path, config, readonly: true}` — `config` is the parsed `config.yaml` for `~/.hermes/` (when `name == "default"`) or `~/.hermes/profiles/<name>/`. Loopback callers skip bearer; remote callers require the relay session bearer. 404 on missing profile / missing config.yaml; 500 on yaml parse error. See §22 in decisions.md. |
 | `/api/profiles/{name}/skills` | GET | Profile-scoped skill enumeration. Walks `<profile>/skills/<category>/<skill>/SKILL.md` recursively; returns `{profile, skills: [{name, category, description, path, enabled: true}], total}`. Same auth model as `/config`. `name`/`description` come from YAML frontmatter when present, else directory basename. All skills report `enabled: true` today — see §22 for the toggle stub. |
 | `/api/profiles/{name}/soul` | GET | Profile-scoped raw `SOUL.md` read. Returns `{profile, path, content, exists, size_bytes}` with optional `truncated: true` when content exceeds the 200KB inline cap. Absent SOUL.md returns 200 with `exists: false` and an empty content string so the Inspector can distinguish "no soul" from transport failure. Same auth model as `/config`. 404 on unknown profile; 500 `{error: "soul_read_failed"}` on decode error. See §22 in decisions.md. |
@@ -521,10 +522,11 @@ Screenshot captured (1280x720)
 MEDIA:hermes-relay://<url-safe-16-byte-token>
 ```
 
-**Server:** three routes on `plugin/relay/server.py`:
+**Server:** media routes on `plugin/relay/server.py`:
 - `POST /media/register` — **loopback-only**. Body `{"path", "content_type", "file_name"}`. Validates path is absolute, resolves (`os.path.realpath`) under an allowed root, exists, is a regular file, fits under `RELAY_MEDIA_MAX_SIZE_MB`. Generates `secrets.token_urlsafe(16)` (128 bits entropy), stores the token → entry mapping in an in-memory `OrderedDict` LRU (capped at `RELAY_MEDIA_LRU_CAP`, TTL `RELAY_MEDIA_TTL_SECONDS`). Returns `{ok, token, expires_at}`. Used when a host-local tool explicitly wants to publish a file.
 - `GET /media/{token}` — requires `Authorization: Bearer <session_token>` against the existing `SessionManager` (same token WSS uses). Streams the file via `web.FileResponse` with the registered content type plus `Content-Disposition: inline; filename="..."` if the entry has a file name. 401 on missing/invalid bearer, 404 on unknown/expired token.
 - `GET /media/by-path?path=<abs>&content_type=<optional>` — requires bearer auth. Shares the same sandbox validation as `/media/register` via a common `validate_media_path()` helper: absolute path, `realpath`-resolves under an allowed root, exists, is a regular file, fits under the size cap. Content-Type is the phone's hint if provided, otherwise guessed via `mimetypes.guess_type()`. This route exists specifically for **LLM-emitted bare-path markers** — upstream `agent/prompt_builder.py` instructs the model to include `MEDIA:/absolute/path/to/file` in its response text, so the bare-path form is the agent's native output, not just a fallback. 401 auth, 403 sandbox, 404 missing file.
+- `POST /media/upload` — bearer-auth'd small upload route for phone-originated media. Accepts base64 content, writes a temp file, and registers it into the same media registry.
 
 **Phone:** parse → fetch → cache → render:
 1. `ChatHandler.scanForMediaMarkers()` runs on every `onTextDelta`, unconditionally (not gated on `parseToolAnnotations`). Matches `MEDIA:hermes-relay://([A-Za-z0-9_-]+)` and fires `onMediaAttachmentRequested(messageId, token)`. A second regex matches the bare-path form `MEDIA:(/\S+)` and fires `onMediaBarePathRequested(messageId, path)` — the ViewModel then calls `RelayHttpClient.fetchMediaByPath()` to pull bytes via `GET /media/by-path`. A per-session `dispatchedMediaMarkers` set dedupes between real-time streaming scans and the post-stream `finalizeMediaMarkers` reconciliation pass. `loadMessageHistory` (invoked by the `session_end reload` pattern at every stream complete) re-runs the same parser on server-stored content so client-injected attachments survive the wholesale state replace. Both marker forms are stripped from the rendered message text.
@@ -629,7 +631,7 @@ Tools register against the Hermes plugin API in `plugin/tools/android_tool.py` (
 | `android_ping` | `GET /ping` | Liveness check — does not require master enable | both |
 | `android_screen` | `GET /screen` | Serialize the accessibility tree → `ScreenContent` | both |
 | `android_screenshot` | `GET /screenshot` | `MediaProjection` PNG → `MEDIA:hermes-relay://<token>` | both |
-| `android_current_app` | `GET /current_app` | Foregrounded package name | both |
+| `android_current_app` | `GET /current_app` | Best-effort foregrounded package name; use `/screen` for verification | both |
 | `android_get_apps` (`/apps` legacy) | `GET /get_apps` | Installed launcher apps | both |
 | `android_tap` | `POST /tap` | Tap at `(x, y)` or on resolved `node_id` | both |
 | `android_tap_text` | `POST /tap_text` | Find text via accessibility tree, tap it (see A9 cascade below) | both |
@@ -669,18 +671,20 @@ Tools register against the Hermes plugin API in `plugin/tools/android_tool.py` (
 
 **v0.4 additions — Tier C (sideload-only):**
 
-Tier C tools add runtime permissions that trigger Google Play policy review and are intentionally scoped to the sideload flavor only. The permissions are declared in `app/src/sideload/AndroidManifest.xml`; the googlePlay manifest does not declare them and the tools no-op via the `BuildFlavor.current == SIDELOAD` guard.
+Tier C tools add runtime permissions or user-mediated system share/compose handoffs that are intentionally scoped to the sideload flavor only. The permissions are declared in `app/src/sideload/AndroidManifest.xml`; the googlePlay manifest does not declare them, and phone-side route gates return structured `403` / `error_code: sideload_only`.
 
 | Tool | HTTP route | Purpose | Permission |
 |------|-----------|---------|------------|
 | `android_location()` | `GET /location` | Last-known GPS fix via `LocationManager.getLastKnownLocation` | `ACCESS_FINE_LOCATION` |
 | `android_search_contacts(query, limit)` | `POST /search_contacts` | `ContactsContract` name → phone number lookup, cap on result count | `READ_CONTACTS` |
-| `android_call(number)` | `POST /call` | Auto-dial via `ACTION_CALL` on sideload; googlePlay stub falls back to `ACTION_DIAL` (user must confirm in the dialer). **Every call is gated on the destructive-verb confirmation modal**; see §6.4.2 safety notes. | `CALL_PHONE` |
-| `android_send_sms(to, body)` | `POST /send_sms` | Direct `SmsManager.sendTextMessage` (or `sendMultipartTextMessage` for long bodies) with a `PendingIntent` result callback. **Every send is gated on the destructive-verb confirmation modal.** | `SEND_SMS` |
+| `android_call(number)` | `POST /call` | Auto-dial via `ACTION_CALL`. **Every call is gated on the destructive-verb confirmation modal**; see §6.4.2 safety notes. | `CALL_PHONE` |
+| `android_send_sms(to, body)` | `POST /send_sms` | Text-only `SmsManager.sendTextMessage` (or `sendMultipartTextMessage` for long bodies) with a `PendingIntent` result callback. Returns structured `sent`, `blocked`, `timeout`, or `failed` status details. **Every send is gated on the destructive-verb confirmation modal.** | `SEND_SMS` |
+| `android_share_media(...)` | `POST /share_media` | Share text, host-local files, relay `MEDIA:` markers, or raw media tokens through Android's native share UI with `FileProvider` `content://` grants. | n/a |
+| `android_send_mms(to, body?, attachments...)` | `POST /send_mms` | Open a user-mediated MMS compose/share handoff with recipient, optional body, and attachments. Hermes Relay does not silently send MMS because Android reserves background MMS delivery for the default SMS app. | n/a |
 
-**Safety integration.** All HTTP routes except `/ping` and `/current_app` are gated in `BridgeCommandHandler` on the Bridge master toggle (`bridge_master_enabled` DataStore flag) and the Tier 5 three-stage safety check:
+**Safety integration.** All HTTP routes except `/ping`, `/current_app`, and `/return_to_hermes` are gated in `BridgeCommandHandler` on the Bridge master toggle (`bridge_master_enabled` DataStore flag) and the Tier 5 three-stage safety check:
 1. **Blocklist gate** — `BridgeSafetyManager.checkPackageAllowed(currentApp)` returns 403 `{"error": "blocked package <name>"}` when the foreground package is in the blocklist (~30 banking/payments/password-manager/2FA defaults seeded via `DEFAULT_BLOCKLIST`).
-2. **Destructive-verb confirmation** — `/tap_text` and `/type` commands whose text matches the user's destructive-verb regex list (`send` / `pay` / `delete` / `transfer` / `confirm` / `submit` / ...) suspend on a `CompletableDeferred<Boolean>` under a `withTimeout`, waiting for the user to Allow / Deny via the `BridgeStatusOverlay` modal. **Tier C `android_call` and `android_send_sms` always go through this gate regardless of body content** — a phone call or SMS is definitionally destructive. Denied or timed-out commands return 403 `{"error": "user denied destructive action", "reason": "confirmation_denied_or_timeout"}`.
+2. **Destructive-verb confirmation** — `/tap_text` and `/type` commands whose text matches the user's destructive-verb regex list (`send` / `pay` / `delete` / `transfer` / `confirm` / `submit` / ...) suspend on a `CompletableDeferred<Boolean>` under a `withTimeout`, waiting for the user to Allow / Deny via the `BridgeStatusOverlay` modal. **Tier C `android_call`, `android_send_sms`, `android_share_media`, and `android_send_mms` always go through this gate regardless of body content** — these actions leave the phone or hand user data to another app. Denied or timed-out commands return 403 `{"error": "user denied destructive action", "reason": "confirmation_denied_or_timeout"}`.
 3. **Auto-disable reschedule** — every successful command resets the idle countdown on `BridgeSafetyManager.rescheduleAutoDisable`, which flips master off after the configured idle window (default 30 min, clamped 5..120).
 
 The newly added Tier A/B tools all flow through the same `BridgeCommandHandler` dispatch and are covered by the existing gates without additional wiring. Tier A tools that only *read* (e.g. `android_screen_hash`, `android_clipboard_read`, `android_describe_node`) skip the destructive-verb check but still hit the blocklist and master-enable gates. `android_send_intent` and `android_broadcast` hit the blocklist gate keyed on the target `package` (not just the foreground app) so an agent can't bypass the blocklist by firing an Intent at a blocked target from an allowed foreground.

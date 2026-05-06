@@ -58,11 +58,13 @@ A **<span class="track-badge track-badge--sideload">Sideload only</span>** badge
 | Feature | Description |
 |---------|-------------|
 | Direct SMS | Send text messages via `SmsManager` with send-result confirmation — no dialer bounce |
+| File and media sharing | Share images, PDFs, audio, video, generated files, and captions through Android's native share sheet |
+| MMS attachment handoff | Open the messaging app with recipient, text, and attachments prepared for user-mediated send |
 | Contact search | Look up a phone number by contact name for voice intents like "text Mom" |
-| One-tap dialing | Place a call directly, with a dialer-opener fallback on Google Play |
+| One-tap dialing | Place a call directly from the sideload build |
 | Location awareness | GPS last-known-location read for "where am I?" and location-scoped commands |
 
-<sup>*</sup> On Google Play, the accessibility service is read-only — the gesture-synthesis code is compiled out for policy reasons. The action UI still surfaces but write actions silently no-op. Sideload ships the full gesture surface and the phone-utility tools above.
+<sup>*</sup> On Google Play, the accessibility service is read-only — action routes fail closed with `403 sideload_only` and do not attempt UI automation. Sideload ships the full gesture surface and the phone-utility tools above.
 
 ## Bridge — Safety Rails (always on, both tracks)
 

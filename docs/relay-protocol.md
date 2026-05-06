@@ -205,7 +205,7 @@ Message types:
 | `bridge.response` | Client → Server | Phone replies, echoing `request_id` |
 | `bridge.status` | Client → Server | Periodic device state (screen on, battery, current app, accessibility on) |
 
-Bridge exposes 30+ HTTP routes on the relay itself (mirrored from legacy): `/ping`, `/screen`, `/screenshot`, `/tap`, `/tap_text`, `/long_press`, `/type`, `/swipe`, `/drag`, `/open_app`, `/press_key`, `/scroll`, `/clipboard`, `/wait`, `/setup`, `/media`, `/find_nodes`, `/screen_hash`, `/diff_screen`, `/send_intent`, `/broadcast`, `/events`, `/location`, `/search_contacts`, `/call`, `/send_sms`, …
+Bridge exposes 30+ HTTP routes on the relay itself (mirrored from legacy): `/ping`, `/screen`, `/screenshot`, `/tap`, `/tap_text`, `/long_press`, `/type`, `/swipe`, `/drag`, `/open_app`, `/return_to_hermes`, `/press_key`, `/scroll`, `/clipboard`, `/wait`, `/setup`, `/media`, `/find_nodes`, `/screen_hash`, `/diff_screen`, `/send_intent`, `/broadcast`, `/events`, `/location`, `/search_contacts`, `/call`, `/send_sms`, `/share_media`, `/send_mms`, …
 
 Sources: `plugin/relay/channels/bridge.py`, `app/src/main/kotlin/.../network/handlers/BridgeCommandHandler.kt`.
 
