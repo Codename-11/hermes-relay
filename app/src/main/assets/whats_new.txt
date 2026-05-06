@@ -1,25 +1,16 @@
-v0.5.1 — Voice Mode Quality Pass
+v0.6.1 - Voice auth, route recovery, and media bridge
 
-Voice Quality
-• Gapless TTS playback — Media3 ExoPlayer with persistent player + addMediaItem
-• Sanitizer strips markdown, tool annotations, URLs, and emoji before ElevenLabs
-  (chat UI still shows emoji — only the voice path is cleaned)
-• Sentence coalescing + 800ms idle flush so short fragments join naturally
-• Prefetch-while-playing pipeline — no dead air between sentence chunks
+Voice and pairing
+* Voice mode can now use your saved Hermes API key directly.
+* Relay sessions recover better after server restarts and updates.
+* LAN/Tailscale pairing and route fallback are more reliable.
 
-Conversational Barge-In (opt-in, Voice Settings)
-• Interrupt the agent by just speaking — Silero VAD + AEC + hysteresis
-• Soft-duck on first positive, hard-cut on confirmed speech
-• Optional resume-from-next-sentence if the barge-in was a cough
-• Sensitivity picker (Off / Low / Default / High) + AEC compatibility hint
+Android bridge
+* Added share-sheet support for files, screenshots, relay media, and attachments.
+* Added MMS compose handoff with attachments.
+* SMS now reports clearer sent, blocked, timeout, and failed states.
+* Return-to-Hermes and bridge route docs now match the actual relay API.
 
-Silence Auto-Stop
-• The Silence Threshold slider in Voice Settings finally works — Continuous
-  and Tap-to-Talk modes now auto-submit after your configured silence window
-• Grace window: auto-stop waits until you've actually started speaking
-• Hold-to-Talk unchanged (physical release is the stop signal)
-
-Fixes
-• Final short sentence with emoji now spoken in Continuous mode
-• Continuous mode preference survives app restarts
-• Bootstrap gateway crash on startup ('tuple' has no attribute 'freeze') — fixed
+Update note
+* Same-flavor installs should keep pairing. Re-pair only after uninstalling data,
+  switching app flavor, revoking the device, or clearing the server session store.

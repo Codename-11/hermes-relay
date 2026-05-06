@@ -248,6 +248,50 @@ def build_payload(
     return json.dumps(payload, separators=(",", ":"))
 
 
+def build_relay_pairing_block(
+    *,
+    relay_url: str,
+    code: str,
+    ttl_seconds: Any = None,
+    grants: Optional[dict] = None,
+    transport_hint: Optional[str] = None,
+) -> dict[str, Any]:
+    """Build the nested ``relay`` block used by all QR emitters."""
+    relay_block: dict[str, Any] = {
+        "url": relay_url,
+        "code": code,
+    }
+    if ttl_seconds is not None:
+        relay_block["ttl_seconds"] = ttl_seconds
+    if grants is not None:
+        relay_block["grants"] = grants
+    if transport_hint is not None:
+        relay_block["transport_hint"] = transport_hint
+    return relay_block
+
+
+def build_pairing_qr_payload(
+    *,
+    host: str,
+    port: int,
+    key: str,
+    tls: bool,
+    relay: Optional[dict] = None,
+    endpoints: Optional[list[dict]] = None,
+    sign: bool = True,
+) -> str:
+    """Build the Android pairing QR payload shared by CLI and dashboard mint."""
+    return build_payload(
+        host=host,
+        port=port,
+        key=key,
+        tls=tls,
+        relay=relay,
+        endpoints=endpoints,
+        sign=sign,
+    )
+
+
 # ── Endpoint candidate discovery (ADR 24) ────────────────────────────────────
 
 
@@ -310,42 +354,171 @@ def _tailscale_endpoint(
     status: dict[str, Any],
     api_port: int,
     relay_port: int,
+    api_tls: bool,
+    relay_tls: bool,
     priority: int,
 ) -> Optional[dict[str, Any]]:
     """Materialize a ``role: tailscale`` candidate from a helper status dict.
 
     The helper contract (ADR 25) hands back something shaped roughly
-    like ``{"hostname": "hermes.tail-scale.ts.net", "https": True}``.
-    We're defensive about shape — if the hostname is missing or doesn't
-    look like a Tailscale magic-DNS record we skip the candidate rather
-    than emit a broken one. Tailscale's ``serve --https`` terminates TLS
-    so the api side is https by default; the relay is reached over wss
-    on the same hostname.
+    like ``{"hostname": "hermes.tail-scale.ts.net", "tailscale_ip":
+    "100.64.0.1", "serve_ports": [...]}``. When Tailscale Serve is active
+    for both the API and relay ports, emit the MagicDNS hostname with TLS.
+    When Serve is not active for the full pair, prefer the raw 100.x
+    Tailscale IP and direct port schemes so Android installs without
+    MagicDNS resolution can still pair and fail over on the tailnet.
     """
     hostname = status.get("hostname") or status.get("dns_name") or status.get("host")
-    if not isinstance(hostname, str) or not hostname.strip():
+    if isinstance(hostname, str):
+        hostname = hostname.strip().rstrip(".")
+    else:
+        hostname = None
+
+    tailscale_ip = status.get("tailscale_ip") or status.get("ip") or status.get("address")
+    if isinstance(tailscale_ip, str):
+        tailscale_ip = tailscale_ip.strip()
+    else:
+        tailscale_ip = None
+
+    serve_ports_raw = status.get("serve_ports")
+    serve_ports: set[int] = set()
+    if isinstance(serve_ports_raw, list):
+        for port in serve_ports_raw:
+            try:
+                serve_ports.add(int(port))
+            except (TypeError, ValueError):
+                continue
+
+    explicit_tls = status.get("tls")
+    use_serve_tls = (
+        bool(explicit_tls)
+        if explicit_tls is not None
+        else api_port in serve_ports and relay_port in serve_ports
+    )
+
+    if use_serve_tls:
+        if not hostname or not hostname.endswith(".ts.net"):
+            return None
+        host = hostname
+        api_tls_effective = True
+        relay_scheme = "wss"
+    else:
+        host = tailscale_ip or hostname
+        if not isinstance(host, str) or not host.strip():
+            return None
+        api_tls_effective = api_tls
+        relay_scheme = "wss" if relay_tls else "ws"
+
+    host = host.strip().rstrip(".")
+    if not host:
         return None
-    hostname = hostname.strip().rstrip(".")
-    if not hostname.endswith(".ts.net"):
-        # Could be ipv4/ipv6 CGNAT-only; that's still a valid Tailscale
-        # endpoint but we only auto-detect .ts.net magic-DNS to avoid
-        # accidentally emitting a candidate pointing at a non-routable
-        # raw address. Operators wanting the ip path can pass a custom
-        # endpoint via the dashboard's /pairing/mint body.
-        return None
-    # Tailscale serve defaults to https; the helper can override via
-    # `tls: False` if the operator set up plain http (uncommon).
-    tls = bool(status.get("tls", True))
-    scheme = "wss" if tls else "ws"
+    url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
     return {
         "role": "tailscale",
         "priority": priority,
-        "api": {"host": hostname, "port": api_port, "tls": tls},
+        "api": {"host": host, "port": api_port, "tls": api_tls_effective},
         "relay": {
-            "url": f"{scheme}://{hostname}:{relay_port}",
-            "transport_hint": scheme,
+            "url": f"{relay_scheme}://{url_host}:{relay_port}",
+            "transport_hint": relay_scheme,
         },
     }
+
+
+def normalize_endpoint_candidates(
+    endpoints: Optional[list[Any]],
+    *,
+    api_port: Optional[int] = None,
+    relay_port: Optional[int] = None,
+    api_tls: Optional[bool] = None,
+    relay_tls: Optional[bool] = None,
+) -> Optional[list[Any]]:
+    """Normalize server-owned endpoint candidates before QR signing.
+
+    Dashboard/plugin callers may be long-running processes with an older
+    ``plugin.pair`` module cached. If they hand the relay a stale Tailscale
+    MagicDNS+TLS candidate while Tailscale Serve is not active, rewrite that
+    candidate to the direct 100.x tailnet route before the relay signs the QR.
+
+    Non-Tailscale roles and malformed records pass through unchanged.
+    """
+    if endpoints is None:
+        return None
+
+    normalized: list[Any] = []
+    status_loaded = False
+    status: Optional[dict[str, Any]] = None
+
+    def _int_or(value: Any, fallback: int) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return fallback
+
+    for index, candidate in enumerate(endpoints):
+        if not isinstance(candidate, dict):
+            normalized.append(candidate)
+            continue
+        if str(candidate.get("role") or "").strip().lower() != "tailscale":
+            normalized.append(candidate)
+            continue
+
+        if not status_loaded:
+            status = _tailscale_status()
+            status_loaded = True
+        if status is None:
+            normalized.append(candidate)
+            continue
+
+        api = candidate.get("api")
+        api_dict = api if isinstance(api, dict) else {}
+        relay = candidate.get("relay")
+        relay_dict = relay if isinstance(relay, dict) else {}
+
+        relay_url = str(relay_dict.get("url") or "")
+        parsed_relay = urlparse(relay_url) if relay_url else None
+
+        effective_api_port = _int_or(
+            api_dict.get("port"),
+            api_port if api_port is not None else 8642,
+        )
+        effective_relay_port = _int_or(
+            parsed_relay.port if parsed_relay is not None else None,
+            relay_port if relay_port is not None else 8767,
+        )
+        effective_api_tls = (
+            bool(api_tls) if api_tls is not None else bool(api_dict.get("tls"))
+        )
+        effective_relay_tls = (
+            bool(relay_tls)
+            if relay_tls is not None
+            else relay_url.startswith("wss://")
+            or str(relay_dict.get("transport_hint") or "").lower() == "wss"
+        )
+        priority = _int_or(candidate.get("priority"), index)
+
+        replacement = _tailscale_endpoint(
+            status,
+            api_port=effective_api_port,
+            relay_port=effective_relay_port,
+            api_tls=effective_api_tls,
+            relay_tls=effective_relay_tls,
+            priority=priority,
+        )
+        if replacement is None:
+            normalized.append(candidate)
+            continue
+
+        merged = dict(candidate)
+        merged_api = dict(api_dict)
+        merged_api.update(replacement["api"])
+        merged_relay = dict(relay_dict)
+        merged_relay.update(replacement["relay"])
+        merged["priority"] = replacement["priority"]
+        merged["api"] = merged_api
+        merged["relay"] = merged_relay
+        normalized.append(merged)
+
+    return normalized
 
 
 def _public_endpoint(
@@ -475,6 +648,8 @@ def build_endpoint_candidates(
                     status,
                     api_port=api_port,
                     relay_port=relay_port,
+                    api_tls=api_tls,
+                    relay_tls=relay_tls,
                     priority=next_priority,
                 )
             )
@@ -1078,16 +1253,15 @@ def pair_command(args) -> None:
                 grants=grants_dict,
                 transport_hint=transport_hint,
             ):
-                relay_block = {
-                    "url": _relay_lan_base_url(
+                relay_block = build_relay_pairing_block(
+                    relay_url=_relay_lan_base_url(
                         relay_cfg["host"], relay_port, tls=relay_tls
                     ),
-                    "code": relay_code,
-                    "ttl_seconds": ttl_seconds,
-                    "transport_hint": transport_hint,
-                }
-                if grants_dict:
-                    relay_block["grants"] = grants_dict
+                    code=relay_code,
+                    ttl_seconds=ttl_seconds,
+                    grants=grants_dict,
+                    transport_hint=transport_hint,
+                )
             else:
                 print(
                     "  [warn] Relay is running but /pairing/register was "
@@ -1125,8 +1299,13 @@ def pair_command(args) -> None:
             print(f"  [error] --mode/--public-url: {exc}", file=sys.stderr)
             sys.exit(2)
 
-    payload = build_payload(
-        host, port, key, tls, relay=relay_block, endpoints=endpoints or None
+    payload = build_pairing_qr_payload(
+        host=host,
+        port=port,
+        key=key,
+        tls=tls,
+        relay=relay_block,
+        endpoints=endpoints or None,
     )
 
     # Always show text block — works in any terminal including Hermes TUI

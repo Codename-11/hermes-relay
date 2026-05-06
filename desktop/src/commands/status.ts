@@ -66,6 +66,10 @@ export async function statusCommand(args: ParsedArgs): Promise<number> {
     process.stdout.write(`    paired:   ${age} ago\n`)
     process.stdout.write(`    token:    ${tokenDisplay}\n`)
     process.stdout.write(`    expires:  ${humanExpiry(rec.ttlExpiresAt)}\n`)
+    const computerUse = rec.toolsConsented ? 'with desktop tools' : 'no'
+    process.stdout.write(
+      `    desktop: tools=${rec.toolsConsented ? 'yes' : 'no'}, computer-use=${computerUse}\n`
+    )
     const role = parseRole(rec.endpointRole)
     if (role) {
       process.stdout.write(`    route:    ${roleLabel(role)}\n`)

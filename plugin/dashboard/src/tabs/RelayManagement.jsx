@@ -34,10 +34,56 @@ function valueText(value) {
   return String(value);
 }
 
+const GRANT_ORDER = {
+  chat: 0,
+  bridge: 10,
+  terminal: 20,
+  tui: 30,
+  "voice:config": 40,
+  "voice:stt": 41,
+  "voice:tts": 42,
+};
+
+function grantSortKey(name) {
+  const normalized = String(name || "").toLowerCase();
+  return Object.prototype.hasOwnProperty.call(GRANT_ORDER, normalized)
+    ? GRANT_ORDER[normalized]
+    : 100;
+}
+
+function formatGrantName(name) {
+  const normalized = String(name || "").toLowerCase();
+  switch (normalized) {
+    case "chat":
+      return "Chat";
+    case "bridge":
+      return "Bridge";
+    case "terminal":
+      return "Terminal";
+    case "tui":
+      return "TUI";
+    case "voice:config":
+      return "Voice config";
+    case "voice:stt":
+      return "Voice STT";
+    case "voice:tts":
+      return "Voice TTS";
+    default:
+      return String(name || "");
+  }
+}
+
+function sortGrants(grants) {
+  return grants.sort((left, right) => {
+    const byKnownOrder = grantSortKey(left.name) - grantSortKey(right.name);
+    return byKnownOrder || String(left.name).localeCompare(String(right.name));
+  });
+}
+
 function extractGrants(session) {
   const raw = session && session.grants;
   if (Array.isArray(raw)) {
-    return raw
+    const grants = raw
       .map((entry) => {
         if (typeof entry === "string") return { name: entry, detail: "" };
         if (!entry || typeof entry !== "object") return null;
@@ -51,9 +97,10 @@ function extractGrants(session) {
         };
       })
       .filter(Boolean);
+    return sortGrants(grants);
   }
   if (raw && typeof raw === "object") {
-    return Object.entries(raw).map(([name, value]) => ({
+    return sortGrants(Object.entries(raw).map(([name, value]) => ({
       name,
       detail:
         value && typeof value === "object"
@@ -61,7 +108,7 @@ function extractGrants(session) {
             ? ttlCountdown(value.expires_at || value.expiresAt || value.until)
             : formatGrantValue(value.ttl_seconds ?? value.ttl ?? value.seconds)
           : formatGrantValue(value),
-    }));
+    })));
   }
   return [];
 }
@@ -353,7 +400,7 @@ export default function RelayManagement({ autoRefresh }) {
                           ) : (
                             grants.map((g) => (
                               <Badge key={`${g.name}:${g.detail}`} variant="secondary" className="text-xs">
-                                {g.detail ? `${g.name} ${g.detail}` : g.name}
+                                {g.detail ? `${formatGrantName(g.name)} ${g.detail}` : formatGrantName(g.name)}
                               </Badge>
                             ))
                           )}

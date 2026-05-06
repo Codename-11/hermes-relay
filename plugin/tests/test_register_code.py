@@ -9,6 +9,8 @@ Coverage:
 
 * ``normalize_pairing_code`` — accepts valid codes, rejects bad chars,
   rejects wrong length, rejects empty/None.
+* ``pair_command`` — keeps the API bearer in top-level ``key`` while the
+  one-shot relay pairing code stays in ``relay.code``.
 * ``register_code_command`` — happy path posts to ``/pairing/register``
   with the right body shape (incl. TTL/grants/transport-hint), surfaces
   validation failures as exit code 2, surfaces relay-down as exit code 1,
@@ -96,6 +98,94 @@ def _args(**overrides: object) -> types.SimpleNamespace:
     }
     defaults.update(overrides)
     return types.SimpleNamespace(**defaults)
+
+
+# ── pair_command ─────────────────────────────────────────────────────────────
+
+
+def _pair_args(**overrides: object) -> types.SimpleNamespace:
+    """Build an argparse-Namespace stand-in for pair_command."""
+    defaults: dict[str, object] = {
+        "register_code": None,
+        "host": None,
+        "port": None,
+        "ttl": None,
+        "grants": None,
+        "no_relay": False,
+        "mode": "auto",
+        "public_url": None,
+        "prefer": None,
+        "png": False,
+        "no_qr": True,
+    }
+    defaults.update(overrides)
+    return types.SimpleNamespace(**defaults)
+
+
+class PairCommandTests(unittest.TestCase):
+    def test_qr_payload_keeps_api_key_separate_from_relay_pair_code(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_build_payload(
+            host,
+            port,
+            key,
+            tls,
+            relay=None,
+            sign=True,
+            endpoints=None,
+        ):
+            payload = {
+                "hermes": 2 if relay else 1,
+                "host": host,
+                "port": port,
+                "key": key,
+                "tls": tls,
+            }
+            if relay is not None:
+                payload["relay"] = relay
+            if endpoints:
+                payload["endpoints"] = endpoints
+            captured["payload"] = payload
+            return json.dumps(payload)
+
+        with patch.object(
+            pair,
+            "read_server_config",
+            return_value={
+                "host": "10.0.0.42",
+                "port": 8642,
+                "key": "sk-cli-config",
+                "tls": False,
+            },
+        ), patch.object(
+            pair,
+            "read_relay_config",
+            return_value={"host": "0.0.0.0", "port": 8767, "tls": False},
+        ), patch.object(
+            pair, "probe_relay", return_value={"status": "ok"}
+        ), patch.object(
+            pair, "_generate_relay_code", return_value="ABCD12"
+        ), patch.object(
+            pair, "register_relay_code", return_value=True
+        ), patch.object(
+            pair, "_relay_lan_base_url", return_value="ws://10.0.0.42:8767"
+        ), patch.object(
+            pair, "build_endpoint_candidates", return_value=[]
+        ), patch.object(
+            pair, "build_payload", side_effect=fake_build_payload
+        ):
+            with redirect_stdout(io.StringIO()):
+                pair.pair_command(_pair_args())
+
+        payload = captured["payload"]
+        self.assertEqual(payload["host"], "10.0.0.42")
+        self.assertEqual(payload["port"], 8642)
+        self.assertEqual(payload["key"], "sk-cli-config")
+        self.assertNotEqual(payload["key"], "ABCD12")
+        relay = payload["relay"]
+        self.assertEqual(relay["url"], "ws://10.0.0.42:8767")
+        self.assertEqual(relay["code"], "ABCD12")
 
 
 class RegisterCodeCommandTests(unittest.TestCase):

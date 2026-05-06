@@ -46,10 +46,10 @@ Restart hermes-agent after install.
 
 ::: tip What you get
 - **Full Hermes-Relay Android app features** — sessions browser, conversation history on app restart, personality picker, command palette, memory management. Just install the plugin and it works.
-- **18 `android_*` device control tools** (tap, type, read screen, screenshot, open apps, send SMS, call, search contacts, etc.) — registered by the plugin
+- **Full `android_*` bridge toolset** (tap, type, read screen, screenshot, open apps, send SMS, call, search contacts, share files/MMS attachments, etc.) — registered by the plugin
 - **`/hermes-relay-pair` slash command** — backed by the `devops/hermes-relay-pair` skill and usable from any Hermes chat surface
 - **`hermes-pair` shell shim** — for scripts and power-user flows
-- **Voice mode endpoints** on the WSS relay (transcribe, synthesize, voice config) wired into the Android app's voice mode UI
+- **Voice mode endpoints** on relay HTTP routes (transcribe, synthesize, voice config), with Hermes API-key auth first and relay-session fallback
 
 No separate skill install, no `qrencode` binary needed.
 :::
@@ -111,7 +111,7 @@ This prints a QR code **and** the plain-text connection details (server URL, API
 
 **One scan configures chat *and* the relay.** If you've already started the Hermes-Relay WSS server on the same host (see [Relay Server](#relay-server-optional) below), `hermes-pair` automatically detects it at `localhost:8767`, mints a fresh 6-char pairing code, pre-registers the code with the relay via its loopback-only `/pairing/register` endpoint, and embeds the relay URL and code in the same QR. The phone scans once and is ready for chat, terminal, and bridge.
 
-If the relay isn't running, `hermes-pair` prints an `[info]` line pointing at `hermes relay start` and renders an API-only QR — chat still works, and you can pair with the relay later once it's up. You can also force API-only mode explicitly:
+If the relay isn't running, `hermes-pair` prints an `[info]` line pointing at `hermes relay start` and renders an API-only QR — chat still works, and you can pair with the relay later once it's up. Voice can use the saved Hermes API key too, so chat+voice does not require a paired Relay session. In manual setup, enter the API URL and API key first; the app derives the Relay URL from the same host on port `8767` and only asks for a manual override if `/voice/config` cannot be reached. Bridge, terminal, media, clipboard, and Android-control routes still require pairing. Plain-LAN voice testing with an API key requires HTTPS or a local runtime opt-in on the relay host: `hermes relay insecure-api-key on` while testing, then `hermes relay insecure-api-key off`. You can also force API-only mode explicitly:
 
 ```bash
 hermes-pair --no-relay
@@ -132,7 +132,7 @@ hermes-pair --ttl never --grants terminal=30d,bridge=1d
 hermes-pair --ttl 1d
 ```
 
-Supported duration formats: `1d`, `7d`, `30d`, `90d`, `1y`, `never` (or any `<number><unit>` combo where unit is `s`/`m`/`h`/`d`/`w`/`y`). Grants can be pre-set for the `terminal` and `bridge` channels and are automatically clamped to the overall session TTL — a grant cannot outlive its session.
+Supported duration formats: `1d`, `7d`, `30d`, `90d`, `1y`, `never` (or any `<number><unit>` combo where unit is `s`/`m`/`h`/`d`/`w`/`y`). Grants can be pre-set for `terminal`, `bridge`, `tui`, `voice:config`, `voice:stt`, and `voice:tts` and are automatically clamped to the overall session TTL — a grant cannot outlive its session. If you omit voice grants, new sessions get them by default, and older sessions inherit voice from the `chat` grant.
 
 ::: tip Camera unavailable? Use manual pairing
 If you can't scan a QR — for example you're SSH'd into the host from the same phone you want to pair, the host has no display attached, or there's no second camera-equipped device handy — Hermes-Relay ships a manual fallback flow. Open the app's **Settings → Connections → [active card] → Advanced → Manual pairing code (fallback)** section to read its locally-generated 6-char code, then on the host run:
@@ -193,7 +193,7 @@ API_SERVER_PORT=8642
 ```
 
 ::: tip API key is optional for local setups
-If you're running Hermes on the same machine (or connecting via `localhost`), you can leave `API_SERVER_KEY` unset. The key is only needed when exposing the API server over the network. If you do set one, `hermes-pair` reads it automatically.
+If you're running Hermes on the same machine (or connecting via `localhost`), you can leave `API_SERVER_KEY` unset. The key is only needed when exposing the API server over the network. If you do set one, `hermes-pair` reads it automatically, and the dashboard's pair/repair QR flow now reads the same key through the relay so chat sessions and voice pairing stay in sync.
 :::
 
 ## Sideload APK
@@ -315,13 +315,13 @@ Hermes-Relay supports **multi-endpoint pairing**: one QR carries every network p
 
 **Default — `--mode auto`.** `hermes-pair --mode auto` (run on the server) probes the LAN, detects Tailscale if it's running, and emits an ordered candidate list in the QR. To include an external reverse-proxy or Cloudflare Tunnel URL, add `--public-url https://hermes.example.com`.
 
-**Enable Tailscale on the server** with `hermes-relay-tailscale enable` — this fronts the loopback-bound relay port with `tailscale serve --https=8767`, using Tailscale's managed TLS + tailnet ACLs. Skip this if you prefer a reverse proxy + Let's Encrypt, or a self-hosted VPN — both work identically; Hermes-Relay doesn't care how the phone reaches the host as long as it can.
+**Enable Tailscale on the server** with `hermes-relay-tailscale enable` — this fronts the loopback-bound relay port `8767` and Hermes API port `8642` with `tailscale serve`, using Tailscale's managed TLS + tailnet ACLs. Both ports matter: relay pairing covers terminal/bridge/control features, while chat and API-key voice use the Hermes API server. Skip this if you prefer a reverse proxy + Let's Encrypt, or a self-hosted VPN — both work identically as long as the phone can reach both services.
 
-**Forcing a specific mode at pair time** — `--prefer <role>` promotes a named role to priority 0 (e.g. `--prefer tailscale` for a QR biased toward the tailnet even when LAN is reachable). Open vocabulary — any role string you pass through `--mode` or a custom operator setup works here.
+**Forcing a specific mode at pair time** — `--mode` accepts `auto`, `lan`, `tailscale`, or `public`. `--prefer <role>` promotes a named role to priority 0 (e.g. `--prefer tailscale` for a QR biased toward the tailnet even when LAN is reachable). Role matching is open-vocabulary for endpoint roles emitted by operator tooling, but the built-in CLI modes are fixed.
 
 **Override per-session on the phone** — Settings → Connections → [active card] → **Show routes** expander → row menu → **Prefer this route**.
 
-For the full matrix (Tailscale, Caddy + Let's Encrypt, Cloudflare Tunnel, self-hosted WireGuard, plaintext over trusted VPN) with working config blocks, see [remote-access.md](https://github.com/Codename-11/hermes-relay/blob/main/docs/remote-access.md) and the [Connections page](/features/connections#multi-endpoint-pairing-one-qr-for-every-network).
+For the full matrix (Tailscale, Caddy + Let's Encrypt, Cloudflare Tunnel, self-hosted WireGuard, plaintext over trusted VPN) with working config blocks, see [Remote access](/guide/remote-access), [remote-access.md](https://github.com/Codename-11/hermes-relay/blob/main/docs/remote-access.md), and the [Connections page](/features/connections#multi-endpoint-pairing-one-qr-for-every-network).
 
 ## Verify Connection
 

@@ -76,6 +76,6 @@ Pairing codes use the full `A-Z / 0-9` alphabet (36 chars). The pair command (`/
 |--------|-------------------|------------------------|
 | Protocol | HTTP/SSE | WSS |
 | Connection | Per-request | Persistent |
-| Auth | Bearer token (optional) | Pairing code + session token |
+| Auth | Bearer token | Pairing code + session token. Voice endpoints may also accept the Direct API bearer token. |
 | Server | Hermes API `:8642` | Unified Relay `:8767` |
 | State | Stateless | Channel-multiplexed |

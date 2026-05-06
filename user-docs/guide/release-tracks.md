@@ -5,7 +5,7 @@ Hermes-Relay ships in **two flavors** built from the same codebase. Most users w
 ## TL;DR
 
 - **Google Play** — easy install, automatic updates, every chat and voice feature, plus the agent can *read* your phone (notifications, what's on screen). The bridge is **read-only** — it cannot tap, type, swipe, send SMS, make calls, or control other apps on your behalf. The toggle is labeled "Bridge Mode."
-- **Sideload** — manual install from GitHub Releases, all of the above plus the agent can *control* your phone — voice-routed bridge intents ("text Sam I'll be late", "open Chrome"), direct SMS/call dispatch, vision-driven navigation, the works. 18 `android_*` tools available. The toggle is labeled "Agent Control."
+- **Sideload** — manual install from GitHub Releases, all of the above plus the agent can *control* your phone — voice-routed bridge intents ("text Sam I'll be late", "open Chrome"), direct SMS/call dispatch, file sharing/MMS attachment handoff, vision-driven navigation, the works. The full `android_*` bridge toolset is available. The toggle is labeled "Agent Control."
 - They coexist on a device — you can install both side-by-side and try them both.
 
 ## Why two tracks?

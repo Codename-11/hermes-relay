@@ -76,11 +76,18 @@ class AuthManager(
      * through.
      */
     private val connectionId: String = CONNECTION_ID_LEGACY,
+    /**
+     * Exact EncryptedSharedPreferences filename for this connection. New
+     * connections use the deterministic id-derived name, but the migrated
+     * legacy connection intentionally keeps [Connection.LEGACY_TOKEN_STORE_KEY].
+     */
+    private val tokenStoreKey: String? = null,
 ) : ChannelMultiplexer.ChannelHandler {
 
     companion object {
         private const val TAG = "AuthManager"
         private const val KEY_SESSION_TOKEN = "session_token"
+        private const val KEY_REFRESH_TOKEN = "refresh_token"
         private const val KEY_DEVICE_ID = "device_id"
         private const val KEY_API_KEY = "api_server_key"
         private const val KEY_PAIRED_META = "paired_session_meta_json"
@@ -95,6 +102,27 @@ class AuthManager(
          * a real connection id through.
          */
         const val CONNECTION_ID_LEGACY: String = "legacy"
+
+        /**
+         * Best-effort read of a connection's stored device id without making
+         * that connection active. Used by the connection removal path so it
+         * can delete the per-device route list before deleting the token
+         * store backing file.
+         */
+        suspend fun readStoredDeviceId(context: Context, tokenStoreKey: String): String? =
+            withContext(Dispatchers.IO) {
+                val appContext = context.applicationContext
+                val primary = KeystoreTokenStore.tryCreate(appContext, tokenStoreKey)
+                    ?: LegacyEncryptedPrefsTokenStore(appContext, tokenStoreKey)
+                primary.getString(KEY_DEVICE_ID)
+                    ?: if (tokenStoreKey == Connection.LEGACY_TOKEN_STORE_KEY) {
+                        runCatching {
+                            LegacyEncryptedPrefsTokenStore(appContext).getString(KEY_DEVICE_ID)
+                        }.getOrNull()
+                    } else {
+                        null
+                    }
+            }
 
         /**
          * Parse the `profiles` array from an `auth.ok` payload into a list of
@@ -176,7 +204,7 @@ class AuthManager(
                 // keeps the pre-multi-connection install on its original file
                 // so the existing paired device keeps working with no
                 // migration.
-                val prefsName = if (connectionId == CONNECTION_ID_LEGACY) {
+                val prefsName = tokenStoreKey ?: if (connectionId == CONNECTION_ID_LEGACY) {
                     Connection.LEGACY_TOKEN_STORE_KEY
                 } else {
                     Connection.buildTokenStoreKey(connectionId)
@@ -210,7 +238,13 @@ class AuthManager(
             return
         }
 
-        val keysToMigrate = listOf(KEY_SESSION_TOKEN, KEY_DEVICE_ID, KEY_API_KEY, KEY_PAIRED_META)
+        val keysToMigrate = listOf(
+            KEY_SESSION_TOKEN,
+            KEY_REFRESH_TOKEN,
+            KEY_DEVICE_ID,
+            KEY_API_KEY,
+            KEY_PAIRED_META,
+        )
         var migrated = false
         for (k in keysToMigrate) {
             val existing = legacy.getString(k) ?: continue
@@ -452,6 +486,9 @@ class AuthManager(
      */
     suspend fun getOrCreateDeviceId(): String = getDeviceId()
 
+    /** Existing device ID without creating a new one. */
+    suspend fun getExistingDeviceId(): String? = store().getString(KEY_DEVICE_ID)
+
     /**
      * Set the TTL the user picked at [SessionTtlPickerDialog]. `0` → never,
      * `null` → defer to server default. Persisted across [authenticate]
@@ -508,12 +545,17 @@ class AuthManager(
             val deviceId = getDeviceId()
             val payload = when (currentState) {
                 is AuthState.Paired -> {
+                    val refreshToken = store().getString(KEY_REFRESH_TOKEN)
                     Log.i(
                         TAG,
-                        "authenticate: sending session_token (state=Paired, token=${currentState.token.take(8)}…)"
+                        "authenticate: sending session_token (state=Paired, token=${currentState.token.take(8)}…, " +
+                            "refresh=${!refreshToken.isNullOrBlank()})"
                     )
                     buildJsonObject {
                         put("session_token", currentState.token)
+                        if (!refreshToken.isNullOrBlank()) {
+                            put("refresh_token", refreshToken)
+                        }
                         put("device_id", deviceId)
                         put("device_name", android.os.Build.MODEL)
                     }
@@ -597,6 +639,7 @@ class AuthManager(
         scope.launch {
             val s = store()
             s.remove(KEY_SESSION_TOKEN)
+            s.remove(KEY_REFRESH_TOKEN)
             s.remove(KEY_PAIRED_META)
             if (relayUrl != null) {
                 certPinStore.removePinFor(relayUrl)
@@ -669,6 +712,7 @@ class AuthManager(
         scope.launch {
             val s = store()
             s.remove(KEY_SESSION_TOKEN)
+            s.remove(KEY_REFRESH_TOKEN)
             s.remove(KEY_PAIRED_META)
             _authState.value = AuthState.Unpaired
             _currentPairedSession.value = null
@@ -717,6 +761,14 @@ class AuthManager(
                 if (token != null) {
                     val s = store()
                     s.putString(KEY_SESSION_TOKEN, token)
+                    val refreshToken = payload["refresh_token"]
+                        ?.jsonPrimitive
+                        ?.contentOrNull
+                        ?.takeIf { it.isNotBlank() }
+                    if (refreshToken != null) {
+                        s.putString(KEY_REFRESH_TOKEN, refreshToken)
+                        Log.i(TAG, "handleAuthOk: stored rotated refresh token")
+                    }
                     _authState.value = AuthState.Paired(token)
                     Log.i(TAG, "handleAuthOk: Paired(token=${token.take(8)}…)")
                     // Server-issued code is one-shot — drop it once the
@@ -818,11 +870,27 @@ class AuthManager(
                 ?: "Unknown error"
             val humanized = humanizeAuthFailReason(rawReason)
             Log.w(TAG, "handleAuthFail: raw=$rawReason humanized=$humanized")
+            clearPendingPairContextAfterAuthFailure(rawReason)
             _authState.value = AuthState.Failed(humanized)
         } catch (e: Exception) {
             Log.w(TAG, "handleAuthFail: exception parsing payload", e)
+            clearPendingPairContextAfterAuthFailure("parse failure")
             _authState.value = AuthState.Failed("Authentication failed")
         }
+    }
+
+    private fun clearPendingPairContextAfterAuthFailure(reason: String) {
+        if (serverIssuedCode == null) return
+        serverIssuedCode = null
+        pendingTtlSeconds = null
+        pendingGrants = null
+        pendingEndpoints = null
+        _pairingCode.value = generatePairingCode()
+        Log.i(
+            TAG,
+            "auth.fail consumed server-issued pairing code; " +
+                "cleared pending pair context so reconnects stop (reason=$reason)"
+        )
     }
 
     /**

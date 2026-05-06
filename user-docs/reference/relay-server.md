@@ -1,16 +1,16 @@
 # Relay Server
 
-The relay server is a lightweight Python WSS service that enables **terminal** (remote shell) and **bridge** (agent-driven phone control) features in Hermes-Relay. Chat does not use the relay — it connects directly to the Hermes API Server.
+The relay server is a lightweight Python WSS/HTTP service that enables **terminal** (remote shell), **bridge** (agent-driven phone control), media, sessions, and voice routes in Hermes-Relay. Chat does not use the relay — it connects directly to the Hermes API Server.
 
 ## Do I Need It?
 
-| Feature | Relay required? |
-|---------|----------------|
-| Chat | No |
-| Voice Mode | Yes (for TTS/STT endpoints) |
-| Inbound media (screenshots from tools) | Yes |
-| Terminal | Yes |
-| Bridge (sideload track only) | Yes |
+| Feature | Relay required? | Auth path |
+|---------|-----------------|-----------|
+| Chat | No | Hermes API key direct to API server |
+| Voice Mode | Yes for TTS/STT endpoints; pairing optional when the API key is present | Hermes API bearer or relay session |
+| Inbound media (screenshots from tools) | Yes | Relay session |
+| Terminal | Yes | Relay session |
+| Bridge (sideload track only) | Yes | Relay session |
 
 ## Quick Start
 
@@ -97,10 +97,14 @@ All settings via environment variables:
 | `RELAY_WEBAPI_URL` | `http://localhost:8642` | Hermes API Server URL |
 | `RELAY_HERMES_CONFIG` | `~/.hermes/config.yaml` | Hermes config path |
 | `RELAY_LOG_LEVEL` | `INFO` | Logging level |
+| `RELAY_TRUST_PROXY_HEADERS` | `0` | Trust `X-Forwarded-Proto: https` from your own reverse proxy for Hermes API bearer auth on `/voice/*`. |
+| `RELAY_ALLOW_INSECURE_API_BEARER` | `0` | Dev-only escape hatch for non-loopback plaintext Hermes API bearer auth on `/voice/*`. Leave off for production. For a running relay, use `hermes relay insecure-api-key on` or the standalone `hermes-relay insecure-api-key on` shim instead of restarting with env. |
 | `RELAY_MEDIA_MAX_SIZE_MB` | `100` | Per-file size cap for `POST /media/register` (inbound media pipeline — see ADR 14) |
 | `RELAY_MEDIA_TTL_SECONDS` | `86400` | How long a registered media entry stays fetchable |
 | `RELAY_MEDIA_LRU_CAP` | `500` | Max entries in the in-memory media registry before LRU eviction |
 | `RELAY_MEDIA_ALLOWED_ROOTS` | — | Extra absolute-path roots allowed on register (`os.pathsep`-separated). Extends defaults (`tempfile.gettempdir()` + `HERMES_WORKSPACE`). |
+
+Voice endpoints accept either a Relay session token or the existing Hermes API bearer token. The Hermes API bearer path is limited to `/voice/config`, `/voice/transcribe`, and `/voice/synthesize`; pairing is still required for terminal, bridge, TUI, sessions, media, clipboard, profile writes, and Android control routes. Android derives a default Relay URL from the API URL by swapping `http(s)` to `ws(s)` and using port `8767`, then probes `/voice/config`; custom Relay URLs are still supported as an override. Non-loopback API-bearer voice calls require HTTPS by default. For temporary plain-LAN phone testing, run `hermes relay insecure-api-key on` or `hermes-relay insecure-api-key on` on the relay host; disable it with the matching `off` command.
 
 ## CLI Flags
 
@@ -114,6 +118,12 @@ hermes relay start [OPTIONS]          (or: python -m plugin.relay)
   --webapi-url URL   Hermes WebAPI base URL (default: http://localhost:8642)
   --log-level LEVEL  DEBUG, INFO, WARNING, ERROR
   --config PATH      Hermes config.yaml path (python -m plugin.relay only)
+  --allow-insecure-api-key
+                     Allow API-key voice auth over plain LAN HTTP at startup
+
+hermes relay insecure-api-key [status|on|off]
+hermes-relay insecure-api-key [status|on|off]
+                     Toggle plain-LAN API-key voice auth on the running relay
 ```
 
 ## HTTP Routes
@@ -124,30 +134,34 @@ hermes relay start [OPTIONS]          (or: python -m plugin.relay)
 | `/health` | GET | `{status, version, clients, sessions}` JSON |
 | `/pairing` | POST | Generate a new relay-side pairing code |
 | `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code so it can be embedded in a QR payload. Optional body fields `ttl_seconds` / `grants` / `transport_hint` attach pairing metadata that applies to the session when the phone consumes the code — operator policy wins over phone-sent values. Also **clears all rate-limit blocks on success** so legitimate re-pair after a relay restart works immediately. Used by `/hermes-relay-pair` / `hermes-pair` on the same host. Rejects non-loopback peers with HTTP 403. |
+| `/pairing/mint` | POST | **Loopback only.** Mint a fresh pairing code and return the signed QR payload used by the dashboard plugin pair/repair flow. Reads the API key from the same host-local config chain as `hermes-pair` when not supplied explicitly. |
 | `/pairing/approve` | POST | **Loopback only, reserved for future use.** Same wire shape as `/pairing/register`. Placeholder for a future phone-generates-code / host-approves flow that would complement the existing QR pairing direction. |
 | `/sessions` | GET | Bearer-auth'd (same token the WSS channel uses). Returns all active paired devices with metadata — device name, token prefix (first 8 chars, full token never exposed), created/last-seen timestamps, session expiry, per-channel grants, transport hint, and `is_current` for the device matching the bearer. `math.inf` expiries serialize as `null` (never expire). |
 | `/sessions/{token_prefix}` | DELETE | Bearer-auth'd. Revoke a paired device by token-prefix (≥ 4 chars). 200 on exact match, 404 on zero, 409 on ambiguous matches. Self-revoke is allowed and flagged via `revoked_self: true`. |
 | `/sessions/{token_prefix}` | PATCH | Bearer-auth'd. Update a paired device's session TTL and/or per-channel grants in place. Body `{ttl_seconds?, grants?}`. TTL restarts the clock from now; grants re-clamp automatically. Powers the phone's Relay sessions "Extend" button. |
+| `/clipboard/inbox` | POST | Bearer-auth'd clipboard rendezvous used by remote clients before native platform clipboard fallback. |
 | `/media/register` | POST | **Loopback only.** Register a host-local file with the `MediaRegistry` and receive an opaque token. Body: `{"path": "/abs/path", "content_type": "image/jpeg", "file_name": "screenshot.jpg"}`. Used by tools like `android_screenshot` so the agent can emit `MEDIA:hermes-relay://<token>` in chat and have the phone fetch bytes out-of-band. Path is sandboxed to `tempfile.gettempdir()` + `HERMES_WORKSPACE` + any `RELAY_MEDIA_ALLOWED_ROOTS`; symlink escape is rejected via `realpath`. Returns 400 on validation failure. See ADR 14. |
+| `/media/upload` | POST | Bearer-auth'd small upload endpoint for phone-originated media. Accepts JSON `{file_name, content_type, content}` where `content` is base64 and registers the decoded bytes with the media registry. |
 | `/media/{token}` | GET | Stream the bytes of a previously-registered file. Requires `Authorization: Bearer <session_token>` — same token the WSS channel uses (validated against `SessionManager`). Response carries the registered `Content-Type` plus `Content-Disposition: inline; filename="..."` if a file name was provided at register time. The client only ever sees the opaque token — the path is never exposed. 401 without/with bad auth, 404 for unknown/expired tokens. |
 | `/media/by-path` | GET | Fetch a file **by absolute path** rather than by registry token — covers the case where the agent's LLM freeform-emits `MEDIA:/abs/path.ext` in its response text (upstream `prompt_builder.py` tells it to). Query: `path` (required), `content_type` (optional hint). Bearer auth identical to `/media/{token}`. Path is sandbox-validated against the same allowed roots as `/media/register` (`tempfile.gettempdir()` + `HERMES_WORKSPACE` + `RELAY_MEDIA_ALLOWED_ROOTS`). 400 missing `path`; 401 auth; 403 sandbox violation; 404 file not found. See ADR 14 for the bare-path-LLM rationale. |
-| `/voice/transcribe` | POST | Bearer-auth'd. `multipart/form-data` with an audio file → `{"text": "...", "provider": "openai", "success": true}`. Relay calls `tools.transcription_tools.transcribe_audio` from the hermes-agent venv. Provider is read from `stt:` in `~/.hermes/config.yaml` — the phone doesn't pass a provider name. See [Voice Mode](/features/voice) for the full story. |
-| `/voice/synthesize` | POST | Bearer-auth'd. JSON body `{"text": "..."}` (max 5000 chars) → `audio/mpeg` file. Relay calls `tools.tts_tool.text_to_speech_tool` which writes to `~/voice-memos/tts_<ts>.mp3` and serves it via `web.FileResponse`. Provider is read from `tts:` in `~/.hermes/config.yaml`. Streaming is client-side — the phone detects sentence boundaries in the chat SSE stream and POSTs one sentence at a time so playback starts within a sentence of the agent replying. |
-| `/voice/config` | GET | Bearer-auth'd. Returns `{"tts": {...}, "stt": {...}, "requirements": {...}}` describing what TTS/STT providers the relay's hermes-agent venv has configured. Used by the app's Voice Settings screen to show provider info and power the Test Voice button. |
+| `/voice/transcribe` | POST | Bearer-auth'd via either a Relay session token with active `voice:stt` grant or a valid Hermes API bearer token. Non-loopback API-bearer calls require HTTPS unless `RELAY_ALLOW_INSECURE_API_BEARER=1`. `multipart/form-data` with an audio file → `{"text": "...", "provider": "openai", "success": true}`. Relay calls `tools.transcription_tools.transcribe_audio` from the hermes-agent venv. Provider is read from `stt:` in `~/.hermes/config.yaml` — the phone doesn't pass a provider name. See [Voice Mode](/features/voice) for the full story. |
+| `/voice/synthesize` | POST | Bearer-auth'd via either a Relay session token with active `voice:tts` grant or a valid Hermes API bearer token. Non-loopback API-bearer calls require HTTPS unless `RELAY_ALLOW_INSECURE_API_BEARER=1`. JSON body `{"text": "..."}` (max 5000 chars) → `audio/mpeg` file. Relay calls `tools.tts_tool.text_to_speech_tool` which writes to `~/voice-memos/tts_<ts>.mp3` and serves it via `web.FileResponse`. Provider is read from `tts:` in `~/.hermes/config.yaml`. Streaming is client-side — the phone detects sentence boundaries in the chat SSE stream and POSTs one sentence at a time so playback starts within a sentence of the agent replying. |
+| `/voice/config` | GET | Bearer-auth'd via either a Relay session token with active `voice:config` grant or a valid Hermes API bearer token. Non-loopback API-bearer calls require HTTPS unless `RELAY_ALLOW_INSECURE_API_BEARER=1`. Returns `{"tts": {...}, "stt": {...}, "requirements": {...}}` describing what TTS/STT providers the relay's hermes-agent venv has configured. Used by the app's Voice Settings screen and API-token clients to show provider info. |
 | `/notifications/recent` | GET | Loopback callers skip bearer auth; remote callers need it. Returns the most recent entries from the bounded in-memory `NotificationsChannel` deque (default cap 100, wiped on relay restart). Backs the `android_notifications_recent(limit=20)` plugin tool. |
 | `/bridge/status` | GET | **Loopback only.** Structured `{"device": {...}, "bridge": {...}, "safety": {...}}` phone-status view used by `android_phone_status()`, the `hermes-status` shell shim, and the `/hermes-relay-status` skill. |
+| `/relay/security` | GET/PATCH | **Loopback only.** Runtime security toggles used by `hermes relay insecure-api-key` and `hermes-relay insecure-api-key`. `GET` reports the running relay's `allow_insecure_api_bearer` state; `PATCH {"allow_insecure_api_bearer": true}` enables plain-LAN API-key voice auth until the relay restarts. |
 
 ## Bridge HTTP Routes
 
 The bridge channel (v0.3+) publishes an HTTP surface on the unified relay for the Hermes `android_*` plugin tools. Every route is proxied over the phone's WSS connection to the in-app `BridgeCommandHandler` and runs through the Tier 5 safety pipeline (blocklist → destructive-verb confirmation → auto-disable reschedule) before any gesture fires. A 30-second per-command timeout and fail-fast-on-phone-disconnect semantics keep callers from wedging.
 
-As of v0.4 the bridge surface is **31 routes** (30 excluding the legacy `/apps` alias) covering gestures, accessibility-tree reads, clipboard, media control, raw intents, an event stream, a sideload-only phone-utility tier (send_sms, call, search_contacts, location), and a self-foreground route (`/return_to_hermes`). On the **googlePlay** flavor, only read-only routes pass the BridgeCommandHandler whitelist — action routes return 403 `sideload_only`. See the v0.3 release notes and v0.4 changelog for the feature story behind each group.
+As of v0.4 the bridge surface is **34 routes** (33 excluding the legacy `/apps` alias) covering gestures, accessibility-tree reads, clipboard, media control, raw intents, an event stream, a sideload-only phone-utility tier (send_sms, call, search_contacts, location, share_media, send_mms), and a self-foreground route (`/return_to_hermes`). On the **googlePlay** flavor, only read-only routes pass the BridgeCommandHandler whitelist — action routes return 403 `sideload_only`. See the v0.3 release notes and v0.4 changelog for the feature story behind each group.
 
 | Route | Method | Group | Purpose |
 |-------|--------|-------|---------|
 | `/ping` | GET | core | Liveness — bypasses the master-enable gate |
 | `/setup` | POST | core | One-shot welcome ping the agent can send before issuing real commands |
-| `/current_app` | GET | core | Foregrounded package name (bypasses master-enable gate) |
+| `/current_app` | GET | core | Best-effort foregrounded package name (bypasses master-enable gate). Accessibility/SystemUI state can lag; use `/screen` for verification. |
 | `/screen` | GET | read | Full accessibility tree → `ScreenContent(rootBounds, nodes[], truncated)`. Walks every accessibility window (system UI, popups, notification shade), not just the active app. |
 | `/screen_hash` | GET | read | SHA-256 fingerprint of the current screen for cheap change detection |
 | `/diff_screen` | POST | read | Compare current screen against a previous hash without re-downloading the full tree |
@@ -174,10 +188,12 @@ As of v0.4 the bridge surface is **31 routes** (30 excluding the legacy `/apps` 
 | `/events/stream` | POST | events | Toggle accessibility-event capture on / off on the phone side |
 | `/location` | GET | sideload-only | GPS last-known-location read |
 | `/search_contacts` | POST | sideload-only | Contact lookup by name → phone number |
-| `/call` | POST | sideload-only | Place a call via `ACTION_CALL`, with an `ACTION_DIAL` fallback on Google Play |
-| `/send_sms` | POST | sideload-only | Direct SMS send via `SmsManager` with send-result confirmation |
+| `/call` | POST | sideload-only | Place a call via `ACTION_CALL` |
+| `/send_sms` | POST | sideload-only | Direct text-only SMS send via `SmsManager` with structured `sent`, `blocked`, `timeout`, or `failed` status details |
+| `/share_media` | POST | sideload-only | Share text/files/relay media through Android's native share UI using `FileProvider` `content://` grants |
+| `/send_mms` | POST | sideload-only | Open a user-mediated MMS compose/share handoff with recipient, text, and attachments |
 
-**Gating.** Every route except `/ping` and `/current_app` is refused with 403 when the in-app master toggle is off. The sideload-only routes are compiled out of the Google Play build. Blocklisted target packages return 403 `{"error": "blocked package <name>"}`; denied destructive-verb confirmations return 403 `{"error": "user denied destructive action", "reason": "confirmation_denied_or_timeout"}`.
+**Gating.** Every route except `/ping`, `/current_app`, and `/return_to_hermes` is refused with 403 when the in-app master toggle is off. Sideload-only routes fail closed with `403` / `error_code: sideload_only` on Google Play builds. Blocklisted target packages return 403 `{"error": "blocked package <name>"}`; denied destructive-verb confirmations return 403 `{"error": "user denied destructive action", "reason": "confirmation_denied_or_timeout"}`.
 
 ## Pairing Model
 
@@ -206,6 +222,7 @@ curl http://localhost:8767/health
 - **QR has no relay block** — the pair command only embeds relay details if it can reach `localhost:RELAY_PORT/health` when it runs. Start the relay first, then re-run `hermes-pair`.
 - **TLS errors** — Use `--no-ssl` for local dev. Ensure cert paths are correct for production.
 - **Phone can't reach relay** — Check firewall rules for port 8767. Verify with `curl http://server-ip:8767/health` from another machine.
+- **Remote chat or API-key voice fails but relay pairs** — Verify the Hermes API route too: `curl http://server-ip:8642/health`, or `https://<tailnet-host>.ts.net:8642/health` when using Tailscale. Pairing can succeed through `:8767` while chat and API-key voice fail if `:8642` is not published.
 - **Service stops when you log out of SSH** — That's systemd's default for user services. Run `loginctl enable-linger $USER` once to fix it.
 
 ## Further Reading

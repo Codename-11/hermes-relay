@@ -2,8 +2,9 @@
 
 v0.3.0 adds:
   * User-chosen session TTL (including "never expire" via ``math.inf``).
-  * Per-channel grants ({"chat", "terminal", "bridge"} → epoch seconds) so
-    blast-radius-heavy channels can get shorter expiries than plain chat.
+  * Per-channel grants ({"chat", "terminal", "bridge", "tui", "voice:*"}
+    → epoch seconds) so blast-radius-heavy channels can get shorter expiries
+    than plain chat.
   * ``transport_hint`` field recording the scheme the phone paired over
     (``"wss"`` / ``"ws"`` / ``"unknown"``) — purely informational, displayed
     on the phone's Paired Devices screen.
@@ -34,6 +35,7 @@ import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -78,9 +80,17 @@ DEFAULT_TTL_SECONDS: float = 30 * 24 * 3600  # 30 days
 DEFAULT_TERMINAL_CAP: float = 30 * 24 * 3600  # 30 days
 DEFAULT_BRIDGE_CAP: float = 7 * 24 * 3600  # 7 days
 DEFAULT_TUI_CAP: float = 30 * 24 * 3600  # 30 days (desktop TUI — Phase 1 MVP)
+VOICE_GRANT_KEYS: tuple[str, ...] = ("voice:config", "voice:stt", "voice:tts")
 
 # Pairing codes still expire after 10 minutes regardless of session TTL.
 _PAIRING_CODE_TTL = 600.0
+
+# Device refresh credentials survive normal relay restarts and updates. They
+# are only issued after a successful pair or an already-valid session reconnect,
+# and they are persisted as hashes so the server file does not contain a bearer
+# credential that can be replayed directly.
+DEFAULT_REFRESH_TTL_SECONDS: float = 180 * 24 * 3600  # 180 days
+_REFRESH_TOKEN_BYTES = 32
 
 
 # ── Data models ──────────────────────────────────────────────────────────────
@@ -89,6 +99,14 @@ _PAIRING_CODE_TTL = 600.0
 def _is_never(value: float) -> bool:
     """True if ``value`` represents a never-expiring timestamp."""
     return math.isinf(value) and value > 0
+
+
+def _generate_refresh_token() -> str:
+    return secrets.token_urlsafe(_REFRESH_TOKEN_BYTES)
+
+
+def _refresh_token_hash(token: str) -> str:
+    return sha256(token.encode("utf-8")).hexdigest()
 
 
 def _default_grants(ttl_seconds: float, now: float) -> dict[str, float]:
@@ -103,6 +121,9 @@ def _default_grants(ttl_seconds: float, now: float) -> dict[str, float]:
             "terminal": math.inf,
             "bridge": math.inf,
             "tui": math.inf,
+            "voice:config": math.inf,
+            "voice:stt": math.inf,
+            "voice:tts": math.inf,
         }
 
     chat_exp = now + ttl_seconds
@@ -114,7 +135,31 @@ def _default_grants(ttl_seconds: float, now: float) -> dict[str, float]:
         "terminal": terminal_exp,
         "bridge": bridge_exp,
         "tui": tui_exp,
+        "voice:config": chat_exp,
+        "voice:stt": chat_exp,
+        "voice:tts": chat_exp,
     }
+
+
+def _clamp_grant_to_session(expiry: float, session_expiry: float) -> float:
+    """Clamp a grant expiry so it cannot outlive its parent session."""
+    if _is_never(session_expiry):
+        return expiry
+    if _is_never(expiry):
+        return session_expiry
+    return min(expiry, session_expiry)
+
+
+def _backfill_voice_grants(grants: dict[str, float], session_expiry: float) -> None:
+    """Add explicit voice grants for sessions created before they existed.
+
+    Voice is chat/media-adjacent, so legacy sessions inherit the chat grant
+    expiry when present; otherwise they inherit the session lifetime.
+    """
+    fallback = grants.get("chat", session_expiry)
+    fallback = _clamp_grant_to_session(fallback, session_expiry)
+    for key in VOICE_GRANT_KEYS:
+        grants.setdefault(key, fallback)
 
 
 def _materialize_grants(
@@ -159,10 +204,8 @@ class Session:
 
     ``expires_at == math.inf`` means "never expires"; the ``is_expired``
     property returns False in that case. Per-channel grants live in
-    ``grants`` — keys include ``"chat"``, ``"terminal"``, ``"bridge"``. The
-    relay itself does not currently enforce grants on incoming traffic
-    (chat goes direct to the API server, not through the relay), but the
-    phone reads them for display and future Phase 2/3 gating.
+    ``grants`` — keys include ``"chat"``, ``"terminal"``, ``"bridge"``,
+    ``"tui"``, and explicit ``"voice:*"`` capabilities.
     """
 
     token: str
@@ -176,6 +219,7 @@ class Session:
     client_surface: str = "unknown"
     device_form_factor: str = "unknown"
     first_seen: float = 0.0
+    refresh_token: str | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.expires_at == 0.0:
@@ -191,6 +235,7 @@ class Session:
             else:
                 ttl = max(0.0, self.expires_at - self.created_at)
             self.grants = _default_grants(ttl, self.created_at)
+        _backfill_voice_grants(self.grants, self.expires_at)
 
     @property
     def is_expired(self) -> bool:
@@ -212,6 +257,38 @@ class Session:
         if _is_never(exp):
             return False
         return time.time() > exp
+
+
+@dataclass
+class TrustedDevice:
+    """Persisted refresh credential for a previously paired device.
+
+    ``refresh_token_hash`` is the only refresh credential material stored on
+    disk. The raw token is shown to the client exactly once in ``auth.ok`` and
+    rotated every time it is used to mint a replacement session.
+    """
+
+    refresh_token_hash: str
+    device_name: str
+    device_id: str
+    created_at: float = field(default_factory=time.time)
+    last_used: float = field(default_factory=time.time)
+    expires_at: float = 0.0
+    session_ttl_seconds: float | None = None
+    grants: dict[str, float] | None = None
+    transport_hint: str = "unknown"
+    client_surface: str = "unknown"
+    device_form_factor: str = "unknown"
+
+    def __post_init__(self) -> None:
+        if self.expires_at == 0.0:
+            self.expires_at = self.created_at + DEFAULT_REFRESH_TTL_SECONDS
+
+    @property
+    def is_expired(self) -> bool:
+        if _is_never(self.expires_at):
+            return False
+        return time.time() > self.expires_at
 
 
 @dataclass
@@ -434,6 +511,81 @@ def _session_from_json(payload: dict[str, Any]) -> Session | None:
     )
 
 
+def _trusted_device_to_json(device: TrustedDevice) -> dict[str, Any]:
+    def _norm(v: float) -> Any:
+        if math.isinf(v) and v > 0:
+            return "never"
+        return v
+
+    payload: dict[str, Any] = {
+        "refresh_token_hash": device.refresh_token_hash,
+        "device_name": device.device_name,
+        "device_id": device.device_id,
+        "created_at": device.created_at,
+        "last_used": device.last_used,
+        "expires_at": _norm(device.expires_at),
+        "session_ttl_seconds": device.session_ttl_seconds,
+        "transport_hint": device.transport_hint,
+        "client_surface": device.client_surface,
+        "device_form_factor": device.device_form_factor,
+    }
+    if device.grants is not None:
+        payload["grants"] = dict(device.grants)
+    return payload
+
+
+def _trusted_device_from_json(payload: dict[str, Any]) -> TrustedDevice | None:
+    try:
+        refresh_token_hash = str(payload["refresh_token_hash"])
+        device_name = str(payload.get("device_name", ""))
+        device_id = str(payload.get("device_id", ""))
+        created_at = float(payload.get("created_at", time.time()))
+        last_used = float(payload.get("last_used", created_at))
+        raw_expires = payload.get("expires_at", 0.0)
+        if raw_expires == "never":
+            expires_at: float = math.inf
+        else:
+            expires_at = float(raw_expires)
+
+        raw_ttl = payload.get("session_ttl_seconds")
+        session_ttl_seconds: float | None
+        if raw_ttl is None:
+            session_ttl_seconds = None
+        else:
+            session_ttl_seconds = float(raw_ttl)
+
+        raw_grants = payload.get("grants")
+        grants: dict[str, float] | None = None
+        if isinstance(raw_grants, dict):
+            grants = {}
+            for channel, value in raw_grants.items():
+                if isinstance(channel, str) and isinstance(value, (int, float)):
+                    grants[channel] = float(value)
+
+        transport_hint = str(payload.get("transport_hint", "unknown"))
+        client_surface = str(payload.get("client_surface", "unknown"))
+        device_form_factor = str(payload.get("device_form_factor", "unknown"))
+    except (KeyError, TypeError, ValueError):
+        return None
+
+    if not refresh_token_hash or not device_id:
+        return None
+
+    return TrustedDevice(
+        refresh_token_hash=refresh_token_hash,
+        device_name=device_name,
+        device_id=device_id,
+        created_at=created_at,
+        last_used=last_used,
+        expires_at=expires_at,
+        session_ttl_seconds=session_ttl_seconds,
+        grants=grants,
+        transport_hint=transport_hint,
+        client_surface=client_surface,
+        device_form_factor=device_form_factor,
+    )
+
+
 class SessionManager:
     """Manages long-lived session tokens for authenticated devices.
 
@@ -444,7 +596,7 @@ class SessionManager:
     (``<hermes_config_path.parent>/hermes-relay-sessions.json``).
 
     File layout:
-      * JSON object ``{"version": 1, "sessions": [...]}``.
+      * JSON object ``{"version": 1, "sessions": [...], "trusted_devices": [...]}``.
       * Mode 0o600 (owner read/write only), matching ``auth.json``.
       * Atomic write via tempfile + ``os.replace()``.
 
@@ -477,6 +629,7 @@ class SessionManager:
             self._persistence_path = Path(persistence_path)
 
         self._sessions: dict[str, Session] = {}
+        self._trusted_devices: dict[str, TrustedDevice] = {}
         if self._persistence_path is not None:
             self._load_from_disk()
 
@@ -548,13 +701,37 @@ class SessionManager:
             self._sessions[session.token] = session
             loaded += 1
 
+        devices_blob = data.get("trusted_devices", [])
+        loaded_devices = 0
+        skipped_devices_expired = 0
+        skipped_devices_invalid = 0
+        if isinstance(devices_blob, list):
+            for entry in devices_blob:
+                if not isinstance(entry, dict):
+                    skipped_devices_invalid += 1
+                    continue
+                device = _trusted_device_from_json(entry)
+                if device is None:
+                    skipped_devices_invalid += 1
+                    continue
+                if device.is_expired:
+                    skipped_devices_expired += 1
+                    continue
+                self._trusted_devices[device.refresh_token_hash] = device
+                loaded_devices += 1
+        elif "trusted_devices" in data:
+            skipped_devices_invalid += 1
+
         logger.info(
-            "SessionManager: loaded %d session(s) from %s "
-            "(skipped %d expired, %d invalid)",
+            "SessionManager: loaded %d session(s), %d trusted device(s) from %s "
+            "(skipped sessions: %d expired, %d invalid; devices: %d expired, %d invalid)",
             loaded,
+            loaded_devices,
             path,
             skipped_expired,
             skipped_invalid,
+            skipped_devices_expired,
+            skipped_devices_invalid,
         )
 
     def _save_to_disk(self) -> None:
@@ -583,6 +760,10 @@ class SessionManager:
             "version": _SESSIONS_FILE_VERSION,
             "sessions": [
                 _session_to_json(s) for s in self._sessions.values()
+            ],
+            "trusted_devices": [
+                _trusted_device_to_json(d)
+                for d in self._trusted_devices.values()
             ],
         }
 
@@ -642,6 +823,7 @@ class SessionManager:
         transport_hint: str = "unknown",
         client_surface: str = "unknown",
         device_form_factor: str = "unknown",
+        issue_refresh_token: bool = False,
     ) -> Session:
         """Create a new session for an authenticated device.
 
@@ -666,6 +848,10 @@ class SessionManager:
         device_form_factor:
             Optional device class metadata (``"phone"``, ``"desktop"``,
             ``"xr"``, or ``"unknown"``).
+        issue_refresh_token:
+            When True, also create a persisted trusted-device credential and
+            attach the raw one-time refresh token to the returned
+            :class:`Session` for inclusion in ``auth.ok``.
         """
         if ttl_seconds is None:
             ttl_seconds = DEFAULT_TTL_SECONDS
@@ -677,6 +863,23 @@ class SessionManager:
             expires_at = now + float(ttl_seconds)
 
         resolved_grants = _materialize_grants(grants, float(ttl_seconds), now)
+        refresh_token: str | None = None
+        if issue_refresh_token:
+            refresh_token = _generate_refresh_token()
+            refresh_hash = _refresh_token_hash(refresh_token)
+            self._trusted_devices[refresh_hash] = TrustedDevice(
+                refresh_token_hash=refresh_hash,
+                device_name=device_name,
+                device_id=device_id,
+                created_at=now,
+                last_used=now,
+                expires_at=now + DEFAULT_REFRESH_TTL_SECONDS,
+                session_ttl_seconds=float(ttl_seconds),
+                grants=dict(grants) if grants is not None else None,
+                transport_hint=transport_hint,
+                client_surface=client_surface,
+                device_form_factor=device_form_factor,
+            )
 
         token = str(uuid.uuid4())
         session = Session(
@@ -691,6 +894,7 @@ class SessionManager:
             client_surface=client_surface,
             device_form_factor=device_form_factor,
             first_seen=now,
+            refresh_token=refresh_token,
         )
         self._sessions[token] = session
         logger.info(
@@ -705,6 +909,109 @@ class SessionManager:
             device_form_factor,
         )
         self._save_to_disk()
+        return session
+
+    def has_trusted_device(self, device_id: str) -> bool:
+        """Return True when a non-expired refresh credential exists for a device."""
+        self._cleanup()
+        return any(
+            device.device_id == device_id
+            for device in self._trusted_devices.values()
+            if not device.is_expired
+        )
+
+    def issue_refresh_token_for_session(self, session: Session) -> str:
+        """Issue a refresh token for an already-valid session.
+
+        This lets existing paired clients adopt trusted-device recovery on
+        their next successful reconnect without forcing an immediate re-pair.
+        """
+        now = time.time()
+        refresh_token = _generate_refresh_token()
+        refresh_hash = _refresh_token_hash(refresh_token)
+        if _is_never(session.expires_at):
+            session_ttl_seconds = 0.0
+        else:
+            session_ttl_seconds = max(0.0, session.expires_at - now)
+        self._trusted_devices[refresh_hash] = TrustedDevice(
+            refresh_token_hash=refresh_hash,
+            device_name=session.device_name,
+            device_id=session.device_id,
+            created_at=now,
+            last_used=now,
+            expires_at=now + DEFAULT_REFRESH_TTL_SECONDS,
+            session_ttl_seconds=session_ttl_seconds,
+            grants=None,
+            transport_hint=session.transport_hint,
+            client_surface=session.client_surface,
+            device_form_factor=session.device_form_factor,
+        )
+        session.refresh_token = refresh_token
+        self._save_to_disk()
+        return refresh_token
+
+    def refresh_session(
+        self,
+        refresh_token: str,
+        *,
+        device_name: str,
+        device_id: str,
+        transport_hint: str = "unknown",
+        client_surface: str = "unknown",
+        device_form_factor: str = "unknown",
+    ) -> Session | None:
+        """Mint a replacement session from a trusted-device refresh token.
+
+        The refresh token is rotated on every successful use. Old refresh
+        tokens immediately stop working, which keeps replay risk bounded even
+        though the trusted-device record intentionally outlives short relay
+        sessions.
+        """
+        self._cleanup()
+        refresh_hash = _refresh_token_hash(refresh_token)
+        trusted = self._trusted_devices.pop(refresh_hash, None)
+        if trusted is None:
+            return None
+        if trusted.is_expired:
+            self._save_to_disk()
+            return None
+        if device_id and trusted.device_id != device_id:
+            logger.info(
+                "Refresh rejected for device_id mismatch: stored=%s attempted=%s",
+                trusted.device_id,
+                device_id,
+            )
+            self._trusted_devices[refresh_hash] = trusted
+            return None
+
+        now = time.time()
+        new_refresh_token = _generate_refresh_token()
+        new_refresh_hash = _refresh_token_hash(new_refresh_token)
+        trusted.refresh_token_hash = new_refresh_hash
+        trusted.device_name = device_name or trusted.device_name
+        trusted.last_used = now
+        trusted.transport_hint = transport_hint or trusted.transport_hint
+        trusted.client_surface = client_surface or trusted.client_surface
+        trusted.device_form_factor = device_form_factor or trusted.device_form_factor
+        self._trusted_devices[new_refresh_hash] = trusted
+
+        session = self.create_session(
+            trusted.device_name,
+            trusted.device_id,
+            ttl_seconds=trusted.session_ttl_seconds,
+            grants=trusted.grants,
+            transport_hint=trusted.transport_hint,
+            client_surface=trusted.client_surface,
+            device_form_factor=trusted.device_form_factor,
+            issue_refresh_token=False,
+        )
+        session.refresh_token = new_refresh_token
+        logger.info(
+            "Refreshed session for trusted device %s (%s), new token=%s...",
+            trusted.device_name,
+            trusted.device_id,
+            session.token[:8],
+        )
         return session
 
     def get_session(self, token: str) -> Session | None:
@@ -731,6 +1038,8 @@ class SessionManager:
             else:
                 ttl = max(0.0, session.expires_at - session.created_at)
             session.grants = _default_grants(ttl, session.created_at)
+        else:
+            _backfill_voice_grants(session.grants, session.expires_at)
         session.last_seen = time.time()
         return session
 
@@ -752,6 +1061,13 @@ class SessionManager:
         """Revoke a session. Returns True if it existed."""
         session = self._sessions.pop(token, None)
         if session is not None:
+            revoked_devices = [
+                refresh_hash
+                for refresh_hash, trusted in self._trusted_devices.items()
+                if trusted.device_id == session.device_id
+            ]
+            for refresh_hash in revoked_devices:
+                del self._trusted_devices[refresh_hash]
             logger.info("Revoked session for %s", session.device_name)
             self._save_to_disk()
             return True
@@ -852,11 +1168,16 @@ class SessionManager:
         return len(self._sessions)
 
     def _cleanup(self) -> None:
-        """Remove expired sessions."""
+        """Remove expired sessions and trusted-device refresh credentials."""
         expired = [k for k, v in self._sessions.items() if v.is_expired]
         for k in expired:
             del self._sessions[k]
-        if expired:
+        expired_devices = [
+            k for k, v in self._trusted_devices.items() if v.is_expired
+        ]
+        for k in expired_devices:
+            del self._trusted_devices[k]
+        if expired or expired_devices:
             # Expired drops mean the on-disk state is now stale; persist.
             self._save_to_disk()
 
@@ -1113,15 +1434,18 @@ class RateLimiter:
 
 # Re-export a few symbols for callers that want to introspect the model.
 __all__ = [
+    "DEFAULT_REFRESH_TTL_SECONDS",
     "DEFAULT_SESSIONS_FILENAME",
     "DEFAULT_TTL_SECONDS",
     "DEFAULT_TERMINAL_CAP",
     "DEFAULT_BRIDGE_CAP",
+    "VOICE_GRANT_KEYS",
     "PairingManager",
     "PairingMetadata",
     "RateLimitConfig",
     "RateLimiter",
     "Session",
     "SessionManager",
+    "TrustedDevice",
     "default_sessions_path",
 ]

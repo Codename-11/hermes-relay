@@ -8,6 +8,7 @@ plumbing.
 from __future__ import annotations
 
 import math
+import json
 import tempfile
 import time
 import unittest
@@ -18,7 +19,9 @@ from plugin.relay.auth import (
     DEFAULT_TTL_SECONDS,
     PairingManager,
     PairingMetadata,
+    Session,
     SessionManager,
+    VOICE_GRANT_KEYS,
 )
 
 
@@ -33,10 +36,17 @@ class SessionTtlTests(unittest.TestCase):
         self.assertAlmostEqual(
             session.expires_at - t0, DEFAULT_TTL_SECONDS, delta=5
         )
-        # All three channels have default grants
+        # All established channels plus explicit voice capabilities have
+        # default grants.
         self.assertIn("chat", session.grants)
         self.assertIn("terminal", session.grants)
         self.assertIn("bridge", session.grants)
+        self.assertIn("tui", session.grants)
+        for key in VOICE_GRANT_KEYS:
+            self.assertIn(key, session.grants)
+            self.assertAlmostEqual(
+                session.grants[key], session.expires_at, delta=1
+            )
         # With a 30-day TTL, caps don't bite — all three should roughly align.
         self.assertAlmostEqual(
             session.grants["chat"], session.expires_at, delta=1
@@ -69,7 +79,7 @@ class SessionTtlTests(unittest.TestCase):
 
         self.assertTrue(math.isinf(session.expires_at))
         self.assertFalse(session.is_expired)
-        for channel in ("chat", "terminal", "bridge"):
+        for channel in ("chat", "terminal", "bridge", "tui", *VOICE_GRANT_KEYS):
             self.assertTrue(math.isinf(session.grants[channel]))
             self.assertFalse(session.channel_is_expired(channel))
 
@@ -162,6 +172,67 @@ class SessionTtlTests(unittest.TestCase):
         mgr = SessionManager()
         session = mgr.create_session("dev", "id-1")
         self.assertTrue(session.channel_is_expired("unknown-channel"))
+
+    def test_partial_legacy_session_grants_get_voice_backfill(self) -> None:
+        """Direct Session construction with old grants inherits chat for voice."""
+        now = time.time()
+        session = Session(
+            token="legacy-token",
+            device_name="legacy",
+            device_id="legacy-id",
+            created_at=now,
+            expires_at=now + 3600,
+            grants={
+                "chat": now + 1800,
+                "terminal": now + 3600,
+                "bridge": now + 3600,
+            },
+        )
+
+        for key in VOICE_GRANT_KEYS:
+            self.assertAlmostEqual(session.grants[key], now + 1800, delta=1)
+
+    def test_persisted_legacy_session_grants_get_voice_backfill(self) -> None:
+        """Persisted sessions without voice keys load without forcing re-pair."""
+        now = time.time()
+        expires_at = now + 3600
+        with tempfile.TemporaryDirectory() as tmp:
+            path = f"{tmp}/sessions.json"
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(
+                    {
+                        "version": 1,
+                        "sessions": [
+                            {
+                                "token": "legacy-token",
+                                "device_name": "legacy",
+                                "device_id": "legacy-id",
+                                "created_at": now,
+                                "last_seen": now,
+                                "expires_at": expires_at,
+                                "grants": {
+                                    "chat": now + 1200,
+                                    "terminal": expires_at,
+                                    "bridge": expires_at,
+                                },
+                            }
+                        ],
+                    },
+                    fh,
+                )
+
+            loaded = SessionManager(persistence_path=path).get_session("legacy-token")
+
+        self.assertIsNotNone(loaded)
+        assert loaded is not None
+        for key in VOICE_GRANT_KEYS:
+            self.assertAlmostEqual(loaded.grants[key], now + 1200, delta=1)
+
+    def test_expired_voice_grant_blocks_channel(self) -> None:
+        mgr = SessionManager()
+        session = mgr.create_session("dev", "id-1")
+        session.grants["voice:tts"] = time.time() - 1
+        self.assertTrue(session.channel_is_expired("voice:tts"))
 
 
 class PairingMetadataTests(unittest.TestCase):

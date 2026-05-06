@@ -4,8 +4,8 @@ Invoked via the ``hermes-relay-tailscale`` shim installed to
 ``~/.local/bin``. Subcommands::
 
     hermes-relay-tailscale status [--json] [--port N]
-    hermes-relay-tailscale enable [--port N] [--no-https] [--json]
-    hermes-relay-tailscale disable [--port N] [--json]
+    hermes-relay-tailscale enable [--port N] [--api-port N] [--relay-only] [--no-https] [--json]
+    hermes-relay-tailscale disable [--port N] [--api-port N] [--relay-only] [--json]
 
 All subcommands exit 0 on success, 1 on structured failure. ``--json``
 prints the raw structured dict for scripting.
@@ -49,20 +49,33 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
 
 def _cmd_enable(args: argparse.Namespace) -> int:
-    result = tailscale.enable(port=args.port, https=not args.no_https)
+    if args.relay_only:
+        result = tailscale.enable(port=args.port, https=not args.no_https)
+    else:
+        result = tailscale.enable_stack(
+            relay_port=args.port,
+            api_port=args.api_port,
+            https=not args.no_https,
+        )
     return _print_result(result, as_json=args.json)
 
 
 def _cmd_disable(args: argparse.Namespace) -> int:
-    result = tailscale.disable(port=args.port)
+    if args.relay_only:
+        result = tailscale.disable(port=args.port)
+    else:
+        result = tailscale.disable_stack(
+            relay_port=args.port,
+            api_port=args.api_port,
+        )
     return _print_result(result, as_json=args.json)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hermes-relay-tailscale",
-        description="Thin wrapper around the tailscale CLI for publishing the "
-                    "hermes-relay port over the tailnet.",
+        description="Thin wrapper around the tailscale CLI for publishing "
+                    "Hermes-Relay relay + API ports over the tailnet.",
     )
     parser.add_argument(
         "--json",
@@ -76,9 +89,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_enable = sub.add_parser(
         "enable",
-        help=f"Publish http://127.0.0.1:<port> via tailscale serve (default port {tailscale.DEFAULT_PORT}).",
+        help="Publish relay + API loopback ports via tailscale serve.",
     )
-    p_enable.add_argument("--port", type=int, default=tailscale.DEFAULT_PORT)
+    p_enable.add_argument("--port", type=int, default=tailscale.DEFAULT_RELAY_PORT)
+    p_enable.add_argument("--api-port", type=int, default=tailscale.DEFAULT_API_PORT)
+    p_enable.add_argument(
+        "--relay-only",
+        action="store_true",
+        help="Publish only the relay port, preserving the older helper behavior.",
+    )
     p_enable.add_argument(
         "--no-https",
         action="store_true",
@@ -88,9 +107,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_disable = sub.add_parser(
         "disable",
-        help="Stop publishing the given port via tailscale serve.",
+        help="Stop publishing relay + API ports via tailscale serve.",
     )
-    p_disable.add_argument("--port", type=int, default=tailscale.DEFAULT_PORT)
+    p_disable.add_argument("--port", type=int, default=tailscale.DEFAULT_RELAY_PORT)
+    p_disable.add_argument("--api-port", type=int, default=tailscale.DEFAULT_API_PORT)
+    p_disable.add_argument(
+        "--relay-only",
+        action="store_true",
+        help="Disable only the relay port, preserving the older helper behavior.",
+    )
     p_disable.set_defaults(func=_cmd_disable)
 
     return parser

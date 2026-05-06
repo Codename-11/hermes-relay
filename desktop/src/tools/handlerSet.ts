@@ -35,11 +35,28 @@ import {
   unzipHandler,
   zipHandler
 } from './handlers/transfer.js'
+import {
+  computerActionHandler,
+  computerCancelHandler,
+  computerGrantRequestHandler,
+  computerScreenshotHandler,
+  computerStatusHandler
+} from './handlers/computer.js'
 import type { ToolHandler } from './router.js'
 
-/** The canonical desktop tool name → handler map. Keys must match the
- * wire schema names in `plugin/tools/desktop_tool.py`. */
-export const DESKTOP_HANDLERS: Record<string, ToolHandler> = {
+/** Experimental computer-use tools are registered in the local handler map
+ * and heartbeat-advertised with the rest of the desktop tools after normal
+ * desktop-tool consent. Host input still fails closed unless a task-scoped
+ * grant exists and was approved from a visible local prompt. */
+export const DESKTOP_COMPUTER_USE_TOOLS: readonly string[] = Object.freeze([
+  'desktop_computer_status',
+  'desktop_computer_screenshot',
+  'desktop_computer_action',
+  'desktop_computer_grant_request',
+  'desktop_computer_cancel'
+])
+
+const BASE_DESKTOP_HANDLERS: Record<string, ToolHandler> = {
   // ── Filesystem ─────────────────────────────────────────────────────────
   desktop_read_file: readFileHandler,
   desktop_write_file: writeFileHandler,
@@ -76,16 +93,50 @@ export const DESKTOP_HANDLERS: Record<string, ToolHandler> = {
   desktop_open_in_editor: openInEditorHandler
 }
 
+const COMPUTER_USE_HANDLERS: Record<string, ToolHandler> = {
+  desktop_computer_status: computerStatusHandler,
+  desktop_computer_screenshot: computerScreenshotHandler,
+  desktop_computer_action: computerActionHandler,
+  desktop_computer_grant_request: computerGrantRequestHandler,
+  desktop_computer_cancel: computerCancelHandler
+}
+
+/** The canonical desktop tool name → handler map. Keys must match the
+ * wire schema names in `plugin/tools/desktop_tool.py`. */
+export const DESKTOP_HANDLERS: Record<string, ToolHandler> = {
+  ...BASE_DESKTOP_HANDLERS,
+  ...COMPUTER_USE_HANDLERS
+}
+
+export interface DesktopAdvertiseOptions {
+  computerUse?: boolean
+}
+
+export function shouldAdvertiseComputerUse(
+  _flags?: Record<string, string | true>
+): boolean {
+  return true
+}
+
 /** Stable list of advertised tool names — what the heartbeat claims to
- * service. Matches `Object.keys(DESKTOP_HANDLERS)` but exported separately
- * so tests can assert on it without depending on object-iteration order. */
-export const DESKTOP_ADVERTISED_TOOLS: readonly string[] = Object.freeze(
-  Object.keys(DESKTOP_HANDLERS)
-)
+ * service. Computer-use tools are included by default with the rest of the
+ * desktop tool surface; callers may pass `computerUse:false` only for tests
+ * or a future explicit disable path. */
+export function advertisedDesktopTools(
+  opts: DesktopAdvertiseOptions = {}
+): readonly string[] {
+  if (opts.computerUse === false) {
+    const experimental = new Set(DESKTOP_COMPUTER_USE_TOOLS)
+    return Object.freeze(Object.keys(DESKTOP_HANDLERS).filter(name => !experimental.has(name)))
+  }
+  return Object.freeze(Object.keys(DESKTOP_HANDLERS))
+}
+
+export const DESKTOP_ADVERTISED_TOOLS: readonly string[] = advertisedDesktopTools()
 
 /** Short summary line used by chat.ts / shell.ts when announcing to the
  * user that tools are wired. Centralizing the count avoids the "9 handlers"
  * literal getting out of sync with the actual map. */
-export function describeAdvertisedTools(): string {
-  return `${DESKTOP_ADVERTISED_TOOLS.length} desktop tools advertised`
+export function describeAdvertisedTools(opts: DesktopAdvertiseOptions = {}): string {
+  return `${advertisedDesktopTools(opts).length} desktop tools advertised`
 }

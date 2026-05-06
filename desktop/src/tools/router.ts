@@ -26,6 +26,7 @@ import * as os from 'node:os'
 import type { RelayTransport } from '../transport/RelayTransport.js'
 
 import { VERSION } from '../version.js'
+import { getComputerGrantSummary, getComputerUseRuntimeSummary } from './computerGrants.js'
 
 /** The payload shape server → client for a single tool invocation. */
 export interface ToolCallPayload {
@@ -91,6 +92,10 @@ const HEARTBEAT_MS = 30_000
  * signal fires and we send `{ok:false, error:'aborted'}`. 30s matches the
  * Android bridge's timeout for the same class of request/response RPCs. */
 const HANDLER_TIMEOUT_MS = 30_000
+/** Computer-use actions may be waiting on a human reading and approving a
+ * visible local prompt, so they get a longer deadline without changing the
+ * existing desktop tool latency contract. */
+const COMPUTER_USE_HANDLER_TIMEOUT_MS = 180_000
 
 function isToolCallPayload(x: unknown): x is ToolCallPayload {
   if (!x || typeof x !== 'object') {
@@ -220,6 +225,30 @@ export class DesktopToolRouter {
         uptime_ms: Date.now() - this.startedAtMs,
         interactive: this.interactive
       }
+      if (this.advertisedTools.some(name => name.startsWith('desktop_computer_'))) {
+        const runtime = getComputerUseRuntimeSummary()
+        const grant = getComputerGrantSummary()
+        const inputGrantActive =
+          grant.active === true && (grant.mode === 'assist' || grant.mode === 'control')
+        payload.computer_use = {
+          stage: 'experimental',
+          protocol_version: 2,
+          enabled: true,
+          capabilities: ['status', 'screenshot', 'grant_request', 'cancel', 'action'],
+          input:
+            runtime.consented === true && inputGrantActive && process.platform === 'win32'
+              ? 'available_until_grant_expiry'
+              : this.interactive
+                ? 'grant_approval_prompt_available'
+                : 'blocked_headless',
+          grant,
+          runtime,
+          overlay: {
+            visible: this.interactive,
+            state: this.interactive ? 'cli_grant_prompt_available' : 'not_available'
+          }
+        }
+      }
       if (this.lastError) {
         payload.last_error = this.lastError
       }
@@ -229,7 +258,7 @@ export class DesktopToolRouter {
     }
   }
 
-  /** Look up the handler, run it under a 30s AbortController, and reply.
+  /** Look up the handler, run it under a tool-specific AbortController, and reply.
    * Always sends a response — even unknown-tool, timeout, and thrown-error
    * paths — so the server's pending-request map never hangs. */
   private async dispatch(cmd: ToolCallPayload): Promise<void> {
@@ -245,9 +274,12 @@ export class DesktopToolRouter {
     }
 
     const controller = new AbortController()
+    const timeoutMs = tool.startsWith('desktop_computer_')
+      ? COMPUTER_USE_HANDLER_TIMEOUT_MS
+      : HANDLER_TIMEOUT_MS
     const timeoutTimer = setTimeout(() => {
       controller.abort()
-    }, HANDLER_TIMEOUT_MS)
+    }, timeoutMs)
     // Timeout fires abort, which the handler should honor. Timer itself
     // is unref'd so it doesn't keep the process alive.
     timeoutTimer.unref?.()

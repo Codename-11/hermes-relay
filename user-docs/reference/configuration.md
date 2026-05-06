@@ -46,7 +46,7 @@ When you scan a pairing QR (or enter a code manually), a **Session TTL Picker** 
 
 The default pre-selection depends on the QR's operator-chosen TTL (if any, via `hermes-pair --ttl <duration>`), falling back to 30d on secure/Tailscale transports or 7d on plain ws. Your last pick persists as the new default for future pairs.
 
-Per-channel grants (`terminal`, `bridge`) can be pre-set by the operator via `hermes-pair --grants terminal=7d,bridge=1d`. The phone displays them on the Relay sessions card as chips with a tap-for-info icon explaining that each grant is a per-feature permission (chat / bridge / voice) with an independent expiry. Grants cannot outlive the session — they're clamped to the session TTL server-side.
+Per-channel grants (`chat`, `terminal`, `bridge`, `tui`, `voice:config`, `voice:stt`, `voice:tts`) can be pre-set by the operator via `hermes-pair --grants terminal=7d,bridge=1d,voice:stt=7d`. The phone displays them on the Relay sessions card as labeled chips with a tap-for-info icon explaining that each grant is a per-feature permission with an independent expiry. Grants cannot outlive the session — they're clamped to the session TTL server-side.
 
 ### Relay sessions
 
@@ -56,7 +56,7 @@ Per-channel grants (`terminal`, `bridge`) can be pre-set by the operator via `he
 - **Current device** badge if this is the device you're looking at the list on
 - Transport security badge (Secure (TLS) / Plain (on `<role>`) / Plain (no TLS))
 - Session expiry (a date or "Never")
-- Per-channel grant chips (`chat · terminal · bridge`)
+- Per-channel grant chips (`chat`, `terminal`, `bridge`, `tui`, and `voice:*`)
 - **Extend** button — opens the same TTL picker dialog used during initial pair, preselected with the current remaining lifetime (or "Never" if already never-expiring). Confirming calls `PATCH /sessions/{token_prefix}` with the new TTL; the server restarts the clock from now and auto-clamps any existing grants to the (possibly new) session lifetime. Also works to **shorten** sessions — pick a shorter duration or "Never" to change the policy without re-pairing.
 - **Revoke** button — confirmation dialog, then `DELETE /sessions/{token_prefix}`. Revoking the current device wipes local session token and redirects to pairing flow.
 
@@ -170,6 +170,8 @@ python -m plugin.relay --no-ssl
 | `RELAY_LOG_LEVEL` | `INFO` | Logging level |
 | `RELAY_TERMINAL_SHELL` | _auto (`$SHELL`)_ | Absolute path to the shell spawned for terminal sessions |
 | `RELAY_PAIRING_CODE` | — | Pre-register a pairing code at startup (same effect as `--pairing-code`) |
+| `RELAY_TRUST_PROXY_HEADERS` | `0` | Trust `X-Forwarded-Proto: https` from your own reverse proxy for Hermes API-key auth on `/voice/*` |
+| `RELAY_ALLOW_INSECURE_API_BEARER` | `0` | Dev-only startup escape hatch for API-key voice auth over non-loopback plain HTTP. For a running relay, use `hermes relay insecure-api-key on` and `off` instead. |
 | `RELAY_MEDIA_MAX_SIZE_MB` | `100` | Per-file size cap on `POST /media/register` (MediaRegistry, used for inbound media delivery — see ADR 14) |
 | `RELAY_MEDIA_TTL_SECONDS` | `86400` | How long a registered media entry stays valid before the registry evicts it |
 | `RELAY_MEDIA_LRU_CAP` | `500` | Max entries in the media registry before oldest-eviction kicks in |
@@ -195,11 +197,10 @@ If you already have an `external_dirs` list, the installer appends to it idempot
 
 ## Network Security Config
 
-The app's `network_security_config.xml` controls which domains allow cleartext (HTTP) traffic:
+The app permits cleartext at the Android network-security layer so LAN, emulator, and trusted-VPN setups can still be configured. App-level controls decide when plain routes are actually used:
 
-- **Cleartext allowed:** `localhost`, `127.0.0.1`, `10.0.2.2` (emulator)
-- **All other domains:** HTTPS required
+- Plain `ws://` relay routes require the app's explicit plain-connection consent.
+- API-key voice over non-loopback plain HTTP is blocked by the relay unless the operator temporarily enables `hermes relay insecure-api-key on`.
+- Tailscale and public reverse-proxy setups should use HTTPS/WSS.
 
-To connect to a server without HTTPS on a local network, you have two options:
-1. Set up a reverse proxy (nginx/Caddy) with TLS on the server
-2. Use an SSH tunnel or VPN to the server, then connect via `localhost`
+For remote access, prefer `hermes-relay-tailscale enable` or a TLS reverse proxy that exposes both relay `:8767` and API `:8642`.

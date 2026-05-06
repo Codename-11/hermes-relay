@@ -54,6 +54,8 @@ const BOOLEAN_FLAGS = new Set([
   'log-human',
   'log-json',
   'allow-tools',
+  'allow-computer-use',
+  'experimental-computer-use',
   'check',
   'yes',
   'new',
@@ -163,6 +165,9 @@ Flags:
   --raw                  shell: skip auto-exec; drop into bare tmux/bash
   --watch-editor         shell/chat: poll tmux/$VSCODE and send active_editor hints every 5s
   --no-tools             chat/shell: disable local tool handlers (fs, exec, search)
+                         Computer-use tools are experimental but ride with normal
+                         desktop tools; host input still requires task grant plus
+                         a visible local yes/no grant approval prompt.
   --grant-tools          pair: prompt for desktop-tool consent during pairing (TTY required;
                          lets you go straight from \`pair\` to \`daemon\` with no \`shell\` round-trip)
   --auto-grant-tools     pair: stamp tool consent without prompting — explicit non-interactive

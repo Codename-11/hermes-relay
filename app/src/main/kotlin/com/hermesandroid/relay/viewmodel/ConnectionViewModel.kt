@@ -32,6 +32,8 @@ import com.hermesandroid.relay.network.EndpointResolver
 import com.hermesandroid.relay.network.HermesApiClient
 import com.hermesandroid.relay.network.ServerCapabilities
 import com.hermesandroid.relay.network.RelayHttpClient
+import com.hermesandroid.relay.network.RelayUrlDeriver
+import com.hermesandroid.relay.network.RelayVoiceClient
 import com.hermesandroid.relay.network.handlers.ChatHandler
 // === PHASE3-accessibility: bridge channel wiring ===
 import com.hermesandroid.relay.accessibility.BridgeStatusReporter
@@ -64,6 +66,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 class ConnectionViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -75,7 +78,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Relay Server (bridge/terminal)
         private val KEY_RELAY_URL = stringPreferencesKey("relay_url")
         private val KEY_SERVER_URL = stringPreferencesKey("server_url") // legacy migration
-        private const val DEFAULT_RELAY_URL = "wss://localhost:8767"
+        private const val DEFAULT_RELAY_URL = "ws://localhost:8767"
 
         // How long the derived [relayUiState] shows `Connecting` before
         // promoting a Paired-but-Disconnected pose to `Stale`. Tuned to
@@ -268,7 +271,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     val relayHttpClient = RelayHttpClient(
         okHttpClient = relayOkHttp,
-        relayUrlProvider = { _relayUrl.value },
+        relayUrlProvider = { effectiveRelayUrlSnapshot() },
         sessionTokenProvider = {
             // AuthManager holds the paired session token in EncryptedSharedPrefs.
             // Pull it out via the authState StateFlow snapshot — if we're not
@@ -309,6 +312,22 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     /** Currently-active endpoint, for the Endpoints card. */
     val activeEndpoint = connectionManager.activeEndpoint
 
+    private fun effectiveApiServerUrlSnapshot(): String =
+        connectionManager.activeEndpoint.value?.api?.url ?: _apiServerUrl.value
+
+    private fun effectiveRelayUrlSnapshot(): String =
+        connectionManager.activeEndpoint.value?.relay?.url ?: autoRelayUrlSnapshot()
+
+    private fun autoRelayUrlSnapshot(): String {
+        val savedRelay = _relayUrl.value
+        val savedApi = _apiServerUrl.value
+        return if (RelayUrlDeriver.isAutoManagedRelayUrl(savedRelay, savedApi)) {
+            RelayUrlDeriver.deriveFromApiUrl(savedApi) ?: savedRelay
+        } else {
+            savedRelay
+        }
+    }
+
     /**
      * Signal stream for `profiles.updated` pushes — emits when the
      * server's in-memory profile list has changed in a way the user
@@ -334,6 +353,11 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val authState: StateFlow<AuthState> = _authManagerFlow
         .flatMapLatest { it.authState }
         .stateIn(viewModelScope, SharingStarted.Eagerly, authManager.authState.value)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val apiKeyPresent: StateFlow<Boolean> = _authManagerFlow
+        .flatMapLatest { it.apiKeyPresent }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, authManager.apiKeyPresent.value)
 
     val insecureMode: StateFlow<Boolean> = connectionManager.insecureMode
     val isInsecureConnection: StateFlow<Boolean> = connectionManager.isInsecureConnection
@@ -378,16 +402,46 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val chatReady: StateFlow<Boolean> = combine(_apiClient, _apiServerReachable) { client, reachable ->
         client != null && reachable
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
-    // NOTE: [relayReady] — symmetric to [chatReady] for the voice + bridge
-    // surfaces — is declared below the [_relayUrl] MutableStateFlow,
+    // NOTE: [relayReady] / [voiceReady] are declared below the [_relayUrl]
+    // MutableStateFlow,
     // further down this file, because Kotlin class-body initializers run
     // top-to-bottom and a forward reference to _relayUrl here would read
     // a null backing field at construction time. Look for the `val
-    // relayReady:` declaration near [_relayUrl].
+    // relayReady:` / `voiceReady:` declarations near [_relayUrl].
 
     // --- Relay URL ---
     private val _relayUrl = MutableStateFlow(DEFAULT_RELAY_URL)
     val relayUrl: StateFlow<String> = _relayUrl.asStateFlow()
+
+    /**
+     * Runtime route for chat/API traffic. The persisted API URL remains the
+     * connection's base config; a resolver-selected endpoint temporarily wins
+     * so paired devices can roam between LAN, Tailscale, and operator VPN
+     * routes without rewriting stored settings.
+     */
+    val effectiveApiServerUrl: StateFlow<String> = combine(
+        _apiServerUrl,
+        connectionManager.activeEndpoint,
+    ) { savedUrl, endpoint ->
+        endpoint?.api?.url ?: savedUrl
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_API_URL)
+
+    /**
+     * Runtime route for relay HTTP calls and WSS-adjacent helpers. Relay
+     * control still requires the paired relay session token; this only
+     * chooses which reachable host carries those authenticated requests.
+     */
+    val effectiveRelayUrl: StateFlow<String> = combine(
+        _relayUrl,
+        _apiServerUrl,
+        connectionManager.activeEndpoint,
+    ) { savedRelayUrl, savedApiUrl, endpoint ->
+        endpoint?.relay?.url ?: if (RelayUrlDeriver.isAutoManagedRelayUrl(savedRelayUrl, savedApiUrl)) {
+            RelayUrlDeriver.deriveFromApiUrl(savedApiUrl) ?: savedRelayUrl
+        } else {
+            savedRelayUrl
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_RELAY_URL)
 
     /**
      * Relay is ready when we have a configured URL, the WSS socket is
@@ -395,35 +449,44 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * matter:
      *  - URL blank → nothing to connect to (post-teardown state after
      *    removing the last connection).
-     *  - WSS not Connected → transport is down; any `/voice/...` or
-     *    bridge command send would throw immediately.
-     *  - authState not Paired → the server would reject the voice/bridge
-     *    call at its bearer-token check, so even a live socket won't help.
+     *  - WSS not Connected → transport is down; bridge command send would
+     *    throw immediately.
+     *  - authState not Paired → the server would reject bridge calls at
+     *    the bearer-token check, so even a live socket won't help.
      *
      * Consumers:
      *  - BridgeScreen — surfaces a "Relay not connected" nag banner so
      *    the user doesn't flip the master toggle on expecting commands
      *    to flow.
-     *  - ChatScreen — greys out the Mic button + tooltip on tap, since
-     *    voice mode's `/voice/transcribe` + `/voice/synthesize` both
-     *    live on the relay.
-     *
      * Symmetric in shape to [chatReady] above so call sites read
      * consistently; intentionally does NOT collapse with chatReady
      * because the two features have orthogonal network dependencies —
-     * Chat runs over direct HTTP to the API server, Voice+Bridge ride
-     * the relay WSS. A phone that's reachable to the API but has no
-     * relay configured is valid state for Chat and invalid for the
-     * other two.
+     * Chat runs over direct HTTP to the API server while Bridge rides the
+     * relay WSS. Voice has its own [voiceReady] gate because it uses Relay
+     * HTTP routes and can authenticate with a Hermes API key.
      */
     val relayReady: StateFlow<Boolean> = combine(
         connectionManager.connectionState,
         authState,
-        _relayUrl,
+        effectiveRelayUrl,
     ) { connState, auth, url ->
         url.isNotBlank() &&
             connState == ConnectionState.Connected &&
             auth is AuthState.Paired
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    /**
+     * Voice is ready when a relay URL exists and the phone has either a
+     * saved Hermes API key or a paired Relay session token. Unlike bridge and
+     * terminal, voice uses HTTP routes and can authenticate with the API key,
+     * so it does not require a live authenticated WSS connection.
+     */
+    val voiceReady: StateFlow<Boolean> = combine(
+        authState,
+        apiKeyPresent,
+        effectiveRelayUrl,
+    ) { auth, hasApiKey, url ->
+        url.isNotBlank() && (auth is AuthState.Paired || hasApiKey)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     // Backward compat: expose as serverUrl for any remaining references
@@ -492,13 +555,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * selection). Written through on [selectProfile]. Cleared on
      * [removeConnection] after the switch completes.
      *
-     * Resolution from persisted `profileName: String?` → `Profile?` happens
-     * against [agentProfiles] at hydrate time; if the persisted name no
-     * longer exists in the server-advertised list (profile was removed on
-     * the server), the resolution yields null.
+     * Resolution from persisted `profileName: String?` to `Profile?` happens
+     * after the destination connection is active and its own [agentProfiles]
+     * list has arrived. That prevents a same-named profile from the previous
+     * connection from being reused during a connection switch.
      */
     private val _selectedProfile = MutableStateFlow<Profile?>(null)
     val selectedProfile: StateFlow<Profile?> = _selectedProfile.asStateFlow()
+    private val _pendingSelectedProfileConnectionId = MutableStateFlow<String?>(null)
+    private val _pendingSelectedProfileName = MutableStateFlow<String?>(null)
 
     /**
      * DataStore-backed persistence for [_selectedProfile] keyed by
@@ -517,18 +582,36 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun selectProfile(profile: Profile?) {
         _selectedProfile.value = profile
         val connectionId = activeConnectionId.value ?: return
+        _pendingSelectedProfileConnectionId.value = connectionId
+        _pendingSelectedProfileName.value = profile?.name
         viewModelScope.launch {
             profileSelectionStore.setSelectedProfile(connectionId, profile?.name)
         }
     }
 
-    /**
-     * Resolve a persisted profile `name` against the current
-     * [agentProfiles] list. Returns null when the profile no longer
-     * exists — the server may have removed or renamed it between runs.
-     */
-    private fun resolveProfileByName(name: String?): Profile? =
-        name?.let { n -> agentProfiles.value.firstOrNull { it.name == n } }
+    private fun resolvePendingProfileFrom(list: List<Profile>) {
+        val connectionId = activeConnectionId.value ?: return
+        if (_pendingSelectedProfileConnectionId.value != connectionId) {
+            return
+        }
+        val current = _selectedProfile.value
+        if (current != null) {
+            val refreshed = list.firstOrNull { it.name == current.name }
+            if (refreshed != null) {
+                if (refreshed != current) {
+                    _selectedProfile.value = refreshed
+                }
+                return
+            }
+            _selectedProfile.value = null
+            _pendingSelectedProfileName.value = current.name
+        }
+        val pendingName = _pendingSelectedProfileName.value ?: return
+        val resolved = list.firstOrNull { it.name == pendingName }
+        if (resolved != null) {
+            _selectedProfile.value = resolved
+        }
+    }
 
     // --- Paired devices list (GET /sessions) -------------------------------
     //
@@ -551,7 +634,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     private val tailscaleDetector = TailscaleDetector(
         context = application,
         scope = viewModelScope,
-        relayUrlProvider = { _relayUrl.value },
+        relayUrlProvider = { effectiveRelayUrlSnapshot() },
     )
     val isTailscaleDetected: StateFlow<Boolean> = tailscaleDetector.isTailscaleDetected
 
@@ -790,7 +873,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     private val screenCapture = ScreenCapture(
         context = application,
         httpClient = relayOkHttp,
-        relayUrlProvider = { _relayUrl.value },
+        relayUrlProvider = { effectiveRelayUrlSnapshot() },
         sessionTokenProvider = {
             (authManager.authState.value as? AuthState.Paired)?.token
         },
@@ -830,6 +913,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         multiplexer = multiplexer,
         scope = viewModelScope,
         screenCapture = screenCapture,
+        relayHttpClient = relayHttpClient,
+        mediaCacheWriter = mediaCacheWriter,
         // === PHASE3-safety-rails: safety enforcement ===
         safetyManager = bridgeSafetyManager,
         // === END PHASE3-safety-rails ===
@@ -861,26 +946,67 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // (cancel stream → stop voice → disconnect WSS → rebuild AuthManager +
     // api client → reconnect WSS if paired). Extracted so the swap is
     // unit-testable without having to mock AndroidViewModel / DataStore.
+    private fun createAuthManagerForConnectionId(connectionId: String): AuthManager {
+        val connection = connectionStore.connections.value.firstOrNull { it.id == connectionId }
+        return AuthManager(
+            context = getApplication<Application>(),
+            multiplexer = multiplexer,
+            scope = viewModelScope,
+            connectionId = connectionId,
+            tokenStoreKey = connection?.tokenStoreKey,
+        )
+    }
+
+    private fun installAuthManager(am: AuthManager) {
+        authManager = am
+        // Push into the flow so the flatMapLatest chains on authState /
+        // pairingCode / currentPairedSession repoint to the new manager.
+        // Without this, existing Compose collectors stay bound to the
+        // previous AuthManager's backing flows forever.
+        _authManagerFlow.value = am
+    }
+
+    private suspend fun restorePersistedActiveConnectionContext(connection: Connection) {
+        if (connectionStore.activeConnectionId.value != connection.id) return
+
+        val restoredAuth = createAuthManagerForConnectionId(connection.id)
+        installAuthManager(restoredAuth)
+
+        val restoredRelayUrl = if (
+            RelayUrlDeriver.isAutoManagedRelayUrl(connection.relayUrl, connection.apiServerUrl)
+        ) {
+            RelayUrlDeriver.deriveFromApiUrl(connection.apiServerUrl) ?: connection.relayUrl
+        } else {
+            connection.relayUrl
+        }
+
+        _apiServerUrl.value = connection.apiServerUrl
+        _relayUrl.value = restoredRelayUrl
+        getApplication<Application>().relayDataStore.edit { prefs ->
+            prefs[KEY_API_SERVER_URL] = connection.apiServerUrl
+            prefs[KEY_RELAY_URL] = restoredRelayUrl
+        }
+        rebuildApiClient()
+
+        withTimeoutOrNull(ConnectionSwitchCoordinator.AUTH_HYDRATE_TIMEOUT_MS) {
+            restoredAuth.authState.first { it is AuthState.Paired || it is AuthState.Failed }
+        }
+
+        if (
+            connectionStore.activeConnectionId.value == connection.id &&
+            restoredAuth.hasPairContext &&
+            restoredRelayUrl.isNotBlank()
+        ) {
+            connectionManager.connect(restoredRelayUrl)
+        }
+    }
+
     private val connectionSwitchCoordinator = ConnectionSwitchCoordinator(
         connectionStore = connectionStore,
         connectionManager = connectionManager,
         scope = viewModelScope,
-        authManagerFactory = { cid ->
-            AuthManager(
-                context = application,
-                multiplexer = multiplexer,
-                scope = viewModelScope,
-                connectionId = cid,
-            )
-        },
-        installAuthManager = { am ->
-            authManager = am
-            // Push into the flow so the flatMapLatest chains on authState /
-            // pairingCode / currentPairedSession repoint to the new manager.
-            // Without this, existing Compose collectors stay bound to the
-            // previous AuthManager's backing flows forever.
-            _authManagerFlow.value = am
-        },
+        authManagerFactory = { cid -> createAuthManagerForConnectionId(cid) },
+        installAuthManager = { am -> installAuthManager(am) },
         setApiServerUrl = { url -> _apiServerUrl.value = url },
         setRelayUrl = { url -> _relayUrl.value = url },
         persistUrls = { apiUrl, relayUrl ->
@@ -1008,6 +1134,23 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     switchConnection(existing.id).join()
                 }
                 return@withLock existing.id
+            }
+
+            val reusable = connectionStore.connections.value.firstOrNull { c ->
+                c.pairedAt == null &&
+                    c.apiServerUrl.isBlank() &&
+                    c.label == PLACEHOLDER_LABEL
+            }
+            if (reusable != null) {
+                android.util.Log.i(
+                    "ConnectionViewModel",
+                    "beginAddConnection: reusing placeholder id=${reusable.id} " +
+                        "instead of pre-allocated id=$preAllocatedId",
+                )
+                if (connectionStore.activeConnectionId.value != reusable.id) {
+                    switchConnection(reusable.id).join()
+                }
+                return@withLock reusable.id
             }
 
             val placeholder = Connection(
@@ -1176,7 +1319,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * renders "No connection" until the user adds one via Settings.
      */
     suspend fun removeConnection(connectionId: String) {
+        val removed = connectionStore.connections.value.firstOrNull { it.id == connectionId }
+            ?: return
         val wasActive = connectionId == activeConnectionId.value
+        val removedDeviceId = readStoredDeviceIdForRemoval(removed, wasActive)
         if (wasActive) {
             val other = connectionStore.connections.value.firstOrNull { it.id != connectionId }
             if (other != null) {
@@ -1227,6 +1373,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 getApplication<Application>().relayDataStore.edit { prefs ->
                     prefs[KEY_API_SERVER_URL] = ""
                     prefs[KEY_RELAY_URL] = ""
+                    prefs.remove(KEY_LAST_SESSION_ID)
                 }
                 // rebuildApiClient() with blank URL nulls _apiClient,
                 // flips _apiServerReachable / _apiServerHealth /
@@ -1237,6 +1384,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 rebuildApiClient()
             }
         }
+        scrubConnectionArtifacts(removed, removedDeviceId)
         connectionStore.removeConnection(connectionId)
         // Clear the persisted profile selection for the removed connection
         // AFTER the switch-away above has finished. Ordering matters: if
@@ -1245,6 +1393,36 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // ProfileSelectionStore is a separate DataStore file from
         // ConnectionStore's EncryptedSharedPrefs.
         profileSelectionStore.clear(connectionId)
+    }
+
+    private suspend fun readStoredDeviceIdForRemoval(
+        connection: Connection,
+        wasActive: Boolean,
+    ): String? {
+        if (wasActive) {
+            runCatching { authManager.getExistingDeviceId() }
+                .getOrNull()
+                ?.let { return it }
+        }
+        return runCatching {
+            AuthManager.readStoredDeviceId(getApplication(), connection.tokenStoreKey)
+        }.getOrNull()
+    }
+
+    private suspend fun scrubConnectionArtifacts(
+        connection: Connection,
+        deviceId: String?,
+    ) {
+        if (deviceId != null) {
+            runCatching {
+                PairingPreferences.removeDeviceEndpoints(getApplication(), deviceId)
+            }.onFailure {
+                android.util.Log.w(
+                    "ConnectionViewModel",
+                    "removeConnection: failed to remove endpoints for ${connection.id}: ${it.message}",
+                )
+            }
+        }
     }
 
     init {
@@ -1373,7 +1551,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             combine(
                 authState,
                 relayConnectionState,
-                _relayUrl,
+                effectiveRelayUrl,
             ) { auth, conn, url -> Triple(auth, conn, url) }
                 .collect { (auth, conn, url) ->
                     pendingStaleJob?.cancel()
@@ -1514,8 +1692,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                         // which would thrash here since the duplicate is
                         // by construction NOT the active connection. Also
                         // clears the per-connection profile pick so the
-                        // removed connection's EncryptedPrefs + profile
-                        // pointer go together.
+                        // removed connection's EncryptedPrefs + route list
+                        // + profile pointer go together.
+                        scrubConnectionArtifacts(
+                            duplicate,
+                            readStoredDeviceIdForRemoval(duplicate, wasActive = false),
+                        )
                         connectionStore.removeConnection(duplicate.id)
                         profileSelectionStore.clear(duplicate.id)
                     }
@@ -1645,6 +1827,23 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             }
         }
 
+        // Cold-start context restore. The field initializer above has to build
+        // an AuthManager before ConnectionStore has hydrated, so it starts on
+        // the legacy token store. Once the persisted active connection is known,
+        // rebuild against that connection's tokenStoreKey so session/API-key
+        // state survives process death.
+        viewModelScope.launch {
+            try {
+                val connection = activeConnection.first { it != null } ?: return@launch
+                restorePersistedActiveConnectionContext(connection)
+            } catch (e: Exception) {
+                android.util.Log.w(
+                    "ConnectionViewModel",
+                    "restorePersistedActiveConnectionContext failed: ${e.message}",
+                )
+            }
+        }
+
         // Load saved state — split into fast (UI-blocking) and slow (network) paths
         viewModelScope.launch {
             _onboardingCompleted.value = dataManager.isOnboardingCompleted()
@@ -1690,7 +1889,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
                 // Rebuild API client in a separate coroutine so it doesn't block
                 // the DataStore flow (getApiKey() awaits Tink crypto init on first call)
-                val currentUrl = _apiServerUrl.value
+                val currentUrl = effectiveApiServerUrlSnapshot()
                 launch {
                     val currentKey = authManager.getApiKey() ?: ""
                     if (currentUrl != prevApiUrl || currentKey != prevApiKey) {
@@ -1722,10 +1921,33 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             while (true) {
                 delay(30_000)
-                if (_relayUrl.value.isNotBlank()) {
+                if (effectiveRelayUrlSnapshot().isNotBlank()) {
                     probeRelayHealth()
                 }
             }
+        }
+
+        // Runtime endpoint changes should move all HTTP clients, not only
+        // the WSS relay socket. Stored URLs remain untouched; this rebuilds
+        // chat/API against the currently resolved route.
+        viewModelScope.launch {
+            effectiveApiServerUrl
+                .drop(1)
+                .distinctUntilChanged()
+                .collect {
+                    rebuildApiClient()
+                }
+        }
+
+        viewModelScope.launch {
+            effectiveRelayUrl
+                .drop(1)
+                .distinctUntilChanged()
+                .collect { url ->
+                    _relayServerHealth.value =
+                        if (url.isBlank()) HealthStatus.Unknown else HealthStatus.Probing
+                    probeRelayHealth()
+                }
         }
 
         // React to network changes — ConnectivityObserver was previously
@@ -1755,51 +1977,37 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             }
         }
 
-        // Hydrate the persisted profile pick on every connection switch.
-        // The pick is per-connection: connection B may have its own
-        // separate last-selected profile from connection A, and neither
-        // should leak across. ProfileSelectionStore stores profile NAMES;
-        // the Profile object itself lives in agentProfiles which is
-        // repopulated by AuthManager on the post-switch reconnect, so we
-        // clear first (so a stale A selection never dangles) then let the
-        // agentProfiles collector below resolve the persisted name once
-        // the new server's list arrives.
+        // Drop the current Profile object as soon as a switch begins. The
+        // persisted destination name is loaded only after activeConnectionId
+        // changes, then resolved by the agentProfiles collector below.
         viewModelScope.launch {
-            connectionSwitchEvents.collect { newConnectionId ->
+            connectionSwitchEvents.collect {
                 _selectedProfile.value = null
-                val persistedName = profileSelectionStore
-                    .selectedProfileFlow(newConnectionId)
-                    .first()
-                // If the new connection has agentProfiles already (rare —
-                // usually the reconnect hasn't landed auth.ok yet), resolve
-                // immediately. Otherwise the collector below handles it
-                // when the list populates.
-                resolveProfileByName(persistedName)?.let { resolved ->
-                    _selectedProfile.value = resolved
-                }
+                _pendingSelectedProfileConnectionId.value = null
+                _pendingSelectedProfileName.value = null
             }
         }
 
-        // When agentProfiles updates (post auth.ok on boot or after a
-        // switch), try to resolve any persisted selection for the active
-        // connection. This covers the common case where the persisted
-        // name was loaded before the server's profile list arrived.
-        // Guarded: if the user has already picked something manually we
-        // don't clobber it — only promote from null-with-persisted-name
-        // to the resolved Profile.
+        // Profile selections are persisted per connection. Loading just the
+        // name here keeps the UI/send path in "server default" until this
+        // active connection's profile list arrives and can resolve it.
+        viewModelScope.launch {
+            activeConnectionId.collect { connectionId ->
+                _selectedProfile.value = null
+                _pendingSelectedProfileConnectionId.value = connectionId
+                _pendingSelectedProfileName.value = connectionId?.let { cid ->
+                    profileSelectionStore.selectedProfileFlow(cid).first()
+                }
+                resolvePendingProfileFrom(agentProfiles.value)
+            }
+        }
+
+        // Resolve or refresh the selected Profile only from the active
+        // connection's current agentProfiles list. A missing persisted name
+        // remains pending so it can recover if the server advertises it later.
         viewModelScope.launch {
             agentProfiles.collect { list ->
-                if (_selectedProfile.value != null) return@collect
-                val cid = activeConnectionId.value ?: return@collect
-                val persistedName = profileSelectionStore
-                    .selectedProfileFlow(cid)
-                    .first()
-                val resolved = persistedName?.let { n ->
-                    list.firstOrNull { it.name == n }
-                }
-                if (resolved != null) {
-                    _selectedProfile.value = resolved
-                }
+                resolvePendingProfileFrom(list)
             }
         }
     }
@@ -1829,12 +2037,17 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun revalidate() {
         if (revalidationJob?.isActive == true) return
         revalidationJob = viewModelScope.launch {
+            val apiRouteBefore = effectiveApiServerUrlSnapshot()
+            connectionManager.refreshActiveEndpoint()
+            if (effectiveApiServerUrlSnapshot() != apiRouteBefore) {
+                rebuildApiClient()
+            }
             // Flip to Probing immediately so the UI doesn't flash whatever
             // stale value the previous session left in the flow.
             if (_apiClient.value != null) {
                 _apiServerHealth.value = HealthStatus.Probing
             }
-            if (_relayUrl.value.isNotBlank()) {
+            if (effectiveRelayUrlSnapshot().isNotBlank()) {
                 _relayServerHealth.value = HealthStatus.Probing
             }
 
@@ -1875,7 +2088,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * [testRelayReachable] which is the user-facing Save & Test action.
      */
     private suspend fun probeRelayHealth() {
-        val url = _relayUrl.value
+        val url = effectiveRelayUrlSnapshot()
         if (url.isBlank()) {
             _relayServerHealth.value = HealthStatus.Unknown
             return
@@ -1942,6 +2155,29 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 updateRelayUrl(relay.url)
                 if (relay.url.startsWith("ws://")) {
                     setInsecureMode(true)
+                }
+            }
+
+            // Persist route candidates before the first WSS attempt. On a
+            // no-LAN pair, waiting until auth.ok means the socket tries the
+            // LAN relay URL from the QR, never receives auth.ok, and therefore
+            // never stores the Tailscale fallback it needed to connect.
+            payload.endpoints?.takeIf { it.isNotEmpty() }?.let { endpoints ->
+                try {
+                    val ctx = getApplication<Application>()
+                    val deviceId = authManager.getOrCreateDeviceId()
+                    PairingPreferences.setDeviceEndpoints(ctx, deviceId, endpoints)
+                    android.util.Log.i(
+                        "ConnectionVM",
+                        "applyPairingPayload: pre-persisted ${endpoints.size} endpoint(s) " +
+                            "for device=$deviceId roles=${endpoints.map { it.role }}"
+                    )
+                } catch (e: Exception) {
+                    android.util.Log.w(
+                        "ConnectionVM",
+                        "applyPairingPayload: endpoint pre-persist failed; " +
+                            "initial connect will use relay.url (${e.message})"
+                    )
                 }
             }
 
@@ -2054,12 +2290,120 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // --- API Server methods ---
 
     fun updateApiServerUrl(url: String) {
-        _apiServerUrl.value = url
+        val trimmed = url.trim()
+        val previousApiUrl = _apiServerUrl.value
+        val previousRelayUrl = _relayUrl.value
+        val derivedRelayUrl = RelayUrlDeriver.deriveFromApiUrl(trimmed)
+        val refreshedRelayUrl = derivedRelayUrl?.takeIf {
+            RelayUrlDeriver.isAutoManagedRelayUrl(previousRelayUrl, previousApiUrl)
+        }
+
+        _apiServerUrl.value = trimmed
+        if (refreshedRelayUrl != null) {
+            _relayUrl.value = refreshedRelayUrl
+            _relayServerHealth.value = HealthStatus.Probing
+        }
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
-                preferences[KEY_API_SERVER_URL] = url
+                preferences[KEY_API_SERVER_URL] = trimmed
+                if (refreshedRelayUrl != null) {
+                    preferences[KEY_RELAY_URL] = refreshedRelayUrl
+                }
             }
+            persistActiveConnectionUrls(
+                apiServerUrl = trimmed,
+                relayUrl = if (refreshedRelayUrl != null) {
+                    refreshedRelayUrl
+                } else {
+                    _relayUrl.value
+                },
+            )
             rebuildApiClient()
+            if (refreshedRelayUrl != null) {
+                probeRelayHealth()
+            }
+        }
+    }
+
+    data class ApiVoiceSetupResult(
+        val apiReachable: Boolean,
+        val relayUrl: String?,
+        val relayAutoDerived: Boolean,
+        val voiceConfigReachable: Boolean,
+        val voiceConfigError: String?,
+    )
+
+    /**
+     * Persist API URL/key, resolve the Relay URL in Auto mode, then probe
+     * `/voice/config`. This is the low-friction chat+voice setup path:
+     * users enter API URL + API key first, and only need a manual Relay URL
+     * if the conventional same-host `:8767` derivation fails.
+     */
+    fun saveApiAndProbeVoice(
+        apiUrl: String,
+        apiKey: String,
+        manualRelayUrlOverride: String?,
+        onResult: (ApiVoiceSetupResult) -> Unit,
+    ) {
+        val trimmedApiUrl = apiUrl.trim()
+        val trimmedOverride = manualRelayUrlOverride?.trim().orEmpty()
+        val derivedRelayUrl = RelayUrlDeriver.deriveFromApiUrl(trimmedApiUrl)
+        val nextRelayUrl = trimmedOverride.ifBlank { derivedRelayUrl.orEmpty() }
+        val usingAutoRelay = trimmedOverride.isBlank()
+
+        _apiServerUrl.value = trimmedApiUrl
+        if (nextRelayUrl.isNotBlank()) {
+            _relayUrl.value = nextRelayUrl
+            _relayServerHealth.value = HealthStatus.Probing
+        }
+
+        viewModelScope.launch {
+            if (apiKey.isNotBlank()) {
+                authManager.setApiKey(apiKey.trim())
+            }
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                preferences[KEY_API_SERVER_URL] = trimmedApiUrl
+                if (nextRelayUrl.isNotBlank()) {
+                    preferences[KEY_RELAY_URL] = nextRelayUrl
+                }
+            }
+            persistActiveConnectionUrls(
+                apiServerUrl = trimmedApiUrl,
+                relayUrl = nextRelayUrl,
+            )
+
+            rebuildApiClient()
+            val apiReachable = _apiServerReachable.value
+
+            val voiceResult = if (nextRelayUrl.isNotBlank()) {
+                RelayVoiceClient(
+                    context = getApplication(),
+                    okHttpClient = relayOkHttp,
+                    relayUrlProvider = { nextRelayUrl },
+                    sessionTokenProvider = {
+                        (authManager.authState.value as? AuthState.Paired)?.token
+                    },
+                    apiBearerTokenProvider = { authManager.getApiKey() },
+                ).getVoiceConfig()
+            } else {
+                Result.failure(IllegalStateException("Relay URL required for voice"))
+            }
+
+            _relayServerHealth.value = if (voiceResult.isSuccess) {
+                HealthStatus.Reachable
+            } else {
+                HealthStatus.Unreachable
+            }
+
+            onResult(
+                ApiVoiceSetupResult(
+                    apiReachable = apiReachable,
+                    relayUrl = nextRelayUrl.ifBlank { null },
+                    relayAutoDerived = usingAutoRelay,
+                    voiceConfigReachable = voiceResult.isSuccess,
+                    voiceConfigError = voiceResult.exceptionOrNull()?.message,
+                ),
+            )
         }
     }
 
@@ -2070,6 +2414,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    suspend fun getApiKey(): String? = authManager.getApiKey()
+
     fun checkApiHealth() {
         viewModelScope.launch {
             val client = _apiClient.value
@@ -2077,17 +2423,41 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun testApiConnection(onResult: (Boolean) -> Unit) {
+    fun testApiConnection(onResult: (Boolean, String) -> Unit) {
         viewModelScope.launch {
             val client = _apiClient.value
-            val reachable = client?.checkHealth() == true
+            if (client == null) {
+                _apiServerReachable.value = false
+                _apiServerHealth.value = HealthStatus.Unknown
+                onResult(false, "No API client configured")
+                return@launch
+            }
+
+            _apiServerHealth.value = HealthStatus.Probing
+            val health = client.checkHealthDetailed()
+            if (health is com.hermesandroid.relay.network.HealthCheckResult.Unhealthy) {
+                _apiServerReachable.value = false
+                _apiServerHealth.value = HealthStatus.Unreachable
+                onResult(false, health.message)
+                return@launch
+            }
+
+            val sessions = client.checkSessionsAuthDetailed()
+            val reachable = sessions is com.hermesandroid.relay.network.HealthCheckResult.Healthy
             _apiServerReachable.value = reachable
-            onResult(reachable)
+            _apiServerHealth.value = if (reachable) HealthStatus.Reachable else HealthStatus.Unreachable
+            val message = when (sessions) {
+                is com.hermesandroid.relay.network.HealthCheckResult.Healthy ->
+                    "Connection OK - health and sessions auth passed"
+                is com.hermesandroid.relay.network.HealthCheckResult.Unhealthy ->
+                    sessions.message
+            }
+            onResult(reachable, message)
         }
     }
 
     private suspend fun rebuildApiClient() {
-        val url = _apiServerUrl.value
+        val url = effectiveApiServerUrlSnapshot()
         val key = authManager.getApiKey() ?: ""
 
         val oldClient = _apiClient.value
@@ -2141,17 +2511,22 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // --- Relay methods ---
 
     fun connectRelay(url: String) {
-        _relayUrl.value = url
+        val trimmed = url.trim()
+        _relayUrl.value = trimmed
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
-                preferences[KEY_RELAY_URL] = url
+                preferences[KEY_RELAY_URL] = trimmed
             }
+            persistActiveConnectionUrls(
+                apiServerUrl = _apiServerUrl.value,
+                relayUrl = trimmed,
+            )
         }
-        connectRelayInternal(url)
+        connectRelayInternal(trimmed)
     }
 
     fun connectRelay() {
-        connectRelayInternal(_relayUrl.value)
+        connectRelayInternal(effectiveRelayUrlSnapshot())
     }
 
     /**
@@ -2252,22 +2627,28 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun reconnectIfStale() {
         val paired = authState.value is AuthState.Paired
         val disconnected = relayConnectionState.value == ConnectionState.Disconnected
-        val hasUrl = _relayUrl.value.isNotBlank()
+        val relayUrl = effectiveRelayUrlSnapshot()
+        val hasUrl = relayUrl.isNotBlank()
         if (paired && disconnected && hasUrl) {
-            connectionManager.connect(_relayUrl.value)
+            connectionManager.connect(relayUrl)
         }
     }
 
     fun updateRelayUrl(url: String) {
-        _relayUrl.value = url
+        val trimmed = url.trim()
+        _relayUrl.value = trimmed
         // The new URL hasn't been verified yet — flip to Probing so the
         // health badge doesn't show stale Reachable/Unreachable from the
         // old URL while the next periodic tick (or revalidate()) lands.
         _relayServerHealth.value = HealthStatus.Probing
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
-                preferences[KEY_RELAY_URL] = url
+                preferences[KEY_RELAY_URL] = trimmed
             }
+            persistActiveConnectionUrls(
+                apiServerUrl = _apiServerUrl.value,
+                relayUrl = trimmed,
+            )
             // Kick a fresh probe right now rather than waiting up to 30s
             // for the periodic loop.
             probeRelayHealth()
@@ -2317,6 +2698,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             getApplication<Application>().relayDataStore.edit { preferences ->
                 preferences[KEY_RELAY_URL] = trimmed
             }
+            persistActiveConnectionUrls(
+                apiServerUrl = _apiServerUrl.value,
+                relayUrl = trimmed,
+            )
         }
 
         _relayReachableResult.value = RelayReachable.Probing
@@ -2343,6 +2728,21 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      */
     fun clearRelayReachableResult() {
         _relayReachableResult.value = null
+    }
+
+    private suspend fun persistActiveConnectionUrls(
+        apiServerUrl: String,
+        relayUrl: String,
+    ) {
+        val activeId = connectionStore.activeConnectionId.value ?: return
+        val current = connectionStore.connections.value.firstOrNull { it.id == activeId } ?: return
+        if (current.apiServerUrl == apiServerUrl && current.relayUrl == relayUrl) return
+        connectionStore.updateConnection(
+            current.copy(
+                apiServerUrl = apiServerUrl,
+                relayUrl = relayUrl,
+            ),
+        )
     }
 
     // Backward compat wrappers
@@ -2624,8 +3024,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      *    candidate to the session lifetime so a stale `1` is harmless.
      *
      * @param tokenPrefix the device's token prefix from `PairedDeviceInfo`.
-     * @param channel the channel name to revoke (`"chat"`, `"voice"`,
-     *   `"terminal"`, `"bridge"`, …).
+     * @param channel the channel name to revoke (`"chat"`, `"terminal"`,
+     *   `"bridge"`, `"tui"`, `"voice:config"`, `"voice:stt"`,
+     *   `"voice:tts"`, …).
      * @return `true` on success.
      */
     suspend fun revokeChannelGrant(

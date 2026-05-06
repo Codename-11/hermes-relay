@@ -305,20 +305,45 @@ class ConnectionManager(
      */
     fun probeAndReconnect() {
         endpointResolver?.clearCache()
-        val current = serverUrl ?: return
+        val current = serverUrl
         scope.launch {
             val resolved = resolveBestEndpointSafe()
-            val targetUrl = resolved?.relay?.url ?: current
+            val targetUrl = resolved?.relay?.url ?: current ?: return@launch
+            val normalizedTarget = normalizeRelayUrl(targetUrl)
             _activeEndpoint.value = resolved
-            // Only reconnect if the target actually changed — otherwise the
-            // cache bust alone was enough and the user's socket should stay
-            // open.
-            if (normalizeRelayUrl(targetUrl) != current) {
-                Log.i(TAG, "probeAndReconnect: swapping $current → $targetUrl")
+            // Reconnect when the winner changed, and also when the socket is
+            // stale/disconnected on the same winner. The latter makes the
+            // "Use now" route action an actual recovery path after Wi-Fi drop
+            // instead of a no-op that only updates preference state.
+            if (current == null) {
+                if (shouldReconnect && reconnectGate()) {
+                    Log.i(TAG, "probeAndReconnect: no current socket — connecting to $normalizedTarget")
+                    connectToUrlOnMainPath(targetUrl)
+                }
+            } else if (normalizedTarget != current) {
+                Log.i(TAG, "probeAndReconnect: swapping $current → $normalizedTarget")
                 webSocket?.close(1000, "Endpoint re-probe")
                 connectToUrlOnMainPath(targetUrl)
+            } else if (_connectionState.value == ConnectionState.Disconnected &&
+                shouldReconnect &&
+                reconnectGate()
+            ) {
+                Log.i(TAG, "probeAndReconnect: current route is stale — reconnecting $current")
+                doConnect(current)
             }
         }
+    }
+
+    /**
+     * Re-run endpoint resolution and publish the winner without forcing a
+     * WSS reconnect. Used by HTTP-only surfaces (chat/voice/relay HTTP)
+     * so they can follow LAN/Tailscale/VPN route changes even when the relay
+     * socket is currently disconnected or intentionally not paired.
+     */
+    suspend fun refreshActiveEndpoint(): EndpointCandidate? {
+        val resolved = resolveBestEndpointSafe()
+        _activeEndpoint.value = resolved
+        return resolved
     }
 
     /**
@@ -333,6 +358,38 @@ class ConnectionManager(
 
     fun getManualRoleOverride(): String? = manualRoleOverride
 
+    private fun markActiveEndpointUnreachable(reason: String) {
+        val active = _activeEndpoint.value ?: return
+        endpointResolver?.markUnreachable(active)
+        Log.i(TAG, "marked endpoint role=${active.role} unreachable ($reason)")
+    }
+
+    private fun resolveAndSwitchIfNeeded(closeReason: String) {
+        if (endpointResolver == null) return
+        val current = serverUrl ?: return
+        scope.launch {
+            val resolved = resolveBestEndpointSafe()
+            if (resolved == null) {
+                _activeEndpoint.value = null
+                return@launch
+            }
+            val newUrl = resolved.relay.url
+            val normalizedNew = normalizeRelayUrl(newUrl)
+            _activeEndpoint.value = resolved
+            if (normalizedNew != current) {
+                Log.i(TAG, "endpoint fallback: swapping $current → $normalizedNew")
+                webSocket?.close(1000, closeReason)
+                connectToUrlOnMainPath(newUrl)
+            } else if (_connectionState.value == ConnectionState.Disconnected &&
+                shouldReconnect &&
+                reconnectGate()
+            ) {
+                Log.i(TAG, "endpoint fallback: same winner is disconnected — reconnecting $current")
+                doConnect(current)
+            }
+        }
+    }
+
     private fun ensureNetworkCallbackRegistered() {
         val ctx = context ?: return
         if (networkCallback != null) return
@@ -344,15 +401,21 @@ class ConnectionManager(
                 val url = serverUrl ?: return
                 scope.launch {
                     val resolved = resolveBestEndpointSafe()
-                    val newUrl = resolved?.relay?.url ?: return@launch
+                    val newUrl = resolved?.relay?.url
+                    if (newUrl == null) {
+                        if (_connectionState.value != ConnectionState.Connected) {
+                            _activeEndpoint.value = null
+                        }
+                        return@launch
+                    }
                     val normalizedNew = normalizeRelayUrl(newUrl)
+                    _activeEndpoint.value = resolved
                     // Only swap if the winner actually differs from the
                     // currently-connected URL. Avoids dropping a healthy
                     // socket on a no-op network flap (Wi-Fi scan, cell
                     // handover that ends up on the same route, etc.).
                     if (normalizedNew != url) {
                         Log.i(TAG, "network change: swapping $url → $normalizedNew")
-                        _activeEndpoint.value = resolved
                         webSocket?.close(1000, "Network change — switching endpoint")
                         connectToUrlOnMainPath(newUrl)
                     }
@@ -360,14 +423,15 @@ class ConnectionManager(
             }
 
             override fun onLost(network: Network) {
-                Log.i(TAG, "network onLost — marking active endpoint unreachable")
-                val active = _activeEndpoint.value ?: return
-                endpointResolver?.markUnreachable(active)
+                Log.i(TAG, "network onLost — marking active endpoint unreachable and resolving fallback")
+                markActiveEndpointUnreachable("network lost")
+                resolveAndSwitchIfNeeded("Network lost — switching endpoint")
             }
         }
         try {
             val request = NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
                 .build()
             cm.registerNetworkCallback(request, callback)
             networkCallback = callback
@@ -505,6 +569,9 @@ class ConnectionManager(
                 val code = response?.code
                 Log.w(TAG, "onFailure: ${t.javaClass.simpleName}: ${t.message} (responseCode=$code)")
                 lastUpgradeResponseCode = code
+                if (response == null) {
+                    markActiveEndpointUnreachable("socket failure")
+                }
                 _connectionState.value = ConnectionState.Disconnected
                 scheduleReconnect()
             }
@@ -546,7 +613,19 @@ class ConnectionManager(
             // expires, auth state may have changed (e.g., user hit Revoke
             // during the retry window).
             if (shouldReconnect && reconnectGate()) {
-                doConnect(url)
+                val resolved = resolveBestEndpointSafe()
+                val targetUrl = resolved?.relay?.url
+                if (resolved != null) {
+                    _activeEndpoint.value = resolved
+                } else {
+                    _activeEndpoint.value = null
+                }
+                if (targetUrl != null && normalizeRelayUrl(targetUrl) != url) {
+                    Log.i(TAG, "scheduleReconnect: switching $url → ${normalizeRelayUrl(targetUrl)}")
+                    connectToUrlOnMainPath(targetUrl)
+                } else {
+                    doConnect(url)
+                }
             } else if (!reconnectGate()) {
                 Log.i(TAG, "scheduleReconnect: gate turned false during backoff — aborting retry")
                 _connectionState.value = ConnectionState.Disconnected

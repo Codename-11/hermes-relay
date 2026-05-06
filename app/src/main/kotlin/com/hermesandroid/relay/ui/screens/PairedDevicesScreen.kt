@@ -284,9 +284,11 @@ fun PairedDevicesScreen(
 
     // === PER-CHANNEL-REVOKE: confirm dialog ===
     pendingChannelRevoke?.let { (device, channel) ->
+        val channelLabel = grantDisplayName(channel)
         val otherChannels = device.grants.keys
             .filter { it != channel }
-            .joinToString(", ")
+            .sortedWith(::compareGrantNames)
+            .joinToString(", ") { grantDisplayName(it) }
             .ifBlank { "none" }
         AlertDialog(
             onDismissRequest = { pendingChannelRevoke = null },
@@ -294,13 +296,13 @@ fun PairedDevicesScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "Revoke $channel access for " +
+                        text = "Revoke $channelLabel access for " +
                             device.deviceName.ifBlank { "this device" } + "?",
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
                         text = "The session itself stays paired — only the " +
-                            "$channel grant is removed. Other channels " +
+                            "$channelLabel grant is removed. Other channels " +
                             "($otherChannels) keep their current expiry.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -318,8 +320,8 @@ fun PairedDevicesScreen(
                                 ch,
                             )
                             snackbarHostState.showSnackbar(
-                                if (ok) "$ch access revoked"
-                                else "Failed to revoke $ch access"
+                                if (ok) "$channelLabel access revoked"
+                                else "Failed to revoke $channelLabel access"
                             )
                         }
                     },
@@ -443,7 +445,7 @@ private fun DeviceList(
         item {
             Text(
                 text = "Each row is a phone that has paired with this server.\n" +
-                    "Channel grants are per-feature authorizations (chat, bridge, voice) " +
+                    "Channel grants are per-feature authorizations (chat, bridge, terminal, TUI, voice) " +
                     "that can expire independently.\n" +
                     "Revoke a session to cut off that phone's access without affecting others.",
                 style = MaterialTheme.typography.bodyMedium,
@@ -481,9 +483,10 @@ private fun DeviceList(
                     text = "Channel grants are per-feature permissions.\n\n" +
                         "• Chat controls sent/received messages.\n" +
                         "• Bridge controls accessibility actions.\n" +
-                        "• Voice controls microphone + TTS.\n\n" +
+                        "• Terminal and TUI control shell-style remote sessions.\n" +
+                        "• Voice is split into config, speech-to-text, and text-to-speech grants.\n\n" +
                         "Each grant has its own expiry, so a phone can keep chat " +
-                        "access long after bridge access has lapsed — or you can " +
+                        "access long after bridge or voice access has lapsed — or you can " +
                         "revoke one channel without ending the whole session.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
@@ -609,7 +612,8 @@ private fun DeviceCard(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    for ((channel, expiry) in device.grants) {
+                    for ((channel, expiry) in device.grants.toList()
+                        .sortedWith { left, right -> compareGrantNames(left.first, right.first) }) {
                         // === PER-CHANNEL-REVOKE: tap-x to revoke a single channel ===
                         GrantChip(
                             channel = channel,
@@ -706,6 +710,7 @@ private fun GrantChip(
     val bg = MaterialTheme.colorScheme.surface
     val nowSec = System.currentTimeMillis() / 1000.0
     val isExpired = expiresAt != null && expiresAt < nowSec
+    val channelLabel = grantDisplayName(channel)
     val fg = if (isExpired) {
         MaterialTheme.colorScheme.onSurfaceVariant
     } else {
@@ -720,7 +725,7 @@ private fun GrantChip(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = "$channel · ${formatRelativeTtl(expiresAt, nowSec)}",
+            text = "$channelLabel · ${formatRelativeTtl(expiresAt, nowSec)}",
             style = MaterialTheme.typography.labelSmall,
             color = fg,
         )
@@ -741,12 +746,39 @@ private fun GrantChip(
         ) {
             Icon(
                 imageVector = Icons.Filled.Close,
-                contentDescription = "Revoke $channel access",
+                contentDescription = "Revoke $channelLabel access",
                 modifier = Modifier.height(14.dp),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
+}
+
+private fun compareGrantNames(left: String, right: String): Int {
+    val byKnownOrder = grantSortKey(left).compareTo(grantSortKey(right))
+    return if (byKnownOrder != 0) byKnownOrder else left.compareTo(right, ignoreCase = true)
+}
+
+private fun grantSortKey(channel: String): Int = when (channel.lowercase()) {
+    "chat" -> 0
+    "bridge" -> 10
+    "terminal" -> 20
+    "tui" -> 30
+    "voice:config" -> 40
+    "voice:stt" -> 41
+    "voice:tts" -> 42
+    else -> 100
+}
+
+private fun grantDisplayName(channel: String): String = when (channel.lowercase()) {
+    "chat" -> "Chat"
+    "bridge" -> "Bridge"
+    "terminal" -> "Terminal"
+    "tui" -> "TUI"
+    "voice:config" -> "Voice config"
+    "voice:stt" -> "Voice STT"
+    "voice:tts" -> "Voice TTS"
+    else -> channel
 }
 
 /**

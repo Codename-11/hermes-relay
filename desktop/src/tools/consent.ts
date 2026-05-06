@@ -24,10 +24,43 @@ This is AGENT-CONTROLLED access. Only use with trusted Hermes installs.
 Type 'yes' to enable, or rerun with --no-tools to disable.
 `
 
+export const COMPUTER_USE_CONSENT_PROMPT = `
+Experimental desktop computer-use tools are about to be exposed.
+The agent may request screenshots and task-scoped mouse/keyboard actions.
+Mouse/keyboard actions still require a visible, task-scoped grant approval
+before anything is sent to the OS.
+Type 'yes' to enable for this relay URL, or press Enter to keep it disabled.
+`
+
 export interface EnsureConsentResult {
   consented: boolean
   /** Reason the router was not wired. Only set when consented=false. */
   reason?: string
+  source?: 'stored' | 'prompted'
+}
+
+function cleanPromptAnswer(raw: string): string {
+  return raw
+    .replaceAll(/\x1b\[[?\d;]*[a-zA-Z~]/g, '')
+    .replaceAll(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
+    .trim()
+}
+
+async function promptForAnswer(prompt: string, question = '> '): Promise<string> {
+  process.stderr.write(prompt + '\x1b[?2004l')
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stderr,
+    terminal: true
+  })
+  try {
+    return cleanPromptAnswer(await rl.question(question))
+  } catch {
+    return ''
+  } finally {
+    rl.close()
+    process.stderr.write('\x1b[?2004h')
+  }
 }
 
 /** Check stored consent for `url`, prompt the user if missing, persist
@@ -36,7 +69,7 @@ export interface EnsureConsentResult {
 export async function ensureToolsConsent(url: string): Promise<EnsureConsentResult> {
   const existing = await getSession(url)
   if (existing?.toolsConsented === true) {
-    return { consented: true }
+    return { consented: true, source: 'stored' }
   }
 
   // Must have a TTY on stdin AND stderr to render the prompt — writing to
@@ -53,27 +86,7 @@ export async function ensureToolsConsent(url: string): Promise<EnsureConsentResu
   // `yes`/`no` clean on Windows Terminal (ConPTY otherwise wraps pasted
   // content in `\x1b[200~...\x1b[201~` escape markers that readline
   // captures into the input string).
-  process.stderr.write(CONSENT_PROMPT + '\x1b[?2004l')
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stderr,
-    terminal: true
-  })
-  let answer = ''
-  try {
-    const raw = await rl.question('> ')
-    // Strip ANSI + control chars defensively, then lower + trim.
-    answer = raw
-      .replaceAll(/\x1b\[[?\d;]*[a-zA-Z~]/g, '')
-      .replaceAll(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
-      .trim()
-      .toLowerCase()
-  } catch {
-    answer = ''
-  } finally {
-    rl.close()
-    process.stderr.write('\x1b[?2004h')
-  }
+  const answer = (await promptForAnswer(CONSENT_PROMPT)).toLowerCase()
 
   if (answer !== 'yes') {
     return { consented: false, reason: 'user declined tool consent' }
@@ -92,5 +105,41 @@ export async function ensureToolsConsent(url: string): Promise<EnsureConsentResu
     }
   }
 
-  return { consented: true }
+  return { consented: true, source: 'prompted' }
+}
+
+/** Legacy separate consent helper for the experimental computer-use tool
+ * surface. Current chat/shell/daemon paths use broad desktop-tool consent
+ * plus visible task-grant approval; this remains for compatibility with
+ * older callers and accepts the same "yes" answer as desktop tools. */
+export async function ensureComputerUseConsent(url: string): Promise<EnsureConsentResult> {
+  const existing = await getSession(url)
+  if (existing?.computerUseConsented === true) {
+    return { consented: true, source: 'stored' }
+  }
+
+  if (!process.stdin.isTTY) {
+    return {
+      consented: false,
+      reason:
+        'desktop computer-use requires interactive consent; rerun on a TTY'
+    }
+  }
+
+  const answer = (await promptForAnswer(COMPUTER_USE_CONSENT_PROMPT)).toLowerCase()
+  if (answer !== 'yes' && answer !== 'y' && answer !== 'allow computer use') {
+    return { consented: false, reason: 'user declined computer-use consent' }
+  }
+
+  if (existing) {
+    try {
+      await saveSession(url, existing.token, existing.serverVersion, {
+        computerUseConsented: true
+      })
+    } catch {
+      // Non-fatal — consent still holds for this process.
+    }
+  }
+
+  return { consented: true, source: 'prompted' }
 }

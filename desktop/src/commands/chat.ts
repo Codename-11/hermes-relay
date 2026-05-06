@@ -30,10 +30,8 @@ import { deleteSession, saveSession } from '../remoteSessions.js'
 import { CliRenderer } from '../renderer.js'
 import { fetchRecentSessions, pickSession } from '../sessionPicker.js'
 import { ensureToolsConsent } from '../tools/consent.js'
-import {
-  DESKTOP_ADVERTISED_TOOLS,
-  DESKTOP_HANDLERS
-} from '../tools/handlerSet.js'
+import { configureComputerUseRuntime } from '../tools/computerGrants.js'
+import { DESKTOP_HANDLERS, advertisedDesktopTools } from '../tools/handlerSet.js'
 import { DesktopToolRouter } from '../tools/router.js'
 import { RelayTransport } from '../transport/RelayTransport.js'
 
@@ -402,13 +400,20 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
   if (!toolsDisabled) {
     const consent = await ensureToolsConsent(url)
     if (consent.consented) {
+      configureComputerUseRuntime({
+        url,
+        computerUseConsented: true,
+        consentSource: consent.source ?? 'stored'
+      })
+      const advertisedTools = advertisedDesktopTools()
       toolRouter = new DesktopToolRouter({
         consentGranted: true,
-        handlers: DESKTOP_HANDLERS
+        handlers: DESKTOP_HANDLERS,
+        advertisedTools: [...advertisedTools]
       })
       toolRouter.attach(relay)
       process.stderr.write(
-        `Desktop tools: ${DESKTOP_ADVERTISED_TOOLS.length} handlers advertised\n`
+        `Desktop tools: ${advertisedTools.length} handlers advertised (computer-use experimental; control requires grant approval)\n`
       )
     } else if (consent.reason) {
       process.stderr.write(`Desktop tools: disabled (${consent.reason})\n`)
@@ -433,11 +438,11 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
 
   setupGracefulExit({ cleanups: [tearDown] })
 
+  const ready = waitForReady(gw)
   gw.start()
   gw.drain()
-
   try {
-    await waitForReady(gw)
+    await ready
   } catch (e) {
     process.stderr.write(`error: ${rpcErrorMessage(e)}\n`)
     tearDown()

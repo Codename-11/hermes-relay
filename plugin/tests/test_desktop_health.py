@@ -21,7 +21,7 @@ import unittest
 from typing import Any
 
 from plugin.relay.channels.desktop import DesktopHandler
-from plugin.relay.server import handle_desktop_health
+from plugin.relay.server import handle_desktop_health, handle_desktop_ping
 
 
 def _run(coro):
@@ -56,6 +56,7 @@ SAMPLE_STATUS_PAYLOAD: dict[str, Any] = {
         "desktop_powershell",
         "desktop_job_start",
         "desktop_health",
+        "desktop_computer_status",
     ],
     "host": "TEST-HOST",
     "platform": "win32",
@@ -67,6 +68,12 @@ SAMPLE_STATUS_PAYLOAD: dict[str, Any] = {
     "uptime_ms": 60_000,
     "interactive": False,
     "last_error": {"message": "boom", "tool": "desktop_terminal", "ts": 1_700_000_059_000},
+    "computer_use": {
+        "stage": "experimental",
+        "protocol_version": 2,
+        "enabled": True,
+        "input": "blocked_headless",
+    },
 }
 
 
@@ -137,6 +144,45 @@ class DesktopHealthEndpointTests(unittest.TestCase):
             self.assertIn("desktop_health", body["advertised_tools"])
             self.assertIsNotNone(body["last_error"])
             self.assertEqual(body["last_error"]["tool"], "desktop_terminal")
+            self.assertEqual(body["computer_use"]["protocol_version"], 2)
+
+        _run(run())
+
+    def test_computer_use_ping_requires_explicit_advertisement(self) -> None:
+        async def run() -> None:
+            h = DesktopHandler()
+            ws = _FakeWs()
+            await h.handle(
+                ws,
+                {
+                    "channel": "desktop",
+                    "type": "desktop.status",
+                    "id": "evt1",
+                    "payload": {"advertised_tools": []},
+                },
+            )
+            server = _FakeServer(h)
+            req = _FakeRequest(remote="127.0.0.1", server=server)
+
+            req.query = {"tool": "desktop_terminal"}
+            normal_resp = await handle_desktop_ping(req)
+            self.assertEqual(normal_resp.status, 200)
+
+            req.query = {"tool": "desktop_computer_status"}
+            computer_resp = await handle_desktop_ping(req)
+            self.assertEqual(computer_resp.status, 503)
+
+            await h.handle(
+                ws,
+                {
+                    "channel": "desktop",
+                    "type": "desktop.status",
+                    "id": "evt2",
+                    "payload": {"advertised_tools": ["desktop_computer_status"]},
+                },
+            )
+            computer_resp = await handle_desktop_ping(req)
+            self.assertEqual(computer_resp.status, 200)
 
         _run(run())
 

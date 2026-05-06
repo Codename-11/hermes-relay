@@ -169,6 +169,23 @@ class EnableDisableTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("permission denied", result["message"])
 
+    def test_enable_stack_publishes_relay_and_api(self) -> None:
+        with patch("plugin.relay.tailscale.shutil.which", return_value="/usr/bin/tailscale"), \
+             patch("plugin.relay.tailscale.subprocess.run",
+                   return_value=_mk_completed(0, stdout="ok")) as mock_run:
+            result = tailscale.enable_stack(relay_port=8767, api_port=8642)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            result["commands"],
+            [
+                ["tailscale", "serve", "--bg", "--https=8767", "http://127.0.0.1:8767"],
+                ["tailscale", "serve", "--bg", "--https=8642", "http://127.0.0.1:8642"],
+            ],
+        )
+        calls = [call.args[0] for call in mock_run.call_args_list]
+        self.assertEqual(calls, result["commands"])
+
     def test_disable_builds_expected_command(self) -> None:
         with patch("plugin.relay.tailscale.shutil.which", return_value="/usr/bin/tailscale"), \
              patch("plugin.relay.tailscale.subprocess.run",
@@ -188,6 +205,23 @@ class EnableDisableTests(unittest.TestCase):
             result = tailscale.disable(port=8767)
         self.assertFalse(result["ok"])
         self.assertIn("not found", result["message"])
+
+    def test_disable_stack_revokes_relay_and_api(self) -> None:
+        with patch("plugin.relay.tailscale.shutil.which", return_value="/usr/bin/tailscale"), \
+             patch("plugin.relay.tailscale.subprocess.run",
+                   return_value=_mk_completed(0, stdout="ok")) as mock_run:
+            result = tailscale.disable_stack(relay_port=8767, api_port=8642)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            result["commands"],
+            [
+                ["tailscale", "serve", "--https=8767", "off"],
+                ["tailscale", "serve", "--https=8642", "off"],
+            ],
+        )
+        calls = [call.args[0] for call in mock_run.call_args_list]
+        self.assertEqual(calls, result["commands"])
 
 
 class CanonicalUpstreamPresentTests(unittest.TestCase):

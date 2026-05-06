@@ -6,10 +6,10 @@ A **connection** in Hermes-Relay is a saved link to a Hermes server. Add multipl
 
 Each connection stores everything needed to talk to one Hermes install:
 
-- API server URL (`http://host:8642`) and relay URL (`wss://host:8767`)
+- API server URL (`http(s)://host:8642`) and auto-derived relay URL (`ws(s)://host:8767`), unless you set a manual relay override
 - Its own pairing record — session token, device ID, optional API key
 - Its own sessions, memory, personalities, and skill list (fetched from that server)
-- Last-active session ID, so switching back takes you where you left off
+- Last-active session ID and explicit profile pick, so switching back takes you where you left off
 
 Connections do **not** share sessions, memory, or personalities. Each Hermes server is a separate world. What *is* shared across connections: the app theme and settings, bridge safety preferences (blocklist, destructive-verb confirmation, auto-disable), and the device's TOFU cert-pin record for each host.
 
@@ -23,7 +23,7 @@ On switch, the app:
 2. Disconnects from the current relay.
 3. Rebinds to the selected connection's endpoints.
 4. Reconnects and reloads sessions, personalities, and skills from the new server.
-5. Restores the last-active session on that connection, if there was one.
+5. Restores the last-active session and profile pick on that connection, if there was one.
 
 The whole thing takes under a second on a healthy connection.
 
@@ -38,13 +38,33 @@ Open **Settings → Connections**. Each card shows the connection's label, hostn
 
 Tap **Add connection** to create a new one. This launches the standard QR pairing flow (same as first-time setup). After pairing, the connection is saved with the server's hostname as its default label.
 
+## Multi-Endpoint Pairing: One QR for Every Network
+
+A pairing QR can carry multiple endpoint candidates for the same server: LAN, Tailscale, public reverse proxy, or an operator-defined VPN route. The app stores the connection once, then chooses the highest-priority reachable route at runtime.
+
+The split is intentional:
+
+- Chat and API-key voice use the Hermes API server route.
+- Terminal, bridge, TUI, media/session management, clipboard, profile writes, Android control, and relay-token voice fallback use the relay route and require a paired relay session.
+
+For Tailscale, run this on the host before pairing:
+
+```bash
+hermes-relay-tailscale enable
+hermes-pair --mode auto --prefer tailscale
+```
+
+The helper publishes relay `:8767` and API `:8642`; both must be reachable for the full app to work away from LAN. The route menu in Settings lets you prefer a route for the current session without changing the stored connection.
+
+See [Remote access](/guide/remote-access) for setup commands and troubleshooting.
+
 ## How this differs from personalities and profiles
 
 - **Personality** = a system prompt preset *on* one agent. Switching a personality just changes what the agent behaves like on the next message. Memory, sessions, tools, and model are unchanged.
 - **Profile** = an upstream-Hermes agent directory on the server (`~/.hermes/profiles/<name>/`). Selecting a profile overlays its model + `SOUL.md` for chat turns. See [Profiles](./profiles.md).
 - **Connection** = a whole different Hermes server. Switching a connection changes *everything* — the conversation history, the agent's memory, the personalities and profiles that are even available to pick from.
 
-The Connection chip lives on the left of the Chat top bar. Profile and Personality selection both live in the **agent sheet** — tap the agent name in the middle of the top bar to open it. That order reflects the hierarchy: pick the server first, then pick the profile and personality *on* that server.
+The Connection chip lives on the left of the Chat top bar. Profile and Personality selection both live in the **agent sheet** — tap the agent name in the middle of the top bar to open it. That order reflects the hierarchy: pick the server first, then pick the profile and personality *on* that server. Choosing **Server default** clears the explicit profile pick for the active connection and lets that server decide its default.
 
 ## Things that stay the same across connections
 

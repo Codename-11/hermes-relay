@@ -73,7 +73,8 @@ Chat was originally proxied through the relay server, which converted SSE respon
 
 ```
 Phone (HTTP/SSE) → Hermes API Server (:8642)   [chat — direct]
-Phone (WSS)      → Relay Server   (:8767)      [terminal, bridge, voice, notifications]
+Phone (HTTP)     → Relay Server   (:8767)      [voice routes]
+Phone (WSS)      → Relay Server   (:8767)      [terminal, bridge, notifications]
 ```
 
 Auth uses optional Bearer token (`API_SERVER_KEY`). Most local setups run without one.

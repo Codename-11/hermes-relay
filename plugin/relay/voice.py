@@ -6,15 +6,14 @@ editable-installed into that same venv, so we import them directly. Both
 upstream functions are *synchronous*, so every call is wrapped in
 ``asyncio.to_thread`` to keep the aiohttp event loop free.
 
-Routes (all bearer-auth'd, same trust model as ``/media/*``):
+Routes (bearer-auth'd via relay sessions or narrow Hermes API tokens):
 
 * ``POST /voice/transcribe`` — multipart/form-data audio upload → JSON text
 * ``POST /voice/synthesize`` — JSON ``{"text": ...}`` → ``audio/mpeg`` bytes
 * ``GET  /voice/config``     — capabilities probe (what's configured)
 
-Auth is handled inline (matching the ``/media/*`` handlers' pattern) rather
-than via a wrapper — the media module sets the precedent and we keep this
-file self-contained.
+Auth is handled by ``plugin.relay.voice_auth`` so the optional Hermes API
+bearer path stays confined to safe voice routes.
 """
 
 from __future__ import annotations
@@ -27,6 +26,8 @@ import tempfile
 from typing import Any
 
 from aiohttp import web
+
+from .voice_auth import require_voice_auth
 
 logger = logging.getLogger("hermes_relay.voice")
 
@@ -65,34 +66,6 @@ def _ext_for_content_type(content_type: str | None) -> str:
     return _AUDIO_EXT_BY_CONTENT_TYPE.get(base, ".wav")
 
 
-def _require_bearer_session(request: web.Request):
-    """Validate the bearer token against the relay SessionManager.
-
-    Mirrors the inline auth pattern used by ``handle_media_get`` /
-    ``handle_media_by_path`` so all phone-facing endpoints behave the same
-    way. Returns the resolved session on success, raises
-    :class:`aiohttp.web.HTTPUnauthorized` on any failure.
-    """
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise web.HTTPUnauthorized(
-            text="Authorization: Bearer <session_token> required",
-        )
-    bearer = auth_header[len("Bearer ") :].strip()
-    if not bearer:
-        raise web.HTTPUnauthorized(text="empty bearer token")
-
-    server = request.app["server"]
-    session = server.sessions.get_session(bearer)
-    if session is None:
-        logger.info(
-            "Voice route rejected: invalid bearer from %s",
-            request.remote or "unknown",
-        )
-        raise web.HTTPUnauthorized(text="invalid or expired session token")
-    return server, session, bearer
-
-
 class VoiceHandler:
     """Routes + small amount of per-request state for the voice endpoints.
 
@@ -116,7 +89,7 @@ class VoiceHandler:
         ``Content-Type``, call ``transcribe_audio`` off-loop, and unlink
         the temp file in ``finally``.
         """
-        _require_bearer_session(request)
+        await require_voice_auth(request, "voice:stt")
 
         temp_path: str | None = None
         try:
@@ -252,7 +225,7 @@ class VoiceHandler:
         upstream's concern. A future LRU pass over that directory would
         pair nicely with the existing MediaRegistry LRU pattern.
         """
-        _require_bearer_session(request)
+        await require_voice_auth(request, "voice:tts")
 
         try:
             payload = await request.json()
@@ -381,7 +354,7 @@ class VoiceHandler:
         the config shape is stable across recent versions. If upstream
         refactors, this handler is the only thing that needs patching.
         """
-        _require_bearer_session(request)
+        await require_voice_auth(request, "voice:config")
 
         try:
             from tools.voice_mode import check_voice_requirements  # type: ignore

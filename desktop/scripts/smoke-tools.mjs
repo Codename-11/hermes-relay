@@ -49,6 +49,56 @@ async function main() {
     throw new Error(`algo mismatch: ${sum.algorithm}`)
   }
 
+  // ── Experimental computer-use advertisement and fail-closed action ───
+  const handlerSet = await import(pathToFileURL(path.join(distRoot, '..', 'handlerSet.js')).href)
+  const defaultAdvertised = handlerSet.advertisedDesktopTools()
+  const explicitlyDisabled = handlerSet.advertisedDesktopTools({ computerUse: false })
+  if (!defaultAdvertised.includes('desktop_computer_action')) {
+    throw new Error('computer-use tools should advertise with normal desktop tools')
+  }
+  if (explicitlyDisabled.includes('desktop_computer_action')) {
+    throw new Error('computer-use tools should be removable for explicit disable/test paths')
+  }
+  const computer = await import(pathToFileURL(path.join(distRoot, 'computer.js')).href)
+  const invalidAction = await computer.computerActionHandler({ action: 'left_click' }, ctx)
+  console.log(`COMPUTER invalid action code=${invalidAction.code}`)
+  if (invalidAction.ok !== false || invalidAction.code !== 'invalid_request') {
+    throw new Error(`expected invalid_request before grant, got ${JSON.stringify(invalidAction)}`)
+  }
+  const action = await computer.computerActionHandler({ action: 'wait', duration_ms: 1 }, ctx)
+  console.log(`COMPUTER action code=${action.code}`)
+  if (action.ok !== false || action.code !== 'grant_required') {
+    throw new Error(`expected grant_required fail-closed action, got ${JSON.stringify(action)}`)
+  }
+  const grants = await import(pathToFileURL(path.join(distRoot, '..', 'computerGrants.js')).href)
+  grants.configureComputerUseRuntime({
+    url: 'smoke',
+    computerUseConsented: true,
+    consentSource: 'override'
+  })
+  const grant = await computer.computerGrantRequestHandler({
+    mode: 'assist',
+    duration_seconds: 30,
+    reason: 'smoke test'
+  }, ctx)
+  if (grant.ok !== false || grant.code !== 'not_interactive') {
+    throw new Error(`expected non-interactive grant approval failure, got ${JSON.stringify(grant)}`)
+  }
+  grants.requestComputerGrant({
+    mode: 'assist',
+    duration_seconds: 30,
+    reason: 'smoke direct grant'
+  })
+  const grantedAction = await computer.computerActionHandler(
+    { action: 'wait', duration_ms: 1 },
+    ctx
+  )
+  console.log(`COMPUTER granted action status=${grantedAction.status}`)
+  if (grantedAction.ok !== true || grantedAction.status !== 'executed') {
+    throw new Error(`expected granted action execution, got ${JSON.stringify(grantedAction)}`)
+  }
+  await computer.computerCancelHandler({ reason: 'smoke cleanup' }, ctx)
+
   // ── Job lifecycle ──────────────────────────────────────────────────────
   const jobs = await import(pathToFileURL(path.join(distRoot, 'jobs.js')).href)
   const cmd =

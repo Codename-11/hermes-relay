@@ -21,6 +21,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import types
 import unittest
 
@@ -79,6 +80,7 @@ _install_fake_tools_modules()
 # install — even though relay imports don't trigger the tools imports,
 # keeping order consistent avoids surprises for future readers.
 from plugin.relay.config import RelayConfig  # noqa: E402
+from plugin.relay import voice_auth  # noqa: E402
 from plugin.relay.server import create_app  # noqa: E402
 
 
@@ -87,12 +89,23 @@ class VoiceRoutesTests(AioHTTPTestCase):
 
     async def get_application(self) -> web.Application:
         self._tmp_files: list[str] = []
+        self._voice_auth_patches: list[tuple[str, object]] = []
+        self._env_patches: list[tuple[str, str | None]] = []
+        voice_auth._VALIDATION_CACHE.clear()
         config = RelayConfig()
         app = create_app(config)
         return app
 
     async def tearDownAsync(self) -> None:
         await super().tearDownAsync()
+        for name, original in reversed(getattr(self, "_voice_auth_patches", [])):
+            setattr(voice_auth, name, original)
+        voice_auth._VALIDATION_CACHE.clear()
+        for name, original in reversed(getattr(self, "_env_patches", [])):
+            if original is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = original
         for path in getattr(self, "_tmp_files", []):
             try:
                 os.unlink(path)
@@ -112,6 +125,24 @@ class VoiceRoutesTests(AioHTTPTestCase):
 
     def _bearer(self, token: str) -> dict[str, str]:
         return {"Authorization": f"Bearer {token}"}
+
+    def _patch_voice_auth(self, name: str, value) -> None:
+        self._voice_auth_patches.append((name, getattr(voice_auth, name)))
+        setattr(voice_auth, name, value)
+
+    def _set_env(self, name: str, value: str) -> None:
+        self._env_patches.append((name, os.environ.get(name)))
+        os.environ[name] = value
+
+    def _stub_api_token_validator(self, valid_tokens: set[str]):
+        calls: list[tuple[str, str]] = []
+
+        async def _fake_validate(webapi_url: str, token: str) -> bool:
+            calls.append((webapi_url, token))
+            return token in valid_tokens
+
+        self._patch_voice_auth("_validate_hermes_api_token", _fake_validate)
+        return calls
 
     def _write_tmp(self, suffix: str, content: bytes) -> str:
         fh = tempfile.NamedTemporaryFile(
@@ -138,6 +169,7 @@ class VoiceRoutesTests(AioHTTPTestCase):
         self.assertEqual(resp.status, 401)
 
     async def test_transcribe_invalid_bearer_returns_401(self) -> None:
+        self._stub_api_token_validator(set())
         form = FormData()
         form.add_field(
             "file",
@@ -190,6 +222,35 @@ class VoiceRoutesTests(AioHTTPTestCase):
         self.assertEqual(captured["bytes"], b"\x52\x49\x46\x46fake-wav-body")
         # Handler should unlink the temp file after the call.
         self.assertFalse(os.path.exists(captured["file_path"]))
+
+    async def test_transcribe_accepts_valid_hermes_api_bearer(self) -> None:
+        calls = self._stub_api_token_validator({"api-token"})
+
+        def _fake_stt(file_path, model=None):
+            return {
+                "success": True,
+                "transcript": "api token transcript",
+                "provider": "openai",
+            }
+
+        sys.modules["tools.transcription_tools"].transcribe_audio = _fake_stt
+
+        form = FormData()
+        form.add_field(
+            "file",
+            b"fake-wav-body",
+            filename="clip.wav",
+            content_type="audio/wav",
+        )
+        resp = await self.client.post(
+            "/voice/transcribe", data=form, headers=self._bearer("api-token")
+        )
+
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertTrue(body["success"])
+        self.assertEqual(body["text"], "api token transcript")
+        self.assertEqual(calls, [("http://localhost:8642", "api-token")])
 
     async def test_transcribe_backend_failure_returns_500(self) -> None:
         def _fake_stt(file_path, model=None):
@@ -255,6 +316,41 @@ class VoiceRoutesTests(AioHTTPTestCase):
         self.assertEqual(captured["text"], "hello there")
         # The handler should NOT delete the TTS file.
         self.assertTrue(os.path.isfile(mp3_path))
+
+    async def test_synthesize_accepts_valid_hermes_api_bearer(self) -> None:
+        calls = self._stub_api_token_validator({"api-token"})
+        payload = b"ID3\x03api-token-mp3"
+        mp3_path = self._write_tmp(".mp3", payload)
+
+        def _fake_tts(text, output_path=None):
+            return json.dumps({"success": True, "file_path": mp3_path})
+
+        sys.modules["tools.tts_tool"].text_to_speech_tool = _fake_tts
+
+        resp = await self.client.post(
+            "/voice/synthesize",
+            json={"text": "hello from api token"},
+            headers=self._bearer("api-token"),
+        )
+
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(await resp.read(), payload)
+        self.assertEqual(calls, [("http://localhost:8642", "api-token")])
+
+    async def test_synthesize_rejects_expired_relay_voice_grant(self) -> None:
+        token = await self._make_session()
+        session = self._server().sessions.get_session(token)
+        self.assertIsNotNone(session)
+        assert session is not None
+        session.grants["voice:tts"] = time.time() - 1
+
+        resp = await self.client.post(
+            "/voice/synthesize",
+            json={"text": "should not synthesize"},
+            headers=self._bearer(token),
+        )
+
+        self.assertEqual(resp.status, 403)
 
     async def test_synthesize_empty_text_rejected(self) -> None:
         token = await self._make_session()
@@ -349,6 +445,173 @@ class VoiceRoutesTests(AioHTTPTestCase):
         self.assertEqual(body["stt"]["model"], "whisper-1")
         self.assertTrue(body["stt"]["enabled"])
         self.assertEqual(body["requirements"], {"tts": True, "stt": True})
+
+    async def test_voice_config_accepts_valid_hermes_api_bearer(self) -> None:
+        calls = self._stub_api_token_validator({"api-token"})
+        sys.modules["tools.tts_tool"]._load_tts_config = lambda: {
+            "provider": "elevenlabs",
+            "voice_id": "voice-1",
+            "model": "tts-model",
+        }
+        sys.modules["tools.transcription_tools"]._load_stt_config = lambda: {
+            "provider": "openai",
+            "model": "whisper-1",
+        }
+        sys.modules["tools.voice_mode"].check_voice_requirements = lambda: {
+            "tts": True,
+            "stt": True,
+        }
+
+        resp = await self.client.get(
+            "/voice/config", headers=self._bearer("api-token")
+        )
+
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertTrue(body["success"])
+        self.assertEqual(body["tts"]["voice_id"], "voice-1")
+        self.assertEqual(calls, [("http://localhost:8642", "api-token")])
+
+    async def test_voice_config_invalid_api_bearer_returns_401(self) -> None:
+        self._stub_api_token_validator(set())
+        resp = await self.client.get(
+            "/voice/config", headers=self._bearer("not-a-session-or-api-token")
+        )
+        self.assertEqual(resp.status, 401)
+
+    async def test_voice_config_rejects_non_loopback_plaintext_api_bearer(
+        self,
+    ) -> None:
+        calls = self._stub_api_token_validator({"api-token"})
+        self._patch_voice_auth("_is_loopback_remote", lambda request: False)
+
+        resp = await self.client.get(
+            "/voice/config", headers=self._bearer("api-token")
+        )
+
+        self.assertEqual(resp.status, 403)
+        self.assertEqual(calls, [])
+        body = await resp.text()
+        self.assertIn("HTTPS", body)
+
+    async def test_voice_config_accepts_tailnet_plaintext_api_bearer(
+        self,
+    ) -> None:
+        calls = self._stub_api_token_validator({"api-token"})
+        self._patch_voice_auth("_is_loopback_remote", lambda request: False)
+        self._patch_voice_auth("_is_tailnet_remote", lambda request: True)
+        sys.modules["tools.tts_tool"]._load_tts_config = lambda: {}
+        sys.modules["tools.transcription_tools"]._load_stt_config = lambda: {}
+        sys.modules["tools.voice_mode"].check_voice_requirements = lambda: {
+            "ok": True,
+        }
+
+        resp = await self.client.get(
+            "/voice/config", headers=self._bearer("api-token")
+        )
+
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(calls, [("http://localhost:8642", "api-token")])
+
+    async def test_voice_config_accepts_trusted_proxy_https_api_bearer(
+        self,
+    ) -> None:
+        self._stub_api_token_validator({"api-token"})
+        self._patch_voice_auth("_is_loopback_remote", lambda request: False)
+        self._set_env("RELAY_TRUST_PROXY_HEADERS", "1")
+        sys.modules["tools.tts_tool"]._load_tts_config = lambda: {}
+        sys.modules["tools.transcription_tools"]._load_stt_config = lambda: {}
+        sys.modules["tools.voice_mode"].check_voice_requirements = lambda: {
+            "ok": True,
+        }
+
+        resp = await self.client.get(
+            "/voice/config",
+            headers={
+                **self._bearer("api-token"),
+                "X-Forwarded-Proto": "https",
+            },
+        )
+
+        self.assertEqual(resp.status, 200)
+
+    async def test_voice_config_accepts_explicit_insecure_dev_escape_hatch(
+        self,
+    ) -> None:
+        self._stub_api_token_validator({"api-token"})
+        self._patch_voice_auth("_is_loopback_remote", lambda request: False)
+        self._set_env("RELAY_ALLOW_INSECURE_API_BEARER", "1")
+        sys.modules["tools.tts_tool"]._load_tts_config = lambda: {}
+        sys.modules["tools.transcription_tools"]._load_stt_config = lambda: {}
+        sys.modules["tools.voice_mode"].check_voice_requirements = lambda: {
+            "ok": True,
+        }
+
+        resp = await self.client.get(
+            "/voice/config", headers=self._bearer("api-token")
+        )
+
+        self.assertEqual(resp.status, 200)
+
+    async def test_voice_config_accepts_runtime_insecure_toggle(
+        self,
+    ) -> None:
+        self._stub_api_token_validator({"api-token"})
+        self._patch_voice_auth("_is_loopback_remote", lambda request: False)
+        self._server().config.allow_insecure_api_bearer = True
+        sys.modules["tools.tts_tool"]._load_tts_config = lambda: {}
+        sys.modules["tools.transcription_tools"]._load_stt_config = lambda: {}
+        sys.modules["tools.voice_mode"].check_voice_requirements = lambda: {
+            "ok": True,
+        }
+
+        resp = await self.client.get(
+            "/voice/config", headers=self._bearer("api-token")
+        )
+
+        self.assertEqual(resp.status, 200)
+
+    async def test_invalid_api_bearer_does_not_log_token_value(self) -> None:
+        self._stub_api_token_validator(set())
+        secret = "api-secret-do-not-log"
+
+        with self.assertLogs("hermes_relay.voice_auth", level="INFO") as logs:
+            resp = await self.client.get(
+                "/voice/config", headers=self._bearer(secret)
+            )
+
+        self.assertEqual(resp.status, 401)
+        rendered_logs = "\n".join(logs.output)
+        self.assertNotIn(secret, rendered_logs)
+        self.assertNotIn(secret, await resp.text())
+
+    async def test_api_bearer_is_not_accepted_by_non_voice_routes(self) -> None:
+        """A Hermes API token must not become a universal Relay credential."""
+        self._stub_api_token_validator({"api-token"})
+        media_path = self._write_tmp(".txt", b"media bytes")
+        entry = await self._server().media.register(
+            media_path,
+            "text/plain",
+            file_name="media.txt",
+        )
+
+        media_resp = await self.client.get(
+            f"/media/{entry.token}",
+            headers=self._bearer("api-token"),
+        )
+        sessions_resp = await self.client.get(
+            "/sessions",
+            headers=self._bearer("api-token"),
+        )
+        clipboard_resp = await self.client.post(
+            "/clipboard/inbox",
+            json={"format": "png", "bytes_base64": ""},
+            headers=self._bearer("api-token"),
+        )
+
+        self.assertEqual(media_resp.status, 401)
+        self.assertEqual(sessions_resp.status, 401)
+        self.assertEqual(clipboard_resp.status, 401)
 
 
 if __name__ == "__main__":

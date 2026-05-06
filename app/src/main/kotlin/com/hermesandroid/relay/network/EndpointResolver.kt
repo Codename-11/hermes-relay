@@ -27,7 +27,7 @@ import java.util.concurrent.TimeUnit
  *    priority over a higher one. Reachability is **only** the tiebreaker
  *    among candidates that share the same priority.
  *  * **Reachability probe.** `HEAD ${api.url}/health` with a 2-second
- *    per-candidate timeout. The cache lives 30 seconds per `(role|host:port)`
+ *    per-candidate timeout. The cache lives 60 seconds per `(role|host:port)`
  *    key so repeated `connect()` calls don't hammer the network.
  *  * **Network-change re-evaluate.** `ConnectionManager`'s network callback
  *    bumps the caller into `resolve()` again on `onAvailable`, and marks the
@@ -170,7 +170,7 @@ class EndpointResolver(
             // pick the first non-null. awaitAll preserves input order, which
             // means a slow-but-reachable priority-0 candidate would block a
             // fast-and-reachable sibling. But HEAD /health against a healthy
-            // relay replies in <100ms and the timeout caps stragglers at 2s,
+            // API route replies in <100ms and the timeout caps stragglers at 2s,
             // so this is acceptable in practice. A true "first to arrive"
             // would need kotlinx.coroutines Channel plumbing that's not
             // worth the weight here.

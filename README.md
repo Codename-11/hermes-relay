@@ -115,7 +115,7 @@ The installer clones Hermes-Relay to `~/.hermes/hermes-relay/` (override with `$
 - **From a shell**: `hermes-pair` (dashed) — a thin wrapper around `python -m plugin.pair` in the hermes-agent venv. Use this in scripts or when you want the raw output.
 - **No camera?** `hermes-pair --register-code ABCD12` — manual fallback for SSH-only / camera-less setups. For Android: read the 6-char code from the app's **Settings → Connection → Manual pairing code (fallback)** card, pre-register it on the host with this command, then tap **Connect** in the app. For the desktop CLI: just pass it as `hermes-relay pair ABCD12 --remote ws://<host>:8767`. Composes with `--ttl` / `--grants`.
 
-Scan the QR from the Android app's onboarding screen, OR paste the 6-char code into `hermes-relay pair --remote ws://<host>:8767` on your laptop, and you're connected. One pair configures **both** the direct-chat API server **and** the WSS relay (for terminal / bridge / desktop tools) — if a local relay is running at `localhost:8767`, the pair command pre-registers a fresh 6-char pairing code with it and embeds the relay URL + code in the same QR. If you only want direct chat from the Android app, pass `--no-relay` (or just don't start the relay). Plain-text connection details are always printed alongside the QR so you can copy values by hand if your terminal can't render QR blocks.
+Scan the QR from the Android app's onboarding screen, OR paste the 6-char code into `hermes-relay pair --remote ws://<host>:8767` on your laptop, and you're connected. One pair configures **both** the direct-chat API server **and** the relay (WSS for terminal / bridge / TUI / desktop tools, HTTP for voice routes) — if a local relay is running at `localhost:8767`, the pair command pre-registers a fresh 6-char pairing code with it and embeds the relay URL + code in the same QR. If you only want direct chat from the Android app, pass `--no-relay` (or just don't start the relay). Plain-text connection details are always printed alongside the QR so you can copy values by hand if your terminal can't render QR blocks.
 
 **Dashboard plugin.** If your hermes-agent install has the Dashboard Plugin System (upstream `axiom` branch), Hermes-Relay ships a plugin at `plugin/dashboard/` that surfaces paired devices, bridge command activity, and active inbound-media tokens in the gateway's web UI. It auto-registers through the same `~/.hermes/plugins/hermes-relay` symlink created by `install.sh` — restart the gateway and a "Relay" tab appears. See [docs/relay-server.md](docs/relay-server.md) and `user-docs/features/dashboard.md` for details.
 
@@ -221,11 +221,12 @@ For detailed setup, server configuration, and feature guides, see the **[full do
 
 ```
 Phone        (HTTP/SSE) --> Hermes API Server (:8642)   [chat — direct]
-Phone        (WSS)      --> Relay Server (:8767)         [voice, bridge, notifications]
+Phone        (HTTP)     --> Relay Server (:8767)         [voice routes — API key or relay session]
+Phone        (WSS/HTTP) --> Relay Server (:8767)         [terminal, bridge, media, sessions]
 Desktop CLI  (WSS)      --> Relay Server (:8767)         [tui, terminal, desktop tools]
 ```
 
-Chat from the Android app connects directly to the Hermes API Server — same pattern used by Open WebUI and other Hermes frontends. Voice and bridge use a separate WSS relay (`:8767`). The desktop CLI connects exclusively to that same relay — `tui` channel for chat / shell, `desktop` channel for client-side tool routing — so one relay process serves both surfaces, and one pair grants access to either.
+Chat from the Android app connects directly to the Hermes API Server with the Hermes API key — same pattern used by Open WebUI and other Hermes frontends. Voice calls the relay's `/voice/*` HTTP routes and authenticates with that Hermes API bearer when present, falling back to the relay session token for paired devices. Remote control surfaces such as terminal, bridge, TUI, media/session management, and desktop tools require relay pairing on `:8767`, so one scan can configure both the API route and the relay route without merging their auth models.
 
 ## Documentation
 
@@ -271,7 +272,7 @@ hermes-relay/
 ├── relay_server/              # WSS relay server (Python + aiohttp; thin shim → plugin/relay)
 ├── plugin/                    # Hermes agent plugin
 │   ├── relay/                 #   - canonical relay (server.py, channels/, media, voice, desktop tools)
-│   ├── tools/                 #   - 18 android_* + 9 desktop_* tool handlers
+│   ├── tools/                 #   - android_* bridge + desktop_* tool handlers
 │   └── pair.py                #   - QR pairing CLI + multi-endpoint payload builder
 ├── skills/                    # Hermes agent skills
 │   └── devops/
@@ -297,7 +298,7 @@ hermes-relay/
 | **CI/CD** | GitHub Actions (lint, build, test, APK artifact, desktop binaries per platform) |
 | **Min SDK** | 26 (Android 8.0) / Target SDK 35 |
 
-### Relay Server (optional — terminal/bridge only)
+### Relay Server (optional — bridge, terminal, TUI, media, and voice routes)
 
 ```bash
 hermes relay start --no-ssl          # if you installed the plugin

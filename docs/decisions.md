@@ -39,7 +39,7 @@
 
 ### 1. Single WSS Connection with Channel Multiplexing
 
-**Decision:** One WebSocket connection carries all three channels (chat, terminal, bridge) via typed message envelopes.
+**Decision:** One WebSocket connection carries relay real-time channels via typed message envelopes. The original set was chat, terminal, and bridge; later releases added TUI over the relay envelope, while voice uses Relay-protected HTTP routes with the same session/grant model.
 
 **Why:** Simpler connection management, single auth flow, single reconnect handler. Mobile networks are flaky — one connection is easier to keep alive than three.
 
@@ -126,9 +126,9 @@ Phone (WSS)      → Relay Server (:8767)          [bridge, terminal]
 - Session tokens avoid re-pairing on every app restart.
 - Tokens stored in EncryptedSharedPreferences (Android Keystore-backed AES-256-GCM).
 
-#### 6a. QR Carries Both API and Relay Credentials (updated 2026-04-11)
+#### 6a. QR Carries Both API and Relay Credentials (updated 2026-05-03)
 
-**Decision:** The Hermes pairing QR payload bundles the API server credentials AND the relay URL + pairing code into a single scan. The pair command (`/hermes-relay-pair` skill or `hermes-pair` shell shim, both backed by `plugin/pair.py`) runs on the Hermes host; if a relay is reachable at `localhost:RELAY_PORT`, the command mints a fresh 6-char code, pre-registers it with the relay via a new loopback-only `POST /pairing/register` endpoint, and embeds `{url, code}` under a nullable `relay` key alongside the existing `host`/`port`/`key`/`tls` fields.
+**Decision:** The Hermes pairing QR payload bundles the API server credentials AND the relay URL + pairing code into a single scan. The pair command (`/hermes-relay-pair` skill or `hermes-pair` shell shim, both backed by `plugin/pair.py`) runs on the Hermes host; if a relay is reachable at `localhost:RELAY_PORT`, the command mints a fresh 6-char code, pre-registers it with the relay via a new loopback-only `POST /pairing/register` endpoint, and embeds `{url, code}` under a nullable `relay` key alongside the existing `host`/`port`/`key`/`tls` fields. The dashboard pairing flow uses the relay's loopback-only `POST /pairing/mint` endpoint instead; when the dashboard omits `api_key`, the relay reads the same host-local Hermes API key config as `hermes-pair` and places it in top-level `key`.
 
 **Trust anchor:** the operator with shell access on the host. Only a process running on the same machine as the relay can hit `/pairing/register` — the handler rejects any non-loopback `request.remote` with HTTP 403. A LAN attacker cannot inject codes. This matches the model we already rely on for reading `~/.hermes/.env` and `~/.hermes/config.yaml`: if you have shell access to the host, you have enough privilege to authorize a device.
 
@@ -139,6 +139,7 @@ Phone (WSS)      → Relay Server (:8767)          [bridge, terminal]
 **Schema evolution:**
 - Old API-only QRs (`{hermes, host, port, key, tls}`) still parse cleanly — the `relay` field is nullable and `kotlinx.serialization` runs with `ignoreUnknownKeys = true`.
 - When `--no-relay` is passed to the pair command, or the relay isn't running, the QR omits the `relay` block and the command prints an `[info]` pointing at `hermes relay start`.
+- Top-level `key` is always the Hermes API bearer token for direct chat/session HTTP. The relay pairing code lives only at `relay.code`; putting an empty API key in a dashboard-minted QR will pair voice/relay successfully but leaves direct chat unauthenticated when the gateway requires `API_SERVER_KEY`.
 
 **Pairing alphabet change:** `PAIRING_ALPHABET` in `plugin/relay/config.py` was widened from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (32 chars, no ambiguous 0/O/1/I) to the full `A-Z / 0-9` (36 chars) to match the phone-side `AuthManager.PAIRING_CODE_CHARS`. The old restriction only mattered when a human had to retype a code from a display; now that the code flows phone ↔ server through a QR + HTTP, the restriction silently rejected ~12% of valid codes and had to go.
 
@@ -146,7 +147,8 @@ Phone (WSS)      → Relay Server (:8767)          [bridge, terminal]
 
 **References:**
 - `plugin/pair.py` — `pair_command()`, `register_relay_code()`, `probe_relay()`
-- `plugin/relay/server.py` — `handle_pairing_register`
+- `plugin/relay/server.py` — `handle_pairing_register`, `handle_pairing_mint`
+- `plugin/dashboard/plugin_api.py` — dashboard proxy for `/pairing/mint`
 - `plugin/relay/auth.py` — `PairingManager.register_code()`
 - `app/.../ui/components/QrPairingScanner.kt` — `HermesPairingPayload` / `RelayPairing`
 
@@ -429,7 +431,7 @@ The bare-path fetch is therefore safe as long as operators treat the allowed-roo
 **Decision:** Replace the minimal pairing model (one-shot code → fixed-30-day session token → no channel separation → `EncryptedSharedPreferences` storage) with a layered architecture built around four ideas:
 
 1. **User chooses session TTL at pair time** — 1 day / 7 days / 30 days / 90 days / 1 year / **never expire**. The Android TTL picker dialog always opens on QR scan so the user explicitly confirms. Defaults depend on transport: wss or Tailscale → 30d; plain ws → 7d. Never-expire is ALWAYS selectable with an inline warning — per operator direction, trust the user's intent rather than gating on secure-transport detection.
-2. **Per-channel grants** — one session token, separate expiries for `chat` / `terminal` / `bridge`. Blast-radius-heavy channels have shorter default caps (`terminal ≤ 30d`, `bridge ≤ 7d`), clamped to the session lifetime. Chat runs through the hermes-agent API server rather than the relay, so the chat grant is informational only (used by the phone UI to show scope).
+2. **Per-channel grants** — one session token, separate expiries for `chat` / `terminal` / `bridge`; later releases added `tui` and split voice grants (`voice:config`, `voice:stt`, `voice:tts`). Blast-radius-heavy channels can have shorter caps, and all grants are clamped to the session lifetime. Chat runs through the hermes-agent API server rather than the relay, so the chat grant is informational only (used by the phone UI to show scope).
 3. **Hardware-backed token storage with graceful fallback** — `KeystoreTokenStore` requests StrongBox-backed keys via `setRequestStrongBoxBacked(true)` on Android 9+ devices that advertise `FEATURE_STRONGBOX_KEYSTORE`. Falls back to the existing `LegacyEncryptedPrefsTokenStore` (TEE-backed `EncryptedSharedPreferences`) on older devices or when the Keystore path throws. Migration is one-shot and lossless — users never lose a session to an app upgrade.
 4. **TOFU cert pinning with explicit reset on re-pair** — `CertPinStore` records SHA-256 SPKI fingerprints per `host:port` on the first successful wss connect. Subsequent connects build an OkHttp `CertificatePinner` from the stored pin. A user-initiated QR re-pair (`applyServerIssuedCodeAndReset(code, relayUrl)`) wipes the pin for the target host — re-pair is explicit consent to potentially-new cert material. Plaintext ws:// short-circuits pinning entirely.
 
@@ -895,7 +897,7 @@ The plan called for adding a `// VOICE HOOK` callback to `ChatViewModel` so `Voi
 
 **References:**
 
-- `plugin/relay/voice.py` — `VoiceHandler`, `handle_transcribe`, `handle_synthesize`, `handle_voice_config`, `_require_bearer_session`
+- `plugin/relay/voice.py` — `VoiceHandler`, `handle_transcribe`, `handle_synthesize`, `handle_voice_config`; route auth is delegated to `plugin/relay/voice_auth.py::require_voice_auth`
 - `plugin/relay/server.py` — route registration alongside `/media/*`
 - `plugin/tests/test_voice_routes.py` — 14 unit tests, `unittest`-based (pytest conftest issue documented in `CLAUDE.md`)
 - `app/src/main/kotlin/.../audio/VoiceRecorder.kt` — MediaRecorder amplitude StateFlow

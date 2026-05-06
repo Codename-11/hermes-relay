@@ -13,7 +13,7 @@ Tools registered:
   - android_drag              precise point-to-point drag (duration-controlled)
   - android_open_app          launch app by package name
   - android_press_key         press hardware/software key (back, home, recents)
-  - android_screenshot        capture screenshot as base64
+  - android_screenshot        capture screenshot as a relay MEDIA marker
   - android_scroll            scroll in direction
   - android_wait              wait for element to appear
   - android_get_apps          list installed apps
@@ -34,12 +34,17 @@ Tools registered:
   - android_search_contacts   search contacts by name (C2, sideload only)
   - android_call              dial a phone number (C3)
   - android_send_sms          send an SMS via SmsManager (C4, sideload only)
+  - android_return_to_hermes  bring Hermes Relay back to foreground
+  - android_share_media       share text/files/attachments via Android share UI
+  - android_send_mms          open MMS compose/share handoff with attachments
 """
 
 import json
+import mimetypes
 import os
 import time
 import requests
+from pathlib import Path
 from typing import Any, Mapping, Optional
 
 # === v0.4.1 JIT permission-denied surfacing ================================
@@ -96,12 +101,35 @@ def _auth_headers() -> dict:
     return {}
 
 def _check_requirements() -> bool:
-    """Returns True if the relay is running and a phone is connected."""
+    """Returns True if the relay is running and a phone is connected.
+
+    The relay's ``/ping`` route is forwarded to the phone and only returns a
+    basic ``{"pong": true}`` payload, so it cannot be used to decide whether
+    the bridge session is available. The structured source of truth is the
+    loopback ``/bridge/status`` route. A tiny ``/ping`` fallback remains for
+    direct-phone development shims that predate the unified relay.
+    """
+    try:
+        r = requests.get(
+            f"{_bridge_url()}/bridge/status",
+            headers=_auth_headers(),
+            timeout=2,
+        )
+        if r.status_code == 200:
+            data = r.json()
+            return bool(data.get("phone_connected", False))
+    except Exception:
+        pass
+
     try:
         r = requests.get(f"{_bridge_url()}/ping", headers=_auth_headers(), timeout=2)
         if r.status_code == 200:
             data = r.json()
-            return data.get("phone_connected", False) or data.get("accessibilityService", False)
+            return bool(
+                data.get("phone_connected", False)
+                or data.get("accessibilityService", False)
+                or data.get("pong", False)
+            )
         return False
     except Exception:
         return False
@@ -889,6 +917,217 @@ def android_send_sms(to: str, body: str) -> str:
     except Exception as e:
         return json.dumps({"error": str(e)})
     jit = _maybe_jit_permission_response(data, tool_name="android_send_sms")
+    return json.dumps(jit if jit is not None else data)
+
+
+def android_return_to_hermes() -> str:
+    """
+    Bring the Hermes Relay app back to the foreground after a bridge task
+    opened another app. This is the explicit tool counterpart to the phone's
+    auto-return safety net.
+    """
+    try:
+        data = _post("/return_to_hermes", {})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+    return json.dumps(data)
+
+
+def _coerce_string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (list, tuple)):
+        return [str(item) for item in value if str(item).strip()]
+    return [str(value)]
+
+
+def _guess_content_type(path: str, content_type: Optional[str]) -> str:
+    if content_type and content_type.strip():
+        return content_type.strip()
+    guessed, _ = mimetypes.guess_type(path)
+    return guessed or "application/octet-stream"
+
+
+def _marker_from_token_or_media(value: str) -> str:
+    stripped = value.strip()
+    if stripped.startswith("MEDIA:"):
+        return stripped
+    if stripped.startswith("hermes-relay://"):
+        return f"MEDIA:{stripped}"
+    return f"MEDIA:hermes-relay://{stripped}"
+
+
+def _register_attachment_path(
+    path: str,
+    content_type: Optional[str],
+    file_name: Optional[str],
+) -> dict[str, str]:
+    source = Path(path).expanduser()
+    if not source.is_file():
+        raise ValueError(f"attachment path is not a file: {path}")
+    resolved_type = _guess_content_type(str(source), content_type)
+    resolved_name = file_name or source.name
+
+    from plugin.relay.client import register_media
+
+    token = register_media(
+        str(source),
+        resolved_type,
+        file_name=resolved_name,
+    )
+    if not token:
+        raise RuntimeError("relay rejected media registration or is unreachable")
+    return {
+        "media": f"MEDIA:hermes-relay://{token}",
+        "content_type": resolved_type,
+        "file_name": resolved_name,
+    }
+
+
+def _normalize_attachment_specs(
+    *,
+    path: Optional[str] = None,
+    paths: Optional[list[str]] = None,
+    media: Optional[str] = None,
+    media_token: Optional[str] = None,
+    media_tokens: Optional[list[str]] = None,
+    attachments: Optional[list[dict[str, Any]]] = None,
+    content_type: Optional[str] = None,
+    file_name: Optional[str] = None,
+) -> list[dict[str, str]]:
+    normalized: list[dict[str, str]] = []
+
+    for raw in attachments or []:
+        if not isinstance(raw, dict):
+            continue
+        raw_content_type = raw.get("content_type") or raw.get("mime_type") or content_type
+        raw_file_name = raw.get("file_name") or raw.get("filename") or file_name
+        raw_path = raw.get("path")
+        if isinstance(raw_path, str) and raw_path.strip():
+            normalized.append(
+                _register_attachment_path(raw_path, raw_content_type, raw_file_name)
+            )
+            continue
+        raw_media = raw.get("media") or raw.get("media_token") or raw.get("token")
+        if isinstance(raw_media, str) and raw_media.strip():
+            item = {"media": _marker_from_token_or_media(raw_media)}
+            if raw_content_type:
+                item["content_type"] = str(raw_content_type)
+            if raw_file_name:
+                item["file_name"] = str(raw_file_name)
+            normalized.append(item)
+
+    for item_path in _coerce_string_list(path) + _coerce_string_list(paths):
+        normalized.append(_register_attachment_path(item_path, content_type, file_name))
+
+    for marker in (
+        _coerce_string_list(media)
+        + _coerce_string_list(media_token)
+        + _coerce_string_list(media_tokens)
+    ):
+        item = {"media": _marker_from_token_or_media(marker)}
+        if content_type:
+            item["content_type"] = content_type
+        if file_name:
+            item["file_name"] = file_name
+        normalized.append(item)
+
+    return normalized
+
+
+def android_share_media(
+    path: Optional[str] = None,
+    paths: Optional[list[str]] = None,
+    media: Optional[str] = None,
+    media_token: Optional[str] = None,
+    media_tokens: Optional[list[str]] = None,
+    attachments: Optional[list[dict[str, Any]]] = None,
+    content_type: Optional[str] = None,
+    file_name: Optional[str] = None,
+    text: Optional[str] = None,
+    title: Optional[str] = None,
+    package: Optional[str] = None,
+) -> str:
+    """
+    Share one or more host files / relay media tokens through Android's
+    ACTION_SEND or ACTION_SEND_MULTIPLE flow. Host paths are first registered
+    with the relay so the phone fetches bytes through the normal paired
+    session and exposes them to the target app through its FileProvider.
+    """
+    try:
+        items = _normalize_attachment_specs(
+            path=path,
+            paths=paths,
+            media=media,
+            media_token=media_token,
+            media_tokens=media_tokens,
+            attachments=attachments,
+            content_type=content_type,
+            file_name=file_name,
+        )
+        if not items and not (text or "").strip():
+            return json.dumps({"error": "provide path/media attachment or text"})
+        payload: dict[str, Any] = {"attachments": items}
+        if text is not None:
+            payload["text"] = text
+        if title is not None:
+            payload["title"] = title
+        if package is not None:
+            payload["package"] = package
+        data = _post("/share_media", payload)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+    jit = _maybe_jit_permission_response(data, tool_name="android_share_media")
+    return json.dumps(jit if jit is not None else data)
+
+
+def android_send_mms(
+    to: str,
+    body: str = "",
+    path: Optional[str] = None,
+    paths: Optional[list[str]] = None,
+    media: Optional[str] = None,
+    media_token: Optional[str] = None,
+    media_tokens: Optional[list[str]] = None,
+    attachments: Optional[list[dict[str, Any]]] = None,
+    content_type: Optional[str] = None,
+    file_name: Optional[str] = None,
+    package: Optional[str] = None,
+) -> str:
+    """
+    Open the user's messaging app with MMS attachments prepared. Android only
+    permits true background MMS send for the default SMS app, so Hermes Relay
+    performs a user-mediated compose handoff instead of pretending it can
+    silently confirm carrier delivery.
+    """
+    try:
+        if not (to or "").strip():
+            return json.dumps({"error": "missing 'to' phone number"})
+        items = _normalize_attachment_specs(
+            path=path,
+            paths=paths,
+            media=media,
+            media_token=media_token,
+            media_tokens=media_tokens,
+            attachments=attachments,
+            content_type=content_type,
+            file_name=file_name,
+        )
+        if not items and not (body or "").strip():
+            return json.dumps({"error": "provide an attachment or body"})
+        payload: dict[str, Any] = {
+            "to": to,
+            "body": body,
+            "attachments": items,
+        }
+        if package is not None:
+            payload["package"] = package
+        data = _post("/send_mms", payload)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+    jit = _maybe_jit_permission_response(data, tool_name="android_send_mms")
     return json.dumps(jit if jit is not None else data)
 
 
@@ -1973,7 +2212,9 @@ _SCHEMAS = {
             "is not declared on the Play Store track). Handles multi-part "
             "messages automatically via divideMessage. The phone's safety-"
             "rails ALWAYS show a destructive-verb confirmation modal before "
-            "the SMS is sent."
+            "the SMS is sent. Text-only schema: {to, body}. For images, "
+            "documents, audio, video, or other attachments use "
+            "android_share_media or android_send_mms."
         ),
         "parameters": {
             "type": "object",
@@ -1988,6 +2229,146 @@ _SCHEMAS = {
                 },
             },
             "required": ["to", "body"],
+        },
+    },
+    "android_return_to_hermes": {
+        "name": "android_return_to_hermes",
+        "description": (
+            "Bring the Hermes Relay app back to the foreground after a "
+            "bridge task opens another app. Use this as the cleanup step "
+            "after open_app, send_intent, share_media, or send_mms flows."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+    "android_share_media": {
+        "name": "android_share_media",
+        "description": (
+            "Share text and/or relay-host files through Android's native "
+            "ACTION_SEND/ACTION_SEND_MULTIPLE flow. Accepts host-local "
+            "paths, relay MEDIA markers, raw media tokens, or an attachments "
+            "array. Host paths are registered with the relay first, then the "
+            "phone fetches the bytes with its paired session token and hands "
+            "third-party apps a FileProvider content:// URI. The phone shows "
+            "an on-device confirmation modal before launching the share UI. "
+            "Use this for files, images, audio, video, PDFs, and arbitrary "
+            "attachments."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Host-local file path to share"},
+                "paths": {
+                    "type": "array",
+                    "description": "Multiple host-local file paths to share",
+                    "items": {"type": "string"},
+                },
+                "media": {
+                    "type": "string",
+                    "description": "Relay MEDIA marker or raw media token to share",
+                },
+                "media_token": {"type": "string", "description": "Raw relay media token"},
+                "media_tokens": {
+                    "type": "array",
+                    "description": "Multiple raw relay media tokens",
+                    "items": {"type": "string"},
+                },
+                "attachments": {
+                    "type": "array",
+                    "description": (
+                        "Attachment objects with one of path, media, token, or "
+                        "media_token plus optional content_type and file_name"
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string"},
+                            "media": {"type": "string"},
+                            "token": {"type": "string"},
+                            "media_token": {"type": "string"},
+                            "content_type": {"type": "string"},
+                            "file_name": {"type": "string"},
+                        },
+                    },
+                },
+                "content_type": {
+                    "type": "string",
+                    "description": "Optional MIME type hint for a single path/media value",
+                },
+                "file_name": {
+                    "type": "string",
+                    "description": "Optional filename hint for a single path/media value",
+                },
+                "text": {"type": "string", "description": "Optional text to share with attachments"},
+                "title": {"type": "string", "description": "Optional Android chooser title"},
+                "package": {
+                    "type": "string",
+                    "description": "Optional target package to launch directly instead of the chooser",
+                },
+            },
+            "required": [],
+        },
+    },
+    "android_send_mms": {
+        "name": "android_send_mms",
+        "description": (
+            "Open a user-mediated MMS compose/share handoff with text and/or "
+            "attachments. Android only allows true background MMS sending "
+            "for the default SMS app, so Hermes does not silently send MMS. "
+            "Instead, the phone fetches relay media, grants FileProvider "
+            "content:// access, pre-fills recipient/text when the target app "
+            "supports it, and launches the native compose/share UI after "
+            "on-device confirmation."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "to": {"type": "string", "description": "Recipient phone number"},
+                "body": {"type": "string", "description": "Optional message body"},
+                "path": {"type": "string", "description": "Host-local file path to attach"},
+                "paths": {
+                    "type": "array",
+                    "description": "Multiple host-local file paths to attach",
+                    "items": {"type": "string"},
+                },
+                "media": {"type": "string", "description": "Relay MEDIA marker or raw media token"},
+                "media_token": {"type": "string", "description": "Raw relay media token"},
+                "media_tokens": {
+                    "type": "array",
+                    "description": "Multiple raw relay media tokens",
+                    "items": {"type": "string"},
+                },
+                "attachments": {
+                    "type": "array",
+                    "description": (
+                        "Attachment objects with one of path, media, token, or "
+                        "media_token plus optional content_type and file_name"
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string"},
+                            "media": {"type": "string"},
+                            "token": {"type": "string"},
+                            "media_token": {"type": "string"},
+                            "content_type": {"type": "string"},
+                            "file_name": {"type": "string"},
+                        },
+                    },
+                },
+                "content_type": {
+                    "type": "string",
+                    "description": "Optional MIME type hint for a single path/media value",
+                },
+                "file_name": {
+                    "type": "string",
+                    "description": "Optional filename hint for a single path/media value",
+                },
+                "package": {
+                    "type": "string",
+                    "description": "Optional SMS/MMS app package to launch directly",
+                },
+            },
+            "required": ["to"],
         },
     },
 }
@@ -2043,6 +2424,9 @@ _HANDLERS = {
     "android_search_contacts":  lambda args, **kw: android_search_contacts(**args),
     "android_call":             lambda args, **kw: android_call(**args),
     "android_send_sms":         lambda args, **kw: android_send_sms(**args),
+    "android_return_to_hermes": lambda args, **kw: android_return_to_hermes(),
+    "android_share_media":      lambda args, **kw: android_share_media(**args),
+    "android_send_mms":         lambda args, **kw: android_send_mms(**args),
 }
 
 # ── Registry registration ──────────────────────────────────────────────────────

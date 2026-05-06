@@ -106,6 +106,90 @@ class SessionPersistenceRoundtripTests(unittest.TestCase):
         assert reloaded is not None
         self.assertTrue(math.isinf(reloaded.expires_at))
 
+    def test_refresh_token_survives_session_loss_and_rotates(self) -> None:
+        """A trusted device can recover a new session after the short
+        session row is lost, and successful refresh rotates the credential."""
+        mgr = SessionManager(persistence_path=self.path)
+        original = mgr.create_session(
+            device_name="Phone-A",
+            device_id="dev-a",
+            ttl_seconds=3600,
+            transport_hint="ws",
+            issue_refresh_token=True,
+        )
+        refresh = original.refresh_token
+        self.assertIsNotNone(refresh)
+        assert refresh is not None
+
+        # Simulate a bad deployment/update that lost active sessions but kept
+        # trusted-device credentials.
+        mgr._sessions.clear()
+        mgr._save_to_disk()
+
+        mgr2 = SessionManager(persistence_path=self.path)
+        recovered = mgr2.refresh_session(
+            refresh,
+            device_name="Phone-A",
+            device_id="dev-a",
+            transport_hint="ws",
+        )
+        self.assertIsNotNone(recovered)
+        assert recovered is not None
+        self.assertNotEqual(recovered.token, original.token)
+        self.assertIsNotNone(recovered.refresh_token)
+        self.assertNotEqual(recovered.refresh_token, refresh)
+
+        # Old refresh token was rotated away and cannot be replayed.
+        replay = mgr2.refresh_session(
+            refresh,
+            device_name="Phone-A",
+            device_id="dev-a",
+            transport_hint="ws",
+        )
+        self.assertIsNone(replay)
+
+    def test_revoke_session_removes_trusted_device(self) -> None:
+        mgr = SessionManager(persistence_path=self.path)
+        original = mgr.create_session(
+            device_name="Phone-A",
+            device_id="dev-a",
+            issue_refresh_token=True,
+        )
+        refresh = original.refresh_token
+        self.assertIsNotNone(refresh)
+        assert refresh is not None
+
+        mgr.revoke_session(original.token)
+
+        mgr2 = SessionManager(persistence_path=self.path)
+        recovered = mgr2.refresh_session(
+            refresh,
+            device_name="Phone-A",
+            device_id="dev-a",
+            transport_hint="ws",
+        )
+        self.assertIsNone(recovered)
+
+    def test_existing_session_can_be_upgraded_with_refresh_token(self) -> None:
+        mgr = SessionManager(persistence_path=self.path)
+        session = mgr.create_session(
+            device_name="Phone-A",
+            device_id="dev-a",
+            ttl_seconds=3600,
+        )
+
+        refresh = mgr.issue_refresh_token_for_session(session)
+        self.assertTrue(refresh)
+
+        mgr2 = SessionManager(persistence_path=self.path)
+        recovered = mgr2.refresh_session(
+            refresh,
+            device_name="Phone-A",
+            device_id="dev-a",
+            transport_hint="ws",
+        )
+        self.assertIsNotNone(recovered)
+
 
 class SessionPersistenceExpiryTests(unittest.TestCase):
     """Expired sessions drop at load time — phone sees a clean list

@@ -86,7 +86,7 @@ fun EndpointsCard(
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            text = "Tap a route for details.",
+            text = "Current: ${activeEndpoint?.displayLabel() ?: "Resolving"}",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -187,6 +187,11 @@ private fun EndpointRow(
             // without needing to expand into a detail sheet. "View pin"
             // suspends to read CertPinStore, so we resolve it into a dialog
             // when the user taps it.
+            if (!isActive) {
+                TextButton(onClick = onPrefer) {
+                    Text("Use now")
+                }
+            }
             Box {
                 IconButton(onClick = { menuOpen = true }) {
                     Icon(

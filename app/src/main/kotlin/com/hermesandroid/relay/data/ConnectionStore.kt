@@ -214,13 +214,24 @@ class ConnectionStore private constructor(
             }
             removed?.let { connection ->
                 context?.let { ctx ->
-                    try {
-                        ctx.deleteSharedPreferences(connection.tokenStoreKey)
-                    } catch (e: Exception) {
-                        Log.w(
-                            TAG,
-                            "deleteSharedPreferences(${connection.tokenStoreKey}) failed: ${e.message}",
-                        )
+                    val storeKeys = buildSet {
+                        add(connection.tokenStoreKey)
+                        if (connection.tokenStoreKey == Connection.LEGACY_TOKEN_STORE_KEY) {
+                            // Pre-StrongBox fallback path used this file. If
+                            // connection 0 is removed, scrub it alongside the
+                            // hardware-backed legacy filename.
+                            add("hermes_companion_auth")
+                        }
+                    }
+                    for (storeKey in storeKeys) {
+                        try {
+                            ctx.deleteSharedPreferences(storeKey)
+                        } catch (e: Exception) {
+                            Log.w(
+                                TAG,
+                                "deleteSharedPreferences($storeKey) failed: ${e.message}",
+                            )
+                        }
                     }
                 }
             }
@@ -316,8 +327,12 @@ class ConnectionStore private constructor(
                     // Already migrated or already has user-created connections.
                     return@edit
                 }
-                val apiUrl = legacyApiServerUrl ?: DEFAULT_API_URL
-                val relayUrl = legacyRelayUrl ?: DEFAULT_RELAY_URL
+                if (legacyApiServerUrl.isNullOrBlank() && legacyRelayUrl.isNullOrBlank()) {
+                    Log.i(TAG, "migrateLegacyConnectionIfNeeded: no legacy URLs to seed")
+                    return@edit
+                }
+                val apiUrl = legacyApiServerUrl?.takeIf { it.isNotBlank() } ?: DEFAULT_API_URL
+                val relayUrl = legacyRelayUrl?.takeIf { it.isNotBlank() } ?: DEFAULT_RELAY_URL
                 val id = java.util.UUID.randomUUID().toString()
                 val seed = Connection(
                     id = id,
@@ -370,6 +385,6 @@ class ConnectionStore private constructor(
         // from migrateLegacyConnectionIfNeeded() resolves to the same endpoints
         // a fresh install would.
         private const val DEFAULT_API_URL = "http://localhost:8642"
-        private const val DEFAULT_RELAY_URL = "wss://localhost:8767"
+        private const val DEFAULT_RELAY_URL = "ws://localhost:8767"
     }
 }

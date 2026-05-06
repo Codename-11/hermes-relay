@@ -4,6 +4,8 @@ Registers the following top-level `hermes` sub-commands:
 
     hermes pair [--png] [--no-qr] [--host HOST] [--port PORT]
     hermes relay start [--port PORT] [--no-ssl] [--log-level LEVEL]
+    hermes relay insecure-api-key [status|on|off]
+    hermes-relay insecure-api-key [status|on|off]
 
 Discovered by the hermes-agent v0.8.0+ plugin CLI registration system. The
 plugin loader calls ``register_cli(subparser)`` with a freshly-built parser
@@ -11,6 +13,12 @@ for each sub-command; handlers are dispatched via ``args.func``.
 """
 
 from __future__ import annotations
+
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
 
 
 # ── hermes pair ───────────────────────────────────────────────────────────────
@@ -120,7 +128,46 @@ def register_relay_cli(subparser) -> None:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Log level (default: INFO)",
     )
+    start.add_argument(
+        "--allow-insecure-api-key",
+        "--allow-insecure-api-bearer",
+        action="store_true",
+        dest="allow_insecure_api_bearer",
+        help=(
+            "Allow Hermes API-key voice auth over non-loopback plain HTTP "
+            "(local LAN testing only)."
+        ),
+    )
     start.set_defaults(func=relay_start_command)
+
+    insecure = sub.add_parser(
+        "insecure-api-key",
+        aliases=["insecure-api-bearer"],
+        help="Show or change the running relay's plain-HTTP API-key voice auth toggle",
+    )
+    insecure.add_argument(
+        "state",
+        nargs="?",
+        default="status",
+        choices=["status", "on", "off", "enable", "disable"],
+        help="Toggle state to apply to the running relay (default: status)",
+    )
+    insecure.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Loopback relay host to contact (default: 127.0.0.1)",
+    )
+    insecure.add_argument("--port", type=int, help="Relay port (default: RELAY_PORT or 8767)")
+    insecure.add_argument("--json", action="store_true", help="Print raw JSON")
+    insecure.set_defaults(func=relay_insecure_api_key_command)
+
+
+def relay_command(args):
+    """Dispatch `hermes relay` subcommands when the host CLI calls one handler."""
+    handler = getattr(args, "func", None)
+    if handler is not None and handler is not relay_command:
+        return handler(args)
+    return relay_start_command(args)
 
 
 def relay_start_command(args) -> None:
@@ -150,6 +197,8 @@ def relay_start_command(args) -> None:
         config.log_level = args.log_level
     if getattr(args, "shell", None):
         config.terminal_shell = args.shell
+    if getattr(args, "allow_insecure_api_bearer", False):
+        config.allow_insecure_api_bearer = True
 
     logging.basicConfig(
         level=getattr(logging, config.log_level, logging.INFO),
@@ -182,3 +231,134 @@ def relay_start_command(args) -> None:
         ssl_context=ssl_ctx,
         print=None,
     )
+
+
+def _relay_cli_port(args) -> int:
+    if getattr(args, "port", None) is not None:
+        return int(args.port)
+    raw = os.environ.get("RELAY_PORT", "").strip()
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            print(
+                f"warning: invalid RELAY_PORT={raw!r}; using 8767",
+                file=sys.stderr,
+            )
+    return 8767
+
+
+def _relay_security_request(
+    *,
+    host: str,
+    port: int,
+    allow_insecure_api_bearer: bool | None,
+    timeout: float = 5.0,
+) -> dict:
+    url = f"http://{host}:{port}/relay/security"
+    data: bytes | None = None
+    method = "GET"
+    headers: dict[str, str] = {}
+    if allow_insecure_api_bearer is not None:
+        method = "PATCH"
+        data = json.dumps(
+            {"allow_insecure_api_bearer": allow_insecure_api_bearer}
+        ).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        try:
+            raw_error = exc.read().decode("utf-8")
+            parsed = json.loads(raw_error)
+            detail = parsed.get("error") if isinstance(parsed, dict) else raw_error
+        except Exception:
+            detail = exc.reason
+        raise RuntimeError(f"Relay returned HTTP {exc.code}: {detail}") from exc
+    except (urllib.error.URLError, OSError) as exc:
+        raise RuntimeError(
+            f"Could not reach relay at {url}. Is Hermes-Relay running?"
+        ) from exc
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Relay returned non-JSON response from {url}") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError(f"Relay returned invalid response from {url}")
+    return parsed
+
+
+def relay_insecure_api_key_command(args) -> None:
+    """Toggle runtime acceptance of API-key voice auth over plain LAN HTTP."""
+    state = getattr(args, "state", "status")
+    desired: bool | None
+    if state == "status":
+        desired = None
+    elif state in ("on", "enable"):
+        desired = True
+    else:
+        desired = False
+
+    host = getattr(args, "host", None) or "127.0.0.1"
+    port = _relay_cli_port(args)
+    try:
+        data = _relay_security_request(
+            host=host,
+            port=port,
+            allow_insecure_api_bearer=desired,
+        )
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+    if getattr(args, "json", False):
+        print(json.dumps(data, indent=2, sort_keys=True))
+        return
+
+    enabled = bool(data.get("allow_insecure_api_bearer"))
+    label = "enabled" if enabled else "disabled"
+    if desired is None:
+        print(f"Insecure API-key voice auth is {label} on {host}:{port}.")
+    else:
+        print(f"Insecure API-key voice auth {label} on {host}:{port}.")
+    if enabled:
+        print(
+            "Plain HTTP LAN voice requests can now use the saved Hermes API key. "
+            "Disable with `hermes relay insecure-api-key off` or "
+            "`hermes-relay insecure-api-key off`."
+        )
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Standalone entry point for hosts without plugin CLI discovery.
+
+    Newer Hermes Agent builds can expose this module as ``hermes relay ...``.
+    Installed relay hosts also get a ``hermes-relay`` shim that calls this
+    entry point directly, which keeps runtime operations available on older
+    agent CLIs.
+    """
+    import argparse
+
+    args_list = list(sys.argv[1:] if argv is None else argv)
+    parser = argparse.ArgumentParser(prog="hermes-relay")
+
+    if args_list and args_list[0] == "relay":
+        sub = parser.add_subparsers(dest="command", required=True)
+        relay = sub.add_parser("relay", help="Manage the Hermes-Relay server")
+        register_relay_cli(relay)
+    else:
+        register_relay_cli(parser)
+
+    parsed = parser.parse_args(args_list)
+    handler = getattr(parsed, "func", None)
+    if handler is None:
+        parser.error("missing command")
+    handler(parsed)
+
+
+if __name__ == "__main__":
+    main()

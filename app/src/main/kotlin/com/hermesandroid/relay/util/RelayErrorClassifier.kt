@@ -56,6 +56,17 @@ private fun classifyIoMessage(msg: String, context: String?): HumanError? {
     // Ordered most-specific-first; callers have already handled the typed
     // SSL / timeout / connect exceptions so this only runs on generic IOs.
     return when {
+        (
+            "api key" in msg ||
+                "sessions auth failed" in msg ||
+                "api auth" in msg ||
+                (context == "send_message" && ("401" in msg || "unauthorized" in msg))
+            ) -> HumanError(
+            title = "API key rejected",
+            body = "The Hermes API rejected the saved API key - update it in Settings",
+            retryable = false,
+            actionLabel = "Settings",
+        )
         "401" in msg || "unauthorized" in msg -> HumanError(
             title = "Session expired",
             body = "Your session is no longer valid — re-pair this device",

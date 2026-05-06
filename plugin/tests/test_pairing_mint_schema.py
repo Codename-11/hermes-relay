@@ -14,7 +14,10 @@ found an empty relay block, then bailed during auth.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import unittest
+from unittest import mock
 
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase
@@ -24,6 +27,23 @@ from plugin.relay.server import create_app
 
 
 class PairingMintSchemaTests(AioHTTPTestCase):
+    async def asyncSetUp(self) -> None:
+        self._hermes_home = tempfile.TemporaryDirectory()
+        self._env_patch = mock.patch.dict(
+            os.environ,
+            {
+                "HERMES_HOME": self._hermes_home.name,
+                "API_SERVER_KEY": "",
+            },
+        )
+        self._env_patch.start()
+        await super().asyncSetUp()
+
+    async def asyncTearDown(self) -> None:
+        await super().asyncTearDown()
+        self._env_patch.stop()
+        self._hermes_home.cleanup()
+
     async def get_application(self) -> web.Application:
         config = RelayConfig(
             host="0.0.0.0",
@@ -71,12 +91,34 @@ class PairingMintSchemaTests(AioHTTPTestCase):
             "regression: minted code must not land at top-level key",
         )
 
+    async def test_api_key_defaults_from_server_config(self) -> None:
+        """Dashboard-minted QRs must include the chat API bearer by default."""
+        with mock.patch(
+            "plugin.pair.read_server_config",
+            return_value={"host": "10.0.0.42", "port": 8642, "key": "sk-config", "tls": False},
+        ):
+            result = await self._mint()
+        qr = json.loads(result["qr_payload"])
+
+        self.assertEqual(qr["key"], "sk-config")
+        self.assertNotEqual(qr["key"], result["code"])
+
     async def test_api_key_override_lands_at_top_level_key(self) -> None:
         result = await self._mint({"api_key": "sk-test-12345"})
         qr = json.loads(result["qr_payload"])
 
         self.assertEqual(qr["key"], "sk-test-12345")
         self.assertNotEqual(qr["key"], result["code"])
+
+    async def test_empty_api_key_override_allows_open_access_qr(self) -> None:
+        with mock.patch(
+            "plugin.pair.read_server_config",
+            return_value={"host": "10.0.0.42", "port": 8642, "key": "sk-config", "tls": False},
+        ):
+            result = await self._mint({"api_key": ""})
+        qr = json.loads(result["qr_payload"])
+
+        self.assertEqual(qr["key"], "")
 
     async def test_body_overrides_api_host_port_tls(self) -> None:
         result = await self._mint({
@@ -147,7 +189,8 @@ class PairingMintSchemaTests(AioHTTPTestCase):
                 },
             },
         ]
-        result = await self._mint({"endpoints": endpoints})
+        with mock.patch("plugin.pair._tailscale_status", return_value=None):
+            result = await self._mint({"endpoints": endpoints})
         qr = json.loads(result["qr_payload"])
 
         self.assertEqual(qr["hermes"], 3, "endpoints present → version 3")
@@ -155,6 +198,53 @@ class PairingMintSchemaTests(AioHTTPTestCase):
         self.assertEqual(qr["endpoints"], endpoints)
         # Mint body also mirrors it for the dashboard round-trip.
         self.assertEqual(result.get("endpoints"), endpoints)
+
+    async def test_mint_normalizes_tailscale_magic_dns_when_serve_off(self) -> None:
+        """Stale dashboard processes cannot sign a broken .ts.net HTTPS route."""
+        endpoints = [
+            {
+                "role": "lan",
+                "priority": 0,
+                "api": {"host": "172.16.24.250", "port": 8642, "tls": False},
+                "relay": {
+                    "url": "ws://172.16.24.250:8767",
+                    "transport_hint": "ws",
+                },
+            },
+            {
+                "role": "tailscale",
+                "priority": 1,
+                "api": {
+                    "host": "docker-server.tail6f460.ts.net",
+                    "port": 8642,
+                    "tls": True,
+                },
+                "relay": {
+                    "url": "wss://docker-server.tail6f460.ts.net:8767",
+                    "transport_hint": "wss",
+                },
+            },
+        ]
+
+        with mock.patch(
+            "plugin.pair._tailscale_status",
+            return_value={
+                "available": True,
+                "hostname": "docker-server.tail6f460.ts.net",
+                "tailscale_ip": "100.71.8.56",
+                "serve_ports": [],
+            },
+        ):
+            result = await self._mint({"endpoints": endpoints})
+        qr = json.loads(result["qr_payload"])
+        tailscale = qr["endpoints"][1]
+
+        self.assertEqual(qr["hermes"], 3)
+        self.assertEqual(tailscale["api"]["host"], "100.71.8.56")
+        self.assertFalse(tailscale["api"]["tls"])
+        self.assertEqual(tailscale["relay"]["url"], "ws://100.71.8.56:8767")
+        self.assertEqual(tailscale["relay"]["transport_hint"], "ws")
+        self.assertEqual(result.get("endpoints"), qr["endpoints"])
 
     async def test_mint_with_endpoints_signature_verifies(self) -> None:
         """ADR 24: the HMAC over a v3 payload must verify unchanged."""
@@ -219,8 +309,13 @@ class PairingMintSchemaTests(AioHTTPTestCase):
 class BuildEndpointCandidatesPreferTests(unittest.TestCase):
     """Direct tests for the `prefer` reorder path (ADR 24, 2026-04-19)."""
 
-    def _build(self, mode: str = "auto", prefer: str | None = None,
-               public_url: str | None = "https://example.com") -> list[dict]:
+    def _build(
+        self,
+        mode: str = "auto",
+        prefer: str | None = None,
+        public_url: str | None = "https://example.com",
+        tailscale_status: dict | None = None,
+    ) -> list[dict]:
         from plugin.pair import build_endpoint_candidates
 
         # Inject a synthetic Tailscale status so the test doesn't depend on
@@ -228,7 +323,7 @@ class BuildEndpointCandidatesPreferTests(unittest.TestCase):
         from plugin.relay import tailscale as ts_mod
         import unittest.mock as mock
 
-        fake_status = {
+        fake_status = tailscale_status or {
             "available": True,
             "hostname": "test.tail-xyz.ts.net",
             "tailscale_ip": "100.64.0.1",
@@ -278,6 +373,51 @@ class BuildEndpointCandidatesPreferTests(unittest.TestCase):
         endpoints = self._build(prefer="lan")
         self.assertEqual([c["role"] for c in endpoints], ["lan", "tailscale", "public"])
         self.assertEqual([c["priority"] for c in endpoints], [0, 1, 2])
+
+    def test_tailscale_uses_raw_ip_for_direct_tailnet_ports(self) -> None:
+        endpoints = self._build(mode="tailscale", public_url=None)
+        tailscale = next(c for c in endpoints if c["role"] == "tailscale")
+
+        self.assertEqual(tailscale["api"]["host"], "100.64.0.1")
+        self.assertFalse(tailscale["api"]["tls"])
+        self.assertEqual(tailscale["relay"]["url"], "ws://100.64.0.1:8767")
+        self.assertEqual(tailscale["relay"]["transport_hint"], "ws")
+
+    def test_tailscale_uses_magic_dns_tls_when_serve_is_active(self) -> None:
+        endpoints = self._build(
+            mode="tailscale",
+            public_url=None,
+            tailscale_status={
+                "available": True,
+                "hostname": "test.tail-xyz.ts.net",
+                "tailscale_ip": "100.64.0.1",
+                "serve_ports": [8642, 8767],
+            },
+        )
+        tailscale = next(c for c in endpoints if c["role"] == "tailscale")
+
+        self.assertEqual(tailscale["api"]["host"], "test.tail-xyz.ts.net")
+        self.assertTrue(tailscale["api"]["tls"])
+        self.assertEqual(tailscale["relay"]["url"], "wss://test.tail-xyz.ts.net:8767")
+        self.assertEqual(tailscale["relay"]["transport_hint"], "wss")
+
+    def test_tailscale_uses_raw_ip_when_only_relay_serve_is_active(self) -> None:
+        endpoints = self._build(
+            mode="tailscale",
+            public_url=None,
+            tailscale_status={
+                "available": True,
+                "hostname": "test.tail-xyz.ts.net",
+                "tailscale_ip": "100.64.0.1",
+                "serve_ports": [8767],
+            },
+        )
+        tailscale = next(c for c in endpoints if c["role"] == "tailscale")
+
+        self.assertEqual(tailscale["api"]["host"], "100.64.0.1")
+        self.assertFalse(tailscale["api"]["tls"])
+        self.assertEqual(tailscale["relay"]["url"], "ws://100.64.0.1:8767")
+        self.assertEqual(tailscale["relay"]["transport_hint"], "ws")
 
 
 if __name__ == "__main__":

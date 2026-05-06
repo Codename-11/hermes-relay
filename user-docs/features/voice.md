@@ -43,6 +43,8 @@ Five STT providers are supported:
 - Microphone permission (requested the first time you tap the mic).
 - A connected relay at `:8767` with the voice routes available (any hermes-relay build from 0.2.0 onwards).
 
+Phone voice mode can authenticate two ways: a paired Relay session token with `voice:config`, `voice:stt`, and `voice:tts` grants, or the same saved Hermes API key used for chat. That means chat+voice-only phone setups can skip the full Relay pairing flow: enter the API URL and API key, and the app derives the Relay URL from the same host on port `8767`. If the `/voice/config` probe fails, the app reveals a manual Relay URL override. The API-key exception is limited to voice routes and requires HTTPS outside loopback. For a temporary plain-LAN phone test, run `hermes relay insecure-api-key on` on the relay host, then turn it back off with `hermes relay insecure-api-key off`.
+
 ## Entering Voice Mode
 
 Open a chat and tap the microphone FAB in the bottom-right corner. The first time, Android will ask for microphone permission. Granting it opens the voice mode overlay immediately. Denying it shows a banner at the top — tap Dismiss and you can try again later.
@@ -126,6 +128,8 @@ Plays a sample sentence ("Hello, this is Hermes. Voice mode is working.") throug
 **"Relay returned 503"** — your server doesn't have the provider's optional dependencies installed. SSH into the server and `pip install` whichever provider you configured (e.g. `pip install edge-tts` for Edge, `pip install elevenlabs` for ElevenLabs, or `pip install faster-whisper` for local STT).
 
 **"Relay returned 413" on synthesize** — you're trying to synthesize more than 5000 characters at once. This is a safety cap on the relay side to avoid runaway TTS costs. Client-side sentence chunking should normally keep individual requests well under this, so a 413 usually means the agent returned one enormous uninterrupted sentence.
+
+**"That pairing code was already used"** — Relay pairing codes are one-shot. Generate a fresh QR from the dashboard Relay tab or `hermes-pair` and scan again. If you only need chat plus voice, skip the Relay pairing path and save the Hermes API URL/key instead; the app will derive the conventional Relay voice URL and probe `/voice/config`.
 
 ## Privacy Note
 

@@ -232,7 +232,9 @@ async def mint_pairing(body: dict[str, Any] = Body(default_factory=dict)) -> Any
                                   resolved to a LAN-routable IP)
       - port: 8642                API server port
       - tls: false                API server TLS
-      - api_key: "<token>"        Optional API bearer token
+      - api_key: "<token>"        Optional API bearer token override. When
+                                  omitted, the relay reads the same local
+                                  Hermes API key config as `hermes-pair`.
       - ttl_seconds: <int>        Session TTL
       - grants: {...}             Per-channel TTL map
       - transport_hint: "wss"|"ws"
@@ -262,6 +264,9 @@ async def mint_pairing(body: dict[str, Any] = Body(default_factory=dict)) -> Any
     ``QrPairingScanner.kt``: top-level host/port/key/tls configure the
     Hermes API server, and the nested ``relay`` block (which the relay
     fills in with its own URL + the minted pairing code) configures WSS.
+    The dashboard does not need to handle the API key directly; the relay
+    inserts it from host-local config unless the request explicitly
+    overrides ``api_key``.
     """
     mode_raw = body.pop("mode", None)
     public_url_raw = body.pop("public_url", None)

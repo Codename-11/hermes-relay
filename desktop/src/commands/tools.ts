@@ -115,11 +115,12 @@ export async function toolsCommand(args: ParsedArgs): Promise<number> {
   }
 
   const gw = new GatewayClient(relay)
+  const ready = waitForReady(gw)
   gw.start()
   gw.drain()
 
   try {
-    await waitForReady(gw)
+    await ready
   } catch (e) {
     process.stderr.write(`error: ${rpcErrorMessage(e)}\n`)
     gw.kill()

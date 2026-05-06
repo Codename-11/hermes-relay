@@ -140,8 +140,11 @@ class ActionExecutor(private val service: HermesAccessibilityService) {
             fun ok(data: Map<String, Any?> = mapOf("ok" to true)): ActionResult =
                 ActionResult(ok = true, data = data)
 
-            fun failure(message: String): ActionResult =
-                ActionResult(ok = false, error = message)
+            fun failure(
+                message: String,
+                data: Map<String, Any?> = emptyMap(),
+            ): ActionResult =
+                ActionResult(ok = false, data = data, error = message)
         }
     }
 
@@ -1622,13 +1625,22 @@ class ActionExecutor(private val service: HermesAccessibilityService) {
      */
     suspend fun sendSms(to: String, body: String): ActionResult {
         if (to.isBlank()) {
-            return ActionResult.failure("send_sms: recipient must be non-blank")
+            return ActionResult.failure(
+                "send_sms: recipient must be non-blank",
+                mapOf("status" to "failed", "reason" to "invalid_recipient"),
+            )
         }
         if (body.isEmpty()) {
-            return ActionResult.failure("send_sms: body must be non-empty")
+            return ActionResult.failure(
+                "send_sms: body must be non-empty",
+                mapOf("status" to "failed", "reason" to "invalid_schema"),
+            )
         }
         if (!to.matches(Regex("^[+0-9 ()\\-.]{2,}$"))) {
-            return ActionResult.failure("send_sms: recipient contains invalid characters")
+            return ActionResult.failure(
+                "send_sms: recipient contains invalid characters",
+                mapOf("status" to "failed", "reason" to "invalid_recipient"),
+            )
         }
 
         val ctx: Context = service
@@ -1636,7 +1648,12 @@ class ActionExecutor(private val service: HermesAccessibilityService) {
             != PackageManager.PERMISSION_GRANTED
         ) {
             return ActionResult.failure(
-                "Grant SMS permission in Settings > Apps > Hermes-Relay > Permissions"
+                "Grant SMS permission in Settings > Apps > Hermes-Relay > Permissions",
+                mapOf(
+                    "status" to "blocked",
+                    "reason" to "permission_denied",
+                    "required_permission" to Manifest.permission.SEND_SMS,
+                ),
             )
         }
 
@@ -1652,7 +1669,10 @@ class ActionExecutor(private val service: HermesAccessibilityService) {
             null
         }
         if (smsManager == null) {
-            return ActionResult.failure("SmsManager unavailable on this device")
+            return ActionResult.failure(
+                "SmsManager unavailable on this device",
+                mapOf("status" to "failed", "reason" to "sms_manager_unavailable"),
+            )
         }
 
         // Pick one intent action value — the receiver identifies us by
@@ -1708,7 +1728,10 @@ class ActionExecutor(private val service: HermesAccessibilityService) {
             ContextCompat.registerReceiver(ctx, receiver, filter, flags)
         } catch (t: Throwable) {
             Log.w(TAG, "registerReceiver for SMS_SENT threw: ${t.message}")
-            return ActionResult.failure("sms receiver registration failed: ${t.message}")
+            return ActionResult.failure(
+                "sms receiver registration failed: ${t.message}",
+                mapOf("status" to "failed", "reason" to "receiver_registration_failed"),
+            )
         }
 
         // One PendingIntent per part — SmsManager fires the broadcast with
@@ -1741,12 +1764,20 @@ class ActionExecutor(private val service: HermesAccessibilityService) {
         } catch (se: SecurityException) {
             try { ctx.unregisterReceiver(receiver) } catch (_: Throwable) { }
             return ActionResult.failure(
-                "SMS permission revoked or restricted — re-grant in system Settings"
+                "SMS permission revoked or restricted — re-grant in system Settings",
+                mapOf(
+                    "status" to "blocked",
+                    "reason" to "permission_denied",
+                    "required_permission" to Manifest.permission.SEND_SMS,
+                ),
             )
         } catch (t: Throwable) {
             try { ctx.unregisterReceiver(receiver) } catch (_: Throwable) { }
             Log.w(TAG, "sendTextMessage threw: ${t.message}")
-            return ActionResult.failure("send_sms failed: ${t.message}")
+            return ActionResult.failure(
+                "send_sms failed: ${t.message}",
+                mapOf("status" to "failed", "reason" to "android_exception"),
+            )
         }
 
         // Wait for the receiver to complete — with a 15s cap. If the radio
@@ -1757,18 +1788,28 @@ class ActionExecutor(private val service: HermesAccessibilityService) {
 
         if (result == null) {
             return ActionResult.failure(
-                "send_sms timeout after ${SEND_SMS_TIMEOUT_MS}ms — carrier never acked"
+                "send_sms timeout after ${SEND_SMS_TIMEOUT_MS}ms — carrier never acked",
+                mapOf(
+                    "status" to "timeout",
+                    "reason" to "carrier_ack_timeout",
+                    "android_result" to "timeout",
+                    "parts" to expectedParts,
+                ),
             )
         }
         return if (result == android.app.Activity.RESULT_OK) {
             ActionResult.ok(
                 mapOf(
+                    "status" to "sent",
+                    "android_result" to "RESULT_OK",
                     "to" to to,
                     "length" to body.length,
                     "parts" to expectedParts,
+                    "summary" to "SMS sent to $to ($expectedParts part(s))",
                 )
             )
         } else {
+            val androidResult = smsResultName(result)
             val reason = when (result) {
                 SmsManager.RESULT_ERROR_GENERIC_FAILURE -> "generic failure"
                 SmsManager.RESULT_ERROR_NO_SERVICE -> "no service"
@@ -1776,8 +1817,25 @@ class ActionExecutor(private val service: HermesAccessibilityService) {
                 SmsManager.RESULT_ERROR_RADIO_OFF -> "radio off (airplane mode?)"
                 else -> "result code $result"
             }
-            ActionResult.failure("send_sms failed: $reason")
+            ActionResult.failure(
+                "send_sms failed: $reason",
+                mapOf(
+                    "status" to "failed",
+                    "reason" to reason,
+                    "android_result" to androidResult,
+                    "parts" to expectedParts,
+                ),
+            )
         }
+    }
+
+    private fun smsResultName(result: Int): String = when (result) {
+        android.app.Activity.RESULT_OK -> "RESULT_OK"
+        SmsManager.RESULT_ERROR_GENERIC_FAILURE -> "RESULT_ERROR_GENERIC_FAILURE"
+        SmsManager.RESULT_ERROR_NO_SERVICE -> "RESULT_ERROR_NO_SERVICE"
+        SmsManager.RESULT_ERROR_NULL_PDU -> "RESULT_ERROR_NULL_PDU"
+        SmsManager.RESULT_ERROR_RADIO_OFF -> "RESULT_ERROR_RADIO_OFF"
+        else -> "RESULT_$result"
     }
 
 }

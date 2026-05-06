@@ -58,10 +58,9 @@ import { deleteSession, getSession, saveSession } from '../remoteSessions.js'
 import { stageClipboardImageToInbox } from './paste.js'
 import { fetchRecentSessions, pickSession } from '../sessionPicker.js'
 import { ensureToolsConsent } from '../tools/consent.js'
-import {
-  DESKTOP_ADVERTISED_TOOLS,
-  DESKTOP_HANDLERS
-} from '../tools/handlerSet.js'
+import { configureComputerUseRuntime } from '../tools/computerGrants.js'
+import { setComputerActionPromptCoordinator } from '../tools/computerActionApproval.js'
+import { DESKTOP_HANDLERS, advertisedDesktopTools } from '../tools/handlerSet.js'
 import { DesktopToolRouter } from '../tools/router.js'
 import { RelayTransport } from '../transport/RelayTransport.js'
 
@@ -277,10 +276,11 @@ async function resolveHermesConversationId(
   // picker, tear the gw down (the terminal channel below doesn't use the
   // tui wrapper — the same relay socket keeps running).
   const gw = new GatewayClient(relay)
+  const ready = waitForGatewayReady(gw)
   gw.start()
   gw.drain()
   try {
-    await waitForGatewayReady(gw)
+    await ready
   } catch {
     // If gateway.ready never comes (server without tui_gateway, stripped
     // build, etc.) we silently fall through to a fresh session — the
@@ -383,13 +383,20 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
   if (!toolsDisabled) {
     const consent = await ensureToolsConsent(url)
     if (consent.consented) {
+      configureComputerUseRuntime({
+        url,
+        computerUseConsented: true,
+        consentSource: consent.source ?? 'stored'
+      })
+      const advertisedTools = advertisedDesktopTools()
       toolRouter = new DesktopToolRouter({
         consentGranted: true,
-        handlers: DESKTOP_HANDLERS
+        handlers: DESKTOP_HANDLERS,
+        advertisedTools: [...advertisedTools]
       })
       toolRouter.attach(relay)
       process.stderr.write(
-        `Desktop tools: ${DESKTOP_ADVERTISED_TOOLS.length} handlers advertised\n`
+        `Desktop tools: ${advertisedTools.length} handlers advertised (computer-use experimental; control requires grant approval)\n`
       )
     } else if (consent.reason) {
       process.stderr.write(`Desktop tools: disabled (${consent.reason})\n`)
@@ -479,6 +486,7 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
   process.stdin.resume()
 
   let escapePending = false
+  let computerPromptActive = false
   /** Reentrancy guard for `Ctrl+A v` so a fast double-press doesn't race two
    * staging requests at once (the server'd then attach two images on /paste). */
   let pasteInFlight = false
@@ -592,6 +600,37 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
     }
   }
 
+  const restoreComputerPromptCoordinator = setComputerActionPromptCoordinator(async runPrompt => {
+    if (computerPromptActive) {
+      return runPrompt()
+    }
+    computerPromptActive = true
+    try {
+      process.stdin.off('data', forwardInput)
+    } catch {
+      /* ignore */
+    }
+    try {
+      process.stdin.setRawMode(false)
+    } catch {
+      /* ignore */
+    }
+    try {
+      return await runPrompt()
+    } finally {
+      if (!exiting) {
+        try {
+          process.stdin.setRawMode(true)
+          process.stdin.resume()
+        } catch {
+          /* ignore */
+        }
+        process.stdin.on('data', forwardInput)
+      }
+      computerPromptActive = false
+    }
+  })
+
   process.stdin.on('data', forwardInput)
 
   // Forward SIGWINCH as a `terminal.resize` envelope. The relay TIOCSWINSZs
@@ -611,8 +650,14 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
   process.stdout.on('resize', onResize)
 
   const cleanup = () => {
+    exiting = true
     try {
       process.stdin.off('data', forwardInput)
+    } catch {
+      /* ignore */
+    }
+    try {
+      restoreComputerPromptCoordinator()
     } catch {
       /* ignore */
     }

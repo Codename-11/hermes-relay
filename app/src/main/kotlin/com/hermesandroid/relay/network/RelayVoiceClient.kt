@@ -24,15 +24,18 @@ import java.io.IOException
  *   POST /voice/synthesize  — JSON `{"text": "..."}`, returns audio/mpeg bytes
  *
  * Auth, URL conversion (`ws` ↔ `http`), and error shape mirror
- * [RelayHttpClient] — same bearer token, same `{relayUrl, sessionToken}`
- * providers. We take the providers as constructor args instead of sharing
- * a [RelayHttpClient] instance so the classes stay decoupled.
+ * [RelayHttpClient]. Android prefers the saved Hermes API key for voice when
+ * present, because chat+voice-only installs do not need the full Relay pairing
+ * flow. Paired Relay sessions remain the fallback for installs without an API
+ * key. We take the providers as constructor args instead of sharing a
+ * [RelayHttpClient] instance so the classes stay decoupled.
  */
 class RelayVoiceClient(
     private val context: Context,
     private val okHttpClient: OkHttpClient,
     private val relayUrlProvider: () -> String?,
     private val sessionTokenProvider: suspend () -> String?,
+    private val apiBearerTokenProvider: suspend () -> String? = { null },
 ) {
 
     companion object {
@@ -50,10 +53,10 @@ class RelayVoiceClient(
     suspend fun transcribe(audioFile: File): Result<String> = withContext(Dispatchers.IO) {
         val httpBase = resolveHttpBase()
             ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
-        val token = sessionTokenProvider()
+        val token = resolveBearerToken()
         if (token.isNullOrBlank()) {
             return@withContext Result.failure(
-                IllegalStateException("Relay not paired — session token missing")
+                missingAuthError()
             )
         }
         if (!audioFile.exists() || audioFile.length() == 0L) {
@@ -122,10 +125,10 @@ class RelayVoiceClient(
     suspend fun synthesize(text: String): Result<File> = withContext(Dispatchers.IO) {
         val httpBase = resolveHttpBase()
             ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
-        val token = sessionTokenProvider()
+        val token = resolveBearerToken()
         if (token.isNullOrBlank()) {
             return@withContext Result.failure(
-                IllegalStateException("Relay not paired — session token missing")
+                missingAuthError()
             )
         }
         if (text.isBlank()) {
@@ -187,10 +190,10 @@ class RelayVoiceClient(
     suspend fun getVoiceConfig(): Result<VoiceConfig> = withContext(Dispatchers.IO) {
         val httpBase = resolveHttpBase()
             ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
-        val token = sessionTokenProvider()
+        val token = resolveBearerToken()
         if (token.isNullOrBlank()) {
             return@withContext Result.failure(
-                IllegalStateException("Relay not paired — session token missing")
+                missingAuthError()
             )
         }
 
@@ -234,8 +237,19 @@ class RelayVoiceClient(
             .trimEnd('/')
     }
 
+    private suspend fun resolveBearerToken(): String? {
+        val apiBearer = apiBearerTokenProvider()?.trim()
+        if (!apiBearer.isNullOrBlank()) return apiBearer
+        val sessionToken = sessionTokenProvider()?.trim()
+        return sessionToken?.takeIf { it.isNotBlank() }
+    }
+
+    private fun missingAuthError(): IllegalStateException =
+        IllegalStateException("Voice auth missing — pair with the relay or save a Hermes API key")
+
     private fun describeHttpError(code: Int, message: String): String = when (code) {
-        401, 403 -> "Unauthorized — re-pair with the relay"
+        401 -> "Voice auth failed — check the Relay session or Hermes API key"
+        403 -> "Voice access expired — extend or re-pair with voice grants"
         404 -> "Voice endpoint not available on this relay"
         413 -> "Audio too large for relay"
         503 -> "Voice provider unavailable (check relay config)"

@@ -332,12 +332,14 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
     relay block had no url/code for it to open a WSS against.
 
     POST /pairing/mint
-      body (all optional — fall back to RelayConfig defaults):
+      body (all optional — fall back to RelayConfig / local Hermes defaults):
         - host: "172.16.24.250"        API server host override (LAN IP)
         - port: 8642                    API server port override
         - tls: false                    API server TLS override
-        - api_key: "<token>"            API bearer token (goes in top-level
-                                        "key"; empty = open access)
+        - api_key: "<token>"            API bearer token override (goes in
+                                        top-level "key"; omitted = read the
+                                        same local config as hermes-pair,
+                                        explicit empty = open access)
         - ttl_seconds: <int>            Session TTL
         - transport_hint: "wss"|"ws"    Forwarded verbatim
         - grants: {...}                 Channel TTL map
@@ -359,7 +361,14 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
 
     server: RelayServer = request.app["server"]
 
-    from ..pair import build_payload, _relay_lan_base_url, _resolve_lan_ip
+    from ..pair import (
+        build_pairing_qr_payload,
+        build_relay_pairing_block,
+        normalize_endpoint_candidates,
+        read_server_config,
+        _relay_lan_base_url,
+        _resolve_lan_ip,
+    )
 
     # ── API server info (top-level of the QR payload) ────────────────────
     # Defaults come from ``RelayConfig.webapi_url`` (the Hermes API gateway
@@ -402,8 +411,18 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
     else:
         api_tls = default_api_url.scheme == "https"
 
-    api_key_raw = payload.get("api_key")
-    api_key = str(api_key_raw) if api_key_raw is not None else ""
+    if "api_key" in payload:
+        api_key_raw = payload.get("api_key")
+        api_key = str(api_key_raw) if api_key_raw is not None else ""
+    else:
+        try:
+            api_key = str(read_server_config().get("key") or "")
+        except Exception as exc:  # pragma: no cover - defensive config fallback
+            logger.warning(
+                "Pairing mint could not read Hermes API key from local config: %s",
+                exc,
+            )
+            api_key = ""
 
     # ── Pairing metadata ─────────────────────────────────────────────────
     ttl_seconds, grants, transport_hint, err = _parse_pairing_metadata(payload)
@@ -411,9 +430,10 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": err}, status=400)
 
     # Optional v3 multi-endpoint array (ADR 24). The caller (dashboard
-    # "pair new device" UI) composes this; the server just stores and
-    # mirrors it. Shape is validated on the phone — any server-side
-    # normalization would break HMAC round-tripping.
+    # "pair new device" UI) composes this; the relay validates only the
+    # outer array shape here. Server-owned normalization happens below,
+    # immediately before QR signing, so the signed payload and response
+    # still round-trip consistently.
     endpoints_raw = payload.get("endpoints")
     if endpoints_raw is not None and not isinstance(endpoints_raw, list):
         return web.json_response(
@@ -446,18 +466,29 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
     relay_url = _relay_lan_base_url(
         server.config.host, server.config.port, tls=relay_tls
     )
-    relay_block: dict[str, Any] = {
-        "url": relay_url,
-        "code": code,
-    }
-    if ttl_seconds is not None:
-        relay_block["ttl_seconds"] = ttl_seconds
-    if grants is not None:
-        relay_block["grants"] = grants
-    if transport_hint is not None:
-        relay_block["transport_hint"] = transport_hint
+    if endpoints_list is not None:
+        normalized_endpoints = normalize_endpoint_candidates(
+            endpoints_list,
+            api_port=api_port,
+            relay_port=server.config.port,
+            api_tls=api_tls,
+            relay_tls=relay_tls,
+        )
+        if normalized_endpoints != endpoints_list:
+            logger.info(
+                "Normalized pairing endpoint candidates before QR signing",
+            )
+        endpoints_list = normalized_endpoints
 
-    qr_payload = build_payload(
+    relay_block = build_relay_pairing_block(
+        relay_url=relay_url,
+        code=code,
+        ttl_seconds=ttl_seconds,
+        grants=grants,
+        transport_hint=transport_hint,
+    )
+
+    qr_payload = build_pairing_qr_payload(
         host=api_host,
         port=api_port,
         key=api_key,
@@ -488,11 +519,12 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
 
     logger.info(
         "Minted pairing code via /pairing/mint: %s "
-        "(api=%s://%s:%d relay=%s)",
+        "(api=%s://%s:%d api_key=%s relay=%s)",
         code,
         "https" if api_tls else "http",
         api_host,
         api_port,
+        "present" if api_key else "absent",
         relay_url,
     )
     mint_response: dict[str, Any] = {
@@ -936,6 +968,7 @@ async def handle_desktop_health(request: web.Request) -> web.Response:
         "started_at_ms": cs.get("started_at_ms"),
         "interactive": cs.get("interactive"),
         "last_error": cs.get("last_error"),
+        "computer_use": cs.get("computer_use"),
         "recent_commands": server.desktop.get_recent(limit=20),
     }
     return web.json_response(out)
@@ -1594,10 +1627,11 @@ async def _bridge_dispatch(
 # close over the path string here. One adapter per endpoint keeps the
 # route registration self-documenting at the call site.
 #
-# Endpoint inventory mirrors ``plugin/tools/android_tool.py``'s 15 tools:
+# Endpoint inventory mirrors ``plugin/tools/android_tool.py``'s bridge tools:
 #   GET  /ping, /screen, /screenshot, /get_apps, /current_app
 #   POST /tap, /tap_text, /type, /swipe, /open_app, /press_key,
-#        /scroll, /describe_node, /wait, /setup
+#        /scroll, /describe_node, /wait, /setup, /return_to_hermes,
+#        /share_media, /send_mms
 #
 # NOTE: the legacy relay used ``/apps`` for list apps but the Android app
 # expects ``/get_apps`` and the tool at line ~230 of android_tool.py calls
@@ -1663,6 +1697,10 @@ async def handle_bridge_drag(request: web.Request) -> web.Response:
 
 async def handle_bridge_open_app(request: web.Request) -> web.Response:
     return await _bridge_dispatch(request, "/open_app")
+
+
+async def handle_bridge_return_to_hermes(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/return_to_hermes")
 
 
 async def handle_bridge_press_key(request: web.Request) -> web.Response:
@@ -1775,6 +1813,14 @@ async def handle_bridge_send_sms(request: web.Request) -> web.Response:
     return await _bridge_dispatch(request, "/send_sms")
 
 
+async def handle_bridge_share_media(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/share_media")
+
+
+async def handle_bridge_send_mms(request: web.Request) -> web.Response:
+    return await _bridge_dispatch(request, "/send_mms")
+
+
 # === END PHASE3-bridge-server ===
 
 
@@ -1856,9 +1902,10 @@ async def handle_bridge_status(request: web.Request) -> web.Response:
 
 # ── Dashboard-plugin loopback routes ─────────────────────────────────────────
 #
-# Three loopback-only endpoints surfaced for the co-hosted dashboard
-# plugin. They expose relay state (bridge command ring buffer, media
-# registry snapshot, aggregate /relay/info) that upstream can't see.
+# Loopback-only endpoints surfaced for the co-hosted dashboard plugin and
+# local CLI. They expose relay state (bridge command ring buffer, media
+# registry snapshot, aggregate /relay/info, runtime security toggles) that
+# upstream can't see.
 # Loopback-gated because the dashboard runs inside the gateway process
 # on the same host; no bearer is needed.
 
@@ -1936,6 +1983,83 @@ async def handle_relay_info(request: web.Request) -> web.Response:
             "health": "ok",
         }
     )
+
+
+def _relay_security_payload(server: RelayServer) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "scope": "runtime",
+        "allow_insecure_api_bearer": bool(
+            server.config.allow_insecure_api_bearer
+        ),
+        "trust_proxy_headers": bool(server.config.trust_proxy_headers),
+    }
+
+
+async def handle_relay_security_get(request: web.Request) -> web.Response:
+    """Return runtime security toggles for local operators.
+
+    GET /relay/security
+      → 200 {allow_insecure_api_bearer, trust_proxy_headers, scope}
+      → 403 non-loopback caller
+    """
+    _require_loopback(request)
+
+    server: RelayServer = request.app["server"]
+    return web.json_response(_relay_security_payload(server))
+
+
+async def handle_relay_security_patch(request: web.Request) -> web.Response:
+    """Patch runtime security toggles for local operators.
+
+    PATCH /relay/security {"allow_insecure_api_bearer": true|false}
+      → 200 {allow_insecure_api_bearer, trust_proxy_headers, scope}
+      → 400 invalid body
+      → 403 non-loopback caller
+    """
+    _require_loopback(request)
+
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
+    if not isinstance(payload, dict):
+        return web.json_response(
+            {"ok": False, "error": "body must be a JSON object"},
+            status=400,
+        )
+
+    if "allow_insecure_api_bearer" not in payload:
+        return web.json_response(
+            {
+                "ok": False,
+                "error": "missing allow_insecure_api_bearer",
+            },
+            status=400,
+        )
+    value = payload["allow_insecure_api_bearer"]
+    if not isinstance(value, bool):
+        return web.json_response(
+            {
+                "ok": False,
+                "error": "allow_insecure_api_bearer must be a boolean",
+            },
+            status=400,
+        )
+
+    server: RelayServer = request.app["server"]
+    server.config.allow_insecure_api_bearer = value
+    if value:
+        logger.warning(
+            "Runtime security toggle enabled: Hermes API bearer voice auth "
+            "is allowed over non-loopback plaintext HTTP"
+        )
+    else:
+        logger.info(
+            "Runtime security toggle disabled: Hermes API bearer voice auth "
+            "requires HTTPS outside loopback"
+        )
+    return web.json_response(_relay_security_payload(server))
 
 
 # ── Profile-scoped read-only config + skills ────────────────────────────────
@@ -2846,11 +2970,11 @@ async def _profile_rescan_loop(app: web.Application) -> None:
 # ``android_notifications_recent`` tool to answer "what came in
 # recently?" questions during a chat turn.
 #
-# The trust model matches every other phone-facing relay HTTP endpoint
-# (``/media/*``, ``/sessions``, ``/voice/*``): a valid relay session
-# token in ``Authorization: Bearer ...`` is required, and the same
-# token serves as proof that the caller is one of the operator's
-# paired devices.
+# The trust model matches other phone-facing relay HTTP endpoints
+# (``/media/*``, ``/sessions``): a valid relay session token in
+# ``Authorization: Bearer ...`` is required, and the same token serves as
+# proof that the caller is one of the operator's paired devices. ``/voice/*``
+# has a narrow additional Hermes API bearer path in ``voice_auth``.
 
 
 async def handle_notifications_recent(request: web.Request) -> web.Response:
@@ -3017,7 +3141,7 @@ def _build_auth_ok_payload(
     # snake_case dicts with ``name``, ``model``, ``description``, and
     # ``system_message`` (which may be ``None``). The Kotlin client
     # deserializes into PairedDeviceInfo.profiles.
-    return {
+    payload: dict[str, Any] = {
         "session_token": session.token,
         "server_version": __version__,
         "profiles": server.config.profiles,
@@ -3027,6 +3151,9 @@ def _build_auth_ok_payload(
         "client_surface": session.client_surface,
         "device_form_factor": session.device_form_factor,
     }
+    if session.refresh_token:
+        payload["refresh_token"] = session.refresh_token
+    return payload
 
 
 async def _authenticate(
@@ -3069,6 +3196,7 @@ async def _authenticate(
     payload = envelope.get("payload", {})
     pairing_code = payload.get("pairing_code", "")
     session_token_attempt = payload.get("session_token", "")
+    refresh_token_attempt = str(payload.get("refresh_token", "") or "").strip()
     device_name = payload.get("device_name", "Unknown device")
     device_id = payload.get("device_id", "unknown")
     client_surface = str(payload.get("client_surface", "unknown") or "unknown")
@@ -3087,6 +3215,33 @@ async def _authenticate(
     # Try session token first (reconnection)
     if session_token_attempt:
         session = server.sessions.get_session(session_token_attempt)
+        if session is not None:
+            if (
+                not refresh_token_attempt
+                and device_id
+                and not server.sessions.has_trusted_device(session.device_id)
+            ):
+                server.sessions.issue_refresh_token_for_session(session)
+            server.rate_limiter.record_success(remote_ip)
+            await _send_system(
+                ws, "auth.ok", _build_auth_ok_payload(session, server)
+            )
+            return session.token
+
+    # If the short session token was lost, revoked during an update, or reset
+    # on a stateless deployment, a trusted-device refresh token can recover
+    # without forcing a new QR scan. The refresh credential is rotated on
+    # success and the replacement session is returned through the normal
+    # auth.ok shape.
+    if refresh_token_attempt:
+        session = server.sessions.refresh_session(
+            refresh_token_attempt,
+            device_name=device_name,
+            device_id=device_id,
+            transport_hint=detected_transport,
+            client_surface=client_surface,
+            device_form_factor=device_form_factor,
+        )
         if session is not None:
             server.rate_limiter.record_success(remote_ip)
             await _send_system(
@@ -3124,6 +3279,7 @@ async def _authenticate(
                 transport_hint=transport_hint,
                 client_surface=client_surface,
                 device_form_factor=device_form_factor,
+                issue_refresh_token=True,
             )
             server.rate_limiter.record_success(remote_ip)
             await _send_system(
@@ -3141,6 +3297,9 @@ async def _authenticate(
     # attempts genuinely failed.
     recorded = False
     if session_token_attempt:
+        server.rate_limiter.record_session_failure(remote_ip)
+        recorded = True
+    if refresh_token_attempt:
         server.rate_limiter.record_session_failure(remote_ip)
         recorded = True
     if pairing_code:
@@ -3398,7 +3557,7 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_get("/media/by-path", handle_media_by_path)
     app.router.add_get("/media/{token}", handle_media_get)
 
-    # Voice endpoints — TTS / STT bridge, bearer-auth'd like /media/*.
+    # Voice endpoints — TTS / STT bridge, bearer-auth'd by voice_auth.
     async def _voice_transcribe(request: web.Request) -> web.StreamResponse:
         s: RelayServer = request.app["server"]
         return await s.voice.handle_transcribe(request)
@@ -3432,6 +3591,7 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_post("/swipe", handle_bridge_swipe)
     app.router.add_post("/drag", handle_bridge_drag)
     app.router.add_post("/open_app", handle_bridge_open_app)
+    app.router.add_post("/return_to_hermes", handle_bridge_return_to_hermes)
     app.router.add_post("/press_key", handle_bridge_press_key)
     app.router.add_post("/scroll", handle_bridge_scroll)
     app.router.add_post("/describe_node", handle_bridge_describe_node)  # A4
@@ -3458,6 +3618,8 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_post("/search_contacts", handle_bridge_search_contacts)
     app.router.add_post("/call", handle_bridge_call)
     app.router.add_post("/send_sms", handle_bridge_send_sms)
+    app.router.add_post("/share_media", handle_bridge_share_media)
+    app.router.add_post("/send_mms", handle_bridge_send_mms)
     # === END PHASE3-bridge-server ===
 
     # === PHASE3-status: loopback-gated structured phone status ===
@@ -3468,6 +3630,8 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_get("/bridge/activity", handle_bridge_activity)
     app.router.add_get("/media/inspect", handle_media_inspect)
     app.router.add_get("/relay/info", handle_relay_info)
+    app.router.add_get("/relay/security", handle_relay_security_get)
+    app.router.add_patch("/relay/security", handle_relay_security_patch)
 
     # === PHASE3-notif-listener: notifications HTTP routes ===
     app.router.add_get("/notifications/recent", handle_notifications_recent)
@@ -3606,6 +3770,16 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--allow-insecure-api-key",
+        "--allow-insecure-api-bearer",
+        action="store_true",
+        dest="allow_insecure_api_bearer",
+        help=(
+            "Allow Hermes API-key voice auth over non-loopback plain HTTP "
+            "(local LAN testing only)."
+        ),
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"hermes-relay {__version__}",
@@ -3635,6 +3809,8 @@ def main() -> None:
     if args.no_ssl:
         config.ssl_cert = None
         config.ssl_key = None
+    if args.allow_insecure_api_bearer:
+        config.allow_insecure_api_bearer = True
 
     # Configure logging
     logging.basicConfig(

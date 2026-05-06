@@ -7,9 +7,10 @@
 // any time of day, not just when they have a shell attached.
 //
 // Design contract:
-//   - Fails closed if no stored session or consent isn't already true.
+//   - Fails closed if no stored session or desktop-tool consent isn't already true.
 //     A headless binary must never be the thing that grants tool access;
-//     the user must have previously consented via interactive `shell`.
+//     the user must have previously consented via interactive `shell`/`chat`
+//     or `pair --grant-tools`.
 //   - Inherits RelayTransport's reconnect state machine as-is. No custom
 //     retry loop here — the transport's exp-backoff-to-30s + auth-resolve
 //     semantics are already daemon-appropriate. Terminal auth failures
@@ -35,9 +36,10 @@ import { rpcErrorMessage } from '../lib/rpc.js'
 import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
 import { getSession } from '../remoteSessions.js'
 import {
-  DESKTOP_ADVERTISED_TOOLS,
-  DESKTOP_HANDLERS
+  DESKTOP_HANDLERS,
+  advertisedDesktopTools
 } from '../tools/handlerSet.js'
+import { configureComputerUseRuntime } from '../tools/computerGrants.js'
 import { DesktopToolRouter } from '../tools/router.js'
 import { RelayTransport } from '../transport/RelayTransport.js'
 import { setupGracefulExit } from '../lib/gracefulExit.js'
@@ -225,17 +227,29 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
 
   // Wire the desktop tool router. consentGranted is true by this point —
   // we gated on stored consent (or --allow-tools override) above.
-  // interactive:false so patch approval auto-rejects (no TTY to prompt on).
+  // A foreground daemon with a real TTY may show approval prompts; a service
+  // or redirected daemon still fails host input closed because no visible
+  // local grant approval prompt can run.
+  const interactive = !!process.stdin.isTTY && !!process.stderr.isTTY
+  configureComputerUseRuntime({
+    url,
+    computerUseConsented: true,
+    consentSource: consented ? 'stored' : 'override'
+  })
+  const advertisedTools = advertisedDesktopTools()
   const router = new DesktopToolRouter({
     consentGranted: true,
-    interactive: false,
-    handlers: DESKTOP_HANDLERS
+    interactive,
+    handlers: DESKTOP_HANDLERS,
+    advertisedTools: [...advertisedTools]
   })
   router.attach(relay)
 
   log.info({
     event: 'ready',
-    advertised_tools: [...DESKTOP_ADVERTISED_TOOLS]
+    advertised_tools: [...advertisedTools],
+    experimental_computer_use: true,
+    interactive
   })
 
   // Graceful shutdown: detach router (stops heartbeats), kill transport

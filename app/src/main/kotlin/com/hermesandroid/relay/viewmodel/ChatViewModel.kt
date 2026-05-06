@@ -396,8 +396,10 @@ class ChatViewModel : ViewModel() {
         val client = apiClient ?: return
         val handler = chatHandler ?: return
         viewModelScope.launch {
-            val sessions = client.listSessions()
-            handler.updateSessions(sessions)
+            client.listSessionsResult().fold(
+                onSuccess = { sessions -> handler.updateSessions(sessions) },
+                onFailure = { error -> emitError(error, context = "load_sessions") }
+            )
         }
     }
 
@@ -410,19 +412,21 @@ class ChatViewModel : ViewModel() {
         activeStream = null
 
         viewModelScope.launch {
-            val session = client.createSession()
-            if (session != null) {
-                val chatSession = ChatSession(
-                    sessionId = session.id,
-                    title = session.title ?: "New Chat",
-                    model = session.model
-                )
-                handler.addSession(chatSession)
-                handler.setSessionId(session.id)
-                handler.clearMessages()
-                onSessionChanged?.invoke(session.id)
-                AppAnalytics.onSessionCreated()
-            }
+            client.createSessionResult().fold(
+                onSuccess = { session ->
+                    val chatSession = ChatSession(
+                        sessionId = session.id,
+                        title = session.title ?: "New Chat",
+                        model = session.model
+                    )
+                    handler.addSession(chatSession)
+                    handler.setSessionId(session.id)
+                    handler.clearMessages()
+                    onSessionChanged?.invoke(session.id)
+                    AppAnalytics.onSessionCreated()
+                },
+                onFailure = { error -> emitError(error, context = "create_session") }
+            )
         }
     }
 
@@ -643,28 +647,32 @@ class ChatViewModel : ViewModel() {
             startStream(client, handler, sessionId, text.trim(), assistantMessageId, attachments)
         } else {
             viewModelScope.launch {
-                val session = client.createSession()
-                if (session != null) {
-                    val chatSession = ChatSession(
-                        sessionId = session.id,
-                        title = null,
-                        model = session.model
-                    )
-                    handler.addSession(chatSession)
-                    handler.setSessionId(session.id)
-                    onSessionChanged?.invoke(session.id)
-                    startStream(client, handler, session.id, text.trim(), assistantMessageId, attachments)
+                client.createSessionResult().fold(
+                    onSuccess = { session ->
+                        val chatSession = ChatSession(
+                            sessionId = session.id,
+                            title = null,
+                            model = session.model
+                        )
+                        handler.addSession(chatSession)
+                        handler.setSessionId(session.id)
+                        onSessionChanged?.invoke(session.id)
+                        startStream(client, handler, session.id, text.trim(), assistantMessageId, attachments)
 
-                    // Auto-title: use first ~50 chars of user message
-                    val autoTitle = text.trim().take(50).let {
-                        if (text.length > 50) "$it..." else it
+                        // Auto-title: use first ~50 chars of user message
+                        val autoTitle = text.trim().take(50).let {
+                            if (text.length > 50) "$it..." else it
+                        }
+                        client.renameSession(session.id, autoTitle)
+                        handler.renameSessionLocal(session.id, autoTitle)
+                    },
+                    onFailure = { error ->
+                        val message = error.message?.let { "Failed to create chat session: $it" }
+                            ?: "Failed to create chat session"
+                        handler.onStreamError(message)
+                        emitError(error, context = "send_message")
                     }
-                    client.renameSession(session.id, autoTitle)
-                    handler.renameSessionLocal(session.id, autoTitle)
-                } else {
-                    handler.onStreamError("Failed to create chat session")
-                    emitError(Exception("Failed to create chat session"), context = "send_message")
-                }
+                )
             }
         }
     }
