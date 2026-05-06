@@ -47,6 +47,7 @@ jobs:
     name: CI Checks
     needs: validate
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
 
@@ -62,8 +63,15 @@ jobs:
       - name: Build debug APK
         run: ./gradlew assembleDebug
 
-      - name: Run unit tests
-        run: ./gradlew test
+      # Keep the tag release gate aligned with CI — Android's broad Gradle
+      # `test` aggregate currently hangs in deferred JVM suites tracked by
+      # issue #32, so the release gate runs the stable connection/pairing slice.
+      - name: Run focused Android unit tests
+        run: |
+          ./gradlew :app:testSideloadDebugUnitTest \
+            --tests com.hermesandroid.relay.network.RelayUrlDeriverTest \
+            --tests com.hermesandroid.relay.viewmodel.ConnectionSwitchTest \
+            --console=plain
 
   release:
     name: Build & Publish Release
