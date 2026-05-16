@@ -18,7 +18,7 @@ Hermes-Relay now ships three independently versioned surfaces:
 | Surface | Tag prefix | Version source | Bump script | Release workflow |
 |---|---|---|---|---|
 | Android app | `v*` | `gradle/libs.versions.toml` | `scripts/bump-android-version.sh` | `.github/workflows/release.yml` |
-| Relay server / Python package | `relay-v*` | `pyproject.toml` + `plugin/relay/__init__.py` | `scripts/bump-relay-version.sh` | `.github/workflows/release-relay.yml` |
+| Relay server / Python package | `relay-v*` | `pyproject.toml` plus checked plugin/dashboard metadata | `scripts/bump-relay-version.sh` | `.github/workflows/release-relay.yml` |
 | Desktop CLI | `desktop-v*` | `desktop/package.json` | `npm version` or manual package bump | `.github/workflows/release-desktop.yml` |
 
 This split is intentional. The Relay server now carries features for both
@@ -69,12 +69,17 @@ Android script.
 
 ### Relay server / Python package versioning
 
-Relay version metadata lives in two places and must stay in lockstep:
+Relay version metadata lives in these relay-owned files and must stay in
+lockstep:
 
 | File | Line | Purpose |
 |---|---|---|
 | `pyproject.toml` | `version = "..."` | Python package metadata |
 | `plugin/relay/__init__.py` | `__version__ = "..."` | runtime version reported by `/health` |
+| `plugin/plugin.yaml` | `version: ...` | Hermes plugin metadata |
+| `plugin/dashboard/manifest.json` | `"version": "..."` | Hermes dashboard plugin metadata |
+| `plugin/dashboard/package.json` | `"version": "..."` | dashboard build/package metadata |
+| `plugin/dashboard/package-lock.json` | `"version": "..."` | locked dashboard package metadata |
 
 Always bump Relay releases via:
 
@@ -82,9 +87,15 @@ Always bump Relay releases via:
 bash scripts/bump-relay-version.sh 0.6.2
 ```
 
-The `relay-v*` release workflow validates the tag against both files,
-runs Relay tests, builds a wheel and sdist, generates checksums, and
-publishes a GitHub Release with the package artifacts.
+Check the current metadata with:
+
+```bash
+python scripts/check-relay-version-sync.py
+```
+
+The `relay-v*` release workflow validates the tag against the same metadata,
+runs Relay tests, builds a wheel and sdist, generates checksums, and publishes
+a GitHub Release with the package artifacts.
 
 ## Branching policy
 
@@ -142,7 +153,7 @@ Squash merges lose that detail and are **not** the house style.
 ### Version bumps happen at release-prep on `dev`, NOT on feature branches
 
 Feature branches **never** touch `gradle/libs.versions.toml`,
-`pyproject.toml`, `plugin/relay/__init__.py`, or `desktop/package.json`.
+relay-owned version metadata, or `desktop/package.json`.
 If two feature branches both bumped a release version, they'd collide on
 version files and, for Android, on `appVersionCode` (which must be
 monotonic).
@@ -423,7 +434,7 @@ git checkout dev
 git pull --ff-only origin dev
 
 bash scripts/bump-relay-version.sh 0.6.2
-git add pyproject.toml plugin/relay/__init__.py CHANGELOG.md
+git add pyproject.toml plugin/relay/__init__.py plugin/plugin.yaml plugin/dashboard/manifest.json plugin/dashboard/package.json plugin/dashboard/package-lock.json CHANGELOG.md
 git commit -m "release(relay): relay-v0.6.2"
 git push origin dev
 
@@ -436,9 +447,10 @@ git push origin relay-v0.6.2
 ```
 
 Pushing `relay-v*` triggers `.github/workflows/release-relay.yml`, which
-validates `pyproject.toml` and `plugin/relay/__init__.py`, runs Relay
-tests, builds a wheel and sdist, generates `SHA256SUMS.txt`, and creates
-a GitHub Release for the Relay package.
+validates all relay-owned version metadata with
+`scripts/check-relay-version-sync.py`, runs Relay tests, builds a wheel and
+sdist, generates `SHA256SUMS.txt`, and creates a GitHub Release for the Relay
+package.
 
 ### 5. Upload to Play Console
 
@@ -530,8 +542,8 @@ On every push of a tag matching `v*`, `.github/workflows/release.yml`:
 On every push of a tag matching `relay-v*`,
 `.github/workflows/release-relay.yml`:
 
-1. Validates the tag matches both `pyproject.toml` and
-   `plugin/relay/__init__.py`.
+1. Validates the tag matches all relay-owned version metadata checked by
+   `scripts/check-relay-version-sync.py`.
 2. Runs Relay syntax checks and the focused route/auth/session test slice.
 3. Builds the Python wheel and sdist with `python -m build`.
 4. Generates `dist/SHA256SUMS.txt`.

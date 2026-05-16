@@ -46,6 +46,10 @@ certs/
 
 # Local tools
 .subframe/
+voice-lab-runs/
+
+# Ad-hoc debugging artifacts (logcat dumps, screenshots, UI XMLs)
+.scratch/
 
 # VitePress
 user-docs/.vitepress/cache/

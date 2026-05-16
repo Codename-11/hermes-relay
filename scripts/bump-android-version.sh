@@ -6,7 +6,7 @@
 #   gradle/libs.versions.toml::appVersionCode
 #
 # Relay/Python releases are intentionally split; use
-# scripts/bump-relay-version.sh for pyproject.toml and plugin/relay/__init__.py.
+# scripts/bump-relay-version.sh for relay-owned plugin/package metadata.
 
 set -euo pipefail
 

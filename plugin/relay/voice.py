@@ -1,9 +1,8 @@
 """Voice endpoints — relay-side TTS / STT bridge for the Android voice mode.
 
-The hermes-agent venv ships ``tools.tts_tool.text_to_speech_tool`` and
-``tools.transcription_tools.transcribe_audio`` — the relay plugin is
-editable-installed into that same venv, so we import them directly. Both
-upstream functions are *synchronous*, so every call is wrapped in
+The hermes-agent venv ships upstream STT/TTS helpers. The relay imports those
+through ``plugin.relay.upstream_voice`` so upstream voice API drift has one
+patch point. Upstream functions are synchronous, so every call is wrapped in
 ``asyncio.to_thread`` to keep the aiohttp event loop free.
 
 Routes (bearer-auth'd via relay sessions or narrow Hermes API tokens):
@@ -27,6 +26,7 @@ from typing import Any
 
 from aiohttp import web
 
+from . import upstream_voice
 from .voice_auth import require_voice_auth
 
 logger = logging.getLogger("hermes_relay.voice")
@@ -160,12 +160,10 @@ class VoiceHandler:
                     status=400,
                 )
 
-            # Imported lazily so tests can monkey-patch the attribute on
-            # ``tools.transcription_tools`` after the relay is already up,
-            # and so a missing hermes-agent venv doesn't blow up import.
-            from tools.transcription_tools import transcribe_audio  # type: ignore
-
-            result = await asyncio.to_thread(transcribe_audio, temp_path)
+            result = await asyncio.to_thread(
+                upstream_voice.transcribe_audio_file,
+                temp_path,
+            )
 
             if not isinstance(result, dict):
                 logger.warning(
@@ -280,9 +278,10 @@ class VoiceHandler:
         text = sanitized
 
         try:
-            from tools.tts_tool import text_to_speech_tool  # type: ignore
-
-            raw = await asyncio.to_thread(text_to_speech_tool, text)
+            raw = await asyncio.to_thread(
+                upstream_voice.synthesize_text_to_speech,
+                text,
+            )
         except Exception as exc:
             logger.exception("Voice synthesize: TTS call failed: %s", exc)
             return web.json_response(
@@ -348,18 +347,14 @@ class VoiceHandler:
           * ``_load_tts_config()`` / ``_load_stt_config()`` — current
             provider / model / voice selections from ``~/.hermes/config.yaml``.
 
-        NOTE: ``_load_tts_config`` and ``_load_stt_config`` are *private*
-        upstream helpers — they're not part of hermes-agent's public API.
-        We use them here because there is no public alternative at V1 and
-        the config shape is stable across recent versions. If upstream
-        refactors, this handler is the only thing that needs patching.
+        NOTE: voice config still depends on private upstream helpers. The
+        imports are isolated in ``plugin.relay.upstream_voice`` until Hermes
+        exposes a public voice config API.
         """
         await require_voice_auth(request, "voice:config")
 
         try:
-            from tools.voice_mode import check_voice_requirements  # type: ignore
-            from tools.tts_tool import _load_tts_config  # type: ignore  # private
-            from tools.transcription_tools import _load_stt_config  # type: ignore  # private
+            helpers = upstream_voice.load_voice_config_helpers()
         except Exception as exc:
             logger.warning("Voice config: imports failed: %s", exc)
             return web.json_response(
@@ -371,19 +366,19 @@ class VoiceHandler:
             )
 
         try:
-            requirements = check_voice_requirements()
+            requirements = helpers.check_voice_requirements()
         except Exception as exc:
             logger.warning("check_voice_requirements failed: %s", exc)
             requirements = {"error": str(exc)}
 
         try:
-            tts_cfg = _load_tts_config() or {}
+            tts_cfg = helpers.load_tts_config() or {}
         except Exception as exc:
             logger.warning("_load_tts_config failed: %s", exc)
             tts_cfg = {"error": str(exc)}
 
         try:
-            stt_cfg = _load_stt_config() or {}
+            stt_cfg = helpers.load_stt_config() or {}
         except Exception as exc:
             logger.warning("_load_stt_config failed: %s", exc)
             stt_cfg = {"error": str(exc)}

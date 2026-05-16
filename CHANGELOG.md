@@ -8,15 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
-- **Relay server release track.** Relay server and Python package releases now use `relay-v*` tags, validate `pyproject.toml` against `plugin/relay/__init__.py`, build wheel/sdist artifacts, generate checksums, and publish through `.github/workflows/release-relay.yml`. This lets Relay server fixes ship independently from Android app `versionCode` bumps and desktop CLI alphas.
+- **Relay server release track.** Relay server and Python package releases now use `relay-v*` tags, validate relay-owned version metadata, build wheel/sdist artifacts, generate checksums, and publish through `.github/workflows/release-relay.yml`. This lets Relay server fixes ship independently from Android app `versionCode` bumps and desktop CLI alphas.
 
 - **Dashboard plugin CI.** `.github/workflows/ci-dashboard.yml` builds the dashboard plugin, runs the dashboard API tests, and verifies the plugin-owned QR modal CSS markers are present in the built bundle.
 
 - **Upstream integration sync reference.** `docs/upstream-integration-sync.md` now tracks which Hermes-Relay surfaces use upstream-supported extension points, which pieces are relay-owned compatibility layers, and what has to be checked before changing relay, Android, desktop, dashboard, bootstrap, or user-doc surfaces.
 
+- **Relay version sync verifier.** `scripts/check-relay-version-sync.py` validates the relay package version against plugin metadata and dashboard metadata so release and dashboard surfaces cannot silently drift.
+
 ### Changed
 
-- **Release versioning is split by surface.** Android app releases remain on `v*` and use `gradle/libs.versions.toml`; Relay releases use `relay-v*` and `pyproject.toml` plus `plugin/relay/__init__.py`; desktop remains on `desktop-v*` and `desktop/package.json`. `scripts/bump-version.sh` is now a backward-compatible Android alias, with new explicit `scripts/bump-android-version.sh` and `scripts/bump-relay-version.sh` helpers.
+- **Release versioning is split by surface.** Android app releases remain on `v*` and use `gradle/libs.versions.toml`; Relay releases use `relay-v*` and keep `pyproject.toml`, `plugin/relay/__init__.py`, `plugin/plugin.yaml`, and dashboard plugin metadata in lockstep; desktop remains on `desktop-v*` and `desktop/package.json`. `scripts/bump-version.sh` is now a backward-compatible Android alias, with new explicit `scripts/bump-android-version.sh` and `scripts/bump-relay-version.sh` helpers.
+
+- **Upstream voice imports are isolated.** Relay voice routes now call upstream Hermes STT/TTS helpers through `plugin.relay.upstream_voice`, keeping private upstream voice helper imports in one adapter module until Hermes exposes a stable HTTP voice API.
 
 - **CI paths and release actions tightened.** Relay CI now watches Relay-owned paths instead of all `plugin/**`, validates Relay version metadata during syntax checks, uses explicit timeouts, and runs the focused route/auth/session test slice instead of broad test discovery. Release workflows now use `softprops/action-gh-release@v3`.
 
