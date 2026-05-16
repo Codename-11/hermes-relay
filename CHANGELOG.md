@@ -24,6 +24,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **CI paths and release actions tightened.** Relay CI now watches Relay-owned paths instead of all `plugin/**`, validates Relay version metadata during syntax checks, uses explicit timeouts, and runs the focused route/auth/session test slice instead of broad test discovery. Release workflows now use `softprops/action-gh-release@v3`.
 
+### Fixed
+
+- **Android voice mode no longer 403s when paired over plain-LAN `ws://` with a Hermes API key saved.** Symptom: tap the mic in Voice mode → red banner *"Voice access expired — extend or re-pair with voice grants"* even though the Connections card shows API Server / Relay / Session all green. Root cause: `RelayVoiceClient` preferred the saved Hermes API key over the paired Relay session token; the relay's `_request_is_secure_enough_for_api_bearer` correctly rejects API-bearer auth on `/voice/*` over plaintext outside loopback/Tailscale, returning a generic 403 that the client flattened to "expired." Fix: invert bearer precedence so paired devices use the session token first (no transport guard — it's the credential the QR/pair handshake already established), with the API key as fallback for chat+voice-only installs that never paired. `describeHttpError` now also reads the server's text/plain response body when present so future 403s show the relay's actual reason instead of a one-size-fits-all string.
+
 ## [0.6.1] - 2026-05-06
 
 ### Added

@@ -24,10 +24,17 @@ import java.io.IOException
  *   POST /voice/synthesize  — JSON `{"text": "..."}`, returns audio/mpeg bytes
  *
  * Auth, URL conversion (`ws` ↔ `http`), and error shape mirror
- * [RelayHttpClient]. Android prefers the saved Hermes API key for voice when
- * present, because chat+voice-only installs do not need the full Relay pairing
- * flow. Paired Relay sessions remain the fallback for installs without an API
- * key. We take the providers as constructor args instead of sharing a
+ * [RelayHttpClient]. Bearer precedence: **paired Relay session token first**,
+ * Hermes API key as fallback for chat+voice-only installs that haven't paired.
+ *
+ * The session token is preferred even when an API key is also present because
+ * the relay applies a transport guard to API-bearer auth on the voice routes
+ * (`_request_is_secure_enough_for_api_bearer` in `plugin/relay/voice_auth.py`):
+ * over plain LAN `ws://`, API bearer is rejected with 403 even though the
+ * session token would be accepted. Once paired, the session is the trusted
+ * credential — use it. The API-key path stays for installs that never paired.
+ *
+ * We take the providers as constructor args instead of sharing a
  * [RelayHttpClient] instance so the classes stay decoupled.
  */
 class RelayVoiceClient(
@@ -84,7 +91,10 @@ class RelayVoiceClient(
         try {
             okHttpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    return@withContext Result.failure(IOException(describeHttpError(response.code, response.message)))
+                    val body = response.body?.string().orEmpty()
+                    return@withContext Result.failure(
+                        IOException(describeHttpError(response.code, response.message, body))
+                    )
                 }
                 val raw = response.body?.string().orEmpty()
                 if (raw.isBlank()) {
@@ -155,7 +165,10 @@ class RelayVoiceClient(
         try {
             okHttpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    return@withContext Result.failure(IOException(describeHttpError(response.code, response.message)))
+                    val errBody = response.body?.string().orEmpty()
+                    return@withContext Result.failure(
+                        IOException(describeHttpError(response.code, response.message, errBody))
+                    )
                 }
                 val body = response.body
                     ?: return@withContext Result.failure(IOException("Empty synthesize response body"))
@@ -207,7 +220,10 @@ class RelayVoiceClient(
         try {
             okHttpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    return@withContext Result.failure(IOException(describeHttpError(response.code, response.message)))
+                    val body = response.body?.string().orEmpty()
+                    return@withContext Result.failure(
+                        IOException(describeHttpError(response.code, response.message, body))
+                    )
                 }
                 val raw = response.body?.string().orEmpty()
                 if (raw.isBlank()) {
@@ -238,23 +254,32 @@ class RelayVoiceClient(
     }
 
     private suspend fun resolveBearerToken(): String? {
-        val apiBearer = apiBearerTokenProvider()?.trim()
-        if (!apiBearer.isNullOrBlank()) return apiBearer
         val sessionToken = sessionTokenProvider()?.trim()
-        return sessionToken?.takeIf { it.isNotBlank() }
+        if (!sessionToken.isNullOrBlank()) return sessionToken
+        val apiBearer = apiBearerTokenProvider()?.trim()
+        return apiBearer?.takeIf { it.isNotBlank() }
     }
 
     private fun missingAuthError(): IllegalStateException =
         IllegalStateException("Voice auth missing — pair with the relay or save a Hermes API key")
 
-    private fun describeHttpError(code: Int, message: String): String = when (code) {
-        401 -> "Voice auth failed — check the Relay session or Hermes API key"
-        403 -> "Voice access expired — extend or re-pair with voice grants"
-        404 -> "Voice endpoint not available on this relay"
-        413 -> "Audio too large for relay"
-        503 -> "Voice provider unavailable (check relay config)"
-        in 500..599 -> "Relay error (HTTP $code)"
-        else -> "HTTP $code: ${message.ifBlank { "request failed" }}"
+    private fun describeHttpError(code: Int, message: String, body: String = ""): String {
+        // Voice routes return text/plain on error (see plugin/relay/voice_auth.py).
+        // Prefer the server's own description when it's present — the 403 path
+        // in particular has two very different causes ("session lacks active
+        // voice:tts grant" vs "Hermes API bearer token requires HTTPS..."),
+        // and we should not flatten them into one misleading "expired" string.
+        val trimmed = body.trim().take(240)
+        val fallback = when (code) {
+            401 -> "Voice auth failed — re-pair to refresh the session"
+            403 -> "Voice access denied — re-pair to restore voice grants"
+            404 -> "Voice endpoint not available on this relay"
+            413 -> "Audio too large for relay"
+            503 -> "Voice provider unavailable (check relay config)"
+            in 500..599 -> "Relay error (HTTP $code)"
+            else -> "HTTP $code: ${message.ifBlank { "request failed" }}"
+        }
+        return if (trimmed.isNotEmpty()) "$fallback ($trimmed)" else fallback
     }
 }
 
