@@ -59,6 +59,8 @@ from .channels.tui import TuiHandler
 from .config import RelayConfig
 from .media import MediaRegistrationError, MediaRegistry, validate_media_path
 from .voice import VoiceHandler
+from .voice_output import VoiceOutputHandler
+from .realtime_voice import RealtimeVoiceHandler
 
 logger = logging.getLogger("hermes_relay")
 
@@ -96,6 +98,8 @@ class RelayServer:
 
         # Voice handler — TTS / STT bridge to the hermes-agent venv tools
         self.voice = VoiceHandler(config)
+        self.voice_output = VoiceOutputHandler(config)
+        self.realtime_voice = RealtimeVoiceHandler(config)
 
         # Channel handlers
         self.chat = ChatHandler(webapi_url=config.webapi_url)
@@ -3573,9 +3577,49 @@ def create_app(config: RelayConfig) -> web.Application:
         s: RelayServer = request.app["server"]
         return await s.voice.handle_voice_config(request)
 
+    async def _voice_output_config(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.voice_output.handle_config(request)
+
+    async def _voice_output_config_patch(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.voice_output.handle_update_config(request)
+
+    async def _voice_output_session(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.voice_output.handle_create_session(request)
+
+    async def _voice_output_ws(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.voice_output.handle_ws(request)
+
+    async def _voice_realtime_config(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.realtime_voice.handle_config(request)
+
+    async def _voice_realtime_config_patch(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.realtime_voice.handle_update_config(request)
+
+    async def _voice_realtime_session(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.realtime_voice.handle_create_session(request)
+
+    async def _voice_realtime_ws(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.realtime_voice.handle_ws(request)
+
     app.router.add_post("/voice/transcribe", _voice_transcribe)
     app.router.add_post("/voice/synthesize", _voice_synthesize)
     app.router.add_get("/voice/config", _voice_config)
+    app.router.add_get("/voice/output/config", _voice_output_config)
+    app.router.add_patch("/voice/output/config", _voice_output_config_patch)
+    app.router.add_post("/voice/output/session", _voice_output_session)
+    app.router.add_get("/voice/output/{session_id}", _voice_output_ws)
+    app.router.add_get("/voice/realtime/config", _voice_realtime_config)
+    app.router.add_patch("/voice/realtime/config", _voice_realtime_config_patch)
+    app.router.add_post("/voice/realtime/session", _voice_realtime_session)
+    app.router.add_get("/voice/realtime/{session_id}", _voice_realtime_ws)
 
     # === PHASE3-bridge-server: bridge HTTP routes ===
     # 14 endpoints mirrored from the legacy standalone relay on port 8766.

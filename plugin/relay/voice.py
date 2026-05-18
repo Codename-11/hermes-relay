@@ -22,9 +22,11 @@ import json
 import logging
 import os
 import tempfile
+from pathlib import Path
 from typing import Any
 
 from aiohttp import web
+import yaml
 
 from . import upstream_voice
 from .voice_auth import require_voice_auth
@@ -383,20 +385,83 @@ class VoiceHandler:
             logger.warning("_load_stt_config failed: %s", exc)
             stt_cfg = {"error": str(exc)}
 
+        hermes_voice_config = _load_hermes_voice_config(self.config)
+        tts_cfg = _merge_selected_provider_config(tts_cfg, hermes_voice_config, "tts")
+        stt_cfg = _merge_selected_provider_config(stt_cfg, hermes_voice_config, "stt")
+
         return web.json_response(
             {
                 "success": True,
                 "tts": {
                     "provider": tts_cfg.get("provider"),
                     "voice_id": tts_cfg.get("voice_id"),
+                    "voice": tts_cfg.get("voice"),
                     "model": tts_cfg.get("model"),
-                    "enabled": bool(tts_cfg.get("provider")),
+                    "enabled": _provider_enabled(tts_cfg),
                 },
                 "stt": {
                     "provider": stt_cfg.get("provider"),
                     "model": stt_cfg.get("model"),
-                    "enabled": bool(stt_cfg.get("provider")),
+                    "enabled": _provider_enabled(stt_cfg),
                 },
                 "requirements": requirements,
             }
         )
+
+
+def _load_hermes_voice_config(config: Any) -> dict[str, Any]:
+    path = Path(getattr(config, "hermes_config_path", "~/.hermes/config.yaml")).expanduser()
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        logger.debug("Voice config: could not read Hermes config details: %s", exc)
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _merge_selected_provider_config(
+    loaded: dict[str, Any],
+    hermes_config: dict[str, Any],
+    section_name: str,
+) -> dict[str, Any]:
+    section = hermes_config.get(section_name)
+    if not isinstance(section, dict):
+        return loaded
+
+    provider = _clean_string(loaded.get("provider")) or _clean_string(section.get("provider"))
+    if not provider:
+        return loaded
+
+    selected = section.get(provider)
+    merged: dict[str, Any] = {}
+    if isinstance(selected, dict):
+        merged.update(selected)
+    merged["provider"] = provider
+    merged.update(_present_values(loaded))
+    return merged
+
+
+def _present_values(values: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in values.items()
+        if value is not None and value != ""
+    }
+
+
+def _provider_enabled(config: dict[str, Any]) -> bool:
+    if not config.get("provider"):
+        return False
+    enabled = config.get("enabled")
+    if isinstance(enabled, bool):
+        return enabled
+    if enabled is None:
+        return True
+    return str(enabled).strip().lower() not in ("0", "false", "no", "off")
+
+
+def _clean_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
