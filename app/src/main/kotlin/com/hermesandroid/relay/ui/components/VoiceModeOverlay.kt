@@ -11,8 +11,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -27,23 +25,23 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -55,12 +53,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -68,8 +61,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.data.BargeInPreferences
+import com.hermesandroid.relay.data.BargeInSensitivity
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.ToolCall
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.util.HumanError
@@ -114,6 +110,15 @@ fun VoiceModeOverlay(
     // hint ("Tap the mic to speak") still renders when the transcript
     // is empty.
     transcriptMessages: List<ChatMessage> = emptyList(),
+    voiceOutputProvider: String? = null,
+    voiceOutputVoice: String? = null,
+    voiceOutputEnabled: Boolean? = null,
+    voiceOutputFallbackEnabled: Boolean? = null,
+    bargeInPrefs: BargeInPreferences = BargeInPreferences(),
+    onBargeInEnabledChange: (Boolean) -> Unit = {},
+    onBargeInSensitivityChange: (BargeInSensitivity) -> Unit = {},
+    onOverlayRequest: () -> Unit = {},
+    onCompactModeChange: (Boolean) -> Unit = {},
     // === END PHASE3-voice-mode-transcript ===
     // === v0.4.1 JIT permission-denied chip ===
     // Tapped when the user clicks the permission-denied chip. Default no-op
@@ -126,7 +131,18 @@ fun VoiceModeOverlay(
     val surface = MaterialTheme.colorScheme.surface
     val haptic = LocalHapticFeedback.current
 
-    var modeMenuOpen by remember { mutableStateOf(false) }
+    var controlsExpanded by remember { mutableStateOf(false) }
+    var focusMode by remember { mutableStateOf(true) }
+    val setFocusMode: (Boolean) -> Unit = { focused ->
+        focusMode = focused
+        onCompactModeChange(!focused)
+    }
+
+    LaunchedEffect(uiState.voiceMode) {
+        if (!uiState.voiceMode) {
+            setFocusMode(true)
+        }
+    }
 
     // Pipe classified voice errors to the app-wide snackbar host. The inline
     // error banner stays as a belt-and-suspenders for longer-lived messages.
@@ -140,68 +156,40 @@ fun VoiceModeOverlay(
     Box(
         modifier = modifier
             .fillMaxSize()
-            // Fully opaque surface — at 0.95f the chat content behind the
-            // overlay was bleeding through (the "phantom pencil" effect). Voice
-            // mode is a modality, not a dim-over; the transition animation
-            // already sells the mode change, no translucency needed.
-            .background(surface)
+            .background(if (focusMode) surface.copy(alpha = 0.96f) else Color.Transparent)
     ) {
-        // Top bar — close + mode selector.
-        // `statusBarsPadding()` pushes the row below the system status bar so
-        // the close button isn't crammed against battery/signal icons and
-        // Android's gesture area can't swallow taps on buttons near the edge.
-        Row(
+        VoiceSessionPill(
+            uiState = uiState,
+            expanded = controlsExpanded,
+            onExpandedChange = { controlsExpanded = it },
+            focusMode = focusMode,
+            onFocusModeChange = setFocusMode,
+            provider = voiceOutputProvider,
+            voice = voiceOutputVoice,
+            outputEnabled = voiceOutputEnabled,
+            fallbackEnabled = voiceOutputFallbackEnabled,
+            bargeInPrefs = bargeInPrefs,
+            onModeChange = onModeChange,
+            onBargeInEnabledChange = onBargeInEnabledChange,
+            onBargeInSensitivityChange = onBargeInSensitivityChange,
+            onMicTap = onMicTap,
+            onMicRelease = onMicRelease,
+            onInterrupt = onInterrupt,
+            onOverlayRequest = onOverlayRequest,
+            onExit = onDismiss,
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
                 .padding(horizontal = 12.dp, vertical = 8.dp)
                 .align(Alignment.TopCenter),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box {
-                TextButton(onClick = { modeMenuOpen = true }) {
-                    Text(uiState.interactionMode.label())
-                }
-                DropdownMenu(
-                    expanded = modeMenuOpen,
-                    onDismissRequest = { modeMenuOpen = false },
-                ) {
-                    InteractionMode.values().forEach { mode ->
-                        DropdownMenuItem(
-                            text = { Text(mode.label()) },
-                            onClick = {
-                                onModeChange(mode)
-                                modeMenuOpen = false
-                            },
-                        )
-                    }
-                }
-            }
+        )
 
-            // Filled tonal background gives the close button a clear "tappable"
-            // affordance. Plain IconButton was visually indistinguishable from
-            // the surface and users couldn't find it at a glance.
-            FilledTonalIconButton(
-                onClick = onDismiss,
-                colors = IconButtonDefaults.filledTonalIconButtonColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                ),
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Close,
-                    contentDescription = "Close voice mode",
-                )
-            }
-        }
-
-        // Center column: sphere → waveform → scrolling transcript.
+        // Center column: sphere -> waveform -> scrolling transcript.
         //
-        // Layout uses fixed-weight slots (sphere 1.5, transcript 1f) instead
-        // of SpaceBetween so the sphere/waveform don't drift as the transcript
-        // grows. The transcript area owns its own scroll state with auto-
-        // scroll-to-tail and a top/bottom fade mask for overflow indication.
+        // Layout uses fixed-weight slots instead of SpaceBetween so the
+        // sphere/waveform don't drift as the transcript grows. The transcript
+        // area owns its own LazyListState and auto-scrolls to the tail item so
+        // long active responses and tool rows stay visible as they update.
         //
         // Transcript content source: `transcriptMessages` (last N chat
         // messages from [ChatViewModel.messages]) — the SINGLE source of
@@ -214,154 +202,126 @@ fun VoiceModeOverlay(
         // one bubble per turn; the last assistant message in-flight still
         // updates in real time through its existing MutableStateFlow, so
         // live-stream visibility is preserved.
-        val transcriptScrollState = rememberScrollState()
+        val transcriptListState = rememberLazyListState()
+        val visibleTranscriptMessages = remember(transcriptMessages) {
+            transcriptMessages.filter { it.role != MessageRole.SYSTEM }
+        }
 
         // Derive the streaming "token length" from the last assistant message
         // in the transcript so auto-scroll follows mid-stream growth without
         // needing a separate `responseText` flow.
-        val lastStreamingContentLength = transcriptMessages.lastOrNull {
+        val lastStreamingContentLength = visibleTranscriptMessages.lastOrNull {
             it.role == MessageRole.ASSISTANT && it.isStreaming
         }?.content?.length ?: 0
+        val toolSnapshot = visibleTranscriptMessages
+            .flatMap { it.toolCalls }
+            .joinToString("|") { tool ->
+                "${tool.id}:${tool.name}:${tool.isComplete}:${tool.result?.length}:${tool.error?.length}"
+            }
 
         // Auto-scroll to the tail whenever a new message arrives in the
         // transcript or the last streaming assistant bubble grows. Smooth
         // animateScrollTo so the user's eye never has to chase token churn.
-        LaunchedEffect(transcriptMessages.size, lastStreamingContentLength) {
-            transcriptScrollState.animateScrollTo(transcriptScrollState.maxValue)
-        }
-
-        // Vertical fade brush for the scroll area: top + bottom edges fade
-        // into the surface so overflow is visually obvious without showing a
-        // scrollbar. Applied via BlendMode.DstIn inside an offscreen
-        // compositing layer so the gradient multiplies the alpha of the
-        // text underneath rather than tinting the surface behind.
-        val fadeBrush = remember {
-            Brush.verticalGradient(
-                0f to Color.Transparent,
-                0.08f to Color.Black,
-                0.92f to Color.Black,
-                1f to Color.Transparent,
-            )
-        }
-
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(top = 64.dp, bottom = 160.dp, start = 24.dp, end = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            // Sphere — dominant share of the column. Compose's `weight()`
-            // splits *remaining* space (after fixed-size children) among
-            // weighted children, so 1.5f vs the response's 1f gives the
-            // sphere ~60% of the available area — matching the old
-            // `fillMaxHeight(0.6f)` look without drifting as the response
-            // grows. weight(fill=true) keeps it from collapsing.
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1.5f),
-                contentAlignment = Alignment.Center,
-            ) {
-                MorphingSphere(
-                    modifier = Modifier.fillMaxSize(),
-                    state = voiceStateToSphereState(uiState.state),
-                    voiceAmplitude = uiState.amplitude,
-                    voiceMode = true,
-                )
+        LaunchedEffect(visibleTranscriptMessages.size, lastStreamingContentLength, toolSnapshot) {
+            if (visibleTranscriptMessages.isNotEmpty()) {
+                transcriptListState.animateScrollToItem(visibleTranscriptMessages.size)
             }
+        }
 
-            VoiceWaveform(
-                amplitude = uiState.amplitude,
-                state = uiState.state,
+        AnimatedVisibility(
+            visible = focusMode,
+            enter = fadeIn(tween(160)),
+            exit = fadeOut(tween(120)),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 32.dp, vertical = 8.dp),
-            )
-
-            Spacer(Modifier.height(8.dp))
-
-            // Destructive-intent countdown indicator. Fades in while a
-            // SendSms (or future destructive intent) is waiting on the v1
-            // 5 s confirmation window and fades out the moment dispatch
-            // completes or the user cancels. Kept deliberately subtle —
-            // voice mode is voice-first; this is a secondary hint, not
-            // the primary safety gate (that's still the spoken preview
-            // + the cancel vocabulary).
-            DestructiveCountdownRow(
-                countdown = uiState.destructiveCountdown,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 32.dp),
-            )
-
-            // v0.4.1 JIT permission-denied chip. Shows up when the most
-            // recent voice intent dispatch failed because the user hasn't
-            // granted the matching runtime permission. Tap deep-links to
-            // Settings → Apps → Hermes Relay → Permissions for the package
-            // so the user can grant + retry without leaving voice mode by
-            // hand. Cleared on the next mic tap or after the user opens
-            // the chip.
-            PermissionDeniedChip(
-                callout = uiState.permissionDeniedCallout,
-                onTap = onPermissionDeniedChipTap,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 32.dp, vertical = 4.dp),
-            )
-
-            Spacer(Modifier.height(4.dp))
-
-            // Transcript area. Shows the last N chat messages in a compact
-            // rolling list — this is the SINGLE source of truth for both
-            // user ("YOU") and agent ("AGENT") turns in voice mode. The
-            // last streaming assistant message updates in real time through
-            // ChatViewModel's StateFlow, so mid-stream tokens still appear
-            // live without a separate `responseText` row.
-            //
-            // Empty-state hint renders when the transcript is empty (first
-            // launch, fresh voice session before any turn has committed).
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f, fill = true),
+                    .fillMaxSize()
+                    .padding(top = 92.dp, bottom = 160.dp, start = 20.dp, end = 20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                val hasTranscript = transcriptMessages.isNotEmpty()
-                if (hasTranscript) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-                            .drawWithContent {
-                                drawContent()
-                                drawRect(brush = fadeBrush, blendMode = BlendMode.DstIn)
-                            }
-                            .verticalScroll(transcriptScrollState)
-                            .padding(vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        transcriptMessages.forEach { msg ->
-                            CompactTranscriptRow(msg)
-                        }
-                    }
-                } else {
-                    Box(
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1.0f),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MorphingSphere(
                         modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        AnimatedContent(
-                            targetState = stateHint(uiState.state),
-                            transitionSpec = {
-                                fadeIn(tween(200)) togetherWith fadeOut(tween(200))
-                            },
-                            label = "stateHint",
-                        ) { hint ->
-                            Text(
-                                text = hint,
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
+                        state = voiceStateToSphereState(uiState.state),
+                        voiceAmplitude = uiState.amplitude,
+                        voiceMode = true,
+                    )
+                }
+
+                VoiceWaveform(
+                    amplitude = uiState.amplitude,
+                    state = uiState.state,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 32.dp, vertical = 8.dp),
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                DestructiveCountdownRow(
+                    countdown = uiState.destructiveCountdown,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp),
+                )
+
+                PermissionDeniedChip(
+                    callout = uiState.permissionDeniedCallout,
+                    onTap = onPermissionDeniedChipTap,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 4.dp),
+                )
+
+                Spacer(Modifier.height(4.dp))
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1.25f, fill = true),
+                ) {
+                    val hasTranscript = visibleTranscriptMessages.isNotEmpty()
+                    if (hasTranscript) {
+                        val latestId = visibleTranscriptMessages.lastOrNull()?.id
+                        LazyColumn(
+                            state = transcriptListState,
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            items(visibleTranscriptMessages, key = { it.id }) { msg ->
+                                CompactTranscriptRow(
+                                    message = msg,
+                                    expanded = msg.id == latestId || msg.isStreaming,
+                                )
+                            }
+                            item { Spacer(Modifier.height(12.dp)) }
+                        }
+                    } else {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            AnimatedContent(
+                                targetState = stateHint(uiState.state),
+                                transitionSpec = {
+                                    fadeIn(tween(200)) togetherWith fadeOut(tween(200))
+                                },
+                                label = "stateHint",
+                            ) { hint ->
+                                Text(
+                                    text = hint,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
                         }
                     }
                 }
@@ -459,6 +419,7 @@ fun VoiceModeOverlay(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 48.dp),
+            visible = focusMode,
         )
     }
 }
@@ -470,7 +431,12 @@ private fun VoiceMicButton(
     onPress: () -> Unit,
     onRelease: () -> Unit,
     modifier: Modifier = Modifier,
+    visible: Boolean = true,
+    baseSize: Int = 72,
+    iconSize: Int = 32,
 ) {
+    if (!visible) return
+
     val pulseScale by animateFloatAsState(
         targetValue = when (uiState.state) {
             VoiceState.Listening -> 1f + uiState.amplitude * 0.15f
@@ -518,7 +484,7 @@ private fun VoiceMicButton(
 
     Surface(
         modifier = modifier
-            .size((72 * pulseScale).dp)
+            .size((baseSize * pulseScale).dp)
             .clip(CircleShape)
             .then(gestureModifier),
         shape = CircleShape,
@@ -530,7 +496,7 @@ private fun VoiceMicButton(
                 imageVector = icon,
                 contentDescription = "Voice mic",
                 tint = Color.White,
-                modifier = Modifier.size(32.dp),
+                modifier = Modifier.size(iconSize.dp),
             )
         }
     }
@@ -559,6 +525,313 @@ private fun InteractionMode.label(): String = when (this) {
     InteractionMode.Continuous -> "Continuous"
 }
 
+@Composable
+private fun VoiceSessionPill(
+    uiState: VoiceUiState,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    focusMode: Boolean,
+    onFocusModeChange: (Boolean) -> Unit,
+    provider: String?,
+    voice: String?,
+    outputEnabled: Boolean?,
+    fallbackEnabled: Boolean?,
+    bargeInPrefs: BargeInPreferences,
+    onModeChange: (InteractionMode) -> Unit,
+    onBargeInEnabledChange: (Boolean) -> Unit,
+    onBargeInSensitivityChange: (BargeInSensitivity) -> Unit,
+    onMicTap: () -> Unit,
+    onMicRelease: () -> Unit,
+    onInterrupt: () -> Unit,
+    onOverlayRequest: () -> Unit,
+    onExit: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val providerText = voiceProviderLabel(provider, voice, outputEnabled)
+    val headlineText = if (focusMode) {
+        providerText
+    } else {
+        "${stateHint(uiState.state).ifBlank { "Voice ready" }} / $providerText"
+    }
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+        tonalElevation = 5.dp,
+        shadowElevation = 7.dp,
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onExpandedChange(!expanded) },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.GraphicEq,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp),
+                )
+                Text(
+                    text = "Voice",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                if (focusMode) {
+                    StatusPill(uiState.interactionMode.label())
+                } else {
+                    StatusPill("Compact", emphasized = true)
+                }
+                StatusPill("Experimental", emphasized = true)
+                Text(
+                    text = headlineText,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (!focusMode) {
+                    CompactVoiceMicButton(
+                        uiState = uiState,
+                        onMicTap = onMicTap,
+                        onMicRelease = onMicRelease,
+                        onInterrupt = onInterrupt,
+                    )
+                }
+                Icon(
+                    imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = if (expanded) "Collapse voice controls" else "Expand voice controls",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+
+            AnimatedVisibility(visible = expanded) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        InteractionMode.values().forEach { mode ->
+                            VoiceControlChip(
+                                text = mode.shortLabel(),
+                                selected = uiState.interactionMode == mode,
+                                onClick = { onModeChange(mode) },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Barge-in",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            Text(
+                                text = bargeInPrefs.sensitivity.name,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = bargeInPrefs.enabled,
+                            onCheckedChange = onBargeInEnabledChange,
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        listOf(
+                            BargeInSensitivity.Off,
+                            BargeInSensitivity.Low,
+                            BargeInSensitivity.Default,
+                            BargeInSensitivity.High,
+                        ).forEach { sensitivity ->
+                            VoiceControlChip(
+                                text = sensitivity.shortLabel(),
+                                selected = bargeInPrefs.sensitivity == sensitivity,
+                                onClick = { onBargeInSensitivityChange(sensitivity) },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        StatusPill(providerText, modifier = Modifier.weight(1f))
+                        StatusPill(
+                            text = when (fallbackEnabled) {
+                                true -> "fallback on"
+                                false -> "fallback off"
+                                null -> "fallback ..."
+                            },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        TextButton(
+                            onClick = { onFocusModeChange(!focusMode) },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(if (focusMode) "Compact" else "Focus")
+                        }
+                        TextButton(
+                            onClick = {
+                                onFocusModeChange(false)
+                                onOverlayRequest()
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Overlay")
+                        }
+                        TextButton(
+                            onClick = onExit,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Exit")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactVoiceMicButton(
+    uiState: VoiceUiState,
+    onMicTap: () -> Unit,
+    onMicRelease: () -> Unit,
+    onInterrupt: () -> Unit,
+) {
+    VoiceMicButton(
+        uiState = uiState,
+        onTap = {
+            when (uiState.state) {
+                VoiceState.Listening -> onMicRelease()
+                VoiceState.Speaking -> onInterrupt()
+                VoiceState.Transcribing, VoiceState.Thinking -> Unit
+                VoiceState.Idle, VoiceState.Error -> onMicTap()
+            }
+        },
+        onPress = onMicTap,
+        onRelease = onMicRelease,
+        baseSize = 40,
+        iconSize = 20,
+    )
+}
+
+@Composable
+private fun VoiceControlChip(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier
+            .height(34.dp)
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(999.dp),
+        color = if (selected) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.58f)
+        },
+        contentColor = if (selected) {
+            MaterialTheme.colorScheme.onPrimaryContainer
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 8.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun StatusPill(
+    text: String,
+    modifier: Modifier = Modifier,
+    emphasized: Boolean = false,
+) {
+    Surface(
+        modifier = modifier.height(24.dp),
+        shape = RoundedCornerShape(999.dp),
+        color = if (emphasized) {
+            MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.72f)
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f)
+        },
+        contentColor = if (emphasized) {
+            MaterialTheme.colorScheme.onTertiaryContainer
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.padding(horizontal = 8.dp),
+        ) {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+private fun voiceProviderLabel(provider: String?, voice: String?, outputEnabled: Boolean?): String {
+    if (outputEnabled == false) return "output off"
+    val providerPart = provider?.takeIf { it.isNotBlank() } ?: "provider ..."
+    val voicePart = voice?.takeIf { it.isNotBlank() }
+    return if (voicePart == null) providerPart else "$providerPart / $voicePart"
+}
+
+private fun InteractionMode.shortLabel(): String = when (this) {
+    InteractionMode.TapToTalk -> "Tap"
+    InteractionMode.HoldToTalk -> "Hold"
+    InteractionMode.Continuous -> "Auto"
+}
+
+private fun BargeInSensitivity.shortLabel(): String = when (this) {
+    BargeInSensitivity.Off -> "Off"
+    BargeInSensitivity.Low -> "Low"
+    BargeInSensitivity.Default -> "Default"
+    BargeInSensitivity.High -> "High"
+}
+
 /**
  * Compact transcript row for voice mode. Rendering rules:
  *
@@ -566,18 +839,20 @@ private fun InteractionMode.label(): String = when (this) {
  *     [MarkdownContent] unbounded (these are the rich bridge-intent bubbles
  *     like "**Opened Chrome** `com.android.chrome` — exact match", which
  *     need the bold + inline code styling to read well).
- *   - `role == USER` → small italic caption "YOU" + body in bodySmall,
- *     two-line truncation.
- *   - `role == ASSISTANT` → caption "AGENT" + body in bodyMedium,
- *     four-line truncation.
- *   - `role == SYSTEM` → skipped entirely (voice mode is a conversation
+ *   - `role == USER` -> caption "YOU" + body in bodySmall.
+ *   - `role == ASSISTANT` -> caption "AGENT" + body in bodyMedium.
+ *   - `role == SYSTEM` -> skipped entirely (voice mode is a conversation
  *     surface, not a system-message debug view).
  *
- * The caller is responsible for bounding the list length (voice mode
- * uses `takeLast(6)`).
+ * The latest or streaming row is unbounded so the current response is not cut
+ * off. Older rows are capped to keep the overlay scan-friendly. The caller is
+ * responsible for bounding the list length.
  */
 @Composable
-private fun CompactTranscriptRow(message: ChatMessage) {
+private fun CompactTranscriptRow(
+    message: ChatMessage,
+    expanded: Boolean,
+) {
     if (message.role == MessageRole.SYSTEM) return
 
     // A voice-intent trace is a PAIR of messages added by
@@ -612,25 +887,107 @@ private fun CompactTranscriptRow(message: ChatMessage) {
             color = captionColor,
         )
         Spacer(Modifier.height(2.dp))
+        val hasText = message.content.isNotBlank()
         when {
-            isVoiceActionBubble -> MarkdownContent(
+            isVoiceActionBubble && hasText -> MarkdownContent(
                 content = message.content,
                 textColor = MaterialTheme.colorScheme.onSurface,
             )
-            message.role == MessageRole.USER -> Text(
+            message.role == MessageRole.USER && hasText -> Text(
                 text = message.content,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
+                maxLines = if (expanded) Int.MAX_VALUE else 3,
                 overflow = TextOverflow.Ellipsis,
             )
-            else -> Text(
+            hasText -> Text(
                 text = message.content,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 4,
+                maxLines = if (expanded) Int.MAX_VALUE else 6,
                 overflow = TextOverflow.Ellipsis,
             )
+        }
+        if (message.toolCalls.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                message.toolCalls.forEach { toolCall ->
+                    VoiceToolStatusRow(toolCall)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun VoiceToolStatusRow(toolCall: ToolCall) {
+    val status = when {
+        toolCall.isComplete && toolCall.success == true -> "done"
+        toolCall.isComplete && toolCall.success == false -> "failed"
+        else -> "running"
+    }
+    val statusColor = when (status) {
+        "done" -> MaterialTheme.colorScheme.primary
+        "failed" -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.tertiary
+    }
+    val duration = if (toolCall.completedAt != null && toolCall.completedAt >= toolCall.startedAt) {
+        val seconds = (toolCall.completedAt - toolCall.startedAt) / 1000.0
+        String.format("%.1fs", seconds)
+    } else {
+        null
+    }
+    val preview = toolCall.error?.takeIf { it.isNotBlank() }
+        ?: toolCall.result?.takeIf { it.isNotBlank() }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.48f),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(
+                    imageVector = toolIcon(toolCall.name),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(14.dp),
+                )
+                Text(
+                    text = toolCall.name,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = duration?.let { "$status $it" } ?: status,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = statusColor,
+                )
+            }
+            if (!toolCall.isComplete) {
+                Spacer(Modifier.height(5.dp))
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.tertiary,
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                )
+            }
+            if (preview != null) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = preview,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }

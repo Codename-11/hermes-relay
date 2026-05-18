@@ -6,6 +6,7 @@ import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.hermesandroid.relay.audio.BargeInListener
+import com.hermesandroid.relay.audio.RealtimePcmPlayer
 import com.hermesandroid.relay.audio.VadEngine
 import com.hermesandroid.relay.audio.VoicePlayer
 import com.hermesandroid.relay.audio.VoiceRecorder
@@ -13,10 +14,13 @@ import com.hermesandroid.relay.audio.VoiceSfxPlayer
 import com.hermesandroid.relay.data.BargeInPreferences
 import com.hermesandroid.relay.data.BargeInPreferencesRepository
 import com.hermesandroid.relay.data.BargeInSensitivity
+import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.ToolCall
 import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.RelayVoiceClient
+import com.hermesandroid.relay.network.RealtimeVoiceEvent
 import com.hermesandroid.relay.network.handlers.LocalDispatchResult
 import com.hermesandroid.relay.util.HumanError
 import com.hermesandroid.relay.util.classifyError
@@ -46,7 +50,9 @@ import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.contentOrNull
 import java.io.File
+import java.util.Base64
 import java.util.Collections
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import com.hermesandroid.relay.data.VoicePreferencesRepository
 
@@ -206,6 +212,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     companion object {
         private const val TAG = "VoiceViewModel"
         private const val TTS_CACHE_CAP = 6 // keep the last N mp3s on disk
+        private const val MAX_BROKERED_TOOL_STATUS_PER_MESSAGE = 2
 
         /**
          * Idle interval after which the chunker will force-flush whatever
@@ -226,6 +233,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
          * full volume so the agent continues audibly.
          */
         internal const val DUCK_WATCHDOG_MS = 500L
+
+        /**
+         * Initial VAD mute window for provider-streamed PCM. The first few
+         * frames after AudioTrack start are most likely to contain TTS echo or
+         * route-settling noise, not a deliberate user interrupt.
+         */
+        private const val REALTIME_BARGE_IN_STARTUP_GUARD_MS = 850L
 
         /**
          * Resume watchdog window (B4). After a hard barge-in interrupt, the
@@ -290,6 +304,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var chatViewModel: ChatViewModel? = null
     private var recorder: VoiceRecorder? = null
     private var player: VoicePlayer? = null
+    private var realtimePcmPlayer: RealtimePcmPlayer? = null
     private var sfxPlayer: VoiceSfxPlayer? = null
     // 2026-04-18: promoted to a field so the silence auto-stop watchdog can
     // read `silenceThresholdMs` at the start of each Listening turn. The
@@ -335,6 +350,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     /** Bounded channel queues sentences pending synthesis/playback. */
     private val ttsQueue = Channel<String>(Channel.UNLIMITED)
 
+    /** Preferred streaming voice-output queue. Falls back to [ttsQueue] when unavailable. */
+    private val realtimeTtsQueue = Channel<String>(Channel.UNLIMITED)
+
     /**
      * Sentences that have been [Channel.trySend]-enqueued to [ttsQueue] but
      * whose synthesize round-trip has not yet completed. Incremented at each
@@ -363,6 +381,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var lastObservedMessageId: String? = null
     private var lastObservedContentLength: Int = 0
     private var sentenceBuffer: StringBuilder = StringBuilder()
+    private val brokeredToolSpeechKeys = mutableSetOf<String>()
+    private val brokeredToolSpeechCounts = mutableMapOf<String, Int>()
 
     /**
      * Raw (unsanitized) deltas held back while a markdown code fence is
@@ -376,6 +396,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     private var streamObserverJob: Job? = null
     private var ttsConsumerJob: Job? = null
+    private var realtimeTtsConsumerJob: Job? = null
     private var amplitudeBridgeJob: Job? = null
     private var currentTurnJob: Job? = null
     // 2026-04-18: silence-based auto-stop watchdog. Runs for the duration
@@ -412,6 +433,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var listenEnvelope: Float = 0f
     /** Attack/release envelope follower state for the TTS playback path. */
     private var speakEnvelope: Float = 0f
+
+    /** Raw PCM captured for the current user turn, forwarded to /voice/realtime. */
+    private var currentTurnPcm: ByteArray = ByteArray(0)
+    private var currentTurnPcmSampleRate: Int = 16_000
+
+    /** Null = not probed, true = prefer realtime, false = fallback to basic TTS. */
+    private var voiceOutputAvailable: Boolean? = null
 
     /**
      * Assistant-message-id that already existed BEFORE the current turn's
@@ -521,6 +549,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     /** True while TTS volume is ducked from a `maybeSpeech` event. */
     @Volatile private var isDucked: Boolean = false
 
+    @Volatile private var bargeInIgnoreUntilMs: Long = 0L
+    @Volatile private var bargeInGuardLogged: Boolean = false
+
     /**
      * Timer that un-ducks 500 ms after [onMaybeSpeech] if no
      * `bargeInDetected` follows (single-frame VAD false-positive). Cancelled
@@ -552,6 +583,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         chatViewModel: ChatViewModel,
         recorder: VoiceRecorder,
         player: VoicePlayer,
+        realtimePcmPlayer: RealtimePcmPlayer? = null,
         sfxPlayer: VoiceSfxPlayer,
         // === PHASE3-voice-intents: voice→bridge intent routing ===
         // Optional so existing call sites keep compiling. On googlePlay both
@@ -586,6 +618,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         this.chatViewModel = chatViewModel
         this.recorder = recorder
         this.player = player
+        this.realtimePcmPlayer = realtimePcmPlayer
         this.sfxPlayer = sfxPlayer
 
         // B4 barge-in wiring. All-or-nothing: if any of the three is null
@@ -598,6 +631,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             viewModelScope.launch {
                 bargeInPreferences.flow.collect { prefs ->
                     _bargeInPrefs.value = prefs
+                    Log.i(
+                        TAG,
+                        "Barge-in prefs updated enabled=${prefs.enabled} " +
+                            "sensitivity=${prefs.sensitivity} resume=${prefs.resumeAfterInterruption}",
+                    )
                     // If the user flips the toggle off mid-Speaking, tear
                     // the listener down immediately — don't wait for the
                     // next Speaking transition.
@@ -730,6 +768,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // === END PHASE3-voice-intents ===
 
         startTtsConsumer()
+        startRealtimeTtsConsumer()
         bridgeAmplitudeFlows()
         startVoiceStatsStateMirror()
     }
@@ -774,6 +813,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // ---------------------------------------------------------------------
 
     fun enterVoiceMode() {
+        // Re-probe on each overlay entry so a restarted relay/provider is picked up.
+        voiceOutputAvailable = null
+        resetBrokeredToolSpeechState()
         // Fire the chime first so the sound lands with the overlay appearing.
         try { sfxPlayer?.playEnter() } catch (_: Exception) { /* ignore */ }
         _uiState.update { it.copy(voiceMode = true, state = VoiceState.Idle, error = null) }
@@ -817,6 +859,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         try {
             player?.stop()
         } catch (_: Exception) { /* ignore */ }
+        try {
+            realtimePcmPlayer?.stop()
+        } catch (_: Exception) { /* ignore */ }
         currentTurnJob?.cancel()
         currentTurnJob = null
         streamObserverJob?.cancel()
@@ -830,16 +875,22 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             if (r.isFailure || r.isClosed) break
             pendingInTtsQueue.decrementAndGet()
         }
+        drainRealtimeTtsQueue()
         // V4 pipeline teardown (see interruptSpeaking for rationale).
         ttsConsumerJob?.cancel()
         ttsConsumerJob = null
+        realtimeTtsConsumerJob?.cancel()
+        realtimeTtsConsumerJob = null
         deletePendingSynthFiles()
         startTtsConsumer()
+        startRealtimeTtsConsumer()
         sentenceBuffer = StringBuilder()
         pendingRawDelta = StringBuilder()
         lastObservedMessageId = null
         lastObservedContentLength = 0
         streamComplete = false
+        currentTurnPcm = ByteArray(0)
+        resetBrokeredToolSpeechState()
 
         // Also abort any destructive countdown — leaving voice mode with a
         // queued SMS would execute the action after the overlay closed,
@@ -880,6 +931,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
         // Stop any TTS playback when the user starts talking.
         try { player?.stop() } catch (_: Exception) { /* ignore */ }
+        try { realtimePcmPlayer?.stop() } catch (_: Exception) { /* ignore */ }
 
         try {
             rec.startRecording()
@@ -921,10 +973,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             surfaceError(e, context = "record")
             return
         }
+        val inputPcm = rec.lastPcmBytes()
+        val inputSampleRate = rec.sampleRate
 
         currentTurnJob?.cancel()
         currentTurnJob = viewModelScope.launch {
-            processVoiceInput(file)
+            processVoiceInput(file, inputPcm, inputSampleRate)
         }
     }
 
@@ -989,6 +1043,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * mental model is "stop" = ready to start a new turn on mic tap).
      */
     fun interruptSpeaking() {
+        Log.i(
+            TAG,
+            "Interrupting speech pipeline; realtimeActive=${realtimePcmPlayer?.isActive == true}",
+        )
         // B4: tear down the barge-in listener immediately so we don't
         // double-trigger on the ducking watchdog or emit another
         // bargeInDetected while the resume watchdog is deliberating.
@@ -1003,8 +1061,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         while (true) {
             val r = ttsQueue.tryReceive()
             if (r.isFailure || r.isClosed) break
+            pendingInTtsQueue.decrementAndGet()
         }
+        drainRealtimeTtsQueue()
         try { player?.stop() } catch (_: Exception) { /* ignore */ }
+        try { realtimePcmPlayer?.stop() } catch (_: Exception) { /* ignore */ }
         // Stop the upstream SSE stream so the agent quits generating tokens.
         try { chatViewModel?.cancelStream() } catch (_: Exception) { /* ignore */ }
         streamObserverJob?.cancel()
@@ -1023,14 +1084,19 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // the restart.
         ttsConsumerJob?.cancel()
         ttsConsumerJob = null
+        realtimeTtsConsumerJob?.cancel()
+        realtimeTtsConsumerJob = null
         deletePendingSynthFiles()
         startTtsConsumer()
+        startRealtimeTtsConsumer()
         // Reset per-turn buffering + tracking so the next turn starts clean.
         sentenceBuffer = StringBuilder()
         pendingRawDelta = StringBuilder()
         lastObservedMessageId = null
         lastObservedContentLength = 0
         streamComplete = false
+        currentTurnPcm = ByteArray(0)
+        resetBrokeredToolSpeechState()
         speakEnvelope = 0f
         // Deliberately do NOT clear responseText here. "Stop" should freeze
         // the visible response so the user can read whatever was already
@@ -1129,13 +1195,20 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // Voice turn processing
     // ---------------------------------------------------------------------
 
-    private suspend fun processVoiceInput(audioFile: File) {
+    private suspend fun processVoiceInput(
+        audioFile: File,
+        inputPcm: ByteArray,
+        inputSampleRate: Int,
+    ) {
         val client = voiceClient
         val chatVm = chatViewModel
         if (client == null || chatVm == null) {
             setError("Voice pipeline not initialized")
             return
         }
+        currentTurnPcm = inputPcm
+        currentTurnPcmSampleRate = inputSampleRate
+        resetBrokeredToolSpeechState()
 
         // Transcribe
         _uiState.update { it.copy(state = VoiceState.Transcribing) }
@@ -1366,9 +1439,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     // A new assistant turn appeared — flush whatever's left
                     // from the previous one, then switch tracking.
                     flushRemainingBuffer()
+                    resetBrokeredToolSpeechState()
                     lastObservedMessageId = msgId
                     lastObservedContentLength = 0
                 }
+
+                observeHermesToolLoopForSpeech(lastAssistant)
 
                 val content = lastAssistant.content
                 if (content.length > lastObservedContentLength) {
@@ -1407,6 +1483,55 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(state = VoiceState.Speaking, responseText = fullContent) }
         drainSentences()
         rearmIdleFlush()
+    }
+
+    /**
+     * Hermes remains the only authority for tool execution. This broker only
+     * turns Hermes tool-start events into short spoken status lines so voice
+     * mode does not sit silently while Hermes searches, reads, or controls a
+     * device through the normal tool loop.
+     */
+    private fun observeHermesToolLoopForSpeech(message: ChatMessage) {
+        if (!_uiState.value.voiceMode || message.toolCalls.isEmpty()) return
+
+        var spokenForMessage = brokeredToolSpeechCounts[message.id] ?: 0
+        message.toolCalls.forEach { tool ->
+            if (tool.isComplete) return@forEach
+            val key = brokeredToolSpeechKey(message, tool, phase = "start")
+            if (!brokeredToolSpeechKeys.add(key)) return@forEach
+            if (spokenForMessage >= MAX_BROKERED_TOOL_STATUS_PER_MESSAGE) return@forEach
+
+            val status = brokeredToolStartStatus(tool.name, spokenForMessage)
+            spokenForMessage += 1
+            brokeredToolSpeechCounts[message.id] = spokenForMessage
+            enqueueBrokeredToolStatus(status)
+        }
+    }
+
+    private fun brokeredToolSpeechKey(message: ChatMessage, tool: ToolCall, phase: String): String {
+        val stableToolId = tool.id ?: "${tool.name}:${tool.startedAt}"
+        return "${message.id}:$stableToolId:$phase"
+    }
+
+    private fun brokeredToolStartStatus(toolName: String, indexForMessage: Int): String {
+        return brokeredToolStartStatusForTts(toolName, indexForMessage)
+    }
+
+    private fun enqueueBrokeredToolStatus(status: String) {
+        if (status.isBlank()) return
+        if (enqueueSentenceForTts(status)) {
+            _uiState.update { state ->
+                state.copy(
+                    state = VoiceState.Speaking,
+                    responseText = state.responseText.ifBlank { status },
+                )
+            }
+        }
+    }
+
+    private fun resetBrokeredToolSpeechState() {
+        brokeredToolSpeechKeys.clear()
+        brokeredToolSpeechCounts.clear()
     }
 
     /**
@@ -1486,6 +1611,19 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * the race this closes.
      */
     private fun enqueueSentenceForTts(sentence: String): Boolean {
+        if (shouldPreferRealtimeVoice()) {
+            val sent = realtimeTtsQueue.trySend(sentence)
+            if (sent.isSuccess) {
+                pendingInTtsQueue.incrementAndGet()
+                return true
+            }
+            Log.w(TAG, "Realtime TTS queue refused sentence: ${sent.exceptionOrNull()?.message}")
+            voiceOutputAvailable = false
+        }
+        return enqueueSentenceForLegacyTts(sentence)
+    }
+
+    private fun enqueueSentenceForLegacyTts(sentence: String): Boolean {
         val sent = ttsQueue.trySend(sentence)
         if (sent.isSuccess) {
             pendingInTtsQueue.incrementAndGet()
@@ -1494,6 +1632,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         Log.w(TAG, "TTS queue refused sentence: ${sent.exceptionOrNull()?.message}")
         return false
     }
+
+    private fun shouldPreferRealtimeVoice(): Boolean =
+        voiceOutputAvailable != false &&
+            realtimePcmPlayer != null &&
+            voiceClient != null
 
     private fun drainSentences() {
         while (true) {
@@ -1546,6 +1689,130 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     // ---------------------------------------------------------------------
     // TTS consumer — two-coroutine pipeline: synth runs ahead of playback
+    // ---------------------------------------------------------------------
+    //
+    // Provider-neutral voice output is now the preferred path. It uses
+    // /voice/output/* to stream renderer PCM through the relay and writes
+    // those chunks directly to AudioTrack. The legacy synth/play workers stay
+    // alive underneath as the fallback path when the relay does not expose the
+    // output route, provider auth is missing, or a renderer fails before
+    // audio starts.
+
+    private fun startRealtimeTtsConsumer() {
+        realtimeTtsConsumerJob?.cancel()
+        realtimeTtsConsumerJob = viewModelScope.launch {
+            for (sentence in realtimeTtsQueue) {
+                speakSentenceViaRealtime(sentence)
+            }
+        }
+    }
+
+    private suspend fun speakSentenceViaRealtime(sentence: String) {
+        val client = voiceClient
+        val pcmPlayer = realtimePcmPlayer
+        if (client == null || pcmPlayer == null) {
+            pendingInTtsQueue.decrementAndGet()
+            enqueueSentenceForLegacyTts(sentence)
+            return
+        }
+
+        if (voiceOutputAvailable == null) {
+            val config = client.getVoiceOutputConfig()
+            voiceOutputAvailable = config.getOrNull()?.enabled == true
+            if (voiceOutputAvailable != true) {
+                Log.i(TAG, "Voice output unavailable; using basic /voice/synthesize fallback")
+                pendingInTtsQueue.decrementAndGet()
+                enqueueSentenceForLegacyTts(sentence)
+                return
+            }
+        }
+
+        val audioSeen = AtomicBoolean(false)
+        val audioBytes = AtomicInteger(0)
+        val bargeInStarted = AtomicBoolean(false)
+        val startedAtMs = System.currentTimeMillis()
+        _uiState.update { it.copy(state = VoiceState.Speaking) }
+        _currentPlayingChunkIndex.value = _currentPlayingChunkIndex.value + 1
+
+        val result = try {
+            client.runVoiceOutput(
+                text = sentence,
+                renderMode = "verbatim",
+            ) { event ->
+                handleRealtimeVoiceEvent(event, pcmPlayer, audioSeen, audioBytes, bargeInStarted)
+            }
+        } finally {
+            if (_uiState.value.state == VoiceState.Speaking) {
+                stopBargeInListener()
+            }
+        }
+
+        pendingInTtsQueue.decrementAndGet()
+        if (result.isSuccess) {
+            spokenChunks.add(sentence)
+            val latencyMs = System.currentTimeMillis() - startedAtMs
+            _voiceStats.update { s ->
+                val nextLatencies = (s.recentTtsLatenciesMs + latencyMs).takeLast(5)
+                s.copy(
+                    lastSynthesizedSentence = sentence,
+                    recentTtsLatenciesMs = nextLatencies,
+                    ttsBytesReceived = s.ttsBytesReceived + audioBytes.get().toLong(),
+                    ttsCallCount = s.ttsCallCount + 1,
+                )
+            }
+            maybeAutoResume()
+            return
+        }
+
+        val err = result.exceptionOrNull()
+        Log.w(TAG, "Voice output failed; falling back to basic TTS: ${err?.message}")
+        voiceOutputAvailable = false
+        if (!audioSeen.get()) {
+            enqueueSentenceForLegacyTts(sentence)
+        } else {
+            maybeAutoResume()
+        }
+    }
+
+    private fun handleRealtimeVoiceEvent(
+        event: RealtimeVoiceEvent,
+        pcmPlayer: RealtimePcmPlayer,
+        audioSeen: AtomicBoolean,
+        audioBytes: AtomicInteger,
+        bargeInStarted: AtomicBoolean,
+    ) {
+        if (event.type != "voice.audio.delta") return
+        val encoded = event.audioBase64 ?: return
+        val audio = try {
+            Base64.getDecoder().decode(encoded)
+        } catch (_: Exception) {
+            return
+        }
+        if (audio.isEmpty()) return
+        audioSeen.set(true)
+        audioBytes.addAndGet(audio.size)
+        pcmPlayer.write(audio, event.sampleRate ?: 24_000)
+        if (bargeInStarted.compareAndSet(false, true)) {
+            startBargeInListenerIfEnabled(
+                audioSessionIdProvider = { pcmPlayer.audioSessionId },
+                startupGuardMs = REALTIME_BARGE_IN_STARTUP_GUARD_MS,
+            )
+        }
+        val level = event.rmsLevel ?: event.peakLevel ?: 0f
+        if (_uiState.value.state == VoiceState.Speaking) {
+            speakEnvelope = applyEnvelope(speakEnvelope, level)
+            _uiState.update { it.copy(amplitude = speakEnvelope) }
+        }
+    }
+
+    private fun drainRealtimeTtsQueue() {
+        while (true) {
+            val r = realtimeTtsQueue.tryReceive()
+            if (r.isFailure || r.isClosed) break
+            pendingInTtsQueue.decrementAndGet()
+        }
+    }
+
     // ---------------------------------------------------------------------
     //
     // V4 (voice-quality-pass 2026-04-16) rewrites what used to be a strictly
@@ -1787,17 +2054,42 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * listener's internal poll loop can watch it flip from 0 to non-zero
      * as playback begins.
      */
-    private fun startBargeInListenerIfEnabled() {
+    private fun startBargeInListenerIfEnabled(
+        audioSessionIdProvider: (() -> Int)? = null,
+        startupGuardMs: Long = 0L,
+    ) {
         // Already running → no-op. We bracket per Speaking turn, not per
         // chunk within a turn.
-        if (bargeInListener != null) return
+        if (bargeInListener != null) {
+            Log.i(TAG, "Barge-in listener already running; leaving active")
+            return
+        }
 
-        val factory = bargeInListenerFactory ?: return
-        val vadFactory = vadEngineFactory ?: return
+        val factory = bargeInListenerFactory
+        val vadFactory = vadEngineFactory
+        if (factory == null || vadFactory == null) {
+            Log.i(TAG, "Barge-in listener unavailable; collaborators not wired")
+            return
+        }
         val prefs = _bargeInPrefs.value
-        if (!prefs.enabled || prefs.sensitivity == BargeInSensitivity.Off) return
+        if (!prefs.enabled || prefs.sensitivity == BargeInSensitivity.Off) {
+            Log.i(
+                TAG,
+                "Barge-in listener skipped; enabled=${prefs.enabled} sensitivity=${prefs.sensitivity}",
+            )
+            return
+        }
 
-        val p = player ?: return
+        val sessionProvider: () -> Int = if (audioSessionIdProvider != null) {
+            audioSessionIdProvider
+        } else {
+            val p = player
+            if (p == null) {
+                Log.i(TAG, "Barge-in listener skipped; legacy player not ready")
+                return
+            }
+            fun(): Int { return p.audioSessionId }
+        }
 
         val vad = try {
             vadFactory().also { it.setSensitivity(prefs.sensitivity) }
@@ -1808,7 +2100,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         bargeInVadEngine = vad
 
         val listener = try {
-            factory(vad) { p.audioSessionId }
+            factory(vad, sessionProvider)
         } catch (t: Throwable) {
             Log.w(TAG, "BargeInListener construction failed; skipping barge-in: ${t.message}")
             try { vad.close() } catch (_: Throwable) { /* ignore */ }
@@ -1817,11 +2109,23 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         bargeInListener = listener
+        bargeInIgnoreUntilMs = if (startupGuardMs > 0L) {
+            System.currentTimeMillis() + startupGuardMs
+        } else {
+            0L
+        }
+        bargeInGuardLogged = false
         bargeInListenerJob = viewModelScope.launch {
             // Fan out the two event flows on child coroutines of this job.
             launch { listener.maybeSpeech.collect { onMaybeSpeech() } }
             launch { listener.bargeInDetected.collect { onBargeInDetected() } }
         }
+        Log.i(
+            TAG,
+            "Starting barge-in listener; sensitivity=${prefs.sensitivity} " +
+                "source=${if (audioSessionIdProvider != null) "realtime_pcm" else "legacy_player"} " +
+                "session=${sessionProvider()}",
+        )
         try {
             listener.start(viewModelScope)
         } catch (t: Throwable) {
@@ -1836,6 +2140,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * volume), and release the owned VAD engine. Idempotent.
      */
     private fun stopBargeInListener() {
+        if (bargeInListener != null) {
+            Log.i(TAG, "Stopping barge-in listener")
+        }
+        bargeInIgnoreUntilMs = 0L
+        bargeInGuardLogged = false
         bargeInListenerJob?.cancel(); bargeInListenerJob = null
         try { bargeInListener?.stop() } catch (_: Throwable) { /* ignore */ }
         bargeInListener = null
@@ -1845,6 +2154,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // Best-effort un-duck so the next playback starts at full volume.
         if (isDucked) {
             try { player?.unduck() } catch (_: Throwable) { /* ignore */ }
+            try { realtimePcmPlayer?.unduck() } catch (_: Throwable) { /* ignore */ }
             isDucked = false
         }
     }
@@ -1859,8 +2169,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * bursty speech signal keeps the duck alive without flickering.
      */
     internal fun onMaybeSpeech() {
+        if (isBargeInStartupGuardActive()) return
         if (!isDucked) {
+            Log.i(TAG, "Barge-in VAD maybe speech; ducking output")
             try { player?.duck() } catch (_: Throwable) { /* ignore */ }
+            try { realtimePcmPlayer?.duck() } catch (_: Throwable) { /* ignore */ }
             isDucked = true
         }
         scheduleDuckingWatchdog()
@@ -1879,9 +2192,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * NOT clear it; the resume watchdog will consume it.
      */
     internal fun onBargeInDetected() {
+        if (isBargeInStartupGuardActive()) return
         duckingWatchdog?.cancel(); duckingWatchdog = null
         lastInterruptedAtChunkIndex = _currentPlayingChunkIndex.value
         _voiceStats.update { it.copy(bargeInCount = it.bargeInCount + 1) }
+        Log.i(TAG, "Barge-in detected; interrupting speech at chunk=$lastInterruptedAtChunkIndex")
 
         // interruptSpeaking tears down the listener itself, so subsequent
         // bargeInDetected emissions are impossible until the next
@@ -1905,6 +2220,16 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         scheduleResumeWatchdog()
+    }
+
+    private fun isBargeInStartupGuardActive(): Boolean {
+        val remainingMs = bargeInIgnoreUntilMs - System.currentTimeMillis()
+        if (remainingMs <= 0L) return false
+        if (!bargeInGuardLogged) {
+            Log.i(TAG, "Barge-in VAD ignored during startup guard (${remainingMs}ms remaining)")
+            bargeInGuardLogged = true
+        }
+        return true
     }
 
     /**
@@ -2233,10 +2558,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         silenceWatchdogJob = null
         try { recorder?.cancel() } catch (_: Exception) { /* ignore */ }
         try { player?.stop() } catch (_: Exception) { /* ignore */ }
+        try { realtimePcmPlayer?.stop() } catch (_: Exception) { /* ignore */ }
         try { sfxPlayer?.release() } catch (_: Exception) { /* ignore */ }
         ttsQueue.close()
+        realtimeTtsQueue.close()
         streamObserverJob?.cancel()
         ttsConsumerJob?.cancel()
+        realtimeTtsConsumerJob?.cancel()
         amplitudeBridgeJob?.cancel()
         currentTurnJob?.cancel()
         idleFlushJob?.cancel()
@@ -2834,6 +3162,33 @@ internal fun sanitizeForTts(text: String): String {
     // 5) Whitespace normalization.
     out = TTS_MD_EXCESS_NL.replace(out, "\n\n")
     return out.trim()
+}
+
+/**
+ * Short deterministic status line spoken when Hermes starts a tool while
+ * voice mode is active. Hermes still owns the tool loop; this only prevents
+ * long-running tool phases from feeling silent in the voice overlay.
+ */
+internal fun brokeredToolStartStatusForTts(toolName: String, indexForMessage: Int): String {
+    if (indexForMessage > 0) return "I'm checking one more thing."
+    val normalized = toolName.lowercase()
+    return when {
+        normalized.startsWith("android_") -> "I'll check the phone."
+        normalized.startsWith("desktop_") ||
+            normalized.contains("computer") -> "I'll check the desktop."
+        normalized.contains("search") ||
+            normalized.contains("browser") ||
+            normalized.contains("web") -> "I'll search that now."
+        normalized.contains("file") ||
+            normalized.contains("read") ||
+            normalized.contains("grep") ||
+            normalized.contains("list") -> "I'll check the relevant files."
+        normalized.contains("shell") ||
+            normalized.contains("terminal") ||
+            normalized.contains("bash") ||
+            normalized.contains("powershell") -> "I'll run a quick check."
+        else -> "Let me check that."
+    }
 }
 
 /**

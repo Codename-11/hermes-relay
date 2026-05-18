@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -25,6 +26,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
@@ -46,12 +48,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hermesandroid.relay.data.BargeInSensitivity
+import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.VoicePreferencesRepository
 import com.hermesandroid.relay.data.VoiceSettings
 import com.hermesandroid.relay.network.RelayVoiceClient
+import com.hermesandroid.relay.network.RealtimeVoiceConfig
+import com.hermesandroid.relay.network.VoiceOutputConfig
 import com.hermesandroid.relay.network.VoiceConfig
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.showHumanError
@@ -66,10 +74,11 @@ import kotlinx.coroutines.launch
  *
  * Sections:
  *   1. Voice Mode       — interaction mode, silence threshold, auto-TTS
- *   2. Barge-in         — interrupt TTS by speaking; sensitivity + resume (V barge-in)
- *   3. Text-to-Speech   — provider label + voice (from GET /voice/config)
- *   4. Speech-to-Text   — provider label + language picker (stored, not wired)
- *   5. Test Voice       — one-shot synth + playback
+ *   2. Voice Output     — provider/model/voice from relay-owned /voice/output/config
+ *   3. Barge-in         — interrupt TTS by speaking; sensitivity + resume (V barge-in)
+ *   4. Text-to-Speech   — provider label + voice from GET /voice/config
+ *   5. Speech-to-Text   — provider label + language picker (stored, not wired)
+ *   6. Test Voice       — one-shot synth + playback
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -84,30 +93,96 @@ fun VoiceSettingsScreen(
 
     val prefsRepo = remember { VoicePreferencesRepository(context) }
     val voiceSettings by prefsRepo.settings.collectAsState(initial = VoiceSettings())
+    val devOptionsUnlocked by FeatureFlags.devOptionsUnlocked(context)
+        .collectAsState(initial = FeatureFlags.isDevBuild)
 
     val bargeInPrefs by settingsViewModel.bargeInPrefs.collectAsState()
     val aecAvailable = settingsViewModel.aecAvailable
 
     var voiceConfig by remember { mutableStateOf<VoiceConfig?>(null) }
     var voiceConfigError by remember { mutableStateOf<String?>(null) }
+    var voiceOutputConfig by remember { mutableStateOf<VoiceOutputConfig?>(null) }
+    var voiceOutputConfigError by remember { mutableStateOf<String?>(null) }
+    var voiceOutputEnabled by remember { mutableStateOf(true) }
+    var voiceOutputProvider by remember { mutableStateOf("") }
+    var voiceOutputModel by remember { mutableStateOf("") }
+    var voiceOutputVoice by remember { mutableStateOf("") }
+    var voiceOutputSampleRate by remember { mutableStateOf("24000") }
+    var voiceOutputLanguage by remember { mutableStateOf("en") }
+    var voiceOutputLatency by remember { mutableStateOf(1f) }
+    var voiceOutputFallback by remember { mutableStateOf(true) }
+    var voiceOutputSaving by remember { mutableStateOf(false) }
+    var realtimeConfig by remember { mutableStateOf<RealtimeVoiceConfig?>(null) }
+    var realtimeConfigError by remember { mutableStateOf<String?>(null) }
 
     // Global snackbar host — voice errors routed through the classifier get
     // shown as snackbars here as well as the inline "unavailable" label below.
     val snackbarHost = LocalSnackbarHost.current
 
-    LaunchedEffect(voiceClient) {
+    LaunchedEffect(voiceClient, devOptionsUnlocked) {
         val client = voiceClient ?: return@LaunchedEffect
-        val result = client.getVoiceConfig()
-        if (result.isSuccess) {
-            voiceConfig = result.getOrNull()
+        val voiceResult = client.getVoiceConfig()
+        if (voiceResult.isSuccess) {
+            voiceConfig = voiceResult.getOrNull()
             voiceConfigError = null
         } else {
             // Use the classifier body so "unavailable" expands into something
             // like "Relay unreachable" / "Voice provider offline".
-            val human = classifyError(result.exceptionOrNull(), context = "voice_config")
+            val human = classifyError(voiceResult.exceptionOrNull(), context = "voice_config")
             voiceConfigError = human.body
             snackbarHost.showHumanError(human)
         }
+
+        val outputResult = client.getVoiceOutputConfig()
+        if (outputResult.isSuccess) {
+            voiceOutputConfig = outputResult.getOrNull()
+            voiceOutputConfigError = null
+        } else {
+            val human = classifyError(
+                outputResult.exceptionOrNull(),
+                context = "voice_config",
+            )
+            voiceOutputConfigError = human.body
+            snackbarHost.showHumanError(human)
+        }
+
+        if (devOptionsUnlocked) {
+            val realtimeResult = client.getRealtimeVoiceConfig()
+            if (realtimeResult.isSuccess) {
+                realtimeConfig = realtimeResult.getOrNull()
+                realtimeConfigError = null
+            } else {
+                val human = classifyError(
+                    realtimeResult.exceptionOrNull(),
+                    context = "voice_config",
+                )
+                realtimeConfigError = human.body
+            }
+        } else {
+            realtimeConfig = null
+            realtimeConfigError = null
+        }
+    }
+
+    LaunchedEffect(
+        voiceOutputConfig?.enabled,
+        voiceOutputConfig?.default_provider,
+        voiceOutputConfig?.default_model,
+        voiceOutputConfig?.default_voice,
+        voiceOutputConfig?.sample_rate,
+        voiceOutputConfig?.language,
+        voiceOutputConfig?.optimize_streaming_latency,
+        voiceOutputConfig?.fallback_enabled,
+    ) {
+        val config = voiceOutputConfig ?: return@LaunchedEffect
+        voiceOutputEnabled = config.enabled
+        voiceOutputProvider = config.default_provider.orEmpty()
+        voiceOutputModel = config.default_model.orEmpty()
+        voiceOutputVoice = config.default_voice.orEmpty()
+        voiceOutputSampleRate = config.sample_rate.toString()
+        voiceOutputLanguage = config.language
+        voiceOutputLatency = config.optimize_streaming_latency.toFloat()
+        voiceOutputFallback = config.fallback_enabled
     }
 
     // Surface VoiceViewModel errors (testVoice synthesize failures etc.) as
@@ -228,10 +303,240 @@ fun VoiceSettingsScreen(
                 }
             }
 
+            // --- Voice Output ---
+            SectionCard(title = "Voice Output", badge = "Experimental") {
+                ProviderRow(
+                    label = "Status",
+                    value = when {
+                        voiceOutputConfig?.enabled == true -> "active"
+                        voiceOutputConfigError != null -> "unavailable"
+                        voiceOutputConfig != null -> "disabled"
+                        else -> "loading..."
+                    },
+                )
+                ProviderRow(
+                    label = "Provider",
+                    value = voiceOutputConfig?.default_provider
+                        ?: (voiceOutputConfigError?.let { "unavailable" } ?: "loading..."),
+                )
+                voiceOutputConfig?.default_model?.let { model ->
+                    ProviderRow(label = "Model", value = model)
+                }
+                voiceOutputConfig?.default_voice?.let { voice ->
+                    ProviderRow(label = "Voice", value = voice)
+                }
+                voiceOutputConfig?.let { config ->
+                    ProviderRow(label = "Sample rate", value = "${config.sample_rate} Hz")
+                    ProviderRow(label = "Language", value = config.language)
+                    ProviderRow(label = "Fallback", value = if (config.fallback_enabled) "legacy TTS on error" else "off")
+                    ProviderRow(label = "Advertised", value = voiceOutputProviderList(config))
+                    ProviderRow(label = "Auth", value = voiceOutputAuthLabel(config))
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("Enabled", style = MaterialTheme.typography.bodyLarge)
+                    Switch(
+                        checked = voiceOutputEnabled,
+                        onCheckedChange = { voiceOutputEnabled = it },
+                    )
+                }
+
+                val providers = voiceOutputConfig?.providers.orEmpty()
+                if (providers.isNotEmpty()) {
+                    Text(
+                        text = "Provider",
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    providers.forEach { provider ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .selectable(
+                                    selected = voiceOutputProvider == provider.id,
+                                    onClick = { voiceOutputProvider = provider.id },
+                                )
+                                .padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(
+                                selected = voiceOutputProvider == provider.id,
+                                onClick = null,
+                            )
+                            Spacer(Modifier.size(8.dp))
+                            Text(
+                                text = provider.id,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                    }
+                } else {
+                    OutlinedTextField(
+                        value = voiceOutputProvider,
+                        onValueChange = { voiceOutputProvider = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("Provider") },
+                    )
+                }
+
+                OutlinedTextField(
+                    value = voiceOutputModel,
+                    onValueChange = { voiceOutputModel = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Model") },
+                )
+                OutlinedTextField(
+                    value = voiceOutputVoice,
+                    onValueChange = { voiceOutputVoice = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Voice") },
+                )
+                OutlinedTextField(
+                    value = voiceOutputSampleRate,
+                    onValueChange = { voiceOutputSampleRate = it.filter(Char::isDigit) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Sample rate") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+                OutlinedTextField(
+                    value = voiceOutputLanguage,
+                    onValueChange = { voiceOutputLanguage = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Language") },
+                )
+
+                Text(
+                    text = "Streaming latency: ${voiceOutputLatency.toInt()}",
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Slider(
+                    value = voiceOutputLatency,
+                    onValueChange = { voiceOutputLatency = it },
+                    valueRange = 0f..1f,
+                    steps = 0,
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Fallback", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            text = "Use legacy Hermes TTS if streaming output fails before audio starts",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = voiceOutputFallback,
+                        onCheckedChange = { voiceOutputFallback = it },
+                    )
+                }
+
+                FilledTonalButton(
+                    onClick = {
+                        val client = voiceClient ?: return@FilledTonalButton
+                        val sampleRate = voiceOutputSampleRate.toIntOrNull()
+                        if (sampleRate == null) {
+                            voiceOutputConfigError = "Sample rate must be a number"
+                            return@FilledTonalButton
+                        }
+                        scope.launch {
+                            voiceOutputSaving = true
+                            val result = client.updateVoiceOutputConfig(
+                                enabled = voiceOutputEnabled,
+                                provider = voiceOutputProvider,
+                                model = voiceOutputModel,
+                                voice = voiceOutputVoice,
+                                sampleRate = sampleRate,
+                                language = voiceOutputLanguage,
+                                codec = "pcm",
+                                optimizeStreamingLatency = voiceOutputLatency.toInt(),
+                                fallbackEnabled = voiceOutputFallback,
+                            )
+                            voiceOutputSaving = false
+                            if (result.isSuccess) {
+                                voiceOutputConfig = result.getOrNull()
+                                voiceOutputConfigError = null
+                            } else {
+                                val human = classifyError(
+                                    result.exceptionOrNull(),
+                                    context = "voice_config",
+                                )
+                                voiceOutputConfigError = human.body
+                                snackbarHost.showHumanError(human)
+                            }
+                        }
+                    },
+                    enabled = !voiceOutputSaving && voiceClient != null,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (voiceOutputSaving) "Saving..." else "Save voice output")
+                }
+                voiceOutputConfigError?.let { error ->
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = error,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+
+            if (devOptionsUnlocked) {
+                // --- Realtime Agent Lab ---
+                SectionCard(title = "Realtime Agent Lab", badge = "Experimental") {
+                    ProviderRow(
+                        label = "Status",
+                        value = when {
+                            realtimeConfig?.enabled == true -> "available"
+                            realtimeConfigError != null -> "unavailable"
+                            realtimeConfig != null -> "disabled"
+                            else -> "loading..."
+                        },
+                    )
+                    ProviderRow(
+                        label = "Provider",
+                        value = realtimeConfig?.default_provider
+                            ?: (realtimeConfigError?.let { "unavailable" } ?: "loading..."),
+                    )
+                    realtimeConfig?.default_model?.let { model ->
+                        ProviderRow(label = "Model", value = model)
+                    }
+                    realtimeConfig?.default_voice?.let { voice ->
+                        ProviderRow(label = "Voice", value = voice)
+                    }
+                    realtimeConfig?.let { config ->
+                        ProviderRow(label = "Advertised", value = realtimeProviderList(config))
+                        ProviderRow(label = "Auth", value = realtimeAuthLabel(config))
+                    }
+                    realtimeConfigError?.let { error ->
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = error,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            }
+
             // --- Barge-in ---
             // Wave 2 / unit B5 of the voice-barge-in plan. Default off. AEC
             // probe at VM init drives the compatibility warning badge.
-            SectionCard(title = "Barge-in") {
+            SectionCard(title = "Barge-in", badge = "Experimental") {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -357,11 +662,22 @@ fun VoiceSettingsScreen(
                     label = "Provider",
                     value = voiceConfig?.tts?.provider ?: (voiceConfigError?.let { "unavailable" } ?: "loading..."),
                 )
+                voiceConfig?.tts?.let { tts ->
+                    ProviderRow(label = "Enabled", value = if (tts.isEnabled) "yes" else "no")
+                }
                 voiceConfig?.tts?.model?.let { model ->
                     ProviderRow(label = "Model", value = model)
                 }
-                voiceConfig?.tts?.voice?.let { voice ->
+                voiceConfig?.tts?.displayVoice?.let { voice ->
                     ProviderRow(label = "Voice", value = voice)
+                }
+                voiceConfigError?.let { error ->
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = error,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
                 }
             }
 
@@ -371,6 +687,9 @@ fun VoiceSettingsScreen(
                     label = "Provider",
                     value = voiceConfig?.stt?.provider ?: (voiceConfigError?.let { "unavailable" } ?: "loading..."),
                 )
+                voiceConfig?.stt?.let { stt ->
+                    ProviderRow(label = "Enabled", value = if (stt.isEnabled) "yes" else "no")
+                }
                 voiceConfig?.stt?.model?.let { model ->
                     ProviderRow(label = "Model", value = model)
                 }
@@ -442,9 +761,39 @@ fun VoiceSettingsScreen(
     }
 }
 
+private fun realtimeProviderList(config: RealtimeVoiceConfig): String {
+    val ids = config.providers.map { provider -> provider.id }.filter { it.isNotBlank() }
+    return ids.joinToString(", ").ifBlank { "none" }
+}
+
+private fun voiceOutputProviderList(config: VoiceOutputConfig): String {
+    val ids = config.providers.map { provider -> provider.id }.filter { it.isNotBlank() }
+    return ids.joinToString(", ").ifBlank { "none" }
+}
+
+private fun realtimeAuthLabel(config: RealtimeVoiceConfig): String {
+    val auth = config.auth ?: return "not reported"
+    return when {
+        auth.xai_oauth -> "Hermes xAI OAuth"
+        auth.xai_env -> "xAI env"
+        else -> "server managed"
+    }
+}
+
+private fun voiceOutputAuthLabel(config: VoiceOutputConfig): String {
+    val auth = config.auth ?: return "not reported"
+    return when {
+        auth.xai_oauth -> "xAI OAuth"
+        auth.xai_env -> "xAI env"
+        auth.openai_env -> "OpenAI env"
+        else -> "server managed"
+    }
+}
+
 @Composable
 private fun SectionCard(
     title: String,
+    badge: String? = null,
     content: @Composable () -> Unit,
 ) {
     Card(
@@ -460,14 +809,47 @@ private fun SectionCard(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                badge?.let { ExperimentalBadge(it) }
+            }
             Spacer(Modifier.height(8.dp))
             content()
         }
+    }
+}
+
+@Composable
+private fun ExperimentalBadge(text: String) {
+    Row(
+        modifier = Modifier
+            .background(
+                color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.72f),
+                shape = RoundedCornerShape(999.dp),
+            )
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Warning,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onTertiaryContainer,
+            modifier = Modifier.size(13.dp),
+        )
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onTertiaryContainer,
+        )
     }
 }
 
@@ -481,10 +863,13 @@ private fun ProviderRow(label: String, value: String) {
             text = label,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(0.38f),
         )
         Text(
             text = value,
             style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(0.62f),
         )
     }
 }

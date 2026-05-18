@@ -95,6 +95,7 @@ import com.hermesandroid.relay.ui.screens.MediaSettingsScreen
 import com.hermesandroid.relay.ui.screens.PairedDevicesScreen
 import com.hermesandroid.relay.ui.screens.ConnectionsSettingsScreen
 import com.hermesandroid.relay.ui.screens.ProfileInspectorScreen
+import com.hermesandroid.relay.ui.screens.RealtimeVoiceTestScreen
 import com.hermesandroid.relay.ui.screens.SettingsScreen
 import com.hermesandroid.relay.ui.screens.TerminalScreen
 import com.hermesandroid.relay.ui.screens.NotificationCompanionSettingsScreen
@@ -109,6 +110,7 @@ import com.hermesandroid.relay.viewmodel.VoiceViewModel
 import com.hermesandroid.relay.audio.VoicePlayer
 import com.hermesandroid.relay.audio.VoiceRecorder
 import com.hermesandroid.relay.audio.VoiceSfxPlayer
+import com.hermesandroid.relay.audio.RealtimePcmPlayer
 import com.hermesandroid.relay.network.RelayVoiceClient
 import com.hermesandroid.relay.auth.AuthState
 import androidx.lifecycle.viewModelScope
@@ -223,6 +225,7 @@ sealed class Screen(
     data object AppearanceSettings : Screen("settings/appearance", "Appearance", Icons.Filled.Settings)
     data object Analytics : Screen("settings/analytics", "Analytics", Icons.Filled.Settings)
     data object DeveloperSettings : Screen("settings/developer", "Developer", Icons.Filled.Settings)
+    data object RealtimeVoiceTest : Screen("settings/developer/realtime_voice", "Realtime voice", Icons.Filled.Settings)
     data object About : Screen("settings/about", "About", Icons.Filled.Settings)
 
     // Profile Inspector — full-screen read-only viewer with 4 tabs
@@ -398,6 +401,7 @@ fun RelayApp() {
     // VoiceSfxPlayer is internally crash-proof — failed AudioTrack builds
     // become null-tracks that no-op — so we don't need an outer try/catch.
     val voiceSfxPlayer = remember { VoiceSfxPlayer(mediaContext) }
+    val realtimePcmPlayer = remember { RealtimePcmPlayer() }
     LaunchedEffect(Unit) {
         val recorder = VoiceRecorder(mediaContext, voiceViewModel.viewModelScope)
         val player = VoicePlayer(mediaContext)
@@ -406,6 +410,7 @@ fun RelayApp() {
             chatViewModel = chatViewModel,
             recorder = recorder,
             player = player,
+            realtimePcmPlayer = realtimePcmPlayer,
             sfxPlayer = voiceSfxPlayer,
             // === PHASE3-voice-intents-localdispatch ===
             // Wire the local in-process dispatcher so voice intents go
@@ -431,6 +436,15 @@ fun RelayApp() {
             // app restarts. VoicePreferencesRepository is the same repo
             // VoiceSettingsScreen reads/writes.
             voicePreferences = com.hermesandroid.relay.data.VoicePreferencesRepository(mediaContext),
+            bargeInPreferences = com.hermesandroid.relay.data.BargeInPreferencesRepository(mediaContext),
+            vadEngineFactory = { com.hermesandroid.relay.audio.VadEngine(mediaContext) },
+            bargeInListenerFactory = { vad, audioSessionIdProvider ->
+                com.hermesandroid.relay.audio.BargeInListener.create(
+                    mediaContext,
+                    vad,
+                    audioSessionIdProvider,
+                )
+            },
         )
     }
 
@@ -893,6 +907,7 @@ fun RelayApp() {
                         chatViewModel = chatViewModel,
                         connectionViewModel = connectionViewModel,
                         voiceViewModel = voiceViewModel,
+                        voiceClient = voiceClient,
                         maxBubbleWidth = maxBubbleWidth,
                         openAgentSheetOnEntry = openAgentSheetArg,
                         onAgentSheetArgConsumed = {
@@ -1199,7 +1214,16 @@ fun RelayApp() {
                 composable(Screen.DeveloperSettings.route) {
                     DeveloperSettingsScreen(
                         connectionViewModel = connectionViewModel,
-                        onBack = { navController.popBackStack() }
+                        onBack = { navController.popBackStack() },
+                        onNavigateToRealtimeVoice = {
+                            navController.navigate(Screen.RealtimeVoiceTest.route)
+                        },
+                    )
+                }
+                composable(Screen.RealtimeVoiceTest.route) {
+                    RealtimeVoiceTestScreen(
+                        voiceClient = voiceClient,
+                        onBack = { navController.popBackStack() },
                     )
                 }
                 composable(Screen.About.route) {

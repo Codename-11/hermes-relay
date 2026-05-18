@@ -59,6 +59,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -85,10 +86,14 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.data.BargeInPreferences
+import com.hermesandroid.relay.data.BargeInPreferencesRepository
 import com.hermesandroid.relay.ui.theme.purpleGlow
 import com.hermesandroid.relay.ui.theme.radialNavyBackground
 import com.hermesandroid.relay.network.ChatMode
 import com.hermesandroid.relay.network.ConnectivityObserver
+import com.hermesandroid.relay.network.RelayVoiceClient
+import com.hermesandroid.relay.network.VoiceOutputConfig
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -136,6 +141,12 @@ import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
+import com.hermesandroid.relay.voice.VoiceOverlayHost
+import com.hermesandroid.relay.voice.VoiceOverlaySession
+import com.hermesandroid.relay.voice.openHermesFromOverlay
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -165,6 +176,7 @@ fun ChatScreen(
     chatViewModel: ChatViewModel,
     connectionViewModel: ConnectionViewModel,
     voiceViewModel: VoiceViewModel,
+    voiceClient: RelayVoiceClient? = null,
     maxBubbleWidth: Dp = 300.dp,
     // Deep-link nudge from Settings → Active Agent card: when `true`, the
     // AgentInfoSheet auto-opens on first composition and [onAgentSheetArgConsumed]
@@ -179,8 +191,9 @@ fun ChatScreen(
     onNavigateToConnections: () -> Unit = {},
 ) {
     val voiceUiState by voiceViewModel.uiState.collectAsState()
+    var voiceCompactMode by remember { mutableStateOf(false) }
     val chatAlpha by animateFloatAsState(
-        targetValue = if (voiceUiState.voiceMode) 0.4f else 1f,
+        targetValue = if (voiceUiState.voiceMode && !voiceCompactMode) 0.4f else 1f,
         animationSpec = tween(300),
         label = "chatAlpha",
     )
@@ -198,8 +211,11 @@ fun ChatScreen(
     // request; on grant, latch the pending-enter and fire enterVoiceMode() in
     // the callback. Denial shows an inline banner above the input.
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val voiceOverlayHost = remember { VoiceOverlayHost.install(context) }
     var pendingVoiceEnter by remember { mutableStateOf(false) }
     var micPermissionDenied by remember { mutableStateOf(false) }
+    var pendingVoiceOverlayPermission by remember { mutableStateOf(false) }
     val micPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
     ) { granted ->
@@ -231,6 +247,9 @@ fun ChatScreen(
 
     val messages by chatViewModel.messages.collectAsState()
     val isStreaming by chatViewModel.isStreaming.collectAsState()
+    val bargeInRepo = remember { BargeInPreferencesRepository(context) }
+    val bargeInPrefs by bargeInRepo.flow.collectAsState(initial = BargeInPreferences())
+    var voiceOutputConfig by remember { mutableStateOf<VoiceOutputConfig?>(null) }
     val chatReady by connectionViewModel.chatReady.collectAsState()
     // Voice mode's /voice/transcribe and /voice/synthesize calls both go
     // over the relay, but voice can authenticate with the saved Hermes API
@@ -332,6 +351,99 @@ fun ChatScreen(
     val clipboard = LocalClipboard.current
     val haptic = LocalHapticFeedback.current
     val snackbarHostState = remember { SnackbarHostState() }
+
+    val showVoiceSystemOverlay: () -> Unit = {
+        if (!voiceOverlayHost.hasOverlayPermission()) {
+            pendingVoiceOverlayPermission = true
+            runCatching {
+                val intent = Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:${context.packageName}"),
+                ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                context.startActivity(intent)
+            }
+            scope.launch {
+                snackbarHostState.showSnackbar(
+                    message = "Enable Display over other apps, then return to start Voice Overlay.",
+                    duration = SnackbarDuration.Short,
+                )
+            }
+        } else {
+            pendingVoiceOverlayPermission = false
+            val shown = voiceOverlayHost.show(
+                VoiceOverlaySession(
+                    uiState = voiceViewModel.uiState,
+                    bargeInPreferences = bargeInRepo.flow,
+                    provider = voiceOutputConfig?.default_provider,
+                    voice = voiceOutputConfig?.default_voice,
+                    outputEnabled = voiceOutputConfig?.enabled,
+                    fallbackEnabled = voiceOutputConfig?.fallback_enabled,
+                    onStartListening = { voiceViewModel.startListening() },
+                    onStopListening = { voiceViewModel.stopListening() },
+                    onInterrupt = { voiceViewModel.interruptSpeaking() },
+                    onReturnToHermes = { openHermesFromOverlay(context) },
+                    onExit = {
+                        voiceOverlayHost.hide()
+                        voiceViewModel.exitVoiceMode()
+                    },
+                ),
+            )
+            if (!shown) {
+                scope.launch {
+                    snackbarHostState.showSnackbar(
+                        message = "Voice Overlay could not be started.",
+                        duration = SnackbarDuration.Short,
+                    )
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(voiceUiState.voiceMode) {
+        if (!voiceUiState.voiceMode) {
+            voiceOverlayHost.hide()
+            pendingVoiceOverlayPermission = false
+            voiceCompactMode = false
+        }
+    }
+
+    DisposableEffect(
+        lifecycleOwner,
+        pendingVoiceOverlayPermission,
+        voiceUiState.voiceMode,
+        voiceOutputConfig,
+    ) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && pendingVoiceOverlayPermission) {
+                when {
+                    voiceOverlayHost.hasOverlayPermission() && voiceUiState.voiceMode -> {
+                        showVoiceSystemOverlay()
+                    }
+                    !voiceOverlayHost.hasOverlayPermission() -> {
+                        pendingVoiceOverlayPermission = false
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                message = "Voice Overlay permission was not granted.",
+                                duration = SnackbarDuration.Short,
+                            )
+                        }
+                    }
+                    else -> pendingVoiceOverlayPermission = false
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    LaunchedEffect(voiceClient, voiceUiState.voiceMode) {
+        if (!voiceUiState.voiceMode) return@LaunchedEffect
+        val client = voiceClient ?: return@LaunchedEffect
+        val result = client.getVoiceOutputConfig()
+        if (result.isSuccess) {
+            voiceOutputConfig = result.getOrNull()
+        }
+    }
 
     // File picker for attachments (any file type)
     val filePickerLauncher = rememberLauncherForActivityResult(
@@ -1540,9 +1652,24 @@ fun ChatScreen(
                 // Voice-first transcript: pass the last N chat messages so
                 // voice mode can show a compact rolling history including
                 // local-only voice-intent traces (agentName="Voice action").
-                // Bounded to 6 to keep voice mode visually focused on sphere
-                // + waveform + mic — the full scroll lives in the chat tab.
-                transcriptMessages = messages.takeLast(6),
+                // Bounded to 12 to keep voice mode focused while still
+                // preserving enough recent tool/context rows for voice turns.
+                transcriptMessages = messages.takeLast(12),
+                voiceOutputProvider = voiceOutputConfig?.default_provider,
+                voiceOutputVoice = voiceOutputConfig?.default_voice,
+                voiceOutputEnabled = voiceOutputConfig?.enabled,
+                voiceOutputFallbackEnabled = voiceOutputConfig?.fallback_enabled,
+                bargeInPrefs = bargeInPrefs,
+                onBargeInEnabledChange = { enabled ->
+                    scope.launch { bargeInRepo.setEnabled(enabled) }
+                },
+                onBargeInSensitivityChange = { sensitivity ->
+                    scope.launch { bargeInRepo.setSensitivity(sensitivity) }
+                },
+                onOverlayRequest = showVoiceSystemOverlay,
+                onCompactModeChange = { compact ->
+                    voiceCompactMode = compact
+                },
                 // === v0.4.1 JIT permission-denied chip ===
                 // Tap deep-links to Settings → Apps → Hermes Relay →
                 // Permissions for the running package. Use BuildConfig

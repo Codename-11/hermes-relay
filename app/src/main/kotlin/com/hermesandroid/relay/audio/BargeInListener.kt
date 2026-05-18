@@ -176,6 +176,7 @@ class BargeInListener internal constructor(
         readerJob = scope.launch(readerDispatcher) {
             try {
                 audioSource.start()
+                Log.i(TAG, "Barge-in AudioRecord reader started")
                 maybeAttachEffects()
 
                 while (isActive) {
@@ -229,6 +230,9 @@ class BargeInListener internal constructor(
      * is typically a single frame later.
      */
     fun stop() {
+        if (readerJob?.isActive == true) {
+            Log.i(TAG, "Stopping barge-in AudioRecord reader")
+        }
         readerJob?.cancel()
         readerJob = null
     }
@@ -253,6 +257,7 @@ class BargeInListener internal constructor(
                     created.enabled = true
                     aec = created
                     _aecAttached.value = true
+                    Log.i(TAG, "AcousticEchoCanceler attached to session=$sessionId")
                 } else {
                     Log.i(TAG, "AcousticEchoCanceler.create returned null; continuing without")
                 }
