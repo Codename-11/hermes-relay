@@ -36,8 +36,9 @@ import { rpcErrorMessage } from '../lib/rpc.js'
 import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
 import { getSession } from '../remoteSessions.js'
 import {
-  DESKTOP_HANDLERS,
-  advertisedDesktopTools
+  advertisedDesktopTools,
+  desktopHandlers,
+  shouldAdvertiseComputerUse
 } from '../tools/handlerSet.js'
 import { configureComputerUseRuntime } from '../tools/computerGrants.js'
 import { DesktopToolRouter } from '../tools/router.js'
@@ -231,16 +232,17 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   // or redirected daemon still fails host input closed because no visible
   // local grant approval prompt can run.
   const interactive = !!process.stdin.isTTY && !!process.stderr.isTTY
+  const computerUseEnabled = shouldAdvertiseComputerUse(args.flags)
   configureComputerUseRuntime({
     url,
-    computerUseConsented: true,
+    computerUseConsented: computerUseEnabled,
     consentSource: consented ? 'stored' : 'override'
   })
-  const advertisedTools = advertisedDesktopTools()
+  const advertisedTools = advertisedDesktopTools({ computerUse: computerUseEnabled })
   const router = new DesktopToolRouter({
     consentGranted: true,
     interactive,
-    handlers: DESKTOP_HANDLERS,
+    handlers: desktopHandlers({ computerUse: computerUseEnabled }),
     advertisedTools: [...advertisedTools]
   })
   router.attach(relay)
@@ -248,7 +250,7 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   log.info({
     event: 'ready',
     advertised_tools: [...advertisedTools],
-    experimental_computer_use: true,
+    experimental_computer_use: computerUseEnabled,
     interactive
   })
 

@@ -17,7 +17,11 @@ import {
   promptForPairingCode,
   validatePairingPayloadString
 } from '../pairing.js'
-import { payloadToCandidates, probeCandidatesByPriority } from '../pairingQr.js'
+import {
+  payloadToRelayCandidates,
+  probeCandidatesByPriority,
+  relayPairingCodeFromPayload
+} from '../pairingQr.js'
 import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
 import { saveSession } from '../remoteSessions.js'
 import { ensureToolsConsent } from '../tools/consent.js'
@@ -49,9 +53,13 @@ async function resolvePairTarget(args: ParsedArgs): Promise<PairTarget | { error
     if (!validated.ok) {
       return { error: `invalid --pair-qr payload: ${validated.reason}` }
     }
-    const candidates = payloadToCandidates(validated.payload)
-    if (candidates.length === 0) {
-      return { error: 'pairing payload had no endpoints to probe' }
+    let candidates
+    let pairingCode
+    try {
+      candidates = payloadToRelayCandidates(validated.payload)
+      pairingCode = relayPairingCodeFromPayload(validated.payload)
+    } catch (e) {
+      return { error: e instanceof Error ? e.message : String(e) }
     }
     process.stderr.write(`Probing ${candidates.length} endpoint(s)...\n`)
     let winner
@@ -65,7 +73,7 @@ async function resolvePairTarget(args: ParsedArgs): Promise<PairTarget | { error
     )
     return {
       url: winner.relay.url,
-      code: validated.payload.key.toUpperCase(),
+      code: pairingCode,
       endpointRole: winner.role
     }
   }

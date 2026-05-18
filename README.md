@@ -36,7 +36,7 @@
 | Surface | What | Status |
 |---------|------|--------|
 | **[Android app](#1a-android-app)** | Native phone control — chat, voice, the agent reads your screen and acts on it (tap, type, swipe), notification companion, multi-Connection. | Available — Google Play (Internal testing) + sideload APK |
-| **[Desktop CLI](#1b-desktop-cli-experimental)** | Use a server-deployed Hermes from your laptop **like it's local** — same shell, same TUI, same `Win+Shift+S` → `Ctrl+A v` paste flow, same conversation continuity. The remote agent can also reach back through the relay and run tools on YOUR machine. | **Experimental** — `desktop-v0.3.0-alpha.14` (one-binary install, no Node required) |
+| **[Desktop app + CLI](#1b-desktop-app--cli-experimental)** | Use a server-deployed Hermes from your laptop **like it's local**. Windows gets the native tray app first: pair, start/pause the daemon, view devices, task log, settings, overlay status, and emergency stop. The CLI remains the terminal/headless surface and powers macOS/Linux installs. Experimental computer-use tools are opt-in. | **Experimental** — `desktop-v0.3.0-alpha.18` (Windows tray installer + native CLI binaries, no Node required) |
 
 Both share `~/.hermes/remote-sessions.json` and the same WSS relay. **Pair once from either, both work.**
 
@@ -68,17 +68,25 @@ Full walkthrough, including signing-certificate fingerprint: [Sideload guide](ht
 
 **Staying up to date (sideload):** the app checks GitHub for a newer release on cold start (at most once every 6 hours) and shows a dismissable banner when you're behind. Tapping **Update** opens the next APK in your browser so Android's Downloads notification hands it to the system installer — no second app required. You can also trigger a check manually under **Settings → About → Updates**. Google Play installs get auto-updates through the Play Store and don't show this banner.
 
-### 1b. Desktop CLI (experimental)
+### 1b. Desktop app + CLI (experimental)
 
-A single-binary thin client (`hermes-relay`) that talks to a server-deployed Hermes over WSS — same shell, same TUI, same `/paste` flow as a local install. The remote agent can also reach back through the relay and run `desktop_read_file`, `desktop_terminal`, `desktop_search_files`, `desktop_screenshot`, `desktop_clipboard_*`, `desktop_open_in_editor`, etc. **on your machine** while its brain stays on the host. One pair, two surfaces (with the Android app), no `ssh`.
+The desktop surface talks to a server-deployed Hermes over WSS. On Windows, the default installer launches the native tray app with pairing, daemon control, devices, task log, settings, overlay status, pause, and emergency stop. The same release still ships the `hermes-relay` CLI for shell/TUI use, scripting, headless daemon mode, and macOS/Linux.
 
-**Install** (Windows PowerShell):
+The remote agent can also reach back through the relay and run `desktop_read_file`, `desktop_terminal`, `desktop_search_files`, `desktop_screenshot`, `desktop_clipboard_*`, `desktop_open_in_editor`, etc. **on your machine** while its brain stays on the host. One pair, two surfaces (with the Android app), no `ssh`.
+
+**Install tray app** (Windows PowerShell):
 
 ```powershell
 irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex
 ```
 
-**Install** (macOS / Linux):
+**Install CLI only** (Windows PowerShell):
+
+```powershell
+$env:HERMES_RELAY_INSTALL_SURFACE='cli'; irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex
+```
+
+**Install CLI** (macOS / Linux):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.sh | sh
@@ -95,9 +103,9 @@ hermes-relay update                            # self-update via GitHub Releases
 
 **Native paste workflow** (the killer demo): inside `hermes-relay shell`, hit `Win+Shift+S` to screenshot, then `Ctrl+A v` — the client reads your clipboard, ships the image to the server's inbox, and types `/paste` into the TUI for you. Identical UX to native local-Hermes paste. The same chord set works on macOS (`Cmd+Shift+4` → `Ctrl+A v`) and Linux (Wayland/X11 detected automatically).
 
-**No Node required** — Bun-compiled native binaries (~60–110 MB per platform) installed via curl/irm. Version-aware install (`upgrading X → Y`), collision-safe `hermes` short alias, self-update via `hermes-relay update`. Binaries are **unsigned** during the experimental phase — SmartScreen/Gatekeeper warnings are expected; the install scripts show the one-line escape hatches. Code signing, multi-client server-side routing, and service installers (sc.exe / systemd / launchd) land with v1.0.
+**No Node required** — the Windows tray installer bundles the compiled CLI sidecar; CLI-only installs use Bun-compiled native binaries (~60–110 MB per platform) via curl/irm. Version-aware install (`upgrading X → Y`), collision-safe `hermes` short alias for CLI installs, self-update via `hermes-relay update`. Assets are **unsigned** during the experimental phase — SmartScreen/Gatekeeper warnings are expected. Code signing, multi-client server-side routing, and service installers (sc.exe / systemd / launchd) land with v1.0.
 
-- **Docs**: [Desktop CLI guide](https://codename-11.github.io/hermes-relay/desktop/) · [`desktop/README.md`](desktop/README.md)
+- **Docs**: [Desktop guide](https://codename-11.github.io/hermes-relay/desktop/) · [`desktop/README.md`](desktop/README.md)
 - **Release track**: tagged `desktop-v*`, [separate from Android](https://github.com/Codename-11/hermes-relay/releases?q=desktop)
 - **AI-agent setup recipe**: `/hermes-relay-desktop-setup` (the agent can run `desktop_terminal` on your machine to diagnose install/pair issues live)
 
@@ -193,7 +201,7 @@ See the [changelog](CHANGELOG.md) for the full list.
 
 - **Shell mode (default)** — bare `hermes-relay` pipes the host's actual `hermes` Ink TUI through a PTY in tmux. Same banner, same skin, same slash commands as a local install. `Ctrl+A .` detaches (preserves tmux), `Ctrl+A k` kills, `Ctrl+A v` pastes a clipboard image, `Ctrl+A ?` re-prints chord help, `Ctrl+A Ctrl+A` literal.
 - **Chat mode** — REPL or one-shot or piped stdin. `--json` emits `GatewayEvent`s per line for `jq` / automation. REPL slash commands `/paste` (clipboard), `/screenshot` (multi-monitor by default; `primary` / `1` / `2` to narrow), `/image <path>` attach the next message.
-- **Local tool routing** — agent calls `desktop_read_file`, `desktop_write_file`, `desktop_terminal`, `desktop_search_files`, `desktop_patch`, `desktop_clipboard_read/write`, `desktop_screenshot`, `desktop_open_in_editor` — all run on YOUR machine over the same WSS relay. One-time per-URL consent gate; `--no-tools` kill-switch; non-TTY stdin fails closed; agent-proposed patches render as colored diffs with `y/n/e/r` interactive approval.
+- **Local tool routing** — agent calls `desktop_read_file`, `desktop_write_file`, `desktop_terminal`, `desktop_search_files`, `desktop_patch`, `desktop_clipboard_read/write`, `desktop_screenshot`, `desktop_open_in_editor` — all run on YOUR machine over the same WSS relay. One-time per-URL consent gate; `--no-tools` kill-switch; non-TTY stdin fails closed; agent-proposed patches render as colored diffs with `y/n/e/r` interactive approval. Experimental `desktop_computer_*` control tools require `--experimental-computer-use` / `HERMES_RELAY_EXPERIMENTAL_COMPUTER_USE=1`, task-scoped grants, and visible local approval.
 - **Daemon mode** — `hermes-relay daemon` runs the tool router headless so the agent can reach you even when no shell is open. JSON-line lifecycle logs by default, auto-human on TTY. Fails closed on missing consent.
 - **Self-update** — `hermes-relay update` polls GitHub Releases (SemVer-max picker, prerelease-aware), verifies SHA256, atomic-swaps the binary on POSIX (running daemon keeps inode), cooperative `.new.exe` swap on Windows.
 - **Multi-endpoint pairing + reconnect-on-drop + TOFU cert pinning** — same as the Android app. One QR carries LAN + Tailscale + public; client races candidates in priority order, re-probes on every network change.

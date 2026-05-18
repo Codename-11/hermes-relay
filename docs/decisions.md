@@ -1219,3 +1219,80 @@ Contribute a `gateway/rich_cards.py` helper upstream + Discord/Slack adapter tra
 - `app/src/main/kotlin/com/hermesandroid/relay/network/handlers/ChatHandler.kt` (+`scanForCardMarkers` / `tryDispatchCardMarker` / `finalizeCardMarkers` / `extractCardsFromContent` / `recordCardDispatch` / `markCardDispatchesSynced`)
 - `app/src/main/kotlin/com/hermesandroid/relay/ui/components/MessageBubble.kt` (+`onCardAction` plumb-through)
 - `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/ChatViewModel.kt` (+`dispatchCardAction`, sync splice in `startStream`)
+
+---
+
+## ADR 27 — Desktop control native shell uses Tauri v2 with CLI fallback
+
+**Status:** Accepted (desktop-control enhanced plan, 2026-05-16).
+
+**Context.** The desktop computer-use surface needs more than a terminal prompt once it graduates from experimental CLI use. Safe control needs a tray icon, always-visible observing/control chip, local grant prompt, task log, settings, and an emergency stop that is available even when no terminal window is open. At the same time, the existing TypeScript CLI and daemon are already the durable thin-client surface and must keep working for operators, headless boxes, and scripting.
+
+**Decision.** Use Tauri v2 (Rust + static web UI) for the native tray/overlay shell. Keep the core desktop tool router, pairing state, grant model, and policy logic in the existing TypeScript CLI first. Rust stays thin and native-specific: tray, overlay window, hotkey, installer/sidecar integration, and later OS-level screenshot/input helpers.
+
+**Overlay UX refinement (2026-05-17).** The desktop overlay should behave like a compact Conjure-style pill, not a mini management card. It is a small transparent always-on-top status window anchored bottom-center to Tauri's monitor work area so it sits just above the taskbar; the full management UI remains in the tray/dashboard. The pill dynamically sizes to its current label (`Observing`, `Paused`, `Offline`, or `Unavailable`) instead of reserving a fixed dashboard-width capsule. On Windows the tray shell reasserts topmost with `SetWindowPos(HWND_TOPMOST | SWP_NOACTIVATE)`, strips native chrome styles, and marks the overlay click-through so the pill cannot steal focus or expose a titlebar.
+
+**UX tiers.**
+- **Easy:** pair once, tray runs, compact visible pill shows Observing / Control Active / Paused / Disconnected, and pause or emergency stop is always reachable from the tray, dashboard, or hotkey.
+- **Standard:** full tray menu with Devices, Revoke, Task Log, Settings, grant history, and a settings panel.
+- **Advanced:** CLI + `hermes-relay daemon` + JSON policy and scripts remain first-class forever.
+
+**Seamless pairing requirement.** The Tauri app must reuse the current `hermes-relay pair` flow, QR/code payloads, `~/.hermes/remote-sessions.json`, and relay `/sessions` device management. A successful Easy-tier pair should leave the tray connected, the overlay chip visible, and Devices / Revoke / Task Log / Settings / Emergency Stop reachable from the tray. Local revoke must also clear active computer-use grants.
+
+**Tray click behavior (2026-05-17).** Tauri's tray menu can appear on left click by default, so the app disables left-click menu display and reserves left click for opening the dashboard. The native management menu remains on right click and through explicit menu events, preventing a single tray click from trying to show both a menu and the main window.
+
+**Control refresh wiring (2026-05-17).** Dashboard controls, tray menu actions, and overlay status all read the same Rust daemon state. Control commands must release the daemon mutex before asking for the resulting daemon status; otherwise pause/stop can deadlock by trying to lock the same mutex twice. Mutating commands emit `dashboard://refresh`, the dashboard guards against stale overlapping refreshes, and the overlay listens for the same event in addition to its fallback poll.
+
+**Desktop GUI refinement (2026-05-17).** The desktop dashboard should reference the Android app's visual discipline and shared Hermes branding, not copy its mobile navigation. The Tauri shell uses the Chevron Compass logo from the repo brand assets, keeps the sidebar navigation-only, and places Start / Pause / Emergency Stop in a sticky topbar so critical daemon controls stay reachable at short window heights. The Android reference remains useful for graphite surfaces, dense operational spacing, short labels, and visible state-first controls.
+
+**Default blocklist baseline.** Computer-use policy starts with password managers, credential vaults, MFA/passkey/OS credential prompts, banking/brokerage/payment apps, crypto wallets, OS security/admin settings, and private-key or token surfaces blocked by default. Advanced users can narrow or extend that baseline through `~/.hermes/desktop-control.json`; the Easy tier keeps it on.
+
+**Why Tauri.**
+- Small binaries and system webview match the thin-client posture better than Electron.
+- Tray, always-on-top windows, native dialogs, hotkeys, signing, and Rust interop cover the missing safety UX.
+- React keeps UI implementation close to the existing TypeScript stack.
+
+**Alternatives rejected.**
+- Electron is too heavy for a background "desktop hand" helper.
+- Pure WinUI3 / SwiftUI / platform-native stacks increase maintenance cost across platforms.
+- CLI-only plus node tray does not give a strong visible overlay and grant-prompt story.
+
+**Compatibility rule.** Phases 1-4 of desktop computer-use must keep working fully in the CLI and daemon with no Tauri dependency. The Tauri app is the Windows Easy/Standard wrapper and primary installer surface, while `hermes-relay daemon` remains the durable advanced/headless backend. The tray installer bundles the compiled CLI as a Tauri sidecar so normal pair/daemon/devices/task-log workflows do not depend on a separate PATH install. When the tray starts the daemon, it also provides a local grant bridge so assist/control requests can open the Grant Requests view for visible approval instead of silently granting host input.
+
+**Key Files:**
+- `docs/plans/desktop-control-computer-use-enhanced.md`
+- `desktop/src/`
+- `desktop/tray/`
+- `desktop/README.md`
+- `plugin/tools/desktop_tool.py`
+
+---
+
+## ADR 28 - Desktop Android pairing parity and one active tray relay
+
+**Status:** Accepted for next desktop tray UI pass (2026-05-17).
+
+**Context.** The first Windows tray pass made the desktop surface testable: real tray icon, click-through overlay pill, sticky daemon controls, dashboard refresh wiring, and shared Hermes branding. The next gap is product parity with the Android pairing/settings experience. Android already has the right model: pairing is a first-class route, endpoint candidates make LAN/Tailscale/public routes visible, auth failures separate API health from relay session auth, and advanced settings are tucked behind expandable sections instead of crowding the default screen.
+
+**Decision.** Track the next desktop implementation in `docs/plans/2026-05-17-desktop-android-pairing-parity.md`. The Windows Tauri tray app should default to dark mode, present one active paired relay instance for now, support manual pairing and pasted pairing invites, expose LAN/Tailscale/manual endpoint choices when available, and require explicit confirmation before replacing the active desktop pairing. Visible "Tier" settings and "Easy tier" copy should be removed from the tray UI; CLI/daemon/JSON configuration remain the advanced operator path without being represented as a user-selectable app tier.
+
+**Terminal and diagnostics refinement (2026-05-17).** After pairing parity, the tray dashboard adds task-based Terminal / CLI and Diagnostics routes. Terminal / CLI opens the remote TUI in a real terminal and converts the active relay into copyable standard `hermes-relay shell`, `chat`, `daemon`, `status`, `tools`, and `doctor` commands so users can move between GUI and terminal workflows without hunting through docs. The CLI resolver reads the tray-selected active relay from `~/.hermes/desktop-control.json`, so copied commands omit `--remote` after pairing and reserve it for explicit one-off overrides. If the app is only using its bundled sidecar, the tab nudges the user to install the CLI shim instead of copying full sidecar paths into normal workflows. Diagnostics keeps local install/session checks visible in the tray and runs `hermes-relay doctor --json` through the bundled sidecar, preserving the CLI as the source of truth for install triage.
+
+**Pairing invite URL and desktop consent repair (2026-05-17).** Host-side pairing now prints a paste-friendly `hermes-relay://pair?payload=...` invite URL alongside the QR payload, and `/pairing/mint` returns the same value as `pairing_url`. Desktop accepts raw JSON, base64 JSON, or the invite URL in the Paste invite flow. The desktop CLI now correctly uses `relay.code` as the one-shot relay pairing code; the top-level `key` remains the Hermes API bearer for direct HTTP chat. The tray dashboard also exposes an explicit active-relay desktop-tool consent grant/revoke control so users do not need to drop into a TTY just to allow the daemon.
+
+**Optional `hermes` alias (2026-05-17).** The desktop CLI installer no longer creates `hermes` / `hermes.cmd` by default. That alias is useful for Orca and upstream-style `hermes` workflows because it opens the paired remote Hermes session, but it can shadow a real local hermes-agent install. Alias management is therefore explicit through `desktop/scripts/hermes-alias.ps1` and `desktop/scripts/hermes-alias.sh`; both scripts enable, disable, or report status and only touch aliases that point to `hermes-relay`.
+
+**Implementation constraints.**
+- Do not change Android as part of the desktop pass.
+- Keep CLI and daemon behavior intact.
+- Keep Rust config deserialization backward-compatible with existing `tier` values while removing the visible selector from the tray UI.
+- Keep multiple stored sessions compatible with `~/.hermes/remote-sessions.json`, but present exactly one active desktop relay in the tray UI until multi-instance desktop UX is explicitly approved.
+- Use a collapsed Advanced section for low-frequency controls such as computer-use flag, emergency hotkey, overlay tuning, raw relay URL override, and blocklist.
+
+**Key Files:**
+- `docs/plans/2026-05-17-desktop-android-pairing-parity.md`
+- `docs/android-ui-design-reference.md`
+- `desktop/tray/src-tauri/src/main.rs`
+- `desktop/tray/ui/index.html`
+- `desktop/tray/ui/app.js`
+- `desktop/tray/ui/styles.css`

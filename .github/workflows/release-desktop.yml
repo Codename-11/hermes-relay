@@ -1,4 +1,4 @@
-name: Release desktop CLI
+name: Release desktop
 
 on:
   push:
@@ -8,8 +8,8 @@ permissions:
   contents: write
 
 jobs:
-  build-binaries:
-    name: Build cross-platform binaries via Bun compile
+  build-cli-binaries:
+    name: Build cross-platform CLI binaries via Bun compile
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -44,10 +44,8 @@ jobs:
       - name: Prepare binary output dir
         run: mkdir -p dist/bin
 
-      # NOTE: delegate to the package.json scripts so there's a single source
-      # of truth for Bun compile flags. Previously these steps inlined their
-      # own flag list, which silently diverged from `npm run build:bin:*` and
-      # made the "drop --bytecode" fix ineffective on desktop-v0.3.0-alpha.2.
+      # Keep the package.json scripts as the single source of truth for Bun
+      # compile flags so release and local smoke builds cannot diverge.
       - name: Build Windows x64
         run: npm run build:bin:win
 
@@ -66,20 +64,13 @@ jobs:
           for f in dist/bin/hermes-relay-*; do
             sz=$(stat -c%s "$f")
             mb=$(( sz / 1024 / 1024 ))
-            echo "  $f — ${mb} MB"
+            echo "  $f - ${mb} MB"
             if [ "$sz" -gt 157286400 ]; then
-              echo "FAIL: $f exceeds 150 MB — Bun likely shipped a debug build or we added a large dep."
+              echo "FAIL: $f exceeds 150 MB - Bun likely shipped a debug build or we added a large dep."
               exit 1
             fi
           done
 
-      # Smoke-test the Linux binary (runner platform) before publishing.
-      # Catches the two failure modes we've burned alpha tags on:
-      #   - startup segfault (exit != 0, no output)
-      #   - silent exit 0 with zero output (main() never invoked)
-      # We can only smoke the Linux target without a cross-platform matrix;
-      # Windows/macOS smoke would need their own runners — tracked as an
-      # alpha.5+ hardening item.
       - name: Smoke-test Linux binary
         run: |
           set -e
@@ -92,14 +83,106 @@ jobs:
               echo "Raw output was: [$out]"
               exit 1
             fi
-            echo "  smoke OK: $cmd → $(echo "$out" | head -1)"
+            echo "  smoke OK: $cmd -> $(echo "$out" | head -1)"
           done
 
-      - name: Generate SHA256SUMS
-        working-directory: desktop/dist/bin
+      - name: Upload CLI release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-cli-release
+          path: |
+            desktop/dist/bin/hermes-relay-win-x64.exe
+            desktop/dist/bin/hermes-relay-linux-x64
+            desktop/dist/bin/hermes-relay-darwin-x64
+            desktop/dist/bin/hermes-relay-darwin-arm64
+          retention-days: 7
+
+  build-windows-tray-installer:
+    name: Build Windows tray installer
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.x'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Type-check
+        run: npm run type-check
+
+      - name: Build dist/ (tsc)
+        run: npm run build
+
+      - name: Test tray shell
+        run: npm run tray:test
+
+      - name: Build tray installer
+        run: npm run tray:build
+
+      - name: Normalize installer asset name
+        shell: pwsh
         run: |
-          sha256sum hermes-relay-* > SHA256SUMS.txt
-          cat SHA256SUMS.txt
+          New-Item -ItemType Directory -Force -Path dist/tray | Out-Null
+          $installer = Get-ChildItem -Path tray/src-tauri/target/release/bundle/nsis -Filter '*_x64-setup.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'NSIS installer was not produced' }
+          Copy-Item -Force $installer.FullName dist/tray/hermes-relay-desktop-windows-x64-setup.exe
+
+      - name: Smoke-test tray exe launch
+        shell: pwsh
+        run: |
+          $home = Join-Path $env:RUNNER_TEMP 'hermes-tray-smoke-home'
+          New-Item -ItemType Directory -Force -Path $home | Out-Null
+          $env:USERPROFILE = $home
+          $env:HOME = $home
+          $proc = Start-Process -FilePath tray/src-tauri/target/release/hermes-relay-desktop.exe -WindowStyle Hidden -PassThru
+          Start-Sleep -Seconds 5
+          if ($proc.HasExited) { throw "tray app exited early with code $($proc.ExitCode)" }
+          Stop-Process -Id $proc.Id -Force
+          Write-Host "tray launch smoke OK pid=$($proc.Id)"
+
+      - name: Upload Windows tray release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows-tray-release
+          path: desktop/dist/tray/hermes-relay-desktop-windows-x64-setup.exe
+          retention-days: 7
+
+  publish-release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs:
+      - build-cli-binaries
+      - build-windows-tray-installer
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Generate SHA256SUMS
+        run: |
+          set -e
+          find release-assets -type f ! -name SHA256SUMS.txt -print0 \
+            | sort -z \
+            | xargs -0 sha256sum \
+            | sed -E 's#release-assets/[^/]+/##' > release-assets/SHA256SUMS.txt
+          cat release-assets/SHA256SUMS.txt
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
@@ -110,18 +193,23 @@ jobs:
           prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
           fail_on_unmatched_files: true
           body: |
-            # Hermes-Relay Desktop CLI — ${{ github.ref_name }}
+            # Hermes-Relay Desktop - ${{ github.ref_name }}
 
-            **Experimental phase.** Binaries are unsigned — Windows SmartScreen and macOS Gatekeeper will warn on first launch. See the install scripts for the `Unblock-File` / `xattr -dr` escape hatches.
+            **Experimental phase.** Assets are unsigned - Windows SmartScreen and macOS Gatekeeper will warn on first launch. Windows now ships a tray installer as the primary desktop surface; CLI binaries remain available for terminal/headless use and for macOS/Linux.
 
             ## Install
 
-            **Windows (PowerShell):**
+            **Windows tray app (PowerShell):**
             ```powershell
             irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex
             ```
 
-            **macOS / Linux:**
+            **Windows CLI only:**
+            ```powershell
+            $env:HERMES_RELAY_INSTALL_SURFACE='cli'; irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex
+            ```
+
+            **macOS / Linux CLI:**
             ```bash
             curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.sh | sh
             ```
@@ -130,17 +218,20 @@ jobs:
 
             ## Verify
 
-            ```
+            ```text
             hermes-relay --version
             hermes-relay pair --remote ws://<host>:8767
             hermes-relay shell
             ```
 
-            See [Desktop CLI docs](https://codename-11.github.io/hermes-relay/desktop/) for full usage.
+            Open **Hermes Relay Desktop** from the Windows Start menu for tray pairing, devices, task log, settings, pause, and emergency stop.
+
+            See [Desktop docs](https://codename-11.github.io/hermes-relay/desktop/) for full usage.
 
           files: |
-            desktop/dist/bin/hermes-relay-win-x64.exe
-            desktop/dist/bin/hermes-relay-linux-x64
-            desktop/dist/bin/hermes-relay-darwin-x64
-            desktop/dist/bin/hermes-relay-darwin-arm64
-            desktop/dist/bin/SHA256SUMS.txt
+            release-assets/desktop-cli-release/hermes-relay-win-x64.exe
+            release-assets/desktop-cli-release/hermes-relay-linux-x64
+            release-assets/desktop-cli-release/hermes-relay-darwin-x64
+            release-assets/desktop-cli-release/hermes-relay-darwin-arm64
+            release-assets/desktop-windows-tray-release/hermes-relay-desktop-windows-x64-setup.exe
+            release-assets/SHA256SUMS.txt

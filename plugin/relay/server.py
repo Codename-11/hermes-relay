@@ -343,7 +343,7 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         - ttl_seconds: <int>            Session TTL
         - transport_hint: "wss"|"ws"    Forwarded verbatim
         - grants: {...}                 Channel TTL map
-      → 200 {ok, code, qr_payload, expires_at, host, port, tls, relay_url}
+      → 200 {ok, code, qr_payload, pairing_url, expires_at, host, port, tls, relay_url}
       → 400 invalid JSON or API host can't be resolved
       → 403 non-loopback caller
     """
@@ -362,6 +362,7 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
     server: RelayServer = request.app["server"]
 
     from ..pair import (
+        build_pairing_invite_url,
         build_pairing_qr_payload,
         build_relay_pairing_block,
         normalize_endpoint_candidates,
@@ -497,6 +498,7 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         sign=True,
         endpoints=endpoints_list or None,
     )
+    pairing_url = build_pairing_invite_url(qr_payload)
 
     # This is the pairing-code expiry (how long the user has to scan),
     # not the future session's TTL. The pairing-code hard-cap is
@@ -531,6 +533,7 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         "ok": True,
         "code": code,
         "qr_payload": qr_payload,
+        "pairing_url": pairing_url,
         "expires_at": expires_at,
         "host": api_host,
         "port": api_port,

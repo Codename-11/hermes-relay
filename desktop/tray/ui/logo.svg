@@ -1,0 +1,24 @@
+<!-- Hermes-Relay - Chevron Compass logo (desktop tray copy) -->
+<svg id="logo-dark" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Hermes Relay">
+  <defs>
+    <linearGradient id="foreGradDark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#9B6BF0"/>
+      <stop offset="100%" stop-color="#6B35E8"/>
+    </linearGradient>
+    <linearGradient id="ghostGradDark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6B35E8" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#9B6BF0" stop-opacity="0.05"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="#1A1A2E" rx="112"/>
+  <g transform="translate(256, 256) scale(1.35) translate(-256, -256)" stroke="url(#ghostGradDark)" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M 112 188 L 192 268 L 320 268 L 400 188"/>
+    <path d="M 112 116 L 192 196"/>
+    <path d="M 400 116 L 320 196"/>
+  </g>
+  <g stroke="url(#foreGradDark)" stroke-width="36" stroke-linecap="round" stroke-linejoin="round" fill="none" filter="drop-shadow(0 12px 16px rgba(0,0,0,0.6))">
+    <path d="M 256 192 L 320 256 L 256 320 L 192 256 Z"/>
+    <path d="M 128 192 L 256 64 L 384 192"/>
+    <path d="M 128 320 L 256 448 L 384 320"/>
+  </g>
+</svg>

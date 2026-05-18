@@ -18,7 +18,12 @@
 
 import type { EndpointCandidate } from './endpoint.js'
 import { promptForPairingCode } from './pairing.js'
-import { decodePairingPayload, payloadToCandidates, probeCandidatesByPriority } from './pairingQr.js'
+import {
+  decodePairingPayload,
+  payloadToRelayCandidates,
+  probeCandidatesByPriority,
+  relayPairingCodeFromPayload
+} from './pairingQr.js'
 import { getSession } from './remoteSessions.js'
 
 export interface Credentials {
@@ -62,10 +67,10 @@ export async function resolveCredentials(
   const pairQr = opts.argPairQr?.trim() || envPairQr
   if (pairQr) {
     const payload = decodePairingPayload(pairQr)
-    const candidates = payloadToCandidates(payload)
+    const candidates = payloadToRelayCandidates(payload)
     const winner = await probeCandidatesByPriority(candidates)
     return {
-      pairingCode: payload.key.toUpperCase(),
+      pairingCode: relayPairingCodeFromPayload(payload),
       resolvedEndpoint: winner,
     }
   }

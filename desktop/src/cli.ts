@@ -56,6 +56,7 @@ const BOOLEAN_FLAGS = new Set([
   'allow-tools',
   'allow-computer-use',
   'experimental-computer-use',
+  'no-computer-use',
   'check',
   'yes',
   'new',
@@ -151,11 +152,12 @@ Usage:
   hermes-relay --version           Print version and exit
 
 Flags:
-  --remote <url>         Relay WSS URL                 (env: HERMES_RELAY_URL)
+  --remote <url>         Override saved active relay   (env: HERMES_RELAY_URL)
   --code <code>          Pairing code (6 chars)        (env: HERMES_RELAY_CODE)
   --token <token>        Session token (skips pairing) (env: HERMES_RELAY_TOKEN)
-  --pair-qr <payload>    Full QR payload (multi-endpoint pairing, ADR 24;
-                         probes endpoints and picks highest-priority reachable)
+  --pair-qr <payload>    Full QR payload or hermes-relay://pair invite URL
+                         (multi-endpoint pairing, ADR 24; probes endpoints
+                         and picks highest-priority reachable)
                                                        (env: HERMES_RELAY_PAIR_QR)
   --session <id>         chat: resume session (legacy alias for --conversation);
                          shell: tmux session name (distinct — tmux, not hermes)
@@ -165,9 +167,12 @@ Flags:
   --raw                  shell: skip auto-exec; drop into bare tmux/bash
   --watch-editor         shell/chat: poll tmux/$VSCODE and send active_editor hints every 5s
   --no-tools             chat/shell: disable local tool handlers (fs, exec, search)
-                         Computer-use tools are experimental but ride with normal
-                         desktop tools; host input still requires task grant plus
-                         a visible local yes/no grant approval prompt.
+  --experimental-computer-use
+                         chat/shell/daemon: advertise experimental desktop_computer_*
+                         tools after normal desktop-tool consent. Host input still
+                         requires task grant plus visible local approval.
+                         Env: HERMES_RELAY_EXPERIMENTAL_COMPUTER_USE=1
+  --no-computer-use      Disable computer-use advertisement even if env enabled.
   --grant-tools          pair: prompt for desktop-tool consent during pairing (TTY required;
                          lets you go straight from \`pair\` to \`daemon\` with no \`shell\` round-trip)
   --auto-grant-tools     pair: stamp tool consent without prompting — explicit non-interactive
@@ -188,11 +193,11 @@ Examples:
   hermes-relay pair --remote ws://172.16.24.250:8767
   # ...prompts for code, stores a token in ~/.hermes/remote-sessions.json
 
-  # REPL — reuses the stored token
-  hermes-relay --remote ws://172.16.24.250:8767
+  # REPL — reuses the tray-selected active relay or stored token
+  hermes-relay
 
   # One-shot
-  hermes-relay "what files are in ~/.hermes?" --remote ws://172.16.24.250:8767
+  hermes-relay "what files are in ~/.hermes?"
 
   # Pipe JSON events for scripting
   hermes-relay --json "summarize the last commit" | jq -c '.type'
@@ -201,15 +206,16 @@ Examples:
   hermes-relay tools --verbose
 
   # Run the tool router headless so the agent can reach you without an open shell
-  hermes-relay daemon --remote ws://172.16.24.250:8767
+  hermes-relay daemon
   # ...writes JSON-line lifecycle events to stderr; redirect or pipe to jq
 
   # Two-command bring-up: pair with consent, then run headless. No \`shell\` round-trip.
   hermes-relay pair   --remote ws://172.16.24.250:8767 --grant-tools
-  hermes-relay daemon --remote ws://172.16.24.250:8767
+  hermes-relay daemon
 
 Config files:
   ~/.hermes/remote-sessions.json   session tokens (mode 0600)
+  ~/.hermes/desktop-control.json   tray-selected active relay
 `
 
 export async function main(argv = process.argv): Promise<number> {
