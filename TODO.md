@@ -52,7 +52,7 @@ to tool state, safety prompts, or the current task.
   tool call is proxied back through relay/Hermes instead of bypassing Hermes.
   The prototype must prove profile isolation, chat transcript parity, tool
   timeline rendering, permission prompts, and Android bridge safety before it
-  can graduate from experimental.
+  can graduate from experimental. Plan: `docs/plans/2026-05-19-realtime-hermes-voice-agent.md`.
 
 ---
 

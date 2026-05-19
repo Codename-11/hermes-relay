@@ -6,7 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-19
+
 ### Added
+
+- **Profile-aware Hermes sessions and voice settings.** Android now treats Hermes profiles as first-class connection state: profile selection resolves against the active server, profile-specific chat sessions are persisted separately, default/Victor display is normalized, and per-profile voice provider/model/voice settings can be read and saved through relay-owned endpoints without depending on Hermes config mutations.
+
+- **Realtime voice playground and provider lab.** The relay now includes standalone OpenAI/xAI/ElevenLabs-oriented voice lab tooling, provider adapters, provider option discovery routes, realtime playground routes, and generated WAV/JSONL artifact ignores for iterative voice quality testing outside production Hermes routes.
+
+- **Streaming voice output routes.** Relay-owned `/voice/output/*`, realtime playground, profile voice config, and provider option endpoints support provider-neutral TTS rendering, dynamic voice/model option surfaces, and profile-scoped voice configuration for Android.
+
+- **Experimental Android realtime voice overlay.** Android adds a richer voice overlay with tap-to-talk, continuous mode controls, optional system overlay mode, compact mode, realtime waveform visualization, playback controls, and an experimental badge around barge-in instead of treating all voice as experimental.
+
+- **Experimental realtime Hermes voice-agent plan.** `docs/plans/2026-05-19-realtime-hermes-voice-agent.md` records the next architecture step: provider-native realtime speech with Hermes-brokered profiles, sessions, tools, confirmations, and transcript mirroring. The stable Hermes chat + voice-output path remains the default.
+
+- **Desktop tray pairing and consent flow.** The desktop surface gained Tauri tray pairing, QR/consent affordances, sidecar preparation, and computer-action approval polish so desktop and Android pairing flows are closer to parity.
+
+- **Shared relay/Quest scaffolding.** Experimental `relay-core`, `relay-ui`, and Quest prototype modules were added for shared pairing, terminal, transport, voice, and morphing-sphere work without changing the Android phone app's default route.
 
 - **Desktop Chat tab with first-run route setup.** The Tauri tray dashboard now has a Chat tab inspired by the Hermes Desktop chat-first flow. It streams through the saved paired relay when `~/.hermes/remote-sessions.json` has an active session, or through a direct Hermes gateway/API URL when relay pairing is not available. The tab supports stop, retry, new chat, clear, current-session transcript history, and a setup panel that offers relay pairing or direct WebAPI configuration without saving the optional API key.
 
@@ -24,6 +40,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- **Stable voice is now the main Android voice path.** Voice mode defaults to Hermes chat streaming plus relay-managed voice output, with realtime-provider work kept as a standalone lab/testbench and future experimental mode instead of replacing Hermes session/tool authority.
+
+- **Realtime voice output uses balanced coalescing.** Normal assistant speech is batched into more natural chunks while tool/status speech stays immediate, reducing provider render resets and tone/volume variation during voice replies.
+
+- **Voice settings are profile-scoped and option-aware.** Android can fetch provider/model/voice options from relay endpoints, show profile context in voice settings, save voice choices per Hermes profile, and expose advanced manual entry when provider metadata is incomplete.
+
+- **Voice UI state is synchronized with chat state.** Voice mode now reuses more of the chat session/profile state, preserves live transcript and tool timeline visibility, and improves overlay exit/minimize behavior for hands-free use.
+
 - **Release versioning is split by surface.** Android app releases remain on `v*` and use `gradle/libs.versions.toml`; Relay releases use `relay-v*` and keep `pyproject.toml`, `plugin/relay/__init__.py`, `plugin/plugin.yaml`, and dashboard plugin metadata in lockstep; desktop remains on `desktop-v*` and `desktop/package.json`. `scripts/bump-version.sh` is now a backward-compatible Android alias, with new explicit `scripts/bump-android-version.sh` and `scripts/bump-relay-version.sh` helpers.
 
 - **Upstream voice imports are isolated.** Relay voice routes now call upstream Hermes STT/TTS helpers through `plugin.relay.upstream_voice`, keeping private upstream voice helper imports in one adapter module until Hermes exposes a stable HTTP voice API.
@@ -31,6 +55,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **CI paths and release actions tightened.** Relay CI now watches Relay-owned paths instead of all `plugin/**`, validates Relay version metadata during syntax checks, uses explicit timeouts, and runs the focused route/auth/session test slice instead of broad test discovery. Release workflows now use `softprops/action-gh-release@v3`.
 
 ### Fixed
+
+- **Profile switching no longer silently falls back to the wrong local API host.** Profile API URL resolution now handles per-profile Hermes API servers, default/Victor compatibility, and relay-managed profile metadata so selecting a profile does not try to create sessions against `localhost` from the phone.
+
+- **Non-default profile names remain visible in chat.** Agent display metadata is normalized so selected profile names persist above finalized assistant messages instead of disappearing back to the default label after stream completion.
+
+- **Voice waveform and playback state are better aligned to real audio.** The output waveform waits for audio playback, handles processing separately, and avoids returning to the microphone too early at the end of an assistant response.
+
+- **Continuous voice mode no longer starts a session just because auto mode is enabled.** Auto/continuous remains a preference, while explicit voice start/stop controls decide when a voice session is active.
 
 - **Android voice mode no longer 403s when paired over plain-LAN `ws://` with a Hermes API key saved.** Symptom: tap the mic in Voice mode → red banner *"Voice access expired — extend or re-pair with voice grants"* even though the Connections card shows API Server / Relay / Session all green. Root cause: `RelayVoiceClient` preferred the saved Hermes API key over the paired Relay session token; the relay's `_request_is_secure_enough_for_api_bearer` correctly rejects API-bearer auth on `/voice/*` over plaintext outside loopback/Tailscale, returning a generic 403 that the client flattened to "expired." Fix: invert bearer precedence so paired devices use the session token first (no transport guard — it's the credential the QR/pair handshake already established), with the API key as fallback for chat+voice-only installs that never paired. `describeHttpError` now also reads the server's text/plain response body when present so future 403s show the relay's actual reason instead of a one-size-fits-all string.
 
@@ -1097,6 +1129,7 @@ MVP release — native Android companion app for Hermes agent with direct API ch
 - **Dev scripts** — build, install, run, test, relay via scripts/dev.bat
 - **ProGuard rules** — okhttp-sse, markdown renderer, intellij-markdown parser
 
-[Unreleased]: https://github.com/Codename-11/hermes-relay/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Codename-11/hermes-relay/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/Codename-11/hermes-relay/compare/v0.6.1...v0.7.0
 [0.1.0]: https://github.com/Codename-11/hermes-relay/compare/v0.1.0-beta...v0.1.0
 [0.1.0-beta]: https://github.com/Codename-11/hermes-relay/releases/tag/v0.1.0-beta

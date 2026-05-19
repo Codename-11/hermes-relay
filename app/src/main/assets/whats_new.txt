@@ -1,16 +1,17 @@
-v0.6.1 - Voice auth, route recovery, and media bridge
+v0.7.0 - Profiles, voice settings, and realtime voice polish
 
-Voice and pairing
-* Voice mode can now use your saved Hermes API key directly.
-* Relay sessions recover better after server restarts and updates.
-* LAN/Tailscale pairing and route fallback are more reliable.
+Profiles
+* Profile switching now keeps profile-specific chat/session state separate.
+* Default/Victor display is normalized so the selected agent name stays visible.
+* Profile API URL handling is safer for remote Hermes profile servers.
 
-Android bridge
-* Added share-sheet support for files, screenshots, relay media, and attachments.
-* Added MMS compose handoff with attachments.
-* SMS now reports clearer sent, blocked, timeout, and failed states.
-* Return-to-Hermes and bridge route docs now match the actual relay API.
+Voice
+* Voice settings can show and save provider/model/voice choices per profile.
+* Voice output uses balanced coalescing for smoother replies.
+* Waveform and playback state better follow real audio output.
+* Continuous mode no longer starts a session just because auto mode is enabled.
+* Barge-in is now clearly marked experimental with known self-capture caveats.
 
-Update note
-* Same-flavor installs should keep pairing. Re-pair only after uninstalling data,
-  switching app flavor, revoking the device, or clearing the server session store.
+Relay
+* Added relay-owned profile voice config, provider options, streaming voice output,
+  and realtime voice playground endpoints for OpenAI/xAI/ElevenLabs testing.
