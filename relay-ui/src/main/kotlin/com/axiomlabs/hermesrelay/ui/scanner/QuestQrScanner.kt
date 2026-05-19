@@ -113,6 +113,7 @@ fun QuestQrScanner(
                             .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
                             .build()
                     )
+                    @androidx.annotation.OptIn(androidx.camera.core.ExperimentalGetImage::class)
                     val imageAnalysis = ImageAnalysis.Builder()
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                         .build()
