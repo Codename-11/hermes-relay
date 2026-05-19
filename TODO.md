@@ -6,6 +6,56 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Hands-free agentic voice backlog
+
+Goal: make Hermes usable for hands-free work without leaving the operator blind
+to tool state, safety prompts, or the current task.
+
+- **Waveform output-start sync** — current input waveform timing feels good, but
+  the agent-output waveform can unfold and begin movement before audible speech
+  starts. Split "preparing audio" from "speaking audio" in the visual layer, or
+  gate the unfolded Speaking waveform on the first real playback frame/audio
+  amplitude. Processing can stay as the folded circular spinner until output is
+  actually audible.
+- **Voice command layer** — reserve local commands that bypass normal agent
+  routing: "pause", "resume", "stop talking", "cancel", "repeat that", "open
+  overlay", "return to Hermes", and "new chat". These should work while the
+  agent is thinking, speaking, or using tools.
+- **Spoken tool progress** — when Hermes uses tools, voice mode should speak
+  short status updates such as "I'm checking the relay logs" or "I found an
+  error" without waiting for final assistant text. Long tool calls should emit
+  periodic, low-noise progress updates.
+- **Realtime tool timeline parity** — the voice overlay should render the same
+  live thinking blocks, streaming assistant text, and tool call progress as the
+  normal chat surface without requiring exit/reload.
+- **Hands-free confirmation flow** — risky actions need first-class spoken and
+  visual confirmation: "yes", "no", "cancel", "confirm", plus a visible and
+  audible countdown for destructive actions.
+- **Voice session memory/status** — add a compact "where are we?" summary for
+  the current voice task: active objective, last tool result, pending next step,
+  and whether the agent is waiting on the user.
+- **Mode presets** — add presets such as Hands-free, Low latency, Careful tool
+  mode, and Quiet/visual-only. Hands-free should favor Continuous listening,
+  spoken tool progress, confirmations, and overlay availability.
+- **Barge-in hardening** — keep barge-in experimental until echo/self-recording
+  is solved. The target path is proper AEC, playback-ducking, and a rule that
+  output audio can never become a user turn.
+- **Audio quality guardrails** — normalize output volume across realtime and
+  fallback TTS providers, keep pronunciation hints/profile voice tuning, and
+  measure provider-specific delay, chunk gaps, and tail clipping.
+- **Voice engine selector** — add a first-class setting for the voice loop:
+  `Hermes chat + voice output` as the stable default, and `Realtime agent` as
+  an experimental option once provider sessions can preserve Hermes profile,
+  memory, transcript, tool, and safety semantics.
+- **Realtime-native Hermes bridge prototype** — spike a secondary mode where
+  OpenAI/xAI realtime speech-to-speech owns the live voice session, but any
+  tool call is proxied back through relay/Hermes instead of bypassing Hermes.
+  The prototype must prove profile isolation, chat transcript parity, tool
+  timeline rendering, permission prompts, and Android bridge safety before it
+  can graduate from experimental.
+
+---
+
 ## Research / open questions
 
 ### Proper Hermes plugin / skill / tool distribution

@@ -80,6 +80,12 @@ data class VoiceUiState(
     val state: VoiceState = VoiceState.Idle,
     /** 0.0-1.0. Drives MorphingSphere pulse + on-screen meter. ~60 FPS. */
     val amplitude: Float = 0f,
+    /**
+     * True only after agent output has produced real playback audio for the
+     * current Speaking turn. The voice UI uses this to keep the waveform in a
+     * processing/spinner shape while TTS/realtime output is still preparing.
+     */
+    val outputAudioActive: Boolean = false,
     /** Last successful user transcript (shown briefly in overlay). */
     val transcribedText: String? = null,
     /** Streaming agent text for the current turn. */
@@ -165,6 +171,10 @@ data class VoiceStats(
     val lastSynthesizedSentence: String = "",
     /** Rolling window of TTS per-sentence latency (last 5). */
     val recentTtsLatenciesMs: List<Long> = emptyList(),
+    /** Number of TTS/realtime render chunks emitted for the current response. */
+    val currentResponseTtsChunks: Int = 0,
+    /** Gap between the previous render finishing and the latest render starting. */
+    val lastTtsChunkGapMs: Long = 0L,
     /** Cumulative TTS bytes received this session. */
     val ttsBytesReceived: Long = 0L,
     /** Number of TTS calls completed this session. */
@@ -242,6 +252,15 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         private const val REALTIME_BARGE_IN_STARTUP_GUARD_MS = 850L
 
         /**
+         * Provider-streamed PCM can still be draining through AudioTrack for a
+         * short moment after the final websocket audio delta arrives. Hold
+         * Continuous-mode auto-resume long enough to avoid cutting the final
+         * syllable when [startListening] stops the player for the next turn.
+         */
+        private const val REALTIME_OUTPUT_RESUME_TAIL_GUARD_MS = 1_100L
+        private const val OUTPUT_AUDIO_ACTIVE_THRESHOLD = 0.012f
+
+        /**
          * Resume watchdog window (B4). After a hard barge-in interrupt, the
          * VoiceViewModel listens for user-speech silence for this many ms
          * before deciding the interrupt was a brief cough / false-positive
@@ -311,6 +330,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // value is a live Flow, so the watchdog snapshots it on entry; changes
     // mid-turn take effect on the next turn.
     private var voicePreferences: VoicePreferencesRepository? = null
+    private var voicePreferencesJob: Job? = null
 
     // === PHASE3-voice-intents: voice→bridge intent routing ===
     // Bridge intent handler — the flavor-selected impl, set in initialize().
@@ -381,6 +401,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var lastObservedMessageId: String? = null
     private var lastObservedContentLength: Int = 0
     private var sentenceBuffer: StringBuilder = StringBuilder()
+    private val realtimeSpeechCoalescer = BalancedRealtimeTtsCoalescer()
     private val brokeredToolSpeechKeys = mutableSetOf<String>()
     private val brokeredToolSpeechCounts = mutableMapOf<String, Int>()
 
@@ -399,6 +420,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var realtimeTtsConsumerJob: Job? = null
     private var amplitudeBridgeJob: Job? = null
     private var currentTurnJob: Job? = null
+    private var continuousResumeJob: Job? = null
+    private var realtimeAmplitudeDecayJob: Job? = null
+    private var continuousLoopArmed: Boolean = false
+    private var lastRealtimeAudioDeltaAtMs: Long = 0L
     // 2026-04-18: silence-based auto-stop watchdog. Runs for the duration
     // of a Listening turn in TapToTalk / Continuous modes when the user has
     // a non-zero `silenceThresholdMs` preference. HoldToTalk never starts
@@ -441,6 +466,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     /** Null = not probed, true = prefer realtime, false = fallback to basic TTS. */
     private var voiceOutputAvailable: Boolean? = null
     private var voiceOutputProfileName: String? = null
+    private var ttsChunksThisResponse: Int = 0
+    private var lastTtsChunkFinishedAtMs: Long = 0L
 
     /**
      * Assistant-message-id that already existed BEFORE the current turn's
@@ -496,6 +523,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var bargeInPreferences: BargeInPreferencesRepository? = null
     private var vadEngineFactory: (() -> VadEngine)? = null
     private var bargeInListenerFactory: ((VadEngine, () -> Int) -> BargeInListener)? = null
+    private var bargeInPreferencesJob: Job? = null
 
     /**
      * Current barge-in settings snapshot. Updated reactively from the
@@ -629,7 +657,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             this.bargeInPreferences = bargeInPreferences
             this.vadEngineFactory = vadEngineFactory
             this.bargeInListenerFactory = bargeInListenerFactory
-            viewModelScope.launch {
+            bargeInPreferencesJob?.cancel()
+            bargeInPreferencesJob = viewModelScope.launch {
                 bargeInPreferences.flow.collect { prefs ->
                     _bargeInPrefs.value = prefs
                     Log.i(
@@ -650,7 +679,18 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         } else if (bargeInPreferences != null || vadEngineFactory != null ||
             bargeInListenerFactory != null
         ) {
+            this.bargeInPreferences = null
+            this.vadEngineFactory = null
+            this.bargeInListenerFactory = null
+            bargeInPreferencesJob?.cancel()
+            bargeInPreferencesJob = null
             Log.w(TAG, "barge-in collaborators only partially wired; disabling barge-in")
+        } else {
+            this.bargeInPreferences = null
+            this.vadEngineFactory = null
+            this.bargeInListenerFactory = null
+            bargeInPreferencesJob?.cancel()
+            bargeInPreferencesJob = null
         }
 
         // 2026-04-17 fix: mirror VoicePreferences.interactionMode into
@@ -664,7 +704,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // `silenceThresholdMs` without re-plumbing it through the UI.
         if (voicePreferences != null) {
             this.voicePreferences = voicePreferences
-            viewModelScope.launch {
+            voicePreferencesJob?.cancel()
+            voicePreferencesJob = viewModelScope.launch {
                 voicePreferences.settings.collect { settings ->
                     val mode = when (settings.interactionMode.lowercase()) {
                         "hold" -> InteractionMode.HoldToTalk
@@ -684,6 +725,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             }
+        } else {
+            this.voicePreferences = null
+            voicePreferencesJob?.cancel()
+            voicePreferencesJob = null
         }
 
         // === PHASE3-voice-intents: voice→bridge intent routing ===
@@ -806,6 +851,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setInteractionMode(mode: InteractionMode) {
+        if (mode != InteractionMode.Continuous) {
+            continuousLoopArmed = false
+            continuousResumeJob?.cancel()
+            continuousResumeJob = null
+        }
         _uiState.update { it.copy(interactionMode = mode) }
     }
 
@@ -814,6 +864,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         if (voiceOutputProfileName == normalized) return
         voiceOutputProfileName = normalized
         voiceOutputAvailable = null
+        resetRealtimeSpeechCoalescer()
     }
 
     // ---------------------------------------------------------------------
@@ -824,9 +875,17 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // Re-probe on each overlay entry so a restarted relay/provider is picked up.
         voiceOutputAvailable = null
         resetBrokeredToolSpeechState()
+        resetRealtimeSpeechCoalescer()
+        continuousLoopArmed = false
+        continuousResumeJob?.cancel()
+        continuousResumeJob = null
+        realtimeAmplitudeDecayJob?.cancel()
+        realtimeAmplitudeDecayJob = null
         // Fire the chime first so the sound lands with the overlay appearing.
         try { sfxPlayer?.playEnter() } catch (_: Exception) { /* ignore */ }
-        _uiState.update { it.copy(voiceMode = true, state = VoiceState.Idle, error = null) }
+        _uiState.update {
+            it.copy(voiceMode = true, state = VoiceState.Idle, outputAudioActive = false, error = null)
+        }
     }
 
     fun exitVoiceMode() {
@@ -874,6 +933,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         currentTurnJob = null
         streamObserverJob?.cancel()
         streamObserverJob = null
+        continuousLoopArmed = false
+        continuousResumeJob?.cancel()
+        continuousResumeJob = null
+        realtimeAmplitudeDecayJob?.cancel()
+        realtimeAmplitudeDecayJob = null
         idleFlushJob?.cancel()
         idleFlushJob = null
         // Drain any queued sentences so the consumer doesn't re-play the
@@ -893,12 +957,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         startTtsConsumer()
         startRealtimeTtsConsumer()
         sentenceBuffer = StringBuilder()
+        resetRealtimeSpeechCoalescer()
         pendingRawDelta = StringBuilder()
         lastObservedMessageId = null
         lastObservedContentLength = 0
         streamComplete = false
         currentTurnPcm = ByteArray(0)
         resetBrokeredToolSpeechState()
+        resetTtsTurnStats()
 
         // Also abort any destructive countdown — leaving voice mode with a
         // queued SMS would execute the action after the overlay closed,
@@ -909,6 +975,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 voiceMode = false,
                 state = VoiceState.Idle,
                 amplitude = 0f,
+                outputAudioActive = false,
                 transcribedText = null,
                 responseText = "",
                 error = null,
@@ -928,6 +995,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         if (_uiState.value.state == VoiceState.Listening) return
+        continuousResumeJob?.cancel()
+        continuousResumeJob = null
+        continuousLoopArmed = _uiState.value.interactionMode == InteractionMode.Continuous
+        lastRealtimeAudioDeltaAtMs = 0L
+        realtimeAmplitudeDecayJob?.cancel()
+        realtimeAmplitudeDecayJob = null
 
         // B4: user manually started a turn → tear down the barge-in
         // listener and cancel any pending resume. Normal "tap mic to
@@ -946,6 +1019,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update {
                 it.copy(
                     state = VoiceState.Listening,
+                    outputAudioActive = false,
                     error = null,
                     responseText = "",
                     // v0.4.1 — fresh turn, drop any stale JIT permission chip
@@ -987,6 +1061,34 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         currentTurnJob?.cancel()
         currentTurnJob = viewModelScope.launch {
             processVoiceInput(file, inputPcm, inputSampleRate)
+        }
+    }
+
+    /**
+     * Pause the Continuous-mode loop without changing the selected mode or
+     * leaving voice mode. The next mic tap re-arms Auto and starts a fresh
+     * listening turn; until then, idle queue-drain callbacks are ignored.
+     */
+    fun pauseContinuousMode() {
+        continuousLoopArmed = false
+        continuousResumeJob?.cancel()
+        continuousResumeJob = null
+        realtimeAmplitudeDecayJob?.cancel()
+        realtimeAmplitudeDecayJob = null
+        silenceWatchdogJob?.cancel()
+        silenceWatchdogJob = null
+
+        when (_uiState.value.state) {
+            VoiceState.Listening -> {
+                try { recorder?.cancel() } catch (_: Exception) { /* ignore */ }
+                _uiState.update { it.copy(state = VoiceState.Idle, amplitude = 0f, outputAudioActive = false) }
+            }
+            VoiceState.Speaking, VoiceState.Transcribing, VoiceState.Thinking -> {
+                interruptSpeaking()
+            }
+            VoiceState.Idle, VoiceState.Error -> {
+                _uiState.update { it.copy(state = VoiceState.Idle, amplitude = 0f, outputAudioActive = false) }
+            }
         }
     }
 
@@ -1080,6 +1182,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         streamObserverJob = null
         currentTurnJob?.cancel()
         currentTurnJob = null
+        continuousLoopArmed = false
+        continuousResumeJob?.cancel()
+        continuousResumeJob = null
+        realtimeAmplitudeDecayJob?.cancel()
+        realtimeAmplitudeDecayJob = null
         idleFlushJob?.cancel()
         idleFlushJob = null
         // V4 pipeline teardown: cancel the supervisor scope that owns the
@@ -1099,12 +1206,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         startRealtimeTtsConsumer()
         // Reset per-turn buffering + tracking so the next turn starts clean.
         sentenceBuffer = StringBuilder()
+        resetRealtimeSpeechCoalescer()
         pendingRawDelta = StringBuilder()
         lastObservedMessageId = null
         lastObservedContentLength = 0
         streamComplete = false
         currentTurnPcm = ByteArray(0)
         resetBrokeredToolSpeechState()
+        resetTtsTurnStats()
         speakEnvelope = 0f
         // Deliberately do NOT clear responseText here. "Stop" should freeze
         // the visible response so the user can read whatever was already
@@ -1116,7 +1225,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // new turn, so old text only sticks around until they choose to
         // move on.
         _uiState.update {
-            it.copy(state = VoiceState.Idle, amplitude = 0f)
+            it.copy(state = VoiceState.Idle, amplitude = 0f, outputAudioActive = false)
         }
     }
 
@@ -1143,7 +1252,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // speaking yet) we still need to pull the progress bar down.
         _uiState.update { it.copy(destructiveCountdown = null) }
         if (_uiState.value.state == VoiceState.Speaking) {
-            _uiState.update { it.copy(state = VoiceState.Idle, responseText = "Cancelled.") }
+            _uiState.update {
+                it.copy(state = VoiceState.Idle, outputAudioActive = false, responseText = "Cancelled.")
+            }
         }
     }
     // === END PHASE3-voice-intents ===
@@ -1277,9 +1388,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         currentTurnPcm = inputPcm
         currentTurnPcmSampleRate = inputSampleRate
         resetBrokeredToolSpeechState()
+        resetRealtimeSpeechCoalescer()
+        resetTtsTurnStats()
 
         // Transcribe
-        _uiState.update { it.copy(state = VoiceState.Transcribing) }
+        _uiState.update { it.copy(state = VoiceState.Transcribing, outputAudioActive = false) }
         val sttStartedAtMs = System.currentTimeMillis()
         val audioBytes = try { audioFile.length() } catch (_: Exception) { 0L }
         val transcribeResult = client.transcribe(audioFile)
@@ -1308,6 +1421,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(
                 state = VoiceState.Thinking,
+                outputAudioActive = false,
                 transcribedText = userText,
                 responseText = "",
             )
@@ -1346,18 +1460,18 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         ) {
             Log.i(TAG, "cancel-mid-countdown: intercepted '$userText'")
             bridgeHandler.cancelPending()
-            // Speak a short "Cancelled." and return to idle. Reuse the
-            // same sentence-buffer path as speakDispatchResult so the
-            // existing TTS queue picks it up in order.
-            sentenceBuffer = StringBuilder("Cancelled.")
+            // Speak a short "Cancelled." and return to idle. Status lines
+            // bypass normal assistant coalescing so the user hears them
+            // immediately.
             _uiState.update {
                 it.copy(
                     state = VoiceState.Speaking,
+                    outputAudioActive = false,
                     responseText = "Cancelled.",
                     destructiveCountdown = null,
                 )
             }
-            flushRemainingBuffer()
+            enqueueSentenceForTts("Cancelled.", immediate = true)
             return
         }
         // === END PHASE3-voice-cancel-midcountdown ===
@@ -1400,15 +1514,21 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     // and the turn ends without spinning up chat SSE.
                     val confirmation = result.spokenConfirmation
                     if (confirmation != null) {
-                        sentenceBuffer = StringBuilder(confirmation)
+                        // Voice-intent confirmations are status speech, not
+                        // assistant prose, so they bypass balanced coalescing.
                         _uiState.update {
-                            it.copy(state = VoiceState.Speaking, responseText = confirmation)
+                            it.copy(
+                                state = VoiceState.Speaking,
+                                outputAudioActive = false,
+                                responseText = confirmation,
+                            )
                         }
-                        flushRemainingBuffer()
+                        enqueueSentenceForTts(confirmation, immediate = true)
                     } else {
                         _uiState.update {
                             it.copy(
                                 state = VoiceState.Idle,
+                                outputAudioActive = false,
                                 responseText = "${result.intentLabel}: $userText",
                             )
                         }
@@ -1436,6 +1556,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(
                 state = VoiceState.Thinking,
+                outputAudioActive = false,
                 transcribedText = userText,
                 responseText = "",
             )
@@ -1534,6 +1655,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     // We can't easily wait here without blocking the collector;
                     // the TTS consumer transitions back to Idle.
                     streamObserverJob?.cancel()
+                    scheduleContinuousResumeCheck()
                 }
             }
         }
@@ -1548,7 +1670,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun onStreamDelta(delta: String, fullContent: String) {
         appendSanitizedDelta(delta)
-        _uiState.update { it.copy(state = VoiceState.Speaking, responseText = fullContent) }
+        _uiState.update {
+            it.copy(
+                state = VoiceState.Speaking,
+                outputAudioActive = it.outputAudioActive && it.state == VoiceState.Speaking,
+                responseText = fullContent,
+            )
+        }
         drainSentences()
         rearmIdleFlush()
     }
@@ -1587,10 +1715,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun enqueueBrokeredToolStatus(status: String) {
         if (status.isBlank()) return
-        if (enqueueSentenceForTts(status)) {
+        if (enqueueSentenceForTts(status, immediate = true)) {
             _uiState.update { state ->
                 state.copy(
                     state = VoiceState.Speaking,
+                    outputAudioActive = state.outputAudioActive && state.state == VoiceState.Speaking,
                     responseText = state.responseText.ifBlank { status },
                 )
             }
@@ -1678,17 +1807,33 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * participates in the pipeline-drained gate — see the field KDoc for
      * the race this closes.
      */
-    private fun enqueueSentenceForTts(sentence: String): Boolean {
+    private fun enqueueSentenceForTts(sentence: String, immediate: Boolean = false): Boolean {
         if (shouldPreferRealtimeVoice()) {
-            val sent = realtimeTtsQueue.trySend(sentence)
-            if (sent.isSuccess) {
-                pendingInTtsQueue.incrementAndGet()
-                return true
+            val realtimeChunks = if (immediate) {
+                realtimeSpeechCoalescer.enqueueImmediate(sentence)
+            } else {
+                realtimeSpeechCoalescer.append(sentence)
             }
-            Log.w(TAG, "Realtime TTS queue refused sentence: ${sent.exceptionOrNull()?.message}")
-            voiceOutputAvailable = false
+            if (realtimeChunks.isEmpty()) return true
+            return enqueueRealtimeTtsChunks(realtimeChunks)
         }
         return enqueueSentenceForLegacyTts(sentence)
+    }
+
+    private fun enqueueRealtimeTtsChunks(chunks: List<String>): Boolean {
+        var allQueued = true
+        for (chunk in chunks) {
+            val sent = realtimeTtsQueue.trySend(chunk)
+            if (sent.isSuccess) {
+                pendingInTtsQueue.incrementAndGet()
+            } else {
+                Log.w(TAG, "Realtime TTS queue refused chunk: ${sent.exceptionOrNull()?.message}")
+                voiceOutputAvailable = false
+                allQueued = false
+                enqueueSentenceForLegacyTts(chunk)
+            }
+        }
+        return allQueued
     }
 
     private fun enqueueSentenceForLegacyTts(sentence: String): Boolean {
@@ -1724,10 +1869,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun drainSentencesForceFlush() {
         while (true) {
-            val sentence = extractNextSentence(sentenceBuffer, streamComplete = true) ?: return
+            val sentence = extractNextSentence(sentenceBuffer, streamComplete = true) ?: break
             if (sentence.isBlank()) continue
             if (!enqueueSentenceForTts(sentence)) return
         }
+        flushRealtimeSpeechCoalescer()
     }
 
     private fun flushRemainingBuffer() {
@@ -1753,6 +1899,21 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         if (trailing.isNotEmpty()) {
             enqueueSentenceForTts(trailing)
         }
+        flushRealtimeSpeechCoalescer()
+    }
+
+    private fun flushRealtimeSpeechCoalescer(): Boolean {
+        if (!shouldPreferRealtimeVoice()) {
+            resetRealtimeSpeechCoalescer()
+            return true
+        }
+        val chunks = realtimeSpeechCoalescer.flush()
+        if (chunks.isEmpty()) return true
+        return enqueueRealtimeTtsChunks(chunks)
+    }
+
+    private fun resetRealtimeSpeechCoalescer() {
+        realtimeSpeechCoalescer.clear()
     }
 
     // ---------------------------------------------------------------------
@@ -1799,7 +1960,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         val audioBytes = AtomicInteger(0)
         val bargeInStarted = AtomicBoolean(false)
         val startedAtMs = System.currentTimeMillis()
-        _uiState.update { it.copy(state = VoiceState.Speaking) }
+        _uiState.update { it.copy(state = VoiceState.Speaking, outputAudioActive = false) }
         _currentPlayingChunkIndex.value = _currentPlayingChunkIndex.value + 1
 
         val result = try {
@@ -1819,15 +1980,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         if (result.isSuccess) {
             spokenChunks.add(sentence)
             val latencyMs = System.currentTimeMillis() - startedAtMs
-            _voiceStats.update { s ->
-                val nextLatencies = (s.recentTtsLatenciesMs + latencyMs).takeLast(5)
-                s.copy(
-                    lastSynthesizedSentence = sentence,
-                    recentTtsLatenciesMs = nextLatencies,
-                    ttsBytesReceived = s.ttsBytesReceived + audioBytes.get().toLong(),
-                    ttsCallCount = s.ttsCallCount + 1,
-                )
-            }
+            recordTtsChunkFinished(
+                sentence = sentence,
+                latencyMs = latencyMs,
+                bytesReceived = audioBytes.get().toLong(),
+                startedAtMs = startedAtMs,
+            )
             maybeAutoResume()
             return
         }
@@ -1859,17 +2017,50 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         if (audio.isEmpty()) return
         audioSeen.set(true)
         audioBytes.addAndGet(audio.size)
-        pcmPlayer.write(audio, event.sampleRate ?: 24_000)
+        lastRealtimeAudioDeltaAtMs = System.currentTimeMillis()
+        val sampleRate = event.sampleRate ?: 24_000
+        val level = pcmPlayer.write(audio, sampleRate)
+        scheduleRealtimeAmplitudeRelease(audio.size, sampleRate, lastRealtimeAudioDeltaAtMs)
         if (bargeInStarted.compareAndSet(false, true)) {
             startBargeInListenerIfEnabled(
                 audioSessionIdProvider = { pcmPlayer.audioSessionId },
                 startupGuardMs = REALTIME_BARGE_IN_STARTUP_GUARD_MS,
             )
         }
-        val level = event.rmsLevel ?: event.peakLevel ?: 0f
         if (_uiState.value.state == VoiceState.Speaking) {
             speakEnvelope = applyEnvelope(speakEnvelope, level)
-            _uiState.update { it.copy(amplitude = speakEnvelope) }
+            _uiState.update {
+                it.copy(
+                    amplitude = speakEnvelope,
+                    outputAudioActive = it.outputAudioActive || level > OUTPUT_AUDIO_ACTIVE_THRESHOLD,
+                )
+            }
+        }
+    }
+
+    private fun scheduleRealtimeAmplitudeRelease(
+        pcmBytes: Int,
+        sampleRate: Int,
+        writeTimestampMs: Long,
+    ) {
+        if (sampleRate <= 0 || pcmBytes <= 0) return
+        realtimeAmplitudeDecayJob?.cancel()
+        realtimeAmplitudeDecayJob = viewModelScope.launch {
+            val chunkDurationMs = ((pcmBytes / 2.0) / sampleRate * 1000.0)
+                .toLong()
+                .coerceIn(25L, 240L)
+            delay(chunkDurationMs + 80L)
+            repeat(10) {
+                if (lastRealtimeAudioDeltaAtMs != writeTimestampMs ||
+                    _uiState.value.state != VoiceState.Speaking
+                ) {
+                    return@launch
+                }
+                speakEnvelope = applyEnvelope(speakEnvelope, 0f)
+                _uiState.update { it.copy(amplitude = speakEnvelope) }
+                if (speakEnvelope <= 0.02f) return@launch
+                delay(45L)
+            }
         }
     }
 
@@ -1878,6 +2069,45 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             val r = realtimeTtsQueue.tryReceive()
             if (r.isFailure || r.isClosed) break
             pendingInTtsQueue.decrementAndGet()
+        }
+        resetRealtimeSpeechCoalescer()
+    }
+
+    private fun resetTtsTurnStats() {
+        ttsChunksThisResponse = 0
+        lastTtsChunkFinishedAtMs = 0L
+        _voiceStats.update {
+            it.copy(
+                currentResponseTtsChunks = 0,
+                lastTtsChunkGapMs = 0L,
+            )
+        }
+    }
+
+    private fun recordTtsChunkFinished(
+        sentence: String,
+        latencyMs: Long,
+        bytesReceived: Long,
+        startedAtMs: Long,
+    ) {
+        val gapMs = if (lastTtsChunkFinishedAtMs > 0L) {
+            (startedAtMs - lastTtsChunkFinishedAtMs).coerceAtLeast(0L)
+        } else {
+            0L
+        }
+        val finishedAtMs = System.currentTimeMillis()
+        ttsChunksThisResponse += 1
+        lastTtsChunkFinishedAtMs = finishedAtMs
+        _voiceStats.update { s ->
+            val nextLatencies = (s.recentTtsLatenciesMs + latencyMs).takeLast(5)
+            s.copy(
+                lastSynthesizedSentence = sentence,
+                recentTtsLatenciesMs = nextLatencies,
+                currentResponseTtsChunks = ttsChunksThisResponse,
+                lastTtsChunkGapMs = gapMs,
+                ttsBytesReceived = s.ttsBytesReceived + bytesReceived,
+                ttsCallCount = s.ttsCallCount + 1,
+            )
         }
     }
 
@@ -1980,15 +2210,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                         val fileBytes = try {
                             result.getOrNull()?.length() ?: 0L
                         } catch (_: Exception) { 0L }
-                        _voiceStats.update { s ->
-                            val nextLatencies = (s.recentTtsLatenciesMs + latencyMs).takeLast(5)
-                            s.copy(
-                                lastSynthesizedSentence = sentence,
-                                recentTtsLatenciesMs = nextLatencies,
-                                ttsBytesReceived = s.ttsBytesReceived + fileBytes,
-                                ttsCallCount = s.ttsCallCount + 1,
-                            )
-                        }
+                        recordTtsChunkFinished(
+                            sentence = sentence,
+                            latencyMs = latencyMs,
+                            bytesReceived = fileBytes,
+                            startedAtMs = synthStartedAtMs,
+                        )
                     }
                     result
                 } finally {
@@ -2022,7 +2249,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 // About to play — ensure Speaking so the amplitude bridge
                 // forwards the player output to the UI.
                 if (_uiState.value.voiceMode && _uiState.value.state != VoiceState.Speaking) {
-                    _uiState.update { it.copy(state = VoiceState.Speaking) }
+                    _uiState.update {
+                        it.copy(state = VoiceState.Speaking, outputAudioActive = false)
+                    }
                 }
                 // B4: advance the playing-chunk cursor BEFORE we call
                 // trackTtsFile so lastInterruptedAtChunkIndex reflects
@@ -2096,16 +2325,66 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // spoken when it ends with an emoji" (emoji strip left a short
         // sentence that could only emit at stream-complete, which is
         // exactly when this race fires).
-        if (pendingInTtsQueue.get() > 0 || pendingTtsFiles.isNotEmpty()) return
+        if (pendingInTtsQueue.get() > 0 || pendingTtsFiles.isNotEmpty()) {
+            scheduleContinuousResumeCheck()
+            return
+        }
+        if (continuousResumeTailGuardRemainingMs() > 0L) {
+            scheduleContinuousResumeCheck()
+            return
+        }
 
         if (_uiState.value.state == VoiceState.Speaking) {
-            _uiState.update { it.copy(state = VoiceState.Idle, amplitude = 0f) }
+            _uiState.update {
+                it.copy(state = VoiceState.Idle, amplitude = 0f, outputAudioActive = false)
+            }
         }
         if (_uiState.value.interactionMode == InteractionMode.Continuous &&
+            continuousLoopArmed &&
             _uiState.value.state == VoiceState.Idle
         ) {
             startListening()
         }
+    }
+
+    /**
+     * Re-check the Continuous-mode handoff after the chat stream ends.
+     * Realtime PCM playback can finish a sentence before ChatViewModel marks
+     * the assistant response complete; the earlier maybeAutoResume() call
+     * then returns because the stream is still active and no playback event
+     * fires again. This bounded retry bridges that gap without touching tap
+     * or hold modes.
+     */
+    private fun scheduleContinuousResumeCheck() {
+        if (_uiState.value.interactionMode != InteractionMode.Continuous) return
+        continuousResumeJob?.cancel()
+        continuousResumeJob = viewModelScope.launch {
+            repeat(30) {
+                val state = _uiState.value
+                if (!state.voiceMode ||
+                    state.interactionMode != InteractionMode.Continuous ||
+                    state.state == VoiceState.Listening
+                ) {
+                    return@launch
+                }
+
+                val observerStopped = streamObserverJob?.isActive != true
+                val pipelineDrained = pendingInTtsQueue.get() <= 0 && pendingTtsFiles.isEmpty()
+                val tailGuardDrained = continuousResumeTailGuardRemainingMs() <= 0L
+                if (observerStopped && pipelineDrained && tailGuardDrained) {
+                    maybeAutoResume()
+                    return@launch
+                }
+                delay(100L)
+            }
+        }
+    }
+
+    private fun continuousResumeTailGuardRemainingMs(): Long {
+        val lastAudioAt = lastRealtimeAudioDeltaAtMs
+        if (lastAudioAt <= 0L) return 0L
+        val elapsed = System.currentTimeMillis() - lastAudioAt
+        return (REALTIME_OUTPUT_RESUME_TAIL_GUARD_MS - elapsed).coerceAtLeast(0L)
     }
 
     // ---------------------------------------------------------------------
@@ -2284,7 +2563,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // interruptSpeaking landed us in Idle — flip to Listening and
         // pre-warm the recorder so the first ~100 ms of user speech
         // isn't clipped by recorder cold-start.
-        _uiState.update { it.copy(state = VoiceState.Listening, error = null, responseText = "") }
+        _uiState.update {
+            it.copy(
+                state = VoiceState.Listening,
+                outputAudioActive = false,
+                error = null,
+                responseText = "",
+            )
+        }
         val rec = recorder
         if (rec != null && !rec.isRecording()) {
             try {
@@ -2368,7 +2654,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 // Recorder was pre-warmed under the assumption the user
                 // would keep speaking; cancel it so it doesn't hang open.
                 try { recorder?.cancel() } catch (_: Throwable) { /* ignore */ }
-                _uiState.update { it.copy(state = VoiceState.Idle, amplitude = 0f) }
+                _uiState.update {
+                    it.copy(state = VoiceState.Idle, amplitude = 0f, outputAudioActive = false)
+                }
                 return@launch
             }
 
@@ -2383,7 +2671,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
             if (tail.isEmpty()) {
                 lastInterruptedAtChunkIndex = null
-                _uiState.update { it.copy(state = VoiceState.Idle, amplitude = 0f) }
+                _uiState.update {
+                    it.copy(state = VoiceState.Idle, amplitude = 0f, outputAudioActive = false)
+                }
                 return@launch
             }
 
@@ -2401,7 +2691,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 try { player?.unduck() } catch (_: Throwable) { /* ignore */ }
                 isDucked = false
             }
-            _uiState.update { it.copy(state = VoiceState.Speaking) }
+            _uiState.update { it.copy(state = VoiceState.Speaking, outputAudioActive = false) }
 
             // Send each tail chunk back through the TTS queue. The synth
             // worker will re-synthesize (our cache isn't content-addressed)
@@ -2488,7 +2778,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             spokenChunks.addAll(chunks)
         }
         _currentPlayingChunkIndex.value = currentIdx
-        _uiState.update { it.copy(voiceMode = true, state = VoiceState.Speaking) }
+        _uiState.update {
+            it.copy(voiceMode = true, state = VoiceState.Speaking, outputAudioActive = false)
+        }
     }
 
     /**
@@ -2548,7 +2840,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 recorder?.amplitude?.collect { amp ->
                     if (_uiState.value.state == VoiceState.Listening) {
                         listenEnvelope = applyEnvelope(listenEnvelope, amp)
-                        _uiState.update { it.copy(amplitude = listenEnvelope) }
+                        _uiState.update {
+                            it.copy(amplitude = listenEnvelope, outputAudioActive = false)
+                        }
                     } else if (listenEnvelope != 0f) {
                         listenEnvelope = 0f
                     }
@@ -2559,7 +2853,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 player?.amplitude?.collect { amp ->
                     if (_uiState.value.state == VoiceState.Speaking) {
                         speakEnvelope = applyEnvelope(speakEnvelope, amp)
-                        _uiState.update { it.copy(amplitude = speakEnvelope) }
+                        _uiState.update {
+                            it.copy(
+                                amplitude = speakEnvelope,
+                                outputAudioActive = it.outputAudioActive ||
+                                    amp > OUTPUT_AUDIO_ACTIVE_THRESHOLD,
+                            )
+                        }
                     } else if (speakEnvelope != 0f) {
                         speakEnvelope = 0f
                     }
@@ -2607,7 +2907,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // ---------------------------------------------------------------------
 
     private fun setError(msg: String) {
-        _uiState.update { it.copy(state = VoiceState.Error, error = msg, amplitude = 0f) }
+        _uiState.update {
+            it.copy(state = VoiceState.Error, error = msg, amplitude = 0f, outputAudioActive = false)
+        }
     }
 
     /**
@@ -2620,7 +2922,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         val err = classifyError(t, context = context)
         _errorEvents.tryEmit(err)
         _uiState.update {
-            it.copy(state = VoiceState.Error, error = err.body, amplitude = 0f)
+            it.copy(state = VoiceState.Error, error = err.body, amplitude = 0f, outputAudioActive = false)
         }
     }
 
@@ -2633,6 +2935,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         resumeWatchdog?.cancel()
         silenceWatchdogJob?.cancel()
         silenceWatchdogJob = null
+        continuousLoopArmed = false
+        continuousResumeJob?.cancel()
+        continuousResumeJob = null
+        realtimeAmplitudeDecayJob?.cancel()
+        realtimeAmplitudeDecayJob = null
         try { recorder?.cancel() } catch (_: Exception) { /* ignore */ }
         try { player?.stop() } catch (_: Exception) { /* ignore */ }
         try { realtimePcmPlayer?.stop() } catch (_: Exception) { /* ignore */ }
@@ -2720,21 +3027,17 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      *
      * Spoken strings are kept **short** on purpose — TTS feels slow when it
      * reads full sentences, and voice mode is already a low-latency surface.
-     * The message funnels through the existing sentence-buffer → [ttsQueue]
-     * pipeline so it plays back-to-back with any in-flight synthesized
-     * audio instead of racing the player.
+     * The message bypasses normal assistant coalescing so outcome/status
+     * speech stays immediate, but still preserves queue order by flushing any
+     * pending assistant speech first.
      */
     private fun speakDispatchResult(label: String, result: LocalDispatchResult) {
         val spoken = buildDispatchResultSpoken(label, result)
         if (spoken.isBlank()) return
-        // Use the same sentence-buffer / flush path the classifier uses for
-        // the pre-dispatch preview. This keeps the queue ordered and reuses
-        // the visible responseText Speaking state update.
-        sentenceBuffer = StringBuilder(spoken)
         _uiState.update {
-            it.copy(state = VoiceState.Speaking, responseText = spoken)
+            it.copy(state = VoiceState.Speaking, outputAudioActive = false, responseText = spoken)
         }
-        flushRemainingBuffer()
+        enqueueSentenceForTts(spoken, immediate = true)
     }
 
     /**
@@ -2982,6 +3285,111 @@ private val SENTENCE_TERMINATORS = charArrayOf('.', '!', '?', '\n')
  * excluded; it matches hyphenated prose too aggressively ("well-formed").
  */
 private val SECONDARY_BREAKS = charArrayOf(',', ';', '\u2014', '\u2013')
+
+private const val REALTIME_FIRST_CHUNK_TARGET_CHARS = 140
+private const val REALTIME_FOLLOWUP_CHUNK_TARGET_CHARS = 260
+private const val REALTIME_MAX_CHUNK_CHARS = 360
+
+/**
+ * Batches normal assistant speech before it reaches provider-streamed realtime
+ * voice output. The sentence extractor still owns markdown cleanup,
+ * abbreviation handling, and stream-complete edge cases; this layer only
+ * decides how many extracted speech chunks should share one provider render.
+ *
+ * Explicit status speech uses [enqueueImmediate], which first flushes any
+ * pending assistant prose to preserve order, then emits the status line as its
+ * own low-latency render.
+ */
+internal class BalancedRealtimeTtsCoalescer(
+    private val firstChunkTargetChars: Int = REALTIME_FIRST_CHUNK_TARGET_CHARS,
+    private val followupChunkTargetChars: Int = REALTIME_FOLLOWUP_CHUNK_TARGET_CHARS,
+    private val maxChunkChars: Int = REALTIME_MAX_CHUNK_CHARS,
+) {
+    private val buffer = StringBuilder()
+    private var emittedChunks = 0
+
+    fun append(text: String): List<String> {
+        val cleaned = text.trim()
+        if (cleaned.isEmpty()) return emptyList()
+        appendWithSpacing(cleaned)
+        return drain(force = false)
+    }
+
+    fun enqueueImmediate(text: String): List<String> {
+        val out = flush().toMutableList()
+        val cleaned = text.trim()
+        if (cleaned.isNotEmpty()) {
+            out += cleaned
+            emittedChunks += 1
+        }
+        return out
+    }
+
+    fun flush(): List<String> = drain(force = true)
+
+    fun clear() {
+        buffer.clear()
+        emittedChunks = 0
+    }
+
+    private fun appendWithSpacing(text: String) {
+        if (buffer.isNotEmpty() && !buffer.last().isWhitespace()) {
+            buffer.append(' ')
+        }
+        buffer.append(text)
+    }
+
+    private fun drain(force: Boolean): List<String> {
+        if (buffer.isEmpty()) return emptyList()
+
+        val out = mutableListOf<String>()
+        while (buffer.isNotEmpty()) {
+            val target = if (emittedChunks == 0) {
+                firstChunkTargetChars
+            } else {
+                followupChunkTargetChars
+            }
+
+            val shouldEmit = force ||
+                buffer.length >= target ||
+                buffer.length > maxChunkChars
+            if (!shouldEmit) break
+
+            val end = if (buffer.length <= maxChunkChars) {
+                buffer.length
+            } else {
+                findRealtimeCoalescedBoundary(buffer, maxChunkChars)
+            }
+            val chunk = consumeChunk(buffer, end)
+            if (chunk.isNotBlank()) {
+                out += chunk
+                emittedChunks += 1
+            }
+
+            if (!force && buffer.length < target) break
+        }
+        return out
+    }
+}
+
+internal fun findRealtimeCoalescedBoundary(buffer: CharSequence, maxChars: Int): Int {
+    val end = minOf(buffer.length, maxChars).coerceAtLeast(1)
+    for (i in end - 1 downTo 0) {
+        val ch = buffer[i]
+        if (ch in SENTENCE_TERMINATORS) {
+            val next = if (i + 1 < buffer.length) buffer[i + 1] else null
+            if (ch == '\n' || next == null || next.isWhitespace()) {
+                return i + 1
+            }
+        }
+    }
+    val secondary = findLastSecondaryBreak(buffer, end)
+    if (secondary >= 0) return secondary + 1
+    for (i in end - 1 downTo 1) {
+        if (buffer[i].isWhitespace()) return i
+    }
+    return end
+}
 
 /**
  * Pop the next TTS-ready chunk off [buffer] (mutating it) and return it.

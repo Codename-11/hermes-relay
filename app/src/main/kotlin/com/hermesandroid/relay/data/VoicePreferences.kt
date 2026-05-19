@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
 /**
@@ -40,14 +41,16 @@ class VoicePreferencesRepository(private val context: Context) {
         const val DEFAULT_LANGUAGE = ""
     }
 
-    val settings: Flow<VoiceSettings> = context.relayDataStore.data.map { prefs ->
-        VoiceSettings(
-            interactionMode = prefs[KEY_INTERACTION_MODE] ?: DEFAULT_INTERACTION_MODE,
-            silenceThresholdMs = prefs[KEY_SILENCE_THRESHOLD_MS] ?: DEFAULT_SILENCE_THRESHOLD_MS,
-            autoTts = prefs[KEY_AUTO_TTS] ?: DEFAULT_AUTO_TTS,
-            language = prefs[KEY_LANGUAGE] ?: DEFAULT_LANGUAGE,
-        )
-    }
+    val settings: Flow<VoiceSettings> = context.relayDataStore.data
+        .map { prefs ->
+            VoiceSettings(
+                interactionMode = prefs[KEY_INTERACTION_MODE] ?: DEFAULT_INTERACTION_MODE,
+                silenceThresholdMs = prefs[KEY_SILENCE_THRESHOLD_MS] ?: DEFAULT_SILENCE_THRESHOLD_MS,
+                autoTts = prefs[KEY_AUTO_TTS] ?: DEFAULT_AUTO_TTS,
+                language = prefs[KEY_LANGUAGE] ?: DEFAULT_LANGUAGE,
+            )
+        }
+        .distinctUntilChanged()
 
     suspend fun setInteractionMode(mode: String) {
         context.relayDataStore.edit { it[KEY_INTERACTION_MODE] = mode }

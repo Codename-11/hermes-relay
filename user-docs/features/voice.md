@@ -85,13 +85,18 @@ Change in **Settings → Voice → Interaction mode**. All three share the same 
 
 Most voice modes wait for the full response, then synthesize all of it, then play. That's a minimum ~3-second latency on top of the LLM.
 
-Hermes-Relay does **client-side sentence chunking**: as the agent streams its
-response over SSE, the phone detects complete sentences and immediately renders
-them through the relay's `/voice/output/*` websocket. PCM audio streams directly
-to Android playback while newer sentences render in the background. If streaming
-voice output fails before audio starts, the app falls back to `/voice/synthesize`.
+Hermes-Relay does **balanced client-side voice chunking**: as the agent streams
+its response over SSE, the phone detects complete speech boundaries, batches
+normal assistant prose into larger natural chunks, and renders those chunks
+through the relay's `/voice/output/*` websocket. PCM audio streams directly to
+Android playback while newer text continues arriving. Short tool/status lines
+such as "I'm checking that" bypass the batcher so they stay immediate. If
+streaming voice output fails before audio starts, the app falls back to
+`/voice/synthesize`.
 
-Result: first audio starts within ~1 sentence of the agent starting to reply. You hear the agent before it finishes thinking.
+Result: first audio starts shortly after the agent begins replying, but normal
+answers use fewer provider renders so tone, prosody, and volume stay more
+consistent across the response.
 
 ## Voice Settings
 

@@ -400,7 +400,7 @@ internal fun buildTimelineEvents(
                 timestampMs = System.currentTimeMillis(),
                 kind = TimelineEventKind.VoiceTurn,
                 title = "voice · ${voiceStats.lastTranscript.take(40)}",
-                details = "stt ${voiceStats.lastSttLatencyMs} ms · tts calls ${voiceStats.ttsCallCount}",
+                details = "stt ${voiceStats.lastSttLatencyMs} ms · chunks ${voiceStats.currentResponseTtsChunks} · tts calls ${voiceStats.ttsCallCount}",
             ),
         )
     }

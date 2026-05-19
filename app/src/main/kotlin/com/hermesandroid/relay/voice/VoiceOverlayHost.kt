@@ -73,12 +73,11 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
-import com.hermesandroid.relay.data.BargeInPreferences
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
 import com.hermesandroid.relay.util.ComposeArrWorkaround
+import com.hermesandroid.relay.viewmodel.InteractionMode
 import com.hermesandroid.relay.viewmodel.VoiceState
 import com.hermesandroid.relay.viewmodel.VoiceUiState
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.cos
@@ -98,7 +97,7 @@ private val OverlaySpeakingPrimary = Color(0xFF40EB8C)
 private val OverlaySpeakingSecondary = Color(0xFF4DD9E0)
 
 /**
- * WindowManager-backed host for the experimental voice overlay.
+ * WindowManager-backed host for the voice overlay.
  *
  * This deliberately mirrors BridgeStatusOverlay's permission and lifecycle
  * pattern, but remains voice-owned so the Bridge safety chip and confirmation
@@ -230,7 +229,6 @@ class VoiceOverlayHost(context: Context) {
 
 data class VoiceOverlaySession(
     val uiState: StateFlow<VoiceUiState>,
-    val bargeInPreferences: Flow<BargeInPreferences>,
     val provider: String?,
     val model: String?,
     val voice: String?,
@@ -241,6 +239,7 @@ data class VoiceOverlaySession(
     val onStartListening: () -> Unit,
     val onStopListening: () -> Unit,
     val onInterrupt: () -> Unit,
+    val onPauseAutoMode: () -> Unit,
     val onReturnToHermes: () -> Unit,
     val onDismissOverlay: () -> Unit,
     val onExit: () -> Unit,
@@ -252,7 +251,6 @@ private fun VoiceFloatingOverlayPill(
     onDragBy: (Float, Float) -> Unit,
 ) {
     val uiState by session.uiState.collectAsState()
-    val bargeIn by session.bargeInPreferences.collectAsState(initial = BargeInPreferences())
     var minimized by remember { mutableStateOf(false) }
     val providerText = voiceProviderLabel(
         session.provider,
@@ -278,6 +276,7 @@ private fun VoiceFloatingOverlayPill(
             onStartListening = session.onStartListening,
             onStopListening = session.onStopListening,
             onInterrupt = session.onInterrupt,
+            onPauseAutoMode = session.onPauseAutoMode,
             onDragBy = onDragBy,
         )
         return
@@ -328,7 +327,6 @@ private fun VoiceFloatingOverlayPill(
                             color = MaterialTheme.colorScheme.onSurface,
                             fontWeight = FontWeight.SemiBold,
                         )
-                        StatusChip("Experimental")
                     }
                     Text(
                         text = "$stateText · $profileText · $providerText",
@@ -343,34 +341,12 @@ private fun VoiceFloatingOverlayPill(
                     onStartListening = session.onStartListening,
                     onStopListening = session.onStopListening,
                     onInterrupt = session.onInterrupt,
+                    onPauseAutoMode = session.onPauseAutoMode,
                 )
             }
 
             if (uiState.state == VoiceState.Transcribing || uiState.state == VoiceState.Thinking) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                StatusChip(
-                    text = if (bargeIn.enabled) {
-                        "barge-in ${bargeIn.sensitivity.name.lowercase()}"
-                    } else {
-                        "barge-in off"
-                    },
-                    modifier = Modifier.weight(1f),
-                )
-                StatusChip(
-                    text = when (session.fallbackEnabled) {
-                        true -> "fallback on"
-                        false -> "fallback off"
-                        null -> "fallback ..."
-                    },
-                    modifier = Modifier.weight(1f),
-                )
             }
 
             Row(
@@ -415,6 +391,7 @@ private fun VoiceFloatingOverlayBubble(
     onStartListening: () -> Unit,
     onStopListening: () -> Unit,
     onInterrupt: () -> Unit,
+    onPauseAutoMode: () -> Unit,
     onDragBy: (Float, Float) -> Unit,
 ) {
     val isHot = uiState.state == VoiceState.Listening || uiState.state == VoiceState.Speaking
@@ -464,6 +441,7 @@ private fun VoiceFloatingOverlayBubble(
                         onStartListening = onStartListening,
                         onStopListening = onStopListening,
                         onInterrupt = onInterrupt,
+                        onPauseAutoMode = onPauseAutoMode,
                     )
                 },
                 onLongClick = onExpand,
@@ -621,6 +599,7 @@ private fun MicControlButton(
     onStartListening: () -> Unit,
     onStopListening: () -> Unit,
     onInterrupt: () -> Unit,
+    onPauseAutoMode: () -> Unit,
 ) {
     val isHot = uiState.state != VoiceState.Idle && uiState.state != VoiceState.Error
     Surface(
@@ -628,7 +607,13 @@ private fun MicControlButton(
             .size(44.dp)
             .clip(CircleShape)
             .clickable {
-                dispatchMicAction(uiState, onStartListening, onStopListening, onInterrupt)
+                dispatchMicAction(
+                    uiState = uiState,
+                    onStartListening = onStartListening,
+                    onStopListening = onStopListening,
+                    onInterrupt = onInterrupt,
+                    onPauseAutoMode = onPauseAutoMode,
+                )
             },
         shape = CircleShape,
         color = if (isHot) Color(0xFFE53935) else MaterialTheme.colorScheme.primary,
@@ -650,10 +635,23 @@ private fun dispatchMicAction(
     onStartListening: () -> Unit,
     onStopListening: () -> Unit,
     onInterrupt: () -> Unit,
+    onPauseAutoMode: () -> Unit,
 ) {
     when (uiState.state) {
-        VoiceState.Listening -> onStopListening()
-        VoiceState.Speaking, VoiceState.Transcribing, VoiceState.Thinking -> onInterrupt()
+        VoiceState.Listening -> {
+            if (uiState.interactionMode == InteractionMode.Continuous) {
+                onPauseAutoMode()
+            } else {
+                onStopListening()
+            }
+        }
+        VoiceState.Speaking, VoiceState.Transcribing, VoiceState.Thinking -> {
+            if (uiState.interactionMode == InteractionMode.Continuous) {
+                onPauseAutoMode()
+            } else {
+                onInterrupt()
+            }
+        }
         VoiceState.Idle, VoiceState.Error -> onStartListening()
     }
 }

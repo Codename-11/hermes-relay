@@ -1927,11 +1927,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     _relayUrl.value = savedRelayUrl
                 }
 
-                // Load last session ID
-                val savedSessionId = preferences[KEY_LAST_SESSION_ID]
-                if (savedSessionId != null) {
-                    _lastSessionId.value = savedSessionId
-                }
+                // Last-session restore is profile-scoped now. Keep that
+                // state owned by refreshLastSessionForProfile(); otherwise
+                // any unrelated relayDataStore emission can overwrite an
+                // active profile's session with the legacy default id.
 
                 // Check if this is a new version → show What's New
                 val currentVersion = getAppVersionName()

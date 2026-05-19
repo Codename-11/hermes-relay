@@ -6,7 +6,11 @@ import android.media.AudioManager
 import android.media.AudioTrack
 import android.os.Build
 import android.util.Log
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlin.math.max
+import kotlin.math.sqrt
 
 /**
  * Small streaming PCM sink for the realtime voice dev testbench.
@@ -19,6 +23,8 @@ class RealtimePcmPlayer {
     private var audioTrack: AudioTrack? = null
     private var currentSampleRate: Int = 0
     private var currentVolume: Float = 1f
+    private val _amplitude = MutableStateFlow(0f)
+    val amplitude: StateFlow<Float> = _amplitude.asStateFlow()
 
     val isActive: Boolean
         get() = audioTrack != null
@@ -26,14 +32,20 @@ class RealtimePcmPlayer {
     val audioSessionId: Int
         get() = audioTrack?.audioSessionId ?: 0
 
-    fun write(pcm: ByteArray, sampleRate: Int) {
-        if (pcm.isEmpty()) return
+    fun write(pcm: ByteArray, sampleRate: Int): Float {
+        if (pcm.isEmpty()) return 0f
+        val level = computePcm16LeRms(pcm)
         val track = ensureTrack(sampleRate)
         try {
-            track.write(pcm, 0, pcm.size)
+            val written = track.write(pcm, 0, pcm.size)
+            if (written > 0) {
+                _amplitude.value = level
+            }
         } catch (e: Exception) {
             Log.w(TAG, "PCM write failed: ${e.message}")
+            return 0f
         }
+        return level
     }
 
     fun stop() {
@@ -45,6 +57,7 @@ class RealtimePcmPlayer {
         }
         audioTrack = null
         currentSampleRate = 0
+        _amplitude.value = 0f
     }
 
     fun setVolume(volume: Float) {
@@ -109,6 +122,29 @@ class RealtimePcmPlayer {
         currentSampleRate = sampleRate
         Log.i(TAG, "Started streaming PCM playback at ${sampleRate}Hz session=${track.audioSessionId}")
         return track
+    }
+
+    private fun computePcm16LeRms(pcm: ByteArray): Float {
+        val usable = pcm.size - (pcm.size % 2)
+        if (usable <= 0) return 0f
+
+        var sumSquares = 0.0
+        var samples = 0
+        var index = 0
+        while (index < usable) {
+            val low = pcm[index].toInt() and 0xff
+            val high = pcm[index + 1].toInt()
+            val sample = ((high shl 8) or low).toShort().toInt()
+            val normalized = sample / Short.MAX_VALUE.toDouble()
+            sumSquares += normalized * normalized
+            samples++
+            index += 2
+        }
+        if (samples == 0) return 0f
+
+        val rms = sqrt(sumSquares / samples)
+        val lifted = sqrt((rms / 0.28).coerceIn(0.0, 1.0))
+        return if (lifted.isNaN() || lifted.isInfinite()) 0f else lifted.toFloat().coerceIn(0f, 1f)
     }
 
     companion object {

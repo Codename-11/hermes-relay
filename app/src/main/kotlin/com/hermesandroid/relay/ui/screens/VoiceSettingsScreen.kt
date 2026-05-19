@@ -438,7 +438,7 @@ fun VoiceSettingsScreen(
             }
 
             // --- Voice Output ---
-            SectionCard(title = "Voice Output", badge = "Experimental") {
+            SectionCard(title = "Voice Output") {
                 ProviderRow(
                     label = "Status",
                     value = when {
@@ -806,7 +806,7 @@ fun VoiceSettingsScreen(
 
             if (devOptionsUnlocked) {
                 // --- Realtime Agent Lab ---
-                SectionCard(title = "Realtime Agent Lab", badge = "Experimental") {
+                SectionCard(title = "Realtime Agent Lab") {
                     ProviderRow(
                         label = "Status",
                         value = when {
@@ -1070,7 +1070,7 @@ fun VoiceSettingsScreen(
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Interrupt when I speak", style = MaterialTheme.typography.bodyLarge)
                         Text(
-                            text = "Let me cut in by speaking, like a real conversation",
+                            text = "Experimental: may hear speaker output and falsely interrupt or record itself. Best with headphones.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -1173,11 +1173,6 @@ fun VoiceSettingsScreen(
                     }
 
                     Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = "Works best with headphones. On some phones the speaker may false-trigger.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                 }
             }
 

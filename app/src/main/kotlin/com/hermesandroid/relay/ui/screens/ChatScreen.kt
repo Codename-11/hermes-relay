@@ -86,8 +86,6 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
-import com.hermesandroid.relay.data.BargeInPreferences
-import com.hermesandroid.relay.data.BargeInPreferencesRepository
 import com.hermesandroid.relay.ui.theme.purpleGlow
 import com.hermesandroid.relay.ui.theme.radialNavyBackground
 import com.hermesandroid.relay.network.ChatMode
@@ -248,8 +246,6 @@ fun ChatScreen(
 
     val messages by chatViewModel.messages.collectAsState()
     val isStreaming by chatViewModel.isStreaming.collectAsState()
-    val bargeInRepo = remember { BargeInPreferencesRepository(context) }
-    val bargeInPrefs by bargeInRepo.flow.collectAsState(initial = BargeInPreferences())
     var voiceOutputConfig by remember { mutableStateOf<VoiceOutputConfig?>(null) }
     val chatReady by connectionViewModel.chatReady.collectAsState()
     // Voice mode's /voice/transcribe and /voice/synthesize calls both go
@@ -374,7 +370,6 @@ fun ChatScreen(
             val shown = voiceOverlayHost.show(
                 VoiceOverlaySession(
                     uiState = voiceViewModel.uiState,
-                    bargeInPreferences = bargeInRepo.flow,
                     provider = voiceOutputConfig?.default_provider,
                     model = voiceOutputConfig?.default_model,
                     voice = voiceOutputConfig?.default_voice,
@@ -386,6 +381,7 @@ fun ChatScreen(
                     onStartListening = { voiceViewModel.startListening() },
                     onStopListening = { voiceViewModel.stopListening() },
                     onInterrupt = { voiceViewModel.interruptSpeaking() },
+                    onPauseAutoMode = { voiceViewModel.pauseContinuousMode() },
                     onReturnToHermes = {
                         openHermesFromOverlay(context)
                         voiceOverlayHost.hide()
@@ -1654,6 +1650,7 @@ fun ChatScreen(
                 onMicTap = { voiceViewModel.startListening() },
                 onMicRelease = { voiceViewModel.stopListening() },
                 onInterrupt = { voiceViewModel.interruptSpeaking() },
+                onPauseAutoMode = { voiceViewModel.pauseContinuousMode() },
                 onDismiss = { voiceViewModel.exitVoiceMode() },
                 onModeChange = { voiceViewModel.setInteractionMode(it) },
                 onClearError = { voiceViewModel.clearError() },
@@ -1666,6 +1663,7 @@ fun ChatScreen(
                 // Bounded to 12 to keep voice mode focused while still
                 // preserving enough recent tool/context rows for voice turns.
                 transcriptMessages = messages.takeLast(12),
+                showThinking = showThinking,
                 voiceOutputProvider = voiceOutputConfig?.default_provider,
                 voiceOutputModel = voiceOutputConfig?.default_model,
                 voiceOutputVoice = voiceOutputConfig?.default_voice,
@@ -1674,13 +1672,6 @@ fun ChatScreen(
                 voiceConfigScope = voiceOutputConfig?.configScope,
                 voiceOutputEnabled = voiceOutputConfig?.enabled,
                 voiceOutputFallbackEnabled = voiceOutputConfig?.fallback_enabled,
-                bargeInPrefs = bargeInPrefs,
-                onBargeInEnabledChange = { enabled ->
-                    scope.launch { bargeInRepo.setEnabled(enabled) }
-                },
-                onBargeInSensitivityChange = { sensitivity ->
-                    scope.launch { bargeInRepo.setSensitivity(sensitivity) }
-                },
                 onOverlayRequest = showVoiceSystemOverlay,
                 onCompactModeChange = { compact ->
                     voiceCompactMode = compact

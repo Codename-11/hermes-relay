@@ -41,7 +41,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -61,8 +60,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.hermesandroid.relay.data.BargeInPreferences
-import com.hermesandroid.relay.data.BargeInSensitivity
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.ToolCall
@@ -88,6 +85,7 @@ fun VoiceModeOverlay(
     onMicTap: () -> Unit,
     onMicRelease: () -> Unit,
     onInterrupt: () -> Unit,
+    onPauseAutoMode: () -> Unit = {},
     onDismiss: () -> Unit,
     onModeChange: (InteractionMode) -> Unit,
     onClearError: () -> Unit,
@@ -110,6 +108,7 @@ fun VoiceModeOverlay(
     // hint ("Tap the mic to speak") still renders when the transcript
     // is empty.
     transcriptMessages: List<ChatMessage> = emptyList(),
+    showThinking: Boolean = true,
     voiceOutputProvider: String? = null,
     voiceOutputModel: String? = null,
     voiceOutputVoice: String? = null,
@@ -117,9 +116,6 @@ fun VoiceModeOverlay(
     voiceConfigScope: String? = null,
     voiceOutputEnabled: Boolean? = null,
     voiceOutputFallbackEnabled: Boolean? = null,
-    bargeInPrefs: BargeInPreferences = BargeInPreferences(),
-    onBargeInEnabledChange: (Boolean) -> Unit = {},
-    onBargeInSensitivityChange: (BargeInSensitivity) -> Unit = {},
     onOverlayRequest: () -> Unit = {},
     onCompactModeChange: (Boolean) -> Unit = {},
     // === END PHASE3-voice-mode-transcript ===
@@ -174,13 +170,11 @@ fun VoiceModeOverlay(
             configScope = voiceConfigScope,
             outputEnabled = voiceOutputEnabled,
             fallbackEnabled = voiceOutputFallbackEnabled,
-            bargeInPrefs = bargeInPrefs,
             onModeChange = onModeChange,
-            onBargeInEnabledChange = onBargeInEnabledChange,
-            onBargeInSensitivityChange = onBargeInSensitivityChange,
             onMicTap = onMicTap,
             onMicRelease = onMicRelease,
             onInterrupt = onInterrupt,
+            onPauseAutoMode = onPauseAutoMode,
             onOverlayRequest = onOverlayRequest,
             onExit = onDismiss,
             modifier = Modifier
@@ -224,6 +218,10 @@ fun VoiceModeOverlay(
         val lastStreamingContentLength = visibleTranscriptMessages.lastOrNull {
             it.role == MessageRole.ASSISTANT && it.isStreaming
         }?.content?.length ?: 0
+        val lastThinkingContentLength = visibleTranscriptMessages.lastOrNull {
+            it.role == MessageRole.ASSISTANT &&
+                (it.isThinkingStreaming || it.thinkingContent.isNotBlank())
+        }?.thinkingContent?.length ?: 0
         val toolSnapshot = visibleTranscriptMessages
             .flatMap { it.toolCalls }
             .joinToString("|") { tool ->
@@ -237,6 +235,7 @@ fun VoiceModeOverlay(
             visibleTranscriptMessages.size,
             pendingTranscriptText,
             lastStreamingContentLength,
+            lastThinkingContentLength,
             toolSnapshot,
         ) {
             val tailIndex = visibleTranscriptMessages.size +
@@ -275,6 +274,7 @@ fun VoiceModeOverlay(
                 VoiceWaveform(
                     amplitude = uiState.amplitude,
                     state = uiState.state,
+                    outputAudioActive = uiState.outputAudioActive,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 32.dp, vertical = 8.dp),
@@ -316,6 +316,7 @@ fun VoiceModeOverlay(
                             items(visibleTranscriptMessages, key = { it.id }) { msg ->
                                 CompactTranscriptRow(
                                     message = msg,
+                                    showThinking = showThinking,
                                     expanded = msg.id == latestId || msg.isStreaming,
                                 )
                             }
@@ -329,6 +330,7 @@ fun VoiceModeOverlay(
                                             timestamp = System.currentTimeMillis(),
                                             isStreaming = true,
                                         ),
+                                        showThinking = showThinking,
                                         expanded = true,
                                     )
                                 }
@@ -423,11 +425,23 @@ fun VoiceModeOverlay(
                         try {
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         } catch (_: Exception) { /* ignore */ }
-                        onMicRelease()
+                        if (uiState.interactionMode == InteractionMode.Continuous) {
+                            onPauseAutoMode()
+                        } else {
+                            onMicRelease()
+                        }
                     }
-                    VoiceState.Speaking -> onInterrupt()
+                    VoiceState.Speaking -> {
+                        if (uiState.interactionMode == InteractionMode.Continuous) {
+                            onPauseAutoMode()
+                        } else {
+                            onInterrupt()
+                        }
+                    }
                     VoiceState.Transcribing, VoiceState.Thinking -> {
-                        // Busy — ignore tap. Avoids double-stop / double-send races.
+                        if (uiState.interactionMode == InteractionMode.Continuous) {
+                            onPauseAutoMode()
+                        }
                     }
                     VoiceState.Idle, VoiceState.Error -> {
                         try {
@@ -490,13 +504,18 @@ private fun VoiceMicButton(
     val containerColor = when (uiState.state) {
         VoiceState.Listening -> Color(0xFFE53935)
         VoiceState.Speaking -> Color(0xFFE53935)
+        VoiceState.Transcribing, VoiceState.Thinking ->
+            if (uiState.interactionMode == InteractionMode.Continuous) Color(0xFFE53935)
+            else MaterialTheme.colorScheme.primary
         VoiceState.Error -> MaterialTheme.colorScheme.errorContainer
         else -> MaterialTheme.colorScheme.primary
     }
 
     val icon = when (uiState.state) {
         VoiceState.Listening -> Icons.Filled.Stop
-        VoiceState.Transcribing, VoiceState.Thinking -> Icons.Filled.GraphicEq
+        VoiceState.Transcribing, VoiceState.Thinking ->
+            if (uiState.interactionMode == InteractionMode.Continuous) Icons.Filled.Stop
+            else Icons.Filled.GraphicEq
         // Stop icon makes the "tap to interrupt TTS" affordance obvious;
         // VolumeUp looked decorative and users didn't try tapping it.
         VoiceState.Speaking -> Icons.Filled.Stop
@@ -598,13 +617,11 @@ private fun VoiceSessionPill(
     configScope: String?,
     outputEnabled: Boolean?,
     fallbackEnabled: Boolean?,
-    bargeInPrefs: BargeInPreferences,
     onModeChange: (InteractionMode) -> Unit,
-    onBargeInEnabledChange: (Boolean) -> Unit,
-    onBargeInSensitivityChange: (BargeInSensitivity) -> Unit,
     onMicTap: () -> Unit,
     onMicRelease: () -> Unit,
     onInterrupt: () -> Unit,
+    onPauseAutoMode: () -> Unit,
     onOverlayRequest: () -> Unit,
     onExit: () -> Unit,
     modifier: Modifier = Modifier,
@@ -653,7 +670,6 @@ private fun VoiceSessionPill(
                 } else {
                     StatusPill("Compact", emphasized = true)
                 }
-                StatusPill("Experimental", emphasized = true)
                 Text(
                     text = headlineText,
                     style = MaterialTheme.typography.labelSmall,
@@ -668,6 +684,7 @@ private fun VoiceSessionPill(
                         onMicTap = onMicTap,
                         onMicRelease = onMicRelease,
                         onInterrupt = onInterrupt,
+                        onPauseAutoMode = onPauseAutoMode,
                     )
                 }
                 Icon(
@@ -701,48 +718,6 @@ private fun VoiceSessionPill(
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Barge-in",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
-                            Text(
-                                text = bargeInPrefs.sensitivity.name,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Switch(
-                            checked = bargeInPrefs.enabled,
-                            onCheckedChange = onBargeInEnabledChange,
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        listOf(
-                            BargeInSensitivity.Off,
-                            BargeInSensitivity.Low,
-                            BargeInSensitivity.Default,
-                            BargeInSensitivity.High,
-                        ).forEach { sensitivity ->
-                            VoiceControlChip(
-                                text = sensitivity.shortLabel(),
-                                selected = bargeInPrefs.sensitivity == sensitivity,
-                                onClick = { onBargeInSensitivityChange(sensitivity) },
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         StatusPill(profileText, modifier = Modifier.weight(1f))
@@ -750,14 +725,6 @@ private fun VoiceSessionPill(
                             StatusPill(it, modifier = Modifier.weight(1f))
                         }
                         StatusPill(providerText, modifier = Modifier.weight(1f))
-                        StatusPill(
-                            text = when (fallbackEnabled) {
-                                true -> "fallback on"
-                                false -> "fallback off"
-                                null -> "fallback ..."
-                            },
-                            modifier = Modifier.weight(1f),
-                        )
                     }
 
                     Row(
@@ -798,14 +765,26 @@ private fun CompactVoiceMicButton(
     onMicTap: () -> Unit,
     onMicRelease: () -> Unit,
     onInterrupt: () -> Unit,
+    onPauseAutoMode: () -> Unit,
 ) {
     VoiceMicButton(
         uiState = uiState,
         onTap = {
             when (uiState.state) {
-                VoiceState.Listening -> onMicRelease()
-                VoiceState.Speaking -> onInterrupt()
-                VoiceState.Transcribing, VoiceState.Thinking -> Unit
+                VoiceState.Listening -> {
+                    if (uiState.interactionMode == InteractionMode.Continuous) {
+                        onPauseAutoMode()
+                    } else {
+                        onMicRelease()
+                    }
+                }
+                VoiceState.Speaking, VoiceState.Transcribing, VoiceState.Thinking -> {
+                    if (uiState.interactionMode == InteractionMode.Continuous) {
+                        onPauseAutoMode()
+                    } else {
+                        onInterrupt()
+                    }
+                }
                 VoiceState.Idle, VoiceState.Error -> onMicTap()
             }
         },
@@ -904,13 +883,6 @@ private fun InteractionMode.shortLabel(): String = when (this) {
     InteractionMode.Continuous -> "Auto"
 }
 
-private fun BargeInSensitivity.shortLabel(): String = when (this) {
-    BargeInSensitivity.Off -> "Off"
-    BargeInSensitivity.Low -> "Low"
-    BargeInSensitivity.Default -> "Default"
-    BargeInSensitivity.High -> "High"
-}
-
 /**
  * Compact transcript row for voice mode. Rendering rules:
  *
@@ -930,6 +902,7 @@ private fun BargeInSensitivity.shortLabel(): String = when (this) {
 @Composable
 private fun CompactTranscriptRow(
     message: ChatMessage,
+    showThinking: Boolean,
     expanded: Boolean,
 ) {
     if (message.role == MessageRole.SYSTEM) return
@@ -966,6 +939,16 @@ private fun CompactTranscriptRow(
             color = captionColor,
         )
         Spacer(Modifier.height(2.dp))
+        if (message.role == MessageRole.ASSISTANT &&
+            showThinking &&
+            message.thinkingContent.isNotBlank()
+        ) {
+            ThinkingBlock(
+                thinkingContent = message.thinkingContent,
+                isStreaming = message.isThinkingStreaming,
+                modifier = Modifier.padding(bottom = 6.dp),
+            )
+        }
         val hasText = message.content.isNotBlank()
         when {
             isVoiceActionBubble && hasText -> MarkdownContent(

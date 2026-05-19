@@ -31,6 +31,7 @@ import com.hermesandroid.relay.util.MediaCacheWriter
 import com.hermesandroid.relay.util.PhoneSnapshot
 import com.hermesandroid.relay.util.buildPromptBlock
 import com.hermesandroid.relay.util.classifyError
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -43,6 +44,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import okhttp3.sse.EventSource
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicInteger
 
 class ChatViewModel : ViewModel() {
 
@@ -51,6 +53,9 @@ class ChatViewModel : ViewModel() {
     private var activeStream: EventSource? = null
     private var intentionallyCancelled = false
     private var firstTokenNotified = false
+    private var toolHistoryJob: Job? = null
+    private var connectionSwitchJob: Job? = null
+    private val historyLoadGeneration = AtomicInteger(0)
 
     // --- Media dependencies (wired via initializeMedia from RelayApp) ---
     private var relayHttpClient: RelayHttpClient? = null
@@ -283,7 +288,8 @@ class ChatViewModel : ViewModel() {
         // messages. Subscribed on every initialize() call so a replaced
         // handler (connection switch) picks up fresh events without leaking
         // the previous connection's tail.
-        viewModelScope.launch {
+        toolHistoryJob?.cancel()
+        toolHistoryJob = viewModelScope.launch {
             chatHandler.messages.collect { msgs ->
                 val events = msgs
                     .asSequence()
@@ -369,8 +375,10 @@ class ChatViewModel : ViewModel() {
      * runs on [viewModelScope] so it's torn down with the VM.
      */
     fun observeConnectionSwitches(events: SharedFlow<String>) {
-        viewModelScope.launch {
+        connectionSwitchJob?.cancel()
+        connectionSwitchJob = viewModelScope.launch {
             events.collect { newConnectionId ->
+                historyLoadGeneration.incrementAndGet()
                 intentionallyCancelled = true
                 activeStream?.cancel()
                 activeStream = null
@@ -414,6 +422,7 @@ class ChatViewModel : ViewModel() {
             stream.cancel()
         }
         activeStream = null
+        val loadGeneration = historyLoadGeneration.incrementAndGet()
         activeProfileContextKey = contextKey
         _queuedMessages.value = emptyList()
         _pendingAttachments.value = emptyList()
@@ -431,12 +440,15 @@ class ChatViewModel : ViewModel() {
         viewModelScope.launch {
             val messages = client.getMessages(sessionId)
             if (
+                historyLoadGeneration.get() == loadGeneration &&
                 activeProfileContextKey == contextKey &&
                 handler.currentSessionId.value == sessionId
             ) {
                 handler.loadMessageHistory(messages)
             }
-            _isLoadingHistory.value = false
+            if (historyLoadGeneration.get() == loadGeneration) {
+                _isLoadingHistory.value = false
+            }
         }
     }
 
@@ -472,6 +484,7 @@ class ChatViewModel : ViewModel() {
         // Cancel any in-flight stream
         activeStream?.cancel()
         activeStream = null
+        val loadGeneration = historyLoadGeneration.incrementAndGet()
 
         viewModelScope.launch {
             val selectedProfile = selectedProfileProvider()
@@ -485,18 +498,24 @@ class ChatViewModel : ViewModel() {
                 },
             ).fold(
                 onSuccess = { session ->
-                    val chatSession = ChatSession(
-                        sessionId = session.id,
-                        title = session.title ?: "New Chat",
-                        model = session.model
-                    )
-                    handler.addSession(chatSession)
-                    handler.setSessionId(session.id)
-                    handler.clearMessages()
-                    onSessionChanged?.invoke(session.id)
-                    AppAnalytics.onSessionCreated()
+                    if (historyLoadGeneration.get() == loadGeneration) {
+                        val chatSession = ChatSession(
+                            sessionId = session.id,
+                            title = session.title ?: "New Chat",
+                            model = session.model
+                        )
+                        handler.addSession(chatSession)
+                        handler.setSessionId(session.id)
+                        handler.clearMessages()
+                        onSessionChanged?.invoke(session.id)
+                        AppAnalytics.onSessionCreated()
+                    }
                 },
-                onFailure = { error -> emitError(error, context = "create_session") }
+                onFailure = { error ->
+                    if (historyLoadGeneration.get() == loadGeneration) {
+                        emitError(error, context = "create_session")
+                    }
+                }
             )
         }
     }
@@ -509,6 +528,7 @@ class ChatViewModel : ViewModel() {
         intentionallyCancelled = true
         activeStream?.cancel()
         activeStream = null
+        val loadGeneration = historyLoadGeneration.incrementAndGet()
 
         handler.setSessionId(sessionId)
         handler.clearMessages()
@@ -519,8 +539,15 @@ class ChatViewModel : ViewModel() {
         _isLoadingHistory.value = true
         viewModelScope.launch {
             val messages = client.getMessages(sessionId)
-            handler.loadMessageHistory(messages)
-            _isLoadingHistory.value = false
+            if (
+                historyLoadGeneration.get() == loadGeneration &&
+                handler.currentSessionId.value == sessionId
+            ) {
+                handler.loadMessageHistory(messages)
+            }
+            if (historyLoadGeneration.get() == loadGeneration) {
+                _isLoadingHistory.value = false
+            }
         }
     }
 
