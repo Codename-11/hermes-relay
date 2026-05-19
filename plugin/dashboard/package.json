@@ -1,6 +1,6 @@
 {
   "name": "hermes-relay-dashboard",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "private": true,
   "description": "Hermes-Relay dashboard plugin frontend (IIFE bundle). Loaded verbatim by the hermes-agent dashboard via the Plugin SDK global.",
   "scripts": {
