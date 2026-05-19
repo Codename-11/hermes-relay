@@ -48,6 +48,7 @@ certs/
 .subframe/
 voice-lab-runs/
 realtime-voice-runs/
+realtime-agent-runs/
 voice_rec_*.wav
 
 # Ad-hoc debugging artifacts (logcat dumps, screenshots, UI XMLs)

@@ -2,19 +2,19 @@
 
 ## Purpose
 
-This document tracks the realtime voice provider lab and the server-mediated
-Hermes-Relay voice output path. The standalone lab still exists for provider
-experimentation, realtime agent testing, streaming TTS testing, expression
-testing, latency measurement, and provider comparison. The runtime now uses the
-relay `/voice/output/*` route for deterministic Android assistant speech, with
-realtime voice-agent providers kept as a separate test mode.
+This document tracks the realtime voice provider lab, the server-mediated
+Hermes-Relay voice output path, and the experimental relay-brokered Realtime
+Agent engine. The standalone lab still exists for provider experimentation,
+streaming TTS testing, expression testing, latency measurement, and provider
+comparison. The stable runtime uses the relay `/voice/output/*` route for
+deterministic Android assistant speech. Realtime Agent is an opt-in Voice
+Settings engine that keeps Hermes as the owner of chat, memory, tools,
+confirmations, and transcript persistence.
 
-Current status: experimental standalone CLI plus experimental relay-owned voice
-output and realtime voice routes used by Android primary voice mode, Voice
-Settings, and the Developer options testbench. Android Voice Settings labels
-the streaming Voice Output, Realtime Agent Lab, and Barge-in controls as
-Experimental while provider quality, echo handling, latency, and barge-in
-tuning are still being evaluated.
+Current status: standalone CLI lab, stable relay-owned Voice Output, legacy
+realtime provider lab routes, and experimental `/voice/realtime-agent/*` broker
+routes. Android Voice Settings labels only Realtime Agent and Barge-in as
+Experimental; the stable voice engine remains `Hermes chat + voice output`.
 
 - Existing `/voice/config`, `/voice/transcribe`, and `/voice/synthesize` remain
   available as the basic fallback and utility surface.
@@ -32,9 +32,14 @@ tuning are still being evaluated.
   observes Hermes tool-start events and brokers short spoken status lines such
   as "I'll search that now" while Hermes runs the actual tool and approval
   flow. Those status lines should go through the selected speech renderer, not
-  through provider-owned tool calls. Provider adapters expose a non-executing
-  tool-call scaffold for testing provider events only; Android does not execute
-  provider-emitted tools locally.
+  through provider-owned Android tool calls.
+- The experimental `/voice/realtime-agent/*` surface binds a provider render
+  session to a Hermes chat session/profile. It mirrors input transcripts,
+  Hermes tool state, confirmation prompts, assistant deltas, final responses,
+  and provider PCM into the existing Android chat/voice timeline.
+- The brokered tool surface is intentionally small:
+  `hermes_run_task`, `hermes_get_status`, `hermes_cancel`, and
+  `hermes_confirm`.
 - The first live realtime adapters are `openai_realtime` and `xai_realtime`,
   using provider WebSocket APIs for CLI testing.
 - `elevenlabs_tts` is available as a streaming TTS comparison target for the
@@ -85,9 +90,11 @@ streaming_tts_renderer
   Next targets: openai_tts, elevenlabs_tts, hermes_compat, stub.
 
 realtime_agent
-  Target for speech-to-speech, provider turn-taking, provider tool-call event
-  experiments, and comparison testing. This mode may reason conversationally.
-  It must not execute Android or Hermes tools directly.
+  Experimental target for speech-to-speech/provider turn-taking work. In the
+  Android MVP, the client sends the transcript text to the relay broker, Hermes
+  performs the chat/tool run, and the selected realtime provider renders the
+  approved Hermes response as PCM. Future provider-native turns must still use
+  the brokered Hermes tool surface.
 
 legacy_hermes_tts
   Compatibility fallback through `/voice/synthesize` and upstream Hermes TTS
@@ -99,6 +106,36 @@ verbatim rendering, waveform/meter data from actual PCM, first-audio latency,
 chunk-gap metrics, barge-in cancellation, fallback selection, short
 pre-tool-call speech, and long-task filler speech. Hermes remains the owner of
 chat, tools, approvals, and final response text.
+
+## Realtime Agent Broker
+
+Realtime Agent is deliberately separate from the older provider lab:
+
+```text
+Android Voice UI
+  -> /voice/realtime-agent/session + websocket
+  -> RealtimeAgentBroker
+  -> HermesToolBroker
+  -> Hermes API session/profile/tool loop
+  -> Realtime provider adapter for PCM output
+  -> Android playback + mirrored chat/voice timeline
+```
+
+Provider adapters live under `plugin/relay/realtime_agent/providers/` and hide
+OpenAI/xAI-specific details behind the broker. They receive only broker-approved
+text/audio rendering context. Hermes remains first-class for profile/session
+binding, memory, transcript writes, tools, Android bridge safety, confirmations,
+and cancellation.
+
+Limitations in the first Android-integrated slice:
+
+- Client STT still produces the committed transcript before the broker runs the
+  Hermes turn.
+- Provider audio starts after Hermes has enough final assistant text to render.
+- If provider audio fails or disconnects, switch Voice engine back to stable
+  `Hermes chat + voice output`.
+- Provider-native function-call loops are allowed only through the brokered
+  Hermes tool surface and remain experimental.
 
 ## Non-Negotiables
 
@@ -223,8 +260,9 @@ Then pair the Android dev build with the relay and open:
 Settings > Developer options > Realtime voice lab
 ```
 
-The primary Android voice overlay now uses the realtime route for assistant
-speech by default. The Developer options screen remains available for isolated
+The primary Android voice overlay uses stable Voice Output by default. Select
+`Settings > Voice > Voice engine > Realtime Agent` to test the experimental
+brokered route. The Developer options screen remains available for isolated
 provider smoke tests; it fetches realtime provider config, captures a short
 mono 16-bit PCM mic sample for the input event, opens the realtime websocket,
 streams provider PCM deltas to `AudioTrack`, shows waveform/latency/event
@@ -819,11 +857,12 @@ the relay-owned runtime auth path when needed:
 
 Android `Settings > Voice` displays all three config surfaces: editable voice
 output from `/voice/output/config`, fallback STT/TTS from `/voice/config`, and
-editable experimental realtime-agent defaults from `/voice/realtime/config`
-behind Developer options. Android can update safe profile-scoped or relay-owned
-voice defaults, but it does not own provider secrets. The **Test Voice** button
-plays the currently saved profile voice-output path, while normal assistant
-speech prefers `/voice/output/*` streaming PCM when available.
+editable experimental Realtime Agent defaults from `/voice/realtime-agent/config`
+when that engine is selected or Developer options are unlocked. Android can
+update safe profile-scoped or relay-owned voice defaults, but it does not own
+provider secrets. The **Test Voice** button plays the currently saved profile
+voice-output path, while normal assistant speech prefers `/voice/output/*`
+streaming PCM when available.
 
 ## Definition Of Done For The Standalone POC
 

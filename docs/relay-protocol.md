@@ -399,6 +399,12 @@ and `/voice/synthesize` routes remain available for basic STT/TTS fallback and
 utility clients. Operators can disable realtime voice with
 `RELAY_REALTIME_VOICE_ENABLED=0`.
 
+The experimental Realtime Agent engine is a separate brokered surface at
+`/voice/realtime-agent/*`. It binds the selected provider to the active Hermes
+profile/chat session, mirrors Hermes tool state into Android, and exposes only
+`hermes_run_task`, `hermes_get_status`, `hermes_cancel`, and `hermes_confirm`
+to provider-side tool loops.
+
 Setup:
 
 ```text
@@ -407,6 +413,13 @@ GET  /voice/realtime/providers/{provider_id}/options
 POST /voice/realtime/providers/{provider_id}/validate
 POST /voice/realtime/session
 GET  /voice/realtime/{session_id}  (websocket)
+
+GET   /voice/realtime-agent/config
+PATCH /voice/realtime-agent/config
+GET   /voice/realtime-agent/providers/{provider_id}/options
+POST  /voice/realtime-agent/providers/{provider_id}/validate
+POST  /voice/realtime-agent/session
+GET   /voice/realtime-agent/{session_id}  (websocket)
 ```
 
 All three routes require bearer auth. Relay session callers need an active
@@ -420,6 +433,18 @@ Client websocket messages:
 {"type":"session.start"}
 {"type":"input_audio.append","sample_rate":16000,"audio_base64":"..."}
 {"type":"response.create","text":"Test prompt","tool_scaffold":false,"render_mode":"verbatim"}
+{"type":"session.close"}
+```
+
+Realtime Agent client websocket messages are similar but commit the transcript
+through the broker:
+
+```json
+{"type":"session.start"}
+{"type":"input_audio.append","sample_rate":16000,"audio_base64":"..."}
+{"type":"input_audio.commit","text":"Please check the relay status."}
+{"type":"response.cancel"}
+{"type":"hermes.confirm","confirmation_id":"...","answer":"yes"}
 {"type":"session.close"}
 ```
 

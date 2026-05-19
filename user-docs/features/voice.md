@@ -4,18 +4,29 @@ Real-time voice conversation with your Hermes agent. Tap the mic in chat, speak,
 and the agent speaks back through the relay-managed voice output provider while
 STT still follows your Hermes server configuration.
 
+The stable default engine is **Hermes chat + voice output**: Hermes owns the
+chat turn, tools, memory, approvals, and transcript, then the relay renders the
+assistant response to speech. An opt-in **Realtime Agent** engine is available
+for experimental provider-native speech work. It is visibly badged as
+Experimental in Voice Settings and can be switched off without changing the
+stable voice behavior.
+
 ## What It Is
 
-Voice mode is a layer on top of chat. Your voice is transcribed to text, sent
-through the normal chat flow, and the agent's response is rendered back to speech
-as it streams in. The MorphingSphere — the same orb you see in the chat empty
-state — expands to fill the screen and reacts to both your voice and the
-agent's.
+Voice mode is a layer on top of chat. In the stable engine, your voice is
+transcribed to text, sent through the normal chat flow, and the agent's response
+is rendered back to speech as it streams in. The MorphingSphere — the same orb
+you see in the chat empty state — expands to fill the screen and reacts to both
+your voice and the agent's.
 
 - **Your voice** drives a subtle blue-purple "listening" state. Gentle breathing, surface wobble with your amplitude.
 - **The agent's voice** drives a dramatic green-teal "speaking" state. The core goes white-hot on peaks, the data ring spins up to 4× speed on loud consonants.
 
-Transcribed messages appear in your chat history as normal messages. Load the session on another device and you'll see the transcript.
+Transcribed messages appear in your chat history as normal messages. Load the
+session on another device and you'll see the transcript. Realtime Agent mirrors
+its transcript, Hermes tool state, confirmation prompts, and final response into
+that same chat timeline so you do not have to exit voice mode to see what
+happened.
 
 ## Requirements
 
@@ -100,10 +111,12 @@ consistent across the response.
 
 ## Voice Settings
 
-**Settings → Voice** has four sections:
+**Settings → Voice** has these core sections:
 
 ### Voice Mode
 
+- **Voice engine** — Stable `Hermes chat + voice output` or opt-in
+  `Realtime Agent` with an Experimental badge.
 - **Interaction mode** — Tap / Hold / Continuous
 - **Silence threshold** — 1-10 seconds, default 3. Only applies in Tap-to-talk mode.
 - **Auto-TTS** — reserved for future: speak all agent responses even when not in voice mode. Currently a placeholder.
@@ -149,14 +162,29 @@ Read-only display of the STT provider and model reported by `/voice/config`.
 STT still follows the upstream Hermes `stt:` configuration, resolved through the
 active profile where Hermes has one.
 
-### Realtime Agent Lab
+### Realtime Agent
 
-Visible only when Developer options are unlocked. This experimental section lets
-you save profile-scoped realtime provider defaults (`realtime_voice:`) for
-speech-to-speech/provider testing. Provider dropdowns use the same relay-owned
-option refresh, search, grouping, and validation pattern. Normal assistant speech
-still uses Voice Output so Hermes remains the owner of chat context, tool
-execution, and approval.
+Visible when the `Realtime Agent` voice engine is selected, and also visible as
+a development surface when Developer options are unlocked. This experimental
+section saves profile-scoped realtime provider defaults (`realtime_voice:`) for
+OpenAI-first and xAI-ready provider testing. Provider dropdowns use the same
+relay-owned option refresh, search, grouping, and validation pattern as Voice
+Output.
+
+Realtime Agent is still Hermes-first. The provider does not get raw Android
+bridge tools, direct Hermes tool execution, or ownership of memory. The relay
+broker exposes only a small tool surface:
+
+- `hermes_run_task`
+- `hermes_get_status`
+- `hermes_cancel`
+- `hermes_confirm`
+
+The first integrated Android path sends the client transcript to the relay
+broker, streams Hermes chat/tool events into the existing timeline, and renders
+the approved Hermes response through the selected realtime provider as PCM. If
+the provider disconnects or quality is poor, switch Voice engine back to
+`Hermes chat + voice output`; existing voice routes and settings remain intact.
 
 ### Test Voice
 

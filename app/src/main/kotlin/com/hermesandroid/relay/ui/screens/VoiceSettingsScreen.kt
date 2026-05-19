@@ -62,6 +62,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hermesandroid.relay.data.BargeInSensitivity
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.VoiceEngineMode
 import com.hermesandroid.relay.data.VoicePreferencesRepository
 import com.hermesandroid.relay.data.VoiceSettings
 import com.hermesandroid.relay.network.RelayVoiceClient
@@ -85,7 +86,7 @@ import kotlinx.coroutines.launch
  * Sections:
  *   1. Voice Mode       — interaction mode, silence threshold, auto-TTS
  *   2. Voice Output     — profile-scoped provider/model/voice from /voice/output/config
- *   3. Realtime Lab     — dev-only realtime provider defaults from /voice/realtime/config
+ *   3. Realtime Agent   — experimental provider defaults from /voice/realtime-agent/config
  *   4. Barge-in         — interrupt TTS by speaking; sensitivity + resume (V barge-in)
  *   5. Text-to-Speech   — fallback provider label + voice from GET /voice/config
  *   6. Speech-to-Text   — provider/model labels from GET /voice/config
@@ -149,7 +150,7 @@ fun VoiceSettingsScreen(
     // shown as snackbars here as well as the inline "unavailable" label below.
     val snackbarHost = LocalSnackbarHost.current
 
-    LaunchedEffect(voiceClient, devOptionsUnlocked, selectedProfile?.name) {
+    LaunchedEffect(voiceClient, selectedProfile?.name) {
         val client = voiceClient ?: return@LaunchedEffect
         val voiceResult = client.getVoiceConfig()
         if (voiceResult.isSuccess) {
@@ -183,28 +184,24 @@ fun VoiceSettingsScreen(
             snackbarHost.showHumanError(human)
         }
 
-        if (devOptionsUnlocked) {
-            val realtimeResult = client.getRealtimeVoiceConfig()
-            if (realtimeResult.isSuccess) {
-                val config = realtimeResult.getOrNull()
-                realtimeConfig = config
-                realtimeConfigError = null
-                config?.default_provider?.takeIf { it.isNotBlank() }?.let { providerId ->
-                    val optionsResult = client.getRealtimeProviderOptions(providerId)
-                    optionsResult.getOrNull()?.provider?.let { provider ->
-                        realtimeProviderOptions = realtimeProviderOptions + (provider.id to provider)
-                    }
+        val realtimeResult = client.getRealtimeAgentConfig()
+        if (realtimeResult.isSuccess) {
+            val config = realtimeResult.getOrNull()
+            realtimeConfig = config
+            realtimeConfigError = null
+            config?.default_provider?.takeIf { it.isNotBlank() }?.let { providerId ->
+                val optionsResult = client.getRealtimeAgentProviderOptions(providerId)
+                optionsResult.getOrNull()?.provider?.let { provider ->
+                    realtimeProviderOptions = realtimeProviderOptions + (provider.id to provider)
                 }
-            } else {
-                val human = classifyError(
-                    realtimeResult.exceptionOrNull(),
-                    context = "voice_config",
-                )
-                realtimeConfigError = human.body
             }
         } else {
+            val human = classifyError(
+                realtimeResult.exceptionOrNull(),
+                context = "voice_config",
+            )
+            realtimeConfigError = human.body
             realtimeConfig = null
-            realtimeConfigError = null
         }
     }
 
@@ -286,7 +283,7 @@ fun VoiceSettingsScreen(
         realtimeOptionsLoading = trimmed
         realtimeOptionsStatus = null
         scope.launch {
-            val result = client.getRealtimeProviderOptions(trimmed)
+            val result = client.getRealtimeAgentProviderOptions(trimmed)
             if (realtimeOptionsLoading == trimmed) {
                 realtimeOptionsLoading = null
             }
@@ -355,6 +352,60 @@ fun VoiceSettingsScreen(
 
             // --- Voice Mode ---
             SectionCard(title = "Voice Mode") {
+                Text(
+                    text = "Voice engine",
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                val currentEngine = VoiceEngineMode.fromStorage(voiceSettings.engineMode)
+                listOf(
+                    VoiceEngineMode.HermesVoiceOutput to Triple(
+                        "Hermes chat + voice output",
+                        "Hermes handles chat, tools, memory, and voice rendering.",
+                        false,
+                    ),
+                    VoiceEngineMode.RealtimeAgent to Triple(
+                        "Realtime Agent",
+                        "Provider-native realtime speech with Hermes-brokered tools.",
+                        true,
+                    ),
+                ).forEach { (engine, copy) ->
+                    val (label, detail, experimental) = copy
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = currentEngine == engine,
+                                onClick = {
+                                    scope.launch { prefsRepo.setEngineMode(engine) }
+                                },
+                            )
+                            .padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = currentEngine == engine,
+                            onClick = null,
+                        )
+                        Spacer(Modifier.size(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(label, style = MaterialTheme.typography.bodyMedium)
+                                if (experimental) ExperimentalBadge("Experimental")
+                            }
+                            Text(
+                                text = detail,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
                 Text(
                     text = "Interaction mode",
                     style = MaterialTheme.typography.labelLarge,
@@ -804,9 +855,18 @@ fun VoiceSettingsScreen(
                 }
             }
 
-            if (devOptionsUnlocked) {
-                // --- Realtime Agent Lab ---
-                SectionCard(title = "Realtime Agent Lab") {
+            if (
+                voiceSettings.engineMode == VoiceEngineMode.RealtimeAgent.storageValue ||
+                devOptionsUnlocked
+            ) {
+                // --- Realtime Agent ---
+                SectionCard(title = "Realtime Agent", badge = "Experimental") {
+                    Text(
+                        text = "Hermes still owns tools and confirmations. Realtime mode may fall back to stable voice if the provider disconnects.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(4.dp))
                     ProviderRow(
                         label = "Status",
                         value = when {
@@ -997,7 +1057,7 @@ fun VoiceSettingsScreen(
                             }
                             scope.launch {
                                 realtimeSaving = true
-                                val validationResult = client.validateRealtimeProvider(
+                                val validationResult = client.validateRealtimeAgentProvider(
                                     providerId = realtimeProvider,
                                     model = realtimeModel,
                                     voice = realtimeVoice,
@@ -1021,7 +1081,7 @@ fun VoiceSettingsScreen(
                                 validationWarning(validationResult.getOrNull())?.let { warning ->
                                     realtimeOptionsStatus = warning
                                 }
-                                val result = client.updateRealtimeVoiceConfig(
+                                val result = client.updateRealtimeAgentConfig(
                                     enabled = realtimeEnabled,
                                     provider = realtimeProvider,
                                     model = realtimeModel,
@@ -1045,7 +1105,7 @@ fun VoiceSettingsScreen(
                         enabled = !realtimeSaving && voiceClient != null,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text(if (realtimeSaving) "Saving..." else "Save realtime")
+                        Text(if (realtimeSaving) "Saving..." else "Save realtime agent")
                     }
                     realtimeConfigError?.let { error ->
                         Spacer(Modifier.height(4.dp))

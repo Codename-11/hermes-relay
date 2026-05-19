@@ -17,6 +17,7 @@ import com.hermesandroid.relay.data.BargeInSensitivity
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.ToolCall
+import com.hermesandroid.relay.data.VoiceEngineMode
 import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.RelayVoiceClient
@@ -185,6 +186,8 @@ data class VoiceStats(
     val vadThresholdMs: Long = 0L,
     /** Current interaction mode ("tap" / "hold" / "continuous"). */
     val interactionMode: String = "tap",
+    /** Current voice engine ("hermes_voice_output" / "realtime_agent"). */
+    val voiceEngineMode: String = VoiceEngineMode.HermesVoiceOutput.storageValue,
     /** Last player state tag ("idle" / "playing" / "paused"). */
     val playerState: String = "idle",
     /** Current TTS queue depth (pending + in-synth + in-play). */
@@ -331,6 +334,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // mid-turn take effect on the next turn.
     private var voicePreferences: VoicePreferencesRepository? = null
     private var voicePreferencesJob: Job? = null
+    private var voiceEngineMode: VoiceEngineMode = VoiceEngineMode.HermesVoiceOutput
 
     // === PHASE3-voice-intents: voice→bridge intent routing ===
     // Bridge intent handler — the flavor-selected impl, set in initialize().
@@ -707,6 +711,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             voicePreferencesJob?.cancel()
             voicePreferencesJob = viewModelScope.launch {
                 voicePreferences.settings.collect { settings ->
+                    voiceEngineMode = VoiceEngineMode.fromStorage(settings.engineMode)
                     val mode = when (settings.interactionMode.lowercase()) {
                         "hold" -> InteractionMode.HoldToTalk
                         "continuous" -> InteractionMode.Continuous
@@ -721,6 +726,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                         it.copy(
                             vadThresholdMs = settings.silenceThresholdMs,
                             interactionMode = settings.interactionMode,
+                            voiceEngineMode = settings.engineMode,
                         )
                     }
                 }
@@ -1338,7 +1344,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 text = sample,
                 renderMode = "verbatim",
             ) { event ->
-                if (event.type != "voice.audio.delta") return@runVoiceOutput
+                if (!event.isAudioDelta) return@runVoiceOutput
                 val encoded = event.audioBase64 ?: return@runVoiceOutput
                 val audio = try {
                     Base64.getDecoder().decode(encoded)
@@ -1544,6 +1550,17 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
         // === END PHASE3-voice-intents ===
 
+        if (voiceEngineMode == VoiceEngineMode.RealtimeAgent) {
+            runRealtimeAgentTurn(
+                client = client,
+                chatVm = chatVm,
+                userText = userText,
+                inputPcm = inputPcm,
+                inputSampleRate = inputSampleRate,
+            )
+            return
+        }
+
         // === PHASE3-voice-intents-fallback-visibility ===
         // Classifier returned NotApplicable — we're about to fall through
         // to chatVm.sendMessage(). The SSE stream takes 500–1500 ms to
@@ -1593,6 +1610,141 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // Route the transcribed text through the normal chat pipeline.
         // This will create a user message + kick off the SSE stream.
         chatVm.sendMessage(userText)
+    }
+
+    private suspend fun runRealtimeAgentTurn(
+        client: RelayVoiceClient,
+        chatVm: ChatViewModel,
+        userText: String,
+        inputPcm: ByteArray,
+        inputSampleRate: Int,
+    ) {
+        sentenceBuffer = StringBuilder()
+        pendingRawDelta = StringBuilder()
+        lastObservedMessageId = null
+        lastObservedContentLength = 0
+        streamComplete = false
+        idleFlushJob?.cancel()
+        idleFlushJob = null
+        resumeWatchdog?.cancel(); resumeWatchdog = null
+        clearSpokenChunksState()
+
+        _uiState.update {
+            it.copy(
+                state = VoiceState.Thinking,
+                outputAudioActive = false,
+                transcribedText = userText,
+                responseText = "",
+            )
+        }
+
+        val assistantMessageId = chatVm.startRealtimeAgentTurn(
+            userText = userText,
+            chatSessionId = chatVm.currentSessionId.value,
+        )
+        val pcmPlayer = realtimePcmPlayer
+        val audioSeen = AtomicBoolean(false)
+        val audioBytes = AtomicInteger(0)
+        val bargeInStarted = AtomicBoolean(false)
+        val responseText = StringBuilder()
+
+        val result = client.runRealtimeAgent(
+            prompt = userText,
+            inputPcm = inputPcm,
+            inputSampleRate = inputSampleRate,
+            chatSessionId = chatVm.currentSessionId.value,
+        ) { event ->
+            chatVm.applyRealtimeAgentEvent(assistantMessageId, event)
+            when (event.type) {
+                "voice.input_transcript.final" -> {
+                    _uiState.update {
+                        it.copy(
+                            state = VoiceState.Thinking,
+                            outputAudioActive = false,
+                            transcribedText = event.text ?: userText,
+                        )
+                    }
+                }
+                "voice.response.started", "hermes.run.started" -> {
+                    _uiState.update {
+                        it.copy(state = VoiceState.Thinking, outputAudioActive = false)
+                    }
+                }
+                "voice.response.delta" -> {
+                    event.delta?.let { responseText.append(it) }
+                    _uiState.update {
+                        it.copy(
+                            state = if (audioSeen.get()) VoiceState.Speaking else VoiceState.Thinking,
+                            responseText = responseText.toString(),
+                        )
+                    }
+                }
+                "hermes.tool.started" -> {
+                    val tool = event.toolName?.replace('_', ' ') ?: "tool"
+                    _uiState.update {
+                        it.copy(
+                            state = VoiceState.Thinking,
+                            responseText = "Using $tool...",
+                        )
+                    }
+                }
+                "hermes.tool.delta" -> {
+                    event.delta?.takeIf { it.isNotBlank() }?.let { delta ->
+                        _uiState.update {
+                            it.copy(state = VoiceState.Thinking, responseText = delta)
+                        }
+                    }
+                }
+                "hermes.confirmation.requested" -> {
+                    _uiState.update {
+                        it.copy(
+                            state = VoiceState.Thinking,
+                            responseText = event.message ?: "Waiting for confirmation",
+                        )
+                    }
+                }
+                "voice.output_audio.delta" -> {
+                    if (pcmPlayer != null) {
+                        handleRealtimeVoiceEvent(
+                            event = event,
+                            pcmPlayer = pcmPlayer,
+                            audioSeen = audioSeen,
+                            audioBytes = audioBytes,
+                            bargeInStarted = bargeInStarted,
+                        )
+                    }
+                }
+                "voice.response.done" -> {
+                    event.text?.takeIf { it.isNotBlank() }?.let { finalText ->
+                        if (responseText.isBlank()) responseText.append(finalText)
+                    }
+                    _uiState.update {
+                        it.copy(
+                            responseText = responseText.toString(),
+                            outputAudioActive = it.outputAudioActive && audioSeen.get(),
+                        )
+                    }
+                }
+                "voice.error" -> {
+                    _uiState.update {
+                        it.copy(
+                            state = VoiceState.Error,
+                            error = event.message ?: "Realtime agent failed",
+                        )
+                    }
+                }
+            }
+        }
+
+        if (result.isSuccess) {
+            pendingInTtsQueue.set(0)
+            maybeAutoResume()
+            return
+        }
+
+        val err = result.exceptionOrNull()
+        Log.w(TAG, "realtime agent failed: ${err?.message}")
+        surfaceError(err, context = "voice_config")
     }
 
     // ---------------------------------------------------------------------
@@ -2007,7 +2159,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         audioBytes: AtomicInteger,
         bargeInStarted: AtomicBoolean,
     ) {
-        if (event.type != "voice.audio.delta") return
+        if (!event.isAudioDelta) return
         val encoded = event.audioBase64 ?: return
         val audio = try {
             Base64.getDecoder().decode(encoded)

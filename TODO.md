@@ -43,16 +43,15 @@ to tool state, safety prompts, or the current task.
 - **Audio quality guardrails** — normalize output volume across realtime and
   fallback TTS providers, keep pronunciation hints/profile voice tuning, and
   measure provider-specific delay, chunk gaps, and tail clipping.
-- **Voice engine selector** — add a first-class setting for the voice loop:
-  `Hermes chat + voice output` as the stable default, and `Realtime agent` as
-  an experimental option once provider sessions can preserve Hermes profile,
-  memory, transcript, tool, and safety semantics.
-- **Realtime-native Hermes bridge prototype** — spike a secondary mode where
-  OpenAI/xAI realtime speech-to-speech owns the live voice session, but any
-  tool call is proxied back through relay/Hermes instead of bypassing Hermes.
-  The prototype must prove profile isolation, chat transcript parity, tool
-  timeline rendering, permission prompts, and Android bridge safety before it
-  can graduate from experimental.
+- **Voice engine selector** — implemented as an opt-in experimental Realtime
+  Agent engine in `docs/plans/2026-05-19-realtime-hermes-voice-agent.md`.
+  Follow-up work is provider-native turn-taking, richer confirmation handling,
+  and quality/latency evaluation before promotion beyond Experimental.
+- **Realtime-native Hermes bridge prototype** — first relay-brokered slice
+  implemented in `docs/plans/2026-05-19-realtime-hermes-voice-agent.md`.
+  Remaining work: let OpenAI/xAI realtime sessions own more of the live speech
+  turn while still proxying every tool, confirmation, memory, and Android bridge
+  action through Hermes/relay safety.
 
 ---
 

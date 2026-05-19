@@ -18,6 +18,7 @@ import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.ToolCallEvent
 import com.hermesandroid.relay.network.HermesApiClient
 import com.hermesandroid.relay.network.RelayHttpClient
+import com.hermesandroid.relay.network.RealtimeVoiceEvent
 import com.hermesandroid.relay.network.handlers.ChatHandler
 import com.hermesandroid.relay.network.handlers.LocalDispatchResult
 import com.hermesandroid.relay.network.handlers.formatPhoneActionResult
@@ -780,6 +781,93 @@ class ChatViewModel : ViewModel() {
                         emitError(error, context = "send_message")
                     }
                 )
+            }
+        }
+    }
+
+    fun startRealtimeAgentTurn(userText: String, chatSessionId: String?): String {
+        val handler = chatHandler ?: return UUID.randomUUID().toString()
+        AppAnalytics.onMessageSent()
+        val trimmed = userText.trim()
+        val userMessageId = UUID.randomUUID().toString()
+        val assistantMessageId = "realtime-agent-${UUID.randomUUID()}"
+        handler.activeAgentName = currentAgentDisplayName()
+        handler.addUserMessage(
+            ChatMessage(
+                id = userMessageId,
+                role = MessageRole.USER,
+                content = trimmed,
+                timestamp = System.currentTimeMillis(),
+            )
+        )
+        handler.setLastSentMessage(trimmed)
+        chatSessionId?.takeIf { it.isNotBlank() }?.let {
+            handler.setSessionId(it)
+            onSessionChanged?.invoke(it)
+        }
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = assistantMessageId,
+                role = MessageRole.ASSISTANT,
+                content = "",
+                timestamp = System.currentTimeMillis(),
+                isStreaming = true,
+                agentName = handler.activeAgentName,
+            )
+        )
+        return assistantMessageId
+    }
+
+    fun applyRealtimeAgentEvent(assistantMessageId: String, event: RealtimeVoiceEvent) {
+        val handler = chatHandler ?: return
+        val hermesSessionId = when {
+            !event.chatSessionId.isNullOrBlank() -> event.chatSessionId
+            event.type.startsWith("hermes.") && !event.sessionId.isNullOrBlank() -> event.sessionId
+            else -> null
+        }
+        hermesSessionId?.let {
+            handler.setSessionId(it)
+            onSessionChanged?.invoke(it)
+        }
+
+        when (event.type) {
+            "hermes.message.started" -> Unit
+            "voice.response.delta" -> {
+                val delta = event.delta ?: return
+                handler.onTextDelta(assistantMessageId, delta)
+            }
+            "hermes.tool.delta" -> {
+                val delta = event.delta ?: return
+                handler.onThinkingDelta(assistantMessageId, delta)
+            }
+            "hermes.tool.started" -> {
+                val name = event.toolName?.takeIf { it.isNotBlank() } ?: "hermes"
+                val callId = event.toolCallId?.takeIf { it.isNotBlank() } ?: name
+                handler.onToolCallStart(assistantMessageId, callId, name)
+            }
+            "hermes.tool.completed" -> {
+                val callId = event.toolCallId?.takeIf { it.isNotBlank() }
+                    ?: event.toolName?.takeIf { it.isNotBlank() }
+                    ?: "hermes"
+                handler.onToolCallComplete(assistantMessageId, callId, event.resultPreview)
+            }
+            "hermes.tool.failed" -> {
+                val callId = event.toolCallId?.takeIf { it.isNotBlank() }
+                    ?: event.toolName?.takeIf { it.isNotBlank() }
+                    ?: "hermes"
+                handler.onToolCallFailed(assistantMessageId, callId, event.message ?: event.resultPreview)
+            }
+            "hermes.confirmation.requested" -> {
+                val prompt = event.message ?: "Waiting for confirmation"
+                handler.onThinkingDelta(assistantMessageId, prompt)
+            }
+            "voice.response.done", "hermes.run.completed" -> {
+                handler.onStreamComplete(assistantMessageId)
+                activeStream = null
+            }
+            "voice.error" -> {
+                handler.onStreamError(event.message ?: "Realtime agent failed")
+                activeStream = null
             }
         }
     }
