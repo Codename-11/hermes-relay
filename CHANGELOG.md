@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Desktop Chat tab with first-run route setup.** The Tauri tray dashboard now has a Chat tab inspired by the Hermes Desktop chat-first flow. It streams through the saved paired relay when `~/.hermes/remote-sessions.json` has an active session, or through a direct Hermes gateway/API URL when relay pairing is not available. The tab supports stop, retry, new chat, clear, current-session transcript history, and a setup panel that offers relay pairing or direct WebAPI configuration without saving the optional API key.
+
+- **First-class desktop TUI tab.** The Tauri tray dashboard now gives the embedded xterm/PTY Hermes session its own sidebar tab instead of nesting it under Terminal / CLI. Terminal remains the external launcher, shim-state, and copyable-command surface, while plugin embeds route into the same TUI tab.
+
+- **Desktop surface plugins.** The desktop CLI and Tauri tray now register built-in terminal surface plugins, starting with Herm (`herm-tui`) from `liftaris/herm`. Users can inspect plugin status, install or update Herm, launch a fresh dashboard, resume with `herm -c`, or embed the plugin in the tray's xterm/PTY surface with `bunx`/`npx` fallback when the `herm` binary is not installed.
+
 - **Relay server release track.** Relay server and Python package releases now use `relay-v*` tags, validate relay-owned version metadata, build wheel/sdist artifacts, generate checksums, and publish through `.github/workflows/release-relay.yml`. This lets Relay server fixes ship independently from Android app `versionCode` bumps and desktop CLI alphas.
 
 - **Dashboard plugin CI.** `.github/workflows/ci-dashboard.yml` builds the dashboard plugin, runs the dashboard API tests, and verifies the plugin-owned QR modal CSS markers are present in the built bundle.

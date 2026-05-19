@@ -73,6 +73,7 @@ import com.hermesandroid.relay.ui.components.UpdateBanner
 import com.hermesandroid.relay.update.UpdateCheckResult
 import com.hermesandroid.relay.viewmodel.UpdateViewModel
 import com.hermesandroid.relay.ui.components.WhatsNewDialog
+import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BridgePreferencesRepository
 import com.hermesandroid.relay.data.BridgeSafetyPreferencesRepository
 import com.hermesandroid.relay.data.BuildFlavor
@@ -353,10 +354,11 @@ fun RelayApp() {
         }
     }
 
-    // Initialize ChatViewModel reactively when API client becomes available
-    val apiClient by connectionViewModel.apiClient.collectAsState()
+    // Initialize ChatViewModel reactively when the chat-routed API client becomes available
+    val chatApiClient by connectionViewModel.chatApiClient.collectAsState()
     val lastSessionId by connectionViewModel.lastSessionId.collectAsState()
-    var sessionResumed by remember { mutableStateOf(false) }
+    val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
+    val activeConnectionId by connectionViewModel.activeConnectionId.collectAsState()
 
     val mediaContext = androidx.compose.ui.platform.LocalContext.current
 
@@ -372,6 +374,9 @@ fun RelayApp() {
                 .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                 .build(),
             relayUrlProvider = { connectionViewModel.effectiveRelayUrl.value },
+            profileNameProvider = {
+                AgentDisplay.profileRequestName(connectionViewModel.selectedProfile.value?.name)
+            },
             sessionTokenProvider = {
                 (connectionViewModel.authState.value as? AuthState.Paired)?.token
             },
@@ -477,8 +482,8 @@ fun RelayApp() {
         chatViewModel.observeConnectionSwitches(connectionViewModel.connectionSwitchEvents)
     }
 
-    LaunchedEffect(apiClient) {
-        apiClient?.let { client ->
+    LaunchedEffect(chatApiClient) {
+        chatApiClient?.let { client ->
             chatViewModel.initialize(client, connectionViewModel.chatHandler)
             chatViewModel.updateApiClient(client)
 
@@ -499,18 +504,36 @@ fun RelayApp() {
             chatViewModel.setSelectedProfileProvider {
                 connectionViewModel.selectedProfile.value
             }
+            chatViewModel.setEffectiveProfileProvider {
+                AgentDisplay.effectiveProfile(
+                    selectedProfile = connectionViewModel.selectedProfile.value,
+                    profiles = connectionViewModel.agentProfiles.value,
+                )
+            }
 
             // Wire session persistence callback
             chatViewModel.onSessionChanged = { sessionId ->
                 connectionViewModel.saveLastSessionId(sessionId)
             }
-
-            // Resume last session on first connection
-            if (!sessionResumed && lastSessionId != null) {
-                chatViewModel.resumeSession(lastSessionId!!)
-                sessionResumed = true
-            }
         }
+    }
+
+    LaunchedEffect(chatApiClient, activeConnectionId, selectedProfile?.name, lastSessionId) {
+        if (chatApiClient == null) return@LaunchedEffect
+        chatViewModel.switchProfileContext(
+            contextKey = AgentDisplay.profileContextKey(
+                connectionId = activeConnectionId,
+                profileName = selectedProfile?.name,
+            ),
+            sessionId = lastSessionId,
+        )
+        chatViewModel.refreshSessions()
+    }
+
+    LaunchedEffect(selectedProfile?.name) {
+        voiceViewModel.onProfileChanged(
+            AgentDisplay.profileRequestName(selectedProfile?.name)
+        )
     }
 
     // === PHASE3-status: sync granular phone-status settings to chat ===
@@ -544,8 +567,8 @@ fun RelayApp() {
 
     // Sync streaming endpoint preference to chat. Resolves "auto" against the
     // current server capabilities so vanilla upstream + bootstrap-injected
-    // sessions API picks /v1/runs for chat (which has live tool events)
-    // while still using /api/sessions/* for browse/rename/delete.
+    // sessions API picks /v1/chat/completions for portable SSE chat while
+    // still using /api/sessions/* for browse/rename/delete.
     val streamingEndpoint by connectionViewModel.streamingEndpoint.collectAsState()
     val serverCapabilities by connectionViewModel.serverCapabilities.collectAsState()
     LaunchedEffect(streamingEndpoint, serverCapabilities) {
@@ -1010,6 +1033,7 @@ fun RelayApp() {
                     VoiceSettingsScreen(
                         voiceViewModel = voiceViewModel,
                         voiceClient = voiceClient,
+                        selectedProfile = selectedProfile,
                         onBack = { navController.popBackStack() }
                     )
                 }

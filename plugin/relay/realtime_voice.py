@@ -30,6 +30,18 @@ from .config import (
     default_realtime_voice_config_path,
     save_realtime_voice_config_file,
 )
+from .profile_voice import (
+    realtime_voice_settings,
+    request_profile,
+    save_profile_voice_section,
+)
+from .provider_options import (
+    PROVIDER_OPTIONS_SCHEMA_VERSION,
+    XAIOptionAuth,
+    fetch_realtime_provider_options,
+    merge_provider_options,
+    validate_provider_selection,
+)
 from .voice_auth import require_voice_auth
 
 DEFAULT_SAMPLE_RATE = 24000
@@ -45,6 +57,9 @@ class RealtimeVoiceSession:
     model: str
     voice: str
     sample_rate: int
+    profile: str | None
+    config_scope: str
+    config_path: Path | None
     created_at: float
     event_log_path: Path
 
@@ -66,31 +81,85 @@ class RealtimeVoiceHandler:
 
     async def handle_config(self, request: web.Request) -> web.StreamResponse:
         await require_voice_auth(request, "voice:realtime")
-        return web.json_response(self.config_payload())
+        profile = request_profile(None, request.query)
+        return web.json_response(self.config_payload(profile))
 
     async def handle_update_config(self, request: web.Request) -> web.StreamResponse:
         await require_voice_auth(request, "voice:realtime")
         payload = await _optional_json(request)
+        profile = request_profile(payload, request.query)
+        payload.pop("profile", None)
         updates = self._validate_config_updates(payload)
-        config_path = save_realtime_voice_config_file(self.config, updates)
-        body = self.config_payload()
+        config_path = save_profile_voice_section(
+            self.config,
+            profile,
+            "realtime_voice",
+            updates,
+        )
+        if config_path is None and profile:
+            raise web.HTTPNotFound(text=f"profile not found or not writable: {profile}")
+        if config_path is None:
+            config_path = save_realtime_voice_config_file(self.config, updates)
+        body = self.config_payload(profile)
         body["updated"] = sorted(updates)
         body["config_path"] = str(config_path)
         return web.json_response(body)
 
-    async def handle_create_session(self, request: web.Request) -> web.StreamResponse:
-        if not self.enabled:
-            raise web.HTTPNotFound(text="realtime voice is disabled")
+    async def handle_provider_options(self, request: web.Request) -> web.StreamResponse:
         await require_voice_auth(request, "voice:realtime")
+        provider_id = str(request.match_info.get("provider_id", "")).strip()
+        profile = request_profile(None, request.query)
+        return web.json_response(await self.provider_options_payload(provider_id, profile))
 
+    async def handle_provider_validate(self, request: web.Request) -> web.StreamResponse:
+        await require_voice_auth(request, "voice:realtime")
+        provider_id = str(request.match_info.get("provider_id", "")).strip()
         payload = await _optional_json(request)
-        provider = _str_option(payload, "provider") or self.config.realtime_voice_provider
-        model = _str_option(payload, "model") or self.config.realtime_voice_model
-        voice = _str_option(payload, "voice") or self.config.realtime_voice_voice
+        profile = request_profile(payload, request.query)
+        settings = realtime_voice_settings(self.config, profile)
+        options = await self.provider_options_payload(provider_id, profile)
+        model = _str_option(payload, "model") or str(settings["model"])
+        voice = _str_option(payload, "voice") or str(settings["voice"])
         sample_rate = _int_option(
             payload,
             "sample_rate",
-            self.config.realtime_voice_sample_rate or DEFAULT_SAMPLE_RATE,
+            int(settings["sample_rate"] or DEFAULT_SAMPLE_RATE),
+        )
+        validation = validate_provider_selection(
+            options["provider"],
+            model=model,
+            voice=voice,
+            sample_rate=sample_rate,
+        )
+        return web.json_response(
+            {
+                "success": True,
+                "mode": "realtime_voice",
+                "protocol": "hermes.voice.realtime.validate.v0",
+                "provider_id": provider_id,
+                "model": model,
+                "voice": voice,
+                "sample_rate": sample_rate,
+                "dynamic": options["dynamic"],
+                **validation,
+            }
+        )
+
+    async def handle_create_session(self, request: web.Request) -> web.StreamResponse:
+        await require_voice_auth(request, "voice:realtime")
+
+        payload = await _optional_json(request)
+        profile = request_profile(payload, request.query)
+        settings = realtime_voice_settings(self.config, profile)
+        if not bool(settings["enabled"]):
+            raise web.HTTPNotFound(text="realtime voice is disabled")
+        provider = _str_option(payload, "provider") or str(settings["provider"])
+        model = _str_option(payload, "model") or str(settings["model"])
+        voice = _str_option(payload, "voice") or str(settings["voice"])
+        sample_rate = _int_option(
+            payload,
+            "sample_rate",
+            int(settings["sample_rate"] or DEFAULT_SAMPLE_RATE),
         )
         self._validate_provider(provider)
 
@@ -102,6 +171,9 @@ class RealtimeVoiceHandler:
             model=model,
             voice=voice,
             sample_rate=sample_rate,
+            profile=settings.get("profile"),
+            config_scope=str(settings["config_scope"]),
+            config_path=settings.get("config_path"),
             created_at=time.time(),
             event_log_path=event_log_path,
         )
@@ -119,6 +191,10 @@ class RealtimeVoiceHandler:
                 "sample_rate": sample_rate,
                 "event_log_path": str(event_log_path),
                 "protocol": "hermes.voice.realtime.v0",
+                "profile": session.profile,
+                "config_scope": session.config_scope,
+                "config_path": str(session.config_path) if session.config_path else None,
+                "fallback_to_global": bool(settings["fallback_to_global"]),
             }
         )
 
@@ -188,24 +264,59 @@ class RealtimeVoiceHandler:
             return True
         return os.getenv("RELAY_REALTIME_VOICE_ENABLED", "").strip().lower() in _TRUE_ENV_VALUES
 
-    def config_payload(self) -> dict[str, Any]:
-        provider = self.config.realtime_voice_provider
-        model = self.config.realtime_voice_model
-        voice = self.config.realtime_voice_voice
-        sample_rate = self.config.realtime_voice_sample_rate or DEFAULT_SAMPLE_RATE
+    def config_payload(self, profile: str | None = None) -> dict[str, Any]:
+        settings = realtime_voice_settings(self.config, profile)
+        provider = settings["provider"]
+        model = settings["model"]
+        voice = settings["voice"]
+        sample_rate = settings["sample_rate"] or DEFAULT_SAMPLE_RATE
         providers = [info.to_dict() for info in self.registry.provider_infos()]
         auth = _xai_auth_status(self.config)
         return {
             "success": True,
-            "enabled": self.enabled,
+            "enabled": bool(settings["enabled"]),
             "protocol": "hermes.voice.realtime.v0",
-            "config_path": str(_config_path_for_payload(self.config)),
+            "config_path": str(settings["config_path"] or _config_path_for_payload(self.config)),
             "default_provider": provider,
             "default_model": model,
             "default_voice": voice,
             "sample_rate": sample_rate,
             "providers": providers,
             "auth": auth,
+            "profile": settings["profile"],
+            "config_scope": settings["config_scope"],
+            "fallback_to_global": settings["fallback_to_global"],
+        }
+
+    async def provider_options_payload(
+        self,
+        provider_id: str,
+        profile: str | None = None,
+    ) -> dict[str, Any]:
+        info = self._validate_realtime_provider(provider_id)
+        settings = realtime_voice_settings(self.config, profile)
+        provider = info.to_dict()
+        dynamic = await asyncio.to_thread(
+            fetch_realtime_provider_options,
+            provider_id,
+            xai_auth=_xai_option_auth(self.config),
+        )
+        merge_provider_options(provider, dynamic.get("provider", {}))
+        return {
+            "success": True,
+            "mode": "realtime_voice",
+            "protocol": "hermes.voice.realtime.options.v0",
+            "schema_version": PROVIDER_OPTIONS_SCHEMA_VERSION,
+            "provider_id": provider_id,
+            "provider": provider,
+            "default_provider": settings["provider"],
+            "default_model": settings["model"],
+            "default_voice": settings["voice"],
+            "sample_rate": settings["sample_rate"] or DEFAULT_SAMPLE_RATE,
+            "profile": settings["profile"],
+            "config_scope": settings["config_scope"],
+            "fallback_to_global": settings["fallback_to_global"],
+            "dynamic": dynamic["dynamic"],
         }
 
     async def _handle_input_audio(
@@ -396,6 +507,15 @@ class RealtimeVoiceHandler:
         except KeyError as exc:
             raise web.HTTPBadRequest(text=str(exc)) from exc
 
+    def _validate_realtime_provider(self, provider: str):
+        try:
+            info = self.registry.info(provider)
+        except KeyError as exc:
+            raise web.HTTPBadRequest(text=str(exc)) from exc
+        if not info.supports_realtime:
+            raise web.HTTPBadRequest(text=f"{provider} is not a realtime voice provider")
+        return info
+
     def _validate_config_updates(self, payload: dict[str, Any]) -> dict[str, Any]:
         updates: dict[str, Any] = {}
         allowed = {"enabled", "provider", "model", "voice", "sample_rate"}
@@ -448,6 +568,9 @@ class RealtimeVoiceHandler:
             "voice": session.voice,
             "sample_rate": session.sample_rate,
             "event_log_path": str(session.event_log_path),
+            "profile": session.profile,
+            "config_scope": session.config_scope,
+            "config_path": str(session.config_path) if session.config_path else None,
         }
 
     async def _send(
@@ -553,6 +676,17 @@ def _read_relay_xai_oauth_token(config: RelayConfig) -> _RelayXAIToken | None:
             base_url=base_url or None,
         )
     return None
+
+
+def _xai_option_auth(config: RelayConfig) -> XAIOptionAuth | None:
+    token = _read_relay_xai_oauth_token(config)
+    if token is None:
+        return None
+    return XAIOptionAuth(
+        access_token=token.access_token,
+        base_url=token.base_url,
+        source=token.source,
+    )
 
 
 def _xai_oauth_token_candidates(store: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:

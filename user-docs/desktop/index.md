@@ -35,7 +35,8 @@ The same chord set works on macOS (`Cmd+Shift+4` → screenshot to clipboard →
 | **Chat (structured)** | `hermes-relay chat "<prompt>"` / `hermes-relay "<prompt>"` | Scriptable, one-shot, pipes stdin. `--json` emits `GatewayEvent`s per line for `jq` / automation. REPL supports `/paste`, `/screenshot`, `/image <path>`. |
 | **Tools** | Automatic, in-session | The remote agent can call `desktop_read_file`, `desktop_write_file`, `desktop_terminal`, `desktop_search_files`, `desktop_patch`, `desktop_clipboard_read/write`, `desktop_screenshot`, `desktop_open_in_editor` — **executed on your machine**, not the server. One-time per-URL consent gate. |
 | **Daemon** | `hermes-relay daemon` | Headless tool router. Keeps the agent's hands available even when no shell is open. JSON-line lifecycle logs. |
-| **Pair / Status / Tools / Devices / Doctor / Update / Workspace / Paste** | `hermes-relay <verb>` | First-time setup, session inventory, server-side toolset introspection, paired-device management, local diagnostics, self-update, workspace-context inspection, one-shot clipboard staging. See [Subcommands](./subcommands.md). |
+| **Surface plugins** | `hermes-relay plugins` | Install and launch terminal dashboard surfaces. Herm is built in as an installable `herm-tui` plugin with external-terminal and embedded-tray launch paths. |
+| **Pair / Sessions / Status / Tools / Devices / Doctor / Update / Workspace / Paste** | `hermes-relay <verb>` | First-time setup, TUI tmux session management, session inventory, server-side toolset introspection, paired-device management, local diagnostics, self-update, workspace-context inspection, one-shot clipboard staging. See [Subcommands](./subcommands.md). |
 
 ### In-shell chord set
 
@@ -54,10 +55,13 @@ While inside the shell/TUI session (bare `hermes-relay`, the default mode), `Ctr
 ## Headline features
 
 - **[Native paste / screenshot / image](./subcommands.md)** — the chord set above, plus REPL slash commands `/paste`, `/screenshot`, `/screenshot primary`, `/screenshot 1`, `/image <path>`. Multi-monitor aware: `/screenshot` defaults to the virtual-screen union; `primary` / a 1-indexed display narrows. Identical wire format to a local Hermes paste.
+- **Tray Chat** — the desktop dashboard has a Chat tab. Paired installs stream through the saved relay session; unpaired/chat-only installs can enter a direct Hermes WebAPI URL and optional in-memory API key.
 - **[Local tool routing](./tools.md)** — agent-callable file I/O, shell exec, ripgrep, clipboard, screenshot, editor-launcher, and unified-diff patching. Strict consent gate per relay URL; non-TTY stdin fails closed.
 - **[Self-update](./subcommands.md#hermes-relay-update)** — `hermes-relay update` polls GitHub Releases, semver-compares, downloads + verifies SHA256, and atomic-swaps the binary. POSIX renames in place; Windows uses cooperative `.new.exe` swap on next start.
+- **[Surface plugins](./subcommands.md#hermes-relay-plugins)** — install, update, launch, or embed terminal dashboard plugins from the tray or CLI. The first built-in plugin is [Herm](https://github.com/liftaris/herm), installed as `herm-tui` and resumed with `herm -c`.
 - **[Workspace awareness](./subcommands.md#hermes-relay-workspace)** — on connect, the client advertises `cwd`, `git_root`, `git_branch`, `repo_name`, `hostname`, `platform`, `active_shell` to the relay so the agent knows which repo you're in. Client-side capability shipped in alpha.6; server-side prompt-context consumption is on the way (see [ROADMAP.md](https://github.com/Codename-11/hermes-relay/blob/main/ROADMAP.md#desktop-track-parallel-lane-to-android--experimental)).
-- **[Conversation picker](./subcommands.md#hermes-relay-shell)** — attach with no `--conversation` / `--new` and you get a numbered list of recent server-side sessions to resume, with first-prompt previews.
+- **[Conversation picker](./subcommands.md#hermes-relay-shell)** — on first or fresh attach, choose from recent server-side Hermes conversations with first-prompt previews before the TUI starts.
+- **[TUI session continuity](./subcommands.md#hermes-relay-sessions)** — bare `hermes-relay` resumes the active/default tmux session, replays recent scrollback, and `sessions list/resume/new/kill` gives explicit control when you need it.
 - **[Editor tool + interactive patch approval](./tools.md#desktop_open_in_editor-and-interactive-patches)** — agent calls `desktop_open_in_editor(path, line, col)` to open `$VISUAL` / `$EDITOR` / VSCode / Cursor / Sublime / nvim. Agent-proposed patches render as colored unified diffs with `y`/`n`/`e`/`r` prompts.
 - **[Daemon mode](./subcommands.md#hermes-relay-daemon)** — `hermes-relay daemon` runs the tool router headless so the agent can reach your machine while you context-switch.
 - **[Multi-endpoint pairing](./pairing.md#multi-endpoint-pairing-adr-24)** — one QR carries LAN + Tailscale + public URLs. The client races candidates in priority order, picks the first reachable, and re-probes on every network change.
@@ -97,6 +101,8 @@ The third command (`hermes-relay` with no args) drops you into `shell` mode — 
 
 See **[Installation](./installation.md)** for the full walkthrough (Bun-compiled binaries, version-aware install, `hermes` alias, self-update flow) and **[Pairing](./pairing.md)** for minting a 6-char code on the server.
 
+The tray app follows the same rule as the CLI for relay-backed desktop control: daemon, devices, grants, and TUI controls unlock only after a paired session token exists in `~/.hermes/remote-sessions.json`. A raw Advanced relay URL is only an override hint, not a pairing, so fresh or signed-out installs show "Pair first" for those controls until pairing completes. The Chat tab is allowed to run in a lighter chat-only mode against a direct Hermes WebAPI URL (`http://host:8642`) with an optional API key kept only for the current tray session. The TUI tab runs the experimental embedded terminal: xterm.js renders inside the dashboard while the Rust tray process owns the local PTY and launches the same tmux-backed `hermes-relay` session path. The Plugins tab uses the same embedded terminal host for installable dashboard surfaces such as Herm. Open in an external terminal remains the fallback for PTY focus, resize, and shortcut testing.
+
 ## Why both shell AND chat modes?
 
 They're not the same thing:
@@ -116,5 +122,6 @@ This mirrors how the Android client exposes `android_tap` / `android_screenshot`
 
 - [Hermes-Relay Android client](/guide/) — same project, same relay, different surface (phone control, voice, bridge).
 - [Hermes Agent](https://github.com/NousResearch/hermes-agent) — the agent platform the CLI talks to.
+- [Herm](https://github.com/liftaris/herm) — OpenTUI dashboard plugin installable from the desktop surface.
 - [Desktop CLI GitHub source](https://github.com/Codename-11/hermes-relay/tree/main/desktop) — `@hermes-relay/cli` package.
 - [Release notes](https://github.com/Codename-11/hermes-relay/releases?q=desktop) — tagged `desktop-v*` (separate track from Android).

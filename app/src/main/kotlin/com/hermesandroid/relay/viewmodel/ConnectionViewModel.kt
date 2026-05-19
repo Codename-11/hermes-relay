@@ -19,7 +19,9 @@ import com.hermesandroid.relay.data.PairingPreferences
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.ConnectionStore
 import com.hermesandroid.relay.data.ConnectionValidation
+import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.ProfileSessionStore
 import com.hermesandroid.relay.data.ProfileSelectionStore
 import com.hermesandroid.relay.data.relayDataStore
 import com.hermesandroid.relay.util.TailscaleDetector
@@ -30,6 +32,7 @@ import com.hermesandroid.relay.network.ConnectionManager
 import com.hermesandroid.relay.network.ConnectionState
 import com.hermesandroid.relay.network.EndpointResolver
 import com.hermesandroid.relay.network.HermesApiClient
+import com.hermesandroid.relay.network.ProfileApiUrlResolver
 import com.hermesandroid.relay.network.ServerCapabilities
 import com.hermesandroid.relay.network.RelayHttpClient
 import com.hermesandroid.relay.network.RelayUrlDeriver
@@ -388,6 +391,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     private val _apiClient = MutableStateFlow<HermesApiClient?>(null)
     val apiClient: StateFlow<HermesApiClient?> = _apiClient.asStateFlow()
 
+    private val _chatApiClient = MutableStateFlow<HermesApiClient?>(null)
+    val chatApiClient: StateFlow<HermesApiClient?> = _chatApiClient.asStateFlow()
+    private var profileChatApiClient: HermesApiClient? = null
+    private var profileChatApiClientUrl: String? = null
+    private var profileChatApiClientKey: String? = null
+
     private val _chatMode = MutableStateFlow(ChatMode.DISCONNECTED)
     val chatMode: StateFlow<ChatMode> = _chatMode.asStateFlow()
 
@@ -398,8 +407,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     private val _serverCapabilities = MutableStateFlow(ServerCapabilities.DISCONNECTED)
     val serverCapabilities: StateFlow<ServerCapabilities> = _serverCapabilities.asStateFlow()
 
-    // Chat is ready when API client exists and server is reachable
-    val chatReady: StateFlow<Boolean> = combine(_apiClient, _apiServerReachable) { client, reachable ->
+    // Chat is ready when a chat-routed API client exists and the base server is reachable.
+    val chatReady: StateFlow<Boolean> = combine(_chatApiClient, _apiServerReachable) { client, reachable ->
         client != null && reachable
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
     // NOTE: [relayReady] / [voiceReady] are declared below the [_relayUrl]
@@ -573,6 +582,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      */
     private val profileSelectionStore: ProfileSelectionStore =
         ProfileSelectionStore(application)
+    private val profileSessionStore: ProfileSessionStore =
+        ProfileSessionStore(application)
 
     /**
      * Set (or clear, with `null`) the active profile pick. Writes through
@@ -580,36 +591,79 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * the selection survives process death and connection switches.
      */
     fun selectProfile(profile: Profile?) {
-        _selectedProfile.value = profile
+        val normalizedProfile = AgentDisplay.normalizeSelection(profile)
+        _selectedProfile.value = normalizedProfile
+        _lastSessionId.value = null
         val connectionId = activeConnectionId.value ?: return
         _pendingSelectedProfileConnectionId.value = connectionId
-        _pendingSelectedProfileName.value = profile?.name
+        _pendingSelectedProfileName.value = normalizedProfile?.name
         viewModelScope.launch {
-            profileSelectionStore.setSelectedProfile(connectionId, profile?.name)
+            profileSelectionStore.setSelectedProfile(connectionId, normalizedProfile?.name)
+            rebuildChatApiClient()
         }
+        refreshLastSessionForProfile(connectionId, normalizedProfile?.name)
     }
 
-    private fun resolvePendingProfileFrom(list: List<Profile>) {
-        val connectionId = activeConnectionId.value ?: return
+    private fun resolvePendingProfileFrom(list: List<Profile>): Boolean {
+        val connectionId = activeConnectionId.value ?: return false
         if (_pendingSelectedProfileConnectionId.value != connectionId) {
-            return
+            return false
         }
         val current = _selectedProfile.value
         if (current != null) {
+            if (AgentDisplay.isServerDefaultAlias(current.name)) {
+                _selectedProfile.value = null
+                _pendingSelectedProfileName.value = null
+                return true
+            }
             val refreshed = list.firstOrNull { it.name == current.name }
             if (refreshed != null) {
                 if (refreshed != current) {
                     _selectedProfile.value = refreshed
+                    return true
                 }
-                return
+                return false
             }
             _selectedProfile.value = null
             _pendingSelectedProfileName.value = current.name
+            return true
         }
-        val pendingName = _pendingSelectedProfileName.value ?: return
+        val pendingName = _pendingSelectedProfileName.value ?: return false
+        if (AgentDisplay.isServerDefaultAlias(pendingName)) {
+            _pendingSelectedProfileName.value = null
+            _selectedProfile.value = null
+            return true
+        }
         val resolved = list.firstOrNull { it.name == pendingName }
         if (resolved != null) {
             _selectedProfile.value = resolved
+            return true
+        }
+        return false
+    }
+
+    private fun refreshLastSessionForProfile(
+        connectionId: String?,
+        profileName: String?,
+    ) {
+        _lastSessionId.value = null
+        if (connectionId == null) return
+        viewModelScope.launch {
+            val profileScoped = profileSessionStore
+                .sessionIdFlow(connectionId, profileName)
+                .first()
+            val legacyDefault = if (profileName == null) {
+                getApplication<Application>().relayDataStore.data
+                    .first()[KEY_LAST_SESSION_ID]
+            } else {
+                null
+            }
+            if (
+                activeConnectionId.value == connectionId &&
+                _selectedProfile.value?.name == profileName
+            ) {
+                _lastSessionId.value = profileScoped ?: legacyDefault
+            }
         }
     }
 
@@ -748,13 +802,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     }
     // === END PHASE3-status ===
 
-    // Streaming endpoint preference. Three values:
+    // Streaming endpoint preference. Four values:
     //   "auto"     — pick based on per-endpoint capability detection (default
     //                for new installs as of v0.3.0). Resolves to "sessions"
     //                when the server has /api/sessions/{id}/chat/stream
-    //                (fork or upstream-merged), otherwise "runs".
+    //                (fork or upstream-merged), then "completions" when
+    //                /v1/chat/completions is available.
     //   "sessions" — force /api/sessions/{id}/chat/stream
-    //   "runs"     — force /v1/runs
+    //   "completions" — force /v1/chat/completions with stream=true
+    //   "runs"     — force /v1/runs for servers known to stream that route
     //
     // Existing users keep whatever they previously chose. Only fresh installs
     // (no value persisted yet) get the new "auto" default.
@@ -772,14 +828,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     /**
      * Resolve the user's `streamingEndpoint` preference to a concrete value
-     * based on the latest capability probe. Returns "sessions" or "runs"
+     * based on the latest capability probe. Returns a concrete endpoint
      * (never "auto"). Used by ChatViewModel right before kicking off a stream.
      *
-     * - "sessions" / "runs" pass through unchanged (manual override wins).
+     * - "sessions" / "completions" / "runs" pass through unchanged (manual override wins).
      * - "auto" → reads `serverCapabilities.value.preferredChatEndpoint()`.
      */
     fun resolveStreamingEndpoint(preference: String): String = when (preference) {
-        "sessions", "runs" -> preference
+        "sessions", "completions", "runs" -> preference
         else -> _serverCapabilities.value.preferredChatEndpoint()
     }
 
@@ -1393,6 +1449,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // ProfileSelectionStore is a separate DataStore file from
         // ConnectionStore's EncryptedSharedPrefs.
         profileSelectionStore.clear(connectionId)
+        profileSessionStore.clearConnection(connectionId)
     }
 
     private suspend fun readStoredDeviceIdForRemoval(
@@ -1700,6 +1757,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                         )
                         connectionStore.removeConnection(duplicate.id)
                         profileSelectionStore.clear(duplicate.id)
+                        profileSessionStore.clearConnection(duplicate.id)
                     }
 
                     // Auto-rename the placeholder label created by
@@ -1994,11 +2052,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             activeConnectionId.collect { connectionId ->
                 _selectedProfile.value = null
+                _lastSessionId.value = null
                 _pendingSelectedProfileConnectionId.value = connectionId
                 _pendingSelectedProfileName.value = connectionId?.let { cid ->
                     profileSelectionStore.selectedProfileFlow(cid).first()
                 }
                 resolvePendingProfileFrom(agentProfiles.value)
+                refreshLastSessionForProfile(connectionId, _selectedProfile.value?.name)
+                rebuildChatApiClient()
             }
         }
 
@@ -2007,7 +2068,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // remains pending so it can recover if the server advertises it later.
         viewModelScope.launch {
             agentProfiles.collect { list ->
-                resolvePendingProfileFrom(list)
+                if (resolvePendingProfileFrom(list)) {
+                    refreshLastSessionForProfile(
+                        activeConnectionId.value,
+                        _selectedProfile.value?.name,
+                    )
+                    rebuildChatApiClient()
+                }
             }
         }
     }
@@ -2487,6 +2554,44 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             _chatMode.value = ChatMode.DISCONNECTED
             _serverCapabilities.value = ServerCapabilities.DISCONNECTED
         }
+        rebuildChatApiClient()
+    }
+
+    private suspend fun rebuildChatApiClient() {
+        val baseApiUrl = ProfileApiUrlResolver.normalize(effectiveApiServerUrlSnapshot())
+        val profileApiUrl = ProfileApiUrlResolver.resolveForConnection(
+            profileApiUrl = _selectedProfile.value?.apiServerUrl,
+            baseApiUrl = baseApiUrl,
+        )
+        val baseClient = _apiClient.value
+        val key = authManager.getApiKey() ?: ""
+
+        if (profileApiUrl == null || profileApiUrl == baseApiUrl) {
+            val oldProfileClient = profileChatApiClient
+            profileChatApiClient = null
+            profileChatApiClientUrl = null
+            profileChatApiClientKey = null
+            _chatApiClient.value = baseClient
+            shutdownClientOffMain(oldProfileClient)
+            return
+        }
+
+        val existingProfileClient = profileChatApiClient
+        if (
+            existingProfileClient != null &&
+            profileChatApiClientUrl == profileApiUrl &&
+            profileChatApiClientKey == key
+        ) {
+            _chatApiClient.value = existingProfileClient
+            return
+        }
+
+        val nextProfileClient = HermesApiClient(baseUrl = profileApiUrl, apiKey = key)
+        profileChatApiClient = nextProfileClient
+        profileChatApiClientUrl = profileApiUrl
+        profileChatApiClientKey = key
+        _chatApiClient.value = nextProfileClient
+        shutdownClientOffMain(existingProfileClient)
     }
 
     /**
@@ -2790,12 +2895,19 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     fun saveLastSessionId(sessionId: String?) {
         _lastSessionId.value = sessionId
+        val connectionId = activeConnectionId.value
+        val profileName = _selectedProfile.value?.name
         viewModelScope.launch {
-            getApplication<Application>().relayDataStore.edit { preferences ->
-                if (sessionId != null) {
-                    preferences[KEY_LAST_SESSION_ID] = sessionId
-                } else {
-                    preferences.remove(KEY_LAST_SESSION_ID)
+            if (connectionId != null) {
+                profileSessionStore.setSessionId(connectionId, profileName, sessionId)
+            }
+            if (profileName == null) {
+                getApplication<Application>().relayDataStore.edit { preferences ->
+                    if (sessionId != null) {
+                        preferences[KEY_LAST_SESSION_ID] = sessionId
+                    } else {
+                        preferences.remove(KEY_LAST_SESSION_ID)
+                    }
                 }
             }
         }
@@ -2850,7 +2962,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             _apiServerUrl.value = DEFAULT_API_URL
             _relayUrl.value = DEFAULT_RELAY_URL
             shutdownClientOffMain(_apiClient.value)
+            shutdownClientOffMain(profileChatApiClient)
             _apiClient.value = null
+            _chatApiClient.value = null
+            profileChatApiClient = null
+            profileChatApiClientUrl = null
+            profileChatApiClientKey = null
             _apiServerReachable.value = false
         }
     }
@@ -3118,6 +3235,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // NetworkOnMainThreadException on live SSL sockets.
         _apiClient.value?.let { client ->
             Thread({ runCatching { client.shutdown() } }, "HermesApiClient-shutdown").start()
+        }
+        profileChatApiClient?.let { client ->
+            Thread(
+                { runCatching { client.shutdown() } },
+                "HermesProfileApiClient-shutdown",
+            ).start()
         }
         tailscaleDetector.shutdown()
         // Release the cached VirtualDisplay + ImageReader + HandlerThread

@@ -3,6 +3,7 @@ package com.hermesandroid.relay.network
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.AppAnalytics
 import com.hermesandroid.relay.network.models.CreateSessionRequest
 import com.hermesandroid.relay.network.models.HermesSseEvent
@@ -21,10 +22,9 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.addJsonObject
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -57,16 +57,16 @@ enum class ChatMode {
  * The Android client uses this to pick the best chat path automatically when
  * `streamingEndpoint = "auto"`. The bootstrap-injected vanilla-upstream case
  * is the interesting one: `sessionsApi=true` (we injected it) but
- * `sessionsChatStream=false` (we deliberately didn't inject the chat
- * handler — runs is better). The auto-resolver picks `runs` for chat in that
- * case while still using sessions endpoints for browse/rename/delete.
+ * `sessionsChatStream=false` (the chat handler is absent). The auto-resolver
+ * now picks OpenAI-compatible chat completions for that case because the route
+ * returns an SSE stream, while `/v1/runs` may be an async JSON run-start API.
  */
 data class ServerCapabilities(
     /** `/api/sessions` (CRUD) — true on fork, upstream-merged, OR bootstrap-injected. */
     val sessionsApi: Boolean,
     /** `/api/sessions/{id}/chat/stream` (SSE) — true ONLY on fork or upstream-merged. */
     val sessionsChatStream: Boolean,
-    /** `/v1/runs` (structured-event SSE) — standard upstream chat path. */
+    /** `/v1/runs` (structured-event SSE) — true only when explicitly advertised as SSE-compatible. */
     val runs: Boolean,
     /** `/v1/chat/completions` — OpenAI-compatible fallback. */
     val portable: Boolean,
@@ -76,6 +76,7 @@ data class ServerCapabilities(
     /** Resolve `streamingEndpoint = "auto"` to the best concrete choice. */
     fun preferredChatEndpoint(): String = when {
         sessionsChatStream -> "sessions"
+        portable -> "completions"
         runs -> "runs"
         else -> "sessions"  // last-resort: try sessions, will surface a clear error
     }
@@ -252,9 +253,19 @@ class HermesApiClient(
     suspend fun listSessions(limit: Int = 50): List<SessionItem> =
         listSessionsResult(limit).getOrElse { emptyList() }
 
-    suspend fun createSessionResult(title: String? = null): Result<SessionItem> = withContext(Dispatchers.IO) {
+    suspend fun createSessionResult(
+        title: String? = null,
+        profileName: String? = null,
+        model: String? = null,
+    ): Result<SessionItem> = withContext(Dispatchers.IO) {
         try {
-            val reqBody = json.encodeToString(CreateSessionRequest(title = title))
+            val reqBody = json.encodeToString(
+                CreateSessionRequest(
+                    title = title,
+                    model = model,
+                    profile = AgentDisplay.profileRequestName(profileName),
+                ),
+            )
             val request = authRequest("$baseUrl/api/sessions")
                 .post(reqBody.toRequestBody(JSON_MEDIA))
                 .build()
@@ -279,8 +290,12 @@ class HermesApiClient(
         }
     }
 
-    suspend fun createSession(title: String? = null): SessionItem? =
-        createSessionResult(title).getOrNull()
+    suspend fun createSession(
+        title: String? = null,
+        profileName: String? = null,
+        model: String? = null,
+    ): SessionItem? =
+        createSessionResult(title, profileName, model).getOrNull()
 
     suspend fun deleteSession(sessionId: String): Boolean = withContext(Dispatchers.IO) {
         try {
@@ -387,10 +402,22 @@ class HermesApiClient(
                     key to ((value as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "")
                 } ?: emptyMap()
 
-                // Default personality: config.display.personality
+                // Default display identity. Upstream Hermes currently uses
+                // config.display.personality for the active persona and often
+                // mirrors the same identity through skin. Accept name-style
+                // aliases too so older or profile-specific configs don't make
+                // Android fall back to the literal "Hermes" label.
                 val display = config["display"] as? JsonObject
-                val defaultName = (display?.get("personality") as? kotlinx.serialization.json.JsonPrimitive)
-                    ?.content ?: ""
+                val defaultPersonality = display.stringField("personality")
+                val defaultName = firstNonBlank(
+                    defaultPersonality.takeUnless { it.equals("default", ignoreCase = true) },
+                    display.stringField("agent_name"),
+                    display.stringField("assistant_name"),
+                    display.stringField("display_name"),
+                    display.stringField("name"),
+                    display.stringField("skin"),
+                    defaultPersonality,
+                )
 
                 PersonalityConfig(
                     names = prompts.keys.toList(),
@@ -453,39 +480,23 @@ class HermesApiClient(
         onComplete: () -> Unit,
         onUsage: (UsageInfo?) -> Unit,
         onError: (String) -> Unit,
-        modelOverride: String? = null
+        modelOverride: String? = null,
+        profileName: String? = null,
     ): EventSource {
-        val requestPayload = buildJsonObject {
-            put("message", message)
-            if (!systemMessage.isNullOrBlank()) {
-                put("system_message", systemMessage)
-            }
-            if (!modelOverride.isNullOrBlank()) {
-                // Agent-profile model override — top-level `model` mirrors
-                // the OpenAI Chat Completions shape and is what the
-                // upstream sessions handler looks at when deciding which
-                // model to route the turn through.
-                put("model", modelOverride)
-                Log.d(TAG, "sendChatStream: modelOverride=$modelOverride (profile pick)")
-            }
-            if (!attachments.isNullOrEmpty()) {
-                putJsonArray("attachments") {
-                    attachments.forEach { att ->
-                        addJsonObject {
-                            put("contentType", att.contentType)
-                            put("content", att.content)
-                        }
-                    }
-                }
-            }
-            if (voiceIntentMessages != null && voiceIntentMessages.isNotEmpty()) {
-                // Nest the synthesized OpenAI-format pairs under `messages`.
-                // Stays additive — the upstream sessions handler reads
-                // `message` for the live turn and treats `messages` as
-                // history context to seed the LLM with.
-                put("messages", voiceIntentMessages)
-            }
+        if (!modelOverride.isNullOrBlank()) {
+            Log.d(TAG, "sendChatStream: modelOverride=$modelOverride (profile pick)")
         }
+        AgentDisplay.profileRequestName(profileName)?.let {
+            Log.d(TAG, "sendChatStream: profile=$it")
+        }
+        val requestPayload = buildSessionChatStreamPayload(
+            message = message,
+            systemMessage = systemMessage,
+            attachments = attachments,
+            voiceIntentMessages = voiceIntentMessages,
+            modelOverride = modelOverride,
+            profileName = profileName,
+        )
         val requestBody = json.encodeToString(JsonObject.serializer(), requestPayload)
 
         val request = authRequest("$baseUrl/api/sessions/$sessionId/chat/stream")
@@ -681,6 +692,180 @@ class HermesApiClient(
         return sseFactory.newEventSource(request, listener)
     }
 
+    // --- OpenAI-compatible chat streaming via /v1/chat/completions ---
+
+    /**
+     * Stream chat through the OpenAI-compatible chat completions endpoint.
+     *
+     * This is the portable SSE fallback for servers that expose
+     * `/v1/chat/completions` but where `/v1/runs` is an async JSON run-start
+     * API rather than an EventSource-compatible stream.
+     */
+    fun sendChatCompletionsStream(
+        message: String,
+        model: String? = null,
+        systemMessage: String? = null,
+        attachments: List<com.hermesandroid.relay.data.Attachment>? = null,
+        voiceIntentMessages: JsonArray? = null,
+        onSessionId: (String) -> Unit,
+        onMessageStarted: (String) -> Unit,
+        onTextDelta: (String) -> Unit,
+        onThinkingDelta: (String) -> Unit,
+        onToolCallStart: (String, String) -> Unit,
+        onToolCallDone: (String, String?) -> Unit,
+        onToolCallFailed: (String, String?) -> Unit,
+        onTurnComplete: () -> Unit,
+        onComplete: () -> Unit,
+        onUsage: (UsageInfo?) -> Unit,
+        onError: (String) -> Unit,
+        modelOverride: String? = null,
+        profileName: String? = null,
+    ): EventSource {
+        if (!modelOverride.isNullOrBlank()) {
+            Log.d(TAG, "sendChatCompletionsStream: modelOverride=$modelOverride (profile pick, was model=$model)")
+        }
+        AgentDisplay.profileRequestName(profileName)?.let {
+            Log.d(TAG, "sendChatCompletionsStream: profile=$it")
+        }
+        val requestPayload = buildChatCompletionsStreamPayload(
+            message = message,
+            model = model,
+            systemMessage = systemMessage,
+            attachments = attachments,
+            voiceIntentMessages = voiceIntentMessages,
+            modelOverride = modelOverride,
+            profileName = profileName,
+        )
+        val requestBody = json.encodeToString(JsonObject.serializer(), requestPayload)
+
+        val request = authRequest("$baseUrl/v1/chat/completions")
+            .header("Accept", "text/event-stream")
+            .post(requestBody.toRequestBody(JSON_MEDIA))
+            .build()
+
+        val completeCalled = AtomicBoolean(false)
+        val messageStarted = AtomicBoolean(false)
+
+        val listener = object : EventSourceListener() {
+            override fun onEvent(
+                eventSource: EventSource,
+                id: String?,
+                type: String?,
+                data: String
+            ) {
+                if (data == "[DONE]") {
+                    if (completeCalled.compareAndSet(false, true)) {
+                        mainHandler.post { onComplete() }
+                    }
+                    return
+                }
+
+                try {
+                    val event = json.decodeFromString<JsonObject>(data)
+                    openAiErrorMessage(event)?.let { msg ->
+                        if (completeCalled.compareAndSet(false, true)) {
+                            mainHandler.post { onError(msg) }
+                        }
+                        return
+                    }
+
+                    openAiUsage(event)?.let { usage ->
+                        mainHandler.post { onUsage(usage) }
+                    }
+
+                    if (messageStarted.compareAndSet(false, true)) {
+                        openAiMessageId(event)?.let { messageId ->
+                            mainHandler.post { onMessageStarted(messageId) }
+                        }
+                    }
+
+                    openAiReasoningDelta(event)?.let { reasoning ->
+                        if (reasoning.isNotEmpty()) {
+                            mainHandler.post { onThinkingDelta(reasoning) }
+                        }
+                    }
+
+                    openAiTextDelta(event)?.let { delta ->
+                        if (delta.isNotEmpty()) {
+                            mainHandler.post { onTextDelta(delta) }
+                        }
+                    }
+
+                    val finishReason = openAiFinishReason(event)
+                    if (!finishReason.isNullOrBlank() && completeCalled.compareAndSet(false, true)) {
+                        mainHandler.post { onComplete() }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Unparseable chat completion SSE event ($type): ${e.message}\nRaw: $data")
+                }
+            }
+
+            override fun onFailure(
+                eventSource: EventSource,
+                t: Throwable?,
+                response: Response?
+            ) {
+                if (completeCalled.compareAndSet(false, true)) {
+                    val msg = when {
+                        response != null && !response.isSuccessful ->
+                            "API error ${response.code}: ${response.message}"
+                        t is IOException -> "Connection failed: ${t.message}"
+                        t != null -> "Stream error: ${t.message}"
+                        else -> "Unknown stream error"
+                    }
+                    mainHandler.post { onError(msg) }
+                }
+            }
+
+            override fun onClosed(eventSource: EventSource) {
+                if (completeCalled.compareAndSet(false, true)) {
+                    mainHandler.post { onComplete() }
+                }
+            }
+        }
+
+        return sseFactory.newEventSource(request, listener)
+    }
+
+    private fun openAiChoice(event: JsonObject): JsonObject? =
+        (event["choices"] as? JsonArray)
+            ?.firstOrNull()
+            ?.let { it as? JsonObject }
+
+    private fun openAiDelta(event: JsonObject): JsonObject? =
+        openAiChoice(event)?.get("delta") as? JsonObject
+
+    private fun openAiTextDelta(event: JsonObject): String? =
+        (openAiDelta(event)?.get("content") as? JsonPrimitive)?.contentOrNull
+
+    private fun openAiReasoningDelta(event: JsonObject): String? {
+        val delta = openAiDelta(event) ?: return null
+        return (delta["reasoning_content"] as? JsonPrimitive)?.contentOrNull
+            ?: (delta["reasoning"] as? JsonPrimitive)?.contentOrNull
+            ?: (delta["thinking"] as? JsonPrimitive)?.contentOrNull
+    }
+
+    private fun openAiFinishReason(event: JsonObject): String? =
+        (openAiChoice(event)?.get("finish_reason") as? JsonPrimitive)?.contentOrNull
+
+    private fun openAiMessageId(event: JsonObject): String? =
+        (event["id"] as? JsonPrimitive)?.contentOrNull
+
+    private fun openAiErrorMessage(event: JsonObject): String? {
+        val error = event["error"] ?: return null
+        return when (error) {
+            is JsonPrimitive -> error.contentOrNull
+            is JsonObject -> (error["message"] as? JsonPrimitive)?.contentOrNull
+                ?: (error["error"] as? JsonPrimitive)?.contentOrNull
+            else -> null
+        }
+    }
+
+    private fun openAiUsage(event: JsonObject): UsageInfo? =
+        (event["usage"] as? JsonObject)?.let { usage ->
+            runCatching { json.decodeFromJsonElement<UsageInfo>(usage) }.getOrNull()
+        }
+
     // --- Run streaming via /v1/runs ---
 
     /**
@@ -715,44 +900,24 @@ class HermesApiClient(
         onComplete: () -> Unit,
         onUsage: (UsageInfo?) -> Unit,
         onError: (String) -> Unit,
-        modelOverride: String? = null
+        modelOverride: String? = null,
+        profileName: String? = null,
     ): EventSource {
-        // Resolution: modelOverride (profile pick) > model (caller default) > "default".
-        // Blank strings are treated as null so callers can't accidentally
-        // ship `"model": ""` over the wire.
-        val resolvedModel = when {
-            !modelOverride.isNullOrBlank() -> modelOverride
-            !model.isNullOrBlank() -> model
-            else -> "default"
-        }
         if (!modelOverride.isNullOrBlank()) {
             Log.d(TAG, "sendRunStream: modelOverride=$modelOverride (profile pick, was model=$model)")
         }
-        val requestPayload = buildJsonObject {
-            put("model", resolvedModel)
-            put("input", message)
-            put("stream", true)
-            if (!systemMessage.isNullOrBlank()) {
-                put("system_message", systemMessage)
-            }
-            if (!attachments.isNullOrEmpty()) {
-                putJsonArray("attachments") {
-                    attachments.forEach { att ->
-                        addJsonObject {
-                            put("contentType", att.contentType)
-                            put("content", att.content)
-                        }
-                    }
-                }
-            }
-            if (voiceIntentMessages != null && voiceIntentMessages.isNotEmpty()) {
-                // /v1/runs is OpenAI Responses-shaped — accepts an
-                // additional `messages` field for context-priming the
-                // run. Mirror the chat-stream branch so both endpoints
-                // ingest the synthetic voice-intent history identically.
-                put("messages", voiceIntentMessages)
-            }
+        AgentDisplay.profileRequestName(profileName)?.let {
+            Log.d(TAG, "sendRunStream: profile=$it")
         }
+        val requestPayload = buildRunStreamPayload(
+            message = message,
+            model = model,
+            systemMessage = systemMessage,
+            attachments = attachments,
+            voiceIntentMessages = voiceIntentMessages,
+            modelOverride = modelOverride,
+            profileName = profileName,
+        )
         val requestBody = json.encodeToString(JsonObject.serializer(), requestPayload)
 
         val request = authRequest("$baseUrl/v1/runs")
@@ -970,8 +1135,9 @@ class HermesApiClient(
      *      presence. The handler only accepts POST, so HEAD returns 405
      *      (Method Not Allowed) when the route is registered. 404 means
      *      the route doesn't exist at all.
-     *   4. `HEAD /v1/runs` — runs endpoint presence (same 405-vs-404 logic).
-     *   5. `HEAD /v1/models` — OpenAI-compat reachability.
+     *   4. `HEAD /v1/chat/completions` — OpenAI-compatible SSE fallback.
+     *   5. `HEAD /v1/runs` with `Accept: text/event-stream` — accepted only
+     *      when the response explicitly advertises event-stream compatibility.
      *
      * **Why HEAD instead of OPTIONS:** The hermes-agent gateway runs CORS
      * middleware (`security_headers_middleware`) that intercepts OPTIONS
@@ -981,10 +1147,13 @@ class HermesApiClient(
      * for present, 404 for missing). Verified empirically against the
      * production hermes-agent gateway on 2026-04-12.
      *
-     * **Success criterion:** any HTTP response code that isn't 404 means
-     * the route is registered. We accept 200, 204, 401, 403, 405, 415,
-     * etc. as positive — even quirky middleware responses count, because
-     * the alternative (404) is the only signal that means "no such path."
+     * **Route presence criterion:** for sessions and completions, any HTTP
+     * response code that isn't 404 means the route is registered. We accept
+     * 200, 204, 401, 403, 405, 415, etc. as positive because the alternative
+     * (404) is the only signal that means "no such path." `/v1/runs` is
+     * stricter: route presence alone is not enough because async runs can
+     * return `202 application/json`; auto only uses it if event-stream support
+     * is explicitly advertised.
      *
      * Network errors (connection refused, DNS failure, etc.) count as
      * "missing" since we can't differentiate from a server-down case.
@@ -1010,10 +1179,31 @@ class HermesApiClient(
             false
         }
 
+        fun Response.advertisesEventStream(): Boolean {
+            val contentType = header("Content-Type").orEmpty()
+            val streamMode = header("X-Hermes-Stream-Mode").orEmpty()
+            val runStreaming = header("X-Hermes-Run-Streaming").orEmpty()
+            return contentType.contains("text/event-stream", ignoreCase = true) ||
+                streamMode.equals("sse", ignoreCase = true) ||
+                runStreaming.equals("sse", ignoreCase = true)
+        }
+
+        fun routeExplicitlySupportsEventStream(path: String): Boolean = try {
+            val req = authRequest("$baseUrl$path")
+                .head()
+                .header("Accept", "text/event-stream")
+                .build()
+            client.newCall(req).execute().use { response ->
+                response.code != 404 && response.advertisesEventStream()
+            }
+        } catch (_: Exception) {
+            false
+        }
+
         val sessionsApi = routeExists("/api/sessions?limit=1")
         val sessionsChatStream = routeExists("/api/sessions/probe/chat/stream")
-        val runs = routeExists("/v1/runs")
-        val portable = routeExists("/v1/models")
+        val portable = routeExists("/v1/chat/completions")
+        val runs = routeExplicitlySupportsEventStream("/v1/runs")
 
         ServerCapabilities(
             sessionsApi = sessionsApi,
@@ -1055,4 +1245,10 @@ class HermesApiClient(
         }
         return IOException(message)
     }
+
+    private fun JsonObject?.stringField(name: String): String =
+        ((this?.get(name) as? JsonPrimitive)?.contentOrNull ?: "").trim()
+
+    private fun firstNonBlank(vararg values: String?): String =
+        values.firstOrNull { !it.isNullOrBlank() }.orEmpty()
 }

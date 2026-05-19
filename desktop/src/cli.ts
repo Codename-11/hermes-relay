@@ -4,15 +4,19 @@
 // subcommands because a thin client has actual verbs (pair, status, tools).
 
 import { chatCommand } from './commands/chat.js'
+import { chatWorkerCommand } from './commands/chatWorker.js'
 import { daemonCommand } from './commands/daemon.js'
 import { devicesCommand } from './commands/devices.js'
 import { doctorCommand } from './commands/doctor.js'
 import { pairCommand } from './commands/pair.js'
 import { pasteCommand } from './commands/paste.js'
+import { pluginsCommand } from './commands/plugins.js'
+import { sessionsCommand } from './commands/sessions.js'
 import { shellCommand } from './commands/shell.js'
 import { statusCommand } from './commands/status.js'
 import { toolsCommand } from './commands/tools.js'
 import { updateCommand } from './commands/update.js'
+import { voiceCommand } from './commands/voice.js'
 import { workspaceCommand } from './commands/workspace.js'
 import { finalizePendingUpdate } from './updater.js'
 import { VERSION } from './version.js'
@@ -57,6 +61,9 @@ const BOOLEAN_FLAGS = new Set([
   'allow-computer-use',
   'experimental-computer-use',
   'no-computer-use',
+  'no-voice',
+  'no-tray',
+  'no-open',
   'check',
   'yes',
   'new',
@@ -120,15 +127,19 @@ function parseArgs(argv: string[]): ParsedArgs {
 
 const KNOWN_COMMANDS = new Set([
   'chat',
+  'chat-worker',
   'daemon',
   'devices',
   'doctor',
   'paste',
   'pair',
+  'sessions',
   'shell',
+  'plugins',
   'status',
   'tools',
   'update',
+  'voice',
   'workspace',
   'help'
 ])
@@ -141,12 +152,16 @@ Usage:
   hermes-relay "<prompt>"          One-shot structured chat (shortcut for chat "...")
   hermes-relay pair [CODE]         Pair with the relay and store a session token
   hermes-relay paste               Stage clipboard image for /paste in the TUI
+  hermes-relay plugins             List/install/update/launch desktop surface plugins
+  hermes-relay sessions            List / resume / create / kill TUI tmux sessions
   hermes-relay status              Show stored sessions + grants + TTL
   hermes-relay tools               List tools available on the server
   hermes-relay devices             List / revoke / extend server-side paired devices
   hermes-relay daemon              Run headless — expose desktop tools even when no shell is open
   hermes-relay doctor              Diagnostic report: version, paths, sessions, daemon status
   hermes-relay update              Check for and install the latest desktop-v* release
+  hermes-relay voice               Show native Hermes voice config (STT/TTS/realtime providers)
+  hermes-relay voice mode          Push-to-talk in a browser tab (proxied through this CLI)
   hermes-relay workspace           Print local workspace context (cwd, git, editor, shell) — --json for scripting
   hermes-relay help                Show this help
   hermes-relay --version           Print version and exit
@@ -209,6 +224,12 @@ Examples:
   hermes-relay daemon
   # ...writes JSON-line lifecycle events to stderr; redirect or pipe to jq
 
+  # Inspect and resume server-side tmux TUI sessions
+  hermes-relay sessions list
+  hermes-relay sessions resume default
+  hermes-relay plugins install herm
+  hermes-relay plugins launch herm
+
   # Two-command bring-up: pair with consent, then run headless. No \`shell\` round-trip.
   hermes-relay pair   --remote ws://172.16.24.250:8767 --grant-tools
   hermes-relay daemon
@@ -216,6 +237,7 @@ Examples:
 Config files:
   ~/.hermes/remote-sessions.json   session tokens (mode 0600)
   ~/.hermes/desktop-control.json   tray-selected active relay
+  ~/.hermes/desktop-sessions.json  active TUI tmux session per relay
 `
 
 export async function main(argv = process.argv): Promise<number> {
@@ -258,6 +280,8 @@ export async function main(argv = process.argv): Promise<number> {
   switch (args.command) {
     case 'chat':
       return chatCommand(args)
+    case 'chat-worker':
+      return chatWorkerCommand(args)
     case 'daemon':
       return daemonCommand(args)
     case 'devices':
@@ -268,6 +292,10 @@ export async function main(argv = process.argv): Promise<number> {
       return pairCommand(args)
     case 'paste':
       return pasteCommand(args)
+    case 'plugins':
+      return pluginsCommand(args)
+    case 'sessions':
+      return sessionsCommand(args)
     case 'shell':
       return shellCommand(args)
     case 'status':
@@ -276,6 +304,8 @@ export async function main(argv = process.argv): Promise<number> {
       return toolsCommand(args)
     case 'update':
       return updateCommand(args)
+    case 'voice':
+      return voiceCommand(args)
     case 'workspace':
       return workspaceCommand(args)
     default:

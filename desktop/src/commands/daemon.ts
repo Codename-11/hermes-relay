@@ -31,8 +31,14 @@
 //     after the shell detaches; see roadmap for pause-while-interactive).
 //   - --log-file <path>: for now, redirect stderr if you need a file.
 
+import { promises as fs } from 'node:fs'
+import * as os from 'node:os'
+import * as path from 'node:path'
+
 import type { ParsedArgs } from '../cli.js'
-import { rpcErrorMessage } from '../lib/rpc.js'
+import { GatewayClient } from '../gatewayClient.js'
+import type { GatewayEvent, SessionCreateResponse } from '../gatewayTypes.js'
+import { rpcErrorMessage, asRpcResult } from '../lib/rpc.js'
 import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
 import { getSession } from '../remoteSessions.js'
 import {
@@ -44,6 +50,9 @@ import { configureComputerUseRuntime } from '../tools/computerGrants.js'
 import { DesktopToolRouter } from '../tools/router.js'
 import { RelayTransport } from '../transport/RelayTransport.js'
 import { setupGracefulExit } from '../lib/gracefulExit.js'
+import { startVoiceServer, type VoiceServer } from '../voiceServer.js'
+
+const VOICE_DISCOVERY_FILE = 'desktop-voice.json'
 
 type LogLevel = 'info' | 'warn' | 'error'
 
@@ -254,10 +263,62 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     interactive
   })
 
+  // ── Voice server ──────────────────────────────────────────────────
+  // Hosts the same loopback HTTP voice surface that `voice mode` starts
+  // ad-hoc, but kept alive for the whole daemon lifetime. The tray reads
+  // ~/.hermes/desktop-voice.json to find the URL. Failures here are
+  // non-fatal — the tool router is the daemon's primary job, voice is
+  // a bonus.
+  const noVoice = !!args.flags['no-voice']
+  let voiceServer: VoiceServer | null = null
+  let voiceSessionId: string | null = null
+
+  if (!noVoice) {
+    const gateway = new GatewayClient(relay)
+    try {
+      // Attach the gateway.ready listener BEFORE drain — drain replays
+      // events buffered since the transport started, and gateway.ready
+      // already arrived (the router attached above is silent on it).
+      const ready = waitForGatewayReady(gateway, 30_000)
+      gateway.start()
+      gateway.drain()
+      await ready
+      voiceSessionId = await createVoiceSession(gateway)
+      voiceServer = await startVoiceServer({
+        token,
+        relayUrl: url,
+        gateway,
+        sessionId: voiceSessionId
+      })
+      await writeVoiceDiscovery(voiceServer.url, voiceSessionId, log)
+      log.info({
+        event: 'voice_ready',
+        url: voiceServer.url,
+        session_id: voiceSessionId.slice(0, 8)
+      })
+    } catch (e) {
+      log.warn({
+        event: 'voice_unavailable',
+        message: rpcErrorMessage(e)
+      })
+      voiceServer = null
+    }
+  }
+
   // Graceful shutdown: detach router (stops heartbeats), kill transport
   // (closes the WSS), then let setupGracefulExit's failsafe exit us.
-  const cleanup = () => {
+  const cleanup = async () => {
     log.info({ event: 'shutdown' })
+    try {
+      if (voiceServer) await voiceServer.close()
+    } catch {
+      /* ignore */
+    }
+    try {
+      await removeVoiceDiscovery()
+    } catch {
+      /* ignore */
+    }
     try {
       router.detach()
     } catch {
@@ -286,3 +347,64 @@ export default daemonCommand
 // Small utility function re-exported for tests that need to stub the logger.
 export type { LogFields }
 export { makeLogger as __makeLoggerForTests, rpcErrorMessage as __rpcErrorMessageForTests }
+
+// ── Voice-server helpers ───────────────────────────────────────────────
+
+function voiceDiscoveryPath(): string {
+  return path.join(os.homedir(), '.hermes', VOICE_DISCOVERY_FILE)
+}
+
+async function writeVoiceDiscovery(
+  url: string,
+  sessionId: string,
+  log: { info: (f: LogFields) => void; warn: (f: LogFields) => void; error: (f: LogFields) => void }
+): Promise<void> {
+  const payload = {
+    url,
+    pid: process.pid,
+    session_id: sessionId,
+    started_at: Math.floor(Date.now() / 1000)
+  }
+  const filePath = voiceDiscoveryPath()
+  try {
+    await fs.mkdir(path.dirname(filePath), { recursive: true })
+    await fs.writeFile(filePath, JSON.stringify(payload, null, 2) + '\n', { mode: 0o600 })
+  } catch (e) {
+    log.warn({ event: 'voice_discovery_write_failed', message: rpcErrorMessage(e), path: filePath })
+  }
+}
+
+async function removeVoiceDiscovery(): Promise<void> {
+  const filePath = voiceDiscoveryPath()
+  try {
+    await fs.unlink(filePath)
+  } catch (e) {
+    // ENOENT is fine; nothing else should bubble up — cleanup is best-effort.
+    if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') throw e
+  }
+}
+
+function waitForGatewayReady(gateway: GatewayClient, timeoutMs: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      gateway.off('event', handler)
+      reject(new Error(`gateway.ready timeout after ${timeoutMs}ms`))
+    }, timeoutMs)
+    timer.unref?.()
+    const handler = (ev: GatewayEvent) => {
+      if (ev.type === 'gateway.ready') {
+        clearTimeout(timer)
+        gateway.off('event', handler)
+        resolve()
+      }
+    }
+    gateway.on('event', handler)
+  })
+}
+
+async function createVoiceSession(gateway: GatewayClient): Promise<string> {
+  const raw = await gateway.request<SessionCreateResponse>('session.create', { cols: 80 })
+  const r = asRpcResult<SessionCreateResponse>(raw)
+  if (!r?.session_id) throw new Error('voice session.create returned no session_id')
+  return r.session_id
+}

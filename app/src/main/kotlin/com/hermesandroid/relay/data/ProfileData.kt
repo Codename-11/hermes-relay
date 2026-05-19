@@ -13,13 +13,16 @@ import kotlinx.serialization.Serializable
  * and added [systemMessage], sourced from each profile's `SOUL.md`.
  *
  * A Profile is a NAMED AGENT CONFIG within a Connection. Switching profile
- * changes:
- *  - which model the phone asks the server to use on the next chat
- *    request (via [model]);
- *  - which system message the phone sends for that request (via
- *    [systemMessage], when non-blank).
+ * changes the active agent identity for the Android chat surface:
+ *  - which profile API server the phone routes chat/session calls to when
+ *    the relay advertises [apiServerUrl];
+ *  - which profile name the phone sends to the server for new sessions and
+ *    chat turns when isolated routing is not available;
+ *  - which model and system message the phone can send as compatibility
+ *    fallback (via [model] and [systemMessage]);
+ *  - which profile-scoped session id Android resumes for local chat context.
  *
- * It does not change the server, sessions, or memory.
+ * It does not mutate the server's configured default profile.
  *
  * Wire shape uses snake_case (`system_message`), this class uses camelCase
  * (`systemMessage`) — translated via [SerialName].
@@ -39,6 +42,12 @@ import kotlinx.serialization.Serializable
  * All three default to safe zero-values and are optional on the wire, so
  * older relays without the fields deserialize cleanly as
  * `gatewayRunning = false, hasSoul = false, skillCount = 0`.
+ *
+ * **Hermes profile API metadata.** A relay can advertise an isolated
+ * profile API server without exposing its secret. When [apiServerUrl] is
+ * present, Android routes chat/session traffic to that URL and reuses the
+ * active connection's stored API key. Operators that use distinct API keys
+ * per profile should pair those profile API servers as separate connections.
  */
 @Serializable
 data class Profile(
@@ -53,4 +62,17 @@ data class Profile(
     val hasSoul: Boolean = false,
     @SerialName("skill_count")
     val skillCount: Int = 0,
-)
+    @SerialName("api_server_enabled")
+    val apiServerEnabled: Boolean = false,
+    @SerialName("api_server_url")
+    val apiServerUrl: String? = null,
+    @SerialName("api_server_host")
+    val apiServerHost: String? = null,
+    @SerialName("api_server_port")
+    val apiServerPort: Int? = null,
+    @SerialName("api_server_key_present")
+    val apiServerKeyPresent: Boolean = false,
+) {
+    val hasIsolatedApi: Boolean
+        get() = !apiServerUrl.isNullOrBlank()
+}

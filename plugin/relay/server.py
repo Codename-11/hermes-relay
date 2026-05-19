@@ -2838,6 +2838,7 @@ def _notify_profiles_changed(
         fresh_profiles = _load_profiles(
             server.config.hermes_config_path,
             enabled=server.config.profile_discovery_enabled,
+            base_api_url=server.config.webapi_url,
         )
     except Exception:
         logger.warning(
@@ -2949,6 +2950,7 @@ async def _profile_rescan_loop(app: web.Application) -> None:
                 fresh = _load_profiles(
                     server.config.hermes_config_path,
                     enabled=server.config.profile_discovery_enabled,
+                    base_api_url=server.config.webapi_url,
                 )
             except Exception:
                 logger.warning(
@@ -3585,6 +3587,14 @@ def create_app(config: RelayConfig) -> web.Application:
         s: RelayServer = request.app["server"]
         return await s.voice_output.handle_update_config(request)
 
+    async def _voice_output_provider_options(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.voice_output.handle_provider_options(request)
+
+    async def _voice_output_provider_validate(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.voice_output.handle_provider_validate(request)
+
     async def _voice_output_session(request: web.Request) -> web.StreamResponse:
         s: RelayServer = request.app["server"]
         return await s.voice_output.handle_create_session(request)
@@ -3601,6 +3611,14 @@ def create_app(config: RelayConfig) -> web.Application:
         s: RelayServer = request.app["server"]
         return await s.realtime_voice.handle_update_config(request)
 
+    async def _voice_realtime_provider_options(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.realtime_voice.handle_provider_options(request)
+
+    async def _voice_realtime_provider_validate(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.realtime_voice.handle_provider_validate(request)
+
     async def _voice_realtime_session(request: web.Request) -> web.StreamResponse:
         s: RelayServer = request.app["server"]
         return await s.realtime_voice.handle_create_session(request)
@@ -3614,10 +3632,26 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_get("/voice/config", _voice_config)
     app.router.add_get("/voice/output/config", _voice_output_config)
     app.router.add_patch("/voice/output/config", _voice_output_config_patch)
+    app.router.add_get(
+        "/voice/output/providers/{provider_id}/options",
+        _voice_output_provider_options,
+    )
+    app.router.add_post(
+        "/voice/output/providers/{provider_id}/validate",
+        _voice_output_provider_validate,
+    )
     app.router.add_post("/voice/output/session", _voice_output_session)
     app.router.add_get("/voice/output/{session_id}", _voice_output_ws)
     app.router.add_get("/voice/realtime/config", _voice_realtime_config)
     app.router.add_patch("/voice/realtime/config", _voice_realtime_config_patch)
+    app.router.add_get(
+        "/voice/realtime/providers/{provider_id}/options",
+        _voice_realtime_provider_options,
+    )
+    app.router.add_post(
+        "/voice/realtime/providers/{provider_id}/validate",
+        _voice_realtime_provider_validate,
+    )
     app.router.add_post("/voice/realtime/session", _voice_realtime_session)
     app.router.add_get("/voice/realtime/{session_id}", _voice_realtime_ws)
 
@@ -3843,14 +3877,16 @@ def main() -> None:
         config.port = args.port
     if args.config is not None:
         config.hermes_config_path = args.config
-        # Reload profiles with the new path
+    if args.webapi_url is not None:
+        config.webapi_url = args.webapi_url
+    if args.config is not None or args.webapi_url is not None:
+        # Reload profiles with any CLI-overridden Hermes home or API base URL.
         from .config import _load_profiles
         config.profiles = _load_profiles(
             config.hermes_config_path,
             enabled=config.profile_discovery_enabled,
+            base_api_url=config.webapi_url,
         )
-    if args.webapi_url is not None:
-        config.webapi_url = args.webapi_url
     if args.log_level is not None:
         config.log_level = args.log_level
     if args.no_ssl:

@@ -372,12 +372,20 @@ fun ChatSettingsScreen(
 
                     HorizontalDivider()
 
-                    // Parse tool annotations toggle (Sessions mode only)
-                    val isSessionsMode = streamingEndpoint == "sessions"
+                    val serverCaps by connectionViewModel.serverCapabilities.collectAsState()
+                    val resolvedStreamingEndpoint = if (streamingEndpoint == "auto") {
+                        serverCaps.preferredChatEndpoint()
+                    } else {
+                        streamingEndpoint
+                    }
+
+                    // Parse tool annotations toggle (text-stream endpoints only)
+                    val isTextAnnotationMode = resolvedStreamingEndpoint == "sessions" ||
+                        resolvedStreamingEndpoint == "completions"
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .then(if (!isSessionsMode) Modifier.alpha(0.5f) else Modifier),
+                            .then(if (!isTextAnnotationMode) Modifier.alpha(0.5f) else Modifier),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -403,19 +411,19 @@ fun ChatSettingsScreen(
                                 )
                             }
                             Text(
-                                text = if (isSessionsMode) {
-                                    "Detect tool usage from text markers. May delay message display until stream completes."
+                                text = if (isTextAnnotationMode) {
+                                    "Detect tool usage from text markers on endpoints without structured tool events."
                                 } else {
-                                    "Only available in Sessions mode — Runs already provides structured tool events"
+                                    "Only available for text-stream endpoints — Runs should provide structured tool events."
                                 },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Switch(
-                            checked = parseToolAnnotations && isSessionsMode,
+                            checked = parseToolAnnotations && isTextAnnotationMode,
                             onCheckedChange = { connectionViewModel.setParseToolAnnotations(it) },
-                            enabled = isSessionsMode
+                            enabled = isTextAnnotationMode
                         )
                     }
 
@@ -427,18 +435,21 @@ fun ChatSettingsScreen(
                             text = "Streaming endpoint",
                             style = MaterialTheme.typography.bodyMedium
                         )
-                        val serverCaps by connectionViewModel.serverCapabilities.collectAsState()
                         val resolvedHelp = when (streamingEndpoint) {
                             "auto" -> {
-                                val resolved = serverCaps.preferredChatEndpoint()
                                 "Auto: picks the best path based on what your server exposes. " +
-                                        "Currently using: $resolved" +
-                                        if (!serverCaps.sessionsChatStream && serverCaps.sessionsApi)
-                                            " (sessions browse via /api/sessions, chat via /v1/runs)"
-                                        else ""
+                                        "Currently using: $resolvedStreamingEndpoint" +
+                                        when {
+                                            !serverCaps.sessionsChatStream && serverCaps.portable ->
+                                                " (chat via /v1/chat/completions)"
+                                            !serverCaps.sessionsChatStream && serverCaps.runs ->
+                                                " (chat via explicitly streamed /v1/runs)"
+                                            else -> ""
+                                        }
                             }
-                            "sessions" -> "Sessions: tool calls shown as inline text annotations."
-                            "runs" -> "Runs: structured tool events with real-time progress cards."
+                            "sessions" -> "Sessions: Hermes-native /api/sessions/{id}/chat/stream."
+                            "completions" -> "Chat: OpenAI-compatible SSE via /v1/chat/completions."
+                            "runs" -> "Runs: use only when your server streams /v1/runs directly."
                             else -> ""
                         }
                         Text(
@@ -447,8 +458,8 @@ fun ChatSettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
 
-                        val endpointOptions = listOf("auto", "sessions", "runs")
-                        val endpointLabels = listOf("Auto", "Sessions", "Runs")
+                        val endpointOptions = listOf("auto", "sessions", "completions", "runs")
+                        val endpointLabels = listOf("Auto", "Sessions", "Chat", "Runs")
                         val selectedEndpointIndex = endpointOptions.indexOf(streamingEndpoint).coerceAtLeast(0)
 
                         SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {

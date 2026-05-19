@@ -35,6 +35,18 @@ from .config import (
     default_realtime_voice_config_path,
     save_voice_output_config_file,
 )
+from .profile_voice import (
+    request_profile,
+    save_profile_voice_section,
+    voice_output_settings,
+)
+from .provider_options import (
+    PROVIDER_OPTIONS_SCHEMA_VERSION,
+    XAIOptionAuth,
+    fetch_voice_output_provider_options,
+    merge_provider_options,
+    validate_provider_selection,
+)
 from .realtime_voice import _read_relay_xai_oauth_token
 from .voice_auth import require_voice_auth
 
@@ -51,6 +63,14 @@ class VoiceOutputSession:
     model: str
     voice: str
     sample_rate: int
+    language: str
+    codec: str
+    optimize_streaming_latency: int
+    text_normalization: bool
+    fallback_enabled: bool
+    profile: str | None
+    config_scope: str
+    config_path: Path | None
     created_at: float
     event_log_path: Path
 
@@ -65,31 +85,88 @@ class VoiceOutputHandler:
 
     async def handle_config(self, request: web.Request) -> web.StreamResponse:
         await require_voice_auth(request, "voice:tts")
-        return web.json_response(self.config_payload())
+        profile = request_profile(None, request.query)
+        return web.json_response(self.config_payload(profile))
 
     async def handle_update_config(self, request: web.Request) -> web.StreamResponse:
         await require_voice_auth(request, "voice:tts")
         payload = await _optional_json(request)
+        profile = request_profile(payload, request.query)
+        payload.pop("profile", None)
         updates = self._validate_config_updates(payload)
-        config_path = save_voice_output_config_file(self.config, updates)
-        body = self.config_payload()
+        config_path = save_profile_voice_section(
+            self.config,
+            profile,
+            "voice_output",
+            updates,
+        )
+        if config_path is None and profile:
+            raise web.HTTPNotFound(text=f"profile not found or not writable: {profile}")
+        if config_path is None:
+            config_path = save_voice_output_config_file(self.config, updates)
+        body = self.config_payload(profile)
         body["updated"] = sorted(updates)
         body["config_path"] = str(config_path)
         return web.json_response(body)
 
-    async def handle_create_session(self, request: web.Request) -> web.StreamResponse:
-        if not self.enabled:
-            raise web.HTTPNotFound(text="voice output is disabled")
+    async def handle_provider_options(self, request: web.Request) -> web.StreamResponse:
         await require_voice_auth(request, "voice:tts")
+        provider_id = str(request.match_info.get("provider_id", "")).strip()
+        profile = request_profile(None, request.query)
+        return web.json_response(await self.provider_options_payload(provider_id, profile))
 
+    async def handle_provider_validate(self, request: web.Request) -> web.StreamResponse:
+        await require_voice_auth(request, "voice:tts")
+        provider_id = str(request.match_info.get("provider_id", "")).strip()
         payload = await _optional_json(request)
-        provider = _str_option(payload, "provider") or self.config.voice_output_provider
-        model = _str_option(payload, "model") or self.config.voice_output_model
-        voice = _str_option(payload, "voice") or self.config.voice_output_voice
+        profile = request_profile(payload, request.query)
+        settings = voice_output_settings(self.config, profile)
+        options = await self.provider_options_payload(provider_id, profile)
+        model = _str_option(payload, "model") or str(settings["model"])
+        voice = _str_option(payload, "voice") or str(settings["voice"])
         sample_rate = _int_option(
             payload,
             "sample_rate",
-            self.config.voice_output_sample_rate or DEFAULT_SAMPLE_RATE,
+            int(settings["sample_rate"] or DEFAULT_SAMPLE_RATE),
+        )
+        language = _str_option(payload, "language") or str(settings["language"])
+        validation = validate_provider_selection(
+            options["provider"],
+            model=model,
+            voice=voice,
+            sample_rate=sample_rate,
+            language=language,
+        )
+        return web.json_response(
+            {
+                "success": True,
+                "mode": "voice_output",
+                "protocol": "hermes.voice.output.validate.v0",
+                "provider_id": provider_id,
+                "model": model,
+                "voice": voice,
+                "sample_rate": sample_rate,
+                "language": language,
+                "dynamic": options["dynamic"],
+                **validation,
+            }
+        )
+
+    async def handle_create_session(self, request: web.Request) -> web.StreamResponse:
+        await require_voice_auth(request, "voice:tts")
+
+        payload = await _optional_json(request)
+        profile = request_profile(payload, request.query)
+        settings = voice_output_settings(self.config, profile)
+        if not bool(settings["enabled"]):
+            raise web.HTTPNotFound(text="voice output is disabled")
+        provider = _str_option(payload, "provider") or str(settings["provider"])
+        model = _str_option(payload, "model") or str(settings["model"])
+        voice = _str_option(payload, "voice") or str(settings["voice"])
+        sample_rate = _int_option(
+            payload,
+            "sample_rate",
+            int(settings["sample_rate"] or DEFAULT_SAMPLE_RATE),
         )
         self._validate_provider(provider)
 
@@ -101,6 +178,14 @@ class VoiceOutputHandler:
             model=model,
             voice=voice,
             sample_rate=sample_rate,
+            language=str(settings["language"]),
+            codec=str(settings["codec"]),
+            optimize_streaming_latency=int(settings["optimize_streaming_latency"]),
+            text_normalization=bool(settings["text_normalization"]),
+            fallback_enabled=bool(settings["fallback_enabled"]),
+            profile=settings.get("profile"),
+            config_scope=str(settings["config_scope"]),
+            config_path=settings.get("config_path"),
             created_at=time.time(),
             event_log_path=event_log_path,
         )
@@ -118,6 +203,10 @@ class VoiceOutputHandler:
                 "sample_rate": sample_rate,
                 "event_log_path": str(event_log_path),
                 "protocol": "hermes.voice.output.v0",
+                "profile": session.profile,
+                "config_scope": session.config_scope,
+                "config_path": str(session.config_path) if session.config_path else None,
+                "fallback_to_global": bool(settings["fallback_to_global"]),
             }
         )
 
@@ -177,29 +266,61 @@ class VoiceOutputHandler:
             return True
         return os.getenv("RELAY_VOICE_OUTPUT_ENABLED", "").strip().lower() in _TRUE_ENV_VALUES
 
-    def config_payload(self) -> dict[str, Any]:
+    def config_payload(self, profile: str | None = None) -> dict[str, Any]:
         providers = [
             info.to_dict()
             for info in self.registry.provider_infos()
             if info.supports_tts and not info.supports_realtime
         ]
+        settings = voice_output_settings(self.config, profile)
         return {
             "success": True,
-            "enabled": self.enabled,
+            "enabled": bool(settings["enabled"]),
             "protocol": "hermes.voice.output.v0",
-            "config_path": str(_config_path_for_payload(self.config)),
-            "default_provider": self.config.voice_output_provider,
-            "default_model": self.config.voice_output_model,
-            "default_voice": self.config.voice_output_voice,
-            "sample_rate": self.config.voice_output_sample_rate,
-            "language": self.config.voice_output_language,
-            "codec": self.config.voice_output_codec,
-            "optimize_streaming_latency": self.config.voice_output_optimize_streaming_latency,
-            "text_normalization": self.config.voice_output_text_normalization,
-            "fallback_enabled": self.config.voice_output_fallback_enabled,
+            "config_path": str(settings["config_path"] or _config_path_for_payload(self.config)),
+            "default_provider": settings["provider"],
+            "default_model": settings["model"],
+            "default_voice": settings["voice"],
+            "sample_rate": settings["sample_rate"],
+            "language": settings["language"],
+            "codec": settings["codec"],
+            "optimize_streaming_latency": settings["optimize_streaming_latency"],
+            "text_normalization": settings["text_normalization"],
+            "fallback_enabled": settings["fallback_enabled"],
             "fallback_provider": "legacy_hermes_tts",
             "providers": providers,
             "auth": _voice_output_auth_status(self.config),
+            "profile": settings["profile"],
+            "config_scope": settings["config_scope"],
+            "fallback_to_global": settings["fallback_to_global"],
+        }
+
+    async def provider_options_payload(
+        self,
+        provider_id: str,
+        profile: str | None = None,
+    ) -> dict[str, Any]:
+        info = self._validate_provider(provider_id)
+        settings = voice_output_settings(self.config, profile)
+        provider = info.to_dict()
+        dynamic = await self._dynamic_provider_options(provider_id)
+        merge_provider_options(provider, dynamic.get("provider", {}))
+        return {
+            "success": True,
+            "mode": "voice_output",
+            "protocol": "hermes.voice.output.options.v0",
+            "schema_version": PROVIDER_OPTIONS_SCHEMA_VERSION,
+            "provider_id": provider_id,
+            "provider": provider,
+            "default_provider": settings["provider"],
+            "default_model": settings["model"],
+            "default_voice": settings["voice"],
+            "sample_rate": settings["sample_rate"],
+            "language": settings["language"],
+            "profile": settings["profile"],
+            "config_scope": settings["config_scope"],
+            "fallback_to_global": settings["fallback_to_global"],
+            "dynamic": dynamic["dynamic"],
         }
 
     async def _run_response(
@@ -281,7 +402,7 @@ class VoiceOutputHandler:
                 session,
                 str(exc),
                 provider=session.provider,
-                fallback_enabled=self.config.voice_output_fallback_enabled,
+                fallback_enabled=session.fallback_enabled,
                 fallback_provider="legacy_hermes_tts",
             )
             return
@@ -291,7 +412,7 @@ class VoiceOutputHandler:
                 session,
                 f"voice output provider failed: {exc.__class__.__name__}: {exc}",
                 provider=session.provider,
-                fallback_enabled=self.config.voice_output_fallback_enabled,
+                fallback_enabled=session.fallback_enabled,
                 fallback_provider="legacy_hermes_tts",
             )
             return
@@ -322,19 +443,19 @@ class VoiceOutputHandler:
         provider_options.setdefault("model", session.model)
         provider_options.setdefault("voice", session.voice)
         provider_options.setdefault("sample_rate", str(session.sample_rate))
-        provider_options.setdefault("language", self.config.voice_output_language)
-        provider_options.setdefault("codec", self.config.voice_output_codec)
+        provider_options.setdefault("language", session.language)
+        provider_options.setdefault("codec", session.codec)
         provider_options.setdefault(
             "response_format",
-            self.config.voice_output_codec,
+            session.codec,
         )
         provider_options.setdefault(
             "optimize_streaming_latency",
-            str(self.config.voice_output_optimize_streaming_latency),
+            str(session.optimize_streaming_latency),
         )
         provider_options.setdefault(
             "text_normalization",
-            "true" if self.config.voice_output_text_normalization else "false",
+            "true" if session.text_normalization else "false",
         )
 
         if session.provider == "xai_tts":
@@ -346,7 +467,14 @@ class VoiceOutputHandler:
                     provider_options.setdefault("url", token.base_url)
         return provider_options
 
-    def _validate_provider(self, provider: str) -> None:
+    async def _dynamic_provider_options(self, provider_id: str) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            fetch_voice_output_provider_options,
+            provider_id,
+            xai_auth=_xai_option_auth(self.config),
+        )
+
+    def _validate_provider(self, provider: str):
         try:
             info = self.registry.info(provider)
         except KeyError as exc:
@@ -355,6 +483,7 @@ class VoiceOutputHandler:
             raise web.HTTPBadRequest(
                 text=f"{provider} is not a streaming TTS renderer"
             )
+        return info
 
     def _validate_config_updates(self, payload: dict[str, Any]) -> dict[str, Any]:
         updates: dict[str, Any] = {}
@@ -449,6 +578,9 @@ class VoiceOutputHandler:
             "sample_rate": session.sample_rate,
             "event_log_path": str(session.event_log_path),
             "output_mode": "streaming_tts_renderer",
+            "profile": session.profile,
+            "config_scope": session.config_scope,
+            "config_path": str(session.config_path) if session.config_path else None,
         }
 
     async def _send(
@@ -485,6 +617,17 @@ class VoiceOutputHandler:
         session.event_log_path.parent.mkdir(parents=True, exist_ok=True)
         with session.event_log_path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
+
+
+def _xai_option_auth(config: RelayConfig) -> XAIOptionAuth | None:
+    token = _read_relay_xai_oauth_token(config)
+    if token is None:
+        return None
+    return XAIOptionAuth(
+        access_token=token.access_token,
+        base_url=token.base_url,
+        source=token.source,
+    )
 
 
 async def _optional_json(request: web.Request) -> dict[str, Any]:

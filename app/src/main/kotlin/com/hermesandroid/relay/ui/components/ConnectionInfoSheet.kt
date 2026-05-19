@@ -60,6 +60,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.auth.AuthState
+import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.AppAnalytics
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.Profile
@@ -668,12 +669,16 @@ fun AgentInfoSheet(
         ) {
             // ---- Header: avatar + agent name + live status ----
             AgentSheetHeader(
-                selectedProfile = selectedProfile,
+                profile = AgentDisplay.effectiveProfile(
+                    selectedProfile = selectedProfile,
+                    profiles = agentProfiles,
+                ),
                 selectedPersonality = selectedPersonality,
                 defaultPersonality = defaultPersonality,
                 serverModelName = serverModelName,
                 apiServerReachable = apiServerReachable,
                 chatMode = chatMode,
+                isCustomized = selectedProfile != null || selectedPersonality != "default",
             )
 
             HorizontalDivider()
@@ -689,6 +694,10 @@ fun AgentInfoSheet(
                 // important when one of the profiles is literally named
                 // "default" so "Server default" vs "default" would be
                 // otherwise indistinguishable.
+                val serverDefaultProfile = agentProfiles
+                    .firstOrNull { AgentDisplay.isServerDefaultAlias(it.name) }
+                val selectableProfiles = agentProfiles
+                    .filterNot { AgentDisplay.isServerDefaultAlias(it.name) }
                 val apparentActiveProfile = agentProfiles
                     .firstOrNull { it.gatewayRunning }
 
@@ -698,25 +707,78 @@ fun AgentInfoSheet(
                         hint = "Overlay an agent's model + SOUL",
                     )
 
-                    // "Server default" row — clears the profile override
-                    // so the request uses whatever the server's own
-                    // config.yaml picks. Renamed from "Default" so a
-                    // profile literally named "default" doesn't collide
-                    // with this row's label.
+                    val defaultDotColor = serverDefaultProfile?.let { profile ->
+                        if (profile.gatewayRunning) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                        }
+                    }
+                    val defaultDotA11y = serverDefaultProfile?.let { profile ->
+                        if (profile.gatewayRunning) "Gateway running" else "Gateway idle"
+                    }
+                    val defaultRunning = serverDefaultProfile?.let { profile ->
+                        if (profile.gatewayRunning) " \u2022 Running" else " \u2022 Idle"
+                    }.orEmpty()
+                    val defaultDisplay = serverDefaultProfile?.let { profile ->
+                        AgentDisplay.profileDisplayName(profile)
+                            ?: profile.name.replaceFirstChar { it.uppercase() }
+                    }
+                    val defaultSecondary = serverDefaultProfile?.let { profile ->
+                        listOfNotNull(
+                            defaultDisplay,
+                            profile.model.takeIf { it.isNotBlank() }?.plus(defaultRunning),
+                        ).joinToString(" \u2022 ")
+                    } ?: "Use this connection's default profile"
+                    val soulBg = MaterialTheme.colorScheme.primaryContainer
+                    val soulFg = MaterialTheme.colorScheme.onPrimaryContainer
+                    val skillsBg = MaterialTheme.colorScheme.surfaceVariant
+                    val skillsFg = MaterialTheme.colorScheme.onSurfaceVariant
+
+                    // "Server default" is the single selectable state for
+                    // the root Hermes config. If the relay advertises a
+                    // synthetic profile named "default" (usually displayed
+                    // as Victor), fold its metadata into this row instead of
+                    // creating a second chat/voice/session scope.
                     ProfileRadioRow(
                         primary = "Server default",
-                        secondary = "Use this connection's default profile",
+                        secondary = defaultSecondary,
+                        tertiary = "Uses this connection's default profile",
                         selected = selectedProfile == null,
                         enabled = !isStreaming,
+                        leadingDotColor = defaultDotColor,
+                        leadingDotContentDescription = defaultDotA11y,
+                        secondaryTrailing = serverDefaultProfile?.let { profile ->
+                            if (profile.hasSoul || profile.skillCount > 0) {
+                                {
+                                    if (profile.skillCount > 0) {
+                                        ProfileMetadataBadge(
+                                            text = "${profile.skillCount} skills",
+                                            background = skillsBg,
+                                            contentColor = skillsFg,
+                                        )
+                                    }
+                                    if (profile.hasSoul) {
+                                        ProfileMetadataBadge(
+                                            text = "SOUL",
+                                            background = soulBg,
+                                            contentColor = soulFg,
+                                        )
+                                    }
+                                }
+                            } else {
+                                null
+                            }
+                        },
                         onSelect = {
                             if (selectedProfile != null) {
                                 connectionViewModel.selectProfile(null)
-                                toast("Using default model")
+                                toast("Using Server default")
                             }
                         },
                     )
 
-                    agentProfiles.forEach { profile ->
+                    selectableProfiles.forEach { profile ->
                         // v0.7.0 runtime metadata indicators:
                         //   - leadingDotColor: green when this profile's
                         //     gateway is the live one, grey otherwise.
@@ -741,10 +803,6 @@ fun AgentInfoSheet(
                         } else {
                             " \u2022 Idle"
                         }
-                        val soulBg = MaterialTheme.colorScheme.primaryContainer
-                        val soulFg = MaterialTheme.colorScheme.onPrimaryContainer
-                        val skillsBg = MaterialTheme.colorScheme.surfaceVariant
-                        val skillsFg = MaterialTheme.colorScheme.onSurfaceVariant
                         val isApparentActive =
                             apparentActiveProfile?.name == profile.name
                         // Emphasize the description as the primary label
@@ -1269,20 +1327,21 @@ private fun ProfileMetadataBadge(
 
 @Composable
 private fun AgentSheetHeader(
-    selectedProfile: Profile?,
+    profile: Profile?,
     selectedPersonality: String,
     defaultPersonality: String,
     serverModelName: String,
     apiServerReachable: Boolean,
     chatMode: ChatMode,
+    isCustomized: Boolean,
 ) {
-    val agentName = when {
-        selectedProfile != null -> selectedProfile.name.replaceFirstChar { it.uppercase() }
-        selectedPersonality != "default" -> selectedPersonality.replaceFirstChar { it.uppercase() }
-        defaultPersonality.isNotBlank() -> defaultPersonality.replaceFirstChar { it.uppercase() }
-        else -> "Hermes"
-    }
-    val modelLabel = selectedProfile?.model ?: serverModelName
+    val agentName = AgentDisplay.agentName(
+        profile = profile,
+        selectedPersonality = selectedPersonality,
+        defaultPersonality = defaultPersonality,
+        connectionLabel = null,
+    )
+    val modelLabel = profile?.model ?: serverModelName
     val isConnecting = !apiServerReachable && chatMode != ChatMode.DISCONNECTED
     val statusText = when {
         apiServerReachable -> "Connected"
@@ -1294,8 +1353,6 @@ private fun AgentSheetHeader(
         isConnecting -> MaterialTheme.colorScheme.tertiary
         else -> MaterialTheme.colorScheme.error
     }
-    val customized = selectedProfile != null || selectedPersonality != "default"
-
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -1304,7 +1361,7 @@ private fun AgentSheetHeader(
             modifier = Modifier
                 .size(48.dp)
                 .then(
-                    if (customized) {
+                    if (isCustomized) {
                         Modifier.border(
                             width = 2.dp,
                             color = MaterialTheme.colorScheme.primary,

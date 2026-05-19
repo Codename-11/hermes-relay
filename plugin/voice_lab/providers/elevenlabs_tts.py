@@ -53,6 +53,10 @@ class ElevenLabsTTSProvider(VoiceProvider):
             "Streaming TTS adapter using ElevenLabs Flash by default. This is a "
             "cascaded TTS benchmark target, not a native realtime voice agent."
         ),
+        models=("eleven_flash_v2_5", "eleven_multilingual_v2", "eleven_turbo_v2_5"),
+        voices=(DEFAULT_VOICE_ID,),
+        languages=("en",),
+        sample_rates=(16000, 22050, 24000, 44100, 48000),
         supports_tts=True,
         supports_realtime=False,
         supports_interruption=False,
@@ -140,6 +144,16 @@ class ElevenLabsTTSProvider(VoiceProvider):
                             label="elevenlabs_stream",
                             pcm=chunk,
                         )
+                        if request.audio_sink is not None:
+                            request.audio_sink(
+                                chunk,
+                                {
+                                    "label": "elevenlabs_stream",
+                                    "sample_rate": sample_rate,
+                                    "channels": 1,
+                                    "sample_width": 2,
+                                },
+                            )
         except urllib.error.HTTPError as exc:
             body_text = exc.read().decode("utf-8", errors="replace")
             _delete_empty_output(request.output_path)

@@ -14,6 +14,7 @@ from aiohttp.test_utils import AioHTTPTestCase
 import yaml
 
 from plugin.relay.config import RelayConfig
+from plugin.relay import provider_options
 from plugin.relay import voice_auth
 from plugin.relay.server import create_app
 
@@ -23,6 +24,7 @@ class VoiceOutputRoutesTests(AioHTTPTestCase):
         self._tmpdir = tempfile.TemporaryDirectory()
         self._voice_auth_patches: list[tuple[str, object]] = []
         voice_auth._VALIDATION_CACHE.clear()
+        provider_options.clear_provider_option_cache()
         config = RelayConfig(
             voice_output_enabled=True,
             voice_output_provider="stub",
@@ -41,6 +43,7 @@ class VoiceOutputRoutesTests(AioHTTPTestCase):
         for name, original in reversed(getattr(self, "_voice_auth_patches", [])):
             setattr(voice_auth, name, original)
         voice_auth._VALIDATION_CACHE.clear()
+        provider_options.clear_provider_option_cache()
         tmpdir = getattr(self, "_tmpdir", None)
         if tmpdir is not None:
             tmpdir.cleanup()
@@ -88,6 +91,77 @@ class VoiceOutputRoutesTests(AioHTTPTestCase):
         self.assertIn("openai_tts", provider_ids)
         self.assertIn("stub", provider_ids)
         self.assertNotIn("xai_realtime", provider_ids)
+        providers_by_id = {item["id"]: item for item in body["providers"]}
+        self.assertIn("xai-tts", providers_by_id["xai_tts"]["models"])
+        self.assertIn("eve", providers_by_id["xai_tts"]["voices"])
+        self.assertIn("ara", providers_by_id["xai_tts"]["voices"])
+        self.assertIn("rex", providers_by_id["xai_tts"]["voices"])
+        self.assertIn("sal", providers_by_id["xai_tts"]["voices"])
+        self.assertIn("leo", providers_by_id["xai_tts"]["voices"])
+        self.assertIn(24000, providers_by_id["xai_tts"]["sample_rates"])
+        self.assertIn("gpt-4o-mini-tts", providers_by_id["openai_tts"]["models"])
+        self.assertIn("coral", providers_by_id["openai_tts"]["voices"])
+        self.assertIn("marin", providers_by_id["openai_tts"]["voices"])
+        self.assertIn("cedar", providers_by_id["openai_tts"]["voices"])
+
+    async def test_voice_output_provider_options_returns_selected_provider_metadata(self) -> None:
+        token = await self._make_session()
+        original = provider_options._env_xai_option_auth
+        provider_options._env_xai_option_auth = lambda: None
+
+        try:
+            resp = await self.client.get(
+                "/voice/output/providers/xai_tts/options",
+                headers=self._bearer(token),
+            )
+        finally:
+            provider_options._env_xai_option_auth = original
+
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertTrue(body["success"])
+        self.assertEqual(body["mode"], "voice_output")
+        self.assertEqual(body["protocol"], "hermes.voice.output.options.v0")
+        self.assertEqual(body["schema_version"], 1)
+        self.assertEqual(body["provider_id"], "xai_tts")
+        self.assertEqual(body["default_provider"], "stub")
+        self.assertEqual(body["provider"]["id"], "xai_tts")
+        self.assertIn("xai-tts", body["provider"]["models"])
+        self.assertIn("eve", body["provider"]["voices"])
+        self.assertIn("ara", body["provider"]["voices"])
+        self.assertIn("rex", body["provider"]["voices"])
+        self.assertIn("sal", body["provider"]["voices"])
+        self.assertIn("leo", body["provider"]["voices"])
+        self.assertEqual(body["provider"]["voice_labels"]["rex"], "Rex - confident, clear")
+        self.assertEqual(body["provider"]["voice_groups"][0]["id"], "xai_builtin")
+        self.assertEqual(body["dynamic"]["status"], "auth_missing")
+
+    async def test_voice_output_provider_validate_reports_incompatible_voice(self) -> None:
+        token = await self._make_session()
+
+        resp = await self.client.post(
+            "/voice/output/providers/openai_tts/validate",
+            json={"model": "tts-1", "voice": "marin", "sample_rate": 24000, "language": "en"},
+            headers=self._bearer(token),
+        )
+
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertTrue(body["success"])
+        self.assertFalse(body["valid"])
+        self.assertEqual(body["protocol"], "hermes.voice.output.validate.v0")
+        self.assertIn("voice_compatible", {check["id"] for check in body["checks"]})
+
+    async def test_voice_output_provider_options_rejects_realtime_provider(self) -> None:
+        token = await self._make_session()
+
+        resp = await self.client.get(
+            "/voice/output/providers/xai_realtime/options",
+            headers=self._bearer(token),
+        )
+
+        self.assertEqual(resp.status, 400)
+        self.assertIn("not a streaming TTS renderer", await resp.text())
 
     async def test_voice_output_config_patch_persists_relay_owned_defaults(self) -> None:
         token = await self._make_session()

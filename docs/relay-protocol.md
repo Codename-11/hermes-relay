@@ -52,7 +52,7 @@ Source: `plugin/relay/server.py:2649-2889` (`handle_ws`, `_authenticate`).
 - `device_name` — display name on "Paired Devices" screen. Max 255 chars.
 - `device_id` — unique persistent identifier.
 - `ttl_seconds` — requested session lifetime; `0` means never expire. Ignored if pairing code carried pre-set metadata from host.
-- `grants` — per-channel seconds-from-now. Keys include `chat`, `terminal`, `bridge`, `tui`, `voice:config`, `voice:stt`, and `voice:tts`.
+- `grants` — per-channel seconds-from-now. Keys include `chat`, `terminal`, `bridge`, `tui`, `voice:config`, `voice:stt`, `voice:tts`, and `voice:realtime`.
 
 Source: `plugin/relay/server.py:2804-2850`.
 
@@ -224,15 +224,15 @@ Relay involvement is limited to session management routes (`/api/sessions/*`) fo
 
 | Type | Direction | Payload |
 |------|-----------|---------|
-| `terminal.attach` | Client → Server | `{session_name?, cols, rows}` |
-| `terminal.attached` | Server → Client | `{session_name, pid, shell, cols, rows, tmux_available}` |
-| `terminal.input` | Client → Server | `{data}` (UTF-8) |
-| `terminal.output` | Server → Client | `{data}` (ANSI UTF-8) |
-| `terminal.resize` | Client → Server | `{cols, rows}` |
+| `terminal.attach` | Client → Server | `{session_name?, cols, rows}` (`session_name` maps to server tmux session `hermes-<safe-name>`) |
+| `terminal.attached` | Server → Client | `{session_name, pid, shell, cols, rows, tmux_available, reattach, replay?}` (`replay` is recent tmux scrollback captured before attach) |
+| `terminal.input` | Client → Server | `{session_name?, data}` (UTF-8) |
+| `terminal.output` | Server → Client | `{session_name, data}` (ANSI UTF-8) |
+| `terminal.resize` | Client → Server | `{session_name?, cols, rows}` |
 | `terminal.detach` | Client → Server | `{session_name?}` (preserves tmux) |
-| `terminal.kill` | Client → Server | `{session_name?}` (destroys tmux) |
+| `terminal.kill` | Client → Server | `{session_name?}` (destroys tmux, including background sessions not owned by the current WebSocket) |
 | `terminal.list` | Client → Server | `{}` |
-| `terminal.sessions` | Server → Client | `{sessions, tmux_available}` |
+| `terminal.sessions` | Server → Client | `{sessions, tmux_available}` where `sessions[]` includes global `hermes-*` tmux sessions plus live per-WebSocket metadata |
 | `terminal.error` | Server → Client | `{message}` |
 
 **Output batching:** frames flushed every ~16ms or when buffer hits 4KB to avoid wire flooding.
@@ -277,7 +277,7 @@ Sources: `plugin/relay/channels/notifications.py`, `app/src/main/kotlin/.../noti
 | `desktop.workspace` | Client → Server | Workspace context snapshot |
 | `desktop.active_editor` | Client → Server | Active editor hint |
 
-Experimental computer-use tools use the same channel and are advertised with the normal desktop tool surface after desktop-tool consent. The relay still treats `desktop_computer_*` names as strict-advertise tools so older clients fail closed. Screenshots require an in-memory observe/assist/control grant. Host input currently uses a Windows-only CLI approval path: desktop-tool consent plus one visible local `yes` prompt for a task-scoped assist/control grant. Actions then run without per-action prompts until that grant expires or is canceled. Headless/non-interactive clients advertise blocked grant state and reject assist/control grant requests with structured failures.
+Experimental computer-use tools use the same channel but are advertised by the desktop client only when the experimental computer-use feature flag is enabled (`--experimental-computer-use` or `HERMES_RELAY_EXPERIMENTAL_COMPUTER_USE=1`) after normal desktop-tool consent. The relay still treats `desktop_computer_*` names as strict-advertise tools so older or unflagged clients fail closed. Screenshots require an in-memory observe/assist/control grant. Host input currently uses a Windows-only CLI approval path: desktop-tool consent plus one visible local `yes` prompt for a task-scoped assist/control grant. Actions then run without per-action prompts until that grant expires or is canceled. Headless/non-interactive clients advertise blocked grant state and reject assist/control grant requests with structured failures.
 
 ### 3.8 TUI *(new, being added — see `docs/plans/2026-04-22-desktop-tui-mvp.md`)*
 
@@ -299,6 +299,169 @@ On `tui.attach`, the relay spawns a `tui_gateway` subprocess (same invocation as
 | `tui.error` | Server → Client | `{message}` |
 
 The TUI's 52 RPC methods and 50+ event types are defined by `tui_gateway/server.py` — see `~/.hermes/hermes-agent/ui-tui/src/gatewayTypes.ts` for the typed schema.
+
+---
+
+### 3.9 Voice Output Route
+
+Provider-neutral voice output uses dedicated HTTP/WebSocket routes separate
+from the canonical `/ws` chat channel. Hermes still owns chat streaming, tool
+execution, approvals, and final answers. Android sends already-decided Hermes
+assistant text or brokered tool-status text to this route, and the relay streams
+PCM from the selected TTS renderer back to the phone.
+
+This route is experimental in the Android UI while provider choice, streaming
+playback, barge-in tuning, and fallback behavior are being validated.
+
+Setup:
+
+```text
+GET  /voice/output/config
+PATCH /voice/output/config
+GET  /voice/output/providers/{provider_id}/options
+POST /voice/output/providers/{provider_id}/validate
+POST /voice/output/session
+GET  /voice/output/{session_id}  (websocket)
+```
+
+All routes require bearer auth. Relay session callers need an active
+`voice:tts` grant; Hermes API bearer callers follow the same narrow voice
+transport guard used by `/voice/config`, `/voice/transcribe`, and
+`/voice/synthesize`.
+
+Client websocket messages:
+
+```json
+{"type":"session.start"}
+{"type":"response.create","text":"Final Hermes assistant sentence.","render_mode":"verbatim"}
+{"type":"session.close"}
+```
+
+Server websocket messages:
+
+```json
+{"type":"voice.session.ready","provider":"xai_tts","model":"xai-tts","voice":"eve","sample_rate":24000,"output_mode":"streaming_tts_renderer"}
+{"type":"voice.response.started","output_mode":"streaming_tts_renderer","render_mode":"verbatim"}
+{"type":"voice.audio.delta","audio_base64":"...","sample_rate":24000,"channels":1,"sample_width":2,"rms_level":0.12}
+{"type":"voice.audio.done"}
+{"type":"voice.response.done","provider":"xai_tts","metrics":{"first_audio_ms":1764.25,"response_done_ms":3637.176},"event_log_path":"...","output_mode":"streaming_tts_renderer"}
+```
+
+Config is relay-owned under `voice_output:` in `~/.hermes-relay/config.yaml`
+or `RELAY_VOICE_OUTPUT_CONFIG`. The authenticated operator/app can patch safe
+fields (`enabled`, `provider`, `model`, `voice`, `sample_rate`, `language`,
+`codec`, `optimize_streaming_latency`, `text_normalization`, and
+`fallback_enabled`) without exposing provider secrets to Android. Provider
+secrets and xAI OAuth paths remain server-side.
+
+Config responses include provider option metadata for dropdown-capable clients:
+`providers[].models`, `providers[].voices`, `providers[].languages`, and
+`providers[].sample_rates`. Provider-specific option responses use
+`schema_version: 1` and can also include `voice_groups`, `voice_metadata`,
+`recommended_voices`, and `model_voice_compatibility` so clients can show
+searchable grouped voice pickers and catch model/voice mismatches. If a profile
+is selected, Android sends `?profile=<name>` for config reads/writes and
+`{"profile":"<name>"}` for session creation so voice output follows that
+profile's experimental `voice_output:` section.
+
+Before saving a changed provider, clients can call
+`GET /voice/output/providers/{provider_id}/options?profile=<name>` to refresh a
+single provider's current safe options. Dynamic provider discovery runs on the
+relay and returns a `dynamic` status field; provider secrets are never sent to
+Android, and manual IDs remain valid when discovery is unavailable. xAI dynamic
+discovery uses `GET /v1/tts/voices` and paginated `GET /v1/custom-voices` when
+xAI auth is present; ElevenLabs uses `/v1/voices` and `/v1/models`; OpenAI is
+static from the documented built-in voice set because there is no general
+OpenAI voice-list endpoint for this surface. Dynamic option fetches are cached
+server-side by `RELAY_PROVIDER_OPTIONS_CACHE_SECONDS`.
+
+Before saving, clients can call
+`POST /voice/output/providers/{provider_id}/validate` with `model`, `voice`,
+`sample_rate`, and optional `language`. The response includes `valid`,
+`checks[]`, and `summary`; unknown manual IDs are warnings, while advertised
+compatibility conflicts are errors.
+
+`xai_tts` is the first-class Grok TTS renderer, `openai_tts` is the OpenAI
+speech renderer, and `stub` is the no-quota route test provider. If the output
+route fails before audio starts and fallback is enabled, Android falls back to
+the legacy `/voice/synthesize` path.
+
+Source: `plugin/relay/voice_output.py` and Android `RelayVoiceClient`.
+
+### 3.10 Realtime Voice-Agent Route
+
+Realtime provider voice uses dedicated HTTP/WebSocket routes separate from the
+canonical `/ws` channel. The current Android dev path can use it for provider
+PCM playback, latency metrics, and barge-in testing. The default deterministic
+assistant speech path is `/voice/output/*`; this realtime route remains the
+realtime-agent/playground path. The older `/voice/config`, `/voice/transcribe`,
+and `/voice/synthesize` routes remain available for basic STT/TTS fallback and
+utility clients. Operators can disable realtime voice with
+`RELAY_REALTIME_VOICE_ENABLED=0`.
+
+Setup:
+
+```text
+GET  /voice/realtime/config
+GET  /voice/realtime/providers/{provider_id}/options
+POST /voice/realtime/providers/{provider_id}/validate
+POST /voice/realtime/session
+GET  /voice/realtime/{session_id}  (websocket)
+```
+
+All three routes require bearer auth. Relay session callers need an active
+`voice:realtime` grant; Hermes API bearer callers follow the same narrow voice
+transport guard used by `/voice/config`, `/voice/transcribe`, and
+`/voice/synthesize`.
+
+Client websocket messages:
+
+```json
+{"type":"session.start"}
+{"type":"input_audio.append","sample_rate":16000,"audio_base64":"..."}
+{"type":"response.create","text":"Test prompt","tool_scaffold":false,"render_mode":"verbatim"}
+{"type":"session.close"}
+```
+
+Server websocket messages:
+
+```json
+{"type":"voice.session.ready","provider":"xai_realtime","model":"grok-voice-latest","voice":"eve","sample_rate":24000}
+{"type":"voice.input_audio.received","byte_count":320,"total_bytes":320}
+{"type":"voice.audio.delta","audio_base64":"...","sample_rate":24000,"channels":1,"sample_width":2,"rms_level":0.12}
+{"type":"voice.audio.done"}
+{"type":"voice.response.done","metrics":{"first_audio_ms":1764.25,"response_done_ms":3637.176},"event_log_path":"..."}
+```
+
+Audio deltas are mono 16-bit little-endian PCM base64 chunks. Android records a
+single PCM/WAV utterance for the voice turn: the WAV is still uploaded to
+`/voice/transcribe` for the legacy STT leg, while the raw PCM is forwarded
+through `input_audio.append` messages for provider-side input-event testing and
+relay artifacts. Provider PCM output streams back to Android for immediate
+`AudioTrack` playback. Tool execution remains owned by the Hermes chat/relay
+loop; provider tool-call events are scaffolded for validation, not executed on
+the Android client. During normal voice turns Android observes Hermes
+`tool.started` state through the chat stream and brokers short spoken status
+sentences through the selected speech renderer, so tool waits remain audible
+without moving execution or approval out of Hermes.
+
+Normal assistant narration should use a deterministic speech renderer where
+available. Realtime-agent providers can still be prompted with
+`render_mode="verbatim"` as a compatibility bridge, but the first-class target is
+streaming TTS such as Grok TTS over the relay.
+
+Realtime config responses use the same provider option metadata shape where
+known. Profile-scoped reads/writes target the selected profile's experimental
+`realtime_voice:` section; the route remains a lab/dev path rather than the
+default Hermes chat voice path.
+
+Realtime provider settings use the matching
+`GET /voice/realtime/providers/{provider_id}/options?profile=<name>` refresh
+route for realtime-capable providers and
+`POST /voice/realtime/providers/{provider_id}/validate` before saving pending
+provider/model/voice/sample-rate selections.
+
+Source: `plugin/relay/realtime_voice.py` and Android `RelayVoiceClient`.
 
 ---
 
@@ -441,6 +604,7 @@ Source: `plugin/relay/tailscale.py`.
 | `voice:config` | Session TTL (inherits chat grant for legacy sessions) |
 | `voice:stt` | Session TTL (inherits chat grant for legacy sessions) |
 | `voice:tts` | Session TTL (inherits chat grant for legacy sessions) |
+| `voice:realtime` | Session TTL (inherits chat grant for legacy sessions) |
 
 Users can override per-channel via TTL picker (Android) or `/pairing/register` metadata (host).
 

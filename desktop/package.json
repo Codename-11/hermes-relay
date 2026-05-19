@@ -75,6 +75,8 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.2",
     "@types/node": "^22.0.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "rimraf": "^5.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"

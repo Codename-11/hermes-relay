@@ -505,6 +505,15 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
   if (session.model) {
     process.stderr.write(`Session ${session.sessionId.slice(0, 8)}… on ${session.model}\n`)
   }
+  renderer.handle({
+    type: 'session.info',
+    session_id: session.sessionId,
+    payload: {
+      model: session.model ?? 'default',
+      skills: {},
+      tools: {}
+    }
+  })
 
   // Mode detection — one-shot vs piped vs REPL.
 

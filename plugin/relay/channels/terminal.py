@@ -57,6 +57,9 @@ _READ_CHUNK_SIZE = 8192
 
 # Per-client session cap (defends against an abusive client opening hundreds of shells).
 _MAX_SESSIONS_PER_CLIENT = 4
+_TMUX_PREFIX = "hermes-"
+_TMUX_REPLAY_LINES = 200
+_TMUX_REPLAY_MAX_BYTES = 64 * 1024
 
 
 def _make_envelope(
@@ -246,6 +249,16 @@ class TerminalHandler:
             return
 
         shell = self._resolve_shell(payload.get("shell"))
+        tmux_preexisting = (
+            await self._tmux_session_exists(session_name)
+            if self.tmux_available
+            else False
+        )
+        tmux_replay = (
+            await self._capture_tmux_replay(session_name)
+            if tmux_preexisting
+            else ""
+        )
 
         # ── Spawn argv selection ─────────────────────────────────────────
         # tmux-backed when available so shells persist across disconnects —
@@ -322,19 +335,22 @@ class TerminalHandler:
             loop = asyncio.get_running_loop()
             loop.add_reader(master_fd, self._on_pty_readable, session)
 
+            attached_payload: dict[str, Any] = {
+                "session_name": session_name,
+                "pid": pid,
+                "shell": shell,
+                "cols": cols,
+                "rows": rows,
+                "tmux_available": self.tmux_available,
+                "reattach": tmux_preexisting,
+            }
+            if tmux_replay:
+                attached_payload["replay"] = tmux_replay
             await _send(
                 ws,
                 _make_envelope(
                     "terminal.attached",
-                    {
-                        "session_name": session_name,
-                        "pid": pid,
-                        "shell": shell,
-                        "cols": cols,
-                        "rows": rows,
-                        "tmux_available": self.tmux_available,
-                        "reattach": False,
-                    },
+                    attached_payload,
                     msg_id,
                 ),
             )
@@ -533,25 +549,30 @@ class TerminalHandler:
         close already does the right thing via ``_close_session`` with
         ``preserve_shell=False``.
         """
-        session = self._lookup(ws, payload.get("session_name"))
+        requested = payload.get("session_name")
+        session = self._lookup(ws, requested)
         if session is None:
+            if isinstance(requested, str) and requested and self.tmux_available:
+                killed = await self._kill_tmux_session(requested)
+                await _send(
+                    ws,
+                    _make_envelope(
+                        "terminal.detached"
+                        if killed
+                        else "terminal.error",
+                        {
+                            "session_name": requested,
+                            "reason": "client kill",
+                            "message": f"no tmux session named {requested}",
+                        }
+                        if not killed
+                        else {"session_name": requested, "reason": "client kill"},
+                    ),
+                )
+                return
             return
-        if self.tmux_available and self._tmux_path:
-            tmux_name = _tmux_session_name(session.name)
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    self._tmux_path,
-                    "kill-session",
-                    "-t",
-                    tmux_name,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-                await proc.wait()
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "tmux kill-session failed for %s: %s", tmux_name, exc
-                )
+        if self.tmux_available:
+            await self._kill_tmux_session(session.name)
         await self._close_session(
             session,
             reason="client kill",
@@ -563,16 +584,13 @@ class TerminalHandler:
         ws: web.WebSocketResponse,
         msg_id: str | None,
     ) -> None:
-        sessions = self._sessions.get(ws, {})
+        sessions = await self._terminal_session_summaries(ws)
         await _send(
             ws,
             _make_envelope(
                 "terminal.sessions",
                 {
-                    "sessions": [
-                        {"name": s.name, "pid": s.pid, "shell": s.shell}
-                        for s in sessions.values()
-                    ],
+                    "sessions": sessions,
                     "tmux_available": self.tmux_available,
                 },
                 msg_id,
@@ -595,6 +613,141 @@ class TerminalHandler:
             # Default to the most-recently-added session.
             return next(reversed(list(sessions.values())))
         return None
+
+    async def _terminal_session_summaries(
+        self,
+        ws: web.WebSocketResponse,
+    ) -> list[dict[str, Any]]:
+        live_sessions = {
+            session.name: session
+            for client_sessions in self._sessions.values()
+            for session in client_sessions.values()
+        }
+        client_live = self._sessions.get(ws, {})
+
+        if self.tmux_available:
+            summaries = await self._list_tmux_sessions()
+            seen: set[str] = set()
+            for item in summaries:
+                name = str(item.get("name") or "")
+                seen.add(name)
+                live = live_sessions.get(name)
+                if live is not None:
+                    item["pid"] = live.pid
+                    item["shell"] = live.shell
+                    item["live"] = True
+                    item["owned_by_client"] = name in client_live
+                else:
+                    item["shell"] = self.default_shell or _default_shell()
+                    item["live"] = False
+                    item["owned_by_client"] = False
+
+            for session in live_sessions.values():
+                if session.name in seen:
+                    continue
+                summaries.append(
+                    {
+                        "name": session.name,
+                        "pid": session.pid,
+                        "shell": session.shell,
+                        "live": True,
+                        "owned_by_client": session.name in client_live,
+                    }
+                )
+            return summaries
+
+        return [
+            {
+                "name": session.name,
+                "pid": session.pid,
+                "shell": session.shell,
+                "live": True,
+                "owned_by_client": session.name in client_live,
+            }
+            for session in client_live.values()
+        ]
+
+    async def _run_tmux(
+        self,
+        *args: str,
+        capture: bool = False,
+    ) -> tuple[int, str]:
+        tmux_binary = self._tmux_path or "tmux"
+        stdout = asyncio.subprocess.PIPE if capture else asyncio.subprocess.DEVNULL
+        proc = await asyncio.create_subprocess_exec(
+            tmux_binary,
+            *args,
+            stdout=stdout,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        out, _ = await proc.communicate()
+        text = out.decode("utf-8", errors="replace") if out else ""
+        return proc.returncode or 0, text
+
+    async def _tmux_session_exists(self, session_name: str) -> bool:
+        try:
+            code, _ = await self._run_tmux(
+                "has-session",
+                "-t",
+                _tmux_session_name(session_name),
+            )
+            return code == 0
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("tmux has-session failed for %s: %s", session_name, exc)
+            return False
+
+    async def _capture_tmux_replay(self, session_name: str) -> str:
+        try:
+            code, text = await self._run_tmux(
+                "capture-pane",
+                "-t",
+                _tmux_session_name(session_name),
+                "-p",
+                "-S",
+                f"-{_TMUX_REPLAY_LINES}",
+                capture=True,
+            )
+            if code != 0:
+                return ""
+            if len(text) > _TMUX_REPLAY_MAX_BYTES:
+                text = text[-_TMUX_REPLAY_MAX_BYTES:]
+            return text
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("tmux capture-pane failed for %s: %s", session_name, exc)
+            return ""
+
+    async def _kill_tmux_session(self, session_name: str) -> bool:
+        try:
+            code, _ = await self._run_tmux(
+                "kill-session",
+                "-t",
+                _tmux_session_name(session_name),
+            )
+            return code == 0
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("tmux kill-session failed for %s: %s", session_name, exc)
+            return False
+
+    async def _list_tmux_sessions(self) -> list[dict[str, Any]]:
+        try:
+            code, text = await self._run_tmux(
+                "list-sessions",
+                "-F",
+                "#{session_name}\t#{session_attached}\t#{session_windows}\t#{session_created}",
+                capture=True,
+            )
+            if code != 0:
+                return []
+            sessions: list[dict[str, Any]] = []
+            for line in text.splitlines():
+                parsed = _parse_tmux_session_line(line)
+                if parsed is not None:
+                    sessions.append(parsed)
+            sessions.sort(key=lambda item: str(item.get("name") or ""))
+            return sessions
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("tmux list-sessions failed: %s", exc)
+            return []
 
     async def _close_session(
         self,
@@ -749,7 +902,37 @@ def _tmux_session_name(client_session_name: str) -> str:
         else:
             sanitized_chars.append(ch)
     sanitized = "".join(sanitized_chars).strip("_") or "default"
-    return f"hermes-{sanitized}"
+    return f"{_TMUX_PREFIX}{sanitized}"
+
+
+def _client_session_name(tmux_session_name: str) -> str | None:
+    if not tmux_session_name.startswith(_TMUX_PREFIX):
+        return None
+    return tmux_session_name[len(_TMUX_PREFIX):] or "default"
+
+
+def _parse_tmux_session_line(line: str) -> dict[str, Any] | None:
+    parts = line.split("\t")
+    if len(parts) < 4:
+        return None
+    tmux_name = parts[0]
+    name = _client_session_name(tmux_name)
+    if name is None:
+        return None
+
+    def parse_int(raw: str) -> int:
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return 0
+
+    return {
+        "name": name,
+        "tmux_name": tmux_name,
+        "attached": parse_int(parts[1]),
+        "windows": parse_int(parts[2]),
+        "created_at": parse_int(parts[3]),
+    }
 
 
 def _set_winsize(fd: int, rows: int, cols: int) -> None:

@@ -44,6 +44,8 @@ import java.util.Locale
 fun SessionDrawerContent(
     sessions: List<ChatSession>,
     currentSessionId: String?,
+    scopeTitle: String = "Sessions",
+    scopeSubtitle: String? = null,
     onNewChat: () -> Unit,
     onSelectSession: (String) -> Unit,
     onDeleteSession: (String) -> Unit,
@@ -56,9 +58,19 @@ fun SessionDrawerContent(
         Column(modifier = Modifier.padding(16.dp)) {
             // Header
             Text(
-                text = "Sessions",
+                text = scopeTitle,
                 style = MaterialTheme.typography.titleLarge
             )
+            scopeSubtitle?.takeIf { it.isNotBlank() }?.let { subtitle ->
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
 
             Spacer(modifier = Modifier.height(8.dp))
 

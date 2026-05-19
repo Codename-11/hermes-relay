@@ -6,6 +6,31 @@ import { spawnSync } from 'node:child_process';
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
+const vendorFiles = [
+  {
+    source: join('node_modules', '@xterm', 'xterm', 'lib', 'xterm.mjs'),
+    target: join('tray', 'ui', 'vendor', 'xterm', 'xterm.mjs')
+  },
+  {
+    source: join('node_modules', '@xterm', 'xterm', 'css', 'xterm.css'),
+    target: join('tray', 'ui', 'vendor', 'xterm', 'xterm.css')
+  },
+  {
+    source: join('node_modules', '@xterm', 'addon-fit', 'lib', 'addon-fit.mjs'),
+    target: join('tray', 'ui', 'vendor', 'xterm', 'addon-fit.mjs')
+  }
+];
+
+for (const file of vendorFiles) {
+  const source = join(desktopRoot, file.source);
+  if (!existsSync(source)) {
+    throw new Error(`missing tray vendor asset: ${source}. Run npm install in desktop/.`);
+  }
+  const targetPath = join(desktopRoot, file.target);
+  mkdirSync(dirname(targetPath), { recursive: true });
+  copyFileSync(source, targetPath);
+}
+
 const targets = {
   'win32:x64': {
     buildScript: 'build:bin:win',

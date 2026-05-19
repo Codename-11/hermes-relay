@@ -120,6 +120,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.ui.platform.LocalContext
+import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
@@ -375,13 +376,21 @@ fun ChatScreen(
                     uiState = voiceViewModel.uiState,
                     bargeInPreferences = bargeInRepo.flow,
                     provider = voiceOutputConfig?.default_provider,
+                    model = voiceOutputConfig?.default_model,
                     voice = voiceOutputConfig?.default_voice,
+                    profileName = selectedProfile?.description?.takeIf { it.isNotBlank() }
+                        ?: selectedProfile?.name,
+                    configScope = voiceOutputConfig?.configScope,
                     outputEnabled = voiceOutputConfig?.enabled,
                     fallbackEnabled = voiceOutputConfig?.fallback_enabled,
                     onStartListening = { voiceViewModel.startListening() },
                     onStopListening = { voiceViewModel.stopListening() },
                     onInterrupt = { voiceViewModel.interruptSpeaking() },
-                    onReturnToHermes = { openHermesFromOverlay(context) },
+                    onReturnToHermes = {
+                        openHermesFromOverlay(context)
+                        voiceOverlayHost.hide()
+                    },
+                    onDismissOverlay = { voiceOverlayHost.hide() },
                     onExit = {
                         voiceOverlayHost.hide()
                         voiceViewModel.exitVoiceMode()
@@ -436,7 +445,7 @@ fun ChatScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    LaunchedEffect(voiceClient, voiceUiState.voiceMode) {
+    LaunchedEffect(voiceClient, voiceUiState.voiceMode, selectedProfile?.name) {
         if (!voiceUiState.voiceMode) return@LaunchedEffect
         val client = voiceClient ?: return@LaunchedEffect
         val result = client.getVoiceOutputConfig()
@@ -719,8 +728,10 @@ fun ChatScreen(
     // loading and a "default" entry shows up.
     val effectiveProfile by remember(selectedProfile, agentProfiles) {
         derivedStateOf {
-            selectedProfile
-                ?: agentProfiles.firstOrNull { it.name.equals("default", ignoreCase = true) }
+            AgentDisplay.effectiveProfile(
+                selectedProfile = selectedProfile,
+                profiles = agentProfiles,
+            )
         }
     }
 
@@ -741,34 +752,37 @@ fun ChatScreen(
     val agentDisplayName by remember {
         derivedStateOf {
             val profile = effectiveProfile
-            val fromProfile = when {
-                profile == null -> null
-                profile.description.isNotBlank() -> profile.description
-                profile.name.isNotBlank() -> profile.name.replaceFirstChar { it.uppercase() }
-                else -> null
-            }
-            fromProfile ?: run {
-                val personalityName = if (selectedPersonality == "default" && defaultPersonality.isNotBlank()) {
-                    defaultPersonality
-                } else {
-                    selectedPersonality
-                }
-                when {
-                    personalityName.isNotBlank() && personalityName != "default" ->
-                        personalityName.replaceFirstChar { it.uppercase() }
-                    !activeConnection?.label.isNullOrBlank() -> activeConnection!!.label
-                    else -> ""
-                }
-            }
+            AgentDisplay.agentName(
+                profile = profile,
+                selectedPersonality = selectedPersonality,
+                defaultPersonality = defaultPersonality,
+                connectionLabel = activeConnection?.label,
+            )
         }
     }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
+            val drawerTitle = if (selectedProfile != null) {
+                "$agentDisplayName sessions"
+            } else {
+                "Server default sessions"
+            }
+            val drawerSubtitle = when {
+                selectedProfile?.hasIsolatedApi == true ->
+                    "Profile API: ${selectedProfile?.apiServerUrl}"
+                selectedProfile != null ->
+                    "Compatibility overlay on ${activeConnection?.label ?: "active connection"}"
+                activeConnection?.label?.isNotBlank() == true ->
+                    "Connection: ${activeConnection?.label}"
+                else -> "Active connection"
+            }
             SessionDrawerContent(
                 sessions = sessions,
                 currentSessionId = currentSessionId,
+                scopeTitle = drawerTitle,
+                scopeSubtitle = drawerSubtitle,
                 onNewChat = {
                     chatViewModel.createNewChat()
                     scope.launch { drawerState.close() }
@@ -833,13 +847,10 @@ fun ChatScreen(
                     // Model priority: profile.model (explicit or default
                     // profile pick) trumps /api/config's `serverModelName`.
                     // The profile picker is the more specific intent.
-                    val personalityLabel = when {
-                        selectedPersonality != "default" ->
-                            selectedPersonality.replaceFirstChar { it.uppercase() }
-                        defaultPersonality.isNotBlank() ->
-                            defaultPersonality.replaceFirstChar { it.uppercase() }
-                        else -> "Default"
-                    }
+                    val personalityLabel = AgentDisplay.personalityLabel(
+                        selectedPersonality = selectedPersonality,
+                        defaultPersonality = defaultPersonality,
+                    )
                     val modelName = effectiveProfile?.model
                         ?.takeIf { it.isNotBlank() }
                         ?: serverModelName
@@ -1656,7 +1667,11 @@ fun ChatScreen(
                 // preserving enough recent tool/context rows for voice turns.
                 transcriptMessages = messages.takeLast(12),
                 voiceOutputProvider = voiceOutputConfig?.default_provider,
+                voiceOutputModel = voiceOutputConfig?.default_model,
                 voiceOutputVoice = voiceOutputConfig?.default_voice,
+                voiceProfileName = selectedProfile?.description?.takeIf { it.isNotBlank() }
+                    ?: selectedProfile?.name,
+                voiceConfigScope = voiceOutputConfig?.configScope,
                 voiceOutputEnabled = voiceOutputConfig?.enabled,
                 voiceOutputFallbackEnabled = voiceOutputConfig?.fallback_enabled,
                 bargeInPrefs = bargeInPrefs,

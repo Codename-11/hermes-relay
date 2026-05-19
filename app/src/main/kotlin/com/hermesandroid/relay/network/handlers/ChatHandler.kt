@@ -555,6 +555,31 @@ class ChatHandler {
     }
 
     /**
+     * Repair assistant labels after late-arriving agent config. History can
+     * load before GET /api/config returns, leaving default-profile messages
+     * with the generic "Hermes" label. Keep local phone/voice action trace
+     * labels intact because those bubbles do not represent the server agent.
+     */
+    fun relabelGenericAssistantMessages(agentName: String?) {
+        val trimmed = agentName?.trim()?.takeIf { it.isNotBlank() } ?: return
+        _messages.update { list ->
+            list.map { message ->
+                if (
+                    message.role == MessageRole.ASSISTANT &&
+                    !message.id.startsWith("voice-intent-") &&
+                    message.agentName != "Voice action" &&
+                    message.agentName != "Phone action" &&
+                    (message.agentName.isNullOrBlank() || message.agentName == "Hermes")
+                ) {
+                    message.copy(agentName = trimmed)
+                } else {
+                    message
+                }
+            }
+        }
+    }
+
+    /**
      * Replace a placeholder message's ID with the server-assigned ID.
      * Only acts on empty, streaming messages to avoid renaming completed turns
      * during multi-turn agent runs.
@@ -667,6 +692,7 @@ class ChatHandler {
                 isStreaming = false,
                 toolCalls = toolCalls,
                 cards = extractedCards,
+                agentName = if (role == MessageRole.ASSISTANT) activeAgentName else null,
             )
         }
 
@@ -877,6 +903,10 @@ class ChatHandler {
                 updatedAt = timestampMs
             )
         }
+    }
+
+    fun clearSessions() {
+        _sessions.value = emptyList()
     }
 
     /**

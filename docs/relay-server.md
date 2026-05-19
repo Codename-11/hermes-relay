@@ -8,7 +8,8 @@ The relay server is a lightweight Python service that bridges the Hermes-Relay A
 |---------|------------------------|-----------------|
 | **Chat** | No | Hermes API key over HTTP/SSE direct to Hermes API Server (`:8642`) |
 | **Voice** | Yes for `/voice/*` routes; relay pairing optional when an API key is present | Hermes API bearer or relay session over relay HTTP/WSS (`:8767`) |
-| **Realtime voice** | Yes; default conversational voice output path, disable with `RELAY_REALTIME_VOICE_ENABLED=0` | Relay session or Hermes API bearer with `voice:realtime` over relay HTTP/WSS (`:8767`) |
+| **Voice output broker** | Yes; default conversational voice renderer, disable with `RELAY_VOICE_OUTPUT_ENABLED=0` | Relay session or Hermes API bearer with `voice:tts` over relay HTTP/WSS (`:8767`) |
+| **Realtime voice-agent lab** | Yes; provider-agent test path, disable with `RELAY_REALTIME_VOICE_ENABLED=0` | Relay session or Hermes API bearer with `voice:realtime` over relay HTTP/WSS (`:8767`) |
 | **Terminal** | Yes | Relay session over WSS (`:8767`) |
 | **Bridge** | Yes | Relay session over WSS/HTTP (`:8767`) |
 
@@ -19,12 +20,30 @@ When using the dashboard's pair/repair flow, the QR still needs both credential 
 ## Architecture
 
 ```
-Phone (HTTP/SSE) --> Hermes API Server (:8642)   [chat]
+Phone (HTTP/SSE) --> Hermes API Server (:8642)   [chat/default profile]
+Phone (HTTP/SSE) --> Profile API Server (:8643+) [chat/selected Hermes profile, when advertised]
 Phone (HTTP/WSS) --> Relay Server (:8767)         [voice routes, realtime voice]
 Phone (WSS/HTTP) --> Relay Server (:8767)         [terminal, bridge, media, sessions]
 ```
 
-The relay runs alongside hermes-agent on the same machine. It reads `~/.hermes/config.yaml` for agent profiles and proxies to the API server at `localhost:8642` by default.
+The relay runs alongside hermes-agent on the same machine. It reads `~/.hermes/config.yaml` and `~/.hermes/profiles/*/` for profile discovery metadata. Chat itself remains direct phone-to-Hermes-API traffic; the relay only advertises which base/profile API URL the phone should use.
+
+### Hermes Profile API Routing
+
+For proper Hermes profile isolation in Android chat, each profile must run its own Hermes API server. The relay discovers profile directories and advertises safe routing metadata only; it does not start profile gateways or expose API keys.
+
+Profile-local `.env` example:
+
+```bash
+API_SERVER_ENABLED=true
+API_SERVER_HOST=0.0.0.0
+API_SERVER_PORT=8645
+API_SERVER_KEY=<same key as the paired Android connection>
+```
+
+Use a distinct port per running profile, then start that profile's Hermes gateway/API service with your normal Hermes service manager, for example `hermes -p mizu gateway start` or the equivalent container/supervisor entry. Set `RELAY_WEBAPI_URL` on the relay service to the phone-reachable base Hermes API URL, for example `http://172.16.24.250:8642`; this lets the relay rewrite local profile binds (`127.0.0.1`, `localhost`, `0.0.0.0`, `::1`) to that same host/scheme while preserving the profile API port. Android also defensively rewrites loopback profile URLs against the active Connection API URL so stale or host-local profile payloads do not make the phone dial its own `127.0.0.1`.
+
+If a profile does not advertise a running API server, Android can still select it, but the behavior is compatibility fallback: the app sends that profile's `model` and `SOUL.md` as request overrides on the active Connection API server. That fallback does not isolate profile memory, sessions, tools, provider auth, or cron jobs.
 
 ## Quick Start
 
@@ -129,13 +148,22 @@ All settings can be configured via environment variables. These override CLI def
 | `RELAY_LOG_LEVEL` | `INFO` | Python logging level |
 | `RELAY_TRUST_PROXY_HEADERS` | `0` | When `1`, trust `X-Forwarded-Proto: https` from your own reverse proxy for Hermes API bearer auth on `/voice/*`. Only enable when the proxy strips untrusted incoming forwarded headers. |
 | `RELAY_ALLOW_INSECURE_API_BEARER` | `0` | Dev-only escape hatch. When `1`, allows Hermes API bearer auth on non-loopback plaintext `/voice/*` requests. Leave off for production. For a running relay, prefer `hermes relay insecure-api-key on` or the standalone `hermes-relay insecure-api-key on` shim so no restart is needed. |
-| `RELAY_REALTIME_VOICE_CONFIG` | `~/.hermes-relay/config.yaml` | Relay-owned config file for realtime voice defaults. This is intentionally separate from upstream Hermes `~/.hermes/config.yaml`, which still owns `stt:` and `tts:`. |
-| `RELAY_REALTIME_VOICE_ENABLED` | Relay config or `1` | Enables `/voice/realtime/*`, the preferred Android conversational voice output path. Set `0` to force the basic `/voice/synthesize` fallback path. |
+| `RELAY_VOICE_OUTPUT_CONFIG` | `~/.hermes-relay/config.yaml` | Relay-owned config file for assistant speech rendering defaults under `voice_output:`. This is intentionally separate from upstream Hermes `~/.hermes/config.yaml`, which still owns legacy `stt:` and `tts:` fallback helpers. |
+| `RELAY_VOICE_OUTPUT_ENABLED` | Relay config or `1` | Enables `/voice/output/*`, the default provider-neutral streaming TTS renderer used by Android voice mode. Set `0` to force the basic `/voice/synthesize` fallback path. |
+| `RELAY_VOICE_OUTPUT_PROVIDER` | Relay config or `xai_tts` | Default voice renderer. Use `xai_tts` for Grok TTS, `openai_tts` for OpenAI speech, or `stub` for no-quota route testing. |
+| `RELAY_VOICE_OUTPUT_MODEL` | Relay config or `xai-tts` | Renderer model label. OpenAI TTS commonly uses `gpt-4o-mini-tts`; xAI TTS does not require a model parameter but the relay reports `xai-tts` for stable UI/metrics. |
+| `RELAY_VOICE_OUTPUT_VOICE` | Relay config or `eve` | Default renderer voice. xAI voices include `eve`, `ara`, `rex`, `sal`, and `leo`; OpenAI voice defaults to `coral`. |
+| `RELAY_VOICE_OUTPUT_SAMPLE_RATE` | Relay config or `24000` | Output PCM sample rate sent to Android `AudioTrack`. |
+| `RELAY_VOICE_OUTPUT_OPTIMIZE_LATENCY` | Relay config or `1` | Low-latency renderer toggle for providers that support it. |
+| `RELAY_VOICE_OUTPUT_FALLBACK_ENABLED` | Relay config or `1` | Whether Android should fall back to legacy `/voice/synthesize` if streaming output fails before audio starts. |
+| `RELAY_REALTIME_VOICE_CONFIG` | `~/.hermes-relay/config.yaml` | Relay-owned config file for realtime voice-agent defaults under `realtime_voice:`. |
+| `RELAY_REALTIME_VOICE_ENABLED` | Relay config or `1` | Enables `/voice/realtime/*`, the Android realtime-agent test path. Set `0` to disable realtime sessions without affecting `/voice/output/*`. |
 | `RELAY_REALTIME_VOICE_PROVIDER` | Relay config or `xai_realtime` | Default realtime provider. Use `stub` for no-quota route testing. Launch env overrides the relay config file for temporary tests. |
 | `RELAY_REALTIME_VOICE_MODEL` | Relay config or `grok-voice-latest` | Default realtime model advertised to Android. Launch env overrides the relay config file for temporary tests. |
 | `RELAY_REALTIME_VOICE_VOICE` | Relay config or `eve` | Default realtime voice advertised to Android. Launch env overrides the relay config file for temporary tests. |
 | `RELAY_REALTIME_VOICE_RUN_DIR` | `~/.hermes-relay/realtime-voice-runs` | Server-side WAV and JSONL artifact directory for realtime runs. |
 | `RELAY_REALTIME_VOICE_XAI_OAUTH_PATH` | `~/.hermes-relay/auth/xai-oauth.json` | Relay-owned xAI OAuth token path for SuperGrok/Premium+ realtime testing. |
+| `RELAY_PROVIDER_OPTIONS_CACHE_SECONDS` | `600` | TTL for relay-owned provider option discovery. Applies to dynamic xAI/ElevenLabs option fetches so Android dropdown refreshes do not repeatedly hit provider APIs. Set `0` to disable caching during provider debugging. |
 | `RELAY_MEDIA_MAX_SIZE_MB` | `100` | Per-file size cap on `POST /media/register`. Files larger than this are rejected. |
 | `RELAY_MEDIA_TTL_SECONDS` | `86400` | How long a registered media entry stays valid before the registry evicts it. Matches the within-a-day scrollback use case — see ADR 14. |
 | `RELAY_MEDIA_LRU_CAP` | `500` | Maximum in-memory entries in the media registry. Oldest is evicted on register-overflow. |
@@ -167,7 +195,7 @@ The relay uses a QR-driven two-step auth flow:
 1. **Pairing** — the pair command runs on the Hermes host (either the `/hermes-relay-pair` slash command invoked from any Hermes chat surface, or the `hermes-pair` shell shim), mints a fresh 6-char code (`A-Z / 0-9`), pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint, and embeds the relay URL + code in the scanned QR payload. The same payload is also printed as a paste-friendly `hermes-relay://pair?payload=...` invite URL for desktop GUI/CLI setup. The phone sends the code in its first `system/auth` envelope; the relay consumes it and issues a session token. Codes are one-shot and expire 10 minutes after registration. Android clears a failed scanned code after `auth.fail` so a stale QR cannot keep reconnecting into the rate limiter.
 2. **Session token** — Stored in Android's EncryptedSharedPreferences. Used for subsequent relay connections and Relay-protected HTTP routes. Expires after 30 days by default and carries per-channel grants, including `voice:config`, `voice:stt`, `voice:tts`, and `voice:realtime`.
 
-Voice endpoints also accept the existing Hermes API bearer token used by API-server clients such as the Obsidian Hermes Client. That API bearer path is limited to `/voice/config`, `/voice/transcribe`, `/voice/synthesize`, and `/voice/realtime/*`; it is not accepted for sessions, media, clipboard, terminal, TUI, bridge, profile writes, or Android control routes. Android derives the conventional Relay URL from the configured API URL (`http(s)://host:8642` to `ws(s)://host:8767`) and probes the voice routes, with a manual Relay URL override for custom routing. For non-loopback callers, Hermes API bearer auth requires HTTPS by default, either direct TLS or trusted `X-Forwarded-Proto: https` from an explicitly trusted proxy.
+Voice endpoints also accept the existing Hermes API bearer token used by API-server clients such as the Obsidian Hermes Client. That API bearer path is limited to `/voice/config`, `/voice/transcribe`, `/voice/synthesize`, `/voice/output/*`, and `/voice/realtime/*`; it is not accepted for sessions, media, clipboard, terminal, TUI, bridge, profile writes, or Android control routes. Android derives the conventional Relay URL from the configured API URL (`http(s)://host:8642` to `ws(s)://host:8767`) and probes the voice routes, with a manual Relay URL override for custom routing. For non-loopback callers, Hermes API bearer auth requires HTTPS by default, either direct TLS or trusted `X-Forwarded-Proto: https` from an explicitly trusted proxy.
 
 Realtime voice defaults live in the relay-owned config file, not upstream
 Hermes config:
@@ -183,15 +211,50 @@ realtime_voice:
   xai_oauth_path: ~/.hermes/auth.json
 ```
 
-Authenticated clients with `voice:realtime` can update safe realtime defaults
-through `PATCH /voice/realtime/config`; the relay validates and persists
-`enabled`, `provider`, `model`, `voice`, and `sample_rate`. Server-local paths
-such as `xai_oauth_path` remain operator-managed in the relay config file or
+Authenticated clients with voice grants can update safe voice defaults through
+`PATCH /voice/output/config` and `PATCH /voice/realtime/config`. Without a
+profile parameter those writes go to the relay-owned config file. With
+`?profile=<name>` they update experimental `voice_output:` or
+`realtime_voice:` sections in that profile's `config.yaml`, so Android Voice
+Settings can follow the active Hermes profile. Server-local paths such as
+`xai_oauth_path` remain operator-managed in the relay config file or
 environment. Environment variables still win at process launch for one-off
-tests. Legacy `tts:` and `stt:` remain owned by upstream Hermes helpers; the
-Android **Test Voice** button uses the legacy `/voice/synthesize` path and
-therefore plays the configured Hermes TTS voice, not the realtime provider
-voice.
+tests. Legacy `tts:` and `stt:` remain owned by upstream Hermes helpers;
+`/voice/config?profile=<name>` reads profile-local values where present and
+reports `config_scope` / `fallback_to_global` for the app UI.
+
+The voice config responses include provider option metadata for client
+controls: each `providers[]` item may advertise `models`, `voices`,
+`languages`, and `sample_rates`. Provider-specific option responses add
+`schema_version`, grouped voice metadata (`voice_groups`), per-voice metadata
+(`voice_metadata` with source/custom/recommended/manual flags), and
+`model_voice_compatibility` where the provider has model-specific voice
+constraints. Android uses that shape for searchable grouped dropdowns, but
+still keeps an advanced manual entry path for provider IDs that are not yet
+advertised by the relay.
+
+For provider-specific refresh before saving, Android can query
+`GET /voice/output/providers/{provider_id}/options?profile=<name>` or
+`GET /voice/realtime/providers/{provider_id}/options?profile=<name>`. These
+routes return the selected provider's safe option metadata plus current
+profile/scope labels. Account-backed discovery stays server-side and is cached
+by `RELAY_PROVIDER_OPTIONS_CACHE_SECONDS`; today the voice-output route can
+refresh ElevenLabs voices/models/languages when the relay has an ElevenLabs API
+key, and xAI output/realtime routes refresh built-in plus paginated account
+custom voices from `GET /v1/tts/voices` and `GET /v1/custom-voices` when xAI
+API/OAuth auth is available. OpenAI choices are advertised from the current
+official voice set because OpenAI does not expose a general voice-list endpoint
+for this use case. If dynamic discovery is unauthenticated or unavailable, the
+relay falls back to static provider metadata and the Android UI keeps advanced
+manual ID entry available.
+
+Before writing a provider/model/voice selection, authenticated clients can call
+`POST /voice/output/providers/{provider_id}/validate` or
+`POST /voice/realtime/providers/{provider_id}/validate` with `model`, `voice`,
+`sample_rate`, and optional `language`. The relay validates the selection
+against the same option schema and returns `valid`, `checks[]`, and `summary`.
+Unknown manual IDs are warnings; advertised model/voice/sample-rate conflicts
+are blocking errors.
 
 For plain LAN phone testing against a running relay, toggle the dev escape hatch without restarting:
 
@@ -230,12 +293,19 @@ See [`docs/spec.md` §3.3](spec.md) for the full auth flow and the QR wire forma
 | `/media/upload` | POST | Bearer-auth'd small upload endpoint for phone-originated media. Accepts JSON `{file_name, content_type, content}` where `content` is base64 and registers the decoded bytes with the media registry. |
 | `/media/{token}` | GET | Stream the bytes of a previously-registered file. Requires `Authorization: Bearer <session_token>` (same token the WSS channel uses; validated against `SessionManager`). Response has the registered `Content-Type` plus `Content-Disposition: inline; filename="..."` when a file name was provided. Returns 401 without auth or with an invalid bearer, 404 if the token is unknown or expired. The client never sees the underlying path — the token is the only handle. |
 | `/media/by-path` | GET | Stream the bytes of a file **addressed by absolute path** rather than by registry token. Covers the case where an agent's LLM freeform-emits a `MEDIA:/abs/path.ext` marker in its response text (upstream `hermes-agent/agent/prompt_builder.py` explicitly instructs the model to do this) — no loopback register step is needed. Query parameters: `path` (required, absolute) and `content_type` (optional; otherwise guessed from extension via Python's `mimetypes`). Requires `Authorization: Bearer <session_token>`. Path sandboxing is identical to `/media/register`: must be absolute, must `realpath`-resolve under an allowed root (`tempfile.gettempdir()` + `HERMES_WORKSPACE` + `RELAY_MEDIA_ALLOWED_ROOTS`), must exist, must be a regular file, must fit under `RELAY_MEDIA_MAX_SIZE_MB`. Response carries `Content-Type` and `Content-Disposition: inline; filename="<basename>"`. Error shapes: 400 missing `path`; 401 missing/invalid bearer; 403 outside sandbox / not absolute / too large; 404 file not found or not a regular file. See ADR 14. |
-| `/voice/transcribe` | POST | Bearer-auth'd via either a Relay session token with active `voice:stt` grant or a valid Hermes API bearer token. Non-loopback API-bearer calls require HTTPS unless `RELAY_ALLOW_INSECURE_API_BEARER=1`. `multipart/form-data` with an audio file field (any name — first field is used). Relay saves the upload to a `tempfile.NamedTemporaryFile`, calls `tools.transcription_tools.transcribe_audio(path)` (sync, wrapped in `asyncio.to_thread`), unlinks the temp file, and returns `{"text": "...", "provider": "openai", "success": true}`. 500 on STT failure with the provider's error in the body. Provider is read from `stt:` in `~/.hermes/config.yaml` — the phone doesn't pass a provider name. See the Voice Mode ADR for why this lives on the relay and not upstream. |
-| `/voice/synthesize` | POST | Bearer-auth'd via either a Relay session token with active `voice:tts` grant or a valid Hermes API bearer token. Non-loopback API-bearer calls require HTTPS unless `RELAY_ALLOW_INSECURE_API_BEARER=1`. JSON body `{"text": "..."}` (max 5000 chars — longer text gets a 400). Relay calls `tools.tts_tool.text_to_speech_tool(text)` (sync, wrapped in `asyncio.to_thread`), parses the JSON string it returns to get the file path, and serves the file via `web.FileResponse` with `Content-Type: audio/mpeg`. The TTS file is written by the upstream tool to `~/voice-memos/tts_<timestamp>.mp3` — cleanup of old files is the tool's concern (TODO: add LRU cap if this dir grows unbounded). Provider is read from `tts:` in `~/.hermes/config.yaml`. 500 on synthesis failure. This is now the basic fallback path when `/voice/realtime/*` is unavailable or fails before audio starts. |
-| `/voice/config` | GET | Bearer-auth'd via either a Relay session token with active `voice:config` grant or a valid Hermes API bearer token. Non-loopback API-bearer calls require HTTPS unless `RELAY_ALLOW_INSECURE_API_BEARER=1`. Returns `{"tts": {"provider": "...", "voice": "...", "model": "..."}, "stt": {"provider": "...", "enabled": true, "language": "..."}, "requirements": {...}}` describing what the relay's hermes-agent venv has configured. Reads the private upstream helpers `_load_tts_config()` / `_load_stt_config()` plus `tools.voice_mode.check_voice_requirements()` — marked as private/unstable in the handler. Used by the Android Voice Settings screen and API-token clients to show provider info. |
-| `/voice/realtime/config` | GET/PATCH | Preferred realtime voice config route. Enabled by default; set `RELAY_REALTIME_VOICE_ENABLED=0` to disable sessions while still allowing config reads/writes. Requires bearer auth via `voice:realtime` or valid Hermes API bearer. `GET` returns provider/model/voice defaults, sample rate, provider registry info, config path, and redacted xAI auth status. `PATCH` persists safe operator settings to the relay-owned config file: `enabled`, `provider`, `model`, `voice`, `sample_rate`. |
-| `/voice/realtime/session` | POST | Preferred realtime voice session route. Requires bearer auth via `voice:realtime` or valid Hermes API bearer. Creates a short-lived server-side realtime session and returns `{session_id, websocket_path, provider, model, voice, sample_rate, event_log_path}`. Optional JSON body may override provider/model/voice/sample rate for the session. |
-| `/voice/realtime/{session_id}` | GET websocket | Preferred realtime voice websocket. Requires the same auth and a session from `/voice/realtime/session`. Client sends JSON events such as `session.start`, `input_audio.append`, and `response.create`; server sends `voice.session.ready`, `voice.input_audio.received`, `voice.audio.delta`, `voice.audio.done`, `voice.response.done`, and `voice.error`. PCM deltas are mono 16-bit little-endian base64 chunks for direct Android `AudioTrack` playback. |
+| `/voice/transcribe` | POST | Bearer-auth'd via either a Relay session token with active `voice:stt` grant or a valid Hermes API bearer token. Non-loopback API-bearer calls require HTTPS unless `RELAY_ALLOW_INSECURE_API_BEARER=1`. `multipart/form-data` with an audio file field (any name — first field is used). Android may include `?profile=<name>` so the active profile context is recorded in the response/UI; execution still goes through the upstream STT helper. |
+| `/voice/synthesize` | POST | Bearer-auth'd via either a Relay session token with active `voice:tts` grant or a valid Hermes API bearer token. Non-loopback API-bearer calls require HTTPS unless `RELAY_ALLOW_INSECURE_API_BEARER=1`. JSON body `{"text": "...", "profile": "mizu"}` (max 5000 chars) runs the basic fallback TTS helper and serves the resulting mp3. Normal assistant speech prefers `/voice/output/*`. |
+| `/voice/config` | GET | Bearer-auth'd via either a Relay session token with active `voice:config` grant or a valid Hermes API bearer token. Optional `?profile=<name>` resolves `tts:` / `stt:` from `~/.hermes/profiles/<name>/config.yaml` where present, otherwise falls back. Returns provider info plus `profile`, `config_scope`, and `fallback_to_global`. |
+| `/voice/output/config` | GET/PATCH | Default assistant speech renderer config route. Enabled by default; set `RELAY_VOICE_OUTPUT_ENABLED=0` to force legacy fallback. Requires bearer auth via `voice:tts` or valid Hermes API bearer. Optional `?profile=<name>` reads/writes experimental `voice_output:` defaults in that profile config; absent profile persists relay-owned `voice_output:` defaults. Responses include provider dropdown metadata (`models`, `voices`, `languages`, `sample_rates`) where known. |
+| `/voice/output/providers/{provider_id}/options` | GET | Provider-specific option discovery for the Voice Output settings UI. Requires `voice:tts` or valid Hermes API bearer. Optional `?profile=<name>` is reflected in profile/scope metadata. Returns a single `provider` option object and `dynamic` status without exposing provider secrets. |
+| `/voice/output/providers/{provider_id}/validate` | POST | Validates a pending Voice Output provider/model/voice/sample-rate/language selection before saving. Requires `voice:tts` or valid Hermes API bearer. Returns structured checks so the app can block incompatible choices while still allowing manual IDs with warnings. |
+| `/voice/output/session` | POST | Default assistant speech renderer session route. Requires bearer auth via `voice:tts` or valid Hermes API bearer. Creates a short-lived server-side output session and returns `{session_id, websocket_path, provider, model, voice, sample_rate, event_log_path, profile, config_scope}`. JSON body may include `profile` plus provider/model/voice/sample-rate overrides. |
+| `/voice/output/{session_id}` | GET websocket | Default voice output websocket. Requires the same auth and a session from `/voice/output/session`. Client sends `session.start`, `response.create` with final Hermes text, and `session.close`; server sends `voice.session.ready`, `voice.audio.delta`, `voice.audio.done`, `voice.response.done`, and `voice.error`. PCM deltas are mono 16-bit little-endian base64 chunks for direct Android `AudioTrack` playback. |
+| `/voice/realtime/config` | GET/PATCH | Experimental realtime voice-agent config route. Enabled by default; set `RELAY_REALTIME_VOICE_ENABLED=0` to disable sessions while still allowing config reads/writes. Requires bearer auth via `voice:realtime` or valid Hermes API bearer. Optional `?profile=<name>` reads/writes experimental `realtime_voice:` defaults in that profile config; absent profile persists relay-owned defaults. Responses include provider dropdown metadata (`models`, `voices`, `sample_rates`) where known. |
+| `/voice/realtime/providers/{provider_id}/options` | GET | Provider-specific option discovery for the dev-only Realtime Agent Lab settings UI. Requires `voice:realtime` or valid Hermes API bearer. Returns a single realtime-capable provider option object and current profile/scope metadata. |
+| `/voice/realtime/providers/{provider_id}/validate` | POST | Validates a pending realtime provider/model/voice/sample-rate selection before saving. Requires `voice:realtime` or valid Hermes API bearer. |
+| `/voice/realtime/session` | POST | Experimental realtime voice-agent session route. Requires bearer auth via `voice:realtime` or valid Hermes API bearer. Creates a short-lived server-side realtime session and returns `{session_id, websocket_path, provider, model, voice, sample_rate, event_log_path, profile, config_scope}`. JSON body may include `profile` plus provider/model/voice/sample-rate overrides. |
+| `/voice/realtime/{session_id}` | GET websocket | Realtime voice-agent websocket. Requires the same auth and a session from `/voice/realtime/session`. Client sends JSON events such as `session.start`, `input_audio.append`, and `response.create`; server sends `voice.session.ready`, `voice.input_audio.received`, `voice.audio.delta`, `voice.audio.done`, `voice.response.done`, and `voice.error`. PCM deltas are mono 16-bit little-endian base64 chunks for direct Android `AudioTrack` playback in the dev/lab mode. |
 | `/bridge/activity` | GET | **Loopback only.** Returns the `BridgeHandler.recent_commands` ring buffer (max 100 entries) as `{"activity": [ {request_id, method, path, params, sent_at, response_status, result_summary, error, decision}, ... ]}` — newest first. Query param: `?limit=N` (1–500, default 100) caps the response size. `params` is redacted for any key in `{password, token, secret, otp, bearer}`; `decision` is one of `pending` / `executed` / `blocked` / `confirmed` / `timeout` / `error`. 403 for non-loopback callers. Consumed by the dashboard plugin's Bridge Activity tab. |
 | `/media/inspect` | GET | **Loopback only.** Returns `{"media": [ {token, file_name, content_type, size, created_at, expires_at, last_accessed, is_expired}, ... ]}` — `MediaRegistry.list_all()` snapshot, newest first. Absolute file paths are **never** included — only `file_name` (basename). Query param: `?include_expired=true` includes evicted entries (default false, hides them). 403 for non-loopback callers. Consumed by the dashboard plugin's Media Inspector tab. |
 | `/relay/info` | GET | **Loopback only.** Aggregate status for the dashboard plugin's Relay Management tab — one call instead of three. Returns `{"version": "0.5.0", "uptime_seconds": 12345, "session_count": 1, "paired_device_count": 1, "pending_commands": 0, "media_entry_count": 7, "health": "ok"}`. 403 for non-loopback callers. |
@@ -302,7 +372,7 @@ All messages use typed envelopes over a single WebSocket connection at `/ws`:
 
 The relay server is **separate from hermes-agent**. The hermes-agent plugin system (`register_tool`, `register_hook`) cannot add HTTP/WebSocket endpoints to the gateway — it only registers agent tools and lifecycle hooks. The relay fills this gap by providing a dedicated WSS server for features that need persistent bidirectional communication.
 
-The relay reads the hermes config file for agent profiles but does not modify it. It proxies chat requests to the API server but handles terminal and bridge sessions directly.
+The relay reads the Hermes config/profile directories for agent metadata but does not modify them. Chat requests stay direct to the selected Hermes API server. Relay-owned routes handle voice, terminal, bridge, media, sessions, and profile inspection.
 
 ## Files
 

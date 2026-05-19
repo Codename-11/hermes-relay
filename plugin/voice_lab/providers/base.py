@@ -26,6 +26,10 @@ class ProviderInfo:
     name: str
     status: str = "available"
     description: str = ""
+    models: tuple[str, ...] = ()
+    voices: tuple[str, ...] = ()
+    languages: tuple[str, ...] = ()
+    sample_rates: tuple[int, ...] = ()
     supports_tts: bool = False
     supports_stt: bool = False
     supports_speech_to_speech: bool = False
@@ -40,6 +44,10 @@ class ProviderInfo:
             "name": self.name,
             "status": self.status,
             "description": self.description,
+            "models": list(self.models),
+            "voices": list(self.voices),
+            "languages": list(self.languages),
+            "sample_rates": list(self.sample_rates),
             "supports_tts": self.supports_tts,
             "supports_stt": self.supports_stt,
             "supports_speech_to_speech": self.supports_speech_to_speech,

@@ -1,3 +1,6 @@
+import { Terminal } from './vendor/xterm/xterm.mjs';
+import { FitAddon } from './vendor/xterm/addon-fit.mjs';
+
 const tauri = window.__TAURI__;
 const invoke = tauri.core.invoke;
 const listen = tauri.event.listen;
@@ -5,7 +8,12 @@ const listen = tauri.event.listen;
 const routes = {
   overview: document.querySelector('#overviewView'),
   pair: document.querySelector('#pairView'),
+  chat: document.querySelector('#chatView'),
+  tui: document.querySelector('#tuiView'),
   connect: document.querySelector('#connectView'),
+  sessions: document.querySelector('#sessionsView'),
+  plugins: document.querySelector('#pluginsView'),
+  voice: document.querySelector('#voiceView'),
   diagnostics: document.querySelector('#diagnosticsView'),
   devices: document.querySelector('#devicesView'),
   grants: document.querySelector('#grantsView'),
@@ -16,7 +24,12 @@ const routes = {
 const titles = {
   overview: 'Overview',
   pair: 'Pair',
+  chat: 'Chat',
+  tui: 'Embedded TUI',
   connect: 'Terminal / CLI',
+  sessions: 'TUI Sessions',
+  plugins: 'Plugins',
+  voice: 'Voice Mode',
   diagnostics: 'Diagnostics',
   devices: 'Devices',
   grants: 'Grant Requests',
@@ -24,11 +37,35 @@ const titles = {
   settings: 'Settings'
 };
 
+let voiceCurrentUrl = null;
+const chatState = {
+  mode: 'relay',
+  busy: false,
+  turnId: null,
+  sessionId: null,
+  messages: [],
+  lastPrompt: '',
+  freshNext: true,
+  apiKey: ''
+};
+
 let state = null;
 let activeRoute = 'overview';
 let activePairMethod = 'qr';
 let loadSerial = 0;
 let controlBusy = false;
+let pairBusy = false;
+let terminalSessions = null;
+let sessionsBusy = false;
+let embeddedBusy = false;
+let pluginBusy = null;
+const embeddedTerminal = {
+  term: null,
+  fit: null,
+  resizeObserver: null,
+  id: null,
+  running: false
+};
 
 function text(id, value) {
   const el = document.querySelector(id);
@@ -44,13 +81,134 @@ function setRoute(route) {
     btn.classList.toggle('active', btn.dataset.route === activeRoute);
   });
   text('#viewTitle', titles[activeRoute]);
-  if (activeRoute === 'devices') refreshDevices();
+  if (activeRoute === 'devices') {
+    if (hasActiveRelay()) refreshDevices();
+    else renderDevicesView();
+  }
   if (activeRoute === 'pair') refreshPairPreview();
-  if (activeRoute === 'connect') renderConnectView();
+  if (activeRoute === 'chat') renderChatView();
+  if (activeRoute === 'connect') {
+    renderConnectView();
+  }
+  if (activeRoute === 'tui') {
+    renderEmbeddedTerminalControls();
+    ensureEmbeddedTerminal();
+    fitEmbeddedTerminal();
+  }
+  if (activeRoute === 'sessions') refreshTerminalSessions();
+  if (activeRoute === 'plugins') renderPluginsView();
+  if (activeRoute === 'voice') refreshVoiceView();
   if (activeRoute === 'diagnostics') renderDiagnostics();
 }
 
+// ─── Voice mode ──────────────────────────────────────────────────────
+// The iframe loads the daemon's local voice page (http://127.0.0.1:PORT/v/NONCE/).
+// We pull the URL from the daemon's discovery file via a Rust command;
+// if that returns nothing we fall back to a manual paste field so the
+// user can still verify the path while the daemon-side work lands.
+
+async function refreshVoiceView() {
+  const empty = document.querySelector('#voiceEmpty');
+  const frame = document.querySelector('#voiceFrame');
+  let url = null;
+  try {
+    url = await invoke('get_voice_url');
+  } catch {
+    // Command may not exist yet on older tray binaries; treat as "no URL".
+    url = null;
+  }
+  if (typeof url === 'string' && url.length > 0) {
+    loadVoiceUrl(url);
+  } else if (voiceCurrentUrl) {
+    // Re-show the previously-loaded iframe (user navigated away and back).
+    loadVoiceUrl(voiceCurrentUrl);
+  } else {
+    empty.hidden = false;
+    frame.hidden = true;
+    frame.src = 'about:blank';
+  }
+}
+
+function loadVoiceUrl(url) {
+  const empty = document.querySelector('#voiceEmpty');
+  const frame = document.querySelector('#voiceFrame');
+  if (!url || !/^https?:\/\/127\.0\.0\.1[:/]/.test(url)) {
+    empty.hidden = false;
+    frame.hidden = true;
+    return;
+  }
+  // Loopback-only guard: refuse to load anything that doesn't start with
+  // http(s)://127.0.0.1 — prevents the URL field being abused to load arbitrary
+  // pages inside the tray webview.
+  voiceCurrentUrl = url;
+  empty.hidden = true;
+  frame.hidden = false;
+  if (frame.src !== url) frame.src = url;
+}
+
+function bindVoiceControls() {
+  const reload = document.querySelector('#voiceReloadBtn');
+  const copy = document.querySelector('#voiceCopyUrlBtn');
+  const manualInput = document.querySelector('#voiceManualUrl');
+  const manualLoad = document.querySelector('#voiceManualLoad');
+
+  reload?.addEventListener('click', () => {
+    if (voiceCurrentUrl) {
+      const frame = document.querySelector('#voiceFrame');
+      // Force a refresh; src= alone is a no-op if the URL is identical.
+      frame.src = 'about:blank';
+      setTimeout(() => loadVoiceUrl(voiceCurrentUrl), 30);
+    } else {
+      refreshVoiceView();
+    }
+  });
+
+  copy?.addEventListener('click', async () => {
+    if (!voiceCurrentUrl) return;
+    try { await navigator.clipboard.writeText(voiceCurrentUrl); } catch { /* best-effort */ }
+  });
+
+  manualLoad?.addEventListener('click', () => {
+    const v = (manualInput?.value ?? '').trim();
+    if (v) loadVoiceUrl(v);
+  });
+  manualInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const v = (manualInput.value ?? '').trim();
+      if (v) loadVoiceUrl(v);
+    }
+  });
+}
+
+function hasActiveRelay() {
+  return !!state?.selected_url;
+}
+
+function pairSubmitLabel() {
+  return activePairMethod === 'stored' ? 'Use Stored Session' : 'Pair';
+}
+
+function setPairBusy(busy) {
+  pairBusy = busy;
+  document.querySelectorAll('.method-tab').forEach((btn) => {
+    btn.disabled = busy;
+  });
+  ['#pairQr', '#pairRemote', '#pairCode', '#pairGrantTools', '#pairStartDaemon'].forEach((selector) => {
+    const el = document.querySelector(selector);
+    if (el) el.disabled = busy;
+  });
+  document.querySelectorAll('[data-use-session]').forEach((btn) => {
+    btn.disabled = busy;
+  });
+  const submit = document.querySelector('#pairSubmitBtn');
+  if (submit) {
+    submit.disabled = busy;
+    submit.textContent = busy ? 'Pairing...' : pairSubmitLabel();
+  }
+}
+
 function setPairMethod(method) {
+  if (pairBusy) return;
   activePairMethod = method;
   document.querySelectorAll('.method-tab').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.pairMethod === method);
@@ -60,7 +218,7 @@ function setPairMethod(method) {
   });
   const submit = document.querySelector('#pairSubmitBtn');
   if (submit) {
-    submit.textContent = method === 'stored' ? 'Use Stored Session' : 'Pair';
+    submit.textContent = pairSubmitLabel();
   }
   refreshPairPreview();
 }
@@ -120,7 +278,7 @@ function commandUnavailableSuffix() {
 }
 
 function shellCommand(options = {}) {
-  return `${cliCommandPrefix()} shell${options.override ? remoteOverrideFlag() : ''}${commandUnavailableSuffix()}`;
+  return `${cliCommandPrefix()}${options.override ? remoteOverrideFlag() : ''}${commandUnavailableSuffix()}`;
 }
 
 function chatCommand(options = {}) {
@@ -144,6 +302,18 @@ function toolsCommand(options = {}) {
   return `${cliCommandPrefix()} tools${options.override ? remoteOverrideFlag() : ''}${commandUnavailableSuffix()}`;
 }
 
+function sessionsListCommand(options = {}) {
+  return `${cliCommandPrefix()} sessions list${options.override ? remoteOverrideFlag() : ''}${commandUnavailableSuffix()}`;
+}
+
+function sessionResumeCommand(name) {
+  return `${cliCommandPrefix()}${name ? ` --session ${psQuote(name)}` : ''}${commandUnavailableSuffix()}`;
+}
+
+function sessionKillCommand(name) {
+  return `${cliCommandPrefix()} sessions kill ${psQuote(name)}${commandUnavailableSuffix()}`;
+}
+
 function setControlsBusy(busy) {
   controlBusy = busy;
   updateControlButtons(state?.daemon);
@@ -153,11 +323,12 @@ function updateControlButtons(daemon) {
   const start = document.querySelector('#startBtn');
   const pause = document.querySelector('#pauseBtn');
   const emergency = document.querySelector('#emergencyBtn');
+  const paired = hasActiveRelay();
   const running = !!daemon?.running;
   const paused = !!daemon?.paused && !running;
   if (start) {
-    start.disabled = controlBusy || running;
-    start.textContent = running ? 'Running' : 'Start';
+    start.disabled = controlBusy || running || !paired;
+    start.textContent = running ? 'Running' : paired ? 'Start' : 'Pair first';
   }
   if (pause) {
     pause.disabled = controlBusy || !running;
@@ -172,6 +343,119 @@ function showStatusError(err) {
   document.querySelector('#statusStrip')?.classList.add('error');
   document.querySelector('#statusStrip .dot').className = 'dot error';
   text('#statusText', String(err ?? 'Action failed'));
+}
+
+function setEmbeddedFeedback(message) {
+  text('#embeddedTerminalFeedback', message ?? '');
+}
+
+function embeddedStatus() {
+  return state?.embedded_terminal ?? { running: false, id: null };
+}
+
+function terminalSessionName() {
+  return document.querySelector('#embeddedSessionName')?.value.trim() || null;
+}
+
+function ensureEmbeddedTerminal() {
+  if (embeddedTerminal.term) return embeddedTerminal.term;
+  const target = document.querySelector('#embeddedTerminal');
+  if (!target) return null;
+  const term = new Terminal({
+    cursorBlink: true,
+    convertEol: false,
+    fontFamily: '"Cascadia Mono", "Consolas", monospace',
+    fontSize: 13,
+    lineHeight: 1.18,
+    scrollback: 6000,
+    theme: {
+      background: '#06090c',
+      foreground: '#dce7ee',
+      cursor: '#58c7b2',
+      selectionBackground: '#243847',
+      black: '#0b1117',
+      red: '#ff6b7a',
+      green: '#58c7b2',
+      yellow: '#e6b858',
+      blue: '#6ca8ff',
+      magenta: '#9b6bf0',
+      cyan: '#72d8ea',
+      white: '#dce7ee',
+      brightBlack: '#516170',
+      brightRed: '#ff8995',
+      brightGreen: '#72d8a7',
+      brightYellow: '#ffd27a',
+      brightBlue: '#8dbbff',
+      brightMagenta: '#b993ff',
+      brightCyan: '#95e8f2',
+      brightWhite: '#f7fbff'
+    }
+  });
+  const fit = new FitAddon();
+  term.loadAddon(fit);
+  term.open(target);
+  term.onData((data) => {
+    if (!embeddedTerminal.running) return;
+    invoke('write_embedded_terminal', { data }).catch((err) => {
+      setEmbeddedFeedback(`Terminal input failed: ${String(err.message ?? err)}`);
+    });
+  });
+  term.onResize(({ cols, rows }) => {
+    if (!embeddedTerminal.running) return;
+    invoke('resize_embedded_terminal', { cols, rows }).catch(() => {});
+  });
+  embeddedTerminal.term = term;
+  embeddedTerminal.fit = fit;
+  embeddedTerminal.resizeObserver = new ResizeObserver(() => fitEmbeddedTerminal());
+  embeddedTerminal.resizeObserver.observe(target);
+  fitEmbeddedTerminal();
+  return term;
+}
+
+function fitEmbeddedTerminal() {
+  if (!embeddedTerminal.fit || !document.querySelector('#tuiView')?.classList.contains('active')) {
+    return;
+  }
+  requestAnimationFrame(() => {
+    try {
+      embeddedTerminal.fit.fit();
+      if (embeddedTerminal.running && embeddedTerminal.term) {
+        invoke('resize_embedded_terminal', {
+          cols: embeddedTerminal.term.cols,
+          rows: embeddedTerminal.term.rows
+        }).catch(() => {});
+      }
+    } catch {
+      /* xterm can throw while the panel is hidden during route changes. */
+    }
+  });
+}
+
+function renderEmbeddedTerminalControls() {
+  const status = embeddedStatus();
+  const running = !!status.running;
+  embeddedTerminal.running = running;
+  embeddedTerminal.id = status.id ?? embeddedTerminal.id;
+  const label = status.surface_label ?? 'Embedded TUI';
+  text('#embeddedTerminalBadge', running ? `${label} attached` : state?.selected_url ? 'Detached' : 'Pair first');
+  text('#tuiActiveRelay', activeRelayText());
+  text('#tuiRouteBadge', state?.selected_url ? activeRouteLabel() : 'No route');
+  text('#tuiSessionStatus', running ? `${label} attached` : state?.selected_url ? 'Detached' : 'Pair first');
+  const empty = document.querySelector('#embeddedTerminalEmpty');
+  if (empty) {
+    empty.classList.toggle('hidden', running || !!embeddedTerminal.term);
+    if (!state?.selected_url) {
+      empty.textContent = 'Pair a relay to start the in-app TUI.';
+    } else if (!embeddedTerminal.term) {
+      empty.textContent = 'Resume a session to attach the in-app TUI.';
+    }
+  }
+  const resume = document.querySelector('#embeddedResumeBtn');
+  const create = document.querySelector('#embeddedNewBtn');
+  const stop = document.querySelector('#embeddedStopBtn');
+  if (resume) resume.disabled = embeddedBusy || running || !state?.selected_url;
+  if (create) create.disabled = embeddedBusy || running || !state?.selected_url;
+  if (stop) stop.disabled = embeddedBusy || !running;
 }
 
 function formatTime(ts) {
@@ -288,7 +572,8 @@ function activeRouteLabel() {
 }
 
 function activeRelayText() {
-  return state?.selected_url ?? 'Not paired';
+  if (state?.selected_url) return state.selected_url;
+  return state?.config?.relay_url ? 'Not paired (stored token missing)' : 'Not paired';
 }
 
 function updateSettingsForm(config) {
@@ -337,6 +622,253 @@ function renderToolConsentControls() {
   if (revoke) revoke.disabled = !hasRelay || !consented;
 }
 
+function chatGatewayInput() {
+  return document.querySelector('#chatGatewayUrl')?.value.trim() || state?.config?.chat_gateway_url || '';
+}
+
+function chatCanSend() {
+  if (chatState.busy) return false;
+  if (chatState.mode === 'relay') return !!state?.chat?.can_use_relay;
+  return !!chatGatewayInput();
+}
+
+function syncChatModeFromState() {
+  const setup = state?.chat ?? {};
+  if (chatState.mode === 'relay' && !setup.can_use_relay) {
+    chatState.mode = setup.can_use_gateway || setup.default_mode === 'setup' ? 'gateway' : 'relay';
+  }
+  if (setup.default_mode === 'relay' && !chatState.sessionId) {
+    chatState.mode = 'relay';
+  } else if (setup.default_mode === 'gateway' && !setup.can_use_relay && !chatState.sessionId) {
+    chatState.mode = 'gateway';
+  }
+}
+
+function appendChatMessage(role, textValue = '', status = '') {
+  const message = {
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    role,
+    text: textValue,
+    status
+  };
+  chatState.messages.push(message);
+  renderChatTranscript();
+  return message;
+}
+
+function currentAssistantMessage() {
+  let message = chatState.messages[chatState.messages.length - 1];
+  if (!message || message.role !== 'assistant' || message.status === 'complete') {
+    message = appendChatMessage('assistant', '', 'streaming');
+  }
+  return message;
+}
+
+function renderChatTranscript() {
+  const transcript = document.querySelector('#chatTranscript');
+  if (!transcript) return;
+  if (!chatState.messages.length) {
+    transcript.innerHTML = '<div class="empty">No messages in this tray chat yet.</div>';
+    return;
+  }
+  transcript.innerHTML = chatState.messages.map((message) => `
+    <article class="chat-message ${escapeHtml(message.role)} ${escapeHtml(message.status)}">
+      <div class="chat-message-role">${escapeHtml(message.role === 'user' ? 'You' : message.role === 'assistant' ? 'Hermes' : 'Event')}</div>
+      <div class="chat-message-body">${escapeHtml(message.text || (message.status === 'streaming' ? 'Thinking...' : ''))}</div>
+    </article>
+  `).join('');
+  transcript.scrollTop = transcript.scrollHeight;
+}
+
+function renderChatView() {
+  if (!state) return;
+  syncChatModeFromState();
+  const setup = state.chat ?? {};
+  const gatewayInput = document.querySelector('#chatGatewayUrl');
+  const gatewayKey = document.querySelector('#chatGatewayKey');
+  if (gatewayInput && !gatewayInput.value && state.config?.chat_gateway_url) {
+    gatewayInput.value = state.config.chat_gateway_url;
+  }
+  if (gatewayKey && !gatewayKey.value && chatState.apiKey) {
+    gatewayKey.value = chatState.apiKey;
+  }
+
+  const relayReady = !!setup.can_use_relay;
+  const gatewayReady = !!chatGatewayInput();
+  const routeLabel = chatState.mode === 'relay'
+    ? (setup.relay_url ?? 'Pair required')
+    : (chatGatewayInput() || 'Gateway URL required');
+  text('#chatRouteBadge', chatState.busy ? 'Streaming' : chatState.mode === 'relay' ? 'Relay' : 'Gateway');
+  text('#chatSetupBadge', relayReady || gatewayReady ? 'Ready' : 'Setup');
+  text('#chatRouteHint', chatState.busy ? `Streaming via ${routeLabel}` : (setup.setup_hint ?? 'Choose a route to start.'));
+  text('#chatRelayRoute', setup.relay_url ?? 'Not paired');
+  text('#chatGatewayRoute', chatGatewayInput() || 'Not set');
+  text('#chatSessionLabel', chatState.sessionId ? chatState.sessionId : chatState.freshNext ? 'New' : 'Current');
+  text(
+    '#chatDiagnostics',
+    chatState.mode === 'relay' && !relayReady
+      ? 'Pair a relay first, or switch to Gateway/API.'
+      : chatState.mode === 'gateway' && !gatewayReady
+        ? 'Enter a gateway URL such as http://host:8642. API key is optional and is not saved.'
+        : ''
+  );
+
+  document.querySelectorAll('input[name="chatMode"]').forEach((input) => {
+    input.checked = input.value === chatState.mode;
+    input.disabled = chatState.busy || (input.value === 'relay' && !relayReady);
+  });
+  document.querySelector('#chatFirstRun')?.classList.toggle('hidden', relayReady || gatewayReady);
+  const send = document.querySelector('#chatSendBtn');
+  const stop = document.querySelector('#chatStopBtn');
+  const retry = document.querySelector('#chatRetryBtn');
+  if (send) send.disabled = !chatCanSend();
+  if (stop) stop.disabled = !chatState.busy;
+  if (retry) retry.disabled = chatState.busy || !chatState.lastPrompt;
+  renderChatTranscript();
+}
+
+function handleChatEventLine(line) {
+  let event;
+  try {
+    event = JSON.parse(line);
+  } catch {
+    return;
+  }
+  const type = event?.type;
+  const payload = event?.payload ?? {};
+  const sessionId = event?.session_id || payload?.id || payload?.session_id;
+  if (sessionId && typeof sessionId === 'string' && sessionId !== 'runs') {
+    chatState.sessionId = sessionId;
+    chatState.freshNext = false;
+  }
+  if (type === 'message.delta') {
+    const textValue = payload.text || payload.delta || payload.rendered || '';
+    if (textValue) {
+      const message = currentAssistantMessage();
+      message.text += String(textValue);
+      message.status = 'streaming';
+      renderChatView();
+    }
+  } else if (type === 'message.complete') {
+    const message = currentAssistantMessage();
+    message.status = 'complete';
+    renderChatView();
+  } else if (type === 'tool.start') {
+    appendChatMessage('event', `Tool started: ${payload.name || payload.tool_id || 'tool'}`, 'tool');
+  } else if (type === 'tool.complete') {
+    const label = payload.name || payload.tool_id || 'tool';
+    const summary = payload.error || payload.summary || 'completed';
+    appendChatMessage('event', `Tool ${label}: ${summary}`, payload.error ? 'error' : 'tool');
+  } else if (type === 'reasoning.delta' || type === 'status.update') {
+    text('#chatDiagnostics', payload.text || '');
+  } else if (type === 'error') {
+    appendChatMessage('event', payload.message || 'Chat failed', 'error');
+  }
+}
+
+async function saveChatGatewayUrl() {
+  const url = chatGatewayInput();
+  if (!url) {
+    showStatusError('Gateway URL is required.');
+    return;
+  }
+  const config = {
+    ...state.config,
+    chat_gateway_url: url
+  };
+  await invoke('save_desktop_config', { config });
+  await loadState();
+  chatState.mode = 'gateway';
+  renderChatView();
+}
+
+async function sendChatPrompt(promptOverride = '') {
+  if (chatState.busy) return;
+  const input = document.querySelector('#chatPrompt');
+  const prompt = (promptOverride || input?.value || '').trim();
+  if (!prompt) return;
+  if (!chatCanSend()) {
+    showStatusError(chatState.mode === 'relay' ? 'Pair a relay before chatting.' : 'Enter a gateway URL before chatting.');
+    return;
+  }
+  chatState.apiKey = document.querySelector('#chatGatewayKey')?.value ?? chatState.apiKey;
+  appendChatMessage('user', prompt, 'complete');
+  appendChatMessage('assistant', '', 'streaming');
+  chatState.busy = true;
+  chatState.lastPrompt = prompt;
+  renderChatView();
+  try {
+    const status = await invoke('start_chat_turn', {
+      mode: chatState.mode,
+      prompt,
+      gatewayUrl: chatState.mode === 'gateway' ? chatGatewayInput() : null,
+      apiKey: chatState.mode === 'gateway' ? chatState.apiKey : null,
+      sessionId: chatState.freshNext ? null : chatState.sessionId,
+      fresh: chatState.freshNext
+    });
+    chatState.turnId = status.id;
+    if (input && !promptOverride) input.value = '';
+  } catch (err) {
+    chatState.busy = false;
+    appendChatMessage('event', String(err.message ?? err), 'error');
+    renderChatView();
+  }
+}
+
+async function stopChatPrompt() {
+  try {
+    await invoke('stop_chat_turn');
+  } catch (err) {
+    showStatusError(err);
+  } finally {
+    chatState.busy = false;
+    renderChatView();
+  }
+}
+
+function newChatSession() {
+  chatState.sessionId = null;
+  chatState.freshNext = true;
+  chatState.messages = [];
+  renderChatView();
+}
+
+function activityStatus(nextState) {
+  const daemon = nextState.daemon ?? {};
+  const grants = nextState.pending_grants ?? [];
+  if (grants.length) {
+    return { label: `${grants.length} approval pending`, cls: 'warn', badge: 'Approval' };
+  }
+  if (!nextState.selected_url) {
+    return { label: 'Pair required', cls: 'warn', badge: 'Pair first' };
+  }
+  if (daemon.paused && !daemon.running) {
+    return { label: 'Paused', cls: 'warn', badge: 'Paused' };
+  }
+  const recent = (nextState.task_log ?? []).slice().reverse().find((entry) => {
+    const age = Date.now() - Number(entry.ts_ms ?? 0);
+    return age >= 0 && age < 45_000;
+  });
+  const event = String(recent?.event ?? '').toLowerCase();
+  const message = String(recent?.message ?? '').toLowerCase();
+  if (event.includes('grant') || message.includes('approval') || message.includes('grant')) {
+    return { label: 'Approval activity', cls: 'warn', badge: 'Approval' };
+  }
+  if (event.includes('sessions') || event.startsWith('tui_')) {
+    return { label: 'TUI session active', cls: 'ok', badge: 'TUI active' };
+  }
+  if (message.includes('desktop_') || message.includes('tool') || event.includes('tool')) {
+    return { label: 'Tool activity', cls: 'ok', badge: 'Tools active' };
+  }
+  if (message.includes('gateway') || message.includes('auth') || message.includes('connected')) {
+    return { label: 'Gateway active', cls: 'ok', badge: 'Gateway' };
+  }
+  if (daemon.running) {
+    return { label: 'Connected - Observing', cls: 'ok', badge: 'Observing' };
+  }
+  return { label: 'Disconnected', cls: 'idle', badge: 'Disconnected' };
+}
+
 function commandRows() {
   const rows = [
     {
@@ -355,9 +887,14 @@ function commandRows() {
       command: daemonCommand()
     },
     {
-      title: 'Stored sessions',
+      title: 'Stored relays',
       detail: 'List paired relays, grants, token TTL, route, and consent state.',
       command: statusCommand()
+    },
+    {
+      title: 'TUI sessions',
+      detail: 'List resumable tmux sessions running on the active relay.',
+      command: sessionsListCommand()
     },
     {
       title: 'Tool inventory',
@@ -412,6 +949,11 @@ function renderConnectView() {
       ? (installState.installed ? 'Open TUI' : 'Install first')
       : 'Pair first';
   }
+  const sessionInput = document.querySelector('#embeddedSessionName');
+  if (sessionInput && !sessionInput.value && terminalSessions?.active?.name) {
+    sessionInput.value = terminalSessions.active.name;
+  }
+  renderEmbeddedTerminalControls();
 
   const list = document.querySelector('#connectCommandList');
   if (!list) return;
@@ -427,13 +969,153 @@ function renderConnectView() {
   `).join('');
 }
 
+function pluginStateLabel(plugin) {
+  if (plugin.installed) return 'Installed';
+  if (plugin.available) return 'Fallback ready';
+  return 'Setup needed';
+}
+
+function pluginPrimaryCommand(plugin) {
+  if (plugin.installed) return plugin.launch?.display ?? plugin.command;
+  return plugin.installer?.display ?? plugin.fallback?.display ?? plugin.command;
+}
+
+function renderCapabilityChips(items = []) {
+  return items.map((item) => `<span>${escapeHtml(item.label)}</span>`).join('');
+}
+
+function renderPluginsView() {
+  const plugins = state?.plugins ?? [];
+  text('#pluginsBadge', plugins.length ? `${plugins.length} built-in` : 'None');
+  const list = document.querySelector('#pluginList');
+  if (!list) return;
+  if (!plugins.length) {
+    list.innerHTML = '<div class="empty">No desktop surface plugins are registered.</div>';
+    return;
+  }
+  list.innerHTML = plugins.map((pluginStatus) => {
+    const plugin = pluginStatus.descriptor ?? {};
+    const busy = pluginBusy === plugin.id;
+    const tabs = (plugin.tabs ?? []).slice(0, 8).join(', ');
+    const moreTabs = Math.max(0, (plugin.tabs ?? []).length - 8);
+    const fallback = pluginStatus.fallback?.display ?? 'Standard relay TUI';
+    const version = pluginStatus.version ? ` / ${pluginStatus.version}` : '';
+    const embeddedRunning = !!state?.embedded_terminal?.running;
+    return `
+      <section class="plugin-card ${pluginStatus.installed ? 'installed' : pluginStatus.available ? 'fallback' : 'missing'}">
+        <div class="plugin-card-main">
+          <div class="plugin-title-row">
+            <div>
+              <strong>${escapeHtml(plugin.name)}</strong>
+              <span>${escapeHtml(plugin.package_name)}${escapeHtml(version)}</span>
+            </div>
+            <span class="badge">${escapeHtml(pluginStateLabel(pluginStatus))}</span>
+          </div>
+          <p>${escapeHtml(plugin.description)}</p>
+          <code>${escapeHtml(pluginPrimaryCommand(pluginStatus))}</code>
+          <div class="plugin-meta-grid">
+            <div>
+              <small>Panels</small>
+              <span>${escapeHtml(tabs)}${moreTabs ? ` +${moreTabs}` : ''}</span>
+            </div>
+            <div>
+              <small>Fallback</small>
+              <span>${escapeHtml(fallback)}</span>
+            </div>
+            <div>
+              <small>Source</small>
+              <span>${escapeHtml(plugin.source_url)}</span>
+            </div>
+          </div>
+          <div class="plugin-chip-row">
+            ${renderCapabilityChips(plugin.keybindings)}
+            ${renderCapabilityChips(plugin.session_actions)}
+          </div>
+        </div>
+        <div class="plugin-actions">
+          <button class="secondary small" type="button" data-plugin-action="install" data-plugin-id="${escapeHtml(plugin.id)}" ${busy || !pluginStatus.installer ? 'disabled' : ''}>Install</button>
+          <button class="secondary small" type="button" data-plugin-action="update" data-plugin-id="${escapeHtml(plugin.id)}" ${busy || !pluginStatus.update ? 'disabled' : ''}>Update</button>
+          <button class="primary small" type="button" data-plugin-action="launch" data-plugin-id="${escapeHtml(plugin.id)}" ${busy || !pluginStatus.launch ? 'disabled' : ''}>Open</button>
+          <button class="secondary small" type="button" data-plugin-action="resume" data-plugin-id="${escapeHtml(plugin.id)}" ${busy || !pluginStatus.resume ? 'disabled' : ''}>Resume</button>
+          <button class="secondary small" type="button" data-plugin-action="embed" data-plugin-id="${escapeHtml(plugin.id)}" ${busy || embeddedRunning || !pluginStatus.launch ? 'disabled' : ''}>Embed</button>
+        </div>
+      </section>
+    `;
+  }).join('');
+}
+
+function renderSessionsView() {
+  if (!state) return;
+  const route = activeRouteLabel();
+  text('#sessionsActiveRelay', activeRelayText());
+  text('#sessionsRouteBadge', state.selected_url ? route : 'No route');
+  text('#sessionsCommand', sessionResumeCommand());
+  const refresh = document.querySelector('#refreshSessionsBtn');
+  const create = document.querySelector('#newSessionBtn');
+  if (refresh) refresh.disabled = sessionsBusy || !state.selected_url;
+  if (create) create.disabled = sessionsBusy || !state.selected_url;
+  renderTerminalSessions();
+}
+
+function renderTerminalSessions() {
+  const list = document.querySelector('#sessionsList');
+  if (!list) return;
+  if (!state?.selected_url) {
+    list.innerHTML = '<div class="empty">Pair a relay before managing TUI sessions.</div>';
+    return;
+  }
+  if (sessionsBusy) {
+    list.innerHTML = '<div class="empty">Loading sessions...</div>';
+    return;
+  }
+  if (!terminalSessions) {
+    list.innerHTML = '<div class="empty">Refresh to load server-side tmux sessions.</div>';
+    return;
+  }
+  const sessions = terminalSessions.sessions ?? [];
+  if (!sessions.length) {
+    list.innerHTML = `
+      <div class="empty">
+        No TUI sessions found. Open a new session or run bare hermes-relay from a terminal.
+      </div>
+    `;
+    return;
+  }
+  const activeName = terminalSessions.active?.name ?? '';
+  list.innerHTML = sessions.map((session) => {
+    const active = session.name === activeName;
+    const attached = session.attached ?? (session.live ? 1 : 0);
+    const created = session.created_at ? new Date(Number(session.created_at) * 1000).toLocaleString() : 'Unknown';
+    return `
+      <div class="session-row ${active ? 'active' : ''}">
+        <div class="session-main">
+          <div class="session-title">
+            <strong>${escapeHtml(session.name)}</strong>
+            <span class="badge">${active ? 'Active' : attached ? `${attached} attached` : 'Idle'}</span>
+          </div>
+          <span>${escapeHtml(session.tmux_name ?? `hermes-${session.name}`)} / ${escapeHtml(created)}</span>
+        </div>
+        <div class="session-meta">
+          <span>${escapeHtml(session.windows ?? 1)} window${Number(session.windows ?? 1) === 1 ? '' : 's'}</span>
+          <span>${escapeHtml(session.shell ?? 'shell')}</span>
+        </div>
+        <div class="session-actions">
+          <button class="primary small" type="button" data-session-action="resume" data-session-name="${escapeHtml(session.name)}">Resume</button>
+          <button class="secondary small" type="button" data-session-action="copy" data-session-name="${escapeHtml(session.name)}">Copy</button>
+          <button class="danger small" type="button" data-session-action="kill" data-session-name="${escapeHtml(session.name)}">Kill</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
 function diagnosticRows() {
   const session = selectedSession();
   const terminalCli = terminalCliStatus();
   const checks = [
     {
       label: 'Active relay',
-      value: state?.selected_url || 'Not paired',
+      value: activeRelayText(),
       status: state?.selected_url ? 'ok' : 'warn'
     },
     {
@@ -514,14 +1196,14 @@ function renderState(nextState) {
   state = nextState;
   document.querySelector('#statusStrip')?.classList.remove('error');
   const daemon = state.daemon;
-  const dotClass = statusClass(daemon);
-  document.querySelector('#statusStrip .dot').className = `dot ${dotClass}`;
-  text('#statusText', daemon.running ? 'Connected - Observing' : daemon.paused ? 'Paused' : 'Disconnected');
+  const activity = activityStatus(state);
+  document.querySelector('#statusStrip .dot').className = `dot ${activity.cls}`;
+  text('#statusText', activity.label);
   text('#cliStatus', cliLabel(state.cli));
   text('#daemonStatus', daemonLabel(daemon));
   text('#overlayStatus', state.config.overlay?.visible === false ? 'Hidden' : 'Visible');
-  text('#controlBadge', daemon.running ? 'Observing' : daemon.paused ? 'Paused' : 'Disconnected');
-  text('#observeState', daemon.running ? 'Ready' : 'Offline');
+  text('#controlBadge', activity.badge);
+  text('#observeState', daemon.running ? 'Ready' : daemon.paused ? 'Paused' : 'Offline');
   text('#controlState', state.config.experimental_computer_use ? 'Flagged' : 'Disabled');
   text('#policyState', `${state.config.blocklist?.length ?? 0} rules`);
   text('#configPath', state.config_path);
@@ -532,8 +1214,14 @@ function renderState(nextState) {
   renderConnectionSummary();
   renderToolConsentControls();
   renderStoredSessions();
+  setPairBusy(pairBusy);
   refreshPairPreview();
+  renderChatView();
   renderConnectView();
+  renderEmbeddedTerminalControls();
+  renderPluginsView();
+  renderSessionsView();
+  renderDevicesView();
   renderDiagnostics();
   updateSettingsForm(state.config);
   renderGrants(state.pending_grants ?? []);
@@ -724,7 +1412,7 @@ function renderStoredSessions() {
     const active = session.url === state?.selected_url;
     const route = roleLabel(session.endpoint_role, session.url);
     return `
-      <button class="stored-session-row ${active ? 'active' : ''}" type="button" data-use-session="${escapeHtml(session.url)}">
+      <button class="stored-session-row ${active ? 'active' : ''}" type="button" data-use-session="${escapeHtml(session.url)}" ${pairBusy ? 'disabled' : ''}>
         <span class="route-pill">${escapeHtml(route)}</span>
         <span>${escapeHtml(session.url)}</span>
         <strong>${active ? 'Active' : 'Use'}</strong>
@@ -736,6 +1424,10 @@ function renderStoredSessions() {
 function parseRelayFromOutput(stdout) {
   const line = String(stdout ?? '').split(/\r?\n/).find((entry) => entry.trim().startsWith('Relay:'));
   return line?.split('Relay:')[1]?.trim() ?? '';
+}
+
+function looksLikeConsumedInvite(output) {
+  return /Invalid pairing code or session token/i.test(String(output ?? ''));
 }
 
 async function useStoredSession(url) {
@@ -751,61 +1443,94 @@ async function useStoredSession(url) {
 }
 
 async function pairWithCurrentMethod() {
-  const grantTools = document.querySelector('#pairGrantTools').checked;
-  const startAfterPair = document.querySelector('#pairStartDaemon').checked;
+  if (pairBusy) return;
+  setPairBusy(true);
+  try {
+    const grantTools = document.querySelector('#pairGrantTools').checked;
+    const startAfterPair = document.querySelector('#pairStartDaemon').checked;
 
-  if (activePairMethod === 'stored') {
-    const selected = state?.selected_url || state?.sessions?.[0]?.url;
-    if (!selected) {
-      appendPairLog('error', 'No stored session is available.');
+    if (activePairMethod === 'stored') {
+      const selected = state?.selected_url || state?.sessions?.[0]?.url;
+      if (!selected) {
+        appendPairLog('error', 'No stored session is available.');
+        return;
+      }
+      await useStoredSession(selected);
       return;
     }
-    await useStoredSession(selected);
-    return;
-  }
 
-  const manualRemote = document.querySelector('#pairRemote').value.trim();
-  const manualCode = document.querySelector('#pairCode').value.trim().toUpperCase();
-  const pairQr = activePairMethod === 'qr' ? document.querySelector('#pairQr').value.trim() : '';
-  const nextTarget = activePairMethod === 'manual' ? manualRemote : 'the route selected from this invite';
-  const replacing = state?.selected_url && (activePairMethod === 'qr' || manualRemote !== state.selected_url);
+    const manualRemote = document.querySelector('#pairRemote').value.trim();
+    const manualCode = document.querySelector('#pairCode').value.trim().toUpperCase();
+    const pairQr = activePairMethod === 'qr' ? document.querySelector('#pairQr').value.trim() : '';
+    if (activePairMethod === 'manual') {
+      if (!manualRemote) throw new Error('Enter the relay URL before pairing.');
+      if (!/^[A-Z0-9]{6}$/.test(manualCode)) {
+        throw new Error('Pairing code must be 6 letters or numbers.');
+      }
+    }
+    const nextTarget = activePairMethod === 'manual' ? manualRemote : 'the route selected from this invite';
+    const replacing = state?.selected_url && (activePairMethod === 'qr' || manualRemote !== state.selected_url);
 
-  if (replacing) {
-    const ok = window.confirm(`Replace the active desktop relay?\n\nCurrent: ${state.selected_url}\nNew: ${nextTarget}`);
-    if (!ok) {
-      appendPairLog('warn', 'Pairing canceled before replacing the active relay.');
+    if (replacing) {
+      const ok = window.confirm(`Replace the active desktop relay?\n\nCurrent: ${state.selected_url}\nNew: ${nextTarget}`);
+      if (!ok) {
+        appendPairLog('warn', 'Pairing canceled before replacing the active relay.');
+        return;
+      }
+    }
+
+    resetPairLog('Pairing');
+    appendPairLog('info', activePairMethod === 'qr' ? 'Validating pairing invite.' : 'Validating manual code.');
+    if (activePairMethod === 'qr') {
+      parsePairingPayload(pairQr);
+      appendPairLog('info', 'CLI will probe LAN, Tailscale, and other invite routes by priority.');
+    } else {
+      appendPairLog('info', `Checking manual relay ${manualRemote}.`);
+    }
+
+    const result = await invoke('pair_relay', {
+      remote: activePairMethod === 'manual' ? manualRemote : '',
+      code: activePairMethod === 'manual' ? manualCode : '',
+      pairQr: activePairMethod === 'qr' ? pairQr : null,
+      grantTools,
+      startAfterPair
+    });
+    const output = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
+    if (output) appendPairLog(result.ok ? 'success' : 'error', output);
+    await loadState();
+    if (!result.ok) {
+      if (looksLikeConsumedInvite(output) && state?.selected_url) {
+        appendPairLog(
+          'warn',
+          `This invite was already used or expired, but this desktop is already paired to ${state.selected_url}.`
+        );
+        setRoute('overview');
+      }
       return;
     }
-  }
-
-  resetPairLog('Pairing');
-  appendPairLog('info', activePairMethod === 'qr' ? 'Validating pairing invite.' : 'Validating manual code.');
-  if (activePairMethod === 'qr') {
-    parsePairingPayload(pairQr);
-    appendPairLog('info', 'CLI will probe LAN, Tailscale, and other invite routes by priority.');
-  } else {
-    appendPairLog('info', `Checking manual relay ${manualRemote}.`);
-  }
-
-  const result = await invoke('pair_relay', {
-    remote: activePairMethod === 'manual' ? manualRemote : '',
-    code: activePairMethod === 'manual' ? manualCode : '',
-    pairQr: activePairMethod === 'qr' ? pairQr : null,
-    grantTools,
-    startAfterPair
-  });
-  const output = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
-  if (output) appendPairLog(result.ok ? 'success' : 'error', output);
-  await loadState();
-  if (result.ok) {
     const relay = parseRelayFromOutput(result.stdout) || state?.selected_url || 'paired relay';
     appendPairLog('success', `Active desktop relay is ${relay}.`);
     setRoute('overview');
+  } finally {
+    setPairBusy(false);
+  }
+}
+
+function renderDevicesView() {
+  const list = document.querySelector('#devicesList');
+  const refresh = document.querySelector('#refreshDevicesBtn');
+  if (refresh) refresh.disabled = !hasActiveRelay();
+  if (list && !hasActiveRelay()) {
+    list.innerHTML = '<div class="empty">Pair a relay before managing devices.</div>';
   }
 }
 
 async function refreshDevices() {
   const list = document.querySelector('#devicesList');
+  if (!hasActiveRelay()) {
+    renderDevicesView();
+    return;
+  }
   list.innerHTML = '<div class="empty">Loading</div>';
   try {
     const result = await invoke('list_devices', { remote: state?.selected_url ?? null });
@@ -833,6 +1558,71 @@ async function refreshDevices() {
   }
 }
 
+async function refreshTerminalSessions() {
+  if (!state?.selected_url || sessionsBusy) {
+    renderSessionsView();
+    return;
+  }
+  sessionsBusy = true;
+  renderSessionsView();
+  try {
+    const result = await invoke('list_terminal_sessions', { remote: state.selected_url });
+    const combined = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
+    if (!result.ok) {
+      terminalSessions = null;
+      text('#sessionsFeedback', combined || 'Session refresh failed.');
+      await loadState();
+      return;
+    }
+    terminalSessions = JSON.parse(result.stdout || '{"sessions":[]}');
+    text('#sessionsFeedback', `Loaded ${(terminalSessions.sessions ?? []).length} session${(terminalSessions.sessions ?? []).length === 1 ? '' : 's'}.`);
+  } catch (err) {
+    terminalSessions = null;
+    text('#sessionsFeedback', `Session refresh failed: ${String(err.message ?? err)}`);
+  } finally {
+    sessionsBusy = false;
+    renderSessionsView();
+  }
+}
+
+async function openTuiSession(name = null, fresh = false) {
+  text('#sessionsFeedback', fresh ? 'Opening new TUI session...' : 'Opening TUI session...');
+  try {
+    await invoke('open_tui_session', {
+      remote: null,
+      sessionName: name,
+      fresh
+    });
+    text('#sessionsFeedback', fresh ? 'Opened a new TUI session.' : `Opened ${name || 'the active session'}.`);
+    await loadState();
+  } catch (err) {
+    text('#sessionsFeedback', `Open failed: ${String(err.message ?? err)}`);
+  }
+}
+
+async function killTuiSession(name) {
+  if (!name) return;
+  const ok = window.confirm(`Kill TUI session "${name}"?\n\nThis destroys the server-side tmux session.`);
+  if (!ok) return;
+  text('#sessionsFeedback', `Killing ${name}...`);
+  try {
+    const result = await invoke('kill_tui_session', {
+      remote: state?.selected_url ?? null,
+      sessionName: name
+    });
+    const combined = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
+    text('#sessionsFeedback', combined || (result.ok ? `Killed ${name}.` : `Kill failed for ${name}.`));
+    await refreshTerminalSessions();
+  } catch (err) {
+    text('#sessionsFeedback', `Kill failed: ${String(err.message ?? err)}`);
+  }
+}
+
+async function copySessionCommand(name) {
+  await copyText(sessionResumeCommand(name));
+  text('#sessionsFeedback', `Copied resume command for ${name}.`);
+}
+
 async function copyCommand(index) {
   const row = commandRows()[Number(index)];
   if (!row) return;
@@ -847,6 +1637,130 @@ async function openTuiTerminal() {
     text('#copyFeedback', 'Opened Remote TUI in a terminal.');
   } catch (err) {
     text('#copyFeedback', `Open TUI failed: ${String(err.message ?? err)}`);
+  }
+}
+
+async function startEmbeddedTerminal(fresh = false) {
+  if (embeddedBusy) return;
+  if (!state?.selected_url) {
+    setEmbeddedFeedback('Pair a relay before starting the embedded TUI.');
+    setRoute('pair');
+    return;
+  }
+  embeddedBusy = true;
+  renderEmbeddedTerminalControls();
+  const term = ensureEmbeddedTerminal();
+  if (!term) {
+    embeddedBusy = false;
+    setEmbeddedFeedback('Embedded terminal could not initialize.');
+    renderEmbeddedTerminalControls();
+    return;
+  }
+  term.clear();
+  term.write('\x1b[38;5;80mStarting Hermes embedded TUI...\x1b[0m\r\n');
+  fitEmbeddedTerminal();
+  try {
+    const status = await invoke('start_embedded_terminal', {
+      remote: null,
+      sessionName: terminalSessionName(),
+      fresh,
+      cols: term.cols || 100,
+      rows: term.rows || 30
+    });
+    embeddedTerminal.id = status.id ?? null;
+    embeddedTerminal.running = !!status.running;
+    setEmbeddedFeedback(fresh ? 'Started a new embedded TUI session.' : 'Attached embedded TUI session.');
+    await loadState();
+    term.focus();
+  } catch (err) {
+    term.write(`\r\n\x1b[31mEmbedded TUI failed: ${String(err.message ?? err)}\x1b[0m\r\n`);
+    setEmbeddedFeedback(`Embedded TUI failed: ${String(err.message ?? err)}`);
+  } finally {
+    embeddedBusy = false;
+    renderEmbeddedTerminalControls();
+  }
+}
+
+async function stopEmbeddedTerminal() {
+  if (embeddedBusy) return;
+  embeddedBusy = true;
+  renderEmbeddedTerminalControls();
+  try {
+    await invoke('stop_embedded_terminal');
+    embeddedTerminal.running = false;
+    setEmbeddedFeedback('Stopped embedded TUI.');
+    await loadState();
+  } catch (err) {
+    setEmbeddedFeedback(`Stop failed: ${String(err.message ?? err)}`);
+  } finally {
+    embeddedBusy = false;
+    renderEmbeddedTerminalControls();
+  }
+}
+
+async function runPluginAction(pluginId, action) {
+  if (!pluginId || pluginBusy) return;
+  pluginBusy = pluginId;
+  renderPluginsView();
+  text('#pluginFeedback', `${action[0].toUpperCase()}${action.slice(1)} in progress...`);
+  try {
+    if (action === 'install') {
+      const result = await invoke('install_plugin', { pluginId });
+      const output = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
+      text('#pluginFeedback', output || (result.ok ? 'Plugin installed.' : 'Plugin install failed.'));
+    } else if (action === 'update') {
+      const result = await invoke('update_plugin', { pluginId });
+      const output = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
+      text('#pluginFeedback', output || (result.ok ? 'Plugin updated.' : 'Plugin update failed.'));
+    } else if (action === 'launch' || action === 'resume') {
+      await invoke('launch_plugin_terminal', {
+        pluginId,
+        resume: action === 'resume'
+      });
+      text('#pluginFeedback', action === 'resume' ? 'Opened plugin resume session.' : 'Opened plugin terminal.');
+    } else if (action === 'embed') {
+      await startEmbeddedPluginTerminal(pluginId, false);
+    }
+    await loadState();
+  } catch (err) {
+    text('#pluginFeedback', `${action} failed: ${String(err.message ?? err)}`);
+  } finally {
+    pluginBusy = null;
+    renderPluginsView();
+  }
+}
+
+async function startEmbeddedPluginTerminal(pluginId, resume = false) {
+  if (embeddedBusy) return;
+  embeddedBusy = true;
+  setRoute('tui');
+  const term = ensureEmbeddedTerminal();
+  if (!term) {
+    embeddedBusy = false;
+    text('#pluginFeedback', 'Embedded terminal could not initialize.');
+    return;
+  }
+  term.clear();
+  term.write('\x1b[38;5;80mStarting plugin surface...\x1b[0m\r\n');
+  fitEmbeddedTerminal();
+  try {
+    const status = await invoke('start_plugin_embedded_terminal', {
+      pluginId,
+      resume,
+      cols: term.cols || 100,
+      rows: term.rows || 30
+    });
+    embeddedTerminal.id = status.id ?? null;
+    embeddedTerminal.running = !!status.running;
+    setEmbeddedFeedback(`Attached ${status.surface_label ?? 'plugin'} in the embedded terminal.`);
+    await loadState();
+    term.focus();
+  } catch (err) {
+    term.write(`\r\n\x1b[31mPlugin terminal failed: ${String(err.message ?? err)}\x1b[0m\r\n`);
+    setEmbeddedFeedback(`Plugin terminal failed: ${String(err.message ?? err)}`);
+  } finally {
+    embeddedBusy = false;
+    renderEmbeddedTerminalControls();
   }
 }
 
@@ -921,6 +1835,8 @@ document.querySelectorAll('[data-route]').forEach((btn) => {
   btn.addEventListener('click', () => setRoute(btn.dataset.route));
 });
 
+bindVoiceControls();
+
 document.querySelectorAll('[data-route-target]').forEach((btn) => {
   btn.addEventListener('click', () => setRoute(btn.dataset.routeTarget));
 });
@@ -932,9 +1848,44 @@ document.querySelectorAll('.method-tab').forEach((btn) => {
 document.querySelector('#pairQr')?.addEventListener('input', refreshPairPreview);
 document.querySelector('#pairRemote')?.addEventListener('input', refreshPairPreview);
 
+document.querySelectorAll('input[name="chatMode"]').forEach((input) => {
+  input.addEventListener('change', () => {
+    chatState.mode = input.value;
+    renderChatView();
+  });
+});
+
+document.querySelector('#chatGatewayUrl')?.addEventListener('input', renderChatView);
+
+document.querySelector('#chatSaveGatewayBtn')?.addEventListener('click', () => {
+  saveChatGatewayUrl().catch(showStatusError);
+});
+
+document.querySelector('#chatForm')?.addEventListener('submit', (event) => {
+  event.preventDefault();
+  sendChatPrompt().catch(showStatusError);
+});
+
+document.querySelector('#chatPrompt')?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    sendChatPrompt().catch(showStatusError);
+  }
+});
+
+document.querySelector('#chatStopBtn')?.addEventListener('click', stopChatPrompt);
+document.querySelector('#chatRetryBtn')?.addEventListener('click', () => {
+  sendChatPrompt(chatState.lastPrompt).catch(showStatusError);
+});
+document.querySelector('#chatNewBtn')?.addEventListener('click', newChatSession);
+document.querySelector('#chatClearBtn')?.addEventListener('click', () => {
+  chatState.messages = [];
+  renderChatView();
+});
+
 document.querySelector('#storedSessionPanel')?.addEventListener('click', async (event) => {
   const btn = event.target.closest('[data-use-session]');
-  if (!btn) return;
+  if (!btn || pairBusy) return;
   resetPairLog('Pairing');
   try {
     await useStoredSession(btn.dataset.useSession);
@@ -944,7 +1895,12 @@ document.querySelector('#storedSessionPanel')?.addEventListener('click', async (
 });
 
 document.querySelector('#startBtn')?.addEventListener('click', async () => {
-  if (state?.selected_url && !selectedSession()?.tools_consented) {
+  if (!hasActiveRelay()) {
+    showStatusError('Pair a relay before starting the daemon.');
+    setRoute('pair');
+    return;
+  }
+  if (!selectedSession()?.tools_consented) {
     showStatusError('Grant desktop tools for the active relay before starting the daemon.');
     setRoute('overview');
     return;
@@ -1015,6 +1971,35 @@ document.querySelector('#copyInstallBtn')?.addEventListener('click', async () =>
 
 document.querySelector('#openTuiBtn')?.addEventListener('click', openTuiTerminal);
 
+document.querySelector('#embeddedResumeBtn')?.addEventListener('click', () => startEmbeddedTerminal(false));
+
+document.querySelector('#embeddedNewBtn')?.addEventListener('click', () => startEmbeddedTerminal(true));
+
+document.querySelector('#embeddedStopBtn')?.addEventListener('click', stopEmbeddedTerminal);
+
+document.querySelector('#pluginList')?.addEventListener('click', async (event) => {
+  const btn = event.target.closest('[data-plugin-action]');
+  if (!btn) return;
+  await runPluginAction(btn.dataset.pluginId, btn.dataset.pluginAction);
+});
+
+document.querySelector('#refreshSessionsBtn')?.addEventListener('click', refreshTerminalSessions);
+
+document.querySelector('#newSessionBtn')?.addEventListener('click', () => openTuiSession(null, true));
+
+document.querySelector('#sessionsList')?.addEventListener('click', async (event) => {
+  const btn = event.target.closest('[data-session-action]');
+  if (!btn) return;
+  const name = btn.dataset.sessionName;
+  if (btn.dataset.sessionAction === 'resume') {
+    await openTuiSession(name, false);
+  } else if (btn.dataset.sessionAction === 'kill') {
+    await killTuiSession(name);
+  } else if (btn.dataset.sessionAction === 'copy') {
+    await copySessionCommand(name);
+  }
+});
+
 document.querySelector('#refreshDiagnosticsBtn')?.addEventListener('click', async () => {
   await loadState();
   renderDiagnostics();
@@ -1074,6 +2059,43 @@ listen('dashboard://refresh', () => {
   loadState().catch(() => {});
 }).catch(showStatusError);
 listen('dashboard://route', (event) => setRoute(event.payload)).catch(showStatusError);
+listen('chat://line', (event) => {
+  const payload = event.payload ?? {};
+  if (chatState.turnId !== null && Number(payload.id) !== Number(chatState.turnId)) return;
+  if (payload.stream === 'stdout') {
+    handleChatEventLine(String(payload.line ?? ''));
+  } else if (payload.line) {
+    text('#chatDiagnostics', String(payload.line));
+  }
+}).catch(showStatusError);
+listen('chat://exit', (event) => {
+  const payload = event.payload ?? {};
+  if (chatState.turnId !== null && Number(payload.id) !== Number(chatState.turnId)) return;
+  chatState.busy = false;
+  chatState.turnId = null;
+  if (payload.success === false && payload.message && !String(payload.message).includes('stopped')) {
+    appendChatMessage('event', String(payload.message), 'error');
+  }
+  renderChatView();
+  loadState().catch(() => {});
+}).catch(showStatusError);
+listen('terminal://output', (event) => {
+  const payload = event.payload ?? {};
+  if (embeddedTerminal.id !== null && payload.id !== embeddedTerminal.id) return;
+  const term = ensureEmbeddedTerminal();
+  if (term) {
+    document.querySelector('#embeddedTerminalEmpty')?.classList.add('hidden');
+    term.write(String(payload.data ?? ''));
+  }
+}).catch(showStatusError);
+listen('terminal://exit', (event) => {
+  const payload = event.payload ?? {};
+  if (embeddedTerminal.id !== null && payload.id !== embeddedTerminal.id) return;
+  embeddedTerminal.running = false;
+  setEmbeddedFeedback(String(payload.message ?? 'Embedded terminal stopped.'));
+  renderEmbeddedTerminalControls();
+  loadState().catch(() => {});
+}).catch(showStatusError);
 
 loadState().then(() => setRoute('overview')).catch(() => {});
 setPairMethod('qr');

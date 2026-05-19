@@ -28,6 +28,10 @@ class StubToneProvider(VoiceProvider):
             "Local deterministic WAV generator for validating the voice-lab "
             "CLI, logs, metrics, and output paths before real providers exist."
         ),
+        models=("stub-tone",),
+        voices=("sine",),
+        languages=("en",),
+        sample_rates=(16000, 24000, 48000),
         supports_tts=True,
         supports_stt=True,
         supports_speech_to_speech=True,

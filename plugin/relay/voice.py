@@ -29,6 +29,7 @@ from aiohttp import web
 import yaml
 
 from . import upstream_voice
+from .profile_voice import request_profile, resolve_profile_voice_scope
 from .voice_auth import require_voice_auth
 
 logger = logging.getLogger("hermes_relay.voice")
@@ -92,6 +93,7 @@ class VoiceHandler:
         the temp file in ``finally``.
         """
         await require_voice_auth(request, "voice:stt")
+        profile = request_profile(None, request.query)
 
         temp_path: str | None = None
         try:
@@ -194,6 +196,7 @@ class VoiceHandler:
                     "success": True,
                     "text": result.get("transcript", ""),
                     "provider": result.get("provider"),
+                    "profile": profile,
                 }
             )
         except web.HTTPException:
@@ -354,6 +357,7 @@ class VoiceHandler:
         exposes a public voice config API.
         """
         await require_voice_auth(request, "voice:config")
+        profile = request_profile(None, request.query)
 
         try:
             helpers = upstream_voice.load_voice_config_helpers()
@@ -385,13 +389,42 @@ class VoiceHandler:
             logger.warning("_load_stt_config failed: %s", exc)
             stt_cfg = {"error": str(exc)}
 
-        hermes_voice_config = _load_hermes_voice_config(self.config)
-        tts_cfg = _merge_selected_provider_config(tts_cfg, hermes_voice_config, "tts")
-        stt_cfg = _merge_selected_provider_config(stt_cfg, hermes_voice_config, "stt")
+        scope = resolve_profile_voice_scope(self.config, profile)
+        hermes_voice_config = scope.data
+        profile_selected = bool(scope.requested_profile)
+        has_voice_section = isinstance(hermes_voice_config.get("tts"), dict) or isinstance(
+            hermes_voice_config.get("stt"),
+            dict,
+        )
+        response_scope = scope.scope
+        response_fallback = scope.fallback_to_global
+        if profile_selected and scope.scope == "profile" and not has_voice_section:
+            response_scope = "global"
+            response_fallback = True
+        tts_cfg = _merge_selected_provider_config(
+            tts_cfg,
+            hermes_voice_config,
+            "tts",
+            prefer_loaded=not profile_selected,
+        )
+        stt_cfg = _merge_selected_provider_config(
+            stt_cfg,
+            hermes_voice_config,
+            "stt",
+            prefer_loaded=not profile_selected,
+        )
 
         return web.json_response(
             {
                 "success": True,
+                "profile": scope.requested_profile,
+                "config_scope": response_scope,
+                "config_path": (
+                    str(scope.config_path)
+                    if scope.config_path and response_scope != "global"
+                    else None
+                ),
+                "fallback_to_global": response_fallback,
                 "tts": {
                     "provider": tts_cfg.get("provider"),
                     "voice_id": tts_cfg.get("voice_id"),
@@ -423,12 +456,18 @@ def _merge_selected_provider_config(
     loaded: dict[str, Any],
     hermes_config: dict[str, Any],
     section_name: str,
+    *,
+    prefer_loaded: bool = True,
 ) -> dict[str, Any]:
     section = hermes_config.get(section_name)
     if not isinstance(section, dict):
         return loaded
 
-    provider = _clean_string(loaded.get("provider")) or _clean_string(section.get("provider"))
+    provider = (
+        _clean_string(loaded.get("provider")) or _clean_string(section.get("provider"))
+        if prefer_loaded
+        else _clean_string(section.get("provider")) or _clean_string(loaded.get("provider"))
+    )
     if not provider:
         return loaded
 
@@ -437,7 +476,8 @@ def _merge_selected_provider_config(
     if isinstance(selected, dict):
         merged.update(selected)
     merged["provider"] = provider
-    merged.update(_present_values(loaded))
+    if prefer_loaded:
+        merged.update(_present_values(loaded))
     return merged
 
 

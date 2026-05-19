@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.background
@@ -20,7 +21,11 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -35,6 +40,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -55,10 +61,14 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hermesandroid.relay.data.BargeInSensitivity
 import com.hermesandroid.relay.data.FeatureFlags
+import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.VoicePreferencesRepository
 import com.hermesandroid.relay.data.VoiceSettings
 import com.hermesandroid.relay.network.RelayVoiceClient
+import com.hermesandroid.relay.network.ProviderOptionsDynamic
 import com.hermesandroid.relay.network.RealtimeVoiceConfig
+import com.hermesandroid.relay.network.RealtimeProviderInfo
+import com.hermesandroid.relay.network.VoiceProviderValidationResponse
 import com.hermesandroid.relay.network.VoiceOutputConfig
 import com.hermesandroid.relay.network.VoiceConfig
 import com.hermesandroid.relay.ui.LocalSnackbarHost
@@ -74,17 +84,19 @@ import kotlinx.coroutines.launch
  *
  * Sections:
  *   1. Voice Mode       — interaction mode, silence threshold, auto-TTS
- *   2. Voice Output     — provider/model/voice from relay-owned /voice/output/config
- *   3. Barge-in         — interrupt TTS by speaking; sensitivity + resume (V barge-in)
- *   4. Text-to-Speech   — provider label + voice from GET /voice/config
- *   5. Speech-to-Text   — provider label + language picker (stored, not wired)
- *   6. Test Voice       — one-shot synth + playback
+ *   2. Voice Output     — profile-scoped provider/model/voice from /voice/output/config
+ *   3. Realtime Lab     — dev-only realtime provider defaults from /voice/realtime/config
+ *   4. Barge-in         — interrupt TTS by speaking; sensitivity + resume (V barge-in)
+ *   5. Text-to-Speech   — fallback provider label + voice from GET /voice/config
+ *   6. Speech-to-Text   — provider/model labels from GET /voice/config
+ *   7. Test Voice       — saved profile voice-output synth + playback
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VoiceSettingsScreen(
     voiceViewModel: VoiceViewModel,
     voiceClient: RelayVoiceClient?,
+    selectedProfile: Profile? = null,
     onBack: () -> Unit,
     settingsViewModel: VoiceSettingsViewModel = viewModel(),
 ) {
@@ -112,14 +124,32 @@ fun VoiceSettingsScreen(
     var voiceOutputLatency by remember { mutableStateOf(1f) }
     var voiceOutputFallback by remember { mutableStateOf(true) }
     var voiceOutputSaving by remember { mutableStateOf(false) }
+    var voiceOutputManualOpen by remember { mutableStateOf(false) }
+    var voiceOutputProviderOptions by remember {
+        mutableStateOf<Map<String, RealtimeProviderInfo>>(emptyMap())
+    }
+    var voiceOutputOptionsLoading by remember { mutableStateOf<String?>(null) }
+    var voiceOutputOptionsStatus by remember { mutableStateOf<String?>(null) }
     var realtimeConfig by remember { mutableStateOf<RealtimeVoiceConfig?>(null) }
     var realtimeConfigError by remember { mutableStateOf<String?>(null) }
+    var realtimeEnabled by remember { mutableStateOf(true) }
+    var realtimeProvider by remember { mutableStateOf("") }
+    var realtimeModel by remember { mutableStateOf("") }
+    var realtimeVoice by remember { mutableStateOf("") }
+    var realtimeSampleRate by remember { mutableStateOf("24000") }
+    var realtimeSaving by remember { mutableStateOf(false) }
+    var realtimeManualOpen by remember { mutableStateOf(false) }
+    var realtimeProviderOptions by remember {
+        mutableStateOf<Map<String, RealtimeProviderInfo>>(emptyMap())
+    }
+    var realtimeOptionsLoading by remember { mutableStateOf<String?>(null) }
+    var realtimeOptionsStatus by remember { mutableStateOf<String?>(null) }
 
     // Global snackbar host — voice errors routed through the classifier get
     // shown as snackbars here as well as the inline "unavailable" label below.
     val snackbarHost = LocalSnackbarHost.current
 
-    LaunchedEffect(voiceClient, devOptionsUnlocked) {
+    LaunchedEffect(voiceClient, devOptionsUnlocked, selectedProfile?.name) {
         val client = voiceClient ?: return@LaunchedEffect
         val voiceResult = client.getVoiceConfig()
         if (voiceResult.isSuccess) {
@@ -135,8 +165,15 @@ fun VoiceSettingsScreen(
 
         val outputResult = client.getVoiceOutputConfig()
         if (outputResult.isSuccess) {
-            voiceOutputConfig = outputResult.getOrNull()
+            val config = outputResult.getOrNull()
+            voiceOutputConfig = config
             voiceOutputConfigError = null
+            config?.default_provider?.takeIf { it.isNotBlank() }?.let { providerId ->
+                val optionsResult = client.getVoiceOutputProviderOptions(providerId)
+                optionsResult.getOrNull()?.provider?.let { provider ->
+                    voiceOutputProviderOptions = voiceOutputProviderOptions + (provider.id to provider)
+                }
+            }
         } else {
             val human = classifyError(
                 outputResult.exceptionOrNull(),
@@ -149,8 +186,15 @@ fun VoiceSettingsScreen(
         if (devOptionsUnlocked) {
             val realtimeResult = client.getRealtimeVoiceConfig()
             if (realtimeResult.isSuccess) {
-                realtimeConfig = realtimeResult.getOrNull()
+                val config = realtimeResult.getOrNull()
+                realtimeConfig = config
                 realtimeConfigError = null
+                config?.default_provider?.takeIf { it.isNotBlank() }?.let { providerId ->
+                    val optionsResult = client.getRealtimeProviderOptions(providerId)
+                    optionsResult.getOrNull()?.provider?.let { provider ->
+                        realtimeProviderOptions = realtimeProviderOptions + (provider.id to provider)
+                    }
+                }
             } else {
                 val human = classifyError(
                     realtimeResult.exceptionOrNull(),
@@ -183,6 +227,90 @@ fun VoiceSettingsScreen(
         voiceOutputLanguage = config.language
         voiceOutputLatency = config.optimize_streaming_latency.toFloat()
         voiceOutputFallback = config.fallback_enabled
+    }
+
+    fun refreshVoiceOutputProviderOptions(providerId: String, applyDefaults: Boolean) {
+        val client = voiceClient ?: return
+        val trimmed = providerId.trim()
+        if (trimmed.isBlank()) return
+        voiceOutputOptionsLoading = trimmed
+        voiceOutputOptionsStatus = null
+        scope.launch {
+            val result = client.getVoiceOutputProviderOptions(trimmed)
+            if (voiceOutputOptionsLoading == trimmed) {
+                voiceOutputOptionsLoading = null
+            }
+            val response = result.getOrNull()
+            val provider = response?.provider
+            if (provider != null) {
+                voiceOutputProviderOptions = voiceOutputProviderOptions + (provider.id to provider)
+                voiceOutputOptionsStatus = providerOptionStatus(response.dynamic)
+                if (applyDefaults && voiceOutputProvider == trimmed) {
+                    val selection = selectionWithProviderDefaults(
+                        provider = provider,
+                        model = voiceOutputModel,
+                        voice = voiceOutputVoice,
+                        sampleRate = voiceOutputSampleRate,
+                        language = voiceOutputLanguage,
+                    )
+                    voiceOutputModel = selection.model
+                    voiceOutputVoice = selection.voice
+                    voiceOutputSampleRate = selection.sampleRate
+                    voiceOutputLanguage = selection.language
+                }
+            } else if (applyDefaults) {
+                voiceOutputOptionsStatus = "Provider options unavailable"
+            }
+        }
+    }
+
+    LaunchedEffect(
+        realtimeConfig?.enabled,
+        realtimeConfig?.default_provider,
+        realtimeConfig?.default_model,
+        realtimeConfig?.default_voice,
+        realtimeConfig?.sample_rate,
+    ) {
+        val config = realtimeConfig ?: return@LaunchedEffect
+        realtimeEnabled = config.enabled
+        realtimeProvider = config.default_provider.orEmpty()
+        realtimeModel = config.default_model.orEmpty()
+        realtimeVoice = config.default_voice.orEmpty()
+        realtimeSampleRate = config.sample_rate.toString()
+    }
+
+    fun refreshRealtimeProviderOptions(providerId: String, applyDefaults: Boolean) {
+        val client = voiceClient ?: return
+        val trimmed = providerId.trim()
+        if (trimmed.isBlank()) return
+        realtimeOptionsLoading = trimmed
+        realtimeOptionsStatus = null
+        scope.launch {
+            val result = client.getRealtimeProviderOptions(trimmed)
+            if (realtimeOptionsLoading == trimmed) {
+                realtimeOptionsLoading = null
+            }
+            val response = result.getOrNull()
+            val provider = response?.provider
+            if (provider != null) {
+                realtimeProviderOptions = realtimeProviderOptions + (provider.id to provider)
+                realtimeOptionsStatus = providerOptionStatus(response.dynamic)
+                if (applyDefaults && realtimeProvider == trimmed) {
+                    val selection = selectionWithProviderDefaults(
+                        provider = provider,
+                        model = realtimeModel,
+                        voice = realtimeVoice,
+                        sampleRate = realtimeSampleRate,
+                        language = null,
+                    )
+                    realtimeModel = selection.model
+                    realtimeVoice = selection.voice
+                    realtimeSampleRate = selection.sampleRate
+                }
+            } else if (applyDefaults) {
+                realtimeOptionsStatus = "Provider options unavailable"
+            }
+        }
     }
 
     // Surface VoiceViewModel errors (testVoice synthesize failures etc.) as
@@ -219,6 +347,12 @@ fun VoiceSettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            VoiceProfileSummaryCard(
+                selectedProfile = selectedProfile,
+                output = voiceOutputConfig,
+                realtime = realtimeConfig,
+            )
+
             // --- Voice Mode ---
             SectionCard(title = "Voice Mode") {
                 Text(
@@ -326,6 +460,14 @@ fun VoiceSettingsScreen(
                     ProviderRow(label = "Voice", value = voice)
                 }
                 voiceOutputConfig?.let { config ->
+                    ProviderRow(
+                        label = "Profile",
+                        value = voiceProfileLabel(config.profile, selectedProfile),
+                    )
+                    ProviderRow(
+                        label = "Scope",
+                        value = voiceScopeLabel(config.configScope, config.fallbackToGlobal),
+                    )
                     ProviderRow(label = "Sample rate", value = "${config.sample_rate} Hz")
                     ProviderRow(label = "Language", value = config.language)
                     ProviderRow(label = "Fallback", value = if (config.fallback_enabled) "legacy TTS on error" else "off")
@@ -347,73 +489,139 @@ fun VoiceSettingsScreen(
                     )
                 }
 
-                val providers = voiceOutputConfig?.providers.orEmpty()
-                if (providers.isNotEmpty()) {
-                    Text(
-                        text = "Provider",
-                        style = MaterialTheme.typography.labelLarge,
-                    )
-                    providers.forEach { provider ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .selectable(
-                                    selected = voiceOutputProvider == provider.id,
-                                    onClick = { voiceOutputProvider = provider.id },
-                                )
-                                .padding(vertical = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            RadioButton(
-                                selected = voiceOutputProvider == provider.id,
-                                onClick = null,
+                val providers = mergedProviders(
+                    voiceOutputConfig?.providers.orEmpty(),
+                    voiceOutputProviderOptions,
+                )
+                val selectedOutputProvider = providerFor(providers, voiceOutputProvider)
+                VoiceChoiceDropdown(
+                    label = "Provider",
+                    value = voiceOutputProvider,
+                    choices = providerChoices(providers, voiceOutputProvider),
+                    onValueChange = { providerId ->
+                        voiceOutputProvider = providerId
+                        providerFor(providers, providerId)?.let { provider ->
+                            val selection = selectionWithProviderDefaults(
+                                provider = provider,
+                                model = voiceOutputModel,
+                                voice = voiceOutputVoice,
+                                sampleRate = voiceOutputSampleRate,
+                                language = voiceOutputLanguage,
                             )
-                            Spacer(Modifier.size(8.dp))
-                            Text(
-                                text = provider.id,
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
+                            voiceOutputModel = selection.model
+                            voiceOutputVoice = selection.voice
+                            voiceOutputSampleRate = selection.sampleRate
+                            voiceOutputLanguage = selection.language
                         }
-                    }
-                } else {
+                        refreshVoiceOutputProviderOptions(providerId, applyDefaults = true)
+                    },
+                    enabled = voiceClient != null,
+                )
+                providerOptionsStatusText(
+                    loading = voiceOutputOptionsLoading == voiceOutputProvider,
+                    status = voiceOutputOptionsStatus,
+                )?.let { status ->
+                    Text(
+                        text = status,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                VoiceChoiceDropdown(
+                    label = "Model",
+                    value = voiceOutputModel,
+                    choices = valueChoices(
+                        selectedOutputProvider?.models.orEmpty(),
+                        voiceOutputModel,
+                        selectedOutputProvider?.model_labels.orEmpty(),
+                    ),
+                    onValueChange = { model ->
+                        voiceOutputModel = model
+                        selectedOutputProvider?.let { provider ->
+                            voiceOutputVoice = voiceForModel(provider, model, voiceOutputVoice)
+                        }
+                    },
+                    enabled = voiceClient != null,
+                )
+                VoiceChoiceDropdown(
+                    label = "Voice",
+                    value = voiceOutputVoice,
+                    choices = voiceChoices(
+                        selectedOutputProvider,
+                        voiceOutputVoice,
+                        voiceOutputModel,
+                    ),
+                    onValueChange = { voiceOutputVoice = it },
+                    enabled = voiceClient != null,
+                )
+                compatibilityNotice(
+                    selectedOutputProvider,
+                    voiceOutputModel,
+                    voiceOutputVoice,
+                )?.let { notice ->
+                    Text(
+                        text = notice,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                VoiceChoiceDropdown(
+                    label = "Language",
+                    value = voiceOutputLanguage,
+                    choices = commonLanguages(voiceOutputLanguage, selectedOutputProvider),
+                    onValueChange = { voiceOutputLanguage = it },
+                    enabled = voiceClient != null,
+                )
+                VoiceChoiceDropdown(
+                    label = "Sample rate",
+                    value = voiceOutputSampleRate,
+                    choices = intChoices(selectedOutputProvider?.sample_rates.orEmpty(), voiceOutputSampleRate),
+                    onValueChange = { voiceOutputSampleRate = it },
+                    enabled = voiceClient != null,
+                )
+
+                AdvancedManualToggle(
+                    expanded = voiceOutputManualOpen,
+                    onExpandedChange = { voiceOutputManualOpen = it },
+                )
+                if (voiceOutputManualOpen) {
                     OutlinedTextField(
                         value = voiceOutputProvider,
                         onValueChange = { voiceOutputProvider = it },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        label = { Text("Provider") },
+                        label = { Text("Provider ID") },
+                    )
+                    OutlinedTextField(
+                        value = voiceOutputModel,
+                        onValueChange = { voiceOutputModel = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("Model ID") },
+                    )
+                    OutlinedTextField(
+                        value = voiceOutputVoice,
+                        onValueChange = { voiceOutputVoice = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("Voice ID") },
+                    )
+                    OutlinedTextField(
+                        value = voiceOutputSampleRate,
+                        onValueChange = { voiceOutputSampleRate = it.filter(Char::isDigit) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("Sample rate") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    )
+                    OutlinedTextField(
+                        value = voiceOutputLanguage,
+                        onValueChange = { voiceOutputLanguage = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("Language") },
                     )
                 }
-
-                OutlinedTextField(
-                    value = voiceOutputModel,
-                    onValueChange = { voiceOutputModel = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    label = { Text("Model") },
-                )
-                OutlinedTextField(
-                    value = voiceOutputVoice,
-                    onValueChange = { voiceOutputVoice = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    label = { Text("Voice") },
-                )
-                OutlinedTextField(
-                    value = voiceOutputSampleRate,
-                    onValueChange = { voiceOutputSampleRate = it.filter(Char::isDigit) },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    label = { Text("Sample rate") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                )
-                OutlinedTextField(
-                    value = voiceOutputLanguage,
-                    onValueChange = { voiceOutputLanguage = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    label = { Text("Language") },
-                )
 
                 Text(
                     text = "Streaming latency: ${voiceOutputLatency.toInt()}",
@@ -445,45 +653,146 @@ fun VoiceSettingsScreen(
                     )
                 }
 
-                FilledTonalButton(
-                    onClick = {
-                        val client = voiceClient ?: return@FilledTonalButton
-                        val sampleRate = voiceOutputSampleRate.toIntOrNull()
-                        if (sampleRate == null) {
-                            voiceOutputConfigError = "Sample rate must be a number"
-                            return@FilledTonalButton
-                        }
-                        scope.launch {
-                            voiceOutputSaving = true
-                            val result = client.updateVoiceOutputConfig(
-                                enabled = voiceOutputEnabled,
-                                provider = voiceOutputProvider,
-                                model = voiceOutputModel,
-                                voice = voiceOutputVoice,
-                                sampleRate = sampleRate,
-                                language = voiceOutputLanguage,
-                                codec = "pcm",
-                                optimizeStreamingLatency = voiceOutputLatency.toInt(),
-                                fallbackEnabled = voiceOutputFallback,
-                            )
-                            voiceOutputSaving = false
-                            if (result.isSuccess) {
-                                voiceOutputConfig = result.getOrNull()
-                                voiceOutputConfigError = null
-                            } else {
-                                val human = classifyError(
-                                    result.exceptionOrNull(),
-                                    context = "voice_config",
-                                )
-                                voiceOutputConfigError = human.body
-                                snackbarHost.showHumanError(human)
-                            }
-                        }
-                    },
-                    enabled = !voiceOutputSaving && voiceClient != null,
+                Row(
                     modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text(if (voiceOutputSaving) "Saving..." else "Save voice output")
+                    FilledTonalButton(
+                        onClick = {
+                            val client = voiceClient ?: return@FilledTonalButton
+                            val sampleRate = voiceOutputSampleRate.toIntOrNull()
+                            if (sampleRate == null) {
+                                voiceOutputConfigError = "Sample rate must be a number"
+                                return@FilledTonalButton
+                            }
+                            scope.launch {
+                                voiceOutputSaving = true
+                                val validationResult = client.validateVoiceOutputProvider(
+                                    providerId = voiceOutputProvider,
+                                    model = voiceOutputModel,
+                                    voice = voiceOutputVoice,
+                                    sampleRate = sampleRate,
+                                    language = voiceOutputLanguage,
+                                )
+                                validationIssue(validationResult.getOrNull())?.let { issue ->
+                                    voiceOutputSaving = false
+                                    voiceOutputConfigError = issue
+                                    return@launch
+                                }
+                                if (validationResult.isFailure) {
+                                    voiceOutputSaving = false
+                                    val human = classifyError(
+                                        validationResult.exceptionOrNull(),
+                                        context = "voice_config",
+                                    )
+                                    voiceOutputConfigError = human.body
+                                    snackbarHost.showHumanError(human)
+                                    return@launch
+                                }
+                                validationWarning(validationResult.getOrNull())?.let { warning ->
+                                    voiceOutputOptionsStatus = warning
+                                }
+                                val result = client.updateVoiceOutputConfig(
+                                    enabled = voiceOutputEnabled,
+                                    provider = voiceOutputProvider,
+                                    model = voiceOutputModel,
+                                    voice = voiceOutputVoice,
+                                    sampleRate = sampleRate,
+                                    language = voiceOutputLanguage,
+                                    codec = "pcm",
+                                    optimizeStreamingLatency = voiceOutputLatency.toInt(),
+                                    fallbackEnabled = voiceOutputFallback,
+                                )
+                                voiceOutputSaving = false
+                                if (result.isSuccess) {
+                                    voiceOutputConfig = result.getOrNull()
+                                    voiceOutputConfigError = null
+                                } else {
+                                    val human = classifyError(
+                                        result.exceptionOrNull(),
+                                        context = "voice_config",
+                                    )
+                                    voiceOutputConfigError = human.body
+                                    snackbarHost.showHumanError(human)
+                                }
+                            }
+                        },
+                        enabled = !voiceOutputSaving && voiceClient != null,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(if (voiceOutputSaving) "Saving..." else "Save")
+                    }
+                    FilledTonalButton(
+                        onClick = {
+                            val client = voiceClient ?: return@FilledTonalButton
+                            val sampleRate = voiceOutputSampleRate.toIntOrNull()
+                            if (sampleRate == null) {
+                                voiceOutputConfigError = "Sample rate must be a number"
+                                return@FilledTonalButton
+                            }
+                            scope.launch {
+                                voiceOutputSaving = true
+                                val validationResult = client.validateVoiceOutputProvider(
+                                    providerId = voiceOutputProvider,
+                                    model = voiceOutputModel,
+                                    voice = voiceOutputVoice,
+                                    sampleRate = sampleRate,
+                                    language = voiceOutputLanguage,
+                                )
+                                validationIssue(validationResult.getOrNull())?.let { issue ->
+                                    voiceOutputSaving = false
+                                    voiceOutputConfigError = issue
+                                    return@launch
+                                }
+                                if (validationResult.isFailure) {
+                                    voiceOutputSaving = false
+                                    val human = classifyError(
+                                        validationResult.exceptionOrNull(),
+                                        context = "voice_config",
+                                    )
+                                    voiceOutputConfigError = human.body
+                                    snackbarHost.showHumanError(human)
+                                    return@launch
+                                }
+                                validationWarning(validationResult.getOrNull())?.let { warning ->
+                                    voiceOutputOptionsStatus = warning
+                                }
+                                val result = client.updateVoiceOutputConfig(
+                                    enabled = voiceOutputEnabled,
+                                    provider = voiceOutputProvider,
+                                    model = voiceOutputModel,
+                                    voice = voiceOutputVoice,
+                                    sampleRate = sampleRate,
+                                    language = voiceOutputLanguage,
+                                    codec = "pcm",
+                                    optimizeStreamingLatency = voiceOutputLatency.toInt(),
+                                    fallbackEnabled = voiceOutputFallback,
+                                )
+                                voiceOutputSaving = false
+                                if (result.isSuccess) {
+                                    voiceOutputConfig = result.getOrNull()
+                                    voiceOutputConfigError = null
+                                    voiceViewModel.testVoice()
+                                } else {
+                                    val human = classifyError(
+                                        result.exceptionOrNull(),
+                                        context = "voice_config",
+                                    )
+                                    voiceOutputConfigError = human.body
+                                    snackbarHost.showHumanError(human)
+                                }
+                            }
+                        },
+                        enabled = !voiceOutputSaving && voiceClient != null,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.PlayArrow,
+                            contentDescription = null,
+                        )
+                        Spacer(Modifier.size(8.dp))
+                        Text("Save & test")
+                    }
                 }
                 voiceOutputConfigError?.let { error ->
                     Spacer(Modifier.height(4.dp))
@@ -519,8 +828,224 @@ fun VoiceSettingsScreen(
                         ProviderRow(label = "Voice", value = voice)
                     }
                     realtimeConfig?.let { config ->
+                        ProviderRow(
+                            label = "Profile",
+                            value = voiceProfileLabel(config.profile, selectedProfile),
+                        )
+                        ProviderRow(
+                            label = "Scope",
+                            value = voiceScopeLabel(config.configScope, config.fallbackToGlobal),
+                        )
                         ProviderRow(label = "Advertised", value = realtimeProviderList(config))
                         ProviderRow(label = "Auth", value = realtimeAuthLabel(config))
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Enabled", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                text = "Server-side realtime voice agent defaults for this profile",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = realtimeEnabled,
+                            onCheckedChange = { realtimeEnabled = it },
+                        )
+                    }
+
+                    val realtimeProviders = mergedProviders(
+                        realtimeConfig?.providers.orEmpty(),
+                        realtimeProviderOptions,
+                    )
+                        .filter { it.supports_realtime }
+                    val selectedRealtimeProvider = providerFor(
+                        realtimeProviders,
+                        realtimeProvider,
+                    )
+                    VoiceChoiceDropdown(
+                        label = "Provider",
+                        value = realtimeProvider,
+                        choices = providerChoices(realtimeProviders, realtimeProvider),
+                        onValueChange = { providerId ->
+                            realtimeProvider = providerId
+                            providerFor(realtimeProviders, providerId)?.let { provider ->
+                                val selection = selectionWithProviderDefaults(
+                                    provider = provider,
+                                    model = realtimeModel,
+                                    voice = realtimeVoice,
+                                    sampleRate = realtimeSampleRate,
+                                    language = null,
+                                )
+                                realtimeModel = selection.model
+                                realtimeVoice = selection.voice
+                                realtimeSampleRate = selection.sampleRate
+                            }
+                            refreshRealtimeProviderOptions(providerId, applyDefaults = true)
+                        },
+                        enabled = voiceClient != null,
+                    )
+                    providerOptionsStatusText(
+                        loading = realtimeOptionsLoading == realtimeProvider,
+                        status = realtimeOptionsStatus,
+                    )?.let { status ->
+                        Text(
+                            text = status,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    VoiceChoiceDropdown(
+                        label = "Model",
+                        value = realtimeModel,
+                        choices = valueChoices(
+                            selectedRealtimeProvider?.models.orEmpty(),
+                            realtimeModel,
+                            selectedRealtimeProvider?.model_labels.orEmpty(),
+                        ),
+                        onValueChange = { model ->
+                            realtimeModel = model
+                            selectedRealtimeProvider?.let { provider ->
+                                realtimeVoice = voiceForModel(provider, model, realtimeVoice)
+                            }
+                        },
+                        enabled = voiceClient != null,
+                    )
+                    VoiceChoiceDropdown(
+                        label = "Voice",
+                        value = realtimeVoice,
+                        choices = voiceChoices(
+                            selectedRealtimeProvider,
+                            realtimeVoice,
+                            realtimeModel,
+                        ),
+                        onValueChange = { realtimeVoice = it },
+                        enabled = voiceClient != null,
+                    )
+                    compatibilityNotice(
+                        selectedRealtimeProvider,
+                        realtimeModel,
+                        realtimeVoice,
+                    )?.let { notice ->
+                        Text(
+                            text = notice,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    VoiceChoiceDropdown(
+                        label = "Sample rate",
+                        value = realtimeSampleRate,
+                        choices = intChoices(
+                            selectedRealtimeProvider?.sample_rates.orEmpty(),
+                            realtimeSampleRate,
+                        ),
+                        onValueChange = { realtimeSampleRate = it },
+                        enabled = voiceClient != null,
+                    )
+
+                    AdvancedManualToggle(
+                        expanded = realtimeManualOpen,
+                        onExpandedChange = { realtimeManualOpen = it },
+                    )
+                    if (realtimeManualOpen) {
+                        OutlinedTextField(
+                            value = realtimeProvider,
+                            onValueChange = { realtimeProvider = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            label = { Text("Provider ID") },
+                        )
+                        OutlinedTextField(
+                            value = realtimeModel,
+                            onValueChange = { realtimeModel = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            label = { Text("Model ID") },
+                        )
+                        OutlinedTextField(
+                            value = realtimeVoice,
+                            onValueChange = { realtimeVoice = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            label = { Text("Voice ID") },
+                        )
+                        OutlinedTextField(
+                            value = realtimeSampleRate,
+                            onValueChange = { realtimeSampleRate = it.filter(Char::isDigit) },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            label = { Text("Sample rate") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        )
+                    }
+
+                    FilledTonalButton(
+                        onClick = {
+                            val client = voiceClient ?: return@FilledTonalButton
+                            val sampleRate = realtimeSampleRate.toIntOrNull()
+                            if (sampleRate == null) {
+                                realtimeConfigError = "Sample rate must be a number"
+                                return@FilledTonalButton
+                            }
+                            scope.launch {
+                                realtimeSaving = true
+                                val validationResult = client.validateRealtimeProvider(
+                                    providerId = realtimeProvider,
+                                    model = realtimeModel,
+                                    voice = realtimeVoice,
+                                    sampleRate = sampleRate,
+                                )
+                                validationIssue(validationResult.getOrNull())?.let { issue ->
+                                    realtimeSaving = false
+                                    realtimeConfigError = issue
+                                    return@launch
+                                }
+                                if (validationResult.isFailure) {
+                                    realtimeSaving = false
+                                    val human = classifyError(
+                                        validationResult.exceptionOrNull(),
+                                        context = "voice_config",
+                                    )
+                                    realtimeConfigError = human.body
+                                    snackbarHost.showHumanError(human)
+                                    return@launch
+                                }
+                                validationWarning(validationResult.getOrNull())?.let { warning ->
+                                    realtimeOptionsStatus = warning
+                                }
+                                val result = client.updateRealtimeVoiceConfig(
+                                    enabled = realtimeEnabled,
+                                    provider = realtimeProvider,
+                                    model = realtimeModel,
+                                    voice = realtimeVoice,
+                                    sampleRate = sampleRate,
+                                )
+                                realtimeSaving = false
+                                if (result.isSuccess) {
+                                    realtimeConfig = result.getOrNull()
+                                    realtimeConfigError = null
+                                } else {
+                                    val human = classifyError(
+                                        result.exceptionOrNull(),
+                                        context = "voice_config",
+                                    )
+                                    realtimeConfigError = human.body
+                                    snackbarHost.showHumanError(human)
+                                }
+                            }
+                        },
+                        enabled = !realtimeSaving && voiceClient != null,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(if (realtimeSaving) "Saving..." else "Save realtime")
                     }
                     realtimeConfigError?.let { error ->
                         Spacer(Modifier.height(4.dp))
@@ -671,6 +1196,16 @@ fun VoiceSettingsScreen(
                 voiceConfig?.tts?.displayVoice?.let { voice ->
                     ProviderRow(label = "Voice", value = voice)
                 }
+                voiceConfig?.let { config ->
+                    ProviderRow(
+                        label = "Profile",
+                        value = voiceProfileLabel(config.profile, selectedProfile),
+                    )
+                    ProviderRow(
+                        label = "Scope",
+                        value = voiceScopeLabel(config.configScope, config.fallbackToGlobal),
+                    )
+                }
                 voiceConfigError?.let { error ->
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -692,6 +1227,16 @@ fun VoiceSettingsScreen(
                 }
                 voiceConfig?.stt?.model?.let { model ->
                     ProviderRow(label = "Model", value = model)
+                }
+                voiceConfig?.let { config ->
+                    ProviderRow(
+                        label = "Profile",
+                        value = voiceProfileLabel(config.profile, selectedProfile),
+                    )
+                    ProviderRow(
+                        label = "Scope",
+                        value = voiceScopeLabel(config.configScope, config.fallbackToGlobal),
+                    )
                 }
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
@@ -739,8 +1284,23 @@ fun VoiceSettingsScreen(
 
             // --- Test Voice ---
             SectionCard(title = "Test Voice") {
+                ProviderRow(
+                    label = "Profile",
+                    value = voiceOutputConfig?.let { config ->
+                        voiceProfileLabel(config.profile, selectedProfile)
+                    } ?: voiceProfileLabel(null, selectedProfile),
+                )
+                ProviderRow(
+                    label = "Voice",
+                    value = listOfNotNull(
+                        voiceOutputConfig?.default_provider,
+                        voiceOutputConfig?.default_model,
+                        voiceOutputConfig?.default_voice,
+                    ).joinToString(" / ").ifBlank { "loading..." },
+                )
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 Text(
-                    text = "Play a short sample to verify TTS end-to-end.",
+                    text = "Play the currently saved profile voice.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -787,6 +1347,478 @@ private fun voiceOutputAuthLabel(config: VoiceOutputConfig): String {
         auth.xai_env -> "xAI env"
         auth.openai_env -> "OpenAI env"
         else -> "server managed"
+    }
+}
+
+private fun voiceProfileLabel(profile: String?, selectedProfile: Profile?): String {
+    val selectedName = selectedProfile?.name?.takeIf { it.isNotBlank() }
+    val selectedLabel = selectedProfile?.description?.takeIf { it.isNotBlank() }
+        ?: selectedName
+    return when {
+        !profile.isNullOrBlank() && selectedLabel != null && profile == selectedName ->
+            "$selectedLabel ($profile)"
+        !profile.isNullOrBlank() -> profile
+        selectedLabel != null -> "$selectedLabel (pending)"
+        else -> "server default"
+    }
+}
+
+private fun voiceScopeLabel(scope: String?, fallbackToGlobal: Boolean): String {
+    val base = when (scope) {
+        "profile" -> "profile config"
+        "relay" -> "relay config"
+        "global" -> "global Hermes config"
+        else -> scope?.takeIf { it.isNotBlank() } ?: "server default"
+    }
+    return if (fallbackToGlobal) "$base fallback" else base
+}
+
+private data class VoiceChoice(
+    val value: String,
+    val label: String = value,
+    val detail: String? = null,
+    val group: String? = null,
+    val custom: Boolean = false,
+    val recommended: Boolean = false,
+    val enabled: Boolean = true,
+)
+
+private data class VoiceSelection(
+    val model: String,
+    val voice: String,
+    val sampleRate: String,
+    val language: String,
+)
+
+private fun providerChoices(
+    providers: List<RealtimeProviderInfo>,
+    current: String,
+): List<VoiceChoice> {
+    return providers
+        .map { provider ->
+            VoiceChoice(
+                value = provider.id,
+                label = provider.name?.takeIf { it.isNotBlank() } ?: provider.id,
+                detail = provider.id,
+            )
+        }
+        .withCurrent(current)
+}
+
+private fun valueChoices(
+    values: List<String>,
+    current: String,
+    labels: Map<String, String> = emptyMap(),
+): List<VoiceChoice> =
+    values.distinct().map { value ->
+        val label = labels[value]?.takeIf { it.isNotBlank() } ?: value
+        VoiceChoice(
+            value = value,
+            label = label,
+            detail = value.takeIf { label != value },
+        )
+    }.withCurrent(current)
+
+private fun voiceChoices(
+    provider: RealtimeProviderInfo?,
+    current: String,
+    model: String,
+): List<VoiceChoice> {
+    if (provider == null) return emptyList<VoiceChoice>().withCurrent(current)
+    val orderedValues = mutableListOf<String>()
+    val groupLabels = mutableMapOf<String, String>()
+    val groupCustom = mutableMapOf<String, Boolean>()
+    provider.voice_groups.forEach { group ->
+        val label = group.label?.takeIf { it.isNotBlank() }
+            ?: group.id?.takeIf { it.isNotBlank() }
+            ?: "Voices"
+        group.values.forEach { value ->
+            if (value.isNotBlank()) {
+                orderedValues.add(value)
+                groupLabels[value] = label
+                groupCustom[value] = group.custom
+            }
+        }
+    }
+    provider.voices.forEach { value ->
+        if (value.isNotBlank()) orderedValues.add(value)
+    }
+
+    val compatible = voiceCompatibilityFor(provider, model)
+    val compatibleSet = compatible?.toSet()
+    val recommended = provider.recommended_voices.toSet()
+    return orderedValues
+        .distinct()
+        .filter { value -> compatibleSet == null || value in compatibleSet || value == current }
+        .map { value ->
+            val metadata = provider.voice_metadata[value]
+            val label = metadata?.label?.takeIf { it.isNotBlank() }
+                ?: provider.voice_labels[value]?.takeIf { it.isNotBlank() }
+                ?: value
+            val isCustom = metadata?.custom == true || groupCustom[value] == true
+            val isRecommended = metadata?.recommended == true || value in recommended
+            val details = buildList {
+                if (label != value) add(value)
+                if (isRecommended) add("recommended")
+                if (isCustom) add("custom")
+                metadata?.source?.takeIf { it.isNotBlank() }?.let { add(it) }
+            }
+            VoiceChoice(
+                value = value,
+                label = label,
+                detail = details.joinToString(" · ").takeIf { it.isNotBlank() },
+                group = groupLabels[value],
+                custom = isCustom,
+                recommended = isRecommended,
+            )
+        }
+        .withCurrent(current)
+}
+
+private fun intChoices(values: List<Int>, current: String): List<VoiceChoice> =
+    values.distinct().map { VoiceChoice(it.toString(), "${it} Hz") }.withCurrent(current)
+
+private fun List<VoiceChoice>.withCurrent(current: String): List<VoiceChoice> {
+    val trimmed = current.trim()
+    if (trimmed.isBlank() || any { it.value == trimmed }) return this
+    return listOf(
+        VoiceChoice(
+            value = trimmed,
+            label = "$trimmed (current)",
+            detail = "manual entry",
+            group = "Manual",
+        )
+    ) + this
+}
+
+private fun providerFor(
+    providers: List<RealtimeProviderInfo>,
+    providerId: String,
+): RealtimeProviderInfo? = providers.firstOrNull { it.id == providerId }
+
+private fun mergedProviders(
+    base: List<RealtimeProviderInfo>,
+    overrides: Map<String, RealtimeProviderInfo>,
+): List<RealtimeProviderInfo> {
+    if (overrides.isEmpty()) return base
+    val seen = mutableSetOf<String>()
+    val merged = base.map { provider ->
+        seen.add(provider.id)
+        overrides[provider.id] ?: provider
+    }.toMutableList()
+    overrides.values
+        .filter { provider -> provider.id !in seen }
+        .forEach { provider -> merged.add(provider) }
+    return merged
+}
+
+private fun selectionWithProviderDefaults(
+    provider: RealtimeProviderInfo,
+    model: String,
+    voice: String,
+    sampleRate: String,
+    language: String?,
+): VoiceSelection {
+    val nextModel = if (provider.models.isNotEmpty() && model !in provider.models) {
+        provider.models.first()
+    } else {
+        model
+    }
+    val nextVoice = if (provider.voices.isNotEmpty() && voice !in provider.voices) {
+        provider.voices.first()
+    } else {
+        voice
+    }
+    val compatibleVoice = voiceForModel(provider, nextModel, nextVoice)
+    val currentSampleRate = sampleRate.toIntOrNull()
+    val nextSampleRate = if (
+        provider.sample_rates.isNotEmpty() &&
+        currentSampleRate?.let { it in provider.sample_rates } != true
+    ) {
+        provider.sample_rates.first().toString()
+    } else {
+        sampleRate
+    }
+    val nextLanguage = if (
+        language != null &&
+        provider.languages.isNotEmpty() &&
+        language !in provider.languages
+    ) {
+        provider.languages.first()
+    } else {
+        language.orEmpty()
+    }
+    return VoiceSelection(
+        model = nextModel,
+        voice = compatibleVoice,
+        sampleRate = nextSampleRate,
+        language = nextLanguage,
+    )
+}
+
+private fun voiceForModel(
+    provider: RealtimeProviderInfo,
+    model: String,
+    current: String,
+): String {
+    val compatible = voiceCompatibilityFor(provider, model)
+    if (compatible.isNullOrEmpty()) {
+        return if (provider.voices.isNotEmpty() && current !in provider.voices) {
+            provider.voices.first()
+        } else {
+            current
+        }
+    }
+    if (current in compatible) return current
+    return compatible.firstOrNull() ?: current
+}
+
+private fun voiceCompatibilityFor(
+    provider: RealtimeProviderInfo,
+    model: String,
+): List<String>? {
+    val trimmed = model.trim()
+    if (trimmed.isBlank()) return null
+    return provider.model_voice_compatibility[trimmed]
+}
+
+private fun compatibilityNotice(
+    provider: RealtimeProviderInfo?,
+    model: String,
+    voice: String,
+): String? {
+    provider ?: return null
+    val compatible = voiceCompatibilityFor(provider, model) ?: return null
+    if (voice.isBlank() || voice in compatible) return null
+    return "Voice is not advertised for the selected model"
+}
+
+private fun validationIssue(validation: VoiceProviderValidationResponse?): String? {
+    if (validation == null || validation.valid) return null
+    val message = validation.checks.firstOrNull { it.status == "error" }
+        ?.message
+        ?.takeIf { it.isNotBlank() }
+    return message ?: "Provider selection is not valid"
+}
+
+private fun validationWarning(validation: VoiceProviderValidationResponse?): String? {
+    validation ?: return null
+    val message = validation.checks.firstOrNull { it.status == "warning" }
+        ?.message
+        ?.takeIf { it.isNotBlank() }
+    return message?.let { "Saved with warning: $it" }
+}
+
+private fun providerOptionStatus(dynamic: ProviderOptionsDynamic?): String? {
+    dynamic ?: return null
+    val base = when (dynamic.status) {
+        "ok" -> "Provider options refreshed"
+        "auth_missing" -> "Server auth missing for dynamic options"
+        "error" -> "Dynamic options unavailable"
+        "static" -> "Static provider options"
+        else -> null
+    }
+    val count = dynamic.custom_voice_count?.takeIf { it > 0 }?.let { "$it custom voices" }
+        ?: dynamic.voice_count?.takeIf { it > 0 }?.let { "$it voices" }
+    val cache = dynamic.cache?.takeIf { it == "hit" }?.let { "cached" }
+    return listOfNotNull(base, count, cache).joinToString(" · ").takeIf { it.isNotBlank() }
+}
+
+private fun providerOptionsStatusText(
+    loading: Boolean,
+    status: String?,
+): String? = when {
+    loading -> "Refreshing provider options..."
+    !status.isNullOrBlank() -> status
+    else -> null
+}
+
+private fun commonLanguages(current: String, provider: RealtimeProviderInfo?): List<VoiceChoice> {
+    val base = provider?.languages.orEmpty().ifEmpty {
+        listOf("en", "es", "fr", "de", "ja", "zh")
+    }
+    return valueChoices(base, current, provider?.language_labels.orEmpty())
+}
+
+private fun voiceOutputSummary(
+    profile: Profile?,
+    output: VoiceOutputConfig?,
+    realtime: RealtimeVoiceConfig?,
+): Pair<String, String> {
+    val profileLabel = profile?.description?.takeIf { it.isNotBlank() }
+        ?: profile?.name?.takeIf { it.isNotBlank() }
+        ?: "Server default"
+    val outputLabel = output?.let { config ->
+        val provider = config.default_provider?.takeIf { it.isNotBlank() } ?: "provider ..."
+        val voice = config.default_voice?.takeIf { it.isNotBlank() } ?: "voice ..."
+        val model = config.default_model?.takeIf { it.isNotBlank() }
+        if (model == null) "$provider / $voice" else "$provider / $model / $voice"
+    } ?: "loading voice output..."
+    val realtimeLabel = realtime?.let { config ->
+        val provider = config.default_provider?.takeIf { it.isNotBlank() } ?: "realtime ..."
+        val voice = config.default_voice?.takeIf { it.isNotBlank() } ?: "voice ..."
+        "$provider / $voice"
+    } ?: "realtime loading..."
+    return profileLabel to "$outputLabel · $realtimeLabel"
+}
+
+@Composable
+private fun VoiceProfileSummaryCard(
+    selectedProfile: Profile?,
+    output: VoiceOutputConfig?,
+    realtime: RealtimeVoiceConfig?,
+) {
+    val (title, subtitle) = voiceOutputSummary(selectedProfile, output, realtime)
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun VoiceChoiceDropdown(
+    label: String,
+    value: String,
+    choices: List<VoiceChoice>,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var query by remember(label) { mutableStateOf("") }
+    val selected = choices.firstOrNull { it.value == value }
+    val displayValue = selected?.label ?: value
+    val searchable = choices.size > 12
+    val filteredChoices = remember(choices, query) {
+        val term = query.trim()
+        if (term.isBlank()) {
+            choices
+        } else {
+            choices.filter { choice ->
+                choice.value.contains(term, ignoreCase = true) ||
+                    choice.label.contains(term, ignoreCase = true) ||
+                    choice.detail.orEmpty().contains(term, ignoreCase = true) ||
+                    choice.group.orEmpty().contains(term, ignoreCase = true)
+            }
+        }
+    }
+    LaunchedEffect(expanded) {
+        if (!expanded) query = ""
+    }
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { if (enabled && choices.isNotEmpty()) expanded = !expanded },
+        modifier = modifier,
+    ) {
+        OutlinedTextField(
+            value = displayValue,
+            onValueChange = {},
+            readOnly = true,
+            singleLine = true,
+            enabled = enabled,
+            label = { Text(label) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier
+                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, enabled)
+                .fillMaxWidth(),
+        )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.heightIn(max = 360.dp),
+        ) {
+            if (searchable) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    singleLine = true,
+                    label = { Text("Search") },
+                )
+                HorizontalDivider()
+            }
+            var lastGroup: String? = null
+            filteredChoices.forEach { choice ->
+                val group = choice.group?.takeIf { it.isNotBlank() }
+                if (group != null && group != lastGroup) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = group,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        },
+                        onClick = {},
+                        enabled = false,
+                    )
+                    lastGroup = group
+                }
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(choice.label)
+                            choice.detail?.takeIf { it.isNotBlank() }?.let { detail ->
+                                Text(
+                                    text = detail,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    },
+                    onClick = {
+                        onValueChange(choice.value)
+                        expanded = false
+                    },
+                    enabled = choice.enabled,
+                )
+            }
+            if (filteredChoices.isEmpty()) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = "No matches",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    },
+                    onClick = {},
+                    enabled = false,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AdvancedManualToggle(
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+) {
+    TextButton(onClick = { onExpandedChange(!expanded) }) {
+        Text(if (expanded) "Hide advanced manual entry" else "Advanced manual entry")
     }
 }
 

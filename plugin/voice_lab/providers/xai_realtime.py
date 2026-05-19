@@ -73,6 +73,9 @@ class XAIRealtimeProvider(VoiceProvider):
             "Server-side WebSocket adapter for the xAI/Grok Voice Agent API. "
             "Uses direct xAI auth or the lab-owned OAuth store for SuperGrok."
         ),
+        models=(DEFAULT_MODEL,),
+        voices=("eve", "ara", "rex", "sal", "leo"),
+        sample_rates=(24000,),
         supports_tts=True,
         supports_tool_use=True,
         supports_realtime=True,

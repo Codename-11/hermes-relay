@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Hermes Relay Desktop</title>
+    <link rel="stylesheet" href="./vendor/xterm/xterm.css" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -19,7 +20,12 @@
         <nav class="sidebar-nav">
           <button class="nav-item active" data-route="overview">Overview</button>
           <button class="nav-item" data-route="pair">Pair</button>
+          <button class="nav-item" data-route="chat">Chat</button>
+          <button class="nav-item" data-route="tui">TUI</button>
           <button class="nav-item" data-route="connect">Terminal</button>
+          <button class="nav-item" data-route="sessions">Sessions</button>
+          <button class="nav-item" data-route="plugins">Plugins</button>
+          <button class="nav-item" data-route="voice">Voice</button>
           <button class="nav-item" data-route="diagnostics">Diagnostics</button>
           <button class="nav-item" data-route="devices">Devices</button>
           <button class="nav-item" data-route="grants">Grants</button>
@@ -180,6 +186,87 @@
           </div>
         </section>
 
+        <section class="view" id="chatView">
+          <div class="chat-layout">
+            <section class="panel chat-panel">
+              <div class="panel-header">
+                <div>
+                  <h3>Chat</h3>
+                  <p class="panel-subtitle" id="chatRouteHint">Choose a paired relay or gateway route to start.</p>
+                </div>
+                <span id="chatRouteBadge" class="badge">Setup</span>
+              </div>
+
+              <div id="chatFirstRun" class="chat-first-run">
+                <div class="setup-option">
+                  <div>
+                    <strong>Pair with Hermes Relay</strong>
+                    <span>Use your saved relay session, pairing code, and existing Hermes gateway session.</span>
+                  </div>
+                  <button class="primary small" type="button" data-route-target="pair">Pair</button>
+                </div>
+                <div class="setup-option">
+                  <div>
+                    <strong>Connect to Gateway/API</strong>
+                    <span>Use a direct Hermes WebAPI URL when relay pairing is not available.</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="chat-transcript" id="chatTranscript" aria-live="polite"></div>
+
+              <form id="chatForm" class="chat-composer">
+                <textarea id="chatPrompt" rows="3" placeholder="Message Hermes..." spellcheck="true"></textarea>
+                <div class="chat-composer-actions">
+                  <div class="button-row">
+                    <button id="chatSendBtn" class="primary" type="submit">Send</button>
+                    <button id="chatStopBtn" class="danger" type="button">Stop</button>
+                  </div>
+                  <div class="button-row">
+                    <button id="chatRetryBtn" class="secondary small" type="button">Retry</button>
+                    <button id="chatNewBtn" class="secondary small" type="button">New</button>
+                    <button id="chatClearBtn" class="secondary small" type="button">Clear</button>
+                  </div>
+                </div>
+              </form>
+            </section>
+
+            <aside class="panel chat-route-panel">
+              <div class="panel-header">
+                <h3>Route</h3>
+                <span id="chatSetupBadge" class="badge">Checking</span>
+              </div>
+              <div class="chat-route-switch" role="radiogroup" aria-label="Chat route">
+                <label>
+                  <input type="radio" name="chatMode" value="relay" />
+                  Relay pairing
+                </label>
+                <label>
+                  <input type="radio" name="chatMode" value="gateway" />
+                  Gateway/API
+                </label>
+              </div>
+              <dl class="facts compact-facts">
+                <div><dt>Relay</dt><dd id="chatRelayRoute">Not paired</dd></div>
+                <div><dt>Gateway</dt><dd id="chatGatewayRoute">Not set</dd></div>
+                <div><dt>Session</dt><dd id="chatSessionLabel">New</dd></div>
+              </dl>
+              <div class="gateway-config">
+                <label>
+                  Gateway URL
+                  <input id="chatGatewayUrl" autocomplete="off" placeholder="http://host:8642" />
+                </label>
+                <label>
+                  API key
+                  <input id="chatGatewayKey" type="password" autocomplete="off" placeholder="Optional; kept for this tray session" />
+                </label>
+                <button id="chatSaveGatewayBtn" class="secondary small" type="button">Save URL</button>
+              </div>
+              <p id="chatDiagnostics" class="quiet-note"></p>
+            </aside>
+          </div>
+        </section>
+
         <section class="view" id="connectView">
           <div class="connect-layout">
             <section class="panel">
@@ -204,6 +291,15 @@
                   <code id="launchTuiCommand">hermes-relay shell</code>
                 </div>
                 <button id="openTuiBtn" class="primary small" type="button">Open TUI</button>
+              </div>
+
+              <div class="terminal-launch-card subtle">
+                <div>
+                  <strong>In-app TUI</strong>
+                  <span>Use the dashboard terminal tab for embedded sessions and plugin surfaces.</span>
+                  <code>Built into Hermes Relay Desktop</code>
+                </div>
+                <button class="secondary small" type="button" data-route-target="tui">Open Tab</button>
               </div>
 
               <div class="install-nudge" id="installNudge">
@@ -232,6 +328,130 @@
               </dl>
             </aside>
           </div>
+        </section>
+
+        <section class="view" id="tuiView">
+          <section class="panel full embedded-terminal-card embedded-terminal-workbench">
+            <div class="embedded-terminal-header">
+              <div>
+                <h3>Embedded TUI</h3>
+                <p class="panel-subtitle">Run the tmux-backed Hermes session inside the desktop dashboard.</p>
+              </div>
+              <span id="embeddedTerminalBadge" class="badge">Detached</span>
+            </div>
+
+            <dl class="facts compact-facts tui-facts">
+              <div><dt>Active relay</dt><dd id="tuiActiveRelay">Not paired</dd></div>
+              <div><dt>Route</dt><dd id="tuiRouteBadge">No route</dd></div>
+              <div><dt>Session</dt><dd id="tuiSessionStatus">Detached</dd></div>
+            </dl>
+
+            <div class="embedded-terminal-toolbar">
+              <label>
+                Session
+                <input id="embeddedSessionName" autocomplete="off" placeholder="default" />
+              </label>
+              <div class="button-row">
+                <button id="embeddedResumeBtn" class="primary small" type="button">Resume</button>
+                <button id="embeddedNewBtn" class="secondary small" type="button">New</button>
+                <button id="embeddedStopBtn" class="danger small" type="button">Stop</button>
+              </div>
+            </div>
+
+            <div class="embedded-terminal-shell">
+              <div id="embeddedTerminal" class="embedded-terminal-surface"></div>
+              <div id="embeddedTerminalEmpty" class="embedded-terminal-empty">Pair a relay to start the in-app TUI.</div>
+            </div>
+            <div class="copy-feedback" id="embeddedTerminalFeedback" aria-live="polite"></div>
+          </section>
+        </section>
+
+        <section class="view" id="pluginsView">
+          <div class="plugins-layout">
+            <section class="panel">
+              <div class="panel-header">
+                <div>
+                  <h3>Plugins</h3>
+                  <p class="panel-subtitle">Install and launch desktop terminal surfaces registered by Hermes Relay.</p>
+                </div>
+                <span id="pluginsBadge" class="badge">Checking</span>
+              </div>
+              <div id="pluginList" class="plugin-list"></div>
+              <div class="copy-feedback" id="pluginFeedback" aria-live="polite"></div>
+            </section>
+
+            <aside class="panel">
+              <div class="panel-header">
+                <h3>Surface Contract</h3>
+                <span class="badge">Built-ins</span>
+              </div>
+              <dl class="facts">
+                <div><dt>Tabs</dt><dd>Plugin-declared panels</dd></div>
+                <div><dt>Commands</dt><dd>Install, update, launch</dd></div>
+                <div><dt>Sessions</dt><dd>Fresh or resume</dd></div>
+                <div><dt>Fallback</dt><dd>Standard relay TUI remains available</dd></div>
+              </dl>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="sessionsView">
+          <section class="panel full">
+            <div class="panel-header">
+              <div>
+                <h3>TUI Sessions</h3>
+                <p class="panel-subtitle">Resume, create, or end server-side tmux sessions for the active relay.</p>
+              </div>
+              <span id="sessionsRouteBadge" class="badge">No route</span>
+            </div>
+
+            <div class="session-toolbar">
+              <dl class="facts compact-facts">
+                <div><dt>Active relay</dt><dd id="sessionsActiveRelay">Not paired</dd></div>
+                <div><dt>Command</dt><dd><code id="sessionsCommand">hermes-relay</code></dd></div>
+              </dl>
+              <div class="button-row">
+                <button id="refreshSessionsBtn" class="secondary" type="button">Refresh</button>
+                <button id="newSessionBtn" class="primary" type="button">New Session</button>
+              </div>
+            </div>
+
+            <div id="sessionsList" class="session-list"></div>
+            <div class="copy-feedback" id="sessionsFeedback" aria-live="polite"></div>
+          </section>
+        </section>
+
+        <section class="view" id="voiceView">
+          <section class="panel full">
+            <div class="panel-header">
+              <div>
+                <h3>Voice Mode</h3>
+                <p class="panel-subtitle">Push-to-talk in the tray webview. Mic captured locally; STT/TTS proxied through the running daemon's voice server.</p>
+              </div>
+              <div class="button-row">
+                <button id="voiceReloadBtn" class="secondary small" type="button">Reload</button>
+                <button id="voiceCopyUrlBtn" class="secondary small" type="button">Copy URL</button>
+              </div>
+            </div>
+
+            <div class="voice-host">
+              <div class="voice-empty" id="voiceEmpty">
+                <p>No voice server detected.</p>
+                <p class="muted">Start the daemon (auto-started by the tray when a relay is paired) or run
+                  <code>hermes-relay voice mode</code> in a terminal and paste the URL below.</p>
+                <div class="voice-manual">
+                  <input id="voiceManualUrl" type="text" placeholder="http://127.0.0.1:PORT/v/NONCE/" autocomplete="off" spellcheck="false" />
+                  <button id="voiceManualLoad" class="primary small" type="button">Open</button>
+                </div>
+              </div>
+              <iframe id="voiceFrame"
+                      class="voice-frame"
+                      title="Hermes Voice Mode"
+                      allow="microphone; autoplay; clipboard-read; clipboard-write"
+                      sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                      hidden></iframe>
+            </div>
+          </section>
         </section>
 
         <section class="view" id="diagnosticsView">

@@ -63,6 +63,20 @@ class OpenAIRealtimeProvider(VoiceProvider):
             "Server-side WebSocket adapter for OpenAI Realtime, defaulting to "
             "gpt-realtime-2 and WAV output for CLI testing."
         ),
+        models=(DEFAULT_MODEL,),
+        voices=(
+            "alloy",
+            "ash",
+            "ballad",
+            "coral",
+            "echo",
+            "sage",
+            "shimmer",
+            "verse",
+            "marin",
+            "cedar",
+        ),
+        sample_rates=(24000,),
         supports_tts=True,
         supports_realtime=True,
         supports_interruption=False,

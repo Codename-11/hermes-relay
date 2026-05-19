@@ -47,6 +47,8 @@ certs/
 # Local tools
 .subframe/
 voice-lab-runs/
+realtime-voice-runs/
+voice_rec_*.wav
 
 # Ad-hoc debugging artifacts (logcat dumps, screenshots, UI XMLs)
 .scratch/
@@ -79,3 +81,6 @@ keystore.properties
 # Desktop TUI smoke harness runtime artifacts
 .smoke-relay.pid
 .smoke-relay.log
+
+# Generated tray frontend vendor assets copied from desktop/node_modules
+desktop/tray/ui/vendor/

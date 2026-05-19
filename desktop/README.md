@@ -2,7 +2,7 @@
 
 Desktop tray app and thin-client CLI for [Hermes-Relay](https://github.com/Codename-11/hermes-relay) — talk to a remote [Hermes agent](https://github.com/NousResearch/hermes-agent) over WSS from a native tray surface or any terminal.
 
-The agent brain (LLM + tools + sessions + memory) runs on your Hermes host. The Windows tray app is the default desktop surface: pair one active relay, start/pause the daemon, open the remote TUI in a real terminal, view devices, inspect the task log, copy terminal/shim commands, run local diagnostics, edit compact settings, see the compact above-taskbar overlay pill, and emergency-stop from the tray or hotkey. The CLI remains the local line-mode thin-client: it handles pairing, persists the session token, and renders the agent's stream to plain stdout so `>`, `|`, and `jq` all work.
+The agent brain (LLM + tools + sessions + memory) runs on your Hermes host. The Windows tray app is the default desktop surface: pair one active relay, chat from the dashboard, start/pause the daemon, open or manage remote TUI sessions in a real terminal, install desktop surface plugins such as Herm, view devices, inspect the task log, copy terminal/shim commands, run local diagnostics, edit compact settings, see the compact above-taskbar overlay pill, and emergency-stop from the tray or hotkey. The CLI remains the local line-mode thin-client: it handles pairing, persists the session token, resumes tmux-backed TUI sessions, and renders the agent's stream to plain stdout so `>`, `|`, and `jq` all work.
 
 > **What this is not:** A local Hermes install. Point it at an existing Hermes-Relay server (`ws://host:8767`). For the full TUI with Ink, see the sibling package [`ui-tui`](../../hermes-agent-tui-smoke/ui-tui) in the hermes-agent fork.
 
@@ -13,12 +13,16 @@ The Windows tray app is the primary desktop install surface for most users. It b
 | Surface | Intended use | Default experience |
 |---------|--------------|--------------------|
 | Windows tray | Daily desktop use | Tauri tray + one active relay + compact status-only above-taskbar overlay pill + tray/hotkey pause/emergency stop |
-| Tray dashboard | Management | Pair/replace, Terminal/CLI launcher and commands, diagnostics, devices/revoke, grants, task log, compact settings, collapsed Advanced controls |
+| Tray dashboard | Management | Pair/replace, Chat, first-class embedded TUI tab, Terminal/CLI launcher and commands, surface plugins, diagnostics, devices/revoke, grants, task log, compact settings, collapsed Advanced controls |
 | CLI/daemon | Operator and headless use | Commands, flags, scripts, and JSON policy |
 
 Tauri is optional outside Windows. The CLI and `hermes-relay daemon` must continue to work without a native app installed.
 
-Tray behavior is intentionally split: left-click the tray icon to open the dashboard, right-click it for the native management menu, and use the compact overlay pill as a click-through status indicator only. The dashboard defaults to a dark graphite UI, keeps Start, Pause, and Emergency Stop in the sticky topbar so daemon controls stay reachable while views scroll, and exposes one active desktop relay instance at a time. Pairing is a first-class flow with pasted pairing invites, manual code, stored-session selection, LAN/Tailscale/manual route preview, and explicit replacement confirmation before changing the active relay. Terminal / CLI opens the remote TUI in a real terminal and turns the active relay into copyable standard `hermes-relay` commands for remote TUI/shell, one-shot chat, headless daemon, status, tool inventory, and doctor. Those commands use the saved active relay by default; `--remote` is shown only as an explicit one-off override. Diagnostics renders local install/session checks and can run `hermes-relay doctor --json` through the bundled sidecar. Settings keep daily controls short and put raw relay override, computer-use flag, emergency hotkey, and blocklist under a collapsed Advanced disclosure. The sidebar is navigation-only and uses the same Chevron Compass brand mark as the Android/docs surfaces. The pill sizes itself to the current state (`Observing`, `Paused`, `Offline`, or `Unavailable`) instead of reserving dashboard-width space. Start, pause, emergency stop, grant resolution, settings saves, doctor runs, and log clears all emit a shared dashboard refresh event so the dashboard and overlay pill stay on the same daemon state.
+Tray behavior is intentionally split: left-click the tray icon to open the dashboard, right-click it for the native management menu, and use the compact overlay pill as a click-through status indicator only. The dashboard defaults to a dark graphite UI, keeps Start, Pause, and Emergency Stop in the sticky topbar so daemon controls stay reachable while views scroll, and exposes one active desktop relay instance at a time. Pairing is a first-class flow with pasted pairing invites, manual code, stored-session selection, LAN/Tailscale/manual route preview, and explicit replacement confirmation before changing the active relay. A raw relay URL in Advanced is not treated as paired until the matching stored session token exists, so unpaired installs keep daemon, devices, and TUI actions gated with "Pair first" UI instead of silently falling back to localhost.
+
+The Chat tab is the first-run conversational surface. If the desktop is already paired, Chat streams through the saved relay and reuses the same CLI/gateway session path as `hermes-relay chat --json`. If the desktop is not paired, Chat offers a direct Hermes gateway/API URL (`http://host:8642`) with an optional API bearer for that tray session; only the URL is saved in `~/.hermes/desktop-control.json`. Relay pairing remains the fuller desktop-control path for daemon, terminal, devices, grants, and local tools, while direct gateway mode is for chat-only WebAPI access.
+
+The TUI tab owns the experimental embedded xterm/PTY surface inside the dashboard, while Terminal / CLI opens the remote TUI in a real terminal and turns the active relay into copyable standard `hermes-relay` commands for remote TUI, one-shot chat, headless daemon, TUI sessions, status, tool inventory, and doctor. The Plugins view registers terminal surface plugins that can be installed, updated, launched externally, or embedded in the same xterm/PTY surface. The Sessions view lists global server-side `hermes-*` tmux sessions, resumes named sessions, creates new sessions, kills stale sessions, and copies the matching CLI commands. Those commands use the saved active relay by default; `--remote` is shown only as an explicit one-off override. Diagnostics renders local install/session checks and can run `hermes-relay doctor --json` through the bundled sidecar. Settings keep daily controls short and put raw relay override, computer-use flag, emergency hotkey, and blocklist under a collapsed Advanced disclosure. The sidebar is navigation-only and uses the same Chevron Compass brand mark as the Android/docs surfaces. The pill sizes itself to the current state (`Observing`, `TUI active`, `Tools`, `Gateway`, `Approval`, `Paused`, `Offline`, or `Unavailable`) instead of reserving dashboard-width space. Start, pause, emergency stop, chat turns, embedded/external TUI session actions, plugin launches, grant resolution, settings saves, doctor runs, and log clears all emit a shared dashboard refresh event so the dashboard and overlay pill stay on the same activity state.
 
 ## Install
 
@@ -149,12 +153,19 @@ relay one-shot code.
 
 Now subsequent `hermes-relay ...` calls reuse the stored session token. Tokens live at `~/.hermes/remote-sessions.json` (mode 0600) — same file the Ink TUI uses, so pairing once from either surface works for both.
 
-### Tray Terminal / CLI and Diagnostics
+### Tray Chat
 
-After pairing from the tray, open **Terminal** to launch the remote TUI or copy commands that target the active desktop relay:
+Open **Chat** after pairing to stream a desktop chat turn through the saved relay. The tray spawns the bundled CLI sidecar in JSON mode, so relay auth, session resume, gateway events, and stop/cancel behavior stay aligned with `hermes-relay chat`.
+
+If you are not paired, switch the Chat route to **Gateway/API** and enter a Hermes WebAPI base URL such as `http://host:8642`. The tray probes `/api/sessions/*/chat/stream` first and falls back to `/v1/runs` when that is the available upstream path. API key is optional and kept in memory for the current tray session; only the gateway URL is saved.
+
+### Tray TUI, Terminal / CLI and Diagnostics
+
+After pairing from the tray, open **TUI** to run the embedded dashboard terminal, or open **Terminal** to launch the remote TUI in a real terminal and copy commands that target the active desktop relay:
 
 ```powershell
-hermes-relay shell
+hermes-relay
+hermes-relay sessions list
 hermes-relay chat "summarize my current project"
 hermes-relay daemon --log-human
 hermes-relay status
@@ -162,9 +173,22 @@ hermes-relay tools
 hermes-relay doctor --json
 ```
 
-The copied commands intentionally use the standard `hermes-relay` command rather than a bundled app path. The CLI reads the tray-selected active relay from `~/.hermes/desktop-control.json`, then falls back to the single stored session or an interactive picker. Use `--remote ws://host:8767` only when you want to override the saved active relay for a single command. If the tray can only see its sidecar, Terminal shows a CLI install nudge and a copyable CLI-only installer command. The same tab still shows shim state, session store, desktop config path, active route, daemon state, and whether experimental computer-use is enabled.
+The copied commands intentionally use the standard `hermes-relay` command rather than a bundled app path. The CLI reads the tray-selected active relay from `~/.hermes/desktop-control.json`, then falls back to the single stored session or an interactive picker. Bare `hermes-relay` resumes the active TUI tmux session stored in `~/.hermes/desktop-sessions.json`, falling back to `default`; `hermes-relay sessions list/resume/new/kill` is the explicit management path. Use `--remote ws://host:8767` only when you want to override the saved active relay for a single command. If the tray can only see its sidecar, Terminal shows a CLI install nudge and a copyable CLI-only installer command. The TUI tab hosts the embedded terminal: xterm.js renders inside the dashboard, Rust owns the local PTY, and the PTY runs the same `hermes-relay --session <name>` / `--new` path as an external terminal. Keep the external terminal button as the fallback when testing PTY focus, resize, or chord behavior. Terminal still shows shim state, session store, desktop config path, active route, daemon state, and whether experimental computer-use is enabled.
 
 Open **Diagnostics** for local state checks: active relay, route, CLI shim availability, daemon status, desktop-tool consent, overlay visibility, blocklist count, session store, config path, and pending grants. **Run Doctor** executes the sidecar's `doctor --json` command and renders a redacted summary in the dashboard.
+
+### Surface plugins
+
+The tray **Plugins** view and `hermes-relay plugins` command expose installable terminal dashboard surfaces. The first built-in plugin is [Herm](https://github.com/liftaris/herm), packaged as `herm-tui`.
+
+```powershell
+hermes-relay plugins status herm
+hermes-relay plugins install herm
+hermes-relay plugins launch herm
+hermes-relay plugins resume herm
+```
+
+Herm uses `bun add -g herm-tui` when Bun is available and falls back to `npm install -g herm-tui`; launch uses the installed `herm` binary or `bunx herm-tui` / `npx --yes herm-tui` when available. The tray can also embed Herm in the dashboard PTY, with `resume` mapped to `herm -c`.
 
 ### Pair + grant tools in one shot (CLI-only daemon bring-up)
 
@@ -194,6 +218,8 @@ hermes-relay [shell]             Pipe the full Hermes CLI over a PTY (default �
 hermes-relay chat [<prompt>]     Structured-event chat (REPL or one-shot, scriptable)
 hermes-relay "<prompt>"          One-shot structured chat (shortcut for chat "...")
 hermes-relay pair [CODE]         Pair with the relay and store a session token
+hermes-relay plugins             List/install/update/launch desktop surface plugins
+hermes-relay sessions            List / resume / create / kill TUI tmux sessions
 hermes-relay status              Show stored sessions + grants + TTL
 hermes-relay tools               List tools available on the server
 hermes-relay devices             List / revoke / extend server-side paired devices
@@ -208,7 +234,7 @@ hermes-relay --help              Full help
 $ hermes-relay
 Connecting...
 Connected via Tailscale (secure) — server 0.6.0
-Attached (tmux session "shell-9f2a1c30") — re-attached to existing session.
+Attached (tmux session "default") — re-attached to existing session.
 Escape: Ctrl+A then . (detach, preserves tmux) · Ctrl+A then k (kill tmux) · Ctrl+A Ctrl+A (literal Ctrl+A)
 
 Desktop tools: 23 handlers advertised
@@ -217,13 +243,24 @@ Desktop tools: 23 handlers advertised
 ❯
 ```
 
-- **`Ctrl+A .`** — detach cleanly; tmux session survives on the server, next `hermes-relay shell` re-attaches.
+- **`Ctrl+A .`** — detach cleanly; tmux session survives on the server, next bare `hermes-relay` re-attaches.
 - **`Ctrl+A k`** — kill the tmux session; next run gets a fresh hermes.
 - **`Ctrl+A Ctrl+A`** — forward a literal `Ctrl+A` (for nested tmux).
 - **Ctrl+C** passes through to `hermes` — interrupts the agent, not the client.
 - **`--raw`** — skip the auto-`exec hermes`; drop into bare tmux/bash.
 - **`--exec <cmd>`** — exec something else instead (e.g. `--exec btop`).
 - **`--session <name>`** — override the tmux session name for deterministic resume.
+
+### Sessions — tmux continuity
+
+```sh
+hermes-relay sessions list
+hermes-relay sessions resume default
+hermes-relay sessions new
+hermes-relay sessions kill default
+```
+
+The relay discovers background server-side tmux sessions named `hermes-*`, so `sessions list` shows sessions even when the current WebSocket did not create them. Bare `hermes-relay` is still the normal path: it resumes the active session recorded in `~/.hermes/desktop-sessions.json` and falls back to `default`. On reattach, the server captures recent tmux scrollback and replays it before live output so the reopened terminal has context immediately.
 
 ### Multi-endpoint pairing (ADR 24)
 

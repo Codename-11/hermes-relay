@@ -10,13 +10,20 @@ import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -35,12 +42,20 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
@@ -66,7 +81,21 @@ import com.hermesandroid.relay.viewmodel.VoiceUiState
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlin.math.cos
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sin
+
+private const val TWO_PI = 6.2831855f
+private const val HALF_PI = 1.5707964f
+
+// Matches the in-app VoiceWaveform palette so minimized overlay mode reads as
+// the same voice surface, just wrapped around the mic control.
+private val OverlayListeningPrimary = Color(0xFF597EF2)
+private val OverlayListeningSecondary = Color(0xFFA573F2)
+private val OverlaySpeakingPrimary = Color(0xFF40EB8C)
+private val OverlaySpeakingSecondary = Color(0xFF4DD9E0)
 
 /**
  * WindowManager-backed host for the experimental voice overlay.
@@ -203,13 +232,17 @@ data class VoiceOverlaySession(
     val uiState: StateFlow<VoiceUiState>,
     val bargeInPreferences: Flow<BargeInPreferences>,
     val provider: String?,
+    val model: String?,
     val voice: String?,
+    val profileName: String?,
+    val configScope: String?,
     val outputEnabled: Boolean?,
     val fallbackEnabled: Boolean?,
     val onStartListening: () -> Unit,
     val onStopListening: () -> Unit,
     val onInterrupt: () -> Unit,
     val onReturnToHermes: () -> Unit,
+    val onDismissOverlay: () -> Unit,
     val onExit: () -> Unit,
 )
 
@@ -220,7 +253,14 @@ private fun VoiceFloatingOverlayPill(
 ) {
     val uiState by session.uiState.collectAsState()
     val bargeIn by session.bargeInPreferences.collectAsState(initial = BargeInPreferences())
-    val providerText = voiceProviderLabel(session.provider, session.voice, session.outputEnabled)
+    var minimized by remember { mutableStateOf(false) }
+    val providerText = voiceProviderLabel(
+        session.provider,
+        session.model,
+        session.voice,
+        session.outputEnabled,
+    )
+    val profileText = session.profileName?.takeIf { it.isNotBlank() } ?: "default profile"
     val stateText = when (uiState.state) {
         VoiceState.Idle -> "Ready"
         VoiceState.Listening -> "Listening"
@@ -228,6 +268,19 @@ private fun VoiceFloatingOverlayPill(
         VoiceState.Thinking -> "Thinking"
         VoiceState.Speaking -> "Speaking"
         VoiceState.Error -> "Error"
+    }
+
+    if (minimized) {
+        VoiceFloatingOverlayBubble(
+            uiState = uiState,
+            stateText = stateText,
+            onExpand = { minimized = false },
+            onStartListening = session.onStartListening,
+            onStopListening = session.onStopListening,
+            onInterrupt = session.onInterrupt,
+            onDragBy = onDragBy,
+        )
+        return
     }
 
     Surface(
@@ -240,7 +293,7 @@ private fun VoiceFloatingOverlayPill(
                 }
             },
         shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
         tonalElevation = 6.dp,
         shadowElevation = 8.dp,
     ) {
@@ -278,7 +331,7 @@ private fun VoiceFloatingOverlayPill(
                         StatusChip("Experimental")
                     }
                     Text(
-                        text = "$stateText · $providerText",
+                        text = "$stateText · $profileText · $providerText",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -322,19 +375,25 @@ private fun VoiceFloatingOverlayPill(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 TextButton(
-                    onClick = session.onInterrupt,
+                    onClick = { minimized = true },
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text("Interrupt")
+                    Text("Minimize")
                 }
                 TextButton(
                     onClick = session.onReturnToHermes,
                     modifier = Modifier.weight(1f),
                 ) {
                     Text("Hermes")
+                }
+                TextButton(
+                    onClick = session.onDismissOverlay,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Hide")
                 }
                 TextButton(
                     onClick = session.onExit,
@@ -347,6 +406,215 @@ private fun VoiceFloatingOverlayPill(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun VoiceFloatingOverlayBubble(
+    uiState: VoiceUiState,
+    stateText: String,
+    onExpand: () -> Unit,
+    onStartListening: () -> Unit,
+    onStopListening: () -> Unit,
+    onInterrupt: () -> Unit,
+    onDragBy: (Float, Float) -> Unit,
+) {
+    val isHot = uiState.state == VoiceState.Listening || uiState.state == VoiceState.Speaking
+    val stateLabel = overlayBubbleStateLabel(uiState.state)
+    val tapAction = when (uiState.state) {
+        VoiceState.Idle, VoiceState.Error -> "start listening"
+        VoiceState.Listening -> "stop listening"
+        else -> "stop voice"
+    }
+    val containerColor = when (uiState.state) {
+        VoiceState.Listening, VoiceState.Speaking -> Color(0xFFE53935)
+        VoiceState.Transcribing, VoiceState.Thinking -> MaterialTheme.colorScheme.tertiary
+        VoiceState.Error -> MaterialTheme.colorScheme.error
+        VoiceState.Idle -> MaterialTheme.colorScheme.primary
+    }
+    val icon = when (uiState.state) {
+        VoiceState.Listening, VoiceState.Speaking -> Icons.Filled.Stop
+        VoiceState.Transcribing, VoiceState.Thinking -> Icons.Filled.GraphicEq
+        VoiceState.Idle, VoiceState.Error -> Icons.Filled.Mic
+    }
+
+    Box(
+        modifier = Modifier
+            .size(94.dp)
+            .pointerInput(Unit) {
+                detectDragGestures { change, dragAmount ->
+                    change.consume()
+                    onDragBy(dragAmount.x, dragAmount.y)
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        OverlayCircularWaveformRing(
+            amplitude = uiState.amplitude,
+            state = uiState.state,
+            modifier = Modifier.fillMaxSize(),
+        )
+
+        Surface(
+            modifier = Modifier
+                .size(70.dp)
+                .clip(CircleShape)
+            .combinedClickable(
+                onClick = {
+                    dispatchMicAction(
+                        uiState = uiState,
+                        onStartListening = onStartListening,
+                        onStopListening = onStopListening,
+                        onInterrupt = onInterrupt,
+                    )
+                },
+                onLongClick = onExpand,
+                onDoubleClick = onExpand,
+            ),
+            shape = CircleShape,
+            color = containerColor.copy(alpha = if (isHot) 0.96f else 0.92f),
+            shadowElevation = 8.dp,
+            tonalElevation = 4.dp,
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = "Voice overlay $stateText. Tap to $tapAction, double tap to expand.",
+                    tint = Color.White,
+                    modifier = Modifier.size(23.dp),
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = stateLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun OverlayCircularWaveformRing(
+    amplitude: Float,
+    state: VoiceState,
+    modifier: Modifier = Modifier,
+) {
+    val displayAmplitude = amplitude.coerceIn(0f, 1f)
+    val phase = rememberOverlayWaveformPhase(displayAmplitude)
+    val dim = MaterialTheme.colorScheme.onSurfaceVariant
+    val errorColor = MaterialTheme.colorScheme.error
+    val targetPrimary = when (state) {
+        VoiceState.Idle -> dim.copy(alpha = 0.38f)
+        VoiceState.Listening -> OverlayListeningPrimary
+        VoiceState.Transcribing -> OverlayListeningPrimary.copy(alpha = 0.72f)
+        VoiceState.Thinking -> dim.copy(alpha = 0.62f)
+        VoiceState.Speaking -> OverlaySpeakingPrimary
+        VoiceState.Error -> errorColor.copy(alpha = 0.9f)
+    }
+    val targetSecondary = when (state) {
+        VoiceState.Idle -> dim.copy(alpha = 0.28f)
+        VoiceState.Listening -> OverlayListeningSecondary
+        VoiceState.Transcribing -> dim.copy(alpha = 0.58f)
+        VoiceState.Thinking -> dim.copy(alpha = 0.48f)
+        VoiceState.Speaking -> OverlaySpeakingSecondary
+        VoiceState.Error -> errorColor.copy(alpha = 0.72f)
+    }
+    val primary by animateColorAsState(
+        targetValue = targetPrimary,
+        animationSpec = tween(durationMillis = 350),
+        label = "overlayRingPrimary",
+    )
+    val secondary by animateColorAsState(
+        targetValue = targetSecondary,
+        animationSpec = tween(durationMillis = 350),
+        label = "overlayRingSecondary",
+    )
+
+    Canvas(modifier = modifier) {
+        val minDimension = min(size.width, size.height)
+        if (minDimension <= 0f) return@Canvas
+
+        val center = androidx.compose.ui.geometry.Offset(size.width / 2f, size.height / 2f)
+        val innerRadius = minDimension * 0.385f
+        val baseLength = minDimension * 0.035f
+        val reactiveLength = minDimension * 0.105f
+        val strokePx = max(2f, minDimension * 0.024f)
+        val bars = 72
+        val baseline = when (state) {
+            VoiceState.Idle -> 0.04f
+            VoiceState.Thinking, VoiceState.Transcribing -> 0.11f
+            VoiceState.Error -> 0.08f
+            VoiceState.Listening, VoiceState.Speaking -> 0.08f
+        }
+        val envelope = max(displayAmplitude, baseline)
+
+        for (index in 0 until bars) {
+            val fraction = index / bars.toFloat()
+            val angle = (fraction * TWO_PI) - HALF_PI
+            val wobble = (
+                sin(angle * 3.0f + phase) * 0.48f +
+                    sin(angle * 7.0f - phase * 0.7f) * 0.28f +
+                    sin(angle * 13.0f + phase * 1.35f) * 0.16f
+                ).coerceIn(-1f, 1f)
+            val normalized = (wobble + 1f) * 0.5f
+            val lineLength = baseLength + reactiveLength * envelope * normalized
+            val startRadius = innerRadius
+            val endRadius = innerRadius + lineLength
+            val start = androidx.compose.ui.geometry.Offset(
+                x = center.x + cos(angle) * startRadius,
+                y = center.y + sin(angle) * startRadius,
+            )
+            val end = androidx.compose.ui.geometry.Offset(
+                x = center.x + cos(angle) * endRadius,
+                y = center.y + sin(angle) * endRadius,
+            )
+            val colorMix = (sin(angle + phase * 0.35f) + 1f) * 0.5f
+            drawLine(
+                color = lerp(primary, secondary, colorMix),
+                start = start,
+                end = end,
+                strokeWidth = strokePx,
+                cap = StrokeCap.Round,
+                alpha = (0.56f + normalized * 0.36f).coerceIn(0f, 1f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun rememberOverlayWaveformPhase(amplitude: Float): Float {
+    val ampRef = rememberUpdatedState(amplitude.coerceIn(0f, 1f))
+    var phase by remember { mutableStateOf(0f) }
+    LaunchedEffect(Unit) {
+        var lastNanos = 0L
+        while (true) {
+            withFrameNanos { now ->
+                if (lastNanos != 0L) {
+                    val deltaSeconds = (now - lastNanos) / 1_000_000_000f
+                    val cyclesPerSecond = 0.28f + ampRef.value * 1.55f
+                    phase = (phase + deltaSeconds * cyclesPerSecond * TWO_PI) % TWO_PI
+                }
+                lastNanos = now
+            }
+        }
+    }
+    return phase
+}
+
+private fun overlayBubbleStateLabel(state: VoiceState): String = when (state) {
+    VoiceState.Idle -> "Ready"
+    VoiceState.Listening -> "Listen"
+    VoiceState.Transcribing -> "STT"
+    VoiceState.Thinking -> "Think"
+    VoiceState.Speaking -> "Speak"
+    VoiceState.Error -> "Error"
+}
+
 @Composable
 private fun MicControlButton(
     uiState: VoiceUiState,
@@ -354,18 +622,13 @@ private fun MicControlButton(
     onStopListening: () -> Unit,
     onInterrupt: () -> Unit,
 ) {
-    val isHot = uiState.state == VoiceState.Listening || uiState.state == VoiceState.Speaking
+    val isHot = uiState.state != VoiceState.Idle && uiState.state != VoiceState.Error
     Surface(
         modifier = Modifier
             .size(44.dp)
             .clip(CircleShape)
             .clickable {
-                when (uiState.state) {
-                    VoiceState.Listening -> onStopListening()
-                    VoiceState.Speaking -> onInterrupt()
-                    VoiceState.Transcribing, VoiceState.Thinking -> Unit
-                    VoiceState.Idle, VoiceState.Error -> onStartListening()
-                }
+                dispatchMicAction(uiState, onStartListening, onStopListening, onInterrupt)
             },
         shape = CircleShape,
         color = if (isHot) Color(0xFFE53935) else MaterialTheme.colorScheme.primary,
@@ -379,6 +642,19 @@ private fun MicControlButton(
                 modifier = Modifier.size(22.dp),
             )
         }
+    }
+}
+
+private fun dispatchMicAction(
+    uiState: VoiceUiState,
+    onStartListening: () -> Unit,
+    onStopListening: () -> Unit,
+    onInterrupt: () -> Unit,
+) {
+    when (uiState.state) {
+        VoiceState.Listening -> onStopListening()
+        VoiceState.Speaking, VoiceState.Transcribing, VoiceState.Thinking -> onInterrupt()
+        VoiceState.Idle, VoiceState.Error -> onStartListening()
     }
 }
 
@@ -407,11 +683,17 @@ private fun StatusChip(
     }
 }
 
-private fun voiceProviderLabel(provider: String?, voice: String?, outputEnabled: Boolean?): String {
+private fun voiceProviderLabel(
+    provider: String?,
+    model: String?,
+    voice: String?,
+    outputEnabled: Boolean?,
+): String {
     if (outputEnabled == false) return "output off"
     val providerPart = provider?.takeIf { it.isNotBlank() } ?: "provider ..."
+    val modelPart = model?.takeIf { it.isNotBlank() }
     val voicePart = voice?.takeIf { it.isNotBlank() }
-    return if (voicePart == null) providerPart else "$providerPart / $voicePart"
+    return listOfNotNull(providerPart, modelPart, voicePart).joinToString(" / ")
 }
 
 fun openHermesFromOverlay(context: Context) {

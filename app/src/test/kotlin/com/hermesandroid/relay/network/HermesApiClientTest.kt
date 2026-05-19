@@ -116,6 +116,61 @@ class HermesApiClientTest {
         assertEquals(ChatMode.DISCONNECTED, ChatMode.valueOf("DISCONNECTED"))
     }
 
+    // --- ServerCapabilities endpoint resolution ---
+
+    @Test
+    fun serverCapabilities_preferredEndpoint_prefersSessionsStream() {
+        val capabilities = ServerCapabilities(
+            sessionsApi = true,
+            sessionsChatStream = true,
+            runs = true,
+            portable = true,
+            healthy = true,
+        )
+
+        assertEquals("sessions", capabilities.preferredChatEndpoint())
+    }
+
+    @Test
+    fun serverCapabilities_preferredEndpoint_prefersCompletionsOverRuns() {
+        val capabilities = ServerCapabilities(
+            sessionsApi = true,
+            sessionsChatStream = false,
+            runs = true,
+            portable = true,
+            healthy = true,
+        )
+
+        assertEquals("completions", capabilities.preferredChatEndpoint())
+    }
+
+    @Test
+    fun serverCapabilities_preferredEndpoint_usesRunsOnlyWhenExplicitlyStreaming() {
+        val capabilities = ServerCapabilities(
+            sessionsApi = true,
+            sessionsChatStream = false,
+            runs = true,
+            portable = false,
+            healthy = true,
+        )
+
+        assertEquals("runs", capabilities.preferredChatEndpoint())
+    }
+
+    @Test
+    fun serverCapabilities_preferredEndpoint_usesCompletionsForIssue52Shape() {
+        val capabilities = ServerCapabilities(
+            sessionsApi = true,
+            sessionsChatStream = false,
+            runs = false,
+            portable = true,
+            healthy = true,
+        )
+
+        assertEquals("completions", capabilities.preferredChatEndpoint())
+        assertEquals(ChatMode.ENHANCED_HERMES, capabilities.toChatMode())
+    }
+
     // --- URL construction patterns ---
     // These verify the string patterns used by authRequest() inside the client.
 

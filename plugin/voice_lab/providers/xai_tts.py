@@ -53,6 +53,10 @@ class XAITTSProvider(VoiceProvider):
             "Provider-neutral streaming TTS renderer for final Hermes text. "
             "This is the default target for deterministic assistant speech."
         ),
+        models=("xai-tts",),
+        voices=("eve", "ara", "rex", "sal", "leo"),
+        languages=("en",),
+        sample_rates=(24000,),
         supports_tts=True,
         supports_realtime=False,
         supports_interruption=False,

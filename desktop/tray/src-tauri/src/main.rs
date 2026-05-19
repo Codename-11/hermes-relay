@@ -1,12 +1,13 @@
+use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     env, fs,
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Mutex,
     },
     thread,
@@ -27,7 +28,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
 };
 
-const DEFAULT_RELAY_URL: &str = "ws://127.0.0.1:8767";
 const DEFAULT_SHORTCUT: &str = "Ctrl+Shift+H";
 const LOG_LIMIT: usize = 300;
 const OVERLAY_WORK_AREA_MARGIN: i32 = 8;
@@ -79,6 +79,8 @@ struct DesktopControlConfig {
     tier: String,
     #[serde(default)]
     relay_url: Option<String>,
+    #[serde(default)]
+    chat_gateway_url: Option<String>,
     #[serde(default = "default_true")]
     auto_start_daemon: bool,
     #[serde(default)]
@@ -96,6 +98,7 @@ impl Default for DesktopControlConfig {
         Self {
             tier: default_tier(),
             relay_url: None,
+            chat_gateway_url: None,
             auto_start_daemon: true,
             experimental_computer_use: false,
             emergency_shortcut: default_shortcut(),
@@ -118,8 +121,8 @@ fn default_shortcut() -> String {
 struct SessionSummary {
     url: String,
     server_version: Option<String>,
-    paired_at: Option<u64>,
-    ttl_expires_at: Option<u64>,
+    paired_at: Option<f64>,
+    ttl_expires_at: Option<f64>,
     endpoint_role: Option<String>,
     tools_consented: bool,
     computer_use_consented: bool,
@@ -135,8 +138,8 @@ struct StoredSessionsFile {
 struct StoredSessionRecord {
     token: String,
     server_version: Option<String>,
-    paired_at: Option<u64>,
-    ttl_expires_at: Option<u64>,
+    paired_at: Option<f64>,
+    ttl_expires_at: Option<f64>,
     endpoint_role: Option<String>,
     tools_consented: Option<bool>,
     computer_use_consented: Option<bool>,
@@ -148,6 +151,94 @@ struct CliStatus {
     available: bool,
     command: String,
     mode: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct ChatSetupState {
+    default_mode: String,
+    can_use_relay: bool,
+    can_use_gateway: bool,
+    relay_url: Option<String>,
+    gateway_url: Option<String>,
+    setup_hint: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct ChatTurnStatus {
+    running: bool,
+    id: u64,
+    pid: Option<u32>,
+    mode: String,
+    route: String,
+    started_at_ms: u128,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct ChatStreamLine {
+    id: u64,
+    stream: String,
+    line: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct ChatStreamExit {
+    id: u64,
+    code: Option<i32>,
+    success: bool,
+    message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct PluginCapability {
+    id: String,
+    label: String,
+    description: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct PluginDescriptor {
+    id: String,
+    name: String,
+    description: String,
+    source_url: String,
+    package_name: String,
+    binary_name: String,
+    tabs: Vec<String>,
+    commands: Vec<PluginCapability>,
+    keybindings: Vec<PluginCapability>,
+    status_cards: Vec<PluginCapability>,
+    session_actions: Vec<PluginCapability>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct PluginCommandPlan {
+    program: String,
+    args: Vec<String>,
+    display: String,
+    mode: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct PluginStatus {
+    descriptor: PluginDescriptor,
+    installed: bool,
+    available: bool,
+    version: Option<String>,
+    command: String,
+    installer: Option<PluginCommandPlan>,
+    update: Option<PluginCommandPlan>,
+    fallback: Option<PluginCommandPlan>,
+    launch: Option<PluginCommandPlan>,
+    resume: Option<PluginCommandPlan>,
+    setup_hint: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -189,11 +280,15 @@ struct DashboardState {
     config: DesktopControlConfig,
     config_path: String,
     session_store_path: String,
+    terminal_session_store_path: String,
     sessions: Vec<SessionSummary>,
     selected_url: Option<String>,
+    chat: ChatSetupState,
     daemon: DaemonStatus,
+    embedded_terminal: EmbeddedTerminalStatus,
     cli: CliStatus,
     terminal_cli: CliStatus,
+    plugins: Vec<PluginStatus>,
     task_log: Vec<TaskLogEntry>,
     pending_grants: Vec<PendingGrantRequest>,
 }
@@ -207,14 +302,65 @@ struct CommandRunResult {
     stderr: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct EmbeddedTerminalStatus {
+    running: bool,
+    id: Option<u64>,
+    pid: Option<u32>,
+    remote: Option<String>,
+    session_name: Option<String>,
+    surface_id: Option<String>,
+    surface_label: Option<String>,
+    started_at_ms: Option<u128>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct EmbeddedTerminalOutput {
+    id: u64,
+    data: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct EmbeddedTerminalExit {
+    id: u64,
+    message: String,
+}
+
 struct DaemonProcess {
     child: Child,
     remote: String,
     started_at_ms: u128,
 }
 
+struct ChatTurnProcess {
+    id: u64,
+    child: Child,
+    mode: String,
+    route: String,
+    started_at_ms: u128,
+}
+
+struct EmbeddedTerminalProcess {
+    id: u64,
+    child: Box<dyn portable_pty::Child + Send + Sync>,
+    master: Box<dyn MasterPty + Send>,
+    writer: Box<dyn Write + Send>,
+    remote: String,
+    session_name: Option<String>,
+    surface_id: String,
+    surface_label: String,
+    started_at_ms: u128,
+}
+
 struct AppState {
     daemon: Mutex<Option<DaemonProcess>>,
+    chat_turn: Mutex<Option<ChatTurnProcess>>,
+    chat_turn_next_id: AtomicU64,
+    embedded_terminal: Mutex<Option<EmbeddedTerminalProcess>>,
+    embedded_terminal_next_id: AtomicU64,
     task_log: Mutex<Vec<TaskLogEntry>>,
     paused: AtomicBool,
 }
@@ -223,6 +369,10 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             daemon: Mutex::new(None),
+            chat_turn: Mutex::new(None),
+            chat_turn_next_id: AtomicU64::new(1),
+            embedded_terminal: Mutex::new(None),
+            embedded_terminal_next_id: AtomicU64::new(1),
             task_log: Mutex::new(Vec::new()),
             paused: AtomicBool::new(false),
         }
@@ -260,6 +410,18 @@ fn config_path() -> Result<PathBuf, String> {
 
 fn sessions_path() -> Result<PathBuf, String> {
     Ok(hermes_dir()?.join("remote-sessions.json"))
+}
+
+fn terminal_sessions_path() -> Result<PathBuf, String> {
+    Ok(hermes_dir()?.join("desktop-sessions.json"))
+}
+
+fn voice_discovery_path() -> Result<PathBuf, String> {
+    Ok(hermes_dir()?.join("desktop-voice.json"))
+}
+
+fn tray_control_path() -> Result<PathBuf, String> {
+    Ok(hermes_dir()?.join("desktop-tray-control.json"))
 }
 
 fn grant_bridge_dir() -> Result<PathBuf, String> {
@@ -395,10 +557,182 @@ fn load_pending_grants() -> Vec<PendingGrantRequest> {
 }
 
 fn selected_url(config: &DesktopControlConfig, sessions: &[SessionSummary]) -> Option<String> {
-    config
+    let configured = config
         .relay_url
-        .clone()
-        .or_else(|| (sessions.len() == 1).then(|| sessions[0].url.clone()))
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(url) = configured {
+        if sessions.iter().any(|session| session.url == url) {
+            return Some(url.to_string());
+        }
+    }
+    (sessions.len() == 1).then(|| sessions[0].url.clone())
+}
+
+fn selected_or_remote(
+    remote: Option<String>,
+    config: &DesktopControlConfig,
+    sessions: &[SessionSummary],
+) -> Result<String, String> {
+    remote
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| selected_url(config, sessions))
+        .ok_or_else(|| "no paired relay selected".to_string())
+}
+
+fn trim_nonempty(value: Option<&String>) -> Option<String> {
+    value
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+        .map(ToString::to_string)
+}
+
+fn normalize_gateway_url(raw: &str) -> Result<String, String> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return Err("gateway URL is required".to_string());
+    }
+    let mut normalized = if value.contains("://") {
+        value.to_string()
+    } else {
+        format!("http://{value}")
+    };
+    while normalized.ends_with('/') {
+        normalized.pop();
+    }
+    if !(normalized.starts_with("http://") || normalized.starts_with("https://")) {
+        return Err("gateway URL must use http:// or https://".to_string());
+    }
+    Ok(normalized)
+}
+
+fn chat_setup_state(config: &DesktopControlConfig, sessions: &[SessionSummary]) -> ChatSetupState {
+    let relay = selected_url(config, sessions);
+    let gateway = trim_nonempty(config.chat_gateway_url.as_ref()).and_then(|url| {
+        normalize_gateway_url(&url)
+            .ok()
+            .or_else(|| Some(url.trim_end_matches('/').to_string()))
+    });
+    let (default_mode, setup_hint) = if relay.is_some() {
+        (
+            "relay".to_string(),
+            "Paired relay ready. Chat will reuse the saved relay session.".to_string(),
+        )
+    } else if gateway.is_some() {
+        (
+            "gateway".to_string(),
+            "Direct gateway configured. Chat will use the Hermes WebAPI stream.".to_string(),
+        )
+    } else {
+        (
+            "setup".to_string(),
+            "Pair a relay or enter a Hermes gateway/API URL to start chatting.".to_string(),
+        )
+    };
+    ChatSetupState {
+        default_mode,
+        can_use_relay: relay.is_some(),
+        can_use_gateway: gateway.is_some(),
+        relay_url: relay,
+        gateway_url: gateway,
+        setup_hint,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ChatLaunchPlan {
+    mode: String,
+    route: String,
+    args: Vec<String>,
+}
+
+fn chat_launch_plan(
+    config: &DesktopControlConfig,
+    sessions: &[SessionSummary],
+    requested_mode: &str,
+    prompt: &str,
+    gateway_url: Option<String>,
+    session_id: Option<String>,
+    fresh: bool,
+) -> Result<ChatLaunchPlan, String> {
+    let prompt = prompt.trim();
+    if prompt.is_empty() {
+        return Err("prompt is required".to_string());
+    }
+
+    let mode = if requested_mode == "gateway" {
+        "gateway"
+    } else if requested_mode == "relay" {
+        "relay"
+    } else if selected_url(config, sessions).is_some() {
+        "relay"
+    } else {
+        "gateway"
+    };
+
+    let clean_session_id = session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+
+    if mode == "relay" {
+        let route = selected_or_remote(None, config, sessions)?;
+        let mut args = vec![
+            "chat".to_string(),
+            "--json".to_string(),
+            "--non-interactive".to_string(),
+            "--quiet".to_string(),
+            "--no-tools".to_string(),
+            "--remote".to_string(),
+            route.clone(),
+        ];
+        if fresh {
+            args.push("--new".to_string());
+        }
+        if let Some(session_id) = clean_session_id {
+            args.push("--conversation".to_string());
+            args.push(session_id);
+        }
+        args.push(prompt.to_string());
+        return Ok(ChatLaunchPlan {
+            mode: "relay".to_string(),
+            route,
+            args,
+        });
+    }
+
+    let raw_gateway = gateway_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| trim_nonempty(config.chat_gateway_url.as_ref()))
+        .ok_or_else(|| "gateway URL is required".to_string())?;
+    let route = normalize_gateway_url(&raw_gateway)?;
+    let mut args = vec![
+        "chat-worker".to_string(),
+        "api".to_string(),
+        "--gateway-url".to_string(),
+        route.clone(),
+    ];
+    if fresh {
+        args.push("--new".to_string());
+    }
+    if let Some(session_id) = clean_session_id {
+        args.push("--session".to_string());
+        args.push(session_id);
+    }
+    args.push(prompt.to_string());
+    Ok(ChatLaunchPlan {
+        mode: "gateway".to_string(),
+        route,
+        args,
+    })
 }
 
 fn parse_pair_stdout_value(stdout: &str, label: &str) -> Option<String> {
@@ -578,6 +912,47 @@ fn command_available(program: &Path) -> bool {
     cmd.status().map(|s| s.success()).unwrap_or(false)
 }
 
+fn shell_command_success(program: &str, args: &[&str]) -> bool {
+    #[cfg(windows)]
+    {
+        let mut cmd = Command::new("cmd");
+        cmd.arg("/C").arg(command_line_from_parts(program, args));
+        cmd.stdout(Stdio::null()).stderr(Stdio::null());
+        return cmd.status().map(|s| s.success()).unwrap_or(false);
+    }
+    #[cfg(not(windows))]
+    {
+        let mut cmd = Command::new(program);
+        cmd.args(args);
+        cmd.stdout(Stdio::null()).stderr(Stdio::null());
+        return cmd.status().map(|s| s.success()).unwrap_or(false);
+    }
+}
+
+fn shell_command_output(program: &str, args: &[&str]) -> Option<String> {
+    #[cfg(windows)]
+    let output = Command::new("cmd")
+        .arg("/C")
+        .arg(command_line_from_parts(program, args))
+        .output()
+        .ok()?;
+    #[cfg(not(windows))]
+    let output = Command::new(program).args(args).output().ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    text.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(ToString::to_string)
+}
+
 fn terminal_arg_quote(value: &str) -> String {
     if !value.is_empty()
         && value
@@ -587,6 +962,231 @@ fn terminal_arg_quote(value: &str) -> String {
         return value.to_string();
     }
     format!("\"{}\"", value.replace('"', "\\\""))
+}
+
+fn command_line_from_parts(program: &str, args: &[&str]) -> String {
+    std::iter::once(program.to_string())
+        .chain(args.iter().map(|arg| terminal_arg_quote(arg)))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn plugin_capability(id: &str, label: &str, description: &str) -> PluginCapability {
+    PluginCapability {
+        id: id.to_string(),
+        label: label.to_string(),
+        description: description.to_string(),
+    }
+}
+
+fn builtin_plugins() -> Vec<PluginDescriptor> {
+    vec![PluginDescriptor {
+        id: "herm".to_string(),
+        name: "Herm".to_string(),
+        description: "OpenTUI dashboard for Hermes Agent, packaged as herm-tui.".to_string(),
+        source_url: "https://github.com/liftaris/herm".to_string(),
+        package_name: "herm-tui".to_string(),
+        binary_name: "herm".to_string(),
+        tabs: [
+            "chat",
+            "sessions",
+            "context",
+            "agents",
+            "analytics",
+            "skills",
+            "cron",
+            "toolsets",
+            "config",
+            "env",
+            "memory",
+            "kanban",
+        ]
+        .iter()
+        .map(|value| value.to_string())
+        .collect(),
+        commands: vec![
+            plugin_capability(
+                "install",
+                "Install",
+                "Install herm-tui globally with Bun when available, otherwise npm.",
+            ),
+            plugin_capability(
+                "update",
+                "Update",
+                "Re-run the package manager install to refresh herm-tui.",
+            ),
+            plugin_capability("launch", "Launch", "Open a fresh Herm dashboard session."),
+            plugin_capability("resume", "Resume", "Open Herm with -c."),
+        ],
+        keybindings: vec![
+            plugin_capability("palette", "Ctrl+K", "Open the Herm command palette."),
+            plugin_capability("keys", "/keys", "Show or edit Herm keybindings."),
+        ],
+        status_cards: vec![
+            plugin_capability(
+                "install",
+                "Install state",
+                "Reports whether the herm binary is on PATH.",
+            ),
+            plugin_capability(
+                "runtime",
+                "Runtime",
+                "Reports Bun/npm fallback availability.",
+            ),
+            plugin_capability(
+                "source",
+                "Source",
+                "Links the built-in plugin to liftaris/herm.",
+            ),
+        ],
+        session_actions: vec![
+            plugin_capability("fresh", "Fresh session", "Run herm without resume flags."),
+            plugin_capability("resume", "Resume last", "Run herm -c."),
+        ],
+    }]
+}
+
+fn plugin_plan(program: &str, args: &[&str], mode: &str) -> PluginCommandPlan {
+    PluginCommandPlan {
+        program: program.to_string(),
+        args: args.iter().map(|arg| arg.to_string()).collect(),
+        display: command_line_from_parts(program, args),
+        mode: mode.to_string(),
+    }
+}
+
+fn plugin_install_plan(plugin: &PluginDescriptor) -> Option<PluginCommandPlan> {
+    if shell_command_success("bun", &["--version"]) {
+        return Some(plugin_plan("bun", &["add", "-g", &plugin.package_name], "bun"));
+    }
+    if shell_command_success("npm", &["--version"]) {
+        return Some(plugin_plan(
+            "npm",
+            &["install", "-g", &plugin.package_name],
+            "npm",
+        ));
+    }
+    None
+}
+
+fn plugin_fallback_plan(plugin: &PluginDescriptor, resume: bool) -> Option<PluginCommandPlan> {
+    let mut bunx_args = vec![plugin.package_name.as_str()];
+    if resume {
+        bunx_args.push("-c");
+    }
+    if shell_command_success("bunx", &["--version"]) {
+        return Some(plugin_plan("bunx", &bunx_args, "bunx"));
+    }
+
+    let mut npx_args = vec!["--yes", plugin.package_name.as_str()];
+    if resume {
+        npx_args.push("-c");
+    }
+    if shell_command_success("npx", &["--version"]) {
+        return Some(plugin_plan("npx", &npx_args, "npx"));
+    }
+    None
+}
+
+fn plugin_launch_plan(plugin: &PluginDescriptor, resume: bool) -> Option<PluginCommandPlan> {
+    let mut args = Vec::new();
+    if resume {
+        args.push("-c");
+    }
+    if shell_command_success(&plugin.binary_name, &["--version"]) {
+        return Some(plugin_plan(&plugin.binary_name, &args, "installed"));
+    }
+    plugin_fallback_plan(plugin, resume)
+}
+
+fn plugin_status(plugin: &PluginDescriptor) -> PluginStatus {
+    let installed = shell_command_success(&plugin.binary_name, &["--version"]);
+    let installer = plugin_install_plan(plugin);
+    let launch = plugin_launch_plan(plugin, false);
+    let resume = plugin_launch_plan(plugin, true);
+    let fallback = plugin_fallback_plan(plugin, false);
+    let version = if installed {
+        shell_command_output(&plugin.binary_name, &["--version"])
+    } else {
+        None
+    };
+    let setup_hint = if installed {
+        format!("{} is available on PATH.", plugin.binary_name)
+    } else if let Some(plan) = installer.as_ref() {
+        format!("Install with {}.", plan.display)
+    } else if let Some(plan) = fallback.as_ref() {
+        format!("Use fallback launch with {}.", plan.display)
+    } else {
+        "Install Bun or npm, then install herm-tui.".to_string()
+    };
+
+    PluginStatus {
+        descriptor: plugin.clone(),
+        installed,
+        available: launch.is_some(),
+        version,
+        command: plugin.binary_name.clone(),
+        installer: installer.clone(),
+        update: installer,
+        fallback,
+        launch,
+        resume,
+        setup_hint,
+    }
+}
+
+fn plugin_statuses() -> Vec<PluginStatus> {
+    builtin_plugins()
+        .iter()
+        .map(plugin_status)
+        .collect::<Vec<_>>()
+}
+
+fn builtin_plugin(id: &str) -> Option<PluginDescriptor> {
+    builtin_plugins().into_iter().find(|plugin| plugin.id == id)
+}
+
+fn plugin_action_plan(
+    plugin: &PluginDescriptor,
+    action: &str,
+    resume: bool,
+) -> Option<PluginCommandPlan> {
+    match action {
+        "install" | "update" => plugin_install_plan(plugin),
+        "launch" => plugin_launch_plan(plugin, resume),
+        _ => None,
+    }
+}
+
+fn command_from_plugin_plan(plan: &PluginCommandPlan) -> Command {
+    #[cfg(windows)]
+    {
+        let mut cmd = Command::new("cmd");
+        cmd.arg("/C").arg(&plan.display);
+        return cmd;
+    }
+    #[cfg(not(windows))]
+    {
+        let mut cmd = Command::new(&plan.program);
+        cmd.args(&plan.args);
+        return cmd;
+    }
+}
+
+fn command_builder_from_plugin_plan(plan: &PluginCommandPlan) -> CommandBuilder {
+    #[cfg(windows)]
+    {
+        let mut cmd = CommandBuilder::new("cmd");
+        cmd.arg("/C");
+        cmd.arg(&plan.display);
+        return cmd;
+    }
+    #[cfg(not(windows))]
+    {
+        let mut cmd = CommandBuilder::new(&plan.program);
+        cmd.args(plan.args.iter());
+        return cmd;
+    }
 }
 
 #[cfg(not(windows))]
@@ -608,6 +1208,8 @@ fn terminal_path_prefix(dir: &Path) -> String {
 fn terminal_launch_command(
     remote_override: Option<&str>,
     experimental: bool,
+    session_name: Option<&str>,
+    fresh: bool,
 ) -> Result<String, String> {
     let cli = resolve_terminal_cli();
     let mut command = String::new();
@@ -623,10 +1225,16 @@ fn terminal_launch_command(
         cli_display_name().to_string()
     };
     command.push_str(&program);
-    command.push_str(" shell");
     if let Some(remote) = remote_override.filter(|value| !value.trim().is_empty()) {
         command.push_str(" --remote ");
         command.push_str(&terminal_arg_quote(remote.trim()));
+    }
+    if fresh {
+        command.push_str(" --new");
+    }
+    if let Some(name) = session_name.filter(|value| !value.trim().is_empty()) {
+        command.push_str(" --session ");
+        command.push_str(&terminal_arg_quote(name.trim()));
     }
     if experimental {
         command.push_str(" --experimental-computer-use");
@@ -795,6 +1403,221 @@ fn spawn_reader<R: std::io::Read + Send + 'static>(
     });
 }
 
+fn chat_turn_status(proc: &ChatTurnProcess) -> ChatTurnStatus {
+    ChatTurnStatus {
+        running: true,
+        id: proc.id,
+        pid: Some(proc.child.id()),
+        mode: proc.mode.clone(),
+        route: proc.route.clone(),
+        started_at_ms: proc.started_at_ms,
+    }
+}
+
+fn spawn_chat_line_reader<R: std::io::Read + Send + 'static>(
+    reader: R,
+    app: AppHandle,
+    id: u64,
+    stream: &'static str,
+) {
+    thread::spawn(move || {
+        let buf = BufReader::new(reader);
+        for line in buf.lines().map_while(Result::ok) {
+            if stream == "stderr" {
+                let state = app.state::<AppState>();
+                push_log(&state, "info", "chat_stderr", line.clone());
+            }
+            let _ = app.emit(
+                "chat://line",
+                ChatStreamLine {
+                    id,
+                    stream: stream.to_string(),
+                    line,
+                },
+            );
+        }
+    });
+}
+
+fn spawn_chat_exit_watcher(app: AppHandle, id: u64) {
+    thread::spawn(move || loop {
+        thread::sleep(Duration::from_millis(200));
+        let outcome = {
+            let state = app.state::<AppState>();
+            let mut guard = state.chat_turn.lock().expect("chat mutex poisoned");
+            let Some(proc) = guard.as_mut() else {
+                return;
+            };
+            if proc.id != id {
+                return;
+            }
+            match proc.child.try_wait() {
+                Ok(Some(status)) => {
+                    let code = status.code();
+                    let success = status.success();
+                    *guard = None;
+                    Some(ChatStreamExit {
+                        id,
+                        code,
+                        success,
+                        message: if success {
+                            "chat turn completed".to_string()
+                        } else {
+                            format!("chat turn exited with {status}")
+                        },
+                    })
+                }
+                Ok(None) => None,
+                Err(err) => {
+                    *guard = None;
+                    Some(ChatStreamExit {
+                        id,
+                        code: None,
+                        success: false,
+                        message: format!("chat turn status failed: {err}"),
+                    })
+                }
+            }
+        };
+        if let Some(exit) = outcome {
+            let state = app.state::<AppState>();
+            push_log(
+                &state,
+                if exit.success { "info" } else { "warn" },
+                "chat_exit",
+                exit.message.clone(),
+            );
+            let _ = app.emit("chat://exit", exit);
+            let _ = app.emit("dashboard://refresh", ());
+            return;
+        }
+    });
+}
+
+fn start_chat_turn_app(
+    app: &AppHandle,
+    state: &AppState,
+    mode: String,
+    prompt: String,
+    gateway_url: Option<String>,
+    api_key: Option<String>,
+    session_id: Option<String>,
+    fresh: bool,
+) -> Result<ChatTurnStatus, String> {
+    {
+        let mut guard = state.chat_turn.lock().expect("chat mutex poisoned");
+        if let Some(proc) = guard.as_mut() {
+            if proc.child.try_wait().map_err(|e| format!("chat status failed: {e}"))?.is_none() {
+                return Err("a chat turn is already running".to_string());
+            }
+            *guard = None;
+        }
+    }
+
+    let config = load_config();
+    let sessions = load_sessions();
+    let plan = chat_launch_plan(
+        &config,
+        &sessions,
+        &mode,
+        &prompt,
+        gateway_url.clone(),
+        session_id,
+        fresh,
+    )?;
+
+    if plan.mode == "gateway" {
+        let mut updated = config.clone();
+        updated.chat_gateway_url = Some(plan.route.clone());
+        save_config_file(&updated)?;
+    }
+
+    let cli = resolve_cli(Some(app));
+    let mut cmd = command_for_cli(&cli);
+    cmd.args(&plan.args);
+    if plan.mode == "gateway" {
+        if let Some(key) = api_key.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+            cmd.env("HERMES_RELAY_GATEWAY_API_KEY", key);
+        }
+    }
+    cmd.stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("failed to start chat turn: {e}"))?;
+    let id = state.chat_turn_next_id.fetch_add(1, Ordering::SeqCst);
+    if let Some(stdout) = child.stdout.take() {
+        spawn_chat_line_reader(stdout, app.clone(), id, "stdout");
+    }
+    if let Some(stderr) = child.stderr.take() {
+        spawn_chat_line_reader(stderr, app.clone(), id, "stderr");
+    }
+    let status = ChatTurnStatus {
+        running: true,
+        id,
+        pid: Some(child.id()),
+        mode: plan.mode.clone(),
+        route: plan.route.clone(),
+        started_at_ms: now_ms(),
+    };
+    {
+        let mut guard = state.chat_turn.lock().expect("chat mutex poisoned");
+        *guard = Some(ChatTurnProcess {
+            id,
+            child,
+            mode: plan.mode.clone(),
+            route: plan.route.clone(),
+            started_at_ms: status.started_at_ms,
+        });
+    }
+    push_log(
+        state,
+        "info",
+        "chat_start",
+        format!("started {} chat via {}", plan.mode, plan.route),
+    );
+    spawn_chat_exit_watcher(app.clone(), id);
+    let _ = app.emit("dashboard://refresh", ());
+    Ok(status)
+}
+
+fn stop_chat_turn_app(app: &AppHandle, state: &AppState) -> Result<Option<ChatTurnStatus>, String> {
+    let stopped = {
+        let mut guard = state.chat_turn.lock().expect("chat mutex poisoned");
+        guard.take()
+    };
+    let Some(mut proc) = stopped else {
+        return Ok(None);
+    };
+    let status = chat_turn_status(&proc);
+    let _ = proc.child.kill();
+    let _ = proc.child.wait();
+    push_log(
+        state,
+        "warn",
+        "chat_stop",
+        format!("stopped {} chat via {}", proc.mode, proc.route),
+    );
+    let _ = app.emit(
+        "chat://exit",
+        ChatStreamExit {
+            id: proc.id,
+            code: None,
+            success: false,
+            message: "chat turn stopped".to_string(),
+        },
+    );
+    let _ = app.emit("dashboard://refresh", ());
+    Ok(Some(status))
+}
+
 fn start_daemon_app(
     app: &AppHandle,
     remote: String,
@@ -894,6 +1717,337 @@ fn stop_daemon_app(
     show_overlay(app, load_config().overlay.visible);
     let _ = app.emit("dashboard://refresh", ());
     Ok(status)
+}
+
+fn terminal_status_stopped() -> EmbeddedTerminalStatus {
+    EmbeddedTerminalStatus {
+        running: false,
+        id: None,
+        pid: None,
+        remote: None,
+        session_name: None,
+        surface_id: None,
+        surface_label: None,
+        started_at_ms: None,
+    }
+}
+
+fn pty_size(cols: u16, rows: u16) -> PtySize {
+    PtySize {
+        rows: rows.clamp(8, 80),
+        cols: cols.clamp(40, 240),
+        pixel_width: 0,
+        pixel_height: 0,
+    }
+}
+
+fn embedded_terminal_status_inner(state: &AppState) -> EmbeddedTerminalStatus {
+    let mut guard = state
+        .embedded_terminal
+        .lock()
+        .expect("embedded terminal mutex poisoned");
+    if let Some(proc) = guard.as_mut() {
+        match proc.child.try_wait() {
+            Ok(Some(status)) => {
+                let id = proc.id;
+                push_log(
+                    state,
+                    if status.success() { "info" } else { "warn" },
+                    "embedded_terminal_exit",
+                    format!("embedded terminal {id} exited with {status}"),
+                );
+                *guard = None;
+            }
+            Ok(None) => {
+                return EmbeddedTerminalStatus {
+                    running: true,
+                    id: Some(proc.id),
+                    pid: proc.child.process_id(),
+                    remote: Some(proc.remote.clone()),
+                    session_name: proc.session_name.clone(),
+                    surface_id: Some(proc.surface_id.clone()),
+                    surface_label: Some(proc.surface_label.clone()),
+                    started_at_ms: Some(proc.started_at_ms),
+                };
+            }
+            Err(err) => {
+                push_log(
+                    state,
+                    "warn",
+                    "embedded_terminal_status",
+                    format!("embedded terminal poll failed: {err}"),
+                );
+                *guard = None;
+            }
+        }
+    }
+    terminal_status_stopped()
+}
+
+fn spawn_embedded_terminal_reader(mut reader: Box<dyn Read + Send>, app: AppHandle, id: u64) {
+    thread::spawn(move || {
+        let mut buf = [0_u8; 8192];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let data = String::from_utf8_lossy(&buf[..n]).to_string();
+                    let _ = app.emit("terminal://output", EmbeddedTerminalOutput { id, data });
+                }
+                Err(err) => {
+                    let _ = app.emit(
+                        "terminal://exit",
+                        EmbeddedTerminalExit {
+                            id,
+                            message: format!("read failed: {err}"),
+                        },
+                    );
+                    return;
+                }
+            }
+        }
+        let _ = app.emit(
+            "terminal://exit",
+            EmbeddedTerminalExit {
+                id,
+                message: "terminal stream ended".to_string(),
+            },
+        );
+        let _ = app.emit("dashboard://refresh", ());
+    });
+}
+
+fn start_embedded_terminal_app(
+    app: &AppHandle,
+    remote: String,
+    session_name: Option<String>,
+    fresh: bool,
+    cols: u16,
+    rows: u16,
+) -> Result<EmbeddedTerminalStatus, String> {
+    let state = app.state::<AppState>();
+    let existing = embedded_terminal_status_inner(&state);
+    if existing.running {
+        return Ok(existing);
+    }
+
+    let cli = resolve_cli(Some(app));
+    if cli.mode == "path" && !command_available(&cli.program) {
+        return Err("hermes-relay CLI is not available for embedded terminal launch".to_string());
+    }
+
+    let pty_system = native_pty_system();
+    let pair = pty_system
+        .openpty(pty_size(cols, rows))
+        .map_err(|e| format!("open embedded terminal pty failed: {e}"))?;
+    let reader = pair
+        .master
+        .try_clone_reader()
+        .map_err(|e| format!("open embedded terminal reader failed: {e}"))?;
+    let writer = pair
+        .master
+        .take_writer()
+        .map_err(|e| format!("open embedded terminal writer failed: {e}"))?;
+
+    let mut cmd = CommandBuilder::new(&cli.program);
+    cmd.args(cli.prefix_args.iter());
+    cmd.arg("--remote");
+    cmd.arg(&remote);
+    if fresh {
+        cmd.arg("--new");
+    }
+    if let Some(name) = session_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        cmd.arg("--session");
+        cmd.arg(name);
+    }
+    if load_config().experimental_computer_use {
+        cmd.arg("--experimental-computer-use");
+    }
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+    cmd.env("HERMES_RELAY_EMBEDDED_TERMINAL", "1");
+
+    let child = pair
+        .slave
+        .spawn_command(cmd)
+        .map_err(|e| format!("start embedded terminal failed: {e}"))?;
+    drop(pair.slave);
+
+    let id = state
+        .embedded_terminal_next_id
+        .fetch_add(1, Ordering::SeqCst);
+    let pid = child.process_id();
+    let started_at_ms = now_ms();
+    let clean_session = session_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+
+    {
+        let mut guard = state
+            .embedded_terminal
+            .lock()
+            .expect("embedded terminal mutex poisoned");
+        *guard = Some(EmbeddedTerminalProcess {
+            id,
+            child,
+            master: pair.master,
+            writer,
+            remote: remote.clone(),
+            session_name: clean_session.clone(),
+            surface_id: "relay-tui".to_string(),
+            surface_label: "Relay TUI".to_string(),
+            started_at_ms,
+        });
+    }
+    spawn_embedded_terminal_reader(reader, app.clone(), id);
+    push_log(
+        &state,
+        "info",
+        "embedded_terminal_start",
+        format!("started embedded TUI id={id} pid={pid:?} remote={remote}"),
+    );
+    let _ = app.emit("dashboard://refresh", ());
+    Ok(EmbeddedTerminalStatus {
+        running: true,
+        id: Some(id),
+        pid,
+        remote: Some(remote),
+        session_name: clean_session,
+        surface_id: Some("relay-tui".to_string()),
+        surface_label: Some("Relay TUI".to_string()),
+        started_at_ms: Some(started_at_ms),
+    })
+}
+
+fn start_plugin_embedded_terminal_app(
+    app: &AppHandle,
+    plugin: PluginDescriptor,
+    resume: bool,
+    cols: u16,
+    rows: u16,
+) -> Result<EmbeddedTerminalStatus, String> {
+    let state = app.state::<AppState>();
+    let existing = embedded_terminal_status_inner(&state);
+    if existing.running {
+        return Ok(existing);
+    }
+
+    let plan = plugin_action_plan(&plugin, "launch", resume)
+        .ok_or_else(|| format!("{} is not installed and no fallback launcher is available", plugin.name))?;
+
+    let pty_system = native_pty_system();
+    let pair = pty_system
+        .openpty(pty_size(cols, rows))
+        .map_err(|e| format!("open embedded plugin terminal pty failed: {e}"))?;
+    let reader = pair
+        .master
+        .try_clone_reader()
+        .map_err(|e| format!("open embedded plugin terminal reader failed: {e}"))?;
+    let writer = pair
+        .master
+        .take_writer()
+        .map_err(|e| format!("open embedded plugin terminal writer failed: {e}"))?;
+
+    let mut cmd = command_builder_from_plugin_plan(&plan);
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+    cmd.env("HERMES_RELAY_EMBEDDED_TERMINAL", "1");
+    cmd.env("HERMES_RELAY_SURFACE_PLUGIN", &plugin.id);
+
+    let child = pair
+        .slave
+        .spawn_command(cmd)
+        .map_err(|e| format!("start embedded plugin terminal failed: {e}"))?;
+    drop(pair.slave);
+
+    let id = state
+        .embedded_terminal_next_id
+        .fetch_add(1, Ordering::SeqCst);
+    let pid = child.process_id();
+    let started_at_ms = now_ms();
+    let surface_id = format!("plugin:{}", plugin.id);
+    let surface_label = plugin.name.clone();
+
+    {
+        let mut guard = state
+            .embedded_terminal
+            .lock()
+            .expect("embedded terminal mutex poisoned");
+        *guard = Some(EmbeddedTerminalProcess {
+            id,
+            child,
+            master: pair.master,
+            writer,
+            remote: surface_id.clone(),
+            session_name: None,
+            surface_id: surface_id.clone(),
+            surface_label: surface_label.clone(),
+            started_at_ms,
+        });
+    }
+    spawn_embedded_terminal_reader(reader, app.clone(), id);
+    push_log(
+        &state,
+        "info",
+        "plugin_embedded_start",
+        format!(
+            "started embedded plugin {} id={id} pid={pid:?} via {}",
+            plugin.id, plan.display
+        ),
+    );
+    let _ = app.emit("dashboard://refresh", ());
+    Ok(EmbeddedTerminalStatus {
+        running: true,
+        id: Some(id),
+        pid,
+        remote: Some(surface_id),
+        session_name: None,
+        surface_id: Some(format!("plugin:{}", plugin.id)),
+        surface_label: Some(surface_label),
+        started_at_ms: Some(started_at_ms),
+    })
+}
+
+fn stop_embedded_terminal_app(
+    app: &AppHandle,
+    reason: &str,
+) -> Result<EmbeddedTerminalStatus, String> {
+    let state = app.state::<AppState>();
+    let stopped = {
+        let mut guard = state
+            .embedded_terminal
+            .lock()
+            .expect("embedded terminal mutex poisoned");
+        guard.take()
+    };
+    if let Some(mut proc) = stopped {
+        let id = proc.id;
+        let pid = proc.child.process_id();
+        let _ = proc.child.kill();
+        let _ = app.emit(
+            "terminal://exit",
+            EmbeddedTerminalExit {
+                id,
+                message: format!("terminal stopped ({reason})"),
+            },
+        );
+        push_log(
+            &state,
+            "warn",
+            reason,
+            format!("stopped embedded terminal id={id} pid={pid:?}"),
+        );
+    } else {
+        push_log(&state, "info", reason, "no embedded terminal was running");
+    }
+    let _ = app.emit("dashboard://refresh", ());
+    Ok(terminal_status_stopped())
 }
 
 fn show_main(app: &AppHandle, route: Option<&str>) {
@@ -1036,19 +2190,26 @@ fn get_dashboard_state(app: AppHandle, state: State<AppState>) -> Result<Dashboa
     let config = load_config();
     let sessions = load_sessions();
     let selected = selected_url(&config, &sessions);
+    let chat = chat_setup_state(&config, &sessions);
     let config_path = config_path()?.to_string_lossy().to_string();
     let session_store_path = sessions_path()?.to_string_lossy().to_string();
+    let terminal_session_store_path = terminal_sessions_path()?.to_string_lossy().to_string();
     let daemon = daemon_status_inner(&state);
+    let embedded_terminal = embedded_terminal_status_inner(&state);
     let task_log = state.task_log.lock().expect("task log poisoned").clone();
     Ok(DashboardState {
         config,
         config_path,
         session_store_path,
+        terminal_session_store_path,
         sessions,
         selected_url: selected,
+        chat,
         daemon,
+        embedded_terminal,
         cli: cli_status(Some(&app)),
         terminal_cli: terminal_cli_status(),
+        plugins: plugin_statuses(),
         task_log,
         pending_grants: load_pending_grants(),
     })
@@ -1073,12 +2234,38 @@ fn save_desktop_config(
 }
 
 #[tauri::command]
+fn start_chat_turn(
+    app: AppHandle,
+    state: State<AppState>,
+    mode: String,
+    prompt: String,
+    gateway_url: Option<String>,
+    api_key: Option<String>,
+    session_id: Option<String>,
+    fresh: bool,
+) -> Result<ChatTurnStatus, String> {
+    start_chat_turn_app(
+        &app,
+        &state,
+        mode,
+        prompt,
+        gateway_url,
+        api_key,
+        session_id,
+        fresh,
+    )
+}
+
+#[tauri::command]
+fn stop_chat_turn(app: AppHandle, state: State<AppState>) -> Result<Option<ChatTurnStatus>, String> {
+    stop_chat_turn_app(&app, &state)
+}
+
+#[tauri::command]
 fn start_daemon(app: AppHandle, remote: Option<String>) -> Result<DaemonStatus, String> {
     let config = load_config();
     let sessions = load_sessions();
-    let url = remote
-        .or_else(|| selected_url(&config, &sessions))
-        .unwrap_or_else(|| DEFAULT_RELAY_URL.to_string());
+    let url = selected_or_remote(remote, &config, &sessions)?;
     start_daemon_app(&app, url, config.experimental_computer_use)
 }
 
@@ -1175,9 +2362,7 @@ fn set_desktop_tool_consent(
 ) -> Result<(), String> {
     let config = load_config();
     let sessions = load_sessions();
-    let url = remote
-        .or_else(|| selected_url(&config, &sessions))
-        .ok_or_else(|| "no paired relay selected".to_string())?;
+    let url = selected_or_remote(remote, &config, &sessions)?;
     set_tools_consent(&url, consented)?;
     if !consented {
         let _ = stop_daemon_app(&app, "tool_consent_revoke", true);
@@ -1204,9 +2389,7 @@ fn list_devices(
 ) -> Result<CommandRunResult, String> {
     let config = load_config();
     let sessions = load_sessions();
-    let url = remote
-        .or_else(|| selected_url(&config, &sessions))
-        .ok_or_else(|| "no paired relay selected".to_string())?;
+    let url = selected_or_remote(remote, &config, &sessions)?;
     let cli = resolve_cli(Some(&app));
     let mut cmd = command_for_cli(&cli);
     cmd.arg("devices")
@@ -1237,9 +2420,7 @@ fn revoke_device(
 ) -> Result<CommandRunResult, String> {
     let config = load_config();
     let sessions = load_sessions();
-    let url = remote
-        .or_else(|| selected_url(&config, &sessions))
-        .ok_or_else(|| "no paired relay selected".to_string())?;
+    let url = selected_or_remote(remote, &config, &sessions)?;
     let cli = resolve_cli(Some(&app));
     let mut cmd = command_for_cli(&cli);
     cmd.arg("devices")
@@ -1272,6 +2453,31 @@ fn clear_task_log(app: AppHandle, state: State<AppState>) -> Result<(), String> 
     Ok(())
 }
 
+/// Read `~/.hermes/desktop-voice.json` and return the voice URL, if any.
+///
+/// The discovery file is written by `hermes-relay daemon` (or `voice mode`)
+/// when a local voice server is running. Returns `Ok(None)` for the missing /
+/// stale / malformed cases so the tray UI can show its "daemon not running"
+/// hint instead of an error toast — the file genuinely going missing when the
+/// daemon is paused is the common case, not an error.
+#[tauri::command]
+fn get_voice_url() -> Result<Option<String>, String> {
+    let path = match voice_discovery_path() {
+        Ok(p) => p,
+        Err(_) => return Ok(None),
+    };
+    let raw = match fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(_) => return Ok(None),
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let url = parsed.get("url").and_then(|v| v.as_str()).map(|s| s.to_string());
+    Ok(url.filter(|u| u.starts_with("http://127.0.0.1") || u.starts_with("https://127.0.0.1")))
+}
+
 #[tauri::command]
 fn run_doctor(app: AppHandle, state: State<AppState>) -> Result<CommandRunResult, String> {
     let cli = resolve_cli(Some(&app));
@@ -1289,6 +2495,37 @@ fn run_doctor(app: AppHandle, state: State<AppState>) -> Result<CommandRunResult
         },
     );
     let _ = app.emit("dashboard://refresh", ());
+    Ok(result)
+}
+
+#[tauri::command]
+fn list_terminal_sessions(
+    app: AppHandle,
+    state: State<AppState>,
+    remote: Option<String>,
+) -> Result<CommandRunResult, String> {
+    let config = load_config();
+    let sessions = load_sessions();
+    let url = selected_or_remote(remote, &config, &sessions)?;
+    let cli = resolve_cli(Some(&app));
+    let mut cmd = command_for_cli(&cli);
+    cmd.arg("sessions")
+        .arg("list")
+        .arg("--json")
+        .arg("--non-interactive")
+        .arg("--remote")
+        .arg(&url);
+    let result = command_output(cmd)?;
+    push_log(
+        &state,
+        if result.ok { "info" } else { "warn" },
+        "sessions_list",
+        if result.ok {
+            format!("loaded TUI sessions for {url}")
+        } else {
+            format!("TUI session list failed: {}", result.stderr.trim())
+        },
+    );
     Ok(result)
 }
 
@@ -1317,8 +2554,12 @@ fn open_tui_terminal(
         return Err("Pair a relay first, or pass a --remote override from the CLI.".to_string());
     }
 
-    let command_line =
-        terminal_launch_command(remote_override.as_deref(), config.experimental_computer_use)?;
+    let command_line = terminal_launch_command(
+        remote_override.as_deref(),
+        config.experimental_computer_use,
+        None,
+        false,
+    )?;
     launch_terminal(&command_line)?;
     push_log(
         &state,
@@ -1331,6 +2572,240 @@ fn open_tui_terminal(
     );
     let _ = app.emit("dashboard://refresh", ());
     Ok(())
+}
+
+#[tauri::command]
+fn open_tui_session(
+    app: AppHandle,
+    state: State<AppState>,
+    remote: Option<String>,
+    session_name: Option<String>,
+    fresh: bool,
+) -> Result<(), String> {
+    let terminal_cli = terminal_cli_status();
+    if !terminal_cli.available {
+        return Err(
+            "CLI shim is not installed yet. Install the hermes-relay CLI shim, then open the TUI."
+                .to_string(),
+        );
+    }
+
+    let config = load_config();
+    let sessions = load_sessions();
+    let remote_override = remote
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    if remote_override.is_none() && selected_url(&config, &sessions).is_none() {
+        return Err("Pair a relay first, or pass a --remote override from the CLI.".to_string());
+    }
+    let session_name = session_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    let command_line = terminal_launch_command(
+        remote_override.as_deref(),
+        config.experimental_computer_use,
+        session_name,
+        fresh,
+    )?;
+    launch_terminal(&command_line)?;
+    push_log(
+        &state,
+        "info",
+        if fresh { "tui_new" } else { "tui_resume" },
+        match session_name {
+            Some(name) => format!("opened terminal TUI session {name}"),
+            None if fresh => "opened new terminal TUI session".to_string(),
+            None => "opened terminal TUI using saved active relay".to_string(),
+        },
+    );
+    let _ = app.emit("dashboard://refresh", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn embedded_terminal_status(state: State<AppState>) -> Result<EmbeddedTerminalStatus, String> {
+    Ok(embedded_terminal_status_inner(&state))
+}
+
+#[tauri::command]
+fn start_embedded_terminal(
+    app: AppHandle,
+    remote: Option<String>,
+    session_name: Option<String>,
+    fresh: bool,
+    cols: u16,
+    rows: u16,
+) -> Result<EmbeddedTerminalStatus, String> {
+    let config = load_config();
+    let sessions = load_sessions();
+    let url = selected_or_remote(remote, &config, &sessions)?;
+    start_embedded_terminal_app(&app, url, session_name, fresh, cols, rows)
+}
+
+#[tauri::command]
+fn write_embedded_terminal(state: State<AppState>, data: String) -> Result<(), String> {
+    let mut guard = state
+        .embedded_terminal
+        .lock()
+        .expect("embedded terminal mutex poisoned");
+    let proc = guard
+        .as_mut()
+        .ok_or_else(|| "no embedded terminal is running".to_string())?;
+    proc.writer
+        .write_all(data.as_bytes())
+        .map_err(|e| format!("write embedded terminal failed: {e}"))?;
+    proc.writer
+        .flush()
+        .map_err(|e| format!("flush embedded terminal failed: {e}"))
+}
+
+#[tauri::command]
+fn resize_embedded_terminal(state: State<AppState>, cols: u16, rows: u16) -> Result<(), String> {
+    let guard = state
+        .embedded_terminal
+        .lock()
+        .expect("embedded terminal mutex poisoned");
+    let proc = guard
+        .as_ref()
+        .ok_or_else(|| "no embedded terminal is running".to_string())?;
+    proc.master
+        .resize(pty_size(cols, rows))
+        .map_err(|e| format!("resize embedded terminal failed: {e}"))
+}
+
+#[tauri::command]
+fn stop_embedded_terminal(app: AppHandle) -> Result<EmbeddedTerminalStatus, String> {
+    stop_embedded_terminal_app(&app, "embedded_terminal_stop")
+}
+
+#[tauri::command]
+fn install_plugin(
+    app: AppHandle,
+    state: State<AppState>,
+    plugin_id: String,
+) -> Result<CommandRunResult, String> {
+    let plugin = builtin_plugin(plugin_id.trim())
+        .ok_or_else(|| format!("unknown plugin: {}", plugin_id.trim()))?;
+    let plan = plugin_action_plan(&plugin, "install", false)
+        .ok_or_else(|| "Install Bun or npm, then retry plugin install.".to_string())?;
+    let result = command_output(command_from_plugin_plan(&plan))?;
+    push_log(
+        &state,
+        if result.ok { "info" } else { "error" },
+        "plugin_install",
+        if result.ok {
+            format!("installed plugin {} via {}", plugin.id, plan.display)
+        } else {
+            format!("plugin {} install failed via {}", plugin.id, plan.display)
+        },
+    );
+    let _ = app.emit("dashboard://refresh", ());
+    Ok(result)
+}
+
+#[tauri::command]
+fn update_plugin(
+    app: AppHandle,
+    state: State<AppState>,
+    plugin_id: String,
+) -> Result<CommandRunResult, String> {
+    let plugin = builtin_plugin(plugin_id.trim())
+        .ok_or_else(|| format!("unknown plugin: {}", plugin_id.trim()))?;
+    let plan = plugin_action_plan(&plugin, "update", false)
+        .ok_or_else(|| "Install Bun or npm, then retry plugin update.".to_string())?;
+    let result = command_output(command_from_plugin_plan(&plan))?;
+    push_log(
+        &state,
+        if result.ok { "info" } else { "error" },
+        "plugin_update",
+        if result.ok {
+            format!("updated plugin {} via {}", plugin.id, plan.display)
+        } else {
+            format!("plugin {} update failed via {}", plugin.id, plan.display)
+        },
+    );
+    let _ = app.emit("dashboard://refresh", ());
+    Ok(result)
+}
+
+#[tauri::command]
+fn launch_plugin_terminal(
+    app: AppHandle,
+    state: State<AppState>,
+    plugin_id: String,
+    resume: bool,
+) -> Result<(), String> {
+    let plugin = builtin_plugin(plugin_id.trim())
+        .ok_or_else(|| format!("unknown plugin: {}", plugin_id.trim()))?;
+    let plan = plugin_action_plan(&plugin, "launch", resume).ok_or_else(|| {
+        format!(
+            "{} is not installed and no bunx/npx fallback is available.",
+            plugin.name
+        )
+    })?;
+    launch_terminal(&plan.display)?;
+    push_log(
+        &state,
+        "info",
+        "plugin_launch",
+        format!("opened plugin {} via {}", plugin.id, plan.display),
+    );
+    let _ = app.emit("dashboard://refresh", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn start_plugin_embedded_terminal(
+    app: AppHandle,
+    plugin_id: String,
+    resume: bool,
+    cols: u16,
+    rows: u16,
+) -> Result<EmbeddedTerminalStatus, String> {
+    let plugin = builtin_plugin(plugin_id.trim())
+        .ok_or_else(|| format!("unknown plugin: {}", plugin_id.trim()))?;
+    start_plugin_embedded_terminal_app(&app, plugin, resume, cols, rows)
+}
+
+#[tauri::command]
+fn kill_tui_session(
+    app: AppHandle,
+    state: State<AppState>,
+    remote: Option<String>,
+    session_name: String,
+) -> Result<CommandRunResult, String> {
+    let name = session_name.trim().to_string();
+    if name.is_empty() {
+        return Err("session name is required".to_string());
+    }
+    let config = load_config();
+    let sessions = load_sessions();
+    let url = selected_or_remote(remote, &config, &sessions)?;
+    let cli = resolve_cli(Some(&app));
+    let mut cmd = command_for_cli(&cli);
+    cmd.arg("sessions")
+        .arg("kill")
+        .arg(&name)
+        .arg("--non-interactive")
+        .arg("--remote")
+        .arg(&url);
+    let result = command_output(cmd)?;
+    push_log(
+        &state,
+        if result.ok { "warn" } else { "error" },
+        "sessions_kill",
+        if result.ok {
+            format!("killed TUI session {name}")
+        } else {
+            format!("TUI session kill failed: {}", result.stderr.trim())
+        },
+    );
+    let _ = app.emit("dashboard://refresh", ());
+    Ok(result)
 }
 
 #[tauri::command]
@@ -1379,6 +2854,184 @@ fn resolve_grant(
     Ok(())
 }
 
+/// Tiny localhost HTTP listener that lets sibling processes (the CLI in
+/// particular) bring the tray window forward and switch to a named route.
+///
+/// Wire shape:
+///
+///   POST http://127.0.0.1:<port>/voice/show
+///        Content-Type: application/json
+///        Body: {"token": "<32-hex>"}
+///        → 200 {"ok":true}  on success
+///        → 401              on token mismatch
+///        → 404              on unknown path
+///
+/// On bind, writes ~/.hermes/desktop-tray-control.json with `{port, token, pid}`
+/// (mode 0600) so the CLI can discover the address. Loopback-only +
+/// token-gated; not reachable off-box.
+fn start_tray_ipc_server(app: AppHandle) {
+    use std::net::TcpListener;
+
+    // Bind on a free port; surface the chosen port for the control file.
+    let listener = match TcpListener::bind("127.0.0.1:0") {
+        Ok(l) => l,
+        Err(err) => {
+            eprintln!("tray IPC bind failed: {err}");
+            return;
+        }
+    };
+    let port = match listener.local_addr() {
+        Ok(addr) => addr.port(),
+        Err(err) => {
+            eprintln!("tray IPC local_addr failed: {err}");
+            return;
+        }
+    };
+
+    // 32-hex char token. Reused for every request — written once to a
+    // 0600 file so other local users can't read it.
+    let token: String = {
+        let mut bytes = [0u8; 16];
+        // SystemTime + pid + millis gives us a non-secret-quality token,
+        // but mixed with a process-unique entropy source is good enough
+        // for "no other local user can guess this". For higher-stakes
+        // pinning we'd reach for `getrandom`, but the file mode is the
+        // primary gate here.
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let pid = std::process::id() as u128;
+        let seed = nanos ^ (pid.rotate_left(64));
+        for (i, b) in bytes.iter_mut().enumerate() {
+            *b = ((seed >> (i * 8)) & 0xff) as u8 ^ ((nanos >> (i * 4)) & 0xff) as u8;
+        }
+        bytes.iter().map(|b| format!("{:02x}", b)).collect()
+    };
+
+    if let Err(err) = write_tray_control_file(port, &token) {
+        eprintln!("tray IPC control file write failed: {err}");
+        return;
+    }
+
+    let expected_token = token.clone();
+    thread::spawn(move || {
+        for incoming in listener.incoming() {
+            let stream = match incoming {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let app = app.clone();
+            let token = expected_token.clone();
+            thread::spawn(move || handle_tray_ipc_connection(stream, app, token));
+        }
+    });
+}
+
+fn write_tray_control_file(port: u16, token: &str) -> Result<(), String> {
+    let path = tray_control_path()?;
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let payload = serde_json::json!({
+        "port": port,
+        "token": token,
+        "pid": std::process::id(),
+        "started_at": SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    });
+    let body = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
+    fs::write(&path, body).map_err(|e| e.to_string())?;
+    // POSIX 0600 — best-effort on Windows where ACLs aren't a chmod call.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
+}
+
+fn handle_tray_ipc_connection(mut stream: std::net::TcpStream, app: AppHandle, expected_token: String) {
+    // Tight bounds — this surface only ever sees small JSON bodies, and we
+    // never trust the client. Drop anything that doesn't fit the shape fast.
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+
+    let mut buf = Vec::with_capacity(2048);
+    let mut chunk = [0u8; 1024];
+    loop {
+        let n = match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(_) => return,
+        };
+        buf.extend_from_slice(&chunk[..n]);
+        if buf.windows(4).any(|w| w == b"\r\n\r\n") || buf.len() > 64 * 1024 {
+            break;
+        }
+    }
+
+    // Split headers from body.
+    let header_end = match buf.windows(4).position(|w| w == b"\r\n\r\n") {
+        Some(p) => p,
+        None => {
+            let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n");
+            return;
+        }
+    };
+    let head = String::from_utf8_lossy(&buf[..header_end]).to_string();
+    let body_start = header_end + 4;
+
+    let mut lines = head.split("\r\n");
+    let request_line = lines.next().unwrap_or("");
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next().unwrap_or("");
+    let path = parts.next().unwrap_or("");
+
+    let mut content_length: usize = 0;
+    for h in lines {
+        if let Some(rest) = h.strip_prefix("Content-Length:").or_else(|| h.strip_prefix("content-length:")) {
+            content_length = rest.trim().parse().unwrap_or(0);
+        }
+    }
+
+    // Read any remaining body bytes that didn't arrive in the first chunk.
+    while buf.len() - body_start < content_length && buf.len() < 64 * 1024 {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+            Err(_) => break,
+        }
+    }
+    let body = &buf[body_start..(body_start + content_length).min(buf.len())];
+
+    // Route dispatch.
+    let (status, body_out) = match (method, path) {
+        ("POST", "/voice/show") => {
+            let parsed: serde_json::Value = serde_json::from_slice(body).unwrap_or(serde_json::Value::Null);
+            let token = parsed.get("token").and_then(|v| v.as_str()).unwrap_or("");
+            if token != expected_token {
+                ("401 Unauthorized", r#"{"ok":false,"error":"token mismatch"}"#.to_string())
+            } else {
+                show_main(&app, Some("voice"));
+                ("200 OK", r#"{"ok":true}"#.to_string())
+            }
+        }
+        ("GET", "/ping") => ("200 OK", r#"{"ok":true,"service":"hermes-relay-tray-ipc"}"#.to_string()),
+        _ => ("404 Not Found", r#"{"ok":false,"error":"unknown route"}"#.to_string()),
+    };
+
+    let response = format!(
+        "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        status,
+        body_out.len(),
+        body_out
+    );
+    let _ = stream.write_all(response.as_bytes());
+}
+
 fn start_grant_watcher(app: AppHandle) {
     thread::spawn(move || {
         let mut last_ids = String::new();
@@ -1413,6 +3066,7 @@ fn start_grant_watcher(app: AppHandle) {
 fn configure_tray(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open Hermes Relay", true, None::<&str>)?;
     let pair = MenuItem::with_id(app, "pair", "Pair new relay", true, None::<&str>)?;
+    let sessions = MenuItem::with_id(app, "sessions", "TUI Sessions", true, None::<&str>)?;
     let devices = MenuItem::with_id(app, "devices", "Devices", true, None::<&str>)?;
     let grants = MenuItem::with_id(app, "grants", "Grant Requests", true, None::<&str>)?;
     let log = MenuItem::with_id(app, "log", "Task Log", true, None::<&str>)?;
@@ -1423,7 +3077,7 @@ fn configure_tray(app: &AppHandle) -> tauri::Result<()> {
     let menu = Menu::with_items(
         app,
         &[
-            &open, &pair, &devices, &grants, &log, &pause, &emergency, &settings, &quit,
+            &open, &pair, &sessions, &devices, &grants, &log, &pause, &emergency, &settings, &quit,
         ],
     )?;
     let tray_icon = Image::from_bytes(include_bytes!("../icons/icon-256.png"))?;
@@ -1436,6 +3090,7 @@ fn configure_tray(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => show_main(app, Some("overview")),
             "pair" => show_main(app, Some("pair")),
+            "sessions" => show_main(app, Some("sessions")),
             "devices" => show_main(app, Some("devices")),
             "grants" => show_main(app, Some("grants")),
             "log" => show_main(app, Some("log")),
@@ -1492,6 +3147,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_dashboard_state,
             save_desktop_config,
+            start_chat_turn,
+            stop_chat_turn,
             start_daemon,
             stop_daemon,
             emergency_stop,
@@ -1500,8 +3157,21 @@ pub fn run() {
             list_devices,
             revoke_device,
             clear_task_log,
+            get_voice_url,
             run_doctor,
+            list_terminal_sessions,
             open_tui_terminal,
+            open_tui_session,
+            embedded_terminal_status,
+            start_embedded_terminal,
+            write_embedded_terminal,
+            resize_embedded_terminal,
+            stop_embedded_terminal,
+            install_plugin,
+            update_plugin,
+            launch_plugin_terminal,
+            start_plugin_embedded_terminal,
+            kill_tui_session,
             resolve_grant
         ])
         .setup(|app| {
@@ -1509,6 +3179,7 @@ pub fn run() {
             configure_tray(&handle)?;
             configure_shortcut(&handle)?;
             start_grant_watcher(handle.clone());
+            start_tray_ipc_server(handle.clone());
             let config = load_config();
             show_overlay(&handle, config.overlay.visible);
             let sessions = load_sessions();
@@ -1553,10 +3224,62 @@ mod tests {
     }
 
     #[test]
-    fn selected_url_prefers_config_then_single_session() {
+    fn selected_url_requires_configured_relay_to_be_paired() {
+        let mut config = DesktopControlConfig::default();
+        let one = SessionSummary {
+            url: "ws://one".to_string(),
+            server_version: None,
+            paired_at: None,
+            ttl_expires_at: None,
+            endpoint_role: None,
+            tools_consented: true,
+            computer_use_consented: false,
+            token_redacted: "(redacted)".to_string(),
+        };
+        let configured = SessionSummary {
+            url: "ws://configured".to_string(),
+            server_version: None,
+            paired_at: None,
+            ttl_expires_at: None,
+            endpoint_role: None,
+            tools_consented: true,
+            computer_use_consented: false,
+            token_redacted: "(redacted)".to_string(),
+        };
+        assert_eq!(
+            selected_url(&config, &[one.clone()]),
+            Some("ws://one".to_string())
+        );
+        config.relay_url = Some("ws://configured".to_string());
+        assert_eq!(
+            selected_url(&config, &[one.clone()]),
+            Some("ws://one".to_string())
+        );
+        assert_eq!(
+            selected_url(&config, &[one.clone(), configured.clone()]),
+            Some("ws://configured".to_string())
+        );
+        assert_eq!(selected_url(&config, &[]), None);
+        assert_eq!(
+            selected_url(
+                &config,
+                &[
+                    one.clone(),
+                    SessionSummary {
+                        url: "ws://two".to_string(),
+                        ..one
+                    },
+                ],
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn selected_or_remote_accepts_override_or_paired_state() {
         let mut config = DesktopControlConfig::default();
         let sessions = vec![SessionSummary {
-            url: "ws://one".to_string(),
+            url: "ws://configured".to_string(),
             server_version: None,
             paired_at: None,
             ttl_expires_at: None,
@@ -1566,13 +3289,17 @@ mod tests {
             token_redacted: "(redacted)".to_string(),
         }];
         assert_eq!(
-            selected_url(&config, &sessions),
-            Some("ws://one".to_string())
+            selected_or_remote(Some(" ws://override ".to_string()), &config, &sessions),
+            Ok("ws://override".to_string())
+        );
+        assert_eq!(
+            selected_or_remote(None, &config, &[]),
+            Err("no paired relay selected".to_string())
         );
         config.relay_url = Some("ws://configured".to_string());
         assert_eq!(
-            selected_url(&config, &sessions),
-            Some("ws://configured".to_string())
+            selected_or_remote(None, &config, &sessions),
+            Ok("ws://configured".to_string())
         );
     }
 
@@ -1580,6 +3307,120 @@ mod tests {
     fn empty_sessions_do_not_select_default_remote() {
         let config = DesktopControlConfig::default();
         assert_eq!(selected_url(&config, &[]), None);
+    }
+
+    #[test]
+    fn chat_setup_prefers_paired_relay_for_first_run() {
+        let config = DesktopControlConfig::default();
+        let sessions = vec![SessionSummary {
+            url: "ws://relay.example:8767".to_string(),
+            server_version: None,
+            paired_at: None,
+            ttl_expires_at: None,
+            endpoint_role: Some("lan".to_string()),
+            tools_consented: true,
+            computer_use_consented: false,
+            token_redacted: "(redacted)".to_string(),
+        }];
+        let setup = chat_setup_state(&config, &sessions);
+        assert_eq!(setup.default_mode, "relay");
+        assert!(setup.can_use_relay);
+        assert_eq!(setup.relay_url, Some("ws://relay.example:8767".to_string()));
+    }
+
+    #[test]
+    fn chat_setup_uses_gateway_when_unpaired() {
+        let mut config = DesktopControlConfig::default();
+        config.chat_gateway_url = Some("gateway.local:8642/".to_string());
+        let setup = chat_setup_state(&config, &[]);
+        assert_eq!(setup.default_mode, "gateway");
+        assert!(setup.can_use_gateway);
+        assert_eq!(setup.gateway_url, Some("http://gateway.local:8642".to_string()));
+    }
+
+    #[test]
+    fn chat_setup_requests_first_run_without_route() {
+        let config = DesktopControlConfig::default();
+        let setup = chat_setup_state(&config, &[]);
+        assert_eq!(setup.default_mode, "setup");
+        assert!(!setup.can_use_relay);
+        assert!(!setup.can_use_gateway);
+    }
+
+    #[test]
+    fn chat_launch_plan_builds_relay_resume_command() {
+        let mut config = DesktopControlConfig::default();
+        config.relay_url = Some("ws://relay.example:8767".to_string());
+        let sessions = vec![SessionSummary {
+            url: "ws://relay.example:8767".to_string(),
+            server_version: None,
+            paired_at: None,
+            ttl_expires_at: None,
+            endpoint_role: None,
+            tools_consented: true,
+            computer_use_consented: false,
+            token_redacted: "(redacted)".to_string(),
+        }];
+        let plan = chat_launch_plan(
+            &config,
+            &sessions,
+            "relay",
+            "hello",
+            None,
+            Some("sess_123".to_string()),
+            false,
+        )
+        .expect("relay chat plan");
+        assert_eq!(plan.mode, "relay");
+        assert_eq!(plan.route, "ws://relay.example:8767");
+        assert!(plan.args.contains(&"--conversation".to_string()));
+        assert!(plan.args.contains(&"sess_123".to_string()));
+        assert!(plan.args.contains(&"--no-tools".to_string()));
+    }
+
+    #[test]
+    fn chat_launch_plan_builds_direct_gateway_command() {
+        let config = DesktopControlConfig::default();
+        let plan = chat_launch_plan(
+            &config,
+            &[],
+            "gateway",
+            "hello",
+            Some("https://gateway.example:8642/".to_string()),
+            Some("sess_123".to_string()),
+            true,
+        )
+        .expect("gateway chat plan");
+        assert_eq!(plan.mode, "gateway");
+        assert_eq!(plan.route, "https://gateway.example:8642");
+        assert_eq!(plan.args[0], "chat-worker");
+        assert!(plan.args.contains(&"--gateway-url".to_string()));
+        assert!(plan.args.contains(&"--new".to_string()));
+        assert!(plan.args.contains(&"--session".to_string()));
+    }
+
+    #[test]
+    fn stored_sessions_accept_fractional_expiry_values() {
+        let raw = r#"{
+  "version": 1,
+  "sessions": {
+    "ws://relay.example:8767": {
+      "token": "secret",
+      "server_version": "0.6.0",
+      "paired_at": 1779119869,
+      "ttl_expires_at": 1781711871.5673373,
+      "tools_consented": true
+    }
+  }
+}"#;
+        let parsed: StoredSessionsFile =
+            serde_json::from_str(raw).expect("parse fractional session timestamps");
+        let session = parsed
+            .sessions
+            .get("ws://relay.example:8767")
+            .expect("stored session");
+        assert_eq!(session.paired_at, Some(1779119869.0));
+        assert_eq!(session.ttl_expires_at, Some(1781711871.5673373));
     }
 
     #[test]
@@ -1641,6 +3482,53 @@ mod tests {
         if cfg!(windows) {
             assert!(name.ends_with(".exe"));
         }
+    }
+
+    #[test]
+    fn terminal_launch_command_uses_bare_resume_path() {
+        let command =
+            terminal_launch_command(Some("ws://relay.example:8767"), true, Some("default"), true)
+                .expect("terminal launch command");
+        assert!(!command.contains(" shell"));
+        assert!(command.contains("--remote"));
+        assert!(command.contains("ws://relay.example:8767"));
+        assert!(command.contains("--new"));
+        assert!(command.contains("--session"));
+        assert!(command.contains("default"));
+        assert!(command.contains("--experimental-computer-use"));
+    }
+
+    #[test]
+    fn builtin_plugins_register_herm_surface_contract() {
+        let herm = builtin_plugin("herm").expect("built-in Herm plugin");
+        assert_eq!(herm.name, "Herm");
+        assert_eq!(herm.source_url, "https://github.com/liftaris/herm");
+        assert_eq!(herm.package_name, "herm-tui");
+        assert_eq!(herm.binary_name, "herm");
+        assert!(herm.tabs.iter().any(|tab| tab == "sessions"));
+        assert!(herm.tabs.iter().any(|tab| tab == "kanban"));
+        assert!(herm.commands.iter().any(|command| command.id == "install"));
+        assert!(herm.session_actions.iter().any(|action| action.id == "resume"));
+    }
+
+    #[test]
+    fn plugin_command_plan_quotes_display_and_preserves_args() {
+        let plan = plugin_plan("bun", &["add", "-g", "herm tui"], "bun");
+        assert_eq!(plan.program, "bun");
+        assert_eq!(plan.args, vec!["add", "-g", "herm tui"]);
+        assert_eq!(plan.display, "bun add -g \"herm tui\"");
+        assert_eq!(plan.mode, "bun");
+    }
+
+    #[test]
+    fn plugin_resume_plan_uses_dash_c_for_installed_binary() {
+        let mut herm = builtin_plugin("herm").expect("built-in Herm plugin");
+        herm.binary_name = "rustc".to_string();
+        let plan = plugin_launch_plan(&herm, true).expect("installed plugin launch plan");
+        assert_eq!(plan.program, "rustc");
+        assert_eq!(plan.args, vec!["-c"]);
+        assert_eq!(plan.display, "rustc -c");
+        assert_eq!(plan.mode, "installed");
     }
 
     #[test]

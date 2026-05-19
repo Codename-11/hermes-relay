@@ -440,6 +440,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Null = not probed, true = prefer realtime, false = fallback to basic TTS. */
     private var voiceOutputAvailable: Boolean? = null
+    private var voiceOutputProfileName: String? = null
 
     /**
      * Assistant-message-id that already existed BEFORE the current turn's
@@ -808,6 +809,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(interactionMode = mode) }
     }
 
+    fun onProfileChanged(profileName: String?) {
+        val normalized = profileName?.trim()?.takeIf { it.isNotBlank() }
+        if (voiceOutputProfileName == normalized) return
+        voiceOutputProfileName = normalized
+        voiceOutputAvailable = null
+    }
+
     // ---------------------------------------------------------------------
     // Voice-mode lifecycle
     // ---------------------------------------------------------------------
@@ -1141,9 +1149,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // === END PHASE3-voice-intents ===
 
     // V2b EXTENSION --------------------------------------------------------
-    // Fire a one-shot TTS synth+playback to verify the voice pipeline from
-    // the settings screen without entering full voice mode. Runs outside
-    // the turn state machine so it doesn't disturb uiState.
+    // Fire a one-shot voice-output playback to verify the active profile's
+    // voice pipeline from the settings screen without entering full voice
+    // mode. Falls back to legacy synth+playback when the streaming output
+    // route is unavailable. Runs outside the turn state machine so it
+    // doesn't disturb uiState.
     //
     // Three toasts so the user knows what's happening: "Testing voice…" on
     // trigger, "Voice test successful" on completion, "Voice test failed" on
@@ -1163,7 +1173,18 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
         val triggerToast = Toast.makeText(app, "Testing voice…", Toast.LENGTH_SHORT).also { it.show() }
         viewModelScope.launch {
-            val result = client.synthesize(sample)
+            val profileAwareResult = testVoiceViaVoiceOutput(client, sample)
+            val result = if (profileAwareResult != null) {
+                if (profileAwareResult.isSuccess) {
+                    triggerToast.cancel()
+                    Toast.makeText(app, "Voice test successful", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+                Log.w(TAG, "profile-aware voice test failed; falling back to legacy synthesize: ${profileAwareResult.exceptionOrNull()?.message}")
+                client.synthesize(sample)
+            } else {
+                client.synthesize(sample)
+            }
             if (result.isFailure) {
                 triggerToast.cancel()
                 val msg = result.exceptionOrNull()?.message ?: "synthesize failed"
@@ -1188,6 +1209,53 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 triggerToast.cancel()
                 Toast.makeText(app, "Voice test failed: ${e.message ?: "playback error"}", Toast.LENGTH_LONG).show()
             }
+        }
+    }
+
+    private suspend fun testVoiceViaVoiceOutput(
+        client: RelayVoiceClient,
+        sample: String,
+    ): Result<Unit>? {
+        val pcmPlayer = realtimePcmPlayer ?: return null
+        val config = client.getVoiceOutputConfig().getOrNull()
+        if (config?.enabled != true) return null
+
+        val audioBytes = AtomicInteger(0)
+        val sampleRate = AtomicInteger(24_000)
+        return try {
+            val result = client.runVoiceOutput(
+                text = sample,
+                renderMode = "verbatim",
+            ) { event ->
+                if (event.type != "voice.audio.delta") return@runVoiceOutput
+                val encoded = event.audioBase64 ?: return@runVoiceOutput
+                val audio = try {
+                    Base64.getDecoder().decode(encoded)
+                } catch (_: Exception) {
+                    return@runVoiceOutput
+                }
+                if (audio.isEmpty()) return@runVoiceOutput
+                val rate = event.sampleRate ?: 24_000
+                sampleRate.set(rate)
+                audioBytes.addAndGet(audio.size)
+                pcmPlayer.write(audio, rate)
+            }
+            result.fold(
+                onSuccess = {
+                    if (audioBytes.get() > 0) {
+                        val drainMs = (
+                            audioBytes.get().toLong() * 1000L / (sampleRate.get().coerceAtLeast(1) * 2L)
+                        ).coerceIn(250L, 4_000L)
+                        delay(drainMs)
+                        Result.success(Unit)
+                    } else {
+                        Result.failure(IllegalStateException("voice output returned no audio"))
+                    }
+                },
+                onFailure = { Result.failure(it) },
+            )
+        } finally {
+            pcmPlayer.stop()
         }
     }
 
@@ -2146,10 +2214,19 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         bargeInIgnoreUntilMs = 0L
         bargeInGuardLogged = false
         bargeInListenerJob?.cancel(); bargeInListenerJob = null
-        try { bargeInListener?.stop() } catch (_: Throwable) { /* ignore */ }
+        val stoppedReaderJob = try { bargeInListener?.stop() } catch (_: Throwable) { null }
         bargeInListener = null
-        try { bargeInVadEngine?.close() } catch (_: Throwable) { /* ignore */ }
+        val vadToClose = bargeInVadEngine
         bargeInVadEngine = null
+        if (vadToClose != null) {
+            if (stoppedReaderJob != null) {
+                stoppedReaderJob.invokeOnCompletion {
+                    try { vadToClose.close() } catch (_: Throwable) { /* ignore */ }
+                }
+            } else {
+                try { vadToClose.close() } catch (_: Throwable) { /* ignore */ }
+            }
+        }
         duckingWatchdog?.cancel(); duckingWatchdog = null
         // Best-effort un-duck so the next playback starts at full volume.
         if (isDucked) {

@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
@@ -313,6 +315,7 @@ class RelayConfig:
         config.profiles = _load_profiles(
             config.hermes_config_path,
             enabled=config.profile_discovery_enabled,
+            base_api_url=config.webapi_url,
         )
 
         # ── Session persistence file ────────────────────────────────────
@@ -781,6 +784,31 @@ def _probe_gateway_running(profile_home: Path) -> bool:
     return True
 
 
+def _probe_api_server_running(api_server_url: str | None) -> bool:
+    """Best-effort liveness fallback for profile API servers.
+
+    Some systemd-managed Hermes gateway processes do not leave a
+    ``gateway.pid`` file behind. The Android client ultimately routes chat by
+    API URL, so an open API TCP port is a better advisory status than marking
+    those profiles idle solely because the pid file is absent.
+    """
+    if not api_server_url:
+        return False
+    try:
+        parsed = urlparse(api_server_url)
+        host = parsed.hostname
+        port = parsed.port
+        if not host or port is None:
+            return False
+        connect_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+        with socket.create_connection((connect_host, port), timeout=0.25):
+            return True
+    except OSError:
+        return False
+    except Exception:  # pragma: no cover — defensive
+        return False
+
+
 def _count_profile_skills(profile_home: Path) -> int:
     """Count ``SKILL.md`` files under ``<profile>/skills/`` recursively.
 
@@ -797,12 +825,167 @@ def _count_profile_skills(profile_home: Path) -> int:
         return 0
 
 
+def _profile_dotenv_values(profile_home: Path) -> dict[str, str]:
+    """Read simple ``KEY=value`` pairs from a profile-local ``.env`` file."""
+    env_path = profile_home / ".env"
+    if not env_path.is_file():
+        return {}
+
+    values: dict[str, str] = {}
+    try:
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        logger.warning(
+            "Profile at %s: failed to read .env for API metadata",
+            profile_home,
+            exc_info=True,
+        )
+        return {}
+
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+
+def _api_server_platform_config(data: dict[str, Any]) -> dict[str, Any]:
+    """Return the Hermes ``api_server`` platform config plus its ``extra`` block."""
+    platform: dict[str, Any] = {}
+    platforms = data.get("platforms")
+    if isinstance(platforms, dict):
+        candidate = platforms.get("api_server")
+        if not isinstance(candidate, dict):
+            candidate = platforms.get("api-server")
+        if isinstance(candidate, dict):
+            platform.update(candidate)
+
+    root_candidate = data.get("api_server")
+    if isinstance(root_candidate, dict):
+        platform.update(root_candidate)
+
+    extra = platform.get("extra")
+    if isinstance(extra, dict):
+        merged = dict(platform)
+        merged.update(extra)
+        platform = merged
+    return platform
+
+
+def _coerce_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in ("1", "true", "yes", "on"):
+        return True
+    if text in ("0", "false", "no", "off"):
+        return False
+    return None
+
+
+def _coerce_int(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _local_host_for_client(host: str) -> bool:
+    return host.lower() in ("127.0.0.1", "localhost", "0.0.0.0", "::1", "::")
+
+
+def _format_url(scheme: str, host: str, port: int) -> str:
+    netloc = host
+    if ":" in netloc and not netloc.startswith("["):
+        netloc = f"[{netloc}]"
+    return f"{scheme}://{netloc}:{port}"
+
+
+def _profile_api_server_metadata(
+    data: dict[str, Any],
+    profile_home: Path,
+    *,
+    base_api_url: str | None = None,
+) -> dict[str, Any]:
+    """Expose profile API-server routing metadata without exposing secrets.
+
+    Hermes profiles are isolated by running each profile's own API server.
+    The relay only advertises enough metadata for the Android client to route
+    chat traffic to that server. API keys stay local; clients reuse the
+    connection's stored key or pair the profile API as a separate connection
+    when operators intentionally use distinct keys.
+    """
+    dotenv = _profile_dotenv_values(profile_home)
+    platform = _api_server_platform_config(data)
+
+    host = (
+        _coerce_string(platform.get("host"))
+        or _coerce_string(dotenv.get("API_SERVER_HOST"))
+        or "127.0.0.1"
+    )
+    port = (
+        _coerce_int(platform.get("port"))
+        or _coerce_int(dotenv.get("API_SERVER_PORT"))
+        or 8642
+    )
+
+    key_present = bool(
+        _coerce_string(platform.get("key"))
+        or _coerce_string(dotenv.get("API_SERVER_KEY"))
+    )
+    enabled_value = platform.get("enabled", dotenv.get("API_SERVER_ENABLED"))
+    explicit_enabled = _coerce_bool(enabled_value)
+    enabled = explicit_enabled if explicit_enabled is not None else key_present
+
+    api_server_url: str | None = None
+    if enabled and port is not None:
+        route_scheme = "http"
+        route_host = host
+        if base_api_url and _local_host_for_client(host):
+            parsed = urlparse(base_api_url)
+            route_scheme = parsed.scheme or route_scheme
+            route_host = parsed.hostname or route_host
+        api_server_url = _format_url(route_scheme, route_host, port)
+
+    return {
+        "api_server_enabled": enabled,
+        "api_server_url": api_server_url,
+        "api_server_host": host if enabled else None,
+        "api_server_port": port if enabled else None,
+        "api_server_key_present": key_present,
+    }
+
+
 def _read_profile_entry(
     name: str,
     config_yaml: Path,
     soul_md: Path,
     *,
     profile_home: Path,
+    base_api_url: str | None = None,
 ) -> dict[str, Any] | None:
     """Read a single profile directory into the wire-shape dict.
 
@@ -872,14 +1055,25 @@ def _read_profile_entry(
     else:
         description = description.strip()
 
+    api_server = _profile_api_server_metadata(
+        data,
+        profile_home,
+        base_api_url=base_api_url,
+    )
+
+    gateway_running = _probe_gateway_running(profile_home) or _probe_api_server_running(
+        api_server.get("api_server_url")
+    )
+
     return {
         "name": name,
         "model": model,
         "description": description,
         "system_message": soul_text if soul_text else None,
-        "gateway_running": _probe_gateway_running(profile_home),
+        "gateway_running": gateway_running,
         "has_soul": soul_md.is_file(),
         "skill_count": _count_profile_skills(profile_home),
+        **api_server,
     }
 
 
@@ -887,6 +1081,7 @@ def _load_profiles(
     config_path: str,
     *,
     enabled: bool = True,
+    base_api_url: str | None = None,
 ) -> list[dict[str, Any]]:
     """Discover agent profiles from the Hermes ``~/.hermes/`` layout.
 
@@ -921,6 +1116,7 @@ def _load_profiles(
             config_yaml=root_config,
             soul_md=hermes_dir / "SOUL.md",
             profile_home=hermes_dir,
+            base_api_url=base_api_url,
         )
         if default_entry is not None:
             results.append(default_entry)
@@ -941,6 +1137,7 @@ def _load_profiles(
                 config_yaml=child / "config.yaml",
                 soul_md=child / "SOUL.md",
                 profile_home=child,
+                base_api_url=base_api_url,
             )
             if entry is not None:
                 results.append(entry)

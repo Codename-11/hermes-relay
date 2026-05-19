@@ -111,7 +111,10 @@ fun VoiceModeOverlay(
     // is empty.
     transcriptMessages: List<ChatMessage> = emptyList(),
     voiceOutputProvider: String? = null,
+    voiceOutputModel: String? = null,
     voiceOutputVoice: String? = null,
+    voiceProfileName: String? = null,
+    voiceConfigScope: String? = null,
     voiceOutputEnabled: Boolean? = null,
     voiceOutputFallbackEnabled: Boolean? = null,
     bargeInPrefs: BargeInPreferences = BargeInPreferences(),
@@ -165,7 +168,10 @@ fun VoiceModeOverlay(
             focusMode = focusMode,
             onFocusModeChange = setFocusMode,
             provider = voiceOutputProvider,
+            model = voiceOutputModel,
             voice = voiceOutputVoice,
+            profileName = voiceProfileName,
+            configScope = voiceConfigScope,
             outputEnabled = voiceOutputEnabled,
             fallbackEnabled = voiceOutputFallbackEnabled,
             bargeInPrefs = bargeInPrefs,
@@ -191,20 +197,25 @@ fun VoiceModeOverlay(
         // area owns its own LazyListState and auto-scrolls to the tail item so
         // long active responses and tool rows stay visible as they update.
         //
-        // Transcript content source: `transcriptMessages` (last N chat
-        // messages from [ChatViewModel.messages]) — the SINGLE source of
-        // truth for both user and agent turns. We used to also render
-        // `uiState.transcribedText` (as a "YOU" chip) and `uiState.responseText`
-        // (as a dedicated `StreamingResponseRow`), but those were also
-        // present in `transcriptMessages` once ChatViewModel committed the
-        // user's send and the assistant's streaming bubble — so every turn
-        // appeared twice. Picking chat-history as the single source keeps
-        // one bubble per turn; the last assistant message in-flight still
-        // updates in real time through its existing MutableStateFlow, so
-        // live-stream visibility is preserved.
+        // Transcript content source: chat history is the durable source of
+        // truth, with one short-lived exception: after STT succeeds but
+        // before ChatViewModel has committed the user message, render a
+        // deduped pending "YOU" row from uiState.transcribedText. That keeps
+        // the voice overlay honest during the Thinking gap without creating
+        // duplicate rows once chat history catches up.
         val transcriptListState = rememberLazyListState()
         val visibleTranscriptMessages = remember(transcriptMessages) {
             transcriptMessages.filter { it.role != MessageRole.SYSTEM }
+        }
+        val pendingTranscriptText = remember(
+            uiState.state,
+            uiState.transcribedText,
+            visibleTranscriptMessages,
+        ) {
+            pendingVoiceTranscriptText(
+                uiState = uiState,
+                visibleTranscriptMessages = visibleTranscriptMessages,
+            )
         }
 
         // Derive the streaming "token length" from the last assistant message
@@ -222,9 +233,16 @@ fun VoiceModeOverlay(
         // Auto-scroll to the tail whenever a new message arrives in the
         // transcript or the last streaming assistant bubble grows. Smooth
         // animateScrollTo so the user's eye never has to chase token churn.
-        LaunchedEffect(visibleTranscriptMessages.size, lastStreamingContentLength, toolSnapshot) {
-            if (visibleTranscriptMessages.isNotEmpty()) {
-                transcriptListState.animateScrollToItem(visibleTranscriptMessages.size)
+        LaunchedEffect(
+            visibleTranscriptMessages.size,
+            pendingTranscriptText,
+            lastStreamingContentLength,
+            toolSnapshot,
+        ) {
+            val tailIndex = visibleTranscriptMessages.size +
+                if (pendingTranscriptText != null) 1 else 0
+            if (tailIndex > 0) {
+                transcriptListState.animateScrollToItem(tailIndex)
             }
         }
 
@@ -286,7 +304,8 @@ fun VoiceModeOverlay(
                         .fillMaxWidth()
                         .weight(1.25f, fill = true),
                 ) {
-                    val hasTranscript = visibleTranscriptMessages.isNotEmpty()
+                    val hasTranscript = visibleTranscriptMessages.isNotEmpty() ||
+                        pendingTranscriptText != null
                     if (hasTranscript) {
                         val latestId = visibleTranscriptMessages.lastOrNull()?.id
                         LazyColumn(
@@ -299,6 +318,20 @@ fun VoiceModeOverlay(
                                     message = msg,
                                     expanded = msg.id == latestId || msg.isStreaming,
                                 )
+                            }
+                            if (pendingTranscriptText != null) {
+                                item(key = "pending-voice-transcript") {
+                                    CompactTranscriptRow(
+                                        message = ChatMessage(
+                                            id = "pending-voice-transcript",
+                                            role = MessageRole.USER,
+                                            content = pendingTranscriptText,
+                                            timestamp = System.currentTimeMillis(),
+                                            isStreaming = true,
+                                        ),
+                                        expanded = true,
+                                    )
+                                }
                             }
                             item { Spacer(Modifier.height(12.dp)) }
                         }
@@ -519,6 +552,32 @@ private fun stateHint(state: VoiceState): String = when (state) {
     VoiceState.Error -> ""
 }
 
+internal fun pendingVoiceTranscriptText(
+    uiState: VoiceUiState,
+    visibleTranscriptMessages: List<ChatMessage>,
+): String? {
+    if (uiState.state != VoiceState.Thinking) return null
+
+    val transcribed = uiState.transcribedText
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?: return null
+
+    fun contentMatches(message: ChatMessage?): Boolean {
+        return message?.role == MessageRole.USER &&
+            message.content.trim() == transcribed
+    }
+
+    val lastMessage = visibleTranscriptMessages.lastOrNull()
+    val previousMessage = visibleTranscriptMessages.dropLast(1).lastOrNull()
+    val alreadyRendered = contentMatches(lastMessage) ||
+        (lastMessage?.role == MessageRole.ASSISTANT &&
+            lastMessage.isStreaming &&
+            contentMatches(previousMessage))
+
+    return if (alreadyRendered) null else transcribed
+}
+
 private fun InteractionMode.label(): String = when (this) {
     InteractionMode.TapToTalk -> "Tap to talk"
     InteractionMode.HoldToTalk -> "Hold to talk"
@@ -533,7 +592,10 @@ private fun VoiceSessionPill(
     focusMode: Boolean,
     onFocusModeChange: (Boolean) -> Unit,
     provider: String?,
+    model: String?,
     voice: String?,
+    profileName: String?,
+    configScope: String?,
     outputEnabled: Boolean?,
     fallbackEnabled: Boolean?,
     bargeInPrefs: BargeInPreferences,
@@ -547,16 +609,23 @@ private fun VoiceSessionPill(
     onExit: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val providerText = voiceProviderLabel(provider, voice, outputEnabled)
+    val providerText = voiceProviderLabel(provider, model, voice, outputEnabled)
+    val profileText = profileName?.takeIf { it.isNotBlank() } ?: "default profile"
+    val scopeText = when (configScope) {
+        "profile" -> "profile voice"
+        "relay" -> "relay voice"
+        "global" -> "global voice"
+        else -> null
+    }
     val headlineText = if (focusMode) {
-        providerText
+        "$profileText / $providerText"
     } else {
-        "${stateHint(uiState.state).ifBlank { "Voice ready" }} / $providerText"
+        "${stateHint(uiState.state).ifBlank { "Voice ready" }} / $profileText / $providerText"
     }
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
         tonalElevation = 5.dp,
         shadowElevation = 7.dp,
     ) {
@@ -676,6 +745,10 @@ private fun VoiceSessionPill(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
+                        StatusPill(profileText, modifier = Modifier.weight(1f))
+                        scopeText?.let {
+                            StatusPill(it, modifier = Modifier.weight(1f))
+                        }
                         StatusPill(providerText, modifier = Modifier.weight(1f))
                         StatusPill(
                             text = when (fallbackEnabled) {
@@ -812,11 +885,17 @@ private fun StatusPill(
     }
 }
 
-private fun voiceProviderLabel(provider: String?, voice: String?, outputEnabled: Boolean?): String {
+private fun voiceProviderLabel(
+    provider: String?,
+    model: String?,
+    voice: String?,
+    outputEnabled: Boolean?,
+): String {
     if (outputEnabled == false) return "output off"
     val providerPart = provider?.takeIf { it.isNotBlank() } ?: "provider ..."
+    val modelPart = model?.takeIf { it.isNotBlank() }
     val voicePart = voice?.takeIf { it.isNotBlank() }
-    return if (voicePart == null) providerPart else "$providerPart / $voicePart"
+    return listOfNotNull(providerPart, modelPart, voicePart).joinToString(" / ")
 }
 
 private fun InteractionMode.shortLabel(): String = when (this) {

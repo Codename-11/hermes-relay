@@ -14,6 +14,7 @@ from aiohttp.test_utils import AioHTTPTestCase
 import yaml
 
 from plugin.relay.config import RelayConfig
+from plugin.relay import provider_options
 from plugin.relay import voice_auth
 from plugin.relay.realtime_voice import _read_relay_xai_oauth_token
 from plugin.relay.server import create_app
@@ -24,6 +25,7 @@ class RealtimeVoiceRoutesTests(AioHTTPTestCase):
         self._tmpdir = tempfile.TemporaryDirectory()
         self._voice_auth_patches: list[tuple[str, object]] = []
         voice_auth._VALIDATION_CACHE.clear()
+        provider_options.clear_provider_option_cache()
         config = RelayConfig(
             realtime_voice_enabled=True,
             realtime_voice_provider="stub",
@@ -42,6 +44,7 @@ class RealtimeVoiceRoutesTests(AioHTTPTestCase):
         for name, original in reversed(getattr(self, "_voice_auth_patches", [])):
             setattr(voice_auth, name, original)
         voice_auth._VALIDATION_CACHE.clear()
+        provider_options.clear_provider_option_cache()
         tmpdir = getattr(self, "_tmpdir", None)
         if tmpdir is not None:
             tmpdir.cleanup()
@@ -112,6 +115,76 @@ class RealtimeVoiceRoutesTests(AioHTTPTestCase):
         )
         self.assertIn("providers", body)
         self.assertIn("auth", body)
+        providers_by_id = {item["id"]: item for item in body["providers"]}
+        self.assertIn("grok-voice-latest", providers_by_id["xai_realtime"]["models"])
+        self.assertIn("eve", providers_by_id["xai_realtime"]["voices"])
+        self.assertIn("ara", providers_by_id["xai_realtime"]["voices"])
+        self.assertIn("rex", providers_by_id["xai_realtime"]["voices"])
+        self.assertIn("sal", providers_by_id["xai_realtime"]["voices"])
+        self.assertIn("leo", providers_by_id["xai_realtime"]["voices"])
+        self.assertIn(24000, providers_by_id["xai_realtime"]["sample_rates"])
+        self.assertIn("gpt-realtime-2", providers_by_id["openai_realtime"]["models"])
+        self.assertIn("marin", providers_by_id["openai_realtime"]["voices"])
+        self.assertIn("cedar", providers_by_id["openai_realtime"]["voices"])
+
+    async def test_realtime_provider_options_returns_selected_provider_metadata(self) -> None:
+        token = await self._make_session()
+        original = provider_options._env_xai_option_auth
+        provider_options._env_xai_option_auth = lambda: None
+
+        try:
+            resp = await self.client.get(
+                "/voice/realtime/providers/xai_realtime/options",
+                headers=self._bearer(token),
+            )
+        finally:
+            provider_options._env_xai_option_auth = original
+
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertTrue(body["success"])
+        self.assertEqual(body["mode"], "realtime_voice")
+        self.assertEqual(body["protocol"], "hermes.voice.realtime.options.v0")
+        self.assertEqual(body["schema_version"], 1)
+        self.assertEqual(body["provider_id"], "xai_realtime")
+        self.assertEqual(body["default_provider"], "stub")
+        self.assertEqual(body["provider"]["id"], "xai_realtime")
+        self.assertIn("grok-voice-latest", body["provider"]["models"])
+        self.assertIn("eve", body["provider"]["voices"])
+        self.assertIn("ara", body["provider"]["voices"])
+        self.assertIn("rex", body["provider"]["voices"])
+        self.assertIn("sal", body["provider"]["voices"])
+        self.assertIn("leo", body["provider"]["voices"])
+        self.assertEqual(body["provider"]["voice_labels"]["sal"], "Sal - smooth, balanced")
+        self.assertEqual(body["provider"]["voice_groups"][0]["id"], "xai_builtin")
+        self.assertEqual(body["dynamic"]["status"], "auth_missing")
+
+    async def test_realtime_provider_validate_reports_valid_selection(self) -> None:
+        token = await self._make_session()
+
+        resp = await self.client.post(
+            "/voice/realtime/providers/openai_realtime/validate",
+            json={"model": "gpt-realtime-2", "voice": "cedar", "sample_rate": 24000},
+            headers=self._bearer(token),
+        )
+
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertTrue(body["success"])
+        self.assertTrue(body["valid"])
+        self.assertEqual(body["protocol"], "hermes.voice.realtime.validate.v0")
+        self.assertEqual(body["summary"], "ok")
+
+    async def test_realtime_provider_options_rejects_tts_only_provider(self) -> None:
+        token = await self._make_session()
+
+        resp = await self.client.get(
+            "/voice/realtime/providers/xai_tts/options",
+            headers=self._bearer(token),
+        )
+
+        self.assertEqual(resp.status, 400)
+        self.assertIn("not a realtime voice provider", await resp.text())
 
     async def test_realtime_config_patch_persists_relay_owned_defaults(self) -> None:
         token = await self._make_session()
