@@ -56,6 +56,12 @@ private fun classifyIoMessage(msg: String, context: String?): HumanError? {
     // Ordered most-specific-first; callers have already handled the typed
     // SSL / timeout / connect exceptions so this only runs on generic IOs.
     return when {
+        "hermes broker auth failed" in msg ||
+            "relay-side hermes credential" in msg -> HumanError(
+            title = "Relay Hermes auth failed",
+            body = "The relay could not authenticate to Hermes. Update the server-side Hermes credential and restart the relay.",
+            retryable = false,
+        )
         (
             "api key" in msg ||
                 "sessions auth failed" in msg ||

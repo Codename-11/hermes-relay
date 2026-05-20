@@ -34,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -142,6 +143,20 @@ fun MessageBubble(
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(bottom = 2.dp, start = 4.dp)
             )
+        }
+
+        if (!isUser && !isSystem && message.badges.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .widthIn(max = maxBubbleWidth)
+                    .padding(bottom = 4.dp, start = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                message.badges.take(4).forEach { badge ->
+                    MessagePathBadge(text = badge)
+                }
+            }
         }
 
         // Thinking block (above the bubble, only for assistant messages)
@@ -284,6 +299,23 @@ fun MessageBubble(
             }
         }
         } // end Row (bubble + optional leading accent bar)
+    }
+}
+
+@Composable
+private fun MessagePathBadge(text: String) {
+    Surface(
+        shape = RoundedCornerShape(6.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.75f),
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

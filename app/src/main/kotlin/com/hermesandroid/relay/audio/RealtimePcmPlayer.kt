@@ -5,6 +5,7 @@ import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
 import android.os.Build
+import android.os.SystemClock
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,6 +24,8 @@ class RealtimePcmPlayer {
     private var audioTrack: AudioTrack? = null
     private var currentSampleRate: Int = 0
     private var currentVolume: Float = 1f
+    private val playbackLock = Any()
+    private var estimatedPlaybackEndAtMs: Long = 0L
     private val _amplitude = MutableStateFlow(0f)
     val amplitude: StateFlow<Float> = _amplitude.asStateFlow()
 
@@ -39,6 +42,7 @@ class RealtimePcmPlayer {
         try {
             val written = track.write(pcm, 0, pcm.size)
             if (written > 0) {
+                noteWrittenBytes(written, sampleRate)
                 _amplitude.value = level
             }
         } catch (e: Exception) {
@@ -57,7 +61,18 @@ class RealtimePcmPlayer {
         }
         audioTrack = null
         currentSampleRate = 0
+        synchronized(playbackLock) {
+            estimatedPlaybackEndAtMs = 0L
+        }
         _amplitude.value = 0f
+    }
+
+    fun estimatedRemainingPlaybackMs(cushionMs: Long = DEFAULT_DRAIN_CUSHION_MS): Long {
+        if (audioTrack == null) return 0L
+        val now = SystemClock.elapsedRealtime()
+        return synchronized(playbackLock) {
+            (estimatedPlaybackEndAtMs - now + cushionMs).coerceAtLeast(0L)
+        }
     }
 
     fun setVolume(volume: Float) {
@@ -124,6 +139,18 @@ class RealtimePcmPlayer {
         return track
     }
 
+    private fun noteWrittenBytes(writtenBytes: Int, sampleRate: Int) {
+        if (writtenBytes <= 0 || sampleRate <= 0) return
+        val durationMs = ((writtenBytes / 2.0) / sampleRate * 1000.0)
+            .toLong()
+            .coerceAtLeast(1L)
+        val now = SystemClock.elapsedRealtime()
+        synchronized(playbackLock) {
+            val base = max(now, estimatedPlaybackEndAtMs)
+            estimatedPlaybackEndAtMs = base + durationMs
+        }
+    }
+
     private fun computePcm16LeRms(pcm: ByteArray): Float {
         val usable = pcm.size - (pcm.size % 2)
         if (usable <= 0) return 0f
@@ -149,5 +176,6 @@ class RealtimePcmPlayer {
 
     companion object {
         private const val TAG = "RealtimePcmPlayer"
+        private const val DEFAULT_DRAIN_CUSHION_MS = 250L
     }
 }

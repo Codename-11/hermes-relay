@@ -15,9 +15,12 @@ stable voice behavior.
 
 Voice mode is a layer on top of chat. In the stable engine, your voice is
 transcribed to text, sent through the normal chat flow, and the agent's response
-is rendered back to speech as it streams in. The MorphingSphere — the same orb
-you see in the chat empty state — expands to fill the screen and reacts to both
-your voice and the agent's.
+is rendered back to speech as it streams in. In the experimental Realtime Agent
+engine, Android streams mic PCM through the relay to a native realtime provider
+such as xAI/Grok Voice Agent or OpenAI Realtime, and the relay mirrors the
+provider's live transcript, audio, and Hermes tool state into the same chat
+timeline. The MorphingSphere — the same orb you see in the chat empty state —
+expands to fill the screen and reacts to both your voice and the agent's.
 
 - **Your voice** drives a subtle blue-purple "listening" state. Gentle breathing, surface wobble with your amplitude.
 - **The agent's voice** drives a dramatic green-teal "speaking" state. The core goes white-hot on peaks, the data ring spins up to 4× speed on loud consonants.
@@ -46,6 +49,11 @@ Common speech output choices:
 | **OpenAI TTS** | `VOICE_TOOLS_OPENAI_KEY` or `OPENAI_API_KEY` | Relay speech renderer for OpenAI speech models. Uses OpenAI's documented built-in voice set. |
 | **ElevenLabs** | `ELEVENLABS_API_KEY` | Cascaded streaming TTS comparison target. Relay can refresh account voices, models, and languages server-side. |
 | **Hermes fallback TTS** | Depends on upstream provider | Used if relay voice output fails before audio starts. |
+
+Realtime Agent native providers also run relay-side. `xai_realtime` uses the
+relay-owned xAI API key or OAuth store. `openai_realtime` uses
+`OPENAI_REALTIME_API_KEY`, `OPENAI_API_KEY`, or `VOICE_TOOLS_OPENAI_KEY` on the
+relay host. These keys are never stored on Android.
 
 Five STT providers are supported:
 
@@ -159,17 +167,23 @@ and is still used if streaming voice output fails before audio starts.
 ### Speech-to-Text
 
 Read-only display of the STT provider and model reported by `/voice/config`.
-STT still follows the upstream Hermes `stt:` configuration, resolved through the
-active profile where Hermes has one.
+STT still follows the upstream Hermes `stt:` configuration for the stable
+Hermes chat + voice output engine, resolved through the active profile where
+Hermes has one. Realtime Agent uses the selected provider's native realtime
+transcription instead and does not upload the turn through `/voice/transcribe`.
 
 ### Realtime Agent
 
 Visible when the `Realtime Agent` voice engine is selected, and also visible as
 a development surface when Developer options are unlocked. This experimental
 section saves profile-scoped realtime provider defaults (`realtime_voice:`) for
-OpenAI-first and xAI-ready provider testing. Provider dropdowns use the same
-relay-owned option refresh, search, grouping, and validation pattern as Voice
-Output.
+provider-native testing. Native Realtime Agent providers currently include
+`xai_realtime` with `grok-voice-latest` and `openai_realtime` with
+`gpt-realtime-2`. Victor's profile can select `leo` for xAI, while OpenAI
+profiles commonly use voices such as `marin` or `cedar`. Provider dropdowns use
+the same relay-owned option refresh, search, grouping, and validation pattern as
+Voice Output, plus a native-agent capability flag so lab/render-only providers
+do not appear as full Realtime Agent choices.
 
 Realtime Agent is still Hermes-first. The provider does not get raw Android
 bridge tools, direct Hermes tool execution, or ownership of memory. The relay
@@ -180,11 +194,47 @@ broker exposes only a small tool surface:
 - `hermes_cancel`
 - `hermes_confirm`
 
-The first integrated Android path sends the client transcript to the relay
-broker, streams Hermes chat/tool events into the existing timeline, and renders
-the approved Hermes response through the selected realtime provider as PCM. If
+When the phone is paired, its Relay session token only authenticates it to the
+realtime route. Hermes tool calls from the realtime broker use the relay
+server's local Hermes API credential from `config.yaml`, `.env`, or
+`API_SERVER_KEY`; the provider never receives the phone's saved API key.
+
+Provider-native Android paths stream mic PCM to a relay-owned realtime provider
+WebSocket session. Android commits the captured utterance, the active provider
+owns input transcription and speech generation, and Hermes still owns profile
+binding, session history, memory, tools, confirmation prompts, cancellation
+policy, and transcript persistence. The relay sends the provider only the
+approved Hermes function schemas, returns compact tool results, and waits for
+Android playback to drain before asking the provider for post-tool narration. If
 the provider disconnects or quality is poor, switch Voice engine back to
 `Hermes chat + voice output`; existing voice routes and settings remain intact.
+
+Voice turns include interface context. In stable voice mode the chat agent is
+told the turn came through `Hermes chat + voice output`; in Realtime Agent mode
+the provider and Hermes broker are told the active path is `realtime_agent`,
+including provider, model, voice, profile, and relay-local date/time. If you ask
+which path is active or what today's date is, the agent should answer from that
+context.
+
+For research, news, current facts beyond the injected date/time, live checks, or
+anything else the realtime provider cannot know from the active context, the
+provider is instructed to call Hermes instead of guessing from model knowledge.
+That also covers latest/versioned data, device or desktop state, personal or
+project context, side effects, precision-sensitive answers, explicit
+check/verify/look-up requests, and media or artifact handling. Hermes performs
+the governed check, then the provider speaks a concise summary.
+
+Realtime Agent also asks the provider to format speech for listening: dates,
+times, currency, percentages, versions, measurements, counts, paths, URLs, IDs,
+JSON, logs, tables, and dense numeric strings should be summarized naturally
+instead of read character by character. When raw values are not useful aloud, the
+voice can say something like "plus a few IDs and raw values" and keep the meaning
+front and center.
+
+The default Realtime Agent timeline stays user-facing: live transcript,
+assistant speech, path badges, confirmation state, and compact tool rows. Turn
+on **Detailed trace** in Voice settings to show raw Hermes deltas and tool
+result previews for debugging.
 
 ### Test Voice
 

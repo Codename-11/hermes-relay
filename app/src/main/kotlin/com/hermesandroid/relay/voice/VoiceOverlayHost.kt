@@ -229,6 +229,7 @@ class VoiceOverlayHost(context: Context) {
 
 data class VoiceOverlaySession(
     val uiState: StateFlow<VoiceUiState>,
+    val engineMode: String? = null,
     val provider: String?,
     val model: String?,
     val voice: String?,
@@ -252,6 +253,7 @@ private fun VoiceFloatingOverlayPill(
 ) {
     val uiState by session.uiState.collectAsState()
     var minimized by remember { mutableStateOf(false) }
+    val engineText = voiceEngineLabel(session.engineMode)
     val providerText = voiceProviderLabel(
         session.provider,
         session.model,
@@ -329,7 +331,7 @@ private fun VoiceFloatingOverlayPill(
                         )
                     }
                     Text(
-                        text = "$stateText · $profileText · $providerText",
+                        text = "$stateText · $engineText · $profileText · $providerText",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -692,6 +694,15 @@ private fun voiceProviderLabel(
     val modelPart = model?.takeIf { it.isNotBlank() }
     val voicePart = voice?.takeIf { it.isNotBlank() }
     return listOfNotNull(providerPart, modelPart, voicePart).joinToString(" / ")
+}
+
+private fun voiceEngineLabel(engineMode: String?): String = when (engineMode) {
+    "realtime_agent" -> "Realtime Agent"
+    "hermes_voice_output" -> "Hermes voice"
+    null, "" -> "Voice engine ..."
+    else -> engineMode
+        .replace('_', ' ')
+        .replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
 }
 
 fun openHermesFromOverlay(context: Context) {

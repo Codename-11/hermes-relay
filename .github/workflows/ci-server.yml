@@ -1,12 +1,12 @@
-# Hermes-Relay — Python Relay CI Pipeline
+# Hermes-Relay — Python Server CI Pipeline
 #
 # Runs on pushes to main/dev and on PRs targeting main/dev, scoped to
-# Python-affecting paths so Android-only changes don't spin up the
+# server-affecting paths so Android-only changes don't spin up the
 # Python toolchain.
 #
-# Pipeline: syntax-check -> focused relay tests
+# Pipeline: syntax-check -> focused server tests
 
-name: CI — Relay
+name: CI — Server
 
 on:
   push:
@@ -26,9 +26,9 @@ on:
       - "relay_server/**"
       - "hermes_relay_bootstrap/**"
       - "pyproject.toml"
-      - "scripts/check-relay-version-sync.py"
-      - "scripts/bump-relay-version.sh"
-      - ".github/workflows/ci-relay.yml"
+      - "scripts/check-server-version-sync.py"
+      - "scripts/bump-server-version.sh"
+      - ".github/workflows/ci-server.yml"
   pull_request:
     branches: [main, dev]
     paths:
@@ -46,18 +46,18 @@ on:
       - "relay_server/**"
       - "hermes_relay_bootstrap/**"
       - "pyproject.toml"
-      - "scripts/check-relay-version-sync.py"
-      - "scripts/bump-relay-version.sh"
-      - ".github/workflows/ci-relay.yml"
+      - "scripts/check-server-version-sync.py"
+      - "scripts/bump-server-version.sh"
+      - ".github/workflows/ci-server.yml"
 
 # Cancel in-progress runs for the same branch/PR, but let main and dev finish
 concurrency:
-  group: ci-relay-${{ github.ref }}
+  group: ci-server-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
 
 jobs:
   # ──────────────────────────────────────────────
-  # Python Relay — py_compile syntax sanity
+  # Python Server — py_compile syntax sanity
   # ──────────────────────────────────────────────
   syntax-check:
     name: Syntax check (Python)
@@ -75,7 +75,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r relay_server/requirements.txt
 
-      - name: Syntax check (plugin.relay — canonical location)
+      - name: Syntax check (server/plugin.relay — canonical location)
         run: |
           python -m py_compile plugin/relay/server.py
           python -m py_compile plugin/relay/channels/terminal.py
@@ -87,18 +87,18 @@ jobs:
       - name: Syntax check (relay_server shim)
         run: python -m py_compile relay_server/__init__.py relay_server/__main__.py
 
-      - name: Validate Relay version metadata
-        run: python scripts/check-relay-version-sync.py
+      - name: Validate Server version metadata
+        run: python scripts/check-server-version-sync.py
 
   # ──────────────────────────────────────────────
-  # Python Relay — focused route/auth/session tests
+  # Python Server — focused route/auth/session tests
   #
   # Tests are ADVISORY on dev (push or PR) so WIP commits don't block the
   # merge queue. Strict on main — the dev → main release-merge PR surfaces
   # any real failures before release.
   # ──────────────────────────────────────────────
   unit-tests:
-    name: Focused Relay tests (Python)
+    name: Focused Server tests (Python)
     needs: syntax-check
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -120,7 +120,7 @@ jobs:
           pip install -r relay_server/requirements.txt
           pip install pytest responses
 
-      - name: Run focused Relay tests
+      - name: Run focused Server tests
         run: |
           python -m pytest \
             plugin/tests/test_relay_security.py \

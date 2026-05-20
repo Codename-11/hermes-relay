@@ -39,6 +39,8 @@ data class ChatMessage(
     val estimatedCost: Double? = null,
     // Agent/personality name for display on assistant messages
     val agentName: String? = null,
+    // Small provenance badges rendered on assistant bubbles.
+    val badges: List<String> = emptyList(),
     // File attachments (images, documents, etc.)
     val attachments: List<Attachment> = emptyList(),
     /**
@@ -204,6 +206,8 @@ data class ToolCall(
     val success: Boolean?,
     val isComplete: Boolean = false,
     val error: String? = null,
+    val runId: String? = null,
+    val provenance: String? = null,
     // Duration tracking
     val startedAt: Long = System.currentTimeMillis(),
     val completedAt: Long? = null

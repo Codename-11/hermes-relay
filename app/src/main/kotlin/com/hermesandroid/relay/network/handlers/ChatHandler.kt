@@ -199,6 +199,18 @@ class ChatHandler {
         }
     }
 
+    fun replaceMessageContent(messageId: String, content: String) {
+        _messages.update { messages ->
+            messages.map { message ->
+                if (message.id == messageId) {
+                    message.copy(content = content)
+                } else {
+                    message
+                }
+            }
+        }
+    }
+
     /**
      * Append a local-only voice-intent trace to the chat scroll. Used by
      * the sideload voice intent flow (`RealVoiceBridgeIntentHandler`) so
@@ -1557,7 +1569,30 @@ class ChatHandler {
         return null
     }
 
-    fun onToolCallStart(messageId: String, toolCallId: String, toolName: String) {
+    fun setMessageBadges(messageId: String, badges: List<String>) {
+        val cleaned = badges
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .take(4)
+        _messages.update { messages ->
+            messages.map { msg ->
+                if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
+                    msg.copy(badges = cleaned)
+                } else {
+                    msg
+                }
+            }
+        }
+    }
+
+    fun onToolCallStart(
+        messageId: String,
+        toolCallId: String,
+        toolName: String,
+        runId: String? = null,
+        provenance: String? = null,
+    ) {
         _isStreaming.value = true
 
         val toolCall = ToolCall(
@@ -1566,7 +1601,9 @@ class ChatHandler {
             args = null,
             result = null,
             success = null,
-            isComplete = false
+            isComplete = false,
+            runId = runId,
+            provenance = provenance,
         )
 
         _messages.update { messages ->
@@ -1595,7 +1632,12 @@ class ChatHandler {
         }
     }
 
-    fun onToolCallComplete(messageId: String, toolCallId: String, resultPreview: String? = null) {
+    fun onToolCallComplete(
+        messageId: String,
+        toolCallId: String,
+        resultPreview: String? = null,
+        provenance: String? = null,
+    ) {
         // Snapshot the matching tool call's name BEFORE mutating — we need it
         // to decide whether to emit a phone-action result bubble below.
         val toolName = _messages.value
@@ -1613,6 +1655,7 @@ class ChatHandler {
                                 success = true,
                                 isComplete = true,
                                 result = resultPreview ?: call.result,
+                                provenance = provenance ?: call.provenance,
                                 completedAt = System.currentTimeMillis()
                             )
                         } else {

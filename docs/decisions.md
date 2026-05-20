@@ -953,16 +953,16 @@ two operational frictions as it grew:
   audience now trails `dev` by a release cadence, not a merge cadence.
 
 **CI impact:** the same workflow files trigger on both branches via
-path-filtered triggers (`ci-android.yml` / `ci-relay.yml` after the
+path-filtered triggers (`ci-android.yml` / `ci-server.yml` after the
 2026-04-19 split). `docs.yml` stays `main`-only — docs publish represents
-shipped state, not integration state. `release.yml` is tag-triggered and
+shipped state, not integration state. Surface release workflows are tag-triggered and
 branch-agnostic, unchanged.
 
 **References:**
 - `CLAUDE.md` — "Git" section + "Testing / CI is split by path" note
 - `RELEASE.md` — "Branching policy" + Release Process step 4 + Hotfix recipe
 - `CONTRIBUTING.md` — "Commit Conventions"
-- `.github/workflows/ci-android.yml`, `.github/workflows/ci-relay.yml`
+- `.github/workflows/ci-android.yml`, `.github/workflows/ci-server.yml`
 - `scripts/bump-version.sh` — prints the dev → main release flow
 
 ---

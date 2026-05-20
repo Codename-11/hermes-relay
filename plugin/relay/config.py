@@ -533,6 +533,29 @@ def save_realtime_voice_config_file(
     return path
 
 
+def hermes_api_server_key(config: RelayConfig) -> str | None:
+    """Return the local Hermes API bearer key, if one is configured.
+
+    This is for relay-internal calls from paired session surfaces to the
+    co-hosted Hermes WebAPI. It deliberately returns only the secret value and
+    never exposes it in profile discovery or client-facing payloads.
+    """
+    config_path = Path(config.hermes_config_path).expanduser()
+    data = _load_yaml_mapping(config_path)
+    platform = _api_server_platform_config(data)
+    key = (
+        _coerce_string(platform.get("key"))
+        or _coerce_string(platform.get("api_key"))
+    )
+    if key:
+        return key
+
+    dotenv = _profile_dotenv_values(config_path.parent)
+    return _coerce_string(dotenv.get("API_SERVER_KEY")) or _coerce_string(
+        os.getenv("API_SERVER_KEY")
+    )
+
+
 def _realtime_voice_config_path(config: RelayConfig) -> Path:
     configured = config.realtime_voice_config_path or str(
         default_realtime_voice_config_path()

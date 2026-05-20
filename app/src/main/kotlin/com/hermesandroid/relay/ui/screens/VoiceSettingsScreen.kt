@@ -866,6 +866,27 @@ fun VoiceSettingsScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Detailed trace", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                text = "Show raw Hermes deltas and tool result previews in the timeline",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = voiceSettings.realtimeTraceDetails,
+                            onCheckedChange = { enabled ->
+                                scope.launch { prefsRepo.setRealtimeTraceDetails(enabled) }
+                            },
+                        )
+                    }
                     Spacer(Modifier.height(4.dp))
                     ProviderRow(
                         label = "Status",
@@ -925,7 +946,7 @@ fun VoiceSettingsScreen(
                         realtimeConfig?.providers.orEmpty(),
                         realtimeProviderOptions,
                     )
-                        .filter { it.supports_realtime }
+                        .filter { it.supports_realtime_agent_native }
                     val selectedRealtimeProvider = providerFor(
                         realtimeProviders,
                         realtimeProvider,
@@ -1391,6 +1412,7 @@ private fun realtimeAuthLabel(config: RealtimeVoiceConfig): String {
     return when {
         auth.xai_oauth -> "Hermes xAI OAuth"
         auth.xai_env -> "xAI env"
+        auth.openai_env -> "OpenAI env"
         else -> "server managed"
     }
 }

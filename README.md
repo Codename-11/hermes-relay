@@ -53,13 +53,13 @@ Three steps: pick your surface (or install both), then install the relay plugin 
 -->
 
 - **Google Play** — coming soon (currently on Internal testing)
-- **APK** — download from [GitHub Releases](https://github.com/Codename-11/hermes-relay/releases/latest)
+- **APK** — download from [GitHub Releases](https://github.com/Codename-11/hermes-relay/releases) and choose the newest Android release (`android-v*`; historical Android releases used bare `v*`)
 
 #### Sideload APK (GitHub Releases)
 
 Prefer not to wait for Google Play? Grab the signed APK directly:
 
-1. Download the file ending in **`-sideload-release.apk`** from [the latest release](https://github.com/Codename-11/hermes-relay/releases/latest) — that's the full-featured "Hermes Dev" build. (Skip any `.aab` file — those are the Google Play bundle format and won't install directly.)
+1. Download the file ending in **`-sideload-release.apk`** from the newest Android release (`android-v*`; historical Android releases used bare `v*`) on [GitHub Releases](https://github.com/Codename-11/hermes-relay/releases) — that's the full-featured "Hermes Dev" build. (Skip any `.aab` file — those are the Google Play bundle format and won't install directly.)
 2. On your phone: **Settings → Apps → Special app access → Install unknown apps** and allow your browser (first time only).
 3. Open the APK from your downloads and tap **Install**.
 4. Optionally verify integrity against `SHA256SUMS.txt` from the same release (`sha256sum` on macOS/Linux, `Get-FileHash -Algorithm SHA256` on Windows).
@@ -229,9 +229,9 @@ For detailed setup, server configuration, and feature guides, see the **[full do
 
 ```
 Phone        (HTTP/SSE) --> Hermes API Server (:8642)   [chat — direct]
-Phone        (HTTP)     --> Relay Server (:8767)         [voice routes — API key or relay session]
-Phone        (WSS/HTTP) --> Relay Server (:8767)         [terminal, bridge, media, sessions]
-Desktop CLI  (WSS)      --> Relay Server (:8767)         [tui, terminal, desktop tools]
+Phone        (HTTP)     --> Server (:8767)         [voice routes — API key or relay session]
+Phone        (WSS/HTTP) --> Server (:8767)         [terminal, bridge, media, sessions]
+Desktop CLI  (WSS)      --> Server (:8767)         [tui, terminal, desktop tools]
 ```
 
 Chat from the Android app connects directly to the Hermes API Server with the Hermes API key — same pattern used by Open WebUI and other Hermes frontends. Voice calls the relay's `/voice/*` HTTP routes and authenticates with that Hermes API bearer when present, falling back to the relay session token for paired devices. Remote control surfaces such as terminal, bridge, TUI, media/session management, and desktop tools require relay pairing on `:8767`, so one scan can configure both the API route and the relay route without merging their auth models.
@@ -247,8 +247,8 @@ Chat from the Android app connects directly to the Hermes API Server with the He
 | [API Reference](https://codename-11.github.io/hermes-relay/reference/api.html) | Hermes API endpoints used by both surfaces |
 | [Specification](docs/spec.md) | Full spec — protocol, UI, phases, dependencies |
 | [Architecture Decisions](docs/decisions.md) | ADRs — framework, channels, auth, terminal |
-| [Upstream Integration Sync](docs/upstream-integration-sync.md) | Supported Hermes extension points vs relay-owned compatibility layers |
-| [Changelog](CHANGELOG.md) | Release history (Android `v*`, Relay `relay-v*`, and desktop `desktop-v*`) |
+| [Upstream Integration Sync](docs/upstream-integration-sync.md) | Supported Hermes extension points vs server-owned compatibility layers |
+| [Changelog](CHANGELOG.md) | Release history (Android `android-v*`, Server `server-v*`, and Desktop `desktop-v*`) |
 
 ---
 
@@ -269,7 +269,7 @@ scripts/dev.bat bundle     # Build release AAB for Google Play
 scripts/dev.bat run        # Build + install + launch + logcat
 scripts/dev.bat test       # Run unit tests
 scripts/dev.bat version    # Show current version
-scripts/dev.bat relay      # Start relay server (dev, no TLS)
+scripts/dev.bat relay      # Start Server (dev, no TLS)
 ```
 
 ### Repository Structure
@@ -278,7 +278,7 @@ scripts/dev.bat relay      # Start relay server (dev, no TLS)
 hermes-relay/
 ├── app/                       # Android app (Kotlin + Jetpack Compose)
 ├── desktop/                   # Desktop CLI thin-client (@hermes-relay/cli — TS + Bun-compiled binary)
-├── relay_server/              # WSS relay server (Python + aiohttp; thin shim → plugin/relay)
+├── relay_server/              # WSS Server (Python + aiohttp; thin shim → plugin/relay)
 ├── plugin/                    # Hermes agent plugin
 │   ├── relay/                 #   - canonical relay (server.py, channels/, media, voice, desktop tools)
 │   ├── tools/                 #   - android_* bridge + desktop_* tool handlers
@@ -291,7 +291,7 @@ hermes-relay/
 ├── user-docs/                 # VitePress documentation site (Android + desktop sections)
 ├── docs/                      # Spec, decisions, security
 ├── scripts/                   # Dev helper scripts
-├── .github/workflows/         # CI + release pipelines (ci-android / ci-relay / ci-desktop)
+├── .github/workflows/         # CI + release pipelines (ci-android / ci-server / ci-desktop)
 └── gradle/                    # Wrapper (8.13) + version catalog
 ```
 
@@ -301,13 +301,13 @@ hermes-relay/
 |-----------|-------|
 | **Android App** | Kotlin 2.0, Jetpack Compose, Material 3, OkHttp |
 | **Desktop CLI** | TypeScript, Bun-compiled native binary, Node ≥21 (source/dev), zero runtime deps |
-| **Relay Server** | Python 3.11+, aiohttp |
+| **Server** | Python 3.11+, aiohttp |
 | **Serialization** | kotlinx.serialization (Android) |
 | **Build** | AGP 9, Gradle 8.13, JVM toolchain 17 (Android); `tsc` + `bun build --compile` (desktop) |
 | **CI/CD** | GitHub Actions (lint, build, test, APK artifact, desktop binaries per platform) |
 | **Min SDK** | 26 (Android 8.0) / Target SDK 35 |
 
-### Relay Server (optional — bridge, terminal, TUI, media, and voice routes)
+### Server (optional — bridge, terminal, TUI, media, and voice routes)
 
 ```bash
 hermes relay start --no-ssl          # if you installed the plugin

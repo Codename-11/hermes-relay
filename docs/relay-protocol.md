@@ -427,6 +427,12 @@ All three routes require bearer auth. Relay session callers need an active
 transport guard used by `/voice/config`, `/voice/transcribe`, and
 `/voice/synthesize`.
 
+For paired Relay-session callers, the session token is not forwarded to the
+Hermes WebAPI. Realtime Agent broker calls use the relay host's local Hermes
+API credential from `config.yaml`, `.env`, or `API_SERVER_KEY`; if that
+credential is missing or rejected, the websocket emits
+`error_code=hermes_broker_auth_failed`.
+
 Client websocket messages:
 
 ```json
@@ -436,13 +442,18 @@ Client websocket messages:
 {"type":"session.close"}
 ```
 
-Realtime Agent client websocket messages are similar but commit the transcript
-through the broker:
+Realtime Agent client websocket messages stream mic PCM to the broker. In the
+provider-native path (`xai_realtime` or `openai_realtime`), `input_audio.commit`
+finalizes the Android-captured utterance; the relay then asks the active
+realtime provider to create a response. Android does not include a client
+transcript because the provider owns speech recognition inside the
+relay-brokered session.
 
 ```json
 {"type":"session.start"}
 {"type":"input_audio.append","sample_rate":16000,"audio_base64":"..."}
-{"type":"input_audio.commit","text":"Please check the relay status."}
+{"type":"input_audio.commit"}
+{"type":"playback.drained","call_id":"..."}
 {"type":"response.cancel"}
 {"type":"hermes.confirm","confirmation_id":"...","answer":"yes"}
 {"type":"session.close"}
@@ -453,27 +464,52 @@ Server websocket messages:
 ```json
 {"type":"voice.session.ready","provider":"xai_realtime","model":"grok-voice-latest","voice":"eve","sample_rate":24000}
 {"type":"voice.input_audio.received","byte_count":320,"total_bytes":320}
-{"type":"voice.audio.delta","audio_base64":"...","sample_rate":24000,"channels":1,"sample_width":2,"rms_level":0.12}
-{"type":"voice.audio.done"}
-{"type":"voice.response.done","metrics":{"first_audio_ms":1764.25,"response_done_ms":3637.176},"event_log_path":"..."}
+{"type":"voice.input_transcript.delta","delta":"please check"}
+{"type":"voice.input_transcript.final","text":"Please check the relay status."}
+{"type":"hermes.run.started","session_id":"...","run_id":"..."}
+{"type":"voice.output_audio.delta","audio_base64":"...","sample_rate":24000,"channels":1,"sample_width":2,"rms_level":0.12}
+{"type":"voice.playback_drain.requested","call_id":"...","timeout_ms":2500}
+{"type":"voice.output_audio.done"}
+{"type":"voice.response.done","event_log_path":"..."}
 ```
 
 Audio deltas are mono 16-bit little-endian PCM base64 chunks. Android records a
-single PCM/WAV utterance for the voice turn: the WAV is still uploaded to
-`/voice/transcribe` for the legacy STT leg, while the raw PCM is forwarded
-through `input_audio.append` messages for provider-side input-event testing and
-relay artifacts. Provider PCM output streams back to Android for immediate
-`AudioTrack` playback. Tool execution remains owned by the Hermes chat/relay
-loop; provider tool-call events are scaffolded for validation, not executed on
-the Android client. During normal voice turns Android observes Hermes
-`tool.started` state through the chat stream and brokers short spoken status
-sentences through the selected speech renderer, so tool waits remain audible
-without moving execution or approval out of Hermes.
+single PCM/WAV utterance for the voice turn. In stable voice mode the WAV is
+uploaded to `/voice/transcribe` for the Hermes STT leg. In provider-native
+Realtime Agent mode, raw PCM is forwarded through `input_audio.append` messages,
+resampled to the provider session rate when needed, and sent to the active
+provider over the server-side WebSocket. Provider PCM output streams back to
+Android for immediate `AudioTrack` playback. Tool execution remains owned by the
+Hermes chat/relay loop; the provider only sees the approved `hermes_run_task`,
+`hermes_get_status`, `hermes_cancel`, and `hermes_confirm` function schemas. The
+relay sends compact function results back to the provider and waits for Android's `playback.drained`
+acknowledgement or a short broker timeout before requesting post-tool audio.
+Realtime Agent sessions also carry explicit interface context in provider
+instructions and brokered Hermes system messages, including relay-local
+date/time, so the agent can answer whether the active path is `realtime_agent`,
+what provider is active, or what today's date is without falling back to model
+training priors. For research, current facts, news, external data, live checks,
+latest/recent/versioned data, device/desktop/app state, personal/session/project
+context, side effects, precision-sensitive answers, explicit check/verify/look-up
+requests, media/artifacts, or anything not present in the realtime prompt/session
+context, provider-native adapters are instructed to call `hermes_run_task`
+instead of answering from provider priors. Hermes response deltas sent during
+tool execution are marked with `source:"hermes"`; clients should keep them out of
+default spoken output and let the provider summarize the function result
+naturally. Provider instructions also ask for speech-safe formatting: dates,
+times, currency, percentages, versions, measurements, counts, paths, URLs, IDs,
+JSON, logs, stack traces, tables, and dense numeric strings should be spoken as
+human-readable summaries rather than raw character-by-character dumps.
 
-Normal assistant narration should use a deterministic speech renderer where
-available. Realtime-agent providers can still be prompted with
-`render_mode="verbatim"` as a compatibility bridge, but the first-class target is
-streaming TTS such as Grok TTS over the relay.
+The render-after-Hermes compatibility bridge remains available for non-native
+providers, but Realtime Agent settings advertise the stricter
+`supports_realtime_agent_native` flag so lab/render-only realtime providers are
+not mistaken for native speech-to-speech agents. Provider-native adapters follow
+the same broker contract:
+Android PCM -> relay provider WebSocket -> normalized transcript/audio/tool
+events -> Hermes brokered tool loop -> provider function output -> Android
+timeline. The current first-class native targets are xAI Grok Voice Agent and
+OpenAI Realtime; both keep the same Hermes-owned tool and confirmation boundary.
 
 Realtime config responses use the same provider option metadata shape where
 known. Profile-scoped reads/writes target the selected profile's experimental

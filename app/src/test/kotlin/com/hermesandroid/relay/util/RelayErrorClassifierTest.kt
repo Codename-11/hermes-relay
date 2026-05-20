@@ -29,4 +29,16 @@ class RelayErrorClassifierTest {
         assertEquals("Session expired", err.title)
         assertTrue(err.body.contains("re-pair", ignoreCase = true))
     }
+
+    @Test
+    fun realtimeHermesBrokerUnauthorizedDoesNotBlameSavedPhoneKey() {
+        val err = classifyError(
+            IOException("Hermes broker auth failed (401): relay-side Hermes credential was rejected."),
+            context = "voice_config",
+        )
+
+        assertEquals("Relay Hermes auth failed", err.title)
+        assertTrue(err.body.contains("server-side Hermes credential"))
+        assertFalse(err.body.contains("saved API key", ignoreCase = true))
+    }
 }

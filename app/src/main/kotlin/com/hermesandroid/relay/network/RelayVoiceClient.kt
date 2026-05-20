@@ -29,6 +29,7 @@ import java.io.IOException
 import java.net.URLEncoder
 import java.util.Base64
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * HTTP/WebSocket client for the Hermes relay voice endpoints.
@@ -905,7 +906,7 @@ class RelayVoiceClient(
         inputPcm: ByteArray,
         inputSampleRate: Int = 16_000,
         chatSessionId: String? = null,
-        onEvent: (RealtimeVoiceEvent) -> Unit,
+        onEvent: (RealtimeVoiceEvent, RealtimeAgentSessionControl) -> Unit,
     ): Result<RealtimeVoiceSummary> = withContext(Dispatchers.IO) {
         val httpBase = resolveHttpBase()
             ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
@@ -925,6 +926,8 @@ class RelayVoiceClient(
         val completed = AtomicBoolean(false)
         var audioChunks = 0
         var audioBytes = 0
+        var outputAudioQueuedMs = 0L
+        val outputAudioStartedAt = AtomicLong(0L)
 
         val request = Request.Builder()
             .url("$wsBase${session.websocketPath}")
@@ -946,17 +949,28 @@ class RelayVoiceClient(
                         offset = end
                     }
                 }
-                webSocket.send(
-                    """{"type":"input_audio.commit","text":"${escapeJson(prompt)}"}"""
-                )
+                webSocket.send("""{"type":"input_audio.commit"}""")
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 val event = parseRealtimeEvent(text)
-                onEvent(event)
+                val control = RealtimeAgentSessionControl(webSocket)
+                onEvent(event, control)
                 if (event.isAudioDelta) {
                     audioChunks += 1
-                    audioBytes += event.byteCount ?: 0
+                    val byteCount = event.byteCount ?: 0
+                    val sampleRate = (event.sampleRate ?: session.sampleRate).coerceAtLeast(1)
+                    audioBytes += byteCount
+                    outputAudioQueuedMs += byteCount.toLong() * 1000L / (sampleRate * 2L)
+                    outputAudioStartedAt.compareAndSet(0L, System.currentTimeMillis())
+                }
+                if (event.type == "voice.playback_drain.requested") {
+                    sendPlaybackDrainedWhenNearlyComplete(
+                        webSocket = webSocket,
+                        callId = event.toolCallId,
+                        queuedAudioMs = outputAudioQueuedMs,
+                        startedAtMs = outputAudioStartedAt.get(),
+                    )
                 }
                 if (event.type == "voice.response.done") {
                     if (completed.compareAndSet(false, true)) {
@@ -1347,6 +1361,37 @@ class RelayVoiceClient(
         return """{"type":"response.create","tool_scaffold":$toolScaffold,"text":"${escapeJson(text)}"$renderModeJson}"""
     }
 
+    private fun sendPlaybackDrainedWhenNearlyComplete(
+        webSocket: WebSocket,
+        callId: String?,
+        queuedAudioMs: Long,
+        startedAtMs: Long,
+    ) {
+        val elapsedMs = if (startedAtMs > 0L) {
+            (System.currentTimeMillis() - startedAtMs).coerceAtLeast(0L)
+        } else {
+            0L
+        }
+        val delayMs = (queuedAudioMs - elapsedMs - 120L).coerceIn(0L, 2_500L)
+        Thread {
+            if (delayMs > 0L) {
+                try {
+                    Thread.sleep(delayMs)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                }
+            }
+            val callPart = callId?.takeIf { it.isNotBlank() }
+                ?.let { ""","call_id":"${escapeJson(it)}"""" }
+                .orEmpty()
+            webSocket.send("""{"type":"playback.drained"$callPart}""")
+        }.apply {
+            name = "HermesRealtimeAgentPlaybackDrain"
+            isDaemon = true
+            start()
+        }
+    }
+
     private fun parseRealtimeEvent(raw: String): RealtimeVoiceEvent {
         return try {
             val obj = json.parseToJsonElement(raw).jsonObject
@@ -1361,6 +1406,7 @@ class RelayVoiceClient(
                 ?: (obj["result"] as? JsonPrimitive)?.contentOrNull
             RealtimeVoiceEvent(
                 type = (obj["type"] as? JsonPrimitive)?.content ?: "unknown",
+                source = (obj["source"] as? JsonPrimitive)?.contentOrNull,
                 message = (obj["message"] as? JsonPrimitive)?.contentOrNull,
                 provider = (obj["provider"] as? JsonPrimitive)?.contentOrNull,
                 model = (obj["model"] as? JsonPrimitive)?.contentOrNull,
@@ -1368,6 +1414,8 @@ class RelayVoiceClient(
                 sessionId = (obj["session_id"] as? JsonPrimitive)?.contentOrNull,
                 chatSessionId = (obj["chat_session_id"] as? JsonPrimitive)?.contentOrNull,
                 messageId = (obj["message_id"] as? JsonPrimitive)?.contentOrNull,
+                runId = (obj["run_id"] as? JsonPrimitive)?.contentOrNull,
+                confirmationId = (obj["confirmation_id"] as? JsonPrimitive)?.contentOrNull,
                 delta = (obj["delta"] as? JsonPrimitive)?.contentOrNull,
                 text = textValue,
                 toolName = toolNameValue,
@@ -1481,6 +1529,7 @@ data class RealtimeProviderInfo(
     val supports_speech_to_speech: Boolean = false,
     val supports_tool_use: Boolean = false,
     val supports_realtime: Boolean = false,
+    val supports_realtime_agent_native: Boolean = false,
     val supports_interruption: Boolean = false,
     val supports_expression: Boolean = false,
 )
@@ -1570,6 +1619,8 @@ data class RealtimeVoiceAuth(
     val xai_oauth: Boolean = false,
     val xai_oauth_path: String? = null,
     val xai_oauth_source: String? = null,
+    val openai_env: Boolean = false,
+    val openai_env_names: List<String> = emptyList(),
 )
 
 @Serializable
@@ -1647,6 +1698,7 @@ data class VoiceOutputSessionResponse(
 
 data class RealtimeVoiceEvent(
     val type: String,
+    val source: String? = null,
     val message: String? = null,
     val provider: String? = null,
     val model: String? = null,
@@ -1654,6 +1706,8 @@ data class RealtimeVoiceEvent(
     val sessionId: String? = null,
     val chatSessionId: String? = null,
     val messageId: String? = null,
+    val runId: String? = null,
+    val confirmationId: String? = null,
     val delta: String? = null,
     val text: String? = null,
     val toolName: String? = null,
@@ -1673,6 +1727,25 @@ data class RealtimeVoiceEvent(
     val isAudioDelta: Boolean
         get() = type == "voice.audio.delta" || type == "voice.output_audio.delta"
 }
+
+class RealtimeAgentSessionControl(private val webSocket: WebSocket) {
+    fun confirm(confirmationId: String, answer: String): Boolean {
+        val id = confirmationId.trim()
+        val normalized = answer.trim().lowercase()
+        if (id.isEmpty() || normalized.isEmpty()) return false
+        return webSocket.send(
+            """{"type":"hermes.confirm","confirmation_id":"${escapeJsonForControl(id)}","answer":"${escapeJsonForControl(normalized)}"}"""
+        )
+    }
+}
+
+private fun escapeJsonForControl(value: String): String =
+    value
+        .replace("\\", "\\\\")
+        .replace("\"", "\\\"")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
 
 data class RealtimeVoiceSummary(
     val provider: String,

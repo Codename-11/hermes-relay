@@ -67,6 +67,7 @@ import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.util.HumanError
 import com.hermesandroid.relay.viewmodel.DestructiveCountdownState
+import com.hermesandroid.relay.viewmodel.HermesConfirmationState
 import com.hermesandroid.relay.viewmodel.InteractionMode
 import com.hermesandroid.relay.viewmodel.PermissionDeniedCallout
 import com.hermesandroid.relay.viewmodel.VoiceState
@@ -109,6 +110,7 @@ fun VoiceModeOverlay(
     // is empty.
     transcriptMessages: List<ChatMessage> = emptyList(),
     showThinking: Boolean = true,
+    voiceEngineMode: String? = null,
     voiceOutputProvider: String? = null,
     voiceOutputModel: String? = null,
     voiceOutputVoice: String? = null,
@@ -125,6 +127,7 @@ fun VoiceModeOverlay(
     // visible if not wired (the chip itself is also gated on
     // `uiState.permissionDeniedCallout` being non-null).
     onPermissionDeniedChipTap: (PermissionDeniedCallout) -> Unit = {},
+    onHermesConfirmationAnswer: (String) -> Unit = {},
     // === END v0.4.1 ===
 ) {
     val surface = MaterialTheme.colorScheme.surface
@@ -163,6 +166,7 @@ fun VoiceModeOverlay(
             onExpandedChange = { controlsExpanded = it },
             focusMode = focusMode,
             onFocusModeChange = setFocusMode,
+            engineMode = voiceEngineMode,
             provider = voiceOutputProvider,
             model = voiceOutputModel,
             voice = voiceOutputVoice,
@@ -292,6 +296,14 @@ fun VoiceModeOverlay(
                 PermissionDeniedChip(
                     callout = uiState.permissionDeniedCallout,
                     onTap = onPermissionDeniedChipTap,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 4.dp),
+                )
+
+                HermesConfirmationCard(
+                    confirmation = uiState.hermesConfirmation,
+                    onAnswer = onHermesConfirmationAnswer,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 24.dp, vertical = 4.dp),
@@ -610,6 +622,7 @@ private fun VoiceSessionPill(
     onExpandedChange: (Boolean) -> Unit,
     focusMode: Boolean,
     onFocusModeChange: (Boolean) -> Unit,
+    engineMode: String?,
     provider: String?,
     model: String?,
     voice: String?,
@@ -626,6 +639,7 @@ private fun VoiceSessionPill(
     onExit: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val engineText = voiceEngineLabel(engineMode)
     val providerText = voiceProviderLabel(provider, model, voice, outputEnabled)
     val profileText = profileName?.takeIf { it.isNotBlank() } ?: "default profile"
     val scopeText = when (configScope) {
@@ -635,9 +649,9 @@ private fun VoiceSessionPill(
         else -> null
     }
     val headlineText = if (focusMode) {
-        "$profileText / $providerText"
+        "$engineText / $profileText / $providerText"
     } else {
-        "${stateHint(uiState.state).ifBlank { "Voice ready" }} / $profileText / $providerText"
+        "${stateHint(uiState.state).ifBlank { "Voice ready" }} / $engineText / $providerText"
     }
     Surface(
         modifier = modifier,
@@ -668,7 +682,7 @@ private fun VoiceSessionPill(
                 if (focusMode) {
                     StatusPill(uiState.interactionMode.label())
                 } else {
-                    StatusPill("Compact", emphasized = true)
+                    StatusPill(engineText, emphasized = true)
                 }
                 Text(
                     text = headlineText,
@@ -720,6 +734,7 @@ private fun VoiceSessionPill(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
+                        StatusPill(engineText, emphasized = true, modifier = Modifier.weight(1f))
                         StatusPill(profileText, modifier = Modifier.weight(1f))
                         scopeText?.let {
                             StatusPill(it, modifier = Modifier.weight(1f))
@@ -875,6 +890,15 @@ private fun voiceProviderLabel(
     val modelPart = model?.takeIf { it.isNotBlank() }
     val voicePart = voice?.takeIf { it.isNotBlank() }
     return listOfNotNull(providerPart, modelPart, voicePart).joinToString(" / ")
+}
+
+private fun voiceEngineLabel(engineMode: String?): String = when (engineMode) {
+    "realtime_agent" -> "Realtime Agent"
+    "hermes_voice_output" -> "Hermes voice"
+    null, "" -> "Voice engine ..."
+    else -> engineMode
+        .replace('_', ' ')
+        .replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
 }
 
 private fun InteractionMode.shortLabel(): String = when (this) {
@@ -1049,6 +1073,48 @@ private fun VoiceToolStatusRow(toolCall: ToolCall) {
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HermesConfirmationCard(
+    confirmation: HermesConfirmationState?,
+    onAnswer: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    AnimatedVisibility(
+        visible = confirmation != null,
+        enter = fadeIn(tween(150)),
+        exit = fadeOut(tween(150)),
+        modifier = modifier,
+    ) {
+        confirmation?.let { state ->
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.tertiaryContainer,
+                tonalElevation = 2.dp,
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = state.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextButton(onClick = { onAnswer("allow") }) { Text("Allow") }
+                        TextButton(onClick = { onAnswer("deny") }) { Text("Deny") }
+                        TextButton(onClick = { onAnswer("cancel") }) { Text("Cancel") }
+                    }
+                }
             }
         }
     }

@@ -4,7 +4,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /**
- * Minimal subset of the GitHub "releases/latest" payload we care about.
+ * Minimal subset of the GitHub releases API payload we care about.
  *
  * Full response is much larger; kotlinx.serialization's default behaviour
  * silently drops unknown keys, so we only declare the fields we read.

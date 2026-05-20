@@ -1,16 +1,16 @@
-# Hermes-Relay — Android App Release Pipeline
+# Hermes-Relay-Android — Release Pipeline
 #
-# Triggered when a version tag (v*) is pushed.
+# Triggered when an Android release tag (android-v*) is pushed.
 # Validates the tag matches the app version in libs.versions.toml,
 # runs focused Android checks, builds release APK/AAB artifacts, and creates a
-# GitHub Release. Relay server/Python package releases use relay-v* tags.
+# GitHub Release. Server/Python package releases use server-v* tags.
 
-name: Release
+name: Release Android
 
 on:
   push:
     tags:
-      - "v*"
+      - "android-v*"
 
 permissions:
   contents: write
@@ -27,7 +27,7 @@ jobs:
 
       - name: Extract version from tag
         id: version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: echo "version=${GITHUB_REF#refs/tags/android-v}" >> $GITHUB_OUTPUT
 
       - name: Verify version sync
         run: |
@@ -135,7 +135,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          name: v${{ needs.validate.outputs.version }}
+          name: Hermes-Relay-Android v${{ needs.validate.outputs.version }}
+          tag_name: android-v${{ needs.validate.outputs.version }}
           body_path: RELEASE_NOTES.md
           prerelease: ${{ contains(needs.validate.outputs.version, '-') }}
           # Attach all four flavored artifacts — users sideload the
@@ -154,7 +155,7 @@ jobs:
         env:
           HERMES_KEYSTORE_BASE64: ${{ secrets.HERMES_KEYSTORE_BASE64 }}
         run: |
-          echo "## Release v${{ needs.validate.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Hermes-Relay-Android v${{ needs.validate.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           if [ -n "$HERMES_KEYSTORE_BASE64" ]; then
             echo "✅ **Signed with release keystore** — suitable for Play Store upload" >> "$GITHUB_STEP_SUMMARY"

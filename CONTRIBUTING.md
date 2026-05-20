@@ -94,14 +94,14 @@ We follow [Conventional Commits](https://www.conventionalcommits.org/): `feat:`,
 
 **Branching model (as of 2026-04-19): `main` + `dev`.** Feature branches — `feature/<name>`, `fix/<name>`, `docs/<name>`, `chore/<name>` — branch off `dev` and merge back into `dev` via `--no-ff` PRs. `main` is released state only; it receives release merges from `dev` and nothing else. There is no straight-to-main exemption — even single-file typos go through `dev`.
 
-Release-prep commits (version bump, changelog promotion) land on `dev` first, then a `release: vX.Y.Z` PR merges `dev` → `main` with `--no-ff`. The tag is cut from `main` after the merge. See [RELEASE.md](RELEASE.md) for the full release process.
+Release-prep commits (version bump, changelog promotion) land on `dev` first, then a surface-specific release PR merges `dev` → `main` with `--no-ff`. Tags are cut from `main` after the merge: `android-vX.Y.Z`, `server-vX.Y.Z`, or `desktop-vX.Y.Z`. See [RELEASE.md](RELEASE.md) for the full release process.
 
 ## Testing
 
 - **Android unit tests:** `scripts/dev.bat test` (runs JUnit + MockK + Compose testing)
 - **Python tests:** `python -m unittest plugin.tests.test_<name>` from the repo root with the hermes-agent venv active. `pytest` works too but the pre-existing `conftest.py` imports a module that isn't always installed — `unittest` avoids that entirely.
 
-CI is split into two path-filtered workflows: `.github/workflows/ci-android.yml` (lint + build + test on app/Gradle changes) and `.github/workflows/ci-relay.yml` (syntax check + unittest discover on plugin/Python changes). Both run on pushes to `main` and `dev` and on PRs targeting either.
+CI is split into path-filtered workflows: `.github/workflows/ci-android.yml` (lint + build + test on app/Gradle changes), `.github/workflows/ci-server.yml` (syntax check + focused server tests on plugin/Python changes), and `.github/workflows/ci-desktop.yml` (desktop type/build/smoke checks). They run on pushes to `main` and `dev` and on PRs targeting either when their paths are touched.
 
 ## Questions?
 

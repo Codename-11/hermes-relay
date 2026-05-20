@@ -57,6 +57,10 @@ class ChatViewModel : ViewModel() {
     private var toolHistoryJob: Job? = null
     private var connectionSwitchJob: Job? = null
     private val historyLoadGeneration = AtomicInteger(0)
+    private val realtimeAgentUserMessages = mutableMapOf<String, String>()
+    private val realtimeAgentInputTranscripts = mutableMapOf<String, StringBuilder>()
+    private val realtimeAgentProviderBadges = mutableMapOf<String, String>()
+    private var nextInterfaceContextPrompt: String? = null
 
     // --- Media dependencies (wired via initializeMedia from RelayApp) ---
     private var relayHttpClient: RelayHttpClient? = null
@@ -611,6 +615,12 @@ class ChatViewModel : ViewModel() {
         sendMessageInternal(client, handler, text)
     }
 
+    fun sendVoiceMessage(text: String, interfaceContextPrompt: String) {
+        if (text.isBlank()) return
+        nextInterfaceContextPrompt = interfaceContextPrompt.takeIf { it.isNotBlank() }
+        sendMessage(text)
+    }
+
     /**
      * Append a local-only voice-intent trace to chat history. Used by
      * VoiceViewModel so phone-control utterances ("open Chrome", "text
@@ -718,6 +728,8 @@ class ChatViewModel : ViewModel() {
 
     private fun sendMessageInternal(client: HermesApiClient, handler: ChatHandler, text: String) {
         AppAnalytics.onMessageSent()
+        val interfaceContextPrompt = nextInterfaceContextPrompt
+        nextInterfaceContextPrompt = null
 
         // Snapshot and clear pending attachments
         val attachments = _pendingAttachments.value.ifEmpty { null }
@@ -741,9 +753,25 @@ class ChatViewModel : ViewModel() {
         val sessionId = handler.currentSessionId.value
 
         if (streamingEndpoint == "runs" || streamingEndpoint == "completions") {
-            startStream(client, handler, sessionId ?: "", text.trim(), assistantMessageId, attachments)
+            startStream(
+                client,
+                handler,
+                sessionId ?: "",
+                text.trim(),
+                assistantMessageId,
+                attachments,
+                interfaceContextPrompt,
+            )
         } else if (sessionId != null) {
-            startStream(client, handler, sessionId, text.trim(), assistantMessageId, attachments)
+            startStream(
+                client,
+                handler,
+                sessionId,
+                text.trim(),
+                assistantMessageId,
+                attachments,
+                interfaceContextPrompt,
+            )
         } else {
             viewModelScope.launch {
                 val selectedProfile = selectedProfileProvider()
@@ -765,7 +793,15 @@ class ChatViewModel : ViewModel() {
                         handler.addSession(chatSession)
                         handler.setSessionId(session.id)
                         onSessionChanged?.invoke(session.id)
-                        startStream(client, handler, session.id, text.trim(), assistantMessageId, attachments)
+                        startStream(
+                            client,
+                            handler,
+                            session.id,
+                            text.trim(),
+                            assistantMessageId,
+                            attachments,
+                            interfaceContextPrompt,
+                        )
 
                         // Auto-title: use first ~50 chars of user message
                         val autoTitle = text.trim().take(50).let {
@@ -788,9 +824,11 @@ class ChatViewModel : ViewModel() {
     fun startRealtimeAgentTurn(userText: String, chatSessionId: String?): String {
         val handler = chatHandler ?: return UUID.randomUUID().toString()
         AppAnalytics.onMessageSent()
-        val trimmed = userText.trim()
+        val trimmed = userText.trim().ifBlank { "Listening..." }
         val userMessageId = UUID.randomUUID().toString()
         val assistantMessageId = "realtime-agent-${UUID.randomUUID()}"
+        realtimeAgentUserMessages[assistantMessageId] = userMessageId
+        realtimeAgentInputTranscripts[assistantMessageId] = StringBuilder()
         handler.activeAgentName = currentAgentDisplayName()
         handler.addUserMessage(
             ChatMessage(
@@ -813,12 +851,47 @@ class ChatViewModel : ViewModel() {
                 timestamp = System.currentTimeMillis(),
                 isStreaming = true,
                 agentName = handler.activeAgentName,
+                badges = listOf("Realtime Agent"),
             )
         )
         return assistantMessageId
     }
 
-    fun applyRealtimeAgentEvent(assistantMessageId: String, event: RealtimeVoiceEvent) {
+    private fun realtimeBadges(
+        assistantMessageId: String,
+        provider: String? = null,
+        voice: String? = null,
+        hasHermes: Boolean,
+        hasTool: Boolean,
+    ): List<String> = buildList {
+        realtimeProviderBadge(provider, voice)?.let {
+            realtimeAgentProviderBadges[assistantMessageId] = it
+        }
+        add("Realtime Agent")
+        if (hasHermes) add("Hermes")
+        if (hasTool) add("Tool")
+        realtimeAgentProviderBadges[assistantMessageId]?.let { add(it) }
+    }
+
+    private fun realtimeProviderBadge(provider: String?, voice: String?): String? {
+        val normalizedProvider = provider
+            ?.takeIf { it.isNotBlank() }
+            ?.replace("_realtime", "")
+            ?.uppercase()
+        val normalizedVoice = voice?.takeIf { it.isNotBlank() }
+        return when {
+            normalizedProvider != null && normalizedVoice != null -> "$normalizedProvider $normalizedVoice"
+            normalizedProvider != null -> normalizedProvider
+            normalizedVoice != null -> normalizedVoice
+            else -> null
+        }
+    }
+
+    fun applyRealtimeAgentEvent(
+        assistantMessageId: String,
+        event: RealtimeVoiceEvent,
+        showDetailedTrace: Boolean = false,
+    ) {
         val handler = chatHandler ?: return
         val hermesSessionId = when {
             !event.chatSessionId.isNullOrBlank() -> event.chatSessionId
@@ -831,25 +904,90 @@ class ChatViewModel : ViewModel() {
         }
 
         when (event.type) {
+            "voice.session.ready", "voice.response.started" -> {
+                handler.setMessageBadges(
+                    assistantMessageId,
+                    realtimeBadges(
+                        assistantMessageId = assistantMessageId,
+                        provider = event.provider,
+                        voice = event.voice,
+                        hasHermes = false,
+                        hasTool = false,
+                    ),
+                )
+            }
             "hermes.message.started" -> Unit
+            "voice.input_transcript.delta" -> {
+                val userMessageId = realtimeAgentUserMessages[assistantMessageId] ?: return
+                val transcript = event.delta?.takeIf { it.isNotBlank() } ?: return
+                val accumulated = realtimeAgentInputTranscripts
+                    .getOrPut(assistantMessageId) { StringBuilder() }
+                    .append(transcript)
+                    .toString()
+                handler.replaceMessageContent(userMessageId, accumulated)
+                handler.setLastSentMessage(accumulated)
+            }
+            "voice.input_transcript.final" -> {
+                val userMessageId = realtimeAgentUserMessages[assistantMessageId] ?: return
+                val transcript = event.text?.takeIf { it.isNotBlank() } ?: return
+                realtimeAgentInputTranscripts[assistantMessageId] = StringBuilder(transcript)
+                handler.replaceMessageContent(userMessageId, transcript)
+                handler.setLastSentMessage(transcript)
+            }
             "voice.response.delta" -> {
                 val delta = event.delta ?: return
-                handler.onTextDelta(assistantMessageId, delta)
+                if (event.source == "hermes") {
+                    if (showDetailedTrace) {
+                        handler.onThinkingDelta(assistantMessageId, delta)
+                    }
+                } else {
+                    handler.onTextDelta(assistantMessageId, delta)
+                }
             }
             "hermes.tool.delta" -> {
+                if (!showDetailedTrace) return
                 val delta = event.delta ?: return
                 handler.onThinkingDelta(assistantMessageId, delta)
+            }
+            "hermes.run.started" -> {
+                handler.setMessageBadges(
+                    assistantMessageId,
+                    realtimeBadges(
+                        assistantMessageId = assistantMessageId,
+                        hasHermes = true,
+                        hasTool = false,
+                    ),
+                )
             }
             "hermes.tool.started" -> {
                 val name = event.toolName?.takeIf { it.isNotBlank() } ?: "hermes"
                 val callId = event.toolCallId?.takeIf { it.isNotBlank() } ?: name
-                handler.onToolCallStart(assistantMessageId, callId, name)
+                handler.setMessageBadges(
+                    assistantMessageId,
+                    realtimeBadges(
+                        assistantMessageId = assistantMessageId,
+                        hasHermes = true,
+                        hasTool = true,
+                    ),
+                )
+                handler.onToolCallStart(
+                    messageId = assistantMessageId,
+                    toolCallId = callId,
+                    toolName = name,
+                    runId = event.runId,
+                    provenance = "Hermes tool result summarized by provider voice",
+                )
             }
             "hermes.tool.completed" -> {
                 val callId = event.toolCallId?.takeIf { it.isNotBlank() }
                     ?: event.toolName?.takeIf { it.isNotBlank() }
                     ?: "hermes"
-                handler.onToolCallComplete(assistantMessageId, callId, event.resultPreview)
+                handler.onToolCallComplete(
+                    messageId = assistantMessageId,
+                    toolCallId = callId,
+                    resultPreview = event.resultPreview.takeIf { showDetailedTrace },
+                    provenance = "Provider-generated spoken summary after Hermes result",
+                )
             }
             "hermes.tool.failed" -> {
                 val callId = event.toolCallId?.takeIf { it.isNotBlank() }
@@ -859,14 +997,42 @@ class ChatViewModel : ViewModel() {
             }
             "hermes.confirmation.requested" -> {
                 val prompt = event.message ?: "Waiting for confirmation"
-                handler.onThinkingDelta(assistantMessageId, prompt)
+                handler.setMessageBadges(
+                    assistantMessageId,
+                    realtimeBadges(
+                        assistantMessageId = assistantMessageId,
+                        hasHermes = true,
+                        hasTool = true,
+                    ),
+                )
+                if (showDetailedTrace) {
+                    handler.onThinkingDelta(assistantMessageId, prompt)
+                }
             }
-            "voice.response.done", "hermes.run.completed" -> {
+            "hermes.run.completed" -> {
+                // Hermes completion means the tool result is ready; provider narration ends the turn.
+                Unit
+            }
+            "voice.response.done" -> {
                 handler.onStreamComplete(assistantMessageId)
+                realtimeAgentUserMessages.remove(assistantMessageId)
+                realtimeAgentInputTranscripts.remove(assistantMessageId)
+                realtimeAgentProviderBadges.remove(assistantMessageId)
+                activeStream = null
+            }
+            "hermes.run.cancelled" -> {
+                handler.replaceMessageContent(assistantMessageId, "Cancelled.")
+                handler.onStreamComplete(assistantMessageId)
+                realtimeAgentUserMessages.remove(assistantMessageId)
+                realtimeAgentInputTranscripts.remove(assistantMessageId)
+                realtimeAgentProviderBadges.remove(assistantMessageId)
                 activeStream = null
             }
             "voice.error" -> {
                 handler.onStreamError(event.message ?: "Realtime agent failed")
+                realtimeAgentUserMessages.remove(assistantMessageId)
+                realtimeAgentInputTranscripts.remove(assistantMessageId)
+                realtimeAgentProviderBadges.remove(assistantMessageId)
                 activeStream = null
             }
         }
@@ -900,7 +1066,8 @@ class ChatViewModel : ViewModel() {
         sessionId: String,
         message: String,
         assistantMessageId: String,
-        attachments: List<Attachment>? = null
+        attachments: List<Attachment>? = null,
+        interfaceContextPrompt: String? = null,
     ) {
         // Resolve the active profile pick once — used below for both
         // modelOverride and the system_message precedence rule.
@@ -925,7 +1092,7 @@ class ChatViewModel : ViewModel() {
         }
         // === PHASE3-status: dynamic phone-status block ===
         val appContext = buildPromptBlock(appContextSettings, capturePhoneSnapshot())
-        val systemMsg = listOfNotNull(personaPrompt, appContext)
+        val systemMsg = listOfNotNull(personaPrompt, appContext, interfaceContextPrompt)
             .joinToString("\n\n")
             .ifBlank { null }
         // === END PHASE3-status ===

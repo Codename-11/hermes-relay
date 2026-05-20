@@ -33,7 +33,7 @@ relay, dashboard, Android app, desktop app, bootstrap package, or user docs.
 
 | Surface | Upstream-supported method | Local implementation | Status | Sync check |
 | --- | --- | --- | --- | --- |
-| Plugin metadata and discovery | `plugin.yaml`, plugin directory discovery, `plugins.enabled`, and `register(ctx)` | `plugin/plugin.yaml`, `plugin/__init__.py` | Aligned | Keep relay-owned version metadata in sync with `python scripts/check-relay-version-sync.py`. |
+| Plugin metadata and discovery | `plugin.yaml`, plugin directory discovery, `plugins.enabled`, and `register(ctx)` | `plugin/plugin.yaml`, `plugin/__init__.py` | Aligned | Keep server-owned version metadata in sync with `python scripts/check-server-version-sync.py`. |
 | Agent tools | Tool Gateway tools registered through plugin context | `ctx.register_tool(...)` in `plugin/__init__.py`; schemas and handlers in `plugin/tools/*` | Aligned with custom transports | Tool registration should stay in `register(ctx)`; transport details stay behind handlers. |
 | Dashboard tab and plugin API | Dashboard plugin manifest plus plugin API routes under the Hermes dashboard plugin mount | `plugin/dashboard/manifest.json`, `plugin/dashboard/plugin_api.py` | Aligned wrapper | Dashboard routes may proxy relay state, but discovery and mounting should stay upstream-native. |
 | Chat and model API | OpenAI-compatible API server routes such as `/v1/chat/completions`, `/v1/models`, `/health`, and supported streaming routes | Android `HermesApiClient`, relay docs, Web API docs | Mixed | Prefer standard API routes first; use `/api/sessions` only when capability probes find it. |
@@ -81,10 +81,10 @@ upgrading the supported Hermes baseline.
 
 1. Re-read the upstream references at the top of this file, especially Plugins, API
    server, Tool Gateway, MCP, and Voice mode.
-2. Verify relay-owned version metadata:
+2. Verify server-owned version metadata:
 
    ```powershell
-   python scripts/check-relay-version-sync.py
+   python scripts/check-server-version-sync.py
    ```
 
 3. Inspect local integration points:

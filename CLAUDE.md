@@ -147,14 +147,14 @@ hermes-android/
 - **Branching model (as of 2026-04-19):** `main` + `dev`. Feature branches target `dev`, not `main`. `main` receives only release merges (and tags). No straight-to-main exemption — even single-file typos go through `dev`.
 - **Merge style:** `git merge --no-ff` — no squash. Preserves per-commit trail for agent-team branches on every merge in the chain (feature → dev → main).
 - **Merging ≠ releasing.** Feature branches land on `dev` continuously as CI goes green; each PR appends to `[Unreleased]` in `CHANGELOG.md` on `dev`. Releases are a separate act — cut when accumulated state is worth shipping, not per-feature. See `RELEASE.md` "When to cut a release."
-- **Version bumps happen on `dev`, then release-merge to `main`.** Use `bash scripts/bump-version.sh <new-version>` to bump all three sources atomically (`gradle/libs.versions.toml`, `pyproject.toml`, `plugin/relay/__init__.py`). The `release: vX.Y.Z` commit lives on `dev`, then a release PR merges `dev` → `main` with `--no-ff`, then the tag is cut from `main`.
+- **Version bumps happen on `dev`, then release-merge to `main`.** Bump only the surface being released: `scripts/bump-android-version.sh` for `android-vX.Y.Z`, `scripts/bump-server-version.sh` for `server-vX.Y.Z`, and `desktop/package.json` for `desktop-vX.Y.Z`. The release commit lives on `dev`, then a release PR merges `dev` → `main` with `--no-ff`, then the surface tag is cut from `main`.
 - **Server tracks `dev` for staging.** The hermes-host deployment pulls `dev` so merged features are exercised before they reach a tag. Released state lives on tags cut from `main`.
 - **Branch protection** on `main` — direct push blocked; only release-merge PRs from `dev` land here. `dev` also requires CI to pass on PRs but accepts feature-branch merges freely.
 
 ### Testing
 - **Android:** JUnit + Compose testing for UI, MockK for mocks
 - **Python:** `python -m unittest plugin.tests.test_<name>` — avoid bare `pytest` (conftest imports `responses` which may not be installed in the venv)
-- **CI is split by path:** `.github/workflows/ci-android.yml` runs on app/Gradle changes; `.github/workflows/ci-relay.yml` runs on plugin/Python changes. Both trigger on pushes to `main` and `dev` and on PRs targeting either. Build + tests must pass before merge to `dev`; release-merge to `main` requires the same.
+- **CI is split by path:** `.github/workflows/ci-android.yml` runs on app/Gradle changes; `.github/workflows/ci-server.yml` runs on plugin/Python changes. Both trigger on pushes to `main` and `dev` and on PRs targeting either. Build + tests must pass before merge to `dev`; release-merge to `main` requires the same.
 
 ## Key Files
 

@@ -166,8 +166,27 @@ fun ToolProgressCard(
                 exit = shrinkVertically()
             ) {
                 Column(modifier = Modifier.padding(top = 8.dp)) {
+                    toolCall.runId?.takeIf { it.isNotBlank() }?.let { runId ->
+                        Text(
+                            text = "Run: $runId",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    toolCall.provenance?.takeIf { it.isNotBlank() }?.let { provenance ->
+                        if (toolCall.runId != null) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                        }
+                        Text(
+                            text = provenance,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+
                     // Arguments
                     toolCall.args?.let { args ->
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = "Arguments:",
                             style = MaterialTheme.typography.labelSmall,
