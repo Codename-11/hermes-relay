@@ -1,22 +1,22 @@
-# Hermes-Relay v0.6.1
+# Hermes-Relay v0.7.0
 
-**Release Date:** May 6, 2026
-**Since v0.6.0:** API-key voice auth, durable pairing/session recovery, route failover hardening, dashboard pairing UI polish, and full Android bridge media/MMS handoff support.
+**Release Date:** May 19, 2026
+**Since v0.6.1:** profile-aware chat/voice state, relay-owned voice provider settings, realtime voice lab/testbench routes, Android voice overlay polish, and Relay package voice-provider support.
 
-v0.6.1 is a compatibility and bridge-contract release. It keeps the v0.6.0 multi-connection model, then tightens the real-world paths we just exercised: LAN/Tailscale pairing, API-key voice mode, stale session recovery, and Android phone bridge tools.
+v0.7.0 is a minor release for the profile and voice workstream. The stable Android path is still Hermes chat streaming plus relay-managed voice output, while realtime provider work remains isolated as a lab/testbench and planned experimental mode.
 
 ---
 
 ## Download
 
-v0.6.1 ships in two build flavors. APK and AAB filenames are version-tagged:
+v0.7.0 ships in two Android build flavors. APK and AAB filenames are version-tagged:
 
 | Flavor | File | Who it's for |
 |---|---|---|
-| sideload | `hermes-relay-0.6.1-sideload-release.apk` | Recommended for full bridge/device-control features, including share/MMS/file handoff. Installs as `com.axiomlabs.hermesrelay.sideload`. |
-| Google Play | `hermes-relay-0.6.1-googlePlay-release.aab` | Conservative Play-track build for chat and voice without sideload-only bridge-control surfaces. |
-| googlePlay APK | `hermes-relay-0.6.1-googlePlay-release.apk` | Parity/testing artifact. |
-| sideload AAB | `hermes-relay-0.6.1-sideload-release.aab` | Parity/testing artifact. |
+| sideload | `hermes-relay-0.7.0-sideload-release.apk` | Recommended for full bridge/device-control features, voice overlay testing, and profile-aware relay features. Installs as `com.axiomlabs.hermesrelay.sideload`. |
+| Google Play | `hermes-relay-0.7.0-googlePlay-release.aab` | Conservative Play-track build for chat, profiles, and voice without sideload-only bridge-control surfaces. |
+| googlePlay APK | `hermes-relay-0.7.0-googlePlay-release.apk` | Parity/testing artifact. |
+| sideload AAB | `hermes-relay-0.7.0-sideload-release.aab` | Parity/testing artifact. |
 
 Verify integrity with `SHA256SUMS.txt` from the same release. See the [Sideload guide](https://codename-11.github.io/hermes-relay/guide/getting-started.html#sideload-apk) for install steps.
 
@@ -24,41 +24,53 @@ Verify integrity with `SHA256SUMS.txt` from the same release. See the [Sideload 
 
 ## Highlights
 
-### Voice auth and pairing durability
+### Profile-aware Hermes use
 
-- Voice routes now accept either Relay session voice grants or a saved Hermes API bearer token for `/voice/config`, `/voice/transcribe`, and `/voice/synthesize`.
-- Chat and voice can work from manual API URL + API key setup without a full QR pairing. Bridge, terminal, Android control, media, clipboard, and pair-session features still use the Relay session path.
-- Relay sessions can recover through trusted device refresh after server restarts/updates, reducing forced re-pairing.
-- Pairing and endpoint resolution were hardened for LAN/Tailscale transitions, including route normalization and clearer VPN fallback behavior.
+- Profile selection now resolves against the active server and keeps profile-specific chat sessions separate.
+- Default/Victor display is normalized so the selected profile name stays visible through streamed and finalized messages.
+- Session drawer and voice settings can reflect the active profile instead of treating every connection as one shared default context.
+- Profile API URL resolution handles per-profile Hermes API servers and avoids phone-side `localhost` fallbacks when a remote profile is selected.
 
-### Android bridge media, files, and MMS handoff
+### Voice settings and output quality
 
-- Added `android_share_media` for text, files, relay media tokens, screenshots, and attachment lists through Android's native share sheet.
-- Added `android_send_mms` for MMS compose/share handoff with body text and attachments.
-- Added the missing `/return_to_hermes` relay route and `android_return_to_hermes` tool so docs, tools, relay HTTP, and the phone command contract match.
-- `android_send_sms` remains text-only and now returns structured states such as `sent`, `blocked`, `awaiting_confirmation`, `timeout`, and `failed`.
-- The active plugin import now uses `plugin.tools.android_tool` as the single source of truth, preventing Hermes tool exposure drift.
+- Relay now owns profile voice configuration endpoints instead of depending on Hermes config edits for realtime voice settings.
+- Android can fetch provider/model/voice option metadata, save per-profile voice choices, and fall back to advanced manual entry when a provider cannot expose a complete option list.
+- Voice output uses balanced coalescing: assistant speech is grouped into natural chunks, while tool/status speech remains immediate.
+- Waveform and playback state are better aligned to real audio output, reducing premature mic return and output-state jitter.
+- Barge-in remains explicitly experimental, with known self-capture limitations documented in settings.
 
-### Dashboard and operator flow
+### Realtime provider lab and Relay package
 
-- Dashboard-minted pairing QRs and the QR modal styling were corrected so the plugin owns its dialog layout instead of inheriting host dashboard card styling.
-- The relay CLI can toggle insecure LAN API-key voice auth at runtime with `hermes relay insecure-api-key status|on|off`.
-- Docs now spell out the bridge HTTP routes, SMS schema, `current_app` limitations, share/MMS handoff behavior, sideload-only restrictions, and direct HTTP fallback route contract.
+- Added standalone voice lab CLI/TUI tooling, provider adapters, waveform/playback support, evaluation helpers, and generated WAV/JSONL artifact ignores for OpenAI, xAI, ElevenLabs, and stub testing.
+- Added relay routes for streaming voice output, realtime playground calls, provider options, and profile voice config.
+- Added a plan for the next experimental Realtime Hermes Voice Agent mode, where providers handle speech but Hermes remains the authority for profiles, sessions, memory, tools, confirmations, and transcript history.
+
+### Android voice UI polish
+
+- Voice mode includes better tap-to-talk, continuous-mode, overlay, compact-mode, and state-display behavior.
+- Continuous mode no longer starts a session solely because the preference is enabled; voice sessions start and stop through explicit controls.
+- Voice overlay state is closer to chat state, including live transcript/tool timeline surfaces without forcing an exit and reload.
+
+### Included groundwork
+
+- Desktop tray pairing and consent-flow improvements are included from the dev branch.
+- Experimental shared `relay-core`, `relay-ui`, and Quest prototype modules are included for future shared pairing/terminal/voice work. They do not change the Android phone app's default flow.
 
 ---
 
 ## Verification
 
-- Relay/tool regression slice: `134 passed`
-- Android Kotlin compile: `:app:compileSideloadDebugKotlin` passed
-- Android Kotlin compile: `:app:compileGooglePlayDebugKotlin` passed
-- Dashboard build passed before deployment
-- Remote staging deploy restarted `hermes-relay` and `hermes-gateway`, both active
+- Relay version metadata: `python scripts/check-relay-version-sync.py --expect 0.7.0` passed.
+- Android version metadata: `scripts\dev.bat version` reported `Hermes-Relay v0.7.0 (versionCode 9)`.
+- Relay route/auth/session/provider slice: 99 pytest tests passed.
+- Voice lab provider/tooling slice: 31 pytest tests passed.
+- Android sideload and Google Play Kotlin compile passed.
+- Focused Android voice/profile unit slice and release-CI unit slice passed.
 
 ## Post-install smoke
 
 - Install the sideload APK over the existing sideload app with `adb install -r`.
-- Existing pairing should survive a normal same-flavor update. Re-pair only if you uninstall app data, switch flavor/applicationId, revoke the device, or the server session store was intentionally cleared.
-- Confirm chat works over the selected route, then test voice with the saved Hermes API key.
-- For bridge media: try `android_share_media` or `POST /share_media` with a relay media token or host file path. The phone should show an on-device confirmation and then Android's native share UI.
-- For MMS: `android_send_mms` opens the composer with the attachment; it does not silently send MMS.
+- Existing pairing should survive a same-flavor update. Re-pair only if you uninstall app data, switch flavor/applicationId, revoke the device, or intentionally clear the server session store.
+- Confirm the profile selector shows the expected server default and named profiles, then create/switch a chat while watching that the agent name remains stable.
+- In Voice settings, confirm the selected profile's provider/model/voice options load, save a per-profile voice, and run a short voice test.
+- In Voice mode, test tap-to-talk first, then continuous mode. Leave barge-in off unless you are explicitly testing the experimental self-capture path.

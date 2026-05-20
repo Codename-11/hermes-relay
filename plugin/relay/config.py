@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
@@ -79,6 +81,34 @@ class RelayConfig:
     trust_proxy_headers: bool = False
     allow_insecure_api_bearer: bool = False
 
+    # Provider-neutral voice output broker. This is the default assistant
+    # speech renderer: final Hermes text goes in, streamed provider PCM comes
+    # out. Realtime providers remain available separately as agent-mode tests.
+    voice_output_enabled: bool = True
+    voice_output_provider: str = "xai_tts"
+    voice_output_model: str = "xai-tts"
+    voice_output_voice: str = "eve"
+    voice_output_sample_rate: int = 24000
+    voice_output_language: str = "en"
+    voice_output_codec: str = "pcm"
+    voice_output_optimize_streaming_latency: int = 1
+    voice_output_text_normalization: bool = False
+    voice_output_fallback_enabled: bool = True
+    voice_output_config_path: str | None = None
+    voice_output_run_dir: str | None = None
+
+    # Realtime voice provider bridge. Kept as a separate realtime-agent
+    # playground path for speech-to-speech, expression, and tool-call event
+    # experiments. It is not the default deterministic speech renderer.
+    realtime_voice_enabled: bool = True
+    realtime_voice_provider: str = "xai_realtime"
+    realtime_voice_model: str = "grok-voice-latest"
+    realtime_voice_voice: str = "eve"
+    realtime_voice_sample_rate: int = 24000
+    realtime_voice_config_path: str | None = None
+    realtime_voice_run_dir: str | None = None
+    realtime_voice_xai_oauth_path: str | None = None
+
     @classmethod
     def from_env(cls) -> RelayConfig:
         """Build config from environment variables, falling back to defaults."""
@@ -93,6 +123,14 @@ class RelayConfig:
             ),
             log_level=os.getenv("RELAY_LOG_LEVEL", cls.log_level),
             terminal_shell=os.getenv("RELAY_TERMINAL_SHELL") or None,
+            realtime_voice_config_path=(
+                os.getenv("RELAY_REALTIME_VOICE_CONFIG")
+                or str(default_realtime_voice_config_path())
+            ),
+            voice_output_config_path=(
+                os.getenv("RELAY_VOICE_OUTPUT_CONFIG")
+                or str(default_realtime_voice_config_path())
+            ),
         )
 
         # ── Profile discovery toggle ────────────────────────────────────
@@ -156,9 +194,128 @@ class RelayConfig:
         if insecure_api_bearer in ("1", "true", "yes", "on"):
             config.allow_insecure_api_bearer = True
 
+        apply_voice_output_config_file(config)
+        apply_realtime_voice_config_file(config)
+
+        voice_output_enabled = os.getenv(
+            "RELAY_VOICE_OUTPUT_ENABLED", ""
+        ).strip().lower()
+        if voice_output_enabled in ("1", "true", "yes", "on"):
+            config.voice_output_enabled = True
+        elif voice_output_enabled in ("0", "false", "no", "off"):
+            config.voice_output_enabled = False
+
+        config.voice_output_provider = os.getenv(
+            "RELAY_VOICE_OUTPUT_PROVIDER",
+            config.voice_output_provider,
+        ).strip() or config.voice_output_provider
+        config.voice_output_model = os.getenv(
+            "RELAY_VOICE_OUTPUT_MODEL",
+            config.voice_output_model,
+        ).strip() or config.voice_output_model
+        config.voice_output_voice = os.getenv(
+            "RELAY_VOICE_OUTPUT_VOICE",
+            config.voice_output_voice,
+        ).strip() or config.voice_output_voice
+        config.voice_output_language = os.getenv(
+            "RELAY_VOICE_OUTPUT_LANGUAGE",
+            config.voice_output_language,
+        ).strip() or config.voice_output_language
+        config.voice_output_codec = os.getenv(
+            "RELAY_VOICE_OUTPUT_CODEC",
+            config.voice_output_codec,
+        ).strip() or config.voice_output_codec
+
+        voice_output_sample_rate = os.getenv("RELAY_VOICE_OUTPUT_SAMPLE_RATE")
+        if voice_output_sample_rate:
+            try:
+                config.voice_output_sample_rate = int(voice_output_sample_rate)
+            except ValueError:
+                logger.warning(
+                    "Invalid RELAY_VOICE_OUTPUT_SAMPLE_RATE=%r — using default %d",
+                    voice_output_sample_rate,
+                    config.voice_output_sample_rate,
+                )
+
+        voice_output_latency = os.getenv("RELAY_VOICE_OUTPUT_OPTIMIZE_LATENCY")
+        if voice_output_latency:
+            try:
+                config.voice_output_optimize_streaming_latency = int(
+                    voice_output_latency
+                )
+            except ValueError:
+                logger.warning(
+                    "Invalid RELAY_VOICE_OUTPUT_OPTIMIZE_LATENCY=%r — using default %d",
+                    voice_output_latency,
+                    config.voice_output_optimize_streaming_latency,
+                )
+
+        voice_output_text_normalization = os.getenv(
+            "RELAY_VOICE_OUTPUT_TEXT_NORMALIZATION", ""
+        ).strip().lower()
+        if voice_output_text_normalization in ("1", "true", "yes", "on"):
+            config.voice_output_text_normalization = True
+        elif voice_output_text_normalization in ("0", "false", "no", "off"):
+            config.voice_output_text_normalization = False
+
+        voice_output_fallback = os.getenv(
+            "RELAY_VOICE_OUTPUT_FALLBACK_ENABLED", ""
+        ).strip().lower()
+        if voice_output_fallback in ("1", "true", "yes", "on"):
+            config.voice_output_fallback_enabled = True
+        elif voice_output_fallback in ("0", "false", "no", "off"):
+            config.voice_output_fallback_enabled = False
+
+        config.voice_output_run_dir = (
+            os.getenv("RELAY_VOICE_OUTPUT_RUN_DIR")
+            or config.voice_output_run_dir
+        )
+
+        realtime_voice_enabled = os.getenv(
+            "RELAY_REALTIME_VOICE_ENABLED", ""
+        ).strip().lower()
+        if realtime_voice_enabled in ("1", "true", "yes", "on"):
+            config.realtime_voice_enabled = True
+        elif realtime_voice_enabled in ("0", "false", "no", "off"):
+            config.realtime_voice_enabled = False
+
+        config.realtime_voice_provider = os.getenv(
+            "RELAY_REALTIME_VOICE_PROVIDER",
+            config.realtime_voice_provider,
+        ).strip() or config.realtime_voice_provider
+        config.realtime_voice_model = os.getenv(
+            "RELAY_REALTIME_VOICE_MODEL",
+            config.realtime_voice_model,
+        ).strip() or config.realtime_voice_model
+        config.realtime_voice_voice = os.getenv(
+            "RELAY_REALTIME_VOICE_VOICE",
+            config.realtime_voice_voice,
+        ).strip() or config.realtime_voice_voice
+
+        realtime_sample_rate = os.getenv("RELAY_REALTIME_VOICE_SAMPLE_RATE")
+        if realtime_sample_rate:
+            try:
+                config.realtime_voice_sample_rate = int(realtime_sample_rate)
+            except ValueError:
+                logger.warning(
+                    "Invalid RELAY_REALTIME_VOICE_SAMPLE_RATE=%r — using default %d",
+                    realtime_sample_rate,
+                    config.realtime_voice_sample_rate,
+                )
+
+        config.realtime_voice_run_dir = (
+            os.getenv("RELAY_REALTIME_VOICE_RUN_DIR")
+            or config.realtime_voice_run_dir
+        )
+        config.realtime_voice_xai_oauth_path = (
+            os.getenv("RELAY_REALTIME_VOICE_XAI_OAUTH_PATH")
+            or config.realtime_voice_xai_oauth_path
+        )
+
         config.profiles = _load_profiles(
             config.hermes_config_path,
             enabled=config.profile_discovery_enabled,
+            base_api_url=config.webapi_url,
         )
 
         # ── Session persistence file ────────────────────────────────────
@@ -178,6 +335,254 @@ class RelayConfig:
             config.session_persistence_path = raw_sessions_file
 
         return config
+
+
+def _apply_realtime_voice_config(
+    config: RelayConfig,
+    section: dict[str, Any],
+) -> None:
+    """Apply a parsed relay-owned ``realtime_voice`` mapping."""
+    if not section:
+        return
+
+    enabled = _optional_bool(section.get("enabled"))
+    if enabled is not None:
+        config.realtime_voice_enabled = enabled
+
+    provider = _string_value(section.get("provider"))
+    if provider:
+        config.realtime_voice_provider = provider
+
+    model = _string_value(section.get("model"))
+    if model:
+        config.realtime_voice_model = model
+
+    voice = _string_value(section.get("voice"))
+    if voice:
+        config.realtime_voice_voice = voice
+
+    sample_rate = _optional_int(section.get("sample_rate"))
+    if sample_rate is not None:
+        config.realtime_voice_sample_rate = sample_rate
+
+    run_dir = _string_value(section.get("run_dir"))
+    if run_dir:
+        config.realtime_voice_run_dir = run_dir
+
+    xai_oauth_path = _string_value(
+        section.get("xai_oauth_path") or section.get("oauth_path")
+    )
+    if xai_oauth_path:
+        config.realtime_voice_xai_oauth_path = xai_oauth_path
+
+
+def _apply_voice_output_config(
+    config: RelayConfig,
+    section: dict[str, Any],
+) -> None:
+    """Apply a parsed relay-owned ``voice_output`` mapping."""
+    if not section:
+        return
+
+    enabled = _optional_bool(section.get("enabled"))
+    if enabled is not None:
+        config.voice_output_enabled = enabled
+
+    provider = _string_value(section.get("provider"))
+    if provider:
+        config.voice_output_provider = provider
+
+    model = _string_value(section.get("model"))
+    if model:
+        config.voice_output_model = model
+
+    voice = _string_value(section.get("voice") or section.get("voice_id"))
+    if voice:
+        config.voice_output_voice = voice
+
+    sample_rate = _optional_int(section.get("sample_rate"))
+    if sample_rate is not None:
+        config.voice_output_sample_rate = sample_rate
+
+    language = _string_value(section.get("language"))
+    if language:
+        config.voice_output_language = language
+
+    codec = _string_value(section.get("codec"))
+    if codec:
+        config.voice_output_codec = codec
+
+    optimize_latency = _optional_int(
+        section.get("optimize_streaming_latency")
+        or section.get("optimize_latency")
+    )
+    if optimize_latency is not None:
+        config.voice_output_optimize_streaming_latency = optimize_latency
+
+    text_normalization = _optional_bool(section.get("text_normalization"))
+    if text_normalization is not None:
+        config.voice_output_text_normalization = text_normalization
+
+    fallback_enabled = _optional_bool(section.get("fallback_enabled"))
+    if fallback_enabled is not None:
+        config.voice_output_fallback_enabled = fallback_enabled
+
+    run_dir = _string_value(section.get("run_dir"))
+    if run_dir:
+        config.voice_output_run_dir = run_dir
+
+
+def apply_voice_output_config_file(config: RelayConfig) -> None:
+    """Apply default assistant speech renderer settings from relay config.
+
+    This is deliberately relay-owned, not Hermes-owned. Hermes owns the chat
+    answer and tool loop; the relay owns how that final text is rendered to
+    audio for paired clients.
+    """
+    _apply_voice_output_config(
+        config,
+        load_voice_output_config_file(config),
+    )
+
+
+def load_voice_output_config_file(config: RelayConfig) -> dict[str, Any]:
+    data = _load_yaml_mapping(_voice_output_config_path(config))
+    section = data.get("voice_output")
+    return section if isinstance(section, dict) else {}
+
+
+def save_voice_output_config_file(
+    config: RelayConfig,
+    updates: dict[str, Any],
+) -> Path:
+    """Persist validated voice output updates and apply them to config."""
+    path = _voice_output_config_path(config)
+    data = _load_yaml_mapping(path)
+    section = data.get("voice_output")
+    if not isinstance(section, dict):
+        section = {}
+    section.update(updates)
+    data["voice_output"] = section
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    tmp_path.write_text(
+        yaml.safe_dump(data, sort_keys=False),
+        encoding="utf-8",
+    )
+    tmp_path.replace(path)
+
+    _apply_voice_output_config(config, section)
+    return path
+
+
+def apply_realtime_voice_config_file(config: RelayConfig) -> None:
+    """Apply realtime voice defaults from the relay-owned config file.
+
+    Realtime voice is not an upstream Hermes config surface. STT/TTS continue
+    to come from Hermes' supported ``stt`` and ``tts`` sections; the relay's
+    provider/model/voice defaults live under ``realtime_voice`` in
+    ``RELAY_REALTIME_VOICE_CONFIG`` (default:
+    ``~/.hermes-relay/config.yaml``). Environment variables still override
+    this file for one-off provider tests and scripted launches.
+    """
+    _apply_realtime_voice_config(
+        config,
+        load_realtime_voice_config_file(config),
+    )
+
+
+def default_realtime_voice_config_path() -> Path:
+    return relay_state_home() / "config.yaml"
+
+
+def relay_state_home() -> Path:
+    return Path(
+        os.getenv("HERMES_RELAY_HOME", str(Path.home() / ".hermes-relay"))
+    ).expanduser()
+
+
+def load_realtime_voice_config_file(config: RelayConfig) -> dict[str, Any]:
+    data = _load_yaml_mapping(_realtime_voice_config_path(config))
+    section = data.get("realtime_voice")
+    return section if isinstance(section, dict) else {}
+
+
+def save_realtime_voice_config_file(
+    config: RelayConfig,
+    updates: dict[str, Any],
+) -> Path:
+    """Persist validated realtime voice updates and apply them to config."""
+    path = _realtime_voice_config_path(config)
+    data = _load_yaml_mapping(path)
+    section = data.get("realtime_voice")
+    if not isinstance(section, dict):
+        section = {}
+    section.update(updates)
+    data["realtime_voice"] = section
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    tmp_path.write_text(
+        yaml.safe_dump(data, sort_keys=False),
+        encoding="utf-8",
+    )
+    tmp_path.replace(path)
+
+    _apply_realtime_voice_config(config, section)
+    return path
+
+
+def _realtime_voice_config_path(config: RelayConfig) -> Path:
+    configured = config.realtime_voice_config_path or str(
+        default_realtime_voice_config_path()
+    )
+    return Path(configured).expanduser()
+
+
+def _voice_output_config_path(config: RelayConfig) -> Path:
+    configured = config.voice_output_config_path or str(
+        default_realtime_voice_config_path()
+    )
+    return Path(configured).expanduser()
+
+
+def _load_yaml_mapping(path: str | Path) -> dict[str, Any]:
+    try:
+        raw = yaml.safe_load(Path(path).expanduser().read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        logger.debug("Could not read relay config for realtime voice defaults: %s", exc)
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _optional_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in ("1", "true", "yes", "on"):
+        return True
+    if text in ("0", "false", "no", "off"):
+        return False
+    return None
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _string_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _extract_description_from_soul(soul_text: str) -> str:
@@ -379,6 +784,31 @@ def _probe_gateway_running(profile_home: Path) -> bool:
     return True
 
 
+def _probe_api_server_running(api_server_url: str | None) -> bool:
+    """Best-effort liveness fallback for profile API servers.
+
+    Some systemd-managed Hermes gateway processes do not leave a
+    ``gateway.pid`` file behind. The Android client ultimately routes chat by
+    API URL, so an open API TCP port is a better advisory status than marking
+    those profiles idle solely because the pid file is absent.
+    """
+    if not api_server_url:
+        return False
+    try:
+        parsed = urlparse(api_server_url)
+        host = parsed.hostname
+        port = parsed.port
+        if not host or port is None:
+            return False
+        connect_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+        with socket.create_connection((connect_host, port), timeout=0.25):
+            return True
+    except OSError:
+        return False
+    except Exception:  # pragma: no cover — defensive
+        return False
+
+
 def _count_profile_skills(profile_home: Path) -> int:
     """Count ``SKILL.md`` files under ``<profile>/skills/`` recursively.
 
@@ -395,12 +825,167 @@ def _count_profile_skills(profile_home: Path) -> int:
         return 0
 
 
+def _profile_dotenv_values(profile_home: Path) -> dict[str, str]:
+    """Read simple ``KEY=value`` pairs from a profile-local ``.env`` file."""
+    env_path = profile_home / ".env"
+    if not env_path.is_file():
+        return {}
+
+    values: dict[str, str] = {}
+    try:
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        logger.warning(
+            "Profile at %s: failed to read .env for API metadata",
+            profile_home,
+            exc_info=True,
+        )
+        return {}
+
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+
+def _api_server_platform_config(data: dict[str, Any]) -> dict[str, Any]:
+    """Return the Hermes ``api_server`` platform config plus its ``extra`` block."""
+    platform: dict[str, Any] = {}
+    platforms = data.get("platforms")
+    if isinstance(platforms, dict):
+        candidate = platforms.get("api_server")
+        if not isinstance(candidate, dict):
+            candidate = platforms.get("api-server")
+        if isinstance(candidate, dict):
+            platform.update(candidate)
+
+    root_candidate = data.get("api_server")
+    if isinstance(root_candidate, dict):
+        platform.update(root_candidate)
+
+    extra = platform.get("extra")
+    if isinstance(extra, dict):
+        merged = dict(platform)
+        merged.update(extra)
+        platform = merged
+    return platform
+
+
+def _coerce_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in ("1", "true", "yes", "on"):
+        return True
+    if text in ("0", "false", "no", "off"):
+        return False
+    return None
+
+
+def _coerce_int(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _local_host_for_client(host: str) -> bool:
+    return host.lower() in ("127.0.0.1", "localhost", "0.0.0.0", "::1", "::")
+
+
+def _format_url(scheme: str, host: str, port: int) -> str:
+    netloc = host
+    if ":" in netloc and not netloc.startswith("["):
+        netloc = f"[{netloc}]"
+    return f"{scheme}://{netloc}:{port}"
+
+
+def _profile_api_server_metadata(
+    data: dict[str, Any],
+    profile_home: Path,
+    *,
+    base_api_url: str | None = None,
+) -> dict[str, Any]:
+    """Expose profile API-server routing metadata without exposing secrets.
+
+    Hermes profiles are isolated by running each profile's own API server.
+    The relay only advertises enough metadata for the Android client to route
+    chat traffic to that server. API keys stay local; clients reuse the
+    connection's stored key or pair the profile API as a separate connection
+    when operators intentionally use distinct keys.
+    """
+    dotenv = _profile_dotenv_values(profile_home)
+    platform = _api_server_platform_config(data)
+
+    host = (
+        _coerce_string(platform.get("host"))
+        or _coerce_string(dotenv.get("API_SERVER_HOST"))
+        or "127.0.0.1"
+    )
+    port = (
+        _coerce_int(platform.get("port"))
+        or _coerce_int(dotenv.get("API_SERVER_PORT"))
+        or 8642
+    )
+
+    key_present = bool(
+        _coerce_string(platform.get("key"))
+        or _coerce_string(dotenv.get("API_SERVER_KEY"))
+    )
+    enabled_value = platform.get("enabled", dotenv.get("API_SERVER_ENABLED"))
+    explicit_enabled = _coerce_bool(enabled_value)
+    enabled = explicit_enabled if explicit_enabled is not None else key_present
+
+    api_server_url: str | None = None
+    if enabled and port is not None:
+        route_scheme = "http"
+        route_host = host
+        if base_api_url and _local_host_for_client(host):
+            parsed = urlparse(base_api_url)
+            route_scheme = parsed.scheme or route_scheme
+            route_host = parsed.hostname or route_host
+        api_server_url = _format_url(route_scheme, route_host, port)
+
+    return {
+        "api_server_enabled": enabled,
+        "api_server_url": api_server_url,
+        "api_server_host": host if enabled else None,
+        "api_server_port": port if enabled else None,
+        "api_server_key_present": key_present,
+    }
+
+
 def _read_profile_entry(
     name: str,
     config_yaml: Path,
     soul_md: Path,
     *,
     profile_home: Path,
+    base_api_url: str | None = None,
 ) -> dict[str, Any] | None:
     """Read a single profile directory into the wire-shape dict.
 
@@ -470,14 +1055,25 @@ def _read_profile_entry(
     else:
         description = description.strip()
 
+    api_server = _profile_api_server_metadata(
+        data,
+        profile_home,
+        base_api_url=base_api_url,
+    )
+
+    gateway_running = _probe_gateway_running(profile_home) or _probe_api_server_running(
+        api_server.get("api_server_url")
+    )
+
     return {
         "name": name,
         "model": model,
         "description": description,
         "system_message": soul_text if soul_text else None,
-        "gateway_running": _probe_gateway_running(profile_home),
+        "gateway_running": gateway_running,
         "has_soul": soul_md.is_file(),
         "skill_count": _count_profile_skills(profile_home),
+        **api_server,
     }
 
 
@@ -485,6 +1081,7 @@ def _load_profiles(
     config_path: str,
     *,
     enabled: bool = True,
+    base_api_url: str | None = None,
 ) -> list[dict[str, Any]]:
     """Discover agent profiles from the Hermes ``~/.hermes/`` layout.
 
@@ -519,6 +1116,7 @@ def _load_profiles(
             config_yaml=root_config,
             soul_md=hermes_dir / "SOUL.md",
             profile_home=hermes_dir,
+            base_api_url=base_api_url,
         )
         if default_entry is not None:
             results.append(default_entry)
@@ -539,6 +1137,7 @@ def _load_profiles(
                 config_yaml=child / "config.yaml",
                 soul_md=child / "SOUL.md",
                 profile_home=child,
+                base_api_url=base_api_url,
             )
             if entry is not None:
                 results.append(entry)

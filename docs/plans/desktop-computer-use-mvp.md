@@ -1,15 +1,15 @@
 # Desktop Computer Use MVP
 
-Status: experimental implementation plan, Phase 3 task-grant approval slice started 2026-04-26.
+Status: experimental implementation record. Future desktop-control phases are governed by the enhanced plan at [`desktop-control-computer-use-enhanced.md`](desktop-control-computer-use-enhanced.md).
 
 This plan converts the Obsidian draft at `~/obsidian-vault/3. System/Projects/Hermes-Relay/Plans/Desktop Control - Computer Use + Overlay.md` into repo-local implementation scope.
 
 ## Constraints
 
 - The desktop CLI is a local workspace package and release-binary target. It is not published to npm, and docs must not tell users to install `@hermes-relay/cli` from npm.
-- The first slice extends the existing desktop WSS/tool channel. It does not introduce a new relay channel or a native app.
+- The first slice extends the existing desktop WSS/tool channel. It does not introduce a new relay channel or require a native app.
 - The safety model is visible, explicit, and grant-scoped. There is no silent mouse or keyboard control.
-- The current native UI does not exist. Tauri/Rust/React remains the later path for tray, overlay, permission prompts, emergency stop, and OS-native input APIs.
+- The current native UI does not exist. The enhanced plan accepts Tauri v2 (Rust + React) as the optional Easy-tier path for tray, overlay, permission prompts, emergency stop, and OS-native input APIs. CLI + daemon remain the primary always-working surface.
 
 ## Phase 1 Scope
 
@@ -21,7 +21,7 @@ Ship an observe-first tool surface behind an explicit experimental opt-in:
 - `desktop_computer_grant_request`
 - `desktop_computer_cancel`
 
-The desktop client registers handlers for all five names and advertises them with the normal desktop tool surface after desktop-tool consent. The relay check endpoint still fails closed for older clients because `desktop_computer_*` tools must be explicitly advertised before the server routes calls to them.
+The desktop client registers handlers for all five names and advertises them with the normal desktop tool surface only when the experimental computer-use flag is enabled after desktop-tool consent. The relay check endpoint still fails closed for older or unflagged clients because `desktop_computer_*` tools must be explicitly advertised before the server routes calls to them.
 
 ## Phase 2 Scope
 

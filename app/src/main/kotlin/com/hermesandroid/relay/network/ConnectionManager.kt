@@ -179,6 +179,9 @@ class ConnectionManager(
     }
 
     fun setInsecureMode(enabled: Boolean) {
+        if (_insecureMode.value == enabled) {
+            return
+        }
         _insecureMode.value = enabled
         if (enabled) {
             Log.w(TAG, "⚠ INSECURE MODE ENABLED — ws:// connections allowed. Do NOT use in production.")

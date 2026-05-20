@@ -249,9 +249,9 @@ Profile and Personality live in a single consolidated **agent sheet** opened fro
 
 ### Trade-offs
 
-- **Ephemeral only.** Selection doesn't persist across app restarts. Persisting per-Connection is a small extension, filed as a follow-up.
+- **Persisted per Connection.** Selection survives app restart and is keyed by Connection/profile context.
 - **SOUL.md size.** The full content ships as `system_message` on every chat turn. Keep SOUL files concise.
-- **Chat-only.** Voice transcribe/synthesize and bridge commands don't honor the profile selection — they route through endpoints that don't carry `model` or `system_message`.
+- **Voice-aware, bridge-independent.** Relay-owned voice routes receive the selected profile and report whether profile voice config or relay/global fallback is active. Bridge commands remain unrelated to model choice.
 
 See `docs/decisions.md` §21 for the full design, including the abandoned earlier attempt at parsing a fictional top-level `profiles:` YAML key.
 

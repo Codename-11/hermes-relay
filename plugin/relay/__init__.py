@@ -13,16 +13,13 @@ See ``plugin/relay/server.py`` for the aiohttp server,
 # during its own import via ``from . import __version__``, so this ordering
 # avoids a circular-import crash during package initialization.
 #
-# Canonical version source is `gradle/libs.versions.toml::appVersionName`.
-# Keep this string + pyproject.toml's [project].version in sync with that
-# every release bump. The /health endpoint reports this string, and shipping
-# a stale version makes diagnosing "is the running process up to date?"
-# harder than it should be (sample: spent two hours on Docker-Server
-# 2026-04-12 because the running relay still reported 0.2.0 from this
-# constant after a successful pull, while pyproject had drifted to 0.5.0
-# ahead of any actual release and I bumped this to match that — both were
-# wrong; 0.3.0 is the real in-progress target).
-__version__ = "0.6.1"
+# Canonical Relay version source is pyproject.toml's [project].version.
+# Keep this runtime constant in sync with pyproject.toml for relay-v*
+# releases. Android app releases use gradle/libs.versions.toml and v* tags;
+# desktop CLI releases use desktop/package.json and desktop-v* tags. The
+# /health endpoint reports this Relay version, and stale values make live
+# server diagnosis harder than it should be.
+__version__ = "0.7.0"
 
 from .server import create_app, main  # noqa: E402 — must come after __version__
 

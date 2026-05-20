@@ -1,4 +1,4 @@
-name: CI desktop CLI
+name: CI desktop
 
 on:
   push:
@@ -86,3 +86,31 @@ jobs:
 
       - name: --help
         run: node bin/hermes-relay.js --help
+
+  tray-shell:
+    name: Tray shell checks
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Cargo check tray shell
+        run: npm run tray:check
+
+      - name: Test tray shell
+        run: npm run tray:test

@@ -73,6 +73,7 @@ import com.hermesandroid.relay.ui.components.UpdateBanner
 import com.hermesandroid.relay.update.UpdateCheckResult
 import com.hermesandroid.relay.viewmodel.UpdateViewModel
 import com.hermesandroid.relay.ui.components.WhatsNewDialog
+import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BridgePreferencesRepository
 import com.hermesandroid.relay.data.BridgeSafetyPreferencesRepository
 import com.hermesandroid.relay.data.BuildFlavor
@@ -95,6 +96,7 @@ import com.hermesandroid.relay.ui.screens.MediaSettingsScreen
 import com.hermesandroid.relay.ui.screens.PairedDevicesScreen
 import com.hermesandroid.relay.ui.screens.ConnectionsSettingsScreen
 import com.hermesandroid.relay.ui.screens.ProfileInspectorScreen
+import com.hermesandroid.relay.ui.screens.RealtimeVoiceTestScreen
 import com.hermesandroid.relay.ui.screens.SettingsScreen
 import com.hermesandroid.relay.ui.screens.TerminalScreen
 import com.hermesandroid.relay.ui.screens.NotificationCompanionSettingsScreen
@@ -109,6 +111,7 @@ import com.hermesandroid.relay.viewmodel.VoiceViewModel
 import com.hermesandroid.relay.audio.VoicePlayer
 import com.hermesandroid.relay.audio.VoiceRecorder
 import com.hermesandroid.relay.audio.VoiceSfxPlayer
+import com.hermesandroid.relay.audio.RealtimePcmPlayer
 import com.hermesandroid.relay.network.RelayVoiceClient
 import com.hermesandroid.relay.auth.AuthState
 import androidx.lifecycle.viewModelScope
@@ -223,6 +226,7 @@ sealed class Screen(
     data object AppearanceSettings : Screen("settings/appearance", "Appearance", Icons.Filled.Settings)
     data object Analytics : Screen("settings/analytics", "Analytics", Icons.Filled.Settings)
     data object DeveloperSettings : Screen("settings/developer", "Developer", Icons.Filled.Settings)
+    data object RealtimeVoiceTest : Screen("settings/developer/realtime_voice", "Realtime voice", Icons.Filled.Settings)
     data object About : Screen("settings/about", "About", Icons.Filled.Settings)
 
     // Profile Inspector — full-screen read-only viewer with 4 tabs
@@ -350,10 +354,11 @@ fun RelayApp() {
         }
     }
 
-    // Initialize ChatViewModel reactively when API client becomes available
-    val apiClient by connectionViewModel.apiClient.collectAsState()
+    // Initialize ChatViewModel reactively when the chat-routed API client becomes available
+    val chatApiClient by connectionViewModel.chatApiClient.collectAsState()
     val lastSessionId by connectionViewModel.lastSessionId.collectAsState()
-    var sessionResumed by remember { mutableStateOf(false) }
+    val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
+    val activeConnectionId by connectionViewModel.activeConnectionId.collectAsState()
 
     val mediaContext = androidx.compose.ui.platform.LocalContext.current
 
@@ -369,6 +374,9 @@ fun RelayApp() {
                 .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                 .build(),
             relayUrlProvider = { connectionViewModel.effectiveRelayUrl.value },
+            profileNameProvider = {
+                AgentDisplay.profileRequestName(connectionViewModel.selectedProfile.value?.name)
+            },
             sessionTokenProvider = {
                 (connectionViewModel.authState.value as? AuthState.Paired)?.token
             },
@@ -398,6 +406,7 @@ fun RelayApp() {
     // VoiceSfxPlayer is internally crash-proof — failed AudioTrack builds
     // become null-tracks that no-op — so we don't need an outer try/catch.
     val voiceSfxPlayer = remember { VoiceSfxPlayer(mediaContext) }
+    val realtimePcmPlayer = remember { RealtimePcmPlayer() }
     LaunchedEffect(Unit) {
         val recorder = VoiceRecorder(mediaContext, voiceViewModel.viewModelScope)
         val player = VoicePlayer(mediaContext)
@@ -406,6 +415,7 @@ fun RelayApp() {
             chatViewModel = chatViewModel,
             recorder = recorder,
             player = player,
+            realtimePcmPlayer = realtimePcmPlayer,
             sfxPlayer = voiceSfxPlayer,
             // === PHASE3-voice-intents-localdispatch ===
             // Wire the local in-process dispatcher so voice intents go
@@ -431,6 +441,15 @@ fun RelayApp() {
             // app restarts. VoicePreferencesRepository is the same repo
             // VoiceSettingsScreen reads/writes.
             voicePreferences = com.hermesandroid.relay.data.VoicePreferencesRepository(mediaContext),
+            bargeInPreferences = com.hermesandroid.relay.data.BargeInPreferencesRepository(mediaContext),
+            vadEngineFactory = { com.hermesandroid.relay.audio.VadEngine(mediaContext) },
+            bargeInListenerFactory = { vad, audioSessionIdProvider ->
+                com.hermesandroid.relay.audio.BargeInListener.create(
+                    mediaContext,
+                    vad,
+                    audioSessionIdProvider,
+                )
+            },
         )
     }
 
@@ -463,8 +482,8 @@ fun RelayApp() {
         chatViewModel.observeConnectionSwitches(connectionViewModel.connectionSwitchEvents)
     }
 
-    LaunchedEffect(apiClient) {
-        apiClient?.let { client ->
+    LaunchedEffect(chatApiClient) {
+        chatApiClient?.let { client ->
             chatViewModel.initialize(client, connectionViewModel.chatHandler)
             chatViewModel.updateApiClient(client)
 
@@ -485,18 +504,36 @@ fun RelayApp() {
             chatViewModel.setSelectedProfileProvider {
                 connectionViewModel.selectedProfile.value
             }
+            chatViewModel.setEffectiveProfileProvider {
+                AgentDisplay.effectiveProfile(
+                    selectedProfile = connectionViewModel.selectedProfile.value,
+                    profiles = connectionViewModel.agentProfiles.value,
+                )
+            }
 
             // Wire session persistence callback
             chatViewModel.onSessionChanged = { sessionId ->
                 connectionViewModel.saveLastSessionId(sessionId)
             }
-
-            // Resume last session on first connection
-            if (!sessionResumed && lastSessionId != null) {
-                chatViewModel.resumeSession(lastSessionId!!)
-                sessionResumed = true
-            }
         }
+    }
+
+    LaunchedEffect(chatApiClient, activeConnectionId, selectedProfile?.name, lastSessionId) {
+        if (chatApiClient == null) return@LaunchedEffect
+        chatViewModel.switchProfileContext(
+            contextKey = AgentDisplay.profileContextKey(
+                connectionId = activeConnectionId,
+                profileName = selectedProfile?.name,
+            ),
+            sessionId = lastSessionId,
+        )
+        chatViewModel.refreshSessions()
+    }
+
+    LaunchedEffect(selectedProfile?.name) {
+        voiceViewModel.onProfileChanged(
+            AgentDisplay.profileRequestName(selectedProfile?.name)
+        )
     }
 
     // === PHASE3-status: sync granular phone-status settings to chat ===
@@ -530,8 +567,8 @@ fun RelayApp() {
 
     // Sync streaming endpoint preference to chat. Resolves "auto" against the
     // current server capabilities so vanilla upstream + bootstrap-injected
-    // sessions API picks /v1/runs for chat (which has live tool events)
-    // while still using /api/sessions/* for browse/rename/delete.
+    // sessions API picks /v1/chat/completions for portable SSE chat while
+    // still using /api/sessions/* for browse/rename/delete.
     val streamingEndpoint by connectionViewModel.streamingEndpoint.collectAsState()
     val serverCapabilities by connectionViewModel.serverCapabilities.collectAsState()
     LaunchedEffect(streamingEndpoint, serverCapabilities) {
@@ -893,6 +930,7 @@ fun RelayApp() {
                         chatViewModel = chatViewModel,
                         connectionViewModel = connectionViewModel,
                         voiceViewModel = voiceViewModel,
+                        voiceClient = voiceClient,
                         maxBubbleWidth = maxBubbleWidth,
                         openAgentSheetOnEntry = openAgentSheetArg,
                         onAgentSheetArgConsumed = {
@@ -995,6 +1033,7 @@ fun RelayApp() {
                     VoiceSettingsScreen(
                         voiceViewModel = voiceViewModel,
                         voiceClient = voiceClient,
+                        selectedProfile = selectedProfile,
                         onBack = { navController.popBackStack() }
                     )
                 }
@@ -1199,7 +1238,16 @@ fun RelayApp() {
                 composable(Screen.DeveloperSettings.route) {
                     DeveloperSettingsScreen(
                         connectionViewModel = connectionViewModel,
-                        onBack = { navController.popBackStack() }
+                        onBack = { navController.popBackStack() },
+                        onNavigateToRealtimeVoice = {
+                            navController.navigate(Screen.RealtimeVoiceTest.route)
+                        },
+                    )
+                }
+                composable(Screen.RealtimeVoiceTest.route) {
+                    RealtimeVoiceTestScreen(
+                        voiceClient = voiceClient,
+                        onBack = { navController.popBackStack() },
                     )
                 }
                 composable(Screen.About.route) {

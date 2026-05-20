@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.AppAnalytics
 import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.AttachmentState
@@ -17,6 +18,7 @@ import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.ToolCallEvent
 import com.hermesandroid.relay.network.HermesApiClient
 import com.hermesandroid.relay.network.RelayHttpClient
+import com.hermesandroid.relay.network.RealtimeVoiceEvent
 import com.hermesandroid.relay.network.handlers.ChatHandler
 import com.hermesandroid.relay.network.handlers.LocalDispatchResult
 import com.hermesandroid.relay.network.handlers.formatPhoneActionResult
@@ -30,6 +32,7 @@ import com.hermesandroid.relay.util.MediaCacheWriter
 import com.hermesandroid.relay.util.PhoneSnapshot
 import com.hermesandroid.relay.util.buildPromptBlock
 import com.hermesandroid.relay.util.classifyError
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -42,6 +45,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import okhttp3.sse.EventSource
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicInteger
 
 class ChatViewModel : ViewModel() {
 
@@ -50,6 +54,9 @@ class ChatViewModel : ViewModel() {
     private var activeStream: EventSource? = null
     private var intentionallyCancelled = false
     private var firstTokenNotified = false
+    private var toolHistoryJob: Job? = null
+    private var connectionSwitchJob: Job? = null
+    private val historyLoadGeneration = AtomicInteger(0)
 
     // --- Media dependencies (wired via initializeMedia from RelayApp) ---
     private var relayHttpClient: RelayHttpClient? = null
@@ -171,16 +178,15 @@ class ChatViewModel : ViewModel() {
 
     /**
      * Streaming endpoint to use for the next chat turn. Always one of
-     * "sessions" or "runs" — never "auto", since the auto-resolver in
+     * "sessions", "completions", or "runs" — never "auto", since the auto-resolver in
      * ConnectionViewModel.resolveStreamingEndpoint() collapses "auto" to
      * a concrete value before this field is written from RelayApp.
      *
-     * Defaults to "runs" so that a fresh ChatViewModel (before RelayApp
-     * pushes the resolved value) prefers the standard upstream chat path.
-     * That's the safer fallback than the previous "sessions" default,
-     * which would 404 on vanilla upstream installs.
+     * Defaults to "completions" so that a fresh ChatViewModel (before
+     * RelayApp pushes the resolved value) prefers an EventSource-compatible
+     * OpenAI chat path instead of assuming `/v1/runs` is an SSE stream.
      */
-    var streamingEndpoint: String = "runs"
+    var streamingEndpoint: String = "completions"
 
     /**
      * Provider for the active agent-profile pick — wired from [RelayApp] at
@@ -195,6 +201,8 @@ class ChatViewModel : ViewModel() {
      * wired the flow) behaves identically to pre-profile-picker installs.
      */
     private var selectedProfileProvider: () -> Profile? = { null }
+    private var effectiveProfileProvider: () -> Profile? = { selectedProfileProvider() }
+    private var activeProfileContextKey: String? = null
 
     /**
      * Wire the agent-profile provider. The provider is typically a lambda
@@ -206,10 +214,17 @@ class ChatViewModel : ViewModel() {
      */
     fun setSelectedProfileProvider(provider: () -> Profile?) {
         selectedProfileProvider = provider
+        refreshActiveAgentName()
+    }
+
+    fun setEffectiveProfileProvider(provider: () -> Profile?) {
+        effectiveProfileProvider = provider
+        refreshActiveAgentName()
     }
 
     fun selectPersonality(name: String) {
         _selectedPersonality.value = name
+        refreshActiveAgentName()
     }
 
     /** The display name of the currently active personality (for chat bubbles). */
@@ -274,7 +289,8 @@ class ChatViewModel : ViewModel() {
         // messages. Subscribed on every initialize() call so a replaced
         // handler (connection switch) picks up fresh events without leaking
         // the previous connection's tail.
-        viewModelScope.launch {
+        toolHistoryJob?.cancel()
+        toolHistoryJob = viewModelScope.launch {
             chatHandler.messages.collect { msgs ->
                 val events = msgs
                     .asSequence()
@@ -360,21 +376,79 @@ class ChatViewModel : ViewModel() {
      * runs on [viewModelScope] so it's torn down with the VM.
      */
     fun observeConnectionSwitches(events: SharedFlow<String>) {
-        viewModelScope.launch {
+        connectionSwitchJob?.cancel()
+        connectionSwitchJob = viewModelScope.launch {
             events.collect { newConnectionId ->
+                historyLoadGeneration.incrementAndGet()
                 intentionallyCancelled = true
                 activeStream?.cancel()
                 activeStream = null
+                activeProfileContextKey = null
                 _queuedMessages.value = emptyList()
                 _pendingAttachments.value = emptyList()
                 chatHandler?.let { handler ->
                     handler.clearMessages()
+                    handler.clearSessions()
                     handler.setSessionId(null)
                 }
                 // Forward the null session id to the persisted
                 // last-session-id slot so the old connection's session
                 // doesn't bleed into the new connection on next launch.
                 onSessionChanged?.invoke(null)
+            }
+        }
+    }
+
+    fun switchProfileContext(contextKey: String, sessionId: String?) {
+        val client = apiClient
+        val handler = chatHandler ?: return
+        handler.activeAgentName = currentAgentDisplayName()
+        if (
+            activeProfileContextKey == contextKey &&
+            handler.currentSessionId.value == sessionId
+        ) {
+            return
+        }
+        if (
+            activeProfileContextKey == null &&
+            sessionId != null &&
+            handler.currentSessionId.value == sessionId
+        ) {
+            activeProfileContextKey = contextKey
+            return
+        }
+
+        activeStream?.let { stream ->
+            intentionallyCancelled = true
+            stream.cancel()
+        }
+        activeStream = null
+        val loadGeneration = historyLoadGeneration.incrementAndGet()
+        activeProfileContextKey = contextKey
+        _queuedMessages.value = emptyList()
+        _pendingAttachments.value = emptyList()
+        handler.clearSessions()
+        handler.setSessionId(sessionId)
+        handler.clearMessages()
+        onSessionChanged?.invoke(sessionId)
+
+        if (sessionId == null || client == null) {
+            _isLoadingHistory.value = false
+            return
+        }
+
+        _isLoadingHistory.value = true
+        viewModelScope.launch {
+            val messages = client.getMessages(sessionId)
+            if (
+                historyLoadGeneration.get() == loadGeneration &&
+                activeProfileContextKey == contextKey &&
+                handler.currentSessionId.value == sessionId
+            ) {
+                handler.loadMessageHistory(messages)
+            }
+            if (historyLoadGeneration.get() == loadGeneration) {
+                _isLoadingHistory.value = false
             }
         }
     }
@@ -387,6 +461,7 @@ class ChatViewModel : ViewModel() {
             _defaultPersonality.value = config.defaultName
             personalityPrompts = config.prompts
             _serverModelName.value = config.modelName
+            refreshActiveAgentName(relabelGenericMessages = true)
         }
     }
 
@@ -410,22 +485,38 @@ class ChatViewModel : ViewModel() {
         // Cancel any in-flight stream
         activeStream?.cancel()
         activeStream = null
+        val loadGeneration = historyLoadGeneration.incrementAndGet()
 
         viewModelScope.launch {
-            client.createSessionResult().fold(
-                onSuccess = { session ->
-                    val chatSession = ChatSession(
-                        sessionId = session.id,
-                        title = session.title ?: "New Chat",
-                        model = session.model
-                    )
-                    handler.addSession(chatSession)
-                    handler.setSessionId(session.id)
-                    handler.clearMessages()
-                    onSessionChanged?.invoke(session.id)
-                    AppAnalytics.onSessionCreated()
+            val selectedProfile = selectedProfileProvider()
+            val useIsolatedProfileApi = selectedProfile?.hasIsolatedApi == true
+            client.createSessionResult(
+                profileName = if (useIsolatedProfileApi) null else selectedProfile?.name,
+                model = if (useIsolatedProfileApi) {
+                    null
+                } else {
+                    selectedProfile?.model?.takeIf { it.isNotBlank() }
                 },
-                onFailure = { error -> emitError(error, context = "create_session") }
+            ).fold(
+                onSuccess = { session ->
+                    if (historyLoadGeneration.get() == loadGeneration) {
+                        val chatSession = ChatSession(
+                            sessionId = session.id,
+                            title = session.title ?: "New Chat",
+                            model = session.model
+                        )
+                        handler.addSession(chatSession)
+                        handler.setSessionId(session.id)
+                        handler.clearMessages()
+                        onSessionChanged?.invoke(session.id)
+                        AppAnalytics.onSessionCreated()
+                    }
+                },
+                onFailure = { error ->
+                    if (historyLoadGeneration.get() == loadGeneration) {
+                        emitError(error, context = "create_session")
+                    }
+                }
             )
         }
     }
@@ -438,6 +529,7 @@ class ChatViewModel : ViewModel() {
         intentionallyCancelled = true
         activeStream?.cancel()
         activeStream = null
+        val loadGeneration = historyLoadGeneration.incrementAndGet()
 
         handler.setSessionId(sessionId)
         handler.clearMessages()
@@ -448,8 +540,15 @@ class ChatViewModel : ViewModel() {
         _isLoadingHistory.value = true
         viewModelScope.launch {
             val messages = client.getMessages(sessionId)
-            handler.loadMessageHistory(messages)
-            _isLoadingHistory.value = false
+            if (
+                historyLoadGeneration.get() == loadGeneration &&
+                handler.currentSessionId.value == sessionId
+            ) {
+                handler.loadMessageHistory(messages)
+            }
+            if (historyLoadGeneration.get() == loadGeneration) {
+                _isLoadingHistory.value = false
+            }
         }
     }
 
@@ -641,13 +740,22 @@ class ChatViewModel : ViewModel() {
         val assistantMessageId = UUID.randomUUID().toString()
         val sessionId = handler.currentSessionId.value
 
-        if (streamingEndpoint == "runs") {
+        if (streamingEndpoint == "runs" || streamingEndpoint == "completions") {
             startStream(client, handler, sessionId ?: "", text.trim(), assistantMessageId, attachments)
         } else if (sessionId != null) {
             startStream(client, handler, sessionId, text.trim(), assistantMessageId, attachments)
         } else {
             viewModelScope.launch {
-                client.createSessionResult().fold(
+                val selectedProfile = selectedProfileProvider()
+                val useIsolatedProfileApi = selectedProfile?.hasIsolatedApi == true
+                client.createSessionResult(
+                    profileName = if (useIsolatedProfileApi) null else selectedProfile?.name,
+                    model = if (useIsolatedProfileApi) {
+                        null
+                    } else {
+                        selectedProfile?.model?.takeIf { it.isNotBlank() }
+                    },
+                ).fold(
                     onSuccess = { session ->
                         val chatSession = ChatSession(
                             sessionId = session.id,
@@ -677,8 +785,95 @@ class ChatViewModel : ViewModel() {
         }
     }
 
+    fun startRealtimeAgentTurn(userText: String, chatSessionId: String?): String {
+        val handler = chatHandler ?: return UUID.randomUUID().toString()
+        AppAnalytics.onMessageSent()
+        val trimmed = userText.trim()
+        val userMessageId = UUID.randomUUID().toString()
+        val assistantMessageId = "realtime-agent-${UUID.randomUUID()}"
+        handler.activeAgentName = currentAgentDisplayName()
+        handler.addUserMessage(
+            ChatMessage(
+                id = userMessageId,
+                role = MessageRole.USER,
+                content = trimmed,
+                timestamp = System.currentTimeMillis(),
+            )
+        )
+        handler.setLastSentMessage(trimmed)
+        chatSessionId?.takeIf { it.isNotBlank() }?.let {
+            handler.setSessionId(it)
+            onSessionChanged?.invoke(it)
+        }
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = assistantMessageId,
+                role = MessageRole.ASSISTANT,
+                content = "",
+                timestamp = System.currentTimeMillis(),
+                isStreaming = true,
+                agentName = handler.activeAgentName,
+            )
+        )
+        return assistantMessageId
+    }
+
+    fun applyRealtimeAgentEvent(assistantMessageId: String, event: RealtimeVoiceEvent) {
+        val handler = chatHandler ?: return
+        val hermesSessionId = when {
+            !event.chatSessionId.isNullOrBlank() -> event.chatSessionId
+            event.type.startsWith("hermes.") && !event.sessionId.isNullOrBlank() -> event.sessionId
+            else -> null
+        }
+        hermesSessionId?.let {
+            handler.setSessionId(it)
+            onSessionChanged?.invoke(it)
+        }
+
+        when (event.type) {
+            "hermes.message.started" -> Unit
+            "voice.response.delta" -> {
+                val delta = event.delta ?: return
+                handler.onTextDelta(assistantMessageId, delta)
+            }
+            "hermes.tool.delta" -> {
+                val delta = event.delta ?: return
+                handler.onThinkingDelta(assistantMessageId, delta)
+            }
+            "hermes.tool.started" -> {
+                val name = event.toolName?.takeIf { it.isNotBlank() } ?: "hermes"
+                val callId = event.toolCallId?.takeIf { it.isNotBlank() } ?: name
+                handler.onToolCallStart(assistantMessageId, callId, name)
+            }
+            "hermes.tool.completed" -> {
+                val callId = event.toolCallId?.takeIf { it.isNotBlank() }
+                    ?: event.toolName?.takeIf { it.isNotBlank() }
+                    ?: "hermes"
+                handler.onToolCallComplete(assistantMessageId, callId, event.resultPreview)
+            }
+            "hermes.tool.failed" -> {
+                val callId = event.toolCallId?.takeIf { it.isNotBlank() }
+                    ?: event.toolName?.takeIf { it.isNotBlank() }
+                    ?: "hermes"
+                handler.onToolCallFailed(assistantMessageId, callId, event.message ?: event.resultPreview)
+            }
+            "hermes.confirmation.requested" -> {
+                val prompt = event.message ?: "Waiting for confirmation"
+                handler.onThinkingDelta(assistantMessageId, prompt)
+            }
+            "voice.response.done", "hermes.run.completed" -> {
+                handler.onStreamComplete(assistantMessageId)
+                activeStream = null
+            }
+            "voice.error" -> {
+                handler.onStreamError(event.message ?: "Realtime agent failed")
+                activeStream = null
+            }
+        }
+    }
+
     /**
-     * Kick off an SSE chat turn against either the runs or sessions endpoint.
+         * Kick off an SSE chat turn against the selected chat endpoint.
      *
      * **System-message precedence (Pass 3, 2026-04-18):**
      *
@@ -687,7 +882,9 @@ class ChatViewModel : ViewModel() {
      *     personality: it bundles model + persona (from the profile's
      *     `SOUL.md`) into a single named unit, so a user who picks a profile
      *     has explicitly asked for that profile's full identity. The
-     *     personality prompt is skipped in this case.
+     *     personality prompt is skipped in this case. If the selected profile
+     *     advertises an isolated API route, the server's profile config owns
+     *     SOUL/default prompt and the phone does not resend it.
      *  2. **Selected non-default personality** — send the personality's
      *     stored system prompt. This is the pre-Pass-3 path.
      *  3. **Neither selected** — no personality prompt, server uses its own
@@ -708,12 +905,16 @@ class ChatViewModel : ViewModel() {
         // Resolve the active profile pick once — used below for both
         // modelOverride and the system_message precedence rule.
         val selectedProfile = selectedProfileProvider()
+        val effectiveProfile = effectiveProfileProvider() ?: selectedProfile
+        val useIsolatedProfileApi = selectedProfile?.hasIsolatedApi == true
 
         // Build persona prompt following the precedence rule documented on
         // this function's KDoc. A profile's systemMessage wins over a
         // selected personality when both are set.
         val selected = _selectedPersonality.value
-        val profileSystemMessage = selectedProfile?.systemMessage?.takeIf { it.isNotBlank() }
+        val profileSystemMessage = selectedProfile
+            ?.systemMessage
+            ?.takeIf { !useIsolatedProfileApi && it.isNotBlank() }
         val personaPrompt: String? = when {
             profileSystemMessage != null -> profileSystemMessage
             selected != "default" && selected != _defaultPersonality.value ->
@@ -729,9 +930,10 @@ class ChatViewModel : ViewModel() {
             .ifBlank { null }
         // === END PHASE3-status ===
 
-        // Set agent name for display on chat bubbles
-        handler.activeAgentName = activePersonalityName.replaceFirstChar { it.uppercase() }
-            .ifBlank { null }
+        // Set agent name for display on chat bubbles. The selected/effective
+        // Hermes profile is the active agent identity; personality is only a
+        // fallback when no profile metadata is available.
+        handler.activeAgentName = currentAgentDisplayName(effectiveProfile)
 
         firstTokenNotified = false
         var lastInputTokens: Int? = null
@@ -889,52 +1091,81 @@ class ChatViewModel : ViewModel() {
         // [selectedProfile] resolved at the top of this function so a
         // rapid switch doesn't give us a systemMessage from profile A but
         // a model from profile B.
-        val modelOverride: String? = selectedProfile
-            ?.model
-            ?.takeIf { it.isNotBlank() }
-
-        activeStream = if (streamingEndpoint == "runs") {
-            client.sendRunStream(
-                message = message,
-                systemMessage = systemMsg,
-                attachments = attachments,
-                voiceIntentMessages = voiceIntentMessages,
-                onSessionId = { sid ->
-                    handler.setSessionId(sid)
-                    onSessionChanged?.invoke(sid)
-                },
-                onMessageStarted = onMessageStartedCb,
-                onTextDelta = onTextDeltaCb,
-                onThinkingDelta = onThinkingDeltaCb,
-                onToolCallStart = onToolCallStartCb,
-                onToolCallDone = onToolCallDoneCb,
-                onToolCallFailed = onToolCallFailedCb,
-                onTurnComplete = onTurnCompleteCb,
-                onComplete = onCompleteCb,
-                onUsage = onUsageCb,
-                onError = onErrorCb,
-                modelOverride = modelOverride,
-            )
+        val modelOverride: String? = if (useIsolatedProfileApi) {
+            null
         } else {
-            client.sendChatStream(
-                sessionId = sessionId,
-                message = message,
-                systemMessage = systemMsg,
-                attachments = attachments,
-                voiceIntentMessages = voiceIntentMessages,
-                onSessionId = { /* already set */ },
-                onMessageStarted = onMessageStartedCb,
-                onTextDelta = onTextDeltaCb,
-                onThinkingDelta = onThinkingDeltaCb,
-                onToolCallStart = onToolCallStartCb,
-                onToolCallDone = onToolCallDoneCb,
-                onToolCallFailed = onToolCallFailedCb,
-                onTurnComplete = onTurnCompleteCb,
-                onComplete = onCompleteCb,
-                onUsage = onUsageCb,
-                onError = onErrorCb,
-                modelOverride = modelOverride,
-            )
+            selectedProfile
+                ?.model
+                ?.takeIf { it.isNotBlank() }
+        }
+        val profileName: String? = if (useIsolatedProfileApi) {
+            null
+        } else {
+            AgentDisplay.profileRequestName(selectedProfile?.name)
+        }
+
+        activeStream = when (streamingEndpoint) {
+            "runs" -> client.sendRunStream(
+                    message = message,
+                    systemMessage = systemMsg,
+                    attachments = attachments,
+                    voiceIntentMessages = voiceIntentMessages,
+                    onSessionId = { sid ->
+                        handler.setSessionId(sid)
+                        onSessionChanged?.invoke(sid)
+                    },
+                    onMessageStarted = onMessageStartedCb,
+                    onTextDelta = onTextDeltaCb,
+                    onThinkingDelta = onThinkingDeltaCb,
+                    onToolCallStart = onToolCallStartCb,
+                    onToolCallDone = onToolCallDoneCb,
+                    onToolCallFailed = onToolCallFailedCb,
+                    onTurnComplete = onTurnCompleteCb,
+                    onComplete = onCompleteCb,
+                    onUsage = onUsageCb,
+                    onError = onErrorCb,
+                    modelOverride = modelOverride,
+                    profileName = profileName,
+                )
+            "completions" -> client.sendChatCompletionsStream(
+                    message = message,
+                    systemMessage = systemMsg,
+                    attachments = attachments,
+                    voiceIntentMessages = voiceIntentMessages,
+                    onSessionId = { /* stateless OpenAI-compatible endpoint */ },
+                    onMessageStarted = onMessageStartedCb,
+                    onTextDelta = onTextDeltaCb,
+                    onThinkingDelta = onThinkingDeltaCb,
+                    onToolCallStart = onToolCallStartCb,
+                    onToolCallDone = onToolCallDoneCb,
+                    onToolCallFailed = onToolCallFailedCb,
+                    onTurnComplete = onTurnCompleteCb,
+                    onComplete = onCompleteCb,
+                    onUsage = onUsageCb,
+                    onError = onErrorCb,
+                    modelOverride = modelOverride,
+                    profileName = profileName,
+                )
+            else -> client.sendChatStream(
+                    sessionId = sessionId,
+                    message = message,
+                    systemMessage = systemMsg,
+                    attachments = attachments,
+                    voiceIntentMessages = voiceIntentMessages,
+                    onSessionId = { /* already set */ },
+                    onMessageStarted = onMessageStartedCb,
+                    onTextDelta = onTextDeltaCb,
+                    onThinkingDelta = onThinkingDeltaCb,
+                    onToolCallStart = onToolCallStartCb,
+                    onToolCallDone = onToolCallDoneCb,
+                    onToolCallFailed = onToolCallFailedCb,
+                    onTurnComplete = onTurnCompleteCb,
+                    onComplete = onCompleteCb,
+                    onUsage = onUsageCb,
+                    onError = onErrorCb,
+                    modelOverride = modelOverride,
+                    profileName = profileName,
+                )
         }
 
         // Flip syncedToServer=true on every voice-intent trace AND every
@@ -950,6 +1181,33 @@ class ChatViewModel : ViewModel() {
         if (voiceIntentMessages != null) {
             if (hasVoiceIntents) handler.markVoiceIntentsSynced()
             if (hasCardDispatches) handler.markCardDispatchesSynced()
+        }
+    }
+
+    private fun currentAgentDisplayName(
+        effectiveProfileOverride: Profile? = null,
+    ): String? {
+        val selectedProfile = selectedProfileProvider()
+        val effectiveProfile = effectiveProfileOverride
+            ?: effectiveProfileProvider()
+            ?: selectedProfile
+        return AgentDisplay.agentName(
+            profile = effectiveProfile,
+            selectedPersonality = _selectedPersonality.value,
+            defaultPersonality = _defaultPersonality.value,
+            connectionLabel = null,
+        ).ifBlank { null }
+    }
+
+    private fun refreshActiveAgentName(
+        effectiveProfileOverride: Profile? = null,
+        relabelGenericMessages: Boolean = false,
+    ) {
+        val handler = chatHandler ?: return
+        val displayName = currentAgentDisplayName(effectiveProfileOverride)
+        handler.activeAgentName = displayName
+        if (relabelGenericMessages) {
+            handler.relabelGenericAssistantMessages(displayName)
         }
     }
 

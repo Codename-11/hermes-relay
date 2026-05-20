@@ -17,21 +17,32 @@ jobs:
     #   github.event.pull_request.user.login == 'external-contributor' ||
     #   github.event.pull_request.user.login == 'new-developer' ||
     #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
-
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       pull-requests: read
       issues: read
       id-token: write
+    env:
+      IS_RELEASE_PR: ${{ github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.ref == 'dev' && startsWith(github.event.pull_request.title, 'release:') }}
 
     steps:
+      - name: Skip aggregate release PR review
+        if: env.IS_RELEASE_PR == 'true'
+        run: |
+          echo "Skipping Claude Code Review for aggregate dev -> main release PR."
+          echo "Feature work is reviewed before it lands on dev; release PRs are gated by CI and release metadata checks."
+
       - name: Checkout repository
+        if: env.IS_RELEASE_PR != 'true'
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
       - name: Run Claude Code Review
+        if: env.IS_RELEASE_PR != 'true'
+        timeout-minutes: 15
         id: claude-review
         uses: anthropics/claude-code-action@v1
         with:

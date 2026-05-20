@@ -2,11 +2,18 @@ package com.hermesandroid.relay.network
 
 import android.content.Context
 import android.util.Log
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
@@ -14,20 +21,49 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 import java.io.File
 import java.io.IOException
+import java.net.URLEncoder
+import java.util.Base64
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * HTTP client for the Hermes relay **voice** endpoints (V1 contract).
+ * HTTP/WebSocket client for the Hermes relay voice endpoints.
  *
- *   POST /voice/transcribe  — multipart upload, returns `{"text": "..."}`
- *   POST /voice/synthesize  — JSON `{"text": "..."}`, returns audio/mpeg bytes
+ * Main voice output path:
+ *   GET  /voice/output/config
+ *   POST /voice/output/session
+ *   GET  /voice/output/{session_id}
  *
- * Auth, URL conversion (`ws` ↔ `http`), and error shape mirror
- * [RelayHttpClient]. Android prefers the saved Hermes API key for voice when
- * present, because chat+voice-only installs do not need the full Relay pairing
- * flow. Paired Relay sessions remain the fallback for installs without an API
- * key. We take the providers as constructor args instead of sharing a
+ * Realtime provider lab path:
+ *   GET  /voice/realtime/config
+ *   POST /voice/realtime/session
+ *   GET  /voice/realtime/{session_id}
+ *
+ * Experimental realtime-agent engine path:
+ *   GET  /voice/realtime-agent/config
+ *   POST /voice/realtime-agent/session
+ *   GET  /voice/realtime-agent/{session_id}
+ *
+ * Basic fallback path:
+ *   POST /voice/transcribe  - multipart upload, returns `{"text": "..."}`
+ *   POST /voice/synthesize  - JSON `{"text": "..."}`, returns audio/mpeg bytes
+ *
+ * Auth, URL conversion (`ws` <-> `http`), and error shape mirror
+ * [RelayHttpClient]. Bearer precedence: **paired Relay session token first**,
+ * Hermes API key as fallback for chat+voice-only installs that haven't paired.
+ *
+ * The session token is preferred even when an API key is also present because
+ * the relay applies a transport guard to API-bearer auth on the voice routes
+ * (`_request_is_secure_enough_for_api_bearer` in `plugin/relay/voice_auth.py`):
+ * over plain LAN `ws://`, API bearer is rejected with 403 even though the
+ * session token would be accepted. Once paired, the session is the trusted
+ * credential — use it. The API-key path stays for installs that never paired.
+ *
+ * We take the providers as constructor args instead of sharing a
  * [RelayHttpClient] instance so the classes stay decoupled.
  */
 class RelayVoiceClient(
@@ -35,6 +71,7 @@ class RelayVoiceClient(
     private val okHttpClient: OkHttpClient,
     private val relayUrlProvider: () -> String?,
     private val sessionTokenProvider: suspend () -> String?,
+    private val profileNameProvider: () -> String? = { null },
     private val apiBearerTokenProvider: suspend () -> String? = { null },
 ) {
 
@@ -43,6 +80,10 @@ class RelayVoiceClient(
         private val json = Json { ignoreUnknownKeys = true; isLenient = true }
         private val JSON_MEDIA_TYPE = "application/json".toMediaType()
         private val MP4_AUDIO = "audio/mp4".toMediaType()
+        private val WAV_AUDIO = "audio/wav".toMediaType()
+        private val OCTET_STREAM = "application/octet-stream".toMediaType()
+        private const val REALTIME_TIMEOUT_MS = 90_000L
+        private const val REALTIME_INPUT_CHUNK_BYTES = 6_400
     }
 
     /**
@@ -70,12 +111,12 @@ class RelayVoiceClient(
             .addFormDataPart(
                 name = "audio",
                 filename = audioFile.name,
-                body = audioFile.asRequestBody(MP4_AUDIO),
+                body = audioFile.asRequestBody(mediaTypeForAudioFile(audioFile)),
             )
             .build()
 
         val request = Request.Builder()
-            .url("$httpBase/voice/transcribe")
+            .url(urlWithProfile("$httpBase/voice/transcribe"))
             .post(body)
             .header("Authorization", "Bearer $token")
             .header("Accept", "application/json")
@@ -84,7 +125,10 @@ class RelayVoiceClient(
         try {
             okHttpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    return@withContext Result.failure(IOException(describeHttpError(response.code, response.message)))
+                    val body = response.body?.string().orEmpty()
+                    return@withContext Result.failure(
+                        IOException(describeHttpError(response.code, response.message, body))
+                    )
                 }
                 val raw = response.body?.string().orEmpty()
                 if (raw.isBlank()) {
@@ -135,15 +179,10 @@ class RelayVoiceClient(
             return@withContext Result.failure(IllegalArgumentException("synthesize: text is blank"))
         }
 
-        // Hand-rolled JSON — one field, easier to audit than pulling in
-        // JsonObjectBuilder just for this call.
-        val escaped = text
-            .replace("\\", "\\\\")
-            .replace("\"", "\\\"")
-            .replace("\n", "\\n")
-            .replace("\r", "\\r")
-            .replace("\t", "\\t")
-        val bodyJson = "{\"text\":\"$escaped\"}"
+        val bodyJson = buildJsonObject {
+            put("text", JsonPrimitive(text))
+            putProfile()
+        }.toString()
 
         val request = Request.Builder()
             .url("$httpBase/voice/synthesize")
@@ -155,7 +194,10 @@ class RelayVoiceClient(
         try {
             okHttpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    return@withContext Result.failure(IOException(describeHttpError(response.code, response.message)))
+                    val errBody = response.body?.string().orEmpty()
+                    return@withContext Result.failure(
+                        IOException(describeHttpError(response.code, response.message, errBody))
+                    )
                 }
                 val body = response.body
                     ?: return@withContext Result.failure(IOException("Empty synthesize response body"))
@@ -198,7 +240,7 @@ class RelayVoiceClient(
         }
 
         val request = Request.Builder()
-            .url("$httpBase/voice/config")
+            .url(urlWithProfile("$httpBase/voice/config"))
             .get()
             .header("Authorization", "Bearer $token")
             .header("Accept", "application/json")
@@ -207,7 +249,10 @@ class RelayVoiceClient(
         try {
             okHttpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    return@withContext Result.failure(IOException(describeHttpError(response.code, response.message)))
+                    val body = response.body?.string().orEmpty()
+                    return@withContext Result.failure(
+                        IOException(describeHttpError(response.code, response.message, body))
+                    )
                 }
                 val raw = response.body?.string().orEmpty()
                 if (raw.isBlank()) {
@@ -228,6 +273,917 @@ class RelayVoiceClient(
         }
     }
 
+    suspend fun getRealtimeVoiceConfig(): Result<RealtimeVoiceConfig> = withContext(Dispatchers.IO) {
+        val httpBase = resolveHttpBase()
+            ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
+        val token = resolveBearerToken()
+        if (token.isNullOrBlank()) {
+            return@withContext Result.failure(missingAuthError())
+        }
+
+        val request = Request.Builder()
+            .url(urlWithProfile("$httpBase/voice/realtime/config"))
+            .get()
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/json")
+            .build()
+
+        try {
+            okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val body = response.body?.string().orEmpty()
+                    return@withContext Result.failure(
+                        IOException(describeHttpError(response.code, response.message, body))
+                    )
+                }
+                val raw = response.body?.string().orEmpty()
+                Result.success(json.decodeFromString(RealtimeVoiceConfig.serializer(), raw))
+            }
+        } catch (e: IOException) {
+            Result.failure(IOException("Realtime voice config failed: ${e.message ?: "network error"}"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun getRealtimeProviderOptions(
+        providerId: String,
+    ): Result<VoiceProviderOptionsResponse> = withContext(Dispatchers.IO) {
+        val httpBase = resolveHttpBase()
+            ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
+        val token = resolveBearerToken()
+        if (token.isNullOrBlank()) {
+            return@withContext Result.failure(missingAuthError())
+        }
+        val provider = providerId.trim()
+        if (provider.isBlank()) {
+            return@withContext Result.failure(IllegalArgumentException("Provider ID required"))
+        }
+
+        val request = Request.Builder()
+            .url(urlWithProfile("$httpBase/voice/realtime/providers/${pathSegment(provider)}/options"))
+            .get()
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/json")
+            .build()
+
+        try {
+            okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val body = response.body.string()
+                    return@withContext Result.failure(
+                        IOException(describeHttpError(response.code, response.message, body))
+                    )
+                }
+                val raw = response.body.string()
+                Result.success(json.decodeFromString(VoiceProviderOptionsResponse.serializer(), raw))
+            }
+        } catch (e: IOException) {
+            Result.failure(IOException("Realtime provider options failed: ${e.message ?: "network error"}"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun validateRealtimeProvider(
+        providerId: String,
+        model: String,
+        voice: String,
+        sampleRate: Int,
+    ): Result<VoiceProviderValidationResponse> = withContext(Dispatchers.IO) {
+        val httpBase = resolveHttpBase()
+            ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
+        val token = resolveBearerToken()
+        if (token.isNullOrBlank()) {
+            return@withContext Result.failure(missingAuthError())
+        }
+        val provider = providerId.trim()
+        if (provider.isBlank()) {
+            return@withContext Result.failure(IllegalArgumentException("Provider ID required"))
+        }
+        val payload = buildJsonObject {
+            put("model", JsonPrimitive(model.trim()))
+            put("voice", JsonPrimitive(voice.trim()))
+            put("sample_rate", JsonPrimitive(sampleRate))
+            putProfile()
+        }
+
+        val request = Request.Builder()
+            .url(urlWithProfile("$httpBase/voice/realtime/providers/${pathSegment(provider)}/validate"))
+            .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/json")
+            .build()
+
+        try {
+            okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val body = response.body?.string().orEmpty()
+                    return@withContext Result.failure(
+                        IOException(describeHttpError(response.code, response.message, body))
+                    )
+                }
+                val raw = response.body?.string().orEmpty()
+                Result.success(json.decodeFromString(VoiceProviderValidationResponse.serializer(), raw))
+            }
+        } catch (e: IOException) {
+            Result.failure(IOException("Realtime provider validation failed: ${e.message ?: "network error"}"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun updateRealtimeVoiceConfig(
+        enabled: Boolean? = null,
+        provider: String? = null,
+        model: String? = null,
+        voice: String? = null,
+        sampleRate: Int? = null,
+    ): Result<RealtimeVoiceConfig> = withContext(Dispatchers.IO) {
+        val httpBase = resolveHttpBase()
+            ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
+        val token = resolveBearerToken()
+        if (token.isNullOrBlank()) {
+            return@withContext Result.failure(missingAuthError())
+        }
+
+        val payload = buildJsonObject {
+            enabled?.let { put("enabled", JsonPrimitive(it)) }
+            provider?.takeIf { it.isNotBlank() }?.let {
+                put("provider", JsonPrimitive(it.trim()))
+            }
+            model?.takeIf { it.isNotBlank() }?.let {
+                put("model", JsonPrimitive(it.trim()))
+            }
+            voice?.takeIf { it.isNotBlank() }?.let {
+                put("voice", JsonPrimitive(it.trim()))
+            }
+            sampleRate?.let { put("sample_rate", JsonPrimitive(it)) }
+        }
+
+        val request = Request.Builder()
+            .url(urlWithProfile("$httpBase/voice/realtime/config"))
+            .patch(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/json")
+            .build()
+
+        try {
+            okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val body = response.body?.string().orEmpty()
+                    return@withContext Result.failure(
+                        IOException(describeHttpError(response.code, response.message, body))
+                    )
+                }
+                val raw = response.body?.string().orEmpty()
+                Result.success(json.decodeFromString(RealtimeVoiceConfig.serializer(), raw))
+            }
+        } catch (e: IOException) {
+            Result.failure(IOException("Realtime voice config update failed: ${e.message ?: "network error"}"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun getRealtimeAgentConfig(): Result<RealtimeVoiceConfig> =
+        getRealtimeConfigAt("/voice/realtime-agent/config", "Realtime agent config")
+
+    suspend fun getRealtimeAgentProviderOptions(
+        providerId: String,
+    ): Result<VoiceProviderOptionsResponse> =
+        getRealtimeProviderOptionsAt(
+            providerId = providerId,
+            pathPrefix = "/voice/realtime-agent/providers",
+            label = "Realtime agent provider options",
+        )
+
+    suspend fun validateRealtimeAgentProvider(
+        providerId: String,
+        model: String,
+        voice: String,
+        sampleRate: Int,
+    ): Result<VoiceProviderValidationResponse> =
+        validateRealtimeProviderAt(
+            providerId = providerId,
+            model = model,
+            voice = voice,
+            sampleRate = sampleRate,
+            pathPrefix = "/voice/realtime-agent/providers",
+            label = "Realtime agent provider validation",
+        )
+
+    suspend fun updateRealtimeAgentConfig(
+        enabled: Boolean? = null,
+        provider: String? = null,
+        model: String? = null,
+        voice: String? = null,
+        sampleRate: Int? = null,
+    ): Result<RealtimeVoiceConfig> =
+        updateRealtimeConfigAt(
+            enabled = enabled,
+            provider = provider,
+            model = model,
+            voice = voice,
+            sampleRate = sampleRate,
+            path = "/voice/realtime-agent/config",
+            label = "Realtime agent config update",
+        )
+
+    suspend fun getVoiceOutputConfig(): Result<VoiceOutputConfig> = withContext(Dispatchers.IO) {
+        val httpBase = resolveHttpBase()
+            ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
+        val token = resolveBearerToken()
+        if (token.isNullOrBlank()) {
+            return@withContext Result.failure(missingAuthError())
+        }
+
+        val request = Request.Builder()
+            .url(urlWithProfile("$httpBase/voice/output/config"))
+            .get()
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/json")
+            .build()
+
+        try {
+            okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val body = response.body?.string().orEmpty()
+                    return@withContext Result.failure(
+                        IOException(describeHttpError(response.code, response.message, body))
+                    )
+                }
+                val raw = response.body?.string().orEmpty()
+                Result.success(json.decodeFromString(VoiceOutputConfig.serializer(), raw))
+            }
+        } catch (e: IOException) {
+            Result.failure(IOException("Voice output config failed: ${e.message ?: "network error"}"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun getVoiceOutputProviderOptions(
+        providerId: String,
+    ): Result<VoiceProviderOptionsResponse> = withContext(Dispatchers.IO) {
+        val httpBase = resolveHttpBase()
+            ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
+        val token = resolveBearerToken()
+        if (token.isNullOrBlank()) {
+            return@withContext Result.failure(missingAuthError())
+        }
+        val provider = providerId.trim()
+        if (provider.isBlank()) {
+            return@withContext Result.failure(IllegalArgumentException("Provider ID required"))
+        }
+
+        val request = Request.Builder()
+            .url(urlWithProfile("$httpBase/voice/output/providers/${pathSegment(provider)}/options"))
+            .get()
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/json")
+            .build()
+
+        try {
+            okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val body = response.body.string()
+                    return@withContext Result.failure(
+                        IOException(describeHttpError(response.code, response.message, body))
+                    )
+                }
+                val raw = response.body.string()
+                Result.success(json.decodeFromString(VoiceProviderOptionsResponse.serializer(), raw))
+            }
+        } catch (e: IOException) {
+            Result.failure(IOException("Voice output provider options failed: ${e.message ?: "network error"}"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun validateVoiceOutputProvider(
+        providerId: String,
+        model: String,
+        voice: String,
+        sampleRate: Int,
+        language: String,
+    ): Result<VoiceProviderValidationResponse> = withContext(Dispatchers.IO) {
+        val httpBase = resolveHttpBase()
+            ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
+        val token = resolveBearerToken()
+        if (token.isNullOrBlank()) {
+            return@withContext Result.failure(missingAuthError())
+        }
+        val provider = providerId.trim()
+        if (provider.isBlank()) {
+            return@withContext Result.failure(IllegalArgumentException("Provider ID required"))
+        }
+        val payload = buildJsonObject {
+            put("model", JsonPrimitive(model.trim()))
+            put("voice", JsonPrimitive(voice.trim()))
+            put("sample_rate", JsonPrimitive(sampleRate))
+            language.trim().takeIf { it.isNotBlank() }?.let {
+                put("language", JsonPrimitive(it))
+            }
+            putProfile()
+        }
+
+        val request = Request.Builder()
+            .url(urlWithProfile("$httpBase/voice/output/providers/${pathSegment(provider)}/validate"))
+            .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/json")
+            .build()
+
+        try {
+            okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val body = response.body?.string().orEmpty()
+                    return@withContext Result.failure(
+                        IOException(describeHttpError(response.code, response.message, body))
+                    )
+                }
+                val raw = response.body?.string().orEmpty()
+                Result.success(json.decodeFromString(VoiceProviderValidationResponse.serializer(), raw))
+            }
+        } catch (e: IOException) {
+            Result.failure(IOException("Voice output provider validation failed: ${e.message ?: "network error"}"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun updateVoiceOutputConfig(
+        enabled: Boolean? = null,
+        provider: String? = null,
+        model: String? = null,
+        voice: String? = null,
+        sampleRate: Int? = null,
+        language: String? = null,
+        codec: String? = null,
+        optimizeStreamingLatency: Int? = null,
+        textNormalization: Boolean? = null,
+        fallbackEnabled: Boolean? = null,
+    ): Result<VoiceOutputConfig> = withContext(Dispatchers.IO) {
+        val httpBase = resolveHttpBase()
+            ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
+        val token = resolveBearerToken()
+        if (token.isNullOrBlank()) {
+            return@withContext Result.failure(missingAuthError())
+        }
+
+        val payload = buildJsonObject {
+            enabled?.let { put("enabled", JsonPrimitive(it)) }
+            provider?.takeIf { it.isNotBlank() }?.let {
+                put("provider", JsonPrimitive(it.trim()))
+            }
+            model?.takeIf { it.isNotBlank() }?.let {
+                put("model", JsonPrimitive(it.trim()))
+            }
+            voice?.takeIf { it.isNotBlank() }?.let {
+                put("voice", JsonPrimitive(it.trim()))
+            }
+            sampleRate?.let { put("sample_rate", JsonPrimitive(it)) }
+            language?.takeIf { it.isNotBlank() }?.let {
+                put("language", JsonPrimitive(it.trim()))
+            }
+            codec?.takeIf { it.isNotBlank() }?.let {
+                put("codec", JsonPrimitive(it.trim()))
+            }
+            optimizeStreamingLatency?.let {
+                put("optimize_streaming_latency", JsonPrimitive(it))
+            }
+            textNormalization?.let { put("text_normalization", JsonPrimitive(it)) }
+            fallbackEnabled?.let { put("fallback_enabled", JsonPrimitive(it)) }
+        }
+
+        val request = Request.Builder()
+            .url(urlWithProfile("$httpBase/voice/output/config"))
+            .patch(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/json")
+            .build()
+
+        try {
+            okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val body = response.body?.string().orEmpty()
+                    return@withContext Result.failure(
+                        IOException(describeHttpError(response.code, response.message, body))
+                    )
+                }
+                val raw = response.body?.string().orEmpty()
+                Result.success(json.decodeFromString(VoiceOutputConfig.serializer(), raw))
+            }
+        } catch (e: IOException) {
+            Result.failure(IOException("Voice output config update failed: ${e.message ?: "network error"}"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun runVoiceOutput(
+        text: String,
+        renderMode: String? = "verbatim",
+        onEvent: (RealtimeVoiceEvent) -> Unit,
+    ): Result<VoiceOutputSummary> = withContext(Dispatchers.IO) {
+        val httpBase = resolveHttpBase()
+            ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
+        val wsBase = resolveWebSocketBase()
+            ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
+        val token = resolveBearerToken()
+        if (token.isNullOrBlank()) {
+            return@withContext Result.failure(missingAuthError())
+        }
+
+        val sessionResult = createVoiceOutputSession(httpBase, token)
+        if (sessionResult.isFailure) {
+            return@withContext Result.failure(sessionResult.exceptionOrNull() ?: IOException("Voice output session failed"))
+        }
+        val session = sessionResult.getOrThrow()
+        val finished = CompletableDeferred<Result<VoiceOutputSummary>>()
+        val completed = AtomicBoolean(false)
+        var audioChunks = 0
+        var audioBytes = 0
+
+        val request = Request.Builder()
+            .url("$wsBase${session.websocketPath}")
+            .header("Authorization", "Bearer $token")
+            .build()
+
+        val listener = object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                webSocket.send("""{"type":"session.start"}""")
+                webSocket.send(
+                    buildRealtimeResponseCreate(
+                        text = text,
+                        toolScaffold = false,
+                        renderMode = renderMode,
+                    )
+                )
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                val event = parseRealtimeEvent(text)
+                onEvent(event)
+                if (event.isAudioDelta) {
+                    audioChunks += 1
+                    audioBytes += event.byteCount ?: 0
+                }
+                if (event.type == "voice.response.done") {
+                    if (completed.compareAndSet(false, true)) {
+                        finished.complete(
+                            Result.success(
+                                VoiceOutputSummary(
+                                    provider = event.provider ?: session.provider,
+                                    model = event.model ?: session.model,
+                                    voice = event.voice ?: session.voice,
+                                    sampleRate = session.sampleRate,
+                                    audioChunks = audioChunks,
+                                    audioBytes = audioBytes,
+                                    firstAudioMs = event.firstAudioMs,
+                                    responseDoneMs = event.responseDoneMs,
+                                    eventLogPath = event.eventLogPath ?: session.eventLogPath,
+                                )
+                            )
+                        )
+                    }
+                    webSocket.close(1000, "done")
+                } else if (event.type == "voice.error") {
+                    if (completed.compareAndSet(false, true)) {
+                        finished.complete(
+                            Result.failure(IOException(event.message ?: "Voice output error"))
+                        )
+                    }
+                    webSocket.close(1011, "provider error")
+                }
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (completed.compareAndSet(false, true)) {
+                    finished.complete(Result.failure(IOException("Voice output websocket failed: ${t.message}", t)))
+                }
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (completed.compareAndSet(false, true)) {
+                    finished.complete(Result.failure(IOException("Voice output websocket closed before completion: $code $reason")))
+                }
+            }
+        }
+
+        val socket = okHttpClient.newWebSocket(request, listener)
+        try {
+            withTimeout(REALTIME_TIMEOUT_MS) {
+                finished.await()
+            }
+        } catch (e: Exception) {
+            socket.close(1001, "timeout")
+            Result.failure(IOException("Voice output timed out", e))
+        }
+    }
+
+    suspend fun runRealtimeDemo(
+        prompt: String,
+        inputPcm: ByteArray,
+        inputSampleRate: Int = 16_000,
+        toolScaffold: Boolean = true,
+        renderMode: String? = null,
+        onEvent: (RealtimeVoiceEvent) -> Unit,
+    ): Result<RealtimeVoiceSummary> = withContext(Dispatchers.IO) {
+        val httpBase = resolveHttpBase()
+            ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
+        val wsBase = resolveWebSocketBase()
+            ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
+        val token = resolveBearerToken()
+        if (token.isNullOrBlank()) {
+            return@withContext Result.failure(missingAuthError())
+        }
+
+        val sessionResult = createRealtimeSession(httpBase, token)
+        if (sessionResult.isFailure) {
+            return@withContext Result.failure(sessionResult.exceptionOrNull() ?: IOException("Session failed"))
+        }
+        val session = sessionResult.getOrThrow()
+        val finished = CompletableDeferred<Result<RealtimeVoiceSummary>>()
+        val completed = AtomicBoolean(false)
+        var audioChunks = 0
+        var audioBytes = 0
+
+        val request = Request.Builder()
+            .url("$wsBase${session.websocketPath}")
+            .header("Authorization", "Bearer $token")
+            .build()
+
+        val listener = object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                webSocket.send("""{"type":"session.start"}""")
+                if (inputPcm.isNotEmpty()) {
+                    var offset = 0
+                    while (offset < inputPcm.size) {
+                        val end = (offset + REALTIME_INPUT_CHUNK_BYTES).coerceAtMost(inputPcm.size)
+                        val encoded = Base64.getEncoder()
+                            .encodeToString(inputPcm.copyOfRange(offset, end))
+                        webSocket.send(
+                            """{"type":"input_audio.append","sample_rate":$inputSampleRate,"audio_base64":"$encoded"}"""
+                        )
+                        offset = end
+                    }
+                }
+                webSocket.send(
+                    buildRealtimeResponseCreate(
+                        text = prompt,
+                        toolScaffold = toolScaffold,
+                        renderMode = renderMode,
+                    )
+                )
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                val event = parseRealtimeEvent(text)
+                onEvent(event)
+                if (event.isAudioDelta) {
+                    audioChunks += 1
+                    audioBytes += event.byteCount ?: 0
+                }
+                if (event.type == "voice.response.done") {
+                    if (completed.compareAndSet(false, true)) {
+                        finished.complete(
+                            Result.success(
+                                RealtimeVoiceSummary(
+                                    provider = event.provider ?: session.provider,
+                                    model = event.model ?: session.model,
+                                    voice = event.voice ?: session.voice,
+                                    sampleRate = session.sampleRate,
+                                    audioChunks = audioChunks,
+                                    audioBytes = audioBytes,
+                                    firstAudioMs = event.firstAudioMs,
+                                    responseDoneMs = event.responseDoneMs,
+                                    eventLogPath = event.eventLogPath ?: session.eventLogPath,
+                                )
+                            )
+                        )
+                    }
+                    webSocket.close(1000, "done")
+                } else if (event.type == "voice.error") {
+                    if (completed.compareAndSet(false, true)) {
+                        finished.complete(
+                            Result.failure(IOException(event.message ?: "Realtime voice error"))
+                        )
+                    }
+                    webSocket.close(1011, "provider error")
+                }
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (completed.compareAndSet(false, true)) {
+                    finished.complete(Result.failure(IOException("Realtime voice websocket failed: ${t.message}", t)))
+                }
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (completed.compareAndSet(false, true)) {
+                    finished.complete(Result.failure(IOException("Realtime voice websocket closed before completion: $code $reason")))
+                }
+            }
+        }
+
+        val socket = okHttpClient.newWebSocket(request, listener)
+        try {
+            withTimeout(REALTIME_TIMEOUT_MS) {
+                finished.await()
+            }
+        } catch (e: Exception) {
+            socket.close(1001, "timeout")
+            Result.failure(IOException("Realtime voice demo timed out", e))
+        }
+    }
+
+    suspend fun runRealtimeAgent(
+        prompt: String,
+        inputPcm: ByteArray,
+        inputSampleRate: Int = 16_000,
+        chatSessionId: String? = null,
+        onEvent: (RealtimeVoiceEvent) -> Unit,
+    ): Result<RealtimeVoiceSummary> = withContext(Dispatchers.IO) {
+        val httpBase = resolveHttpBase()
+            ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
+        val wsBase = resolveWebSocketBase()
+            ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
+        val token = resolveBearerToken()
+        if (token.isNullOrBlank()) {
+            return@withContext Result.failure(missingAuthError())
+        }
+
+        val sessionResult = createRealtimeAgentSession(httpBase, token, chatSessionId)
+        if (sessionResult.isFailure) {
+            return@withContext Result.failure(sessionResult.exceptionOrNull() ?: IOException("Realtime agent session failed"))
+        }
+        val session = sessionResult.getOrThrow()
+        val finished = CompletableDeferred<Result<RealtimeVoiceSummary>>()
+        val completed = AtomicBoolean(false)
+        var audioChunks = 0
+        var audioBytes = 0
+
+        val request = Request.Builder()
+            .url("$wsBase${session.websocketPath}")
+            .header("Authorization", "Bearer $token")
+            .build()
+
+        val listener = object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                webSocket.send("""{"type":"session.start"}""")
+                if (inputPcm.isNotEmpty()) {
+                    var offset = 0
+                    while (offset < inputPcm.size) {
+                        val end = (offset + REALTIME_INPUT_CHUNK_BYTES).coerceAtMost(inputPcm.size)
+                        val encoded = Base64.getEncoder()
+                            .encodeToString(inputPcm.copyOfRange(offset, end))
+                        webSocket.send(
+                            """{"type":"input_audio.append","sample_rate":$inputSampleRate,"audio_base64":"$encoded"}"""
+                        )
+                        offset = end
+                    }
+                }
+                webSocket.send(
+                    """{"type":"input_audio.commit","text":"${escapeJson(prompt)}"}"""
+                )
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                val event = parseRealtimeEvent(text)
+                onEvent(event)
+                if (event.isAudioDelta) {
+                    audioChunks += 1
+                    audioBytes += event.byteCount ?: 0
+                }
+                if (event.type == "voice.response.done") {
+                    if (completed.compareAndSet(false, true)) {
+                        finished.complete(
+                            Result.success(
+                                RealtimeVoiceSummary(
+                                    provider = event.provider ?: session.provider,
+                                    model = event.model ?: session.model,
+                                    voice = event.voice ?: session.voice,
+                                    sampleRate = session.sampleRate,
+                                    audioChunks = audioChunks,
+                                    audioBytes = audioBytes,
+                                    firstAudioMs = event.firstAudioMs,
+                                    responseDoneMs = event.responseDoneMs,
+                                    eventLogPath = event.eventLogPath ?: session.eventLogPath,
+                                )
+                            )
+                        )
+                    }
+                    webSocket.close(1000, "done")
+                } else if (event.type == "voice.error") {
+                    if (completed.compareAndSet(false, true)) {
+                        finished.complete(
+                            Result.failure(IOException(event.message ?: "Realtime agent error"))
+                        )
+                    }
+                    webSocket.close(1011, "provider error")
+                }
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (completed.compareAndSet(false, true)) {
+                    finished.complete(Result.failure(IOException("Realtime agent websocket failed: ${t.message}", t)))
+                }
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (completed.compareAndSet(false, true)) {
+                    finished.complete(Result.failure(IOException("Realtime agent websocket closed before completion: $code $reason")))
+                }
+            }
+        }
+
+        val socket = okHttpClient.newWebSocket(request, listener)
+        try {
+            withTimeout(REALTIME_TIMEOUT_MS) {
+                finished.await()
+            }
+        } catch (e: Exception) {
+            socket.close(1001, "timeout")
+            Result.failure(IOException("Realtime agent timed out", e))
+        }
+    }
+
+    private suspend fun getRealtimeConfigAt(
+        path: String,
+        label: String,
+    ): Result<RealtimeVoiceConfig> = withContext(Dispatchers.IO) {
+        val httpBase = resolveHttpBase()
+            ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
+        val token = resolveBearerToken()
+        if (token.isNullOrBlank()) {
+            return@withContext Result.failure(missingAuthError())
+        }
+        val request = Request.Builder()
+            .url(urlWithProfile("$httpBase$path"))
+            .get()
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/json")
+            .build()
+        try {
+            okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val body = response.body?.string().orEmpty()
+                    return@withContext Result.failure(
+                        IOException(describeHttpError(response.code, response.message, body))
+                    )
+                }
+                val raw = response.body?.string().orEmpty()
+                Result.success(json.decodeFromString(RealtimeVoiceConfig.serializer(), raw))
+            }
+        } catch (e: IOException) {
+            Result.failure(IOException("$label failed: ${e.message ?: "network error"}"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private suspend fun getRealtimeProviderOptionsAt(
+        providerId: String,
+        pathPrefix: String,
+        label: String,
+    ): Result<VoiceProviderOptionsResponse> = withContext(Dispatchers.IO) {
+        val httpBase = resolveHttpBase()
+            ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
+        val token = resolveBearerToken()
+        if (token.isNullOrBlank()) {
+            return@withContext Result.failure(missingAuthError())
+        }
+        val provider = providerId.trim()
+        if (provider.isBlank()) {
+            return@withContext Result.failure(IllegalArgumentException("Provider ID required"))
+        }
+        val request = Request.Builder()
+            .url(urlWithProfile("$httpBase$pathPrefix/${pathSegment(provider)}/options"))
+            .get()
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/json")
+            .build()
+        try {
+            okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val body = response.body.string()
+                    return@withContext Result.failure(
+                        IOException(describeHttpError(response.code, response.message, body))
+                    )
+                }
+                val raw = response.body.string()
+                Result.success(json.decodeFromString(VoiceProviderOptionsResponse.serializer(), raw))
+            }
+        } catch (e: IOException) {
+            Result.failure(IOException("$label failed: ${e.message ?: "network error"}"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private suspend fun validateRealtimeProviderAt(
+        providerId: String,
+        model: String,
+        voice: String,
+        sampleRate: Int,
+        pathPrefix: String,
+        label: String,
+    ): Result<VoiceProviderValidationResponse> = withContext(Dispatchers.IO) {
+        val httpBase = resolveHttpBase()
+            ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
+        val token = resolveBearerToken()
+        if (token.isNullOrBlank()) {
+            return@withContext Result.failure(missingAuthError())
+        }
+        val provider = providerId.trim()
+        if (provider.isBlank()) {
+            return@withContext Result.failure(IllegalArgumentException("Provider ID required"))
+        }
+        val payload = buildJsonObject {
+            put("model", JsonPrimitive(model.trim()))
+            put("voice", JsonPrimitive(voice.trim()))
+            put("sample_rate", JsonPrimitive(sampleRate))
+            putProfile()
+        }
+        val request = Request.Builder()
+            .url(urlWithProfile("$httpBase$pathPrefix/${pathSegment(provider)}/validate"))
+            .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/json")
+            .build()
+        try {
+            okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val body = response.body?.string().orEmpty()
+                    return@withContext Result.failure(
+                        IOException(describeHttpError(response.code, response.message, body))
+                    )
+                }
+                val raw = response.body?.string().orEmpty()
+                Result.success(json.decodeFromString(VoiceProviderValidationResponse.serializer(), raw))
+            }
+        } catch (e: IOException) {
+            Result.failure(IOException("$label failed: ${e.message ?: "network error"}"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private suspend fun updateRealtimeConfigAt(
+        enabled: Boolean? = null,
+        provider: String? = null,
+        model: String? = null,
+        voice: String? = null,
+        sampleRate: Int? = null,
+        path: String,
+        label: String,
+    ): Result<RealtimeVoiceConfig> = withContext(Dispatchers.IO) {
+        val httpBase = resolveHttpBase()
+            ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
+        val token = resolveBearerToken()
+        if (token.isNullOrBlank()) {
+            return@withContext Result.failure(missingAuthError())
+        }
+        val payload = buildJsonObject {
+            enabled?.let { put("enabled", JsonPrimitive(it)) }
+            provider?.takeIf { it.isNotBlank() }?.let {
+                put("provider", JsonPrimitive(it.trim()))
+            }
+            model?.takeIf { it.isNotBlank() }?.let {
+                put("model", JsonPrimitive(it.trim()))
+            }
+            voice?.takeIf { it.isNotBlank() }?.let {
+                put("voice", JsonPrimitive(it.trim()))
+            }
+            sampleRate?.let { put("sample_rate", JsonPrimitive(it)) }
+        }
+        val request = Request.Builder()
+            .url(urlWithProfile("$httpBase$path"))
+            .patch(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/json")
+            .build()
+        try {
+            okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val body = response.body?.string().orEmpty()
+                    return@withContext Result.failure(
+                        IOException(describeHttpError(response.code, response.message, body))
+                    )
+                }
+                val raw = response.body?.string().orEmpty()
+                Result.success(json.decodeFromString(RealtimeVoiceConfig.serializer(), raw))
+            }
+        } catch (e: IOException) {
+            Result.failure(IOException("$label failed: ${e.message ?: "network error"}"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     private fun resolveHttpBase(): String? {
         val relayUrl = relayUrlProvider()?.trim().orEmpty()
         if (relayUrl.isEmpty()) return null
@@ -237,24 +1193,216 @@ class RelayVoiceClient(
             .trimEnd('/')
     }
 
-    private suspend fun resolveBearerToken(): String? {
-        val apiBearer = apiBearerTokenProvider()?.trim()
-        if (!apiBearer.isNullOrBlank()) return apiBearer
-        val sessionToken = sessionTokenProvider()?.trim()
-        return sessionToken?.takeIf { it.isNotBlank() }
+    private fun resolveWebSocketBase(): String? {
+        val relayUrl = relayUrlProvider()?.trim().orEmpty()
+        if (relayUrl.isEmpty()) return null
+        return relayUrl
+            .replace(Regex("^https://", RegexOption.IGNORE_CASE), "wss://")
+            .replace(Regex("^http://", RegexOption.IGNORE_CASE), "ws://")
+            .trimEnd('/')
     }
+
+    private suspend fun resolveBearerToken(): String? {
+        val sessionToken = sessionTokenProvider()?.trim()
+        if (!sessionToken.isNullOrBlank()) return sessionToken
+        val apiBearer = apiBearerTokenProvider()?.trim()
+        return apiBearer?.takeIf { it.isNotBlank() }
+    }
+
+    private fun currentProfileName(): String? =
+        profileNameProvider()?.trim()?.takeIf { it.isNotBlank() }
+
+    private fun urlWithProfile(url: String): String {
+        val profile = currentProfileName() ?: return url
+        val encoded = URLEncoder.encode(profile, Charsets.UTF_8.name())
+        val separator = if ("?" in url) "&" else "?"
+        return "$url${separator}profile=$encoded"
+    }
+
+    private fun pathSegment(value: String): String =
+        URLEncoder.encode(value, Charsets.UTF_8.name()).replace("+", "%20")
 
     private fun missingAuthError(): IllegalStateException =
         IllegalStateException("Voice auth missing — pair with the relay or save a Hermes API key")
 
-    private fun describeHttpError(code: Int, message: String): String = when (code) {
-        401 -> "Voice auth failed — check the Relay session or Hermes API key"
-        403 -> "Voice access expired — extend or re-pair with voice grants"
-        404 -> "Voice endpoint not available on this relay"
-        413 -> "Audio too large for relay"
-        503 -> "Voice provider unavailable (check relay config)"
-        in 500..599 -> "Relay error (HTTP $code)"
-        else -> "HTTP $code: ${message.ifBlank { "request failed" }}"
+    private fun describeHttpError(code: Int, message: String, body: String = ""): String {
+        // Voice routes return text/plain on error (see plugin/relay/voice_auth.py).
+        // Prefer the server's own description when it's present — the 403 path
+        // in particular has two very different causes ("session lacks active
+        // voice:tts grant" vs "Hermes API bearer token requires HTTPS..."),
+        // and we should not flatten them into one misleading "expired" string.
+        val trimmed = body.trim().take(240)
+        val fallback = when (code) {
+            401 -> "Voice auth failed — re-pair to refresh the session"
+            403 -> "Voice access denied — re-pair to restore voice grants"
+            404 -> "Voice endpoint not available on this relay"
+            413 -> "Audio too large for relay"
+            503 -> "Voice provider unavailable (check relay config)"
+            in 500..599 -> "Relay error (HTTP $code)"
+            else -> "HTTP $code: ${message.ifBlank { "request failed" }}"
+        }
+        return if (trimmed.isNotEmpty()) "$fallback ($trimmed)" else fallback
+    }
+
+    private fun createRealtimeSession(httpBase: String, token: String): Result<RealtimeSessionResponse> {
+        val body = buildJsonObject { putProfile() }.toString()
+        val request = Request.Builder()
+            .url("$httpBase/voice/realtime/session")
+            .post(body.toRequestBody(JSON_MEDIA_TYPE))
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/json")
+            .build()
+        return try {
+            okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val body = response.body?.string().orEmpty()
+                    return Result.failure(
+                        IOException(describeHttpError(response.code, response.message, body))
+                    )
+                }
+                val raw = response.body?.string().orEmpty()
+                Result.success(json.decodeFromString(RealtimeSessionResponse.serializer(), raw))
+            }
+        } catch (e: IOException) {
+            Result.failure(IOException("Realtime voice session failed: ${e.message ?: "network error"}"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private fun createRealtimeAgentSession(
+        httpBase: String,
+        token: String,
+        chatSessionId: String?,
+    ): Result<RealtimeSessionResponse> {
+        val body = buildJsonObject {
+            putProfile()
+            chatSessionId?.trim()?.takeIf { it.isNotBlank() }?.let {
+                put("chat_session_id", JsonPrimitive(it))
+            }
+        }.toString()
+        val request = Request.Builder()
+            .url("$httpBase/voice/realtime-agent/session")
+            .post(body.toRequestBody(JSON_MEDIA_TYPE))
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/json")
+            .build()
+        return try {
+            okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val body = response.body?.string().orEmpty()
+                    return Result.failure(
+                        IOException(describeHttpError(response.code, response.message, body))
+                    )
+                }
+                val raw = response.body?.string().orEmpty()
+                Result.success(json.decodeFromString(RealtimeSessionResponse.serializer(), raw))
+            }
+        } catch (e: IOException) {
+            Result.failure(IOException("Realtime agent session failed: ${e.message ?: "network error"}"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private fun createVoiceOutputSession(httpBase: String, token: String): Result<VoiceOutputSessionResponse> {
+        val body = buildJsonObject { putProfile() }.toString()
+        val request = Request.Builder()
+            .url("$httpBase/voice/output/session")
+            .post(body.toRequestBody(JSON_MEDIA_TYPE))
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/json")
+            .build()
+        return try {
+            okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val body = response.body?.string().orEmpty()
+                    return Result.failure(
+                        IOException(describeHttpError(response.code, response.message, body))
+                    )
+                }
+                val raw = response.body?.string().orEmpty()
+                Result.success(json.decodeFromString(VoiceOutputSessionResponse.serializer(), raw))
+            }
+        } catch (e: IOException) {
+            Result.failure(IOException("Voice output session failed: ${e.message ?: "network error"}"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private fun mediaTypeForAudioFile(file: File) = when (file.extension.lowercase()) {
+        "wav", "wave" -> WAV_AUDIO
+        "m4a", "mp4", "aac" -> MP4_AUDIO
+        else -> OCTET_STREAM
+    }
+
+    private fun buildRealtimeResponseCreate(
+        text: String,
+        toolScaffold: Boolean,
+        renderMode: String?,
+    ): String {
+        val mode = renderMode?.trim()?.takeIf { it.isNotEmpty() }
+        val renderModeJson = mode?.let { ""","render_mode":"${escapeJson(it)}"""" }.orEmpty()
+        return """{"type":"response.create","tool_scaffold":$toolScaffold,"text":"${escapeJson(text)}"$renderModeJson}"""
+    }
+
+    private fun parseRealtimeEvent(raw: String): RealtimeVoiceEvent {
+        return try {
+            val obj = json.parseToJsonElement(raw).jsonObject
+            val metrics = obj["metrics"]?.jsonObject
+            val textValue = (obj["text"] as? JsonPrimitive)?.contentOrNull
+                ?: (obj["final_text"] as? JsonPrimitive)?.contentOrNull
+            val toolNameValue = (obj["tool_name"] as? JsonPrimitive)?.contentOrNull
+                ?: (obj["name"] as? JsonPrimitive)?.contentOrNull
+            val toolCallIdValue = (obj["tool_call_id"] as? JsonPrimitive)?.contentOrNull
+                ?: (obj["call_id"] as? JsonPrimitive)?.contentOrNull
+            val resultPreviewValue = (obj["result_preview"] as? JsonPrimitive)?.contentOrNull
+                ?: (obj["result"] as? JsonPrimitive)?.contentOrNull
+            RealtimeVoiceEvent(
+                type = (obj["type"] as? JsonPrimitive)?.content ?: "unknown",
+                message = (obj["message"] as? JsonPrimitive)?.contentOrNull,
+                provider = (obj["provider"] as? JsonPrimitive)?.contentOrNull,
+                model = (obj["model"] as? JsonPrimitive)?.contentOrNull,
+                voice = (obj["voice"] as? JsonPrimitive)?.contentOrNull,
+                sessionId = (obj["session_id"] as? JsonPrimitive)?.contentOrNull,
+                chatSessionId = (obj["chat_session_id"] as? JsonPrimitive)?.contentOrNull,
+                messageId = (obj["message_id"] as? JsonPrimitive)?.contentOrNull,
+                delta = (obj["delta"] as? JsonPrimitive)?.contentOrNull,
+                text = textValue,
+                toolName = toolNameValue,
+                toolCallId = toolCallIdValue,
+                resultPreview = resultPreviewValue,
+                success = (obj["success"] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull(),
+                audioBase64 = (obj["audio_base64"] as? JsonPrimitive)?.contentOrNull,
+                byteCount = (obj["byte_count"] as? JsonPrimitive)?.intOrNull,
+                sampleRate = (obj["sample_rate"] as? JsonPrimitive)?.intOrNull,
+                peakLevel = (obj["peak_level"] as? JsonPrimitive)?.doubleOrNull?.toFloat(),
+                rmsLevel = (obj["rms_level"] as? JsonPrimitive)?.doubleOrNull?.toFloat(),
+                eventLogPath = (obj["event_log_path"] as? JsonPrimitive)?.contentOrNull,
+                firstAudioMs = (metrics?.get("first_audio_ms") as? JsonPrimitive)?.doubleOrNull,
+                responseDoneMs = (metrics?.get("response_done_ms") as? JsonPrimitive)?.doubleOrNull,
+                raw = raw,
+            )
+        } catch (e: Exception) {
+            RealtimeVoiceEvent(
+                type = "parse.error",
+                message = e.message,
+                raw = raw,
+            )
+        }
+    }
+
+    private fun escapeJson(value: String): String =
+        value
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t")
+
+    private fun kotlinx.serialization.json.JsonObjectBuilder.putProfile() {
+        currentProfileName()?.let { put("profile", JsonPrimitive(it)) }
     }
 }
 
@@ -265,8 +1413,16 @@ class RelayVoiceClient(
  */
 @Serializable
 data class VoiceConfig(
+    val success: Boolean = false,
     val tts: VoiceProviderInfo? = null,
     val stt: VoiceProviderInfo? = null,
+    val profile: String? = null,
+    @SerialName("config_scope")
+    val configScope: String? = null,
+    @SerialName("config_path")
+    val configPath: String? = null,
+    @SerialName("fallback_to_global")
+    val fallbackToGlobal: Boolean = false,
 )
 
 @Serializable
@@ -274,5 +1430,270 @@ data class VoiceProviderInfo(
     val provider: String? = null,
     val model: String? = null,
     val voice: String? = null,
+    @SerialName("voice_id")
+    val voiceId: String? = null,
+    val enabled: Boolean = false,
     val available: Boolean = true,
+) {
+    val displayVoice: String? get() = voice ?: voiceId
+    val isEnabled: Boolean get() = enabled || (!provider.isNullOrBlank() && available)
+}
+
+@Serializable
+data class RealtimeVoiceConfig(
+    val success: Boolean = false,
+    val enabled: Boolean = false,
+    val protocol: String? = null,
+    val config_path: String? = null,
+    val default_provider: String? = null,
+    val default_model: String? = null,
+    val default_voice: String? = null,
+    val sample_rate: Int = 24000,
+    val providers: List<RealtimeProviderInfo> = emptyList(),
+    val auth: RealtimeVoiceAuth? = null,
+    val profile: String? = null,
+    @SerialName("config_scope")
+    val configScope: String? = null,
+    @SerialName("fallback_to_global")
+    val fallbackToGlobal: Boolean = false,
+)
+
+@Serializable
+data class RealtimeProviderInfo(
+    val id: String,
+    val name: String? = null,
+    val status: String? = null,
+    val description: String? = null,
+    val models: List<String> = emptyList(),
+    val voices: List<String> = emptyList(),
+    val languages: List<String> = emptyList(),
+    val sample_rates: List<Int> = emptyList(),
+    val model_labels: Map<String, String> = emptyMap(),
+    val voice_labels: Map<String, String> = emptyMap(),
+    val language_labels: Map<String, String> = emptyMap(),
+    val voice_groups: List<ProviderOptionGroup> = emptyList(),
+    val voice_metadata: Map<String, ProviderOptionMetadata> = emptyMap(),
+    val model_voice_compatibility: Map<String, List<String>> = emptyMap(),
+    val recommended_voices: List<String> = emptyList(),
+    val requires_manual_id: Boolean = false,
+    val supports_tts: Boolean = false,
+    val supports_stt: Boolean = false,
+    val supports_speech_to_speech: Boolean = false,
+    val supports_tool_use: Boolean = false,
+    val supports_realtime: Boolean = false,
+    val supports_interruption: Boolean = false,
+    val supports_expression: Boolean = false,
+)
+
+@Serializable
+data class ProviderOptionGroup(
+    val id: String? = null,
+    val label: String? = null,
+    val values: List<String> = emptyList(),
+    val source: String? = null,
+    val recommended: List<String> = emptyList(),
+    val custom: Boolean = false,
+)
+
+@Serializable
+data class ProviderOptionMetadata(
+    val label: String? = null,
+    val source: String? = null,
+    val custom: Boolean = false,
+    val recommended: Boolean = false,
+    val experimental: Boolean = false,
+    val requires_manual_id: Boolean = false,
+)
+
+@Serializable
+data class VoiceProviderOptionsResponse(
+    val success: Boolean = false,
+    val mode: String? = null,
+    val protocol: String? = null,
+    val schema_version: Int = 0,
+    val provider_id: String? = null,
+    val provider: RealtimeProviderInfo? = null,
+    val default_provider: String? = null,
+    val default_model: String? = null,
+    val default_voice: String? = null,
+    val sample_rate: Int = 24000,
+    val language: String? = null,
+    val profile: String? = null,
+    @SerialName("config_scope")
+    val configScope: String? = null,
+    @SerialName("fallback_to_global")
+    val fallbackToGlobal: Boolean = false,
+    val dynamic: ProviderOptionsDynamic? = null,
+)
+
+@Serializable
+data class ProviderOptionsDynamic(
+    val attempted: Boolean = false,
+    val status: String? = null,
+    val source: String? = null,
+    val message: String? = null,
+    val voice_count: Int? = null,
+    val custom_voice_count: Int? = null,
+    val model_count: Int? = null,
+    val cache: String? = null,
+    val cache_ttl_seconds: Int? = null,
+    val auth_source: String? = null,
+)
+
+@Serializable
+data class VoiceProviderValidationResponse(
+    val success: Boolean = false,
+    val mode: String? = null,
+    val protocol: String? = null,
+    val provider_id: String? = null,
+    val model: String? = null,
+    val voice: String? = null,
+    val sample_rate: Int? = null,
+    val language: String? = null,
+    val valid: Boolean = false,
+    val summary: String? = null,
+    val checks: List<ProviderValidationCheck> = emptyList(),
+    val dynamic: ProviderOptionsDynamic? = null,
+)
+
+@Serializable
+data class ProviderValidationCheck(
+    val id: String? = null,
+    val status: String? = null,
+    val message: String? = null,
+)
+
+@Serializable
+data class RealtimeVoiceAuth(
+    val xai_env: Boolean = false,
+    val xai_env_names: List<String> = emptyList(),
+    val xai_oauth: Boolean = false,
+    val xai_oauth_path: String? = null,
+    val xai_oauth_source: String? = null,
+)
+
+@Serializable
+data class VoiceOutputConfig(
+    val success: Boolean = false,
+    val enabled: Boolean = false,
+    val protocol: String? = null,
+    val config_path: String? = null,
+    val default_provider: String? = null,
+    val default_model: String? = null,
+    val default_voice: String? = null,
+    val sample_rate: Int = 24000,
+    val language: String = "en",
+    val codec: String = "pcm",
+    val optimize_streaming_latency: Int = 1,
+    val text_normalization: Boolean = false,
+    val fallback_enabled: Boolean = true,
+    val fallback_provider: String? = null,
+    val providers: List<RealtimeProviderInfo> = emptyList(),
+    val auth: VoiceOutputAuth? = null,
+    val profile: String? = null,
+    @SerialName("config_scope")
+    val configScope: String? = null,
+    @SerialName("fallback_to_global")
+    val fallbackToGlobal: Boolean = false,
+)
+
+@Serializable
+data class VoiceOutputAuth(
+    val xai_env: Boolean = false,
+    val xai_env_names: List<String> = emptyList(),
+    val xai_oauth: Boolean = false,
+    val xai_oauth_source: String? = null,
+    val openai_env: Boolean = false,
+    val openai_env_names: List<String> = emptyList(),
+)
+
+@Serializable
+data class RealtimeSessionResponse(
+    val success: Boolean = false,
+    val session_id: String,
+    val websocket_path: String,
+    val provider: String,
+    val model: String,
+    val voice: String,
+    val sample_rate: Int = 24000,
+    val event_log_path: String? = null,
+    val profile: String? = null,
+    @SerialName("config_scope")
+    val configScope: String? = null,
+) {
+    val websocketPath: String get() = websocket_path
+    val sampleRate: Int get() = sample_rate
+    val eventLogPath: String? get() = event_log_path
+}
+
+@Serializable
+data class VoiceOutputSessionResponse(
+    val success: Boolean = false,
+    val session_id: String,
+    val websocket_path: String,
+    val provider: String,
+    val model: String,
+    val voice: String,
+    val sample_rate: Int = 24000,
+    val event_log_path: String? = null,
+    val profile: String? = null,
+    @SerialName("config_scope")
+    val configScope: String? = null,
+) {
+    val websocketPath: String get() = websocket_path
+    val sampleRate: Int get() = sample_rate
+    val eventLogPath: String? get() = event_log_path
+}
+
+data class RealtimeVoiceEvent(
+    val type: String,
+    val message: String? = null,
+    val provider: String? = null,
+    val model: String? = null,
+    val voice: String? = null,
+    val sessionId: String? = null,
+    val chatSessionId: String? = null,
+    val messageId: String? = null,
+    val delta: String? = null,
+    val text: String? = null,
+    val toolName: String? = null,
+    val toolCallId: String? = null,
+    val resultPreview: String? = null,
+    val success: Boolean? = null,
+    val audioBase64: String? = null,
+    val byteCount: Int? = null,
+    val sampleRate: Int? = null,
+    val peakLevel: Float? = null,
+    val rmsLevel: Float? = null,
+    val eventLogPath: String? = null,
+    val firstAudioMs: Double? = null,
+    val responseDoneMs: Double? = null,
+    val raw: String,
+) {
+    val isAudioDelta: Boolean
+        get() = type == "voice.audio.delta" || type == "voice.output_audio.delta"
+}
+
+data class RealtimeVoiceSummary(
+    val provider: String,
+    val model: String,
+    val voice: String,
+    val sampleRate: Int,
+    val audioChunks: Int,
+    val audioBytes: Int,
+    val firstAudioMs: Double?,
+    val responseDoneMs: Double?,
+    val eventLogPath: String?,
+)
+
+data class VoiceOutputSummary(
+    val provider: String,
+    val model: String,
+    val voice: String,
+    val sampleRate: Int,
+    val audioChunks: Int,
+    val audioBytes: Int,
+    val firstAudioMs: Double?,
+    val responseDoneMs: Double?,
+    val eventLogPath: String?,
 )

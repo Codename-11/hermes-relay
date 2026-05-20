@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.ui.components
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -20,6 +21,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -32,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.viewmodel.VoiceState
 import kotlin.math.PI
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sin
 
 /**
@@ -113,6 +116,7 @@ private const val EDGE_FADE_FRACTION = 0.12f
 fun VoiceWaveform(
     amplitude: Float,
     state: VoiceState,
+    outputAudioActive: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     // No downstream smoothing. The VoiceViewModel already runs an
@@ -160,6 +164,16 @@ fun VoiceWaveform(
     // velocity scales with the current amplitude so the wave visibly surges
     // when the user speaks instead of running on its own fixed clock.
     val phases = rememberAmplitudeDrivenPhases(phaseDurationsMs, displayAmplitude)
+    val waitingForOutputAudio = state == VoiceState.Speaking && !outputAudioActive
+    val processing = state == VoiceState.Transcribing ||
+        state == VoiceState.Thinking ||
+        waitingForOutputAudio
+    val waveformUnfold by animateFloatAsState(
+        targetValue = if (processing) 0f else 1f,
+        animationSpec = tween(durationMillis = 360),
+        label = "waveformUnfold",
+    )
+    val spinnerPhase = rememberProcessingSpinnerPhase(processing)
 
     Canvas(
         modifier = modifier
@@ -173,9 +187,38 @@ fun VoiceWaveform(
         val centerY = height / 2f
         val peakPixels = height * PEAK_FRACTION
         val strokePx = STROKE_WIDTH_DP.dp.toPx()
+        val centerX = width / 2f
+        val spinnerAlpha = 1f - waveformUnfold
+
+        if (spinnerAlpha > 0.01f) {
+            val spinnerSize = min(width, height) * 0.64f
+            val radius = spinnerSize / 2f
+            val topLeft = Offset(centerX - radius, centerY - radius)
+            val arcSize = Size(spinnerSize, spinnerSize)
+            val sweep = 82f + displayAmplitude * 64f
+            drawArc(
+                color = primaryColor.copy(alpha = primaryColor.alpha * spinnerAlpha * 0.82f),
+                startAngle = spinnerPhase,
+                sweepAngle = sweep,
+                useCenter = false,
+                topLeft = topLeft,
+                size = arcSize,
+                style = Stroke(width = strokePx * 1.35f, cap = StrokeCap.Round),
+            )
+            drawArc(
+                color = secondaryColor.copy(alpha = secondaryColor.alpha * spinnerAlpha * 0.58f),
+                startAngle = spinnerPhase + 152f,
+                sweepAngle = 42f + displayAmplitude * 36f,
+                useCenter = false,
+                topLeft = topLeft,
+                size = arcSize,
+                style = Stroke(width = strokePx * 1.05f, cap = StrokeCap.Round),
+            )
+        }
 
         // Sample every SAMPLE_STEP_PX pixels across the canvas. steps+1 vertices.
         val steps = max(2, (width / SAMPLE_STEP_PX).toInt())
+        if (waveformUnfold <= 0.01f) return@Canvas
 
         // Offscreen layer so we can mask the stroke alpha with DstIn and the
         // mask never bleeds onto whatever's underneath the waveform. Without
@@ -199,12 +242,13 @@ fun VoiceWaveform(
                 // true silence (amplitude = 0).
                 val rawEnvelope = displayAmplitude * layerScale * peakPixels
                 val minEnvelope = MIN_ENVELOPE * peakPixels * layerScale
-                val envelope = max(rawEnvelope, minEnvelope)
+                val envelope = max(rawEnvelope, minEnvelope) * waveformUnfold
 
                 val path = Path()
-                path.moveTo(0f, centerY)
+                path.moveTo(centerX - (centerX * waveformUnfold), centerY)
                 for (i in 0..steps) {
                     val x = i * (width / steps)
+                    val foldedX = centerX + (x - centerX) * waveformUnfold
                     val t = x / width
                     val angle = (t * freq * 2f * PI).toFloat() + phase
                     // Geometric tuck-in: sin(πt) goes 0 → 1 → 0 across the
@@ -214,15 +258,15 @@ fun VoiceWaveform(
                     // without any hard cut at the canvas boundary.
                     val taper = sin(PI.toFloat() * t)
                     val y = centerY + sin(angle) * envelope * taper
-                    if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                    if (i == 0) path.moveTo(foldedX, y) else path.lineTo(foldedX, y)
                 }
 
                 drawPath(
                     path = path,
                     brush = Brush.horizontalGradient(
                         listOf(
-                            primaryColor.copy(alpha = primaryColor.alpha * layerAlpha),
-                            secondaryColor.copy(alpha = secondaryColor.alpha * layerAlpha),
+                            primaryColor.copy(alpha = primaryColor.alpha * layerAlpha * waveformUnfold),
+                            secondaryColor.copy(alpha = secondaryColor.alpha * layerAlpha * waveformUnfold),
                         ),
                     ),
                     style = Stroke(width = strokePx, cap = StrokeCap.Round),
@@ -300,6 +344,29 @@ private fun rememberAmplitudeDrivenPhases(
         }
     }
     return phases
+}
+
+@Composable
+private fun rememberProcessingSpinnerPhase(active: Boolean): Float {
+    val activeRef = rememberUpdatedState(active)
+    var phase by remember { mutableStateOf(0f) }
+    LaunchedEffect(Unit) {
+        var prevNanos = 0L
+        while (true) {
+            withFrameNanos { nanos ->
+                if (prevNanos == 0L) {
+                    prevNanos = nanos
+                    return@withFrameNanos
+                }
+                val dtSec = (nanos - prevNanos) / 1_000_000_000f
+                prevNanos = nanos
+                if (activeRef.value) {
+                    phase = (phase + dtSec * 220f) % 360f
+                }
+            }
+        }
+    }
+    return phase
 }
 
 // ── Previews ─────────────────────────────────────────────────────────

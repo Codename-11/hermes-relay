@@ -1,4 +1,4 @@
-# Play Store Listing — Hermes-Relay v0.4.0
+# Play Store Listing — Hermes-Relay v0.7.0
 
 > Temporary reference for Google Play Console submission. Delete after listing is live.
 
@@ -71,16 +71,17 @@ Hermes-Relay is MIT licensed. Source code, documentation, and issue tracking ava
 
 This app is a community project and is not affiliated with or endorsed by NousResearch.
 
-## Release Notes (v0.4.0)
+## Release Notes (v0.7.0)
 
-Bridge feature expansion — device control, voice intents, and safety rails.
+Profiles, voice settings, and realtime voice polish.
 
-• Bridge channel with long-press, drag, clipboard, intent-send, and more
-• Voice-to-bridge intent routing (sideload flavor)
-• Tiered permission system with JIT error surfacing
-• Notification companion — agent reads your notifications (opt-in)
-• BridgeSafetyManager blocklist + destructive-verb confirmation
-• Two build flavors: sideload (full features) and Google Play (conservative)
+• Profile switching now keeps chat/session state separate per Hermes profile
+• Selected agent names stay visible through streamed and finalized replies
+• Voice settings can load and save provider/model/voice choices per profile
+• Smoother voice playback with balanced output coalescing and waveform polish
+• Continuous voice mode start/stop behavior is more predictable
+• Barge-in remains available as an experimental setting with clearer caveats
+• Relay adds profile voice config, provider options, and realtime voice test routes
 
 ## Category
 

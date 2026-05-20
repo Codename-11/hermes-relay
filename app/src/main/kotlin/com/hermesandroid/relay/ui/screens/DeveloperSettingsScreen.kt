@@ -62,6 +62,7 @@ import kotlinx.coroutines.launch
 fun DeveloperSettingsScreen(
     connectionViewModel: ConnectionViewModel,
     onBack: () -> Unit,
+    onNavigateToRealtimeVoice: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -325,6 +326,43 @@ fun DeveloperSettingsScreen(
                             checked = relayEnabled,
                             onCheckedChange = { scope.launch { FeatureFlags.setRelayEnabled(context, it) } }
                         )
+                    }
+
+                    HorizontalDivider()
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Science,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.tertiary
+                                )
+                                Text(
+                                    text = "Realtime voice lab",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                            Text(
+                                text = "Open the provider websocket testbench for dev builds",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(onClick = onNavigateToRealtimeVoice) {
+                            Icon(
+                                imageVector = Icons.Filled.Science,
+                                contentDescription = "Open realtime voice lab"
+                            )
+                        }
                     }
 
                     HorizontalDivider()

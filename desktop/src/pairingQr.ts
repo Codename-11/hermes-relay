@@ -42,8 +42,8 @@ export const PROBE_CACHE_TTL_MS = 60_000
  * `transport_hint` / `code` are all optional so v1 QRs with only `url`
  * still decode.
  *
- * `code` is not currently used by the CLI (the top-level `key` field
- * carries the pairing code) but is preserved so we can pivot later.
+ * `code` is the relay one-shot pairing code. The top-level `key` field is
+ * the Hermes API bearer for direct HTTP chat and must stay separate.
  */
 export interface PairingRelay {
   url: string
@@ -70,6 +70,77 @@ export interface PairingPayload {
   relay?: PairingRelay
   endpoints?: EndpointCandidate[]
   sig?: string
+}
+
+const PAIRING_CODE_RE = /^[A-Z0-9]{6}$/
+
+function normalizeBase64Payload(raw: string): string {
+  return raw.replaceAll('-', '+').replaceAll('_', '/')
+}
+
+function extractInviteCandidate(raw: string): string | null {
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  const direct = trimmed.match(/^hermes-relay:\/\/pair(?:\/([^?\s#]+))?(?:\?([^\s#]+))?/i)
+  const embedded = direct ?? trimmed.match(/hermes-relay:\/\/pair(?:\/([^?\s#]+))?(?:\?([^\s#]+))?/i)
+  if (!embedded) return null
+  const candidate = embedded[0]
+  try {
+    const url = new URL(candidate)
+    const fromQuery = url.searchParams.get('payload') ?? url.searchParams.get('p')
+    if (fromQuery && fromQuery.trim()) return fromQuery.trim()
+    const fromPath = url.pathname.replace(/^\/+/, '')
+    if (fromPath) return decodeURIComponent(fromPath)
+  } catch {
+    // Fall through to regex query extraction for partial clipboard lines.
+  }
+  const query = embedded[2]
+  if (query) {
+    const params = new URLSearchParams(query)
+    const fromQuery = params.get('payload') ?? params.get('p')
+    if (fromQuery && fromQuery.trim()) return fromQuery.trim()
+  }
+  const pathPayload = embedded[1]
+  return pathPayload ? decodeURIComponent(pathPayload) : null
+}
+
+/**
+ * Return the raw JSON/base64 payload from either a QR payload or a
+ * paste-friendly ``hermes-relay://pair?payload=...`` invite URL.
+ */
+export function unwrapPairingPayload(raw: string): string {
+  const trimmed = raw.trim()
+  return extractInviteCandidate(trimmed) ?? trimmed
+}
+
+/**
+ * The relay one-shot code lives in ``relay.code``. Top-level ``key`` is the
+ * Hermes API bearer for direct HTTP chat and must never be used as a relay
+ * pairing code.
+ */
+export function relayPairingCodeFromPayload(payload: PairingPayload): string {
+  const code = payload.relay?.code?.trim().toUpperCase() ?? ''
+  if (!code) {
+    throw new Error(
+      'pairing invite has no relay.code. Start the relay on the server and mint a new invite.'
+    )
+  }
+  if (!PAIRING_CODE_RE.test(code)) {
+    throw new Error('pairing invite has an invalid relay.code; expected 6 chars of A-Z or 0-9')
+  }
+  return code
+}
+
+export function payloadToRelayCandidates(payload: PairingPayload): EndpointCandidate[] {
+  const candidates = payloadToCandidates(payload).filter((candidate) =>
+    typeof candidate.relay.url === 'string' && candidate.relay.url.trim().length > 0
+  )
+  if (candidates.length === 0) {
+    throw new Error(
+      'pairing invite has no relay URL. Start the relay on the server and mint a new invite.'
+    )
+  }
+  return candidates
 }
 
 /**
@@ -110,7 +181,7 @@ function parseCandidate(v: unknown): EndpointCandidate | null {
  * directly to the user.
  */
 export function decodePairingPayload(raw: string): PairingPayload {
-  const trimmed = raw.trim()
+  const trimmed = unwrapPairingPayload(raw)
   if (trimmed.length === 0) {
     throw new Error('empty pairing payload')
   }
@@ -128,7 +199,7 @@ export function decodePairingPayload(raw: string): PairingPayload {
     }
     try {
       // Accept both standard and URL-safe base64 variants.
-      const normalized = trimmed.replaceAll('-', '+').replaceAll('_', '/')
+      const normalized = normalizeBase64Payload(trimmed)
       text = Buffer.from(normalized, 'base64').toString('utf8')
       parsed = JSON.parse(text)
     } catch {

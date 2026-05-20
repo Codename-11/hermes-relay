@@ -726,9 +726,9 @@ Four sub-decisions captured together:
 - `docs/spec.md` §10.1 Dashboard plugin — user-facing overview + route table
 - `docs/relay-server.md` HTTP Routes — wire-shape details for `/bridge/activity`, `/media/inspect`, `/relay/info`, `/sessions` loopback branch
 
-### 21. Agent Profile picker — directory-discovered overlay of model + SOUL (2026-04-18)
+### 21. Agent Profile picker — Hermes profile API routing with overlay fallback (2026-04-18, updated 2026-05-18)
 
-**Decision:** The relay auto-discovers upstream Hermes profiles by scanning `~/.hermes/profiles/*/` (plus a synthetic "default" entry for the root `~/.hermes/config.yaml`). Each discovered profile is advertised in the `auth.ok` payload as `{name, model, description, system_message}`. On chat send with a profile selected, the phone overrides the request's `model` field with the profile's model AND uses the profile's `SOUL.md` content (carried in `system_message`) as the request's `system_message`. Selection is ephemeral and clears on Connection switch.
+**Decision:** The relay auto-discovers upstream Hermes profiles by scanning `~/.hermes/profiles/*/` (plus a synthetic "default" entry for the root `~/.hermes/config.yaml`). Each discovered profile is advertised in the `auth.ok` payload as `{name, model, description, system_message, api_server_*}`. When a selected profile advertises `api_server_url`, Android routes chat/session API traffic to that profile's Hermes API server so memory, sessions, tools, `.env`, and model config follow upstream Hermes isolation. When no isolated API route is advertised, Android falls back to the older compatibility overlay: send the selected profile's `model` and `SOUL.md` (`system_message`) on the active Connection's API server.
 
 **Why this supersedes the original §21 design:**
 
@@ -738,27 +738,31 @@ Rather than invent our own schema, match upstream's layout. The relay scans the 
 
 **Three-layer model (unchanged at the UI level):**
 - **Connection** (§19) — which Hermes server + gateway. One scan per server.
-- **Profile** (this decision) — which upstream-layout agent directory on that server. Overlays model + SOUL.
+- **Profile** (this decision) — which upstream-layout agent directory on that server. Routes to that profile's API server when advertised; otherwise overlays model + SOUL as fallback.
 - **Personality** (§8) — which system-prompt preset *within* the agent's config.
 
 **How:**
 
 Server side (`plugin/relay/config.py`, `plugin/relay/server.py`):
 - `_load_profiles` rewritten to walk `~/.hermes/profiles/*/`. For each profile: `name = dir.name`; `model = config.yaml/model.default || "unknown"`; `description = config.yaml/description || first non-blank line of SOUL.md || ""`; `system_message = SOUL.md content || null`. Plus a synthetic `"default"` entry from the root config.
+- `_load_profiles` also reads profile-local API server metadata from `config.yaml` (`platforms.api_server` / `api_server`) and `.env` (`API_SERVER_ENABLED`, `API_SERVER_HOST`, `API_SERVER_PORT`, `API_SERVER_KEY`). It advertises `api_server_enabled`, `api_server_url`, `api_server_host`, `api_server_port`, and `api_server_key_present`, but never the API key value. Local bind hosts (`127.0.0.1`, `localhost`, `0.0.0.0`, `::1`) are rewritten through `RelayConfig.webapi_url`; operators should set `RELAY_WEBAPI_URL` to the phone-reachable base API URL. Android also rewrites loopback profile URLs against the active Connection API URL as a defensive fallback for stale or host-local payloads.
 - New `RelayConfig.profile_discovery_enabled: bool = True`. Set to `false` in the relay's config to skip the scan and advertise an empty list — matches our configurability pattern of "opt-out defaults" for discovery features. Disabled state is logged at INFO on startup.
-- `auth.ok` payload shape: each entry is `{"name": str, "model": str, "description": str, "system_message": str | null}` (snake_case on the wire).
+- `auth.ok` payload shape: each entry is `{"name": str, "model": str, "description": str, "system_message": str | null, "api_server_enabled": bool, "api_server_url": str | null, "api_server_host": str | null, "api_server_port": int | null, "api_server_key_present": bool}` (snake_case on the wire).
 
 Client side (`app/src/main/kotlin/.../data/ProfileData.kt`, `auth/AuthManager.kt`, `viewmodel/ChatViewModel.kt`):
-- `Profile(name, model, description, systemMessage: String? = null)`, `@SerialName("system_message")` for the last field.
-- `AuthManager.parseAgentProfiles` reads the new `system_message` field (null-safe, default null).
-- `ChatViewModel` send path: if `selectedProfile != null`, pass `modelOverride = profile.model` AND, when `profile.systemMessage?.isNotBlank() == true`, use `profile.systemMessage` as the `system_message` override. Profile's `system_message` WINS over the personality's system message when both are selected — the profile is a richer/newer concept, and picking both implies the user wants the profile's full persona.
-- `ConnectionViewModel.selectedProfile` and the reset-on-Connection-switch rule are unchanged from the earlier pass; `HermesApiClient.modelOverride` is unchanged.
+- `Profile` includes the `apiServer*` metadata and exposes `hasIsolatedApi`.
+- `AuthManager.parseAgentProfiles` reads the new `api_server_*` fields with safe defaults so older relays remain compatible.
+- `ConnectionViewModel` keeps a base API client for server health/settings and a chat-routed API client for actual chat. Selecting a profile with `apiServerUrl` swaps chat/session calls to that profile API URL while reusing the Connection's stored API bearer token.
+- `ChatViewModel` send path omits `profile`, `model`, and profile `SOUL.md` overrides when the selected profile has an isolated API route. The profile API server owns its own default model, SOUL, sessions, memory, tools, and `.env`; Android still appends phone context when enabled. If no isolated API route exists, it keeps the compatibility overlay behavior.
+- Chat session browsing is scoped to the selected profile route. On profile switch Android clears the old session list, refetches through the routed API client, and labels the drawer with the active profile/API fallback.
+- Voice requests carry the selected profile to relay-owned `/voice/*` routes. `/voice/config` resolves profile-local `tts`/`stt` where present, while `/voice/output/*` and `/voice/realtime/*` resolve experimental `voice_output` / `realtime_voice` sections from the selected profile config and fall back to relay defaults with explicit `config_scope` metadata.
 
 **Trade-offs / v1 scope:**
-- **Overlay, not isolation.** Selecting a profile on the phone routes through the active Connection's gateway with the profile's model + SOUL applied. The profile's `.env` (different API keys), memory, sessions, skills, and cron jobs stay with the Connection's default gateway. For fully isolated profile state, run the profile's own gateway (`hermes -p <name> platform start api --port <other>`) and pair it as a **separate Connection**. The server-side docs for this live in `plugin/relay/config.py` + `user-docs/features/profiles.md`.
-- **SOUL.md size.** Some SOUL files are multi-KB (Mizu's is 8 KB). The full content ships as `system_message` on every chat turn. Upstream's personality path already ships a system prompt per turn, so this is consistent — but it's worth keeping SOUL.md concise.
-- **Ephemeral only.** Selection doesn't persist across app restarts. Re-opening the app lands on server-default. Persisting per-Connection is a ~30-line extension (add `lastSelectedProfileName` to the Connection data class) — filed as a follow-up.
-- **Chat-only.** Voice transcribe/synthesize and bridge commands don't honor the profile selection. Voice routes through `/voice/*` relay endpoints that don't carry `model` or `system_message`; bridge is unrelated to model choice.
+- **Isolation when the profile API is running; overlay only as fallback.** Proper Hermes profile switching requires each profile's API server/gateway to be running and discoverable. If a profile has no API route, the app can still provide the older model/SOUL overlay, but that does not isolate memory, sessions, tools, provider auth, or cron jobs.
+- **Shared-key assumption.** The relay exposes only `api_server_key_present`, never the key. Android reuses the active Connection's stored API bearer for profile API requests. Operators who intentionally use different API keys per profile should pair those profile API servers as separate Connections or keep a shared API key across profile API servers.
+- **SOUL.md size.** Some SOUL files are multi-KB (Mizu's is 8 KB). The full content ships as `system_message` only in overlay fallback mode; isolated profile APIs should rely on their own configured SOUL/default prompt.
+- **Persisted per Connection.** The selected profile name and last session id are persisted per Connection/profile context. Switching Connections clears the in-memory object, then rehydrates the destination Connection's persisted profile once its advertised profile list arrives.
+- **Voice is profile-aware but still relay-mediated.** Voice output/realtime settings can follow the selected profile, but provider secrets stay server-side and the Hermes chat/tool loop still owns the final assistant text. Bridge commands remain unrelated to model choice.
 - **Config toggle.** `profile_discovery_enabled = false` lets a server op keep the phone picker empty (e.g. if the operator wants Connections-only semantics). Per our configurability pattern of "enable useful defaults, let the operator opt out."
 
 **Earlier (abandoned) design, for the record:**
@@ -1219,3 +1223,236 @@ Contribute a `gateway/rich_cards.py` helper upstream + Discord/Slack adapter tra
 - `app/src/main/kotlin/com/hermesandroid/relay/network/handlers/ChatHandler.kt` (+`scanForCardMarkers` / `tryDispatchCardMarker` / `finalizeCardMarkers` / `extractCardsFromContent` / `recordCardDispatch` / `markCardDispatchesSynced`)
 - `app/src/main/kotlin/com/hermesandroid/relay/ui/components/MessageBubble.kt` (+`onCardAction` plumb-through)
 - `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/ChatViewModel.kt` (+`dispatchCardAction`, sync splice in `startStream`)
+
+---
+
+## ADR 27 — Desktop control native shell uses Tauri v2 with CLI fallback
+
+**Status:** Accepted (desktop-control enhanced plan, 2026-05-16).
+
+**Context.** The desktop computer-use surface needs more than a terminal prompt once it graduates from experimental CLI use. Safe control needs a tray icon, always-visible observing/control chip, local grant prompt, task log, settings, and an emergency stop that is available even when no terminal window is open. At the same time, the existing TypeScript CLI and daemon are already the durable thin-client surface and must keep working for operators, headless boxes, and scripting.
+
+**Decision.** Use Tauri v2 (Rust + static web UI) for the native tray/overlay shell. Keep the core desktop tool router, pairing state, grant model, and policy logic in the existing TypeScript CLI first. Rust stays thin and native-specific: tray, overlay window, hotkey, installer/sidecar integration, and later OS-level screenshot/input helpers.
+
+**Overlay UX refinement (2026-05-17).** The desktop overlay should behave like a compact Conjure-style pill, not a mini management card. It is a small transparent always-on-top status window anchored bottom-center to Tauri's monitor work area so it sits just above the taskbar; the full management UI remains in the tray/dashboard. The pill dynamically sizes to its current label (`Observing`, `Paused`, `Offline`, or `Unavailable`) instead of reserving a fixed dashboard-width capsule. On Windows the tray shell reasserts topmost with `SetWindowPos(HWND_TOPMOST | SWP_NOACTIVATE)`, strips native chrome styles, and marks the overlay click-through so the pill cannot steal focus or expose a titlebar.
+
+**UX tiers.**
+- **Easy:** pair once, tray runs, compact visible pill shows Observing / Control Active / Paused / Disconnected, and pause or emergency stop is always reachable from the tray, dashboard, or hotkey.
+- **Standard:** full tray menu with Devices, Revoke, Task Log, Settings, grant history, and a settings panel.
+- **Advanced:** CLI + `hermes-relay daemon` + JSON policy and scripts remain first-class forever.
+
+**Seamless pairing requirement.** The Tauri app must reuse the current `hermes-relay pair` flow, QR/code payloads, `~/.hermes/remote-sessions.json`, and relay `/sessions` device management. A successful Easy-tier pair should leave the tray connected, the overlay chip visible, and Devices / Revoke / Task Log / Settings / Emergency Stop reachable from the tray. Local revoke must also clear active computer-use grants.
+
+**Tray click behavior (2026-05-17).** Tauri's tray menu can appear on left click by default, so the app disables left-click menu display and reserves left click for opening the dashboard. The native management menu remains on right click and through explicit menu events, preventing a single tray click from trying to show both a menu and the main window.
+
+**Control refresh wiring (2026-05-17).** Dashboard controls, tray menu actions, and overlay status all read the same Rust daemon state. Control commands must release the daemon mutex before asking for the resulting daemon status; otherwise pause/stop can deadlock by trying to lock the same mutex twice. Mutating commands emit `dashboard://refresh`, the dashboard guards against stale overlapping refreshes, and the overlay listens for the same event in addition to its fallback poll.
+
+**Desktop GUI refinement (2026-05-17).** The desktop dashboard should reference the Android app's visual discipline and shared Hermes branding, not copy its mobile navigation. The Tauri shell uses the Chevron Compass logo from the repo brand assets, keeps the sidebar navigation-only, and places Start / Pause / Emergency Stop in a sticky topbar so critical daemon controls stay reachable at short window heights. The Android reference remains useful for graphite surfaces, dense operational spacing, short labels, and visible state-first controls.
+
+**Default blocklist baseline.** Computer-use policy starts with password managers, credential vaults, MFA/passkey/OS credential prompts, banking/brokerage/payment apps, crypto wallets, OS security/admin settings, and private-key or token surfaces blocked by default. Advanced users can narrow or extend that baseline through `~/.hermes/desktop-control.json`; the Easy tier keeps it on.
+
+**Why Tauri.**
+- Small binaries and system webview match the thin-client posture better than Electron.
+- Tray, always-on-top windows, native dialogs, hotkeys, signing, and Rust interop cover the missing safety UX.
+- React keeps UI implementation close to the existing TypeScript stack.
+
+**Alternatives rejected.**
+- Electron is too heavy for a background "desktop hand" helper.
+- Pure WinUI3 / SwiftUI / platform-native stacks increase maintenance cost across platforms.
+- CLI-only plus node tray does not give a strong visible overlay and grant-prompt story.
+
+**Compatibility rule.** Phases 1-4 of desktop computer-use must keep working fully in the CLI and daemon with no Tauri dependency. The Tauri app is the Windows Easy/Standard wrapper and primary installer surface, while `hermes-relay daemon` remains the durable advanced/headless backend. The tray installer bundles the compiled CLI as a Tauri sidecar so normal pair/daemon/devices/task-log workflows do not depend on a separate PATH install. When the tray starts the daemon, it also provides a local grant bridge so assist/control requests can open the Grant Requests view for visible approval instead of silently granting host input.
+
+**Key Files:**
+- `docs/plans/desktop-control-computer-use-enhanced.md`
+- `desktop/src/`
+- `desktop/tray/`
+- `desktop/README.md`
+- `plugin/tools/desktop_tool.py`
+
+---
+
+## ADR 28 - Desktop Android pairing parity and one active tray relay
+
+**Status:** Accepted for next desktop tray UI pass (2026-05-17).
+
+**Context.** The first Windows tray pass made the desktop surface testable: real tray icon, click-through overlay pill, sticky daemon controls, dashboard refresh wiring, and shared Hermes branding. The next gap is product parity with the Android pairing/settings experience. Android already has the right model: pairing is a first-class route, endpoint candidates make LAN/Tailscale/public routes visible, auth failures separate API health from relay session auth, and advanced settings are tucked behind expandable sections instead of crowding the default screen.
+
+**Decision.** Track the next desktop implementation in `docs/plans/2026-05-17-desktop-android-pairing-parity.md`. The Windows Tauri tray app should default to dark mode, present one active paired relay instance for now, support manual pairing and pasted pairing invites, expose LAN/Tailscale/manual endpoint choices when available, and require explicit confirmation before replacing the active desktop pairing. Visible "Tier" settings and "Easy tier" copy should be removed from the tray UI; CLI/daemon/JSON configuration remain the advanced operator path without being represented as a user-selectable app tier.
+
+**Terminal and diagnostics refinement (2026-05-17).** After pairing parity, the tray dashboard adds task-based Terminal / CLI and Diagnostics routes. Terminal / CLI opens the remote TUI in a real terminal and converts the active relay into copyable standard `hermes-relay shell`, `chat`, `daemon`, `status`, `tools`, and `doctor` commands so users can move between GUI and terminal workflows without hunting through docs. The CLI resolver reads the tray-selected active relay from `~/.hermes/desktop-control.json`, so copied commands omit `--remote` after pairing and reserve it for explicit one-off overrides. If the app is only using its bundled sidecar, the tab nudges the user to install the CLI shim instead of copying full sidecar paths into normal workflows. Diagnostics keeps local install/session checks visible in the tray and runs `hermes-relay doctor --json` through the bundled sidecar, preserving the CLI as the source of truth for install triage.
+
+**Pairing invite URL and desktop consent repair (2026-05-17).** Host-side pairing now prints a paste-friendly `hermes-relay://pair?payload=...` invite URL alongside the QR payload, and `/pairing/mint` returns the same value as `pairing_url`. Desktop accepts raw JSON, base64 JSON, or the invite URL in the Paste invite flow. The desktop CLI now correctly uses `relay.code` as the one-shot relay pairing code; the top-level `key` remains the Hermes API bearer for direct HTTP chat. The tray dashboard also exposes an explicit active-relay desktop-tool consent grant/revoke control so users do not need to drop into a TTY just to allow the daemon.
+
+**Optional `hermes` alias (2026-05-17).** The desktop CLI installer no longer creates `hermes` / `hermes.cmd` by default. That alias is useful for Orca and upstream-style `hermes` workflows because it opens the paired remote Hermes session, but it can shadow a real local hermes-agent install. Alias management is therefore explicit through `desktop/scripts/hermes-alias.ps1` and `desktop/scripts/hermes-alias.sh`; both scripts enable, disable, or report status and only touch aliases that point to `hermes-relay`.
+
+**Implementation constraints.**
+- Do not change Android as part of the desktop pass.
+- Keep CLI and daemon behavior intact.
+- Keep Rust config deserialization backward-compatible with existing `tier` values while removing the visible selector from the tray UI.
+- Keep multiple stored sessions compatible with `~/.hermes/remote-sessions.json`, but present exactly one active desktop relay in the tray UI until multi-instance desktop UX is explicitly approved.
+- Use a collapsed Advanced section for low-frequency controls such as computer-use flag, emergency hotkey, overlay tuning, raw relay URL override, and blocklist.
+
+**Key Files:**
+- `docs/plans/2026-05-17-desktop-android-pairing-parity.md`
+- `docs/android-ui-design-reference.md`
+- `desktop/tray/src-tauri/src/main.rs`
+- `desktop/tray/ui/index.html`
+- `desktop/tray/ui/app.js`
+- `desktop/tray/ui/styles.css`
+
+---
+
+## ADR 29 - Voice output uses streaming TTS as renderer, realtime as agent mode
+
+**Status:** Implemented baseline (2026-05-18).
+
+**Context.** The first relay-mediated realtime voice path made provider PCM,
+Android `AudioTrack` playback, waveform metrics, and barge-in testable. It also
+exposed a correctness issue: when normal chat speech is sent to a realtime
+voice-agent provider as a conversational prompt, the provider can answer
+differently from the Hermes chat response. We patched the current path with a
+`render_mode="verbatim"` bridge, but that is still instruction-following on a
+conversational provider rather than a true speech renderer.
+
+**Decision.** Treat deterministic assistant narration and realtime voice agents
+as different output modes.
+
+- `streaming_tts_renderer` is the default target for normal assistant speech,
+  pre-tool-call status lines, long-task filler, and final response narration.
+  It receives final Hermes text and should emit exact audio without answering
+  conversationally.
+- `realtime_agent` is reserved for speech-to-speech, provider turn-taking,
+  provider tool-call event experiments, and comparison testing.
+- Hermes remains the owner of chat text, tool execution, approvals, and final
+  answers. Provider-emitted tool-call events are scaffolds unless a later
+  explicit integration changes that contract.
+
+**Provider direction.** Grok streaming TTS (`xai_tts`) is the first renderer,
+with OpenAI streaming TTS (`openai_tts`) added as the next renderer. Existing
+Hermes `/voice/synthesize` remains the fallback path, and ElevenLabs remains a
+lab comparison adapter. Keep Grok/OpenAI Realtime providers in the lab and relay
+for agent-mode testing and comparison.
+
+**Shared broker behavior.** The voice output broker owns verbatim rendering,
+PCM waveform levels, first-audio latency, chunk-gap metrics, playback, barge-in
+cancel, fallback selection, and short spoken tool/wait status lines. These
+behaviors should not be reimplemented separately in every provider adapter.
+
+**Key Files:**
+- `docs/realtime-voice-poc.md`
+- `docs/realtime-voice-lab-readme.html`
+- `plugin/relay/voice_output.py`
+- `plugin/relay/realtime_voice.py`
+- `plugin/voice_lab/providers/xai_tts.py`
+- `plugin/voice_lab/providers/openai_tts.py`
+- `plugin.voice_lab`
+- `app/src/main/kotlin/com/hermesandroid/relay/network/RelayVoiceClient.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/screens/VoiceSettingsScreen.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/VoiceViewModel.kt`
+
+---
+
+## ADR 30 - Desktop surface plugins and built-in Herm launcher
+
+**Status:** Accepted for desktop tray/CLI plugin surface (2026-05-18).
+
+**Context.** The desktop tray already owns a local xterm/PTY host for the
+remote Hermes Relay TUI. Herm (`liftaris/herm`) is a separate OpenTUI dashboard
+for Hermes, published as `herm-tui`, and should be installable without folding
+its code into Hermes-Relay or replacing the default relay TUI path.
+
+**Decision.** Add a small desktop surface plugin registry to the CLI and Tauri
+tray. The first built-in descriptor is Herm:
+
+- source: `https://github.com/liftaris/herm`
+- package: `herm-tui`
+- binary: `herm`
+- install/update: prefer `bun add -g herm-tui`, fall back to `npm install -g herm-tui`
+- launch: prefer installed `herm`, fall back to `bunx herm-tui` or `npx --yes herm-tui`
+- resume: use `-c` for installed and fallback launchers
+
+The registry describes plugin tabs, status cards, keybindings, and session
+actions for the dashboard. The CLI exposes `hermes-relay plugins`; the tray
+adds a Plugins view with Install, Update, Open, Resume, and Embed actions.
+Embedding reuses the existing xterm/PTY host and records the running surface as
+`plugin:<id>` so the dashboard can distinguish Herm from the default Relay TUI.
+
+**Why built-in first.** Herm is a known terminal surface with simple package
+manager semantics. A built-in descriptor gets install/update/launch UX working
+now while keeping dynamic third-party plugin loading out of the trusted desktop
+surface until signing, permissions, and manifest validation have an explicit
+design.
+
+**Compatibility rules.**
+
+- Bare `hermes-relay` remains the default remote Relay TUI path.
+- Plugin installation is optional and does not mutate relay pairing or session
+  token state.
+- Plugin fallback launchers are convenience paths only; a user can still manage
+  `herm-tui` directly with Bun or npm.
+- The tray must keep external terminal launch available when embedded PTY focus,
+  resize, or shortcut behavior needs a fallback.
+
+**Key Files:**
+- `desktop/src/surfacePlugins.ts`
+- `desktop/src/commands/plugins.ts`
+- `desktop/src/cli.ts`
+- `desktop/tray/src-tauri/src/main.rs`
+- `desktop/tray/ui/index.html`
+- `desktop/tray/ui/app.js`
+- `desktop/tray/ui/styles.css`
+- `desktop/README.md`
+- `user-docs/desktop/subcommands.md`
+
+---
+
+## ADR 31 - Desktop Chat tab and first-run chat route
+
+**Status:** Accepted for desktop tray chat surface (2026-05-18).
+
+**Context.** `fathah/hermes-desktop` is useful as a product reference for a
+chat-first desktop surface and first-run setup, but Hermes-Relay's desktop app
+is a thin Tauri client that should not fork a separate Electron chat stack.
+The durable local source of truth is still the paired relay session in
+`~/.hermes/remote-sessions.json` plus the existing `hermes-relay chat` CLI
+path. Some users also need chat-only access to a Hermes WebAPI gateway before
+or instead of pairing a relay.
+
+**Decision.** Add a tray Chat tab with route selection:
+
+- Paired relay mode is the default whenever `selected_url` resolves to a stored
+  session. It spawns the bundled CLI sidecar as `hermes-relay chat --json` with
+  the active relay URL, so auth, session creation/resume, gateway events, and
+  cancellation remain shared with the CLI.
+- Direct Gateway/API mode is available when no relay is paired or when the user
+  selects it explicitly. The tray saves only `chat_gateway_url` in
+  `~/.hermes/desktop-control.json`; the optional API key is passed to the
+  sidecar as an environment variable for the current chat turn and is not
+  persisted.
+- The direct API worker probes `/api/sessions/probe/chat/stream` first, then
+  `/v1/runs`, mirroring the Android WebAPI capability split.
+- The tab owns only chat UX: transcript, stop, retry, new chat, clear, setup
+  diagnostics. Models, providers, memory, skills, schedules, and richer agent
+  management remain future plugin panels rather than core tray navigation.
+
+**Compatibility rules.**
+
+- Relay pairing remains required for daemon, terminal/TUI, devices, grants, and
+  desktop tool routing.
+- Direct Gateway/API mode is chat-only and must not imply desktop-control
+  consent or a paired relay session.
+- The default relay TUI and plugin terminal surfaces must remain available
+  unchanged.
+
+**Key Files:**
+- `desktop/src/commands/chat.ts`
+- `desktop/src/commands/chatWorker.ts`
+- `desktop/src/cli.ts`
+- `desktop/tray/src-tauri/src/main.rs`
+- `desktop/tray/ui/index.html`
+- `desktop/tray/ui/app.js`
+- `desktop/tray/ui/styles.css`
+- `desktop/README.md`
+- `user-docs/desktop/index.md`
+- `user-docs/desktop/subcommands.md`

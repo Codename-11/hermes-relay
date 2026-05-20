@@ -147,6 +147,9 @@ class AuthManager(
          *    metadata) are optional on the wire. Missing / malformed values
          *    fall back to `false` / `false` / `0` so older relays stay
          *    compatible and bad server data can't crash the pairing handshake.
+         *  - `api_server_*` metadata is optional. When present, it lets the
+         *    client route chat through a profile's isolated Hermes API
+         *    server without exposing that profile server's key.
          */
         fun parseAgentProfiles(array: JsonArray): List<Profile> {
             return array.mapNotNull { entry ->
@@ -164,6 +167,16 @@ class AuthManager(
                     ?.jsonPrimitive?.booleanOrNull ?: false
                 val skillCount = obj["skill_count"]
                     ?.jsonPrimitive?.intOrNull ?: 0
+                val apiServerEnabled = obj["api_server_enabled"]
+                    ?.jsonPrimitive?.booleanOrNull ?: false
+                val apiServerUrl = obj["api_server_url"]
+                    ?.jsonPrimitive?.contentOrNull
+                val apiServerHost = obj["api_server_host"]
+                    ?.jsonPrimitive?.contentOrNull
+                val apiServerPort = obj["api_server_port"]
+                    ?.jsonPrimitive?.intOrNull
+                val apiServerKeyPresent = obj["api_server_key_present"]
+                    ?.jsonPrimitive?.booleanOrNull ?: false
                 Profile(
                     name = name,
                     model = model,
@@ -172,6 +185,11 @@ class AuthManager(
                     gatewayRunning = gatewayRunning,
                     hasSoul = hasSoul,
                     skillCount = skillCount,
+                    apiServerEnabled = apiServerEnabled,
+                    apiServerUrl = apiServerUrl,
+                    apiServerHost = apiServerHost,
+                    apiServerPort = apiServerPort,
+                    apiServerKeyPresent = apiServerKeyPresent,
                 )
             }
         }

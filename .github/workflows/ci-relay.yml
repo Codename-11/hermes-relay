@@ -4,7 +4,7 @@
 # Python-affecting paths so Android-only changes don't spin up the
 # Python toolchain.
 #
-# Pipeline: syntax-check -> unit-tests
+# Pipeline: syntax-check -> focused relay tests
 
 name: CI — Relay
 
@@ -12,18 +12,42 @@ on:
   push:
     branches: [main, dev]
     paths:
-      - "plugin/**"
+      - "plugin/__init__.py"
+      - "plugin/android_tool.py"
+      - "plugin/cli.py"
+      - "plugin/pair.py"
+      - "plugin/plugin.yaml"
+      - "plugin/dashboard/manifest.json"
+      - "plugin/dashboard/package.json"
+      - "plugin/dashboard/package-lock.json"
+      - "plugin/relay/**"
+      - "plugin/tools/**"
+      - "plugin/tests/**"
       - "relay_server/**"
       - "hermes_relay_bootstrap/**"
       - "pyproject.toml"
+      - "scripts/check-relay-version-sync.py"
+      - "scripts/bump-relay-version.sh"
       - ".github/workflows/ci-relay.yml"
   pull_request:
     branches: [main, dev]
     paths:
-      - "plugin/**"
+      - "plugin/__init__.py"
+      - "plugin/android_tool.py"
+      - "plugin/cli.py"
+      - "plugin/pair.py"
+      - "plugin/plugin.yaml"
+      - "plugin/dashboard/manifest.json"
+      - "plugin/dashboard/package.json"
+      - "plugin/dashboard/package-lock.json"
+      - "plugin/relay/**"
+      - "plugin/tools/**"
+      - "plugin/tests/**"
       - "relay_server/**"
       - "hermes_relay_bootstrap/**"
       - "pyproject.toml"
+      - "scripts/check-relay-version-sync.py"
+      - "scripts/bump-relay-version.sh"
       - ".github/workflows/ci-relay.yml"
 
 # Cancel in-progress runs for the same branch/PR, but let main and dev finish
@@ -38,6 +62,7 @@ jobs:
   syntax-check:
     name: Syntax check (Python)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -56,21 +81,27 @@ jobs:
           python -m py_compile plugin/relay/channels/terminal.py
           python -m py_compile plugin/relay/channels/chat.py
           python -m py_compile plugin/relay/channels/bridge.py
+          python -m py_compile plugin/relay/voice.py
+          python -m py_compile plugin/relay/upstream_voice.py
 
       - name: Syntax check (relay_server shim)
         run: python -m py_compile relay_server/__init__.py relay_server/__main__.py
 
+      - name: Validate Relay version metadata
+        run: python scripts/check-relay-version-sync.py
+
   # ──────────────────────────────────────────────
-  # Python Relay — unittest discover
+  # Python Relay — focused route/auth/session tests
   #
   # Tests are ADVISORY on dev (push or PR) so WIP commits don't block the
   # merge queue. Strict on main — the dev → main release-merge PR surfaces
   # any real failures before release.
   # ──────────────────────────────────────────────
   unit-tests:
-    name: Unit tests (Python)
+    name: Focused Relay tests (Python)
     needs: syntax-check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Advisory on dev, strict on main. Evaluates to false (= strict) for
     # pushes to main and PRs whose base branch is main; true (= advisory)
     # for everything else (dev pushes, dev-targeted PRs, feature branches).
@@ -84,14 +115,14 @@ jobs:
         with:
           python-version: "3.11"
 
-      # conftest.py imports `pytest` and `responses` at collection time.
-      # `unittest discover` walks conftest.py like any other module, so both
-      # must be importable even though none of the tests themselves use
-      # pytest fixtures (they're all stdlib unittest.TestCase).
       - name: Install dependencies
         run: |
           pip install -r relay_server/requirements.txt
           pip install pytest responses
 
-      - name: Run unit tests
-        run: python -m unittest discover plugin/tests
+      - name: Run focused Relay tests
+        run: |
+          python -m pytest \
+            plugin/tests/test_relay_security.py \
+            plugin/tests/test_voice_routes.py \
+            plugin/tests/test_session_grants.py

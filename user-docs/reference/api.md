@@ -14,7 +14,7 @@ http(s)://<server>:8642
 Authorization: Bearer <API_SERVER_KEY>   (optional — only if server has a key configured)
 ```
 
-Hermes-Relay voice endpoints can reuse this same Bearer token. Relay validates it against the protected `GET /v1/models` endpoint on the configured Hermes API Server, then accepts it only for `/voice/config`, `/voice/transcribe`, and `/voice/synthesize`. Relay pairing/session tokens remain required for sessions, media, clipboard, terminal, TUI, bridge, profile writes, and Android control routes. Non-loopback API-bearer voice calls require HTTPS by default; for temporary plain-LAN testing, run `hermes relay insecure-api-key on` on the relay host.
+Hermes-Relay voice endpoints can reuse this same Bearer token. Relay validates it against the protected `GET /v1/models` endpoint on the configured Hermes API Server, then accepts it only for `/voice/config`, `/voice/transcribe`, `/voice/synthesize`, `/voice/output/*`, `/voice/realtime/*`, and `/voice/realtime-agent/*`. Relay pairing/session tokens remain required for sessions, media, clipboard, terminal, TUI, bridge, profile writes, and Android control routes. Non-loopback API-bearer voice calls require HTTPS by default; for temporary plain-LAN testing, run `hermes relay insecure-api-key on` on the relay host.
 
 ## How endpoints get served
 

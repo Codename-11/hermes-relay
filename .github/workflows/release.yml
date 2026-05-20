@@ -1,8 +1,9 @@
-# Hermes-Relay — Release Pipeline
+# Hermes-Relay — Android App Release Pipeline
 #
 # Triggered when a version tag (v*) is pushed.
 # Validates the tag matches the app version in libs.versions.toml,
-# runs CI checks, builds a release APK, and creates a GitHub Release.
+# runs focused Android checks, builds release APK/AAB artifacts, and creates a
+# GitHub Release. Relay server/Python package releases use relay-v* tags.
 
 name: Release
 
@@ -77,6 +78,7 @@ jobs:
     name: Build & Publish Release
     needs: [validate, ci]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
 
@@ -131,7 +133,7 @@ jobs:
           cat SHA256SUMS.txt
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: v${{ needs.validate.outputs.version }}
           body_path: RELEASE_NOTES.md

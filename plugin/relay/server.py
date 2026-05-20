@@ -59,6 +59,9 @@ from .channels.tui import TuiHandler
 from .config import RelayConfig
 from .media import MediaRegistrationError, MediaRegistry, validate_media_path
 from .voice import VoiceHandler
+from .voice_output import VoiceOutputHandler
+from .realtime_voice import RealtimeVoiceHandler
+from .realtime_agent import RealtimeAgentHandler
 
 logger = logging.getLogger("hermes_relay")
 
@@ -96,6 +99,9 @@ class RelayServer:
 
         # Voice handler — TTS / STT bridge to the hermes-agent venv tools
         self.voice = VoiceHandler(config)
+        self.voice_output = VoiceOutputHandler(config)
+        self.realtime_voice = RealtimeVoiceHandler(config)
+        self.realtime_agent = RealtimeAgentHandler(config)
 
         # Channel handlers
         self.chat = ChatHandler(webapi_url=config.webapi_url)
@@ -343,7 +349,7 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         - ttl_seconds: <int>            Session TTL
         - transport_hint: "wss"|"ws"    Forwarded verbatim
         - grants: {...}                 Channel TTL map
-      → 200 {ok, code, qr_payload, expires_at, host, port, tls, relay_url}
+      → 200 {ok, code, qr_payload, pairing_url, expires_at, host, port, tls, relay_url}
       → 400 invalid JSON or API host can't be resolved
       → 403 non-loopback caller
     """
@@ -362,6 +368,7 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
     server: RelayServer = request.app["server"]
 
     from ..pair import (
+        build_pairing_invite_url,
         build_pairing_qr_payload,
         build_relay_pairing_block,
         normalize_endpoint_candidates,
@@ -497,6 +504,7 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         sign=True,
         endpoints=endpoints_list or None,
     )
+    pairing_url = build_pairing_invite_url(qr_payload)
 
     # This is the pairing-code expiry (how long the user has to scan),
     # not the future session's TTL. The pairing-code hard-cap is
@@ -531,6 +539,7 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         "ok": True,
         "code": code,
         "qr_payload": qr_payload,
+        "pairing_url": pairing_url,
         "expires_at": expires_at,
         "host": api_host,
         "port": api_port,
@@ -2831,6 +2840,7 @@ def _notify_profiles_changed(
         fresh_profiles = _load_profiles(
             server.config.hermes_config_path,
             enabled=server.config.profile_discovery_enabled,
+            base_api_url=server.config.webapi_url,
         )
     except Exception:
         logger.warning(
@@ -2942,6 +2952,7 @@ async def _profile_rescan_loop(app: web.Application) -> None:
                 fresh = _load_profiles(
                     server.config.hermes_config_path,
                     enabled=server.config.profile_discovery_enabled,
+                    base_api_url=server.config.webapi_url,
                 )
             except Exception:
                 logger.warning(
@@ -3570,9 +3581,117 @@ def create_app(config: RelayConfig) -> web.Application:
         s: RelayServer = request.app["server"]
         return await s.voice.handle_voice_config(request)
 
+    async def _voice_output_config(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.voice_output.handle_config(request)
+
+    async def _voice_output_config_patch(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.voice_output.handle_update_config(request)
+
+    async def _voice_output_provider_options(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.voice_output.handle_provider_options(request)
+
+    async def _voice_output_provider_validate(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.voice_output.handle_provider_validate(request)
+
+    async def _voice_output_session(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.voice_output.handle_create_session(request)
+
+    async def _voice_output_ws(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.voice_output.handle_ws(request)
+
+    async def _voice_realtime_config(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.realtime_voice.handle_config(request)
+
+    async def _voice_realtime_config_patch(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.realtime_voice.handle_update_config(request)
+
+    async def _voice_realtime_provider_options(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.realtime_voice.handle_provider_options(request)
+
+    async def _voice_realtime_provider_validate(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.realtime_voice.handle_provider_validate(request)
+
+    async def _voice_realtime_session(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.realtime_voice.handle_create_session(request)
+
+    async def _voice_realtime_ws(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.realtime_voice.handle_ws(request)
+
+    async def _voice_realtime_agent_config(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.realtime_agent.handle_config(request)
+
+    async def _voice_realtime_agent_config_patch(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.realtime_agent.handle_update_config(request)
+
+    async def _voice_realtime_agent_provider_options(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.realtime_agent.handle_provider_options(request)
+
+    async def _voice_realtime_agent_provider_validate(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.realtime_agent.handle_provider_validate(request)
+
+    async def _voice_realtime_agent_session(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.realtime_agent.handle_create_session(request)
+
+    async def _voice_realtime_agent_ws(request: web.Request) -> web.StreamResponse:
+        s: RelayServer = request.app["server"]
+        return await s.realtime_agent.handle_ws(request)
+
     app.router.add_post("/voice/transcribe", _voice_transcribe)
     app.router.add_post("/voice/synthesize", _voice_synthesize)
     app.router.add_get("/voice/config", _voice_config)
+    app.router.add_get("/voice/output/config", _voice_output_config)
+    app.router.add_patch("/voice/output/config", _voice_output_config_patch)
+    app.router.add_get(
+        "/voice/output/providers/{provider_id}/options",
+        _voice_output_provider_options,
+    )
+    app.router.add_post(
+        "/voice/output/providers/{provider_id}/validate",
+        _voice_output_provider_validate,
+    )
+    app.router.add_post("/voice/output/session", _voice_output_session)
+    app.router.add_get("/voice/output/{session_id}", _voice_output_ws)
+    app.router.add_get("/voice/realtime/config", _voice_realtime_config)
+    app.router.add_patch("/voice/realtime/config", _voice_realtime_config_patch)
+    app.router.add_get(
+        "/voice/realtime/providers/{provider_id}/options",
+        _voice_realtime_provider_options,
+    )
+    app.router.add_post(
+        "/voice/realtime/providers/{provider_id}/validate",
+        _voice_realtime_provider_validate,
+    )
+    app.router.add_post("/voice/realtime/session", _voice_realtime_session)
+    app.router.add_get("/voice/realtime/{session_id}", _voice_realtime_ws)
+    app.router.add_get("/voice/realtime-agent/config", _voice_realtime_agent_config)
+    app.router.add_patch("/voice/realtime-agent/config", _voice_realtime_agent_config_patch)
+    app.router.add_get(
+        "/voice/realtime-agent/providers/{provider_id}/options",
+        _voice_realtime_agent_provider_options,
+    )
+    app.router.add_post(
+        "/voice/realtime-agent/providers/{provider_id}/validate",
+        _voice_realtime_agent_provider_validate,
+    )
+    app.router.add_post("/voice/realtime-agent/session", _voice_realtime_agent_session)
+    app.router.add_get("/voice/realtime-agent/{session_id}", _voice_realtime_agent_ws)
 
     # === PHASE3-bridge-server: bridge HTTP routes ===
     # 14 endpoints mirrored from the legacy standalone relay on port 8766.
@@ -3796,14 +3915,16 @@ def main() -> None:
         config.port = args.port
     if args.config is not None:
         config.hermes_config_path = args.config
-        # Reload profiles with the new path
+    if args.webapi_url is not None:
+        config.webapi_url = args.webapi_url
+    if args.config is not None or args.webapi_url is not None:
+        # Reload profiles with any CLI-overridden Hermes home or API base URL.
         from .config import _load_profiles
         config.profiles = _load_profiles(
             config.hermes_config_path,
             enabled=config.profile_discovery_enabled,
+            base_api_url=config.webapi_url,
         )
-    if args.webapi_url is not None:
-        config.webapi_url = args.webapi_url
     if args.log_level is not None:
         config.log_level = args.log_level
     if args.no_ssl:

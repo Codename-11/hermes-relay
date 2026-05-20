@@ -1,5 +1,7 @@
 node_modules/
 dist/
+tray/src-tauri/bin/
+tray/src-tauri/target/
 *.log
 .DS_Store
 *.tsbuildinfo

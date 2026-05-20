@@ -29,7 +29,7 @@ The app connects only to user-configured endpoints:
 
 - **HTTP/SSE** to your Hermes API server (default `localhost:8642`) for chat streaming
 - **WSS** to your relay server (default `localhost:8767`) for terminal and bridge channels
-- **HTTP(S)** to your relay server's `/voice/*` routes for voice settings, speech-to-text uploads, and text-to-speech audio when you use Voice mode
+- **HTTP(S)/WSS** to your relay server's `/voice/*` routes for voice settings, speech-to-text uploads, realtime voice websocket sessions, and fallback text-to-speech audio when you use Voice mode
 - Cleartext (HTTP) is permitted for local/private network connections to user-configured servers; the app warns when using insecure connections
 - No DNS prefetching, no background pings to external services
 

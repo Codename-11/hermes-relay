@@ -20,6 +20,7 @@
 
 import { createInterface } from 'node:readline/promises'
 
+import { getActiveDesktopRelayUrl } from './desktopConfig.js'
 import { listSessions } from './remoteSessions.js'
 
 const URL_RE = /^wss?:\/\/\S+$/
@@ -102,11 +103,14 @@ export interface ResolveFirstRunUrlOptions {
  * When neither --remote nor HERMES_RELAY_URL nor --pair-qr is set, figure out
  * what URL the user wants to talk to:
  *
- *   1. If `~/.hermes/remote-sessions.json` has exactly one entry → return it
+ *   1. If the desktop tray has an active relay in
+ *      `~/.hermes/desktop-control.json` → return it (the GUI-selected relay
+ *      wins even when multiple CLI sessions are stored).
+ *   2. If `~/.hermes/remote-sessions.json` has exactly one entry → return it
  *      and note the pick to stderr (zero-friction re-use).
- *   2. If it has multiple entries → show a numbered list, let the user pick
+ *   3. If it has multiple entries → show a numbered list, let the user pick
  *      or type "n" to enter a new URL.
- *   3. If it has zero entries → print the first-run banner and prompt for
+ *   4. If it has zero entries → print the first-run banner and prompt for
  *      a URL directly.
  *
  * Non-interactive callers (daemon, CI scripts with --non-interactive) never
@@ -118,8 +122,14 @@ export async function resolveFirstRunUrl(
 ): Promise<string> {
   const sessions = await listSessions()
   const urls = Object.keys(sessions)
+  const activeDesktopUrl = await getActiveDesktopRelayUrl()
 
-  // Case (1): exactly one stored session — auto-pick. Both interactive and
+  if (activeDesktopUrl) {
+    process.stderr.write(`Using active desktop relay ${activeDesktopUrl}\n`)
+    return activeDesktopUrl
+  }
+
+  // Case (2): exactly one stored session — auto-pick. Both interactive and
   // non-interactive callers benefit (it's the happy path for repeat users).
   if (urls.length === 1) {
     const url = urls[0]!
@@ -149,7 +159,7 @@ export async function resolveFirstRunUrl(
     )
   }
 
-  // Case (3): zero stored sessions — first-run path. Show a welcoming banner
+  // Case (4): zero stored sessions — first-run path. Show a welcoming banner
   // before the URL prompt so a brand-new user knows they're in the right place.
   if (urls.length === 0) {
     const banner =
@@ -159,7 +169,7 @@ export async function resolveFirstRunUrl(
     return promptForRelayUrl()
   }
 
-  // Case (2): multiple stored sessions — numbered picker with "n" for new URL.
+  // Case (3): multiple stored sessions — numbered picker with "n" for new URL.
   process.stderr.write('\nStored sessions:\n')
   urls.forEach((u, i) => {
     process.stderr.write(`  ${i + 1}. ${u}\n`)

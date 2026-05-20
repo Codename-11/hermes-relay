@@ -57,6 +57,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
 import com.hermesandroid.relay.ui.components.ProfileInspectorCard
@@ -180,14 +181,20 @@ fun SettingsScreen(
             // users can change Connection / Profile / Personality without
             // having to navigate to Chat first and then hunt for the
             // agent-name header.
+            val effectiveProfile = AgentDisplay.effectiveProfile(
+                selectedProfile = selectedProfile,
+                profiles = agentProfiles,
+            )
             ActiveAgentCard(
-                agentName = agentDisplayName(
+                agentName = AgentDisplay.agentName(
+                    profile = effectiveProfile,
                     selectedPersonality = selectedPersonality,
                     defaultPersonality = defaultPersonality,
+                    connectionLabel = activeConnection?.label,
                 ),
                 connectionLabel = activeConnection?.label ?: "No connection",
-                model = selectedProfile?.model ?: "default",
-                personalityLabel = personalityDisplayLabel(
+                model = effectiveProfile?.model ?: "default",
+                personalityLabel = AgentDisplay.personalityLabel(
                     selectedPersonality = selectedPersonality,
                     defaultPersonality = defaultPersonality,
                 ),
@@ -447,40 +454,6 @@ private fun ActiveAgentCard(
             )
         }
     }
-}
-
-/**
- * Resolve the agent display name the same way ChatScreen's top bar does:
- * when the user has not overridden the personality ("default") and the
- * server has advertised a default personality name, use that; otherwise use
- * whatever is currently selected. The result is title-cased.
- */
-private fun agentDisplayName(
-    selectedPersonality: String,
-    defaultPersonality: String,
-): String {
-    val name = if (selectedPersonality == "default" && defaultPersonality.isNotBlank()) {
-        defaultPersonality
-    } else {
-        selectedPersonality
-    }
-    return name.replaceFirstChar { it.uppercase() }
-}
-
-/**
- * Title-cased personality label for the subtitle token. Falls back to the
- * server default (when the user hasn't picked one) and finally to a literal
- * "Default" so the subtitle never renders with a blank middle token.
- */
-private fun personalityDisplayLabel(
-    selectedPersonality: String,
-    defaultPersonality: String,
-): String = when {
-    selectedPersonality != "default" ->
-        selectedPersonality.replaceFirstChar { it.uppercase() }
-    defaultPersonality.isNotBlank() ->
-        defaultPersonality.replaceFirstChar { it.uppercase() }
-    else -> "Default"
 }
 
 /**

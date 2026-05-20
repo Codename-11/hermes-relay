@@ -112,7 +112,8 @@ data class SessionItem(
 @Serializable
 data class CreateSessionRequest(
     val title: String? = null,
-    val model: String? = null
+    val model: String? = null,
+    val profile: String? = null,
 )
 
 @Serializable
