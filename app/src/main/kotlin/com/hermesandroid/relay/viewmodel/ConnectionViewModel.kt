@@ -20,6 +20,7 @@ import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.ConnectionStore
 import com.hermesandroid.relay.data.ConnectionValidation
 import com.hermesandroid.relay.data.AgentDisplay
+import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.ProfileSessionStore
 import com.hermesandroid.relay.data.ProfileSelectionStore
@@ -926,7 +927,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // constructed before the user has consented to screen capture.
     // [BridgeCommandHandler] will surface a 503 error for /screenshot
     // requests until [MediaProjectionHolder.projection] is non-null.
-    private val screenCapture = ScreenCapture(
+    private val screenCapture = if (BuildFlavor.isSideload) ScreenCapture(
         context = application,
         httpClient = relayOkHttp,
         relayUrlProvider = { effectiveRelayUrlSnapshot() },
@@ -936,22 +937,22 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         mediaProjectionProvider = {
             com.hermesandroid.relay.accessibility.MediaProjectionHolder.projection
         },
-    )
+    ) else null
 
     // === PHASE3-safety-rails: safety manager + overlay wiring ===
     // Process-wide singletons — install() is idempotent and the overlay
     // host wires itself into ConfirmationOverlayHost.instance so the
     // safety manager can reach it without a hard ref.
     private val bridgeSafetyManager =
-        com.hermesandroid.relay.bridge.BridgeSafetyManager.install(
+        if (BuildFlavor.isSideload) com.hermesandroid.relay.bridge.BridgeSafetyManager.install(
             context = application,
             scope = viewModelScope,
         ).also {
             com.hermesandroid.relay.bridge.BridgeStatusOverlay.install(application)
-        }
+        } else null
 
     /** Exposed for BridgeScreen → safety summary card. */
-    val bridgeSafety: com.hermesandroid.relay.bridge.BridgeSafetyManager get() = bridgeSafetyManager
+    val bridgeSafety: com.hermesandroid.relay.bridge.BridgeSafetyManager? get() = bridgeSafetyManager
     // === END PHASE3-safety-rails ===
 
     // v0.4.1 polish: bridge activity log sink. BridgeCommandHandler posts
@@ -965,7 +966,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // Public so RelayApp can hand the local-dispatch entry point to
     // VoiceViewModel. The voice intent handler calls handleLocalCommand()
     // for in-process action dispatch (see BridgeCommandHandler KDoc).
-    val bridgeCommandHandler = BridgeCommandHandler(
+    val bridgeCommandHandler: BridgeCommandHandler = BridgeCommandHandler(
         multiplexer = multiplexer,
         scope = viewModelScope,
         screenCapture = screenCapture,
@@ -1494,13 +1495,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
 
         // === PHASE3-accessibility: bridge handler registration ===
-        // Route every incoming `bridge` channel envelope to the command
-        // handler. Registering unconditionally is safe — the handler
-        // itself checks whether HermesAccessibilityService is running and
-        // whether the master toggle is enabled before executing anything.
-        // Start the periodic status reporter once too; it ticks every
-        // 30s and is a no-op while the WSS isn't connected (multiplexer
-        // just drops the envelopes).
+        // Device Control commands are sideload-only. Google Play still
+        // registers the bridge channel so direct route probes fail closed with
+        // a clear 403 instead of waiting for a command timeout.
         multiplexer.registerHandler("bridge") { envelope ->
             bridgeCommandHandler.onMessage(envelope)
         }
@@ -1512,77 +1509,81 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // the new master_enabled value right away — not up to 30 s later.
         // drop(1) skips the initial DataStore replay so we don't double
         // up with the first periodic tick on boot.
-        viewModelScope.launch {
-            com.hermesandroid.relay.accessibility.HermesAccessibilityService
-                .masterEnabledFlow(application)
-                .distinctUntilChanged()
-                .drop(1)
-                .collect {
-                    bridgeStatusReporter.pushNow()
-                }
+        if (BuildFlavor.isSideload) {
+            viewModelScope.launch {
+                com.hermesandroid.relay.accessibility.HermesAccessibilityService
+                    .masterEnabledFlow(application)
+                    .distinctUntilChanged()
+                    .drop(1)
+                    .collect {
+                        bridgeStatusReporter.pushNow()
+                    }
+            }
         }
         // === END PHASE3-status ===
 
-        // === v0.4.1 polish: auto-return to Hermes on run.completed ===
-        // BridgeRunTracker wires Chat (SSE run.completed) to Bridge
-        // (foreground-shifting dispatch) via a shared singleton. When
-        // both signals converge in a run, fire a local /return_to_hermes
-        // so the user is never stranded on another app after the agent
-        // finishes — even if the LLM forgot to call the return tool
-        // itself. See BridgeRunTracker KDoc for the full contract.
-        com.hermesandroid.relay.bridge.BridgeRunTracker.registerAutoReturnCallback {
-            viewModelScope.launch {
-                runCatching {
-                    val envelope = com.hermesandroid.relay.network.models.Envelope(
-                        channel = "bridge",
-                        type = "bridge.command",
-                        payload = kotlinx.serialization.json.buildJsonObject {
-                            put(
-                                "request_id",
-                                kotlinx.serialization.json.JsonPrimitive(
-                                    java.util.UUID.randomUUID().toString(),
-                                ),
-                            )
-                            put("method", kotlinx.serialization.json.JsonPrimitive("POST"))
-                            put("path", kotlinx.serialization.json.JsonPrimitive("/return_to_hermes"))
-                            put(
-                                "body",
-                                kotlinx.serialization.json.buildJsonObject { },
-                            )
-                            put(
-                                "source",
-                                kotlinx.serialization.json.JsonPrimitive("auto_return"),
-                            )
-                        },
-                    )
-                    bridgeCommandHandler.handleLocalCommand(envelope)
-                }.onFailure {
-                    android.util.Log.w(
-                        "ConnectionViewModel",
-                        "auto-return dispatch failed: ${it.message}",
-                    )
+        if (BuildFlavor.isSideload) {
+            // === v0.4.1 polish: auto-return to Hermes on run.completed ===
+            // BridgeRunTracker wires Chat (SSE run.completed) to Bridge
+            // (foreground-shifting dispatch) via a shared singleton. When
+            // both signals converge in a run, fire a local /return_to_hermes
+            // so the user is never stranded on another app after the agent
+            // finishes — even if the LLM forgot to call the return tool
+            // itself. See BridgeRunTracker KDoc for the full contract.
+            com.hermesandroid.relay.bridge.BridgeRunTracker.registerAutoReturnCallback {
+                viewModelScope.launch {
+                    runCatching {
+                        val envelope = com.hermesandroid.relay.network.models.Envelope(
+                            channel = "bridge",
+                            type = "bridge.command",
+                            payload = kotlinx.serialization.json.buildJsonObject {
+                                put(
+                                    "request_id",
+                                    kotlinx.serialization.json.JsonPrimitive(
+                                        java.util.UUID.randomUUID().toString(),
+                                    ),
+                                )
+                                put("method", kotlinx.serialization.json.JsonPrimitive("POST"))
+                                put("path", kotlinx.serialization.json.JsonPrimitive("/return_to_hermes"))
+                                put(
+                                    "body",
+                                    kotlinx.serialization.json.buildJsonObject { },
+                                )
+                                put(
+                                    "source",
+                                    kotlinx.serialization.json.JsonPrimitive("auto_return"),
+                                )
+                            },
+                        )
+                        bridgeCommandHandler.handleLocalCommand(envelope)
+                    }.onFailure {
+                        android.util.Log.w(
+                            "ConnectionViewModel",
+                            "auto-return dispatch failed: ${it.message}",
+                        )
+                    }
                 }
             }
-        }
-        // === END v0.4.1 polish ===
+            // === END v0.4.1 polish ===
 
-        // === v0.4.1 polish: push on unattended-access toggle flip ===
-        // Same rationale as the master-toggle push above — the host-side
-        // agent reading `/bridge/status` needs to see the new unattended
-        // state within a second of the user flipping the toggle, not up
-        // to 30 s later. `UnattendedAccessManager.enabled` is a StateFlow
-        // so distinctUntilChanged is implicit (per the StateFlow
-        // "Operator Fusion" rule) — drop(1) still needed to skip the
-        // initial value replay so we don't double up with the first
-        // periodic tick on boot.
-        viewModelScope.launch {
-            com.hermesandroid.relay.bridge.UnattendedAccessManager.enabled
-                .drop(1)
-                .collect {
-                    bridgeStatusReporter.pushNow()
-                }
+            // === v0.4.1 polish: push on unattended-access toggle flip ===
+            // Same rationale as the master-toggle push above — the host-side
+            // agent reading `/bridge/status` needs to see the new unattended
+            // state within a second of the user flipping the toggle, not up
+            // to 30 s later. `UnattendedAccessManager.enabled` is a StateFlow
+            // so distinctUntilChanged is implicit (per the StateFlow
+            // "Operator Fusion" rule) — drop(1) still needed to skip the
+            // initial value replay so we don't double up with the first
+            // periodic tick on boot.
+            viewModelScope.launch {
+                com.hermesandroid.relay.bridge.UnattendedAccessManager.enabled
+                    .drop(1)
+                    .collect {
+                        bridgeStatusReporter.pushNow()
+                    }
+            }
+            // === END v0.4.1 polish ===
         }
-        // === END v0.4.1 polish ===
         // === END PHASE3-accessibility ===
 
         // === PHASE3-notif-listener-followup: notification companion multiplexer wiring ===
@@ -3246,6 +3247,6 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // built by ScreenCapture on the first /screenshot call. Without
         // this, a process-rare VM teardown would leak the capture pipeline
         // until the OS cleans up on exit.
-        runCatching { screenCapture.releaseCache() }
+        runCatching { screenCapture?.releaseCache() }
     }
 }

@@ -85,6 +85,7 @@ import com.hermesandroid.relay.ui.onboarding.OnboardingScreen
 import com.hermesandroid.relay.ui.screens.AboutScreen
 import com.hermesandroid.relay.ui.screens.AnalyticsScreen
 import com.hermesandroid.relay.ui.screens.AppearanceSettingsScreen
+import com.hermesandroid.relay.ui.screens.BridgeCoreScreen
 import com.hermesandroid.relay.ui.screens.BridgeScreen
 // === PHASE3-safety-rails: bridge safety route ===
 import com.hermesandroid.relay.ui.screens.BridgeSafetySettingsScreen
@@ -435,7 +436,11 @@ fun RelayApp() {
             // wiring fix in commit a568366 that unblocked the dispatch
             // path enough to surface this protocol mismatch.
             bridgeMultiplexer = connectionViewModel.multiplexer,
-            localBridgeDispatcher = connectionViewModel.bridgeCommandHandler::handleLocalCommand,
+            localBridgeDispatcher = if (BuildFlavor.isSideload) {
+                connectionViewModel.bridgeCommandHandler::handleLocalCommand
+            } else {
+                null
+            },
             // === END PHASE3-voice-intents-localdispatch ===
             // 2026-04-17: persist the interaction-mode preference across
             // app restarts. VoicePreferencesRepository is the same repo
@@ -953,29 +958,42 @@ fun RelayApp() {
                     )
                 }
                 composable(Screen.Bridge.route) {
-                    // === PHASE3-bridge-ui: BridgeScreen wiring ===
-                    // BridgeScreen owns its own BridgeViewModel via the
-                    // default `viewModel()` parameter — no shared state with
-                    // ChatViewModel / ConnectionViewModel is plumbed through
-                    // here yet. Once Agent accessibility lands HermesAccessibilityService
-                    // and we need to observe its runtime state from RelayApp
-                    // scope, a shared holder or explicit VM param gets added
-                    // here.
-                    BridgeScreen(
-                        // Pass the connection VM so the screen can render
-                        // the "Relay not connected" banner when the WSS
-                        // isn't in a Paired+Connected state. Without this
-                        // the user can flip master toggle on, pass every
-                        // permission check, and still receive zero
-                        // commands — silently useless.
-                        connectionViewModel = connectionViewModel,
-                        // === PHASE3-safety-rails: bridge safety route ===
-                        onNavigateToBridgeSafety = {
-                            navController.navigate(Screen.BridgeSafetySettings.route)
-                        },
-                        // === END PHASE3-safety-rails ===
-                    )
-                    // === END PHASE3-bridge-ui ===
+                    if (BuildFlavor.isSideload) {
+                        BridgeScreen(
+                            connectionViewModel = connectionViewModel,
+                            onNavigateToBridgeSafety = {
+                                navController.navigate(Screen.BridgeSafetySettings.route)
+                            },
+                        )
+                    } else {
+                        BridgeCoreScreen(
+                            connectionViewModel = connectionViewModel,
+                            onNavigateToConnections = {
+                                navController.navigate(Screen.ConnectionsSettings.route)
+                            },
+                            onNavigateToTerminal = {
+                                navController.navigate(Screen.Terminal.route) {
+                                    popUpTo(navController.graph.findStartDestination().id) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
+                            onNavigateToVoiceSettings = {
+                                navController.navigate(Screen.VoiceSettings.route)
+                            },
+                            onNavigateToNotificationCompanion = {
+                                navController.navigate(Screen.NotificationCompanionSettings.route)
+                            },
+                            onNavigateToMediaSettings = {
+                                navController.navigate(Screen.MediaSettings.route)
+                            },
+                            onNavigateToRelaySessions = {
+                                navController.navigate(Screen.PairedDevices.route)
+                            },
+                        )
+                    }
                 }
                 composable(Screen.Settings.route) {
                     SettingsScreen(
@@ -1046,9 +1064,33 @@ fun RelayApp() {
                 // === END PHASE3-notif-listener-followup ===
                 // === PHASE3-safety-rails: bridge safety route ===
                 composable(Screen.BridgeSafetySettings.route) {
-                    BridgeSafetySettingsScreen(
-                        onBack = { navController.popBackStack() }
-                    )
+                    if (BuildFlavor.isSideload) {
+                        BridgeSafetySettingsScreen(
+                            onBack = { navController.popBackStack() }
+                        )
+                    } else {
+                        BridgeCoreScreen(
+                            connectionViewModel = connectionViewModel,
+                            onNavigateToConnections = {
+                                navController.navigate(Screen.ConnectionsSettings.route)
+                            },
+                            onNavigateToTerminal = {
+                                navController.navigate(Screen.Terminal.route)
+                            },
+                            onNavigateToVoiceSettings = {
+                                navController.navigate(Screen.VoiceSettings.route)
+                            },
+                            onNavigateToNotificationCompanion = {
+                                navController.navigate(Screen.NotificationCompanionSettings.route)
+                            },
+                            onNavigateToMediaSettings = {
+                                navController.navigate(Screen.MediaSettings.route)
+                            },
+                            onNavigateToRelaySessions = {
+                                navController.navigate(Screen.PairedDevices.route)
+                            },
+                        )
+                    }
                 }
                 // === END PHASE3-safety-rails ===
                 composable(Screen.PairedDevices.route) {

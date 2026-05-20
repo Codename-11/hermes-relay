@@ -58,6 +58,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.data.AgentDisplay
+import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
 import com.hermesandroid.relay.ui.components.ProfileInspectorCard
@@ -274,15 +275,17 @@ fun SettingsScreen(
             )
             // === END PHASE3-notif-listener-followup ===
 
-            // === PHASE3-safety-rails: bridge safety entry-point ===
-            SettingsCategoryRow(
-                icon = Icons.Filled.Security,
-                title = "Bridge safety",
-                subtitle = "Blocklist, destructive-verb confirmation, auto-disable",
-                onClick = onNavigateToBridgeSafety,
-                isDarkTheme = isDarkTheme,
-            )
-            // === END PHASE3-safety-rails ===
+            if (BuildFlavor.isSideload) {
+                // === PHASE3-safety-rails: bridge safety entry-point ===
+                SettingsCategoryRow(
+                    icon = Icons.Filled.Security,
+                    title = "Bridge safety",
+                    subtitle = "Blocklist, destructive-verb confirmation, auto-disable",
+                    onClick = onNavigateToBridgeSafety,
+                    isDarkTheme = isDarkTheme,
+                )
+                // === END PHASE3-safety-rails ===
+            }
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Image,

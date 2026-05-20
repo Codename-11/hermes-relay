@@ -68,20 +68,18 @@ android {
         }
     }
 
-    // ─── Phase 3 — Bridge channel release tracks ────────────────────────────────
-    // Google Play scrutinizes AccessibilityService heavily (policy review + manual
-    // appeals are common), so Phase 3 ships two distinct tracks via flavor-merged
-    // manifests + flavor-scoped strings + flavor-scoped accessibility configs:
+    // ─── Bridge release tracks ─────────────────────────────────────────────────
+    // Google Play ships Bridge Core only: pairing, chat, voice, terminal/TUI,
+    // media, notification companion, relay sessions, and status. It does not
+    // declare AccessibilityService, overlay, MediaProjection, wake-lock device
+    // control, SMS/call/contact/location, or unattended-control permissions.
     //
-    //   googlePlay  — conservative use-case description targeted at Play Store
-    //                 policy review. Subset of event types + flagDefault only.
-    //                 No gestures, no interactive-window reporting. Feature gates
-    //                 in BuildFlavor.kt hide tier 3/4/6 surfaces in the UI.
+    //   googlePlay  — canonical Play Store install. Bridge Core only.
     //
-    //   sideload    — full agent-control description for users who install the
-    //                 APK directly (GitHub Releases, F-Droid, ADB). typeAllMask,
-    //                 gestures, interactive windows, view-id reporting. All six
-    //                 tiers enabled.
+    //   sideload    — Device Control for users who install directly (GitHub
+    //                 Releases, F-Droid, ADB). AccessibilityService, gestures,
+    //                 screenshots, overlay/status chip, and phone utilities are
+    //                 declared in the sideload manifest.
     //
     // applicationIdSuffix decision: sideload gets `.sideload` so both tracks can
     // coexist on the same device. The Play build keeps the base

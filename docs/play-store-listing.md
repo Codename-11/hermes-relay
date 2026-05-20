@@ -1,87 +1,85 @@
-# Play Store Listing — Hermes-Relay v0.7.0
+# Play Store Listing — Hermes-Relay
 
-> Temporary reference for Google Play Console submission. Delete after listing is live.
+> Reference copy for the Google Play Console submission.
 
 ## Short Description (≤80 chars)
 
-Native Android client for your self-hosted Hermes AI agent
+Self-hosted Hermes chat, voice, terminal, and notification companion
 
 ## Full Description
 
-**Hermes-Relay** is a native Android client for the Hermes agent platform. Connect to your self-hosted Hermes AI agent and chat in real time — directly from your phone.
+**Hermes-Relay** is a native Android client for the Hermes agent platform. Connect to your self-hosted Hermes AI agent and chat, speak, pair, and manage relay sessions directly from your phone.
 
-Built for developers and AI enthusiasts who run their own Hermes agent instance. This is not a hosted AI service — it's a companion app for your own infrastructure.
+Built for developers and AI enthusiasts who run their own Hermes agent instance. This is not a hosted AI service — it is a companion app for your own infrastructure.
 
 ━━━ HOW IT WORKS ━━━
 
-Hermes-Relay connects directly to your Hermes API Server over HTTP/SSE for real-time streaming chat. Point it at your server, optionally scan a QR code to auto-configure, and start talking to your agent.
+Hermes-Relay connects directly to your Hermes API Server over HTTP/SSE for real-time streaming chat. If you also run the Hermes relay service, the app can pair by QR code and use Bridge Core features such as terminal access, voice routes, notification companion, media handoff, and relay-session management.
+
+━━━ GOOGLE PLAY BUILD ━━━
+
+The Google Play build ships **Hermes Bridge Core** only. It does not include AccessibilityService-based Device Control and cannot read your screen, tap, type, swipe, capture screenshots, send SMS, place calls, access contacts or location, or perform unattended phone control.
+
+Device Control is reserved for sideload builds distributed outside Google Play.
 
 ━━━ FEATURES ━━━
 
 ◆ Direct API Streaming
-Chat with your Hermes agent over SSE. Responses stream in token-by-token with animated typing indicators. Send follow-up messages while the agent is still responding.
+Chat with your Hermes agent over SSE. Responses stream token-by-token with animated typing indicators.
 
 ◆ Session Management
-Create, switch, rename, and delete chat sessions. Full message history is preserved per session with auto-generated titles.
+Create, switch, rename, and delete chat sessions. Message history is loaded from your Hermes server on demand.
 
-◆ Rich Rendering
-Full markdown support — syntax-highlighted code blocks, bold, italic, links, and lists. Collapsible reasoning blocks when your agent uses extended thinking.
+◆ Profiles and Personalities
+Switch between configured Hermes profiles and personalities. The active profile context stays visible in chat and voice surfaces.
 
-◆ Personality Picker
-Switch between agent personalities configured on your server. The active personality name appears on chat bubbles so you always know who you're talking to.
+◆ Voice Mode
+Use optional microphone capture for speech-to-text and relay-rendered assistant speech. Voice provider, model, and voice options come from your relay/Hermes configuration.
 
-◆ Command Palette
-Searchable command browser with 29 gateway commands, dynamic personality commands, and server skill discovery. Type "/" in chat for inline autocomplete.
+◆ Bridge Core Pairing
+Scan a relay QR code to configure API and relay endpoints, then manage relay sessions and per-feature grants from the app.
 
-◆ Tool Progress Display
-See what your agent is doing in real time. Configurable tool display (Off / Compact / Detailed) with type-specific icons, duration tracking, and auto-expand/collapse.
+◆ Terminal and TUI Relay
+Use paired relay sessions for terminal/TUI access to your Hermes host when your relay grants allow it.
 
-◆ File Attachments
-Attach images, documents, and other files to your messages. Configurable size limits in Settings.
+◆ Notification Companion
+Optional Android notification access lets Hermes-Relay forward posted-notification metadata to your paired relay so your assistant can summarize recent notifications. You enable or revoke this in Android system settings at any time.
 
-◆ QR Code Pairing
-Run hermes-pair on your server to generate a QR code. Scan it from the app to auto-configure your connection — no manual URL entry needed.
+◆ Media Handoff
+Fetch relay-registered media into chat and share supported media through Android-native flows.
 
 ◆ Stats for Nerds
-Built-in analytics: time-to-first-token, completion times, token usage per message with cost estimates, peak activity times, and stream health. Bar charts rendered on Canvas.
+Built-in local analytics show response timing, token usage, cost estimates, and stream health. These counters stay on your phone.
 
 ◆ Material You Design
-Full Material 3 with dynamic color theming. Light, dark, and system-auto modes. Animated splash screen and haptic feedback throughout.
+Full Material 3 with dynamic color theming, light/dark/system modes, animated splash screen, and haptic feedback.
 
-◆ ASCII Morphing Sphere
-An animated 3D character sphere greets you on the empty chat screen. Toggle ambient fullscreen mode or display it behind messages as a subtle background effect.
+━━━ SECURITY & PRIVACY ━━━
 
-━━━ SECURITY ━━━
-
-• API keys stored in AES-256-GCM encrypted storage
-• HTTPS enforced for remote connections
-• Cleartext permitted only for localhost/LAN development servers
-• No telemetry, no analytics sent externally
-• All data stays between your phone and your server
+• API keys and relay tokens are stored in encrypted Android storage
+• HTTPS is enforced for remote connections
+• Cleartext is permitted only for localhost/LAN development servers
+• No telemetry, no ads, no tracking, no third-party analytics SDKs
+• Notification companion is optional and user-controlled
+• Microphone is optional and requested only when you use Voice mode
+• All app traffic goes only to servers you configure
 
 ━━━ REQUIREMENTS ━━━
 
 • Android 8.0 or later (API 26+)
-• A running Hermes agent instance (https://github.com/NousResearch/hermes-agent)
-• Network access to your server (local network or internet)
+• A running Hermes agent instance
+• Optional Hermes relay service for Bridge Core features
+• Network access to your server (local network, VPN, or internet)
 
 ━━━ OPEN SOURCE ━━━
 
-Hermes-Relay is MIT licensed. Source code, documentation, and issue tracking available on GitHub.
+Hermes-Relay is MIT licensed. Source code, documentation, and issue tracking are available on GitHub.
 
 This app is a community project and is not affiliated with or endorsed by NousResearch.
 
-## Release Notes (v0.7.0)
+## Release Notes
 
-Profiles, voice settings, and realtime voice polish.
-
-• Profile switching now keeps chat/session state separate per Hermes profile
-• Selected agent names stay visible through streamed and finalized replies
-• Voice settings can load and save provider/model/voice choices per profile
-• Smoother voice playback with balanced output coalescing and waveform polish
-• Continuous voice mode start/stop behavior is more predictable
-• Barge-in remains available as an experimental setting with clearer caveats
-• Relay adds profile voice config, provider options, and realtime voice test routes
+Google Play track now ships Bridge Core without AccessibilityService-based Device Control. Chat, voice, terminal, media, notification companion, relay sessions, and QR pairing remain available for paired self-hosted Hermes users.
 
 ## Category
 
@@ -94,4 +92,4 @@ Not designed for children.
 
 ## Tags
 
-ai, agent, hermes, developer tools, chat, self-hosted, open source
+ai, agent, hermes, developer tools, chat, voice, terminal, self-hosted, open source

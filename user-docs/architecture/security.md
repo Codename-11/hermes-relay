@@ -67,7 +67,7 @@ Pairing codes use the full `A-Z / 0-9` alphabet (36 chars). The earlier "no ambi
 
 ## Bridge Security — Five-Stage Safety Gate
 
-The bridge channel gives the agent the ability to read your screen, tap, type, swipe, open apps, and take screenshots. This is powerful and inherently sensitive — treat it with the same caution as remote desktop access. To keep that power bounded, every bridge command must pass five independent gates before a single gesture dispatches:
+The sideload Device Control bridge gives the agent the ability to read your screen, tap, type, swipe, open apps, and take screenshots. This is powerful and inherently sensitive — treat it with the same caution as remote desktop access. The Google Play build ships Bridge Core only and does not include this Device Control surface. On sideload, every Device Control command must pass five independent gates before a single gesture dispatches:
 
 1. **Session grant** — the paired device's session must include a `bridge` channel grant (the TTL and grant matrix chosen at pair time)
 2. **In-app master toggle** — the **Allow Agent Control** switch on the Bridge tab is the user-facing kill switch. Labelled with a `MASTER` pill and "Master switch —" subtitle as of v0.4.1 so its parent-gate role is legible at a glance. Tapping the Switch when the Accessibility grant is missing surfaces a snackbar ("Accessibility Service must be enabled first.") with an "Open Settings" action that deep-links to Android's Accessibility Settings rather than silently dropping the tap.
@@ -88,7 +88,7 @@ The Tier 5 pipeline runs inside `BridgeSafetyManager` on every inbound command:
 
 ### What bypasses the gate
 
-`/ping`, `/current_app`, and `/return_to_hermes` — liveness, introspection, and self-foreground — bypass the master-enable gate so agents and operators can check bridge health and return focus to Hermes without first unlocking actions. On the **googlePlay** flavor, a separate whitelist gate blocks ALL action routes before the master-enable gate even fires — only read-only routes (`/screen`, `/current_app`, `/get_apps`, `/clipboard` GET, `/return_to_hermes`) pass.
+On sideload, `/ping`, `/current_app`, and `/return_to_hermes` — liveness, introspection, and self-foreground — bypass the master-enable gate so agents and operators can check bridge health and return focus to Hermes without first unlocking actions. On the **googlePlay** flavor, only harmless probes such as `/ping`, `/events`, and `/setup` can answer; Device Control commands fail closed with `error_code: device_control_sideload_only`.
 
 ### Sideload-only permissions
 

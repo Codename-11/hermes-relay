@@ -1,19 +1,23 @@
 # Flavor Differences
 
-Hermes-Relay ships as two product flavors from the same codebase: **googlePlay** and **sideload**. Both flavors share the core chat, voice, session, and relay features. They diverge on the bridge channel -- how much control the agent has over the phone.
+Hermes-Relay ships as two product flavors from the same codebase: **googlePlay** and **sideload**. Both share chat, profiles, voice, relay pairing, terminal/TUI relay, media handoff, notification companion, sessions, and status. They diverge on Device Control.
 
-This page documents the technical differences for developers and contributors.
+## Track model
+
+| Flavor | Install ID | Bridge scope |
+|--------|------------|--------------|
+| `googlePlay` | `com.axiomlabs.hermesrelay` | **Bridge Core** only. No AccessibilityService, screen reading, gestures, screenshots, SMS/call/contact/location access, overlays, wake-lock Device Control, or unattended control. |
+| `sideload` | `com.axiomlabs.hermesrelay.sideload` | **Device Control**. Adds AccessibilityService-backed screen reads, taps, typing, screenshots, app launch, clipboard/media control, phone utilities, safety rails, and unattended controls. |
 
 ## Build System
 
-Two product flavors defined in `app/build.gradle.kts` under a single `track` dimension:
+Two product flavors are defined in `app/build.gradle.kts` under the `track` dimension:
 
 ```kotlin
 flavorDimensions += "track"
 productFlavors {
     create("googlePlay") {
         dimension = "track"
-        // No applicationIdSuffix — canonical Play Store install
     }
     create("sideload") {
         dimension = "track"
@@ -23,139 +27,117 @@ productFlavors {
 }
 ```
 
-Both flavors coexist on the same device. The `googlePlay` build installs as `com.axiomlabs.hermesrelay`; the `sideload` build installs as `com.axiomlabs.hermesrelay.sideload`. Users see two launcher icons if both are installed, differentiated by a flavored label suffix in `strings.xml`.
+Both flavors can coexist on the same device.
 
 ## Source Set Layout
 
 ```
 app/src/
-├── main/              # Shared code — all screens, networking, auth, voice, bridge handler
+├── main/              # Shared UI, chat, voice, relay, notification companion
 ├── googlePlay/
-│   ���── AndroidManifest.xml          # Overlay: narrows BridgeForegroundService type
-│   ├── kotlin/.../voice/
-│   │   ├── VoiceBridgeIntentHandlerImpl.kt   # NoopVoiceBridgeIntentHandler
-│   │   └── VoiceBridgeIntentFactory.kt
-│   └── res/
-│       ├── xml/accessibility_service_config.xml   # Conservative config
-│       └── values/strings.xml                     # Play-track labels
+│   ├── AndroidManifest.xml          # Documents the Bridge Core-only Play track
+│   └── kotlin/.../voice/
+│       ├── VoiceBridgeIntentHandlerImpl.kt   # NoopVoiceBridgeIntentHandler
+│       └── VoiceBridgeIntentFactory.kt
 └── sideload/
-    ├── AndroidManifest.xml          # Overlay: adds sideload-only permissions
+    ├── AndroidManifest.xml          # Adds Device Control permissions/services
     ├── kotlin/.../voice/
-    │   ├── VoiceIntentClassifier.kt              # Real regex classifier
-    │   ├── VoiceBridgeIntentHandlerImpl.kt       # RealVoiceBridgeIntentHandler
+    │   ├── VoiceIntentClassifier.kt
+    │   ├── VoiceBridgeIntentHandlerImpl.kt
     │   └── VoiceBridgeIntentFactory.kt
     └── res/
-        ├── xml/accessibility_service_config.xml   # Full agent-control config
-        └── values/strings.xml                     # Sideload-track labels
+        ├── xml/accessibility_service_config.xml
+        └── values/strings.xml
 ```
 
-The `VoiceBridgeIntentHandler` interface lives in `main/` so `VoiceViewModel` can reference it at compile time. Each flavor provides a `createVoiceBridgeIntentHandler()` factory function in `VoiceBridgeIntentFactory.kt`. No reflection.
+The `VoiceBridgeIntentHandler` interface lives in `main/`; each flavor provides the factory implementation.
 
 ## Manifest Split
 
-### Main manifest (both flavors)
+### Main manifest
+
+The shared manifest declares only the app permissions and services needed by both tracks:
 
 ```
-INTERNET, ACCESS_NETWORK_STATE, CAMERA, RECORD_AUDIO, MODIFY_AUDIO_SETTINGS,
-WAKE_LOCK, FOREGROUND_SERVICE, POST_NOTIFICATIONS, SYSTEM_ALERT_WINDOW,
-FOREGROUND_SERVICE_SPECIAL_USE
+INTERNET, ACCESS_NETWORK_STATE, CAMERA, RECORD_AUDIO, MODIFY_AUDIO_SETTINGS
 ```
 
-The `BridgeForegroundService` in main declares `foregroundServiceType="specialUse|mediaProjection"`.
+It also declares the optional notification companion service. It does not declare the accessibility service, Device Control foreground service, overlay permission, wake lock, MediaProjection foreground-service type, contacts, location, SMS, or call permissions.
 
-### Sideload overlay
+### Google Play manifest
 
-Adds permissions that Google Play policy forbids without a default-dialer / default-SMS-app justification:
+The Play manifest does not add Device Control permissions or services. The merged Play manifest should contain no `AccessibilityService`, `BIND_ACCESSIBILITY_SERVICE`, `SYSTEM_ALERT_WINDOW`, `FOREGROUND_SERVICE_SPECIAL_USE`, `WAKE_LOCK`, or `BridgeForegroundService` declaration.
 
-```
-SEND_SMS, CALL_PHONE, READ_CONTACTS,
-ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION,
-FOREGROUND_SERVICE_MEDIA_PROJECTION
-```
+### Sideload manifest
 
-### googlePlay overlay
-
-Narrows the `BridgeForegroundService` foreground service type to `specialUse` only, stripping `mediaProjection` via `tools:replace="android:foregroundServiceType"`. Without this, the merged manifest would carry the `mediaProjection` type from main, and Play review would flag it against the conservative accessibility use-case description.
-
-## Accessibility Service Config
-
-The `AccessibilityService` is declared once in the main manifest. The flavor distinction is purely at the resource layer -- each flavor provides its own `res/xml/accessibility_service_config.xml`.
-
-| Attribute | googlePlay | sideload |
-|-----------|-----------|----------|
-| `accessibilityEventTypes` | `typeWindowStateChanged\|typeWindowContentChanged\|typeViewClicked` | `typeAllMask` |
-| `accessibilityFlags` | `flagDefault` | `flagDefault\|flagRetrieveInteractiveWindows\|flagReportViewIds\|flagRequestTouchExplorationMode` |
-| `canRetrieveWindowContent` | `true` | `true` |
-| `canPerformGestures` | absent (no gestures) | `true` |
-
-The googlePlay config targets the "read notifications, summarize messages, reply with confirmation" use case that Play Store policy review expects. The sideload config enables the full agent-control surface.
-
-## BridgeCommandHandler Route Gate
-
-The googlePlay build has a **fail-closed whitelist** in `BridgeCommandHandler`. Any bridge route not explicitly listed returns `403` with `error_code: sideload_only`. The whitelist:
+The sideload manifest adds the Device Control surface:
 
 ```
-/ping, /screen, /current_app, /get_apps, /apps,
-/clipboard (GET only), /return_to_hermes
+WAKE_LOCK, FOREGROUND_SERVICE, POST_NOTIFICATIONS,
+SYSTEM_ALERT_WINDOW, FOREGROUND_SERVICE_SPECIAL_USE,
+FOREGROUND_SERVICE_MEDIA_PROJECTION,
+READ_CONTACTS, SEND_SMS, CALL_PHONE,
+ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION
 ```
 
-Every new route added to the `when` block defaults to sideload-only on the Play flavor unless explicitly added to this set. This prevents future routes from accidentally widening the Play APK's capability surface.
+It also declares `HermesAccessibilityService`, `BridgeForegroundService`, the AccessibilityService config resource, and package visibility for launchable apps.
 
-Additionally, the sideload-only phone utility routes (`/location`, `/search_contacts`, `/call`, `/send_sms`, `/share_media`, `/send_mms`) have individual `BuildFlavor.isSideload` gates that return `403` with the same `sideload_only` error code, even though they'd also be blocked by the whitelist. Belt and braces.
+## Bridge Status Contract
 
-Clipboard write (`POST /clipboard`) has its own secondary gate inside the `/clipboard` handler because both GET and POST share a path -- the whitelist lets `/clipboard` through for read, and the handler blocks write on googlePlay.
+`BridgeStatusReporter` publishes a flavor-aware `/bridge/status` payload:
 
-## UI Differences
-
-### Bridge tab
-
-| Element | googlePlay | sideload |
-|---------|-----------|----------|
-| Master toggle label | "Enable Bridge Mode" | "Allow Agent Control" |
-| Accessibility subtitle | "Read screen content for chat context" | "Read screen content, dispatch taps/types" |
-| Screen Capture row | Hidden | Visible (MediaProjection consent) |
-| Display Over Apps row | Hidden | Visible (SYSTEM_ALERT_WINDOW) |
-| Overlay permission nag banner | Hidden | Visible when bridge enabled + overlay not granted |
-| Safety summary card | Hidden | Visible (blocklist, destructive verbs, auto-disable timer) |
-| Unattended Access card | Hidden | Visible (gated on master toggle; credential-lock warning inlined) |
-| Unattended global banner | Hidden | Visible on every tab when master + unattended are both on |
-
-The permission checklist always shows the Accessibility Service row and the Notification Listener row on both flavors. Only the Screen Capture and Display Over Apps rows are conditionally visible based on `BuildFlavor.isSideload`. The Sideload-features checklist section (Contacts / SMS / Phone / Location) is hidden on googlePlay entirely.
-
-## Voice Intent Classifier
-
-| Flavor | Handler class | Behavior |
-|--------|--------------|----------|
-| googlePlay | `NoopVoiceBridgeIntentHandler` | Always returns `NotApplicable`. Every voice utterance goes to chat. |
-| sideload | `RealVoiceBridgeIntentHandler` | Runs `VoiceIntentClassifier.classify()`. Recognized intents dispatch locally through the bridge. Unrecognized text falls through to chat. |
-
-Both handlers implement the same `VoiceBridgeIntentHandler` interface. `VoiceViewModel` calls the factory once during `initialize()` and doesn't know which implementation it received.
-
-## BuildFlavor Object
-
-Compile-time flavor gating in Kotlin code uses the `BuildFlavor` object in `data/FeatureFlags.kt`:
-
-```kotlin
-object BuildFlavor {
-    const val GOOGLE_PLAY = "googlePlay"
-    const val SIDELOAD = "sideload"
-    val current: String get() = BuildConfig.FLAVOR
-
-    val isSideload: Boolean get() = current == SIDELOAD
-
-    val bridgeTier1: Boolean = true                      // baseline — both
-    val bridgeTier2: Boolean = true                      // notifications — both
-    val bridgeTier3: Boolean get() = current == SIDELOAD // voice-first
-    val bridgeTier4: Boolean get() = current == SIDELOAD // vision-first
-    val bridgeTier5: Boolean = true                      // safety rails — always
-    val bridgeTier6: Boolean get() = current == SIDELOAD // future ambitious
+```json
+{
+  "phone_connected": true,
+  "bridge": {
+    "device_control_supported": false,
+    "master_enabled": false,
+    "accessibility_granted": false,
+    "screen_capture_granted": false,
+    "overlay_granted": false,
+    "notification_listener_granted": true
+  },
+  "unattended": {
+    "supported": false,
+    "enabled": false
+  }
 }
 ```
 
-Most call sites use `BuildFlavor.isSideload` for simple checks. The `bridgeTier1`--`bridgeTier6` flags are available for finer-grained gating but aren't widely used yet. `current` resolves to a `BuildConfig.FLAVOR` compile-time constant, so R8 folds the comparisons away in release builds.
+On `googlePlay`, `device_control_supported=false` and `unattended.supported=false`. On `sideload`, those fields reflect the real Device Control state.
 
-## Plugin Tool Descriptions
+## Bridge Command Gate
 
-The `android_*` tool registrations in `plugin/android_tool.py` and `plugin/tools/android_tool.py` carry trust-model and denial-retry guidance in their description strings regardless of flavor. The plugin runs server-side and has no compile-time awareness of which flavor the phone is running. When a tool call hits a flavor gate at runtime, the phone returns a `403` with `error_code: sideload_only` and a human-readable message the agent can relay to the user.
+Google Play still registers the bridge channel so direct route probes fail closed quickly. Harmless probes such as `/ping`, `/events`, and `/setup` can answer, but Device Control commands return `403` with `error_code: device_control_sideload_only` before any AccessibilityService-dependent code runs.
 
-This means the agent may attempt to call `android_send_sms`, `android_share_media`, or `android_send_mms` on a googlePlay phone. The structured error response tells the agent the tool isn't available on this build. It should not try to work around the denial by driving the Messages app UI, because those action routes are also gated by the Play route whitelist and return `sideload_only`. The result is fail-safe: sideload-only capabilities can't leak through alternate tool paths on the Play build.
+Sideload builds dispatch commands through `BridgeCommandHandler` after the usual gates: relay session grant, in-app master toggle, AccessibilityService binding, optional MediaProjection consent, blocklist, destructive-verb confirmation, and auto-disable timing.
+
+## UI Differences
+
+| Surface | googlePlay | sideload |
+|---------|------------|----------|
+| Bridge tab | `BridgeCoreScreen`: relay status and links to Connections, Terminal, Voice, Notification Companion, Media, Relay Sessions | `BridgeScreen`: Device Control permissions, master toggle, activity log, safety rails |
+| Settings | No Bridge Safety row | Bridge Safety row visible |
+| Voice bridge intents | `NoopVoiceBridgeIntentHandler`: utterances go to chat | `RealVoiceBridgeIntentHandler`: recognized phone-control intents dispatch locally |
+| Screen capture request | Not installed | Installed for MediaProjection screenshot flow |
+| Unattended access | Not available | Available after explicit sideload opt-in |
+
+## BuildFlavor Object
+
+Compile-time flavor gating in Kotlin code uses `BuildFlavor` in `data/FeatureFlags.kt`. All bridge tiers now map to sideload-only Device Control:
+
+```kotlin
+val isSideload: Boolean get() = current == SIDELOAD
+val bridgeTier1: Boolean get() = current == SIDELOAD
+val bridgeTier2: Boolean get() = current == SIDELOAD
+val bridgeTier3: Boolean get() = current == SIDELOAD
+val bridgeTier4: Boolean get() = current == SIDELOAD
+val bridgeTier5: Boolean get() = current == SIDELOAD
+val bridgeTier6: Boolean get() = current == SIDELOAD
+```
+
+## Plugin Tool Visibility
+
+The server-side `android_*` Device Control tools are registered with a runtime requirement check. Tools other than `android_setup` are visible only when `/bridge/status` reports both `phone_connected=true` and `bridge.device_control_supported=true`.
+
+That means a connected Google Play Bridge Core phone can still show up in relay status and use non-device-control features, but the agent will not see phone-control tools for it.

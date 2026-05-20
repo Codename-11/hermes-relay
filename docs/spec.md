@@ -622,30 +622,30 @@ Wraps the existing relay protocol. When the agent calls `android_*` tools, the t
 
 #### 6.4.1 `android_*` tool surface
 
-Tools register against the Hermes plugin API in `plugin/tools/android_tool.py` (plus `plugin/tools/android_notifications.py`, `plugin/tools/android_navigate.py`). The Python-side tool issues an HTTP request to the relay on loopback; the relay forwards it to the phone over WSS; the phone executes it via the accessibility service and returns a structured response. Flavor gating: tools marked **sideload-only** are gated on `BuildFlavor.current == SIDELOAD` via `FeatureFlags.BuildFlavor` and/or require manifest permissions only declared in `app/src/sideload/AndroidManifest.xml`.
+Tools register against the Hermes plugin API in `plugin/tools/android_tool.py` (plus `plugin/tools/android_notifications.py`, `plugin/tools/android_navigate.py`). The Python-side Device Control tools issue HTTP requests to the relay on loopback; the relay forwards them to the phone over WSS; the sideload phone executes them via the accessibility service and returns structured responses. Google Play phones report `bridge.device_control_supported=false` from `/bridge/status`, so these tools are hidden from the agent and direct command probes fail closed with `error_code: device_control_sideload_only`.
 
 **Baseline (pre-v0.4 — shipped in Phase 3 Wave 1):**
 
 | Tool | HTTP route | Purpose | Flavor |
 |------|-----------|---------|--------|
-| `android_ping` | `GET /ping` | Liveness check — does not require master enable | both |
-| `android_screen` | `GET /screen` | Serialize the accessibility tree → `ScreenContent` | both |
-| `android_screenshot` | `GET /screenshot` | `MediaProjection` PNG → `MEDIA:hermes-relay://<token>` | both |
-| `android_current_app` | `GET /current_app` | Best-effort foregrounded package name; use `/screen` for verification | both |
-| `android_get_apps` (`/apps` legacy) | `GET /get_apps` | Installed launcher apps | both |
-| `android_tap` | `POST /tap` | Tap at `(x, y)` or on resolved `node_id` | both |
-| `android_tap_text` | `POST /tap_text` | Find text via accessibility tree, tap it (see A9 cascade below) | both |
-| `android_type` | `POST /type` | `ACTION_SET_TEXT` on focused input field | both |
-| `android_swipe` | `POST /swipe` | Gesture swipe with direction + distance | both |
-| `android_scroll` | `POST /scroll` | Scroll a specific container (resolves `node_id`) | both |
-| `android_open_app` | `POST /open_app` | Launch an app by package name | both |
-| `android_press_key` | `POST /press_key` | Curated global-action vocab (home/back/recents/notifications/quick_settings) — no raw `KeyEvent` injection | both |
-| `android_wait` | `POST /wait` | Clamped idle — max 15s | both |
+| `android_ping` | `GET /ping` | Liveness check — does not require master enable | sideload Device Control |
+| `android_screen` | `GET /screen` | Serialize the accessibility tree → `ScreenContent` | sideload Device Control |
+| `android_screenshot` | `GET /screenshot` | `MediaProjection` PNG → `MEDIA:hermes-relay://<token>` | sideload Device Control |
+| `android_current_app` | `GET /current_app` | Best-effort foregrounded package name; use `/screen` for verification | sideload Device Control |
+| `android_get_apps` (`/apps` legacy) | `GET /get_apps` | Installed launcher apps | sideload Device Control |
+| `android_tap` | `POST /tap` | Tap at `(x, y)` or on resolved `node_id` | sideload Device Control |
+| `android_tap_text` | `POST /tap_text` | Find text via accessibility tree, tap it (see A9 cascade below) | sideload Device Control |
+| `android_type` | `POST /type` | `ACTION_SET_TEXT` on focused input field | sideload Device Control |
+| `android_swipe` | `POST /swipe` | Gesture swipe with direction + distance | sideload Device Control |
+| `android_scroll` | `POST /scroll` | Scroll a specific container (resolves `node_id`) | sideload Device Control |
+| `android_open_app` | `POST /open_app` | Launch an app by package name | sideload Device Control |
+| `android_press_key` | `POST /press_key` | Curated global-action vocab (home/back/recents/notifications/quick_settings) — no raw `KeyEvent` injection | sideload Device Control |
+| `android_wait` | `POST /wait` | Clamped idle — max 15s | sideload Device Control |
 | `android_setup` | `POST /setup` | Permission bootstrap helper | both |
-| `android_navigate` | (dispatches `/screenshot` + `/tap_text`/`/tap`/`/type`/`/swipe`/`/press_key`) | Tier 4 vision-driven close-the-loop navigation | both |
+| `android_navigate` | (dispatches `/screenshot` + `/tap_text`/`/tap`/`/type`/`/swipe`/`/press_key`) | Tier 4 vision-driven close-the-loop navigation | sideload Device Control |
 | `android_notifications_recent` | `GET /notifications/recent` | Poll the notif-listener ring buffer (loopback-only for Python tool callers) | both |
 
-**v0.4 additions — Tier A (both flavors):**
+**v0.4 additions — Tier A (sideload Device Control):**
 
 | Tool | HTTP route | Purpose |
 |------|-----------|---------|
@@ -660,7 +660,7 @@ Tools register against the Hermes plugin API in `plugin/tools/android_tool.py` (
 | `android_media(action)` | `POST /media` | System-wide media control via `AudioManager.dispatchMediaKeyEvent` + `ACTION_MEDIA_BUTTON` broadcast. Actions: `play` / `pause` / `toggle` / `next` / `previous`. |
 | `android_macro(steps, name, pace_ms)` | (Python-side only) | Pure-Python batched workflow dispatcher. Iterates `steps` (each `{tool, args}`), stops on first failure, returns the full trace. No new HTTP route — dispatches to the existing tool handlers in-process. |
 
-**v0.4 additions — Tier B (both flavors):**
+**v0.4 additions — Tier B (sideload Device Control):**
 
 | Tool | HTTP route | Purpose |
 |------|-----------|---------|
@@ -671,7 +671,7 @@ Tools register against the Hermes plugin API in `plugin/tools/android_tool.py` (
 
 **v0.4 additions — Tier C (sideload-only):**
 
-Tier C tools add runtime permissions or user-mediated system share/compose handoffs that are intentionally scoped to the sideload flavor only. The permissions are declared in `app/src/sideload/AndroidManifest.xml`; the googlePlay manifest does not declare them, and phone-side route gates return structured `403` / `error_code: sideload_only`.
+Tier C tools add runtime permissions or user-mediated system share/compose handoffs that are intentionally scoped to the sideload flavor only. The permissions are declared in `app/src/sideload/AndroidManifest.xml`; the googlePlay manifest does not declare them, and phone-side route gates return structured `403` / `error_code: device_control_sideload_only`.
 
 | Tool | HTTP route | Purpose | Permission |
 |------|-----------|---------|------------|

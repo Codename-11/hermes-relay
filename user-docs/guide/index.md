@@ -1,12 +1,12 @@
 # Hermes-Relay — Android
 
-This section covers the **Android client** for [Hermes Agent](https://hermes-agent.nousresearch.com) — the native phone-control app: chat, voice, the agent reads your screen and acts on it, notifications.
+This section covers the **Android client** for [Hermes Agent](https://hermes-agent.nousresearch.com): chat, voice, relay pairing, terminal/TUI relay, notifications, and optional sideload Device Control.
 
 ::: tip Looking for the desktop CLI?
 The desktop terminal client (Windows / macOS / Linux) lives in its own section: **[Desktop CLI →](/desktop/)**. Both clients pair against the same Hermes-Relay server and share `~/.hermes/remote-sessions.json` — pair once from either, both work.
 :::
 
-Hermes-Relay is a native Android app for [Hermes Agent](https://hermes-agent.nousresearch.com). Chat with your agent, manage sessions, and — in future phases — control your phone via the device bridge and access a remote terminal.
+Hermes-Relay is a native Android app for [Hermes Agent](https://hermes-agent.nousresearch.com). Chat with your agent, manage sessions, use voice, pair to the relay, and access remote terminal/TUI surfaces. The Google Play build ships Bridge Core only; sideload builds add AccessibilityService-backed Device Control.
 
 ## Quick Install
 
@@ -34,10 +34,10 @@ The uninstaller is idempotent and never touches state shared with other Hermes t
 
 ```
 Phone (HTTP/SSE) → Hermes API Server (:8642)   [chat — direct]
-Phone (WSS/HTTP) → Relay Server (:8767)        [bridge, terminal, TUI, media, voice]
+Phone (WSS/HTTP) → Relay Server (:8767)        [Bridge Core, terminal, TUI, media, voice]
 ```
 
-Chat connects directly to the Hermes API Server using the Sessions API with SSE streaming. The relay server handles bridge, terminal, TUI, media, Android-control, and `/voice/*` routes.
+Chat connects directly to the Hermes API Server using the Sessions API with SSE streaming. The relay server handles Bridge Core, terminal, TUI, media, notification companion, sessions, and `/voice/*` routes. Sideload builds additionally expose Android Device Control routes.
 
 ## Current Status — v0.4.0
 
@@ -54,8 +54,9 @@ Chat connects directly to the Hermes API Server using the Sessions API with SSE 
 | Tool progress cards (Off/Compact/Detailed) | Complete |
 | In-app analytics (Stats for Nerds) | Complete |
 | Animated splash screen | Complete |
-| Terminal (remote shell) | Beta (sideload track) |
-| Bridge (device control) | Beta (sideload track) |
+| Terminal/TUI relay | Beta |
+| Bridge Core | Complete |
+| Device Control | Beta (sideload track) |
 
 ## Quick Links
 

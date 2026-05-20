@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Google Play Bridge Core split.** The Google Play Android track now keeps relay pairing, chat, voice, terminal/TUI, media, notification companion, relay sessions, and status while removing AccessibilityService-backed Device Control declarations and permissions. Sideload remains the track for screen reading, gestures, screenshots, SMS/calls, contacts/location, overlays, wake locks, and unattended control.
+
 ## [0.7.0] - 2026-05-19
 
 ### Added
