@@ -164,6 +164,9 @@ android {
     // both failing with RuntimeException from unmocked Log.w calls.
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // Robolectric (VoicePlayerTest) needs merged Android resources +
+        // manifest on the unit-test classpath to bootstrap its sandbox.
+        unitTests.isIncludeAndroidResources = true
     }
 }
 
@@ -257,6 +260,7 @@ dependencies {
     // Testing
     testImplementation(libs.junit)
     testImplementation(libs.mockk)
+    testImplementation(libs.robolectric)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.kotlinx.serialization.json)
     // MockWebServer for ADR 24 EndpointResolver tests — probes HEAD /health
