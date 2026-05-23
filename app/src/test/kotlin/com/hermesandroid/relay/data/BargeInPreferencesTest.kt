@@ -4,18 +4,16 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
-import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -30,7 +28,6 @@ import java.io.File
  * test pattern and is why [BargeInPreferencesRepository] exposes a
  * `DataStore<Preferences>`-accepting constructor alongside the Context one.
  */
-@Ignore("Tracked in GitHub issue #32 — voice test suite validation deferred (DataStore scope may collect flows that don't terminate in runTest)")
 class BargeInPreferencesTest {
 
     @get:Rule
@@ -42,7 +39,15 @@ class BargeInPreferencesTest {
 
     @Before
     fun setUp() {
-        scope = TestScope(StandardTestDispatcher() + Job())
+        // DataStore's internal reader/writer actor runs on this scope. It
+        // must be a REAL dispatcher, not a StandardTestDispatcher: the latter
+        // only runs queued work when its scheduler is advanced, and nothing
+        // here advances it — so dataStore.data would never emit and
+        // repo.flow.first() would suspend forever (the indefinite hang that
+        // got this class deferred under issue #32). The test bodies still use
+        // runTest{}; the suspend calls complete against the real IO scope well
+        // within runTest's dispatch timeout.
+        scope = CoroutineScope(Dispatchers.IO + Job())
         val file: File = tempFolder.newFile("barge_in_test.preferences_pb")
         // We want a fresh empty store — delete the newFile() sentinel so
         // PreferenceDataStoreFactory starts from clean state each test.

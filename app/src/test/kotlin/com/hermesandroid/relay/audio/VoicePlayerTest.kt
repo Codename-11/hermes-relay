@@ -21,8 +21,10 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
-import org.junit.Ignore
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.io.File
 
 /**
@@ -48,24 +50,23 @@ import java.io.File
  * Objenesis to load the `ExoPlayer` class, and its static init chain
  * references `android.os.Looper` which isn't available on the pure JVM.
  *
- * TODO(2026-04-18): `@Ignore`d pending follow-up PR. Tried Robolectric
- * 4.14.1 with `@RunWith(RobolectricTestRunner::class)` + `@Config(sdk=34)`
- * + `forkEvery=1` — the test itself passed in isolation (2m53s) but
- * the full unit-test suite hung indefinitely at
- * `:app:testGooglePlayDebugUnitTest`, both locally and in CI. Robolectric's
- * shadow classloader appears to leak into sibling test JVMs in ways
- * `forkEvery=1` didn't resolve. Clean fix is a separate Gradle test task
- * or source set that runs only Robolectric-annotated tests — deferred
- * because the v0.5.1 release blocks on this.
+ * Runs under [RobolectricTestRunner] so `android.os.Looper` (pulled in by
+ * ExoPlayer's static init when MockK/Objenesis loads the class) resolves
+ * against Robolectric's sandbox instead of throwing
+ * `ExceptionInInitializerError` on the bare JVM classpath. `@Config(sdk=[34])`
+ * pins the emulated SDK to a Robolectric-4.14.1-supported level (the app
+ * compiles against a newer SDK, but the test only needs a working Looper).
  *
- * Tracked in GitHub issue (opened alongside this PR) and in the memory
- * `deferred_items.md` entry — search for "VoicePlayerTest Robolectric".
- * When the follow-up lands, delete `@Ignore` and add the Robolectric
- * annotations back. The test source itself is correct and passes under
- * Robolectric; only the test-infra wiring needs finishing.
+ * History (GitHub issue #32): a prior un-ignore attempt blamed Robolectric's
+ * shadow classloader for hanging the full suite under `forkEvery=1`. The
+ * real culprit was an unrelated DataStore deadlock in `BargeInPreferencesTest`
+ * (a never-pumped `StandardTestDispatcher` scope); once that was fixed this
+ * test runs cleanly in the normal `test` source set with no isolation
+ * gymnastics required.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
-@Ignore("Tracked in GitHub issue #32 — Robolectric wiring hangs full suite; fix via separate source set")
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
 class VoicePlayerTest {
 
     private lateinit var context: Context
