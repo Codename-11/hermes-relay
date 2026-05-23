@@ -1,5 +1,28 @@
 # Hermes-Relay — Dev Log
 
+## 2026-05-23 — Un-defer the voice/audio test suite (issue #32) + barge-in resume bug
+
+**Context.** GitHub issue #32 tracked 5 voice/audio unit tests `@Ignore`'d during the v0.5.1 release because the full `:app:testGooglePlayDebugUnitTest` task "hung indefinitely." Scope had quietly grown to **8** ignored classes (3 of the "pure-logic, should-work" ones got swept in defensively). Branch `fix/voice-test-suite`.
+
+**Root-cause of the hang.** Not Robolectric's classloader (the v0.5.1 hypothesis) — it was `BargeInPreferencesTest` building its DataStore on a `TestScope(StandardTestDispatcher() + Job())` whose scheduler is **never advanced**. DataStore's reader actor never ran, so `repo.flow.first()` suspended forever. Fixed by backing the DataStore with a real dispatcher scope (`CoroutineScope(Dispatchers.IO + Job())`); the `runTest{}` bodies still drive the suspend calls within the dispatch timeout.
+
+**Real product bug found (not just test infra).** Un-ignoring `VoiceViewModelBargeInTest` surfaced a genuine regression: the barge-in **"resume after interruption"** feature was silently broken. `onBargeInDetected()` → `interruptSpeaking()` → `startTtsConsumer()` restarts the play worker, which immediately hits an empty `audioQueue`, fires `onQueueDrained` → `clearSpokenChunksState()` **synchronously** (on `Dispatchers.Main.immediate`) — wiping `spokenChunks` before the 600 ms resume watchdog reads it. The watchdog always saw an empty tail and dropped the resume. Fixed by snapshotting the un-played tail (`pendingResumeTail`) synchronously in `onBargeInDetected()`, the instant the interrupt fires, instead of re-reading live state later.
+
+**VoicePlayerTest / Robolectric.** No separate source set needed (the issue's proposed Phase 3). The "Robolectric leaks across forks and hangs the suite" symptom was a misattribution of the DataStore hang. With that fixed, VoicePlayerTest runs cleanly in the normal `test` source set under `@RunWith(RobolectricTestRunner) @Config(sdk=[34])` — added `robolectric 4.14.1` (testImplementation) + `unitTests.isIncludeAndroidResources = true`.
+
+**Result.** All 8 issue-#32 classes un-ignored and green. Full suite: **525 completed, 12 skipped, 0 failed, no hang (~30 s)**. The 12 skipped are unrelated pre-existing `@Ignore`s (`ConnectionStoreTest` et al.).
+
+**Also fixed (pre-existing failures surfaced while greening the suite):**
+
+- **`CardDispatchSyncBuilder` bug** — `buildSyntheticMessages` short-circuited on `msg.cards.isEmpty()`, silently dropping dispatches whose card was trimmed from the rolling buffer. This directly contradicted the SUT's own docstring (and `CardDispatchSyncBuilderTest.buildSyntheticMessages_unknownCardKey_stillEmitsBareEnvelope`), which require a bare-envelope audit record in that case. Fixed the guard to gate on `cardDispatches.isEmpty()` only; the `card == null` fallback already handles the missing-card path.
+- **4 lint errors in sideload-only bridge code compiled into googlePlay.** `NotificationPermission` (`AutoDisableWorker`) — the real `hasPostNotificationsPermission()` early-return guard was already correct; the existing `@SuppressLint("MissingPermission")` just used the wrong ID, so added `"NotificationPermission"`. `ForegroundServiceType` ×3 (`BridgeForegroundService`) — the service + its `FOREGROUND_SERVICE_*`/`POST_NOTIFICATIONS` permissions are declared only in the **sideload** manifest; googlePlay deliberately omits them (no device-control, Play-Store compliance), making the code unreachable there. Suppressed with a justification rather than weakening googlePlay.
+
+**Verified.** `:app:testGooglePlayDebugUnitTest` green (0 failures); `:app:lint` green (0 errors).
+
+**Next.** Commit, merge `fix/voice-test-suite` → `dev`, close issue #32.
+
+---
+
 ## 2026-05-19 — Experimental Realtime Hermes Voice Agent
 
 **Plan.** [docs/plans/2026-05-19-realtime-hermes-voice-agent.md](docs/plans/2026-05-19-realtime-hermes-voice-agent.md) — add a switchable Android voice engine that brokers a realtime provider session (OpenAI first, xAI ready) while keeping Hermes as authority for profiles, sessions, memory, tool execution, Android bridge safety, confirmations, and cancellation. Stable `Hermes chat + voice output` remains the default and is untouched.
