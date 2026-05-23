@@ -599,6 +599,20 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      */
     private var lastInterruptedAtChunkIndex: Int? = null
 
+    /**
+     * Un-played [spokenChunks] tail captured synchronously the instant a
+     * barge-in interrupt fires, before [interruptSpeaking] runs. This MUST
+     * be snapshotted here rather than re-read by the resume watchdog 600 ms
+     * later: [interruptSpeaking] restarts the TTS consumer, whose play
+     * worker immediately hits an empty audioQueue and fires
+     * `onQueueDrained` → [clearSpokenChunksState] synchronously (on
+     * `Dispatchers.Main.immediate`). That clears [spokenChunks] long before
+     * the watchdog reads it, so reading live state would always yield an
+     * empty tail and silently drop the resume (regression caught by
+     * `VoiceViewModelBargeInTest`, GitHub issue #32).
+     */
+    private var pendingResumeTail: List<String> = emptyList()
+
     /** True while TTS volume is ducked from a `maybeSpeech` event. */
     @Volatile private var isDucked: Boolean = false
 
@@ -2859,6 +2873,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         if (isBargeInStartupGuardActive()) return
         duckingWatchdog?.cancel(); duckingWatchdog = null
         lastInterruptedAtChunkIndex = _currentPlayingChunkIndex.value
+        // Snapshot the un-played tail NOW, before interruptSpeaking restarts
+        // the consumer and its play worker clears spokenChunks out from under
+        // the resume watchdog. See [pendingResumeTail].
+        val resumeStartIdx = (lastInterruptedAtChunkIndex ?: -1) + 1
+        pendingResumeTail = synchronized(spokenChunks) {
+            val snapshot = spokenChunks.toList()
+            if (resumeStartIdx in snapshot.indices) snapshot.drop(resumeStartIdx) else emptyList()
+        }
         _voiceStats.update { it.copy(bargeInCount = it.bargeInCount + 1) }
         Log.i(TAG, "Barge-in detected; interrupting speech at chunk=$lastInterruptedAtChunkIndex")
 
@@ -2968,10 +2990,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
 
-            // Silence + resume enabled → re-enqueue un-played chunks.
-            val startIdx = (lastInterruptedAtChunkIndex ?: -1) + 1
-            val snapshot: List<String> = synchronized(spokenChunks) { spokenChunks.toList() }
-            val tail = if (startIdx in snapshot.indices) snapshot.drop(startIdx) else emptyList()
+            // Silence + resume enabled → re-enqueue un-played chunks. The
+            // tail was snapshotted synchronously in [onBargeInDetected]; we
+            // can't re-read [spokenChunks] here because interruptSpeaking's
+            // consumer restart has already cleared it (see [pendingResumeTail]).
+            val tail = pendingResumeTail
 
             // Cancel the recorder that was pre-warmed for a user turn
             // that didn't materialize.
