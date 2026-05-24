@@ -941,6 +941,26 @@ fun VoiceSettingsScreen(
                             },
                         )
                     }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Persistent session", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                text = "Keep one provider conversation open across turns. Turn off to fall back to a fresh session per utterance.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = voiceSettings.realtimePersistentSession,
+                            onCheckedChange = { enabled ->
+                                scope.launch { prefsRepo.setRealtimePersistentSession(enabled) }
+                            },
+                        )
+                    }
                     Spacer(Modifier.height(4.dp))
                     ProviderRow(
                         label = "Status",
