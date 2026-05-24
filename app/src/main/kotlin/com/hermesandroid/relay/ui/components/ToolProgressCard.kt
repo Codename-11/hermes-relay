@@ -201,6 +201,7 @@ fun ToolProgressCard(
 
                     // Error (tool.failed)
                     toolCall.error?.let { error ->
+                        val preview = compactToolDetail(error)
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = "Error:",
@@ -208,7 +209,7 @@ fun ToolProgressCard(
                             color = MaterialTheme.colorScheme.error
                         )
                         Text(
-                            text = error,
+                            text = preview,
                             style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                             color = MaterialTheme.colorScheme.error,
                             modifier = Modifier.padding(top = 2.dp)
@@ -217,6 +218,7 @@ fun ToolProgressCard(
 
                     // Result
                     toolCall.result?.let { result ->
+                        val preview = compactToolDetail(result)
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = "Result:",
@@ -224,7 +226,7 @@ fun ToolProgressCard(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = result,
+                            text = preview,
                             style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                             modifier = Modifier.padding(top = 2.dp)
                         )
@@ -244,4 +246,12 @@ internal fun toolIcon(toolName: String): ImageVector = when {
     toolName.contains("file") || toolName.contains("read") || toolName.contains("write") -> Icons.Filled.Description
     toolName.contains("search") || toolName.contains("web") -> Icons.Filled.Search
     else -> Icons.Filled.Build
+}
+
+internal fun compactToolDetail(value: String, maxChars: Int = 700): String {
+    val compact = value
+        .replace(Regex("\\s+"), " ")
+        .trim()
+    if (compact.length <= maxChars) return compact
+    return compact.take(maxChars.coerceAtLeast(80)).trimEnd() + "..."
 }

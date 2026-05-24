@@ -79,7 +79,17 @@ data class ChatMessage(
      * to true via [com.hermesandroid.relay.network.handlers.ChatHandler.markVoiceIntentsSynced]
      * so they're not re-sent on the next turn.
      */
-    val voiceIntent: VoiceIntentTrace? = null
+    val voiceIntent: VoiceIntentTrace? = null,
+    /**
+     * Provider-native Realtime Agent turns can answer without calling Hermes.
+     * Those local-only assistant turns need to be spliced into the next Hermes
+     * chat/run payload so switching back to normal chat preserves context.
+     *
+     * Hermes-backed realtime turns leave this null because Hermes already owns
+     * the durable session turn; the provider's spoken summary is UI/runtime
+     * provenance, not another canonical assistant message.
+     */
+    val realtimeTurn: RealtimeTurnTrace? = null
 )
 
 /**
@@ -128,6 +138,24 @@ data class VoiceIntentTrace(
     val argumentsJson: String,
     val success: Boolean,
     val resultJson: String,
+    val syncedToServer: Boolean = false,
+)
+
+/**
+ * Local provider-native realtime turn that has not necessarily been absorbed
+ * into the Hermes session yet.
+ *
+ * Stored on the assistant message so the next normal chat send can emit a
+ * compact OpenAI-format user/assistant pair before the live user message. This
+ * keeps Realtime Agent and Hermes Chat + Voice Output as one conversation even
+ * when the realtime provider answered directly.
+ */
+data class RealtimeTurnTrace(
+    val userText: String,
+    val assistantText: String,
+    val provider: String? = null,
+    val model: String? = null,
+    val voice: String? = null,
     val syncedToServer: Boolean = false,
 )
 

@@ -8,12 +8,15 @@ import unittest
 from typing import Any
 from unittest.mock import patch
 
+import aiohttp
+
 from plugin.relay.realtime_agent.models import (
     HERMES_TOOL_SURFACE,
     ProviderEventKind,
     RealtimeAgentSessionConfig,
 )
 from plugin.relay.realtime_agent.providers.openai import OpenAIRealtimeAgentProvider
+from plugin.voice_lab.providers.base import ProviderUnavailable
 
 
 class FakeOpenAISocket:
@@ -35,6 +38,57 @@ class FakeOpenAISocket:
 
 
 class OpenAIRealtimeAgentProviderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_auth_handshake_failure_reports_reauth_action(self) -> None:
+        async def factory(url: str, headers: dict[str, str], timeout: float):
+            raise aiohttp.WSServerHandshakeError(
+                None,
+                (),
+                status=403,
+                message="Invalid response status",
+            )
+
+        provider = OpenAIRealtimeAgentProvider(socket_factory=factory)
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(
+                ProviderUnavailable,
+                "Update the relay-side OpenAI realtime provider credentials",
+            ):
+                await provider.connect(
+                    RealtimeAgentSessionConfig(
+                        provider="openai_realtime",
+                        model="gpt-realtime-2",
+                        voice="marin",
+                        sample_rate=24000,
+                        profile="victor",
+                        hermes_session_id="chat-123",
+                        provider_options={"api_key": "openai-test"},
+                    )
+                )
+
+    async def test_default_instructions_allow_brief_hermes_acknowledgement(self) -> None:
+        fake_socket = FakeOpenAISocket()
+
+        async def factory(url: str, headers: dict[str, str], timeout: float):
+            return fake_socket
+
+        provider = OpenAIRealtimeAgentProvider(socket_factory=factory)
+        with patch.dict(os.environ, {}, clear=True):
+            await provider.connect(
+                RealtimeAgentSessionConfig(
+                    provider="openai_realtime",
+                    model="gpt-realtime-2",
+                    voice="marin",
+                    sample_rate=24000,
+                    profile="victor",
+                    hermes_session_id="chat-123",
+                    provider_options={"api_key": "openai-test"},
+                )
+            )
+
+        instructions = fake_socket.sent[0]["session"]["instructions"]
+        self.assertIn("You may speak one brief acknowledgement", instructions)
+        self.assertNotIn("do not speak or emit acknowledgement text", instructions)
+
     async def test_connect_sends_session_update_with_pcm_manual_turns_and_hermes_tools(
         self,
     ) -> None:
@@ -198,7 +252,17 @@ class OpenAIRealtimeAgentProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fake_socket.sent[-1], {"type": "response.create"})
 
         await connection.commit_audio()
-        self.assertEqual(fake_socket.sent[-2], {"type": "input_audio_buffer.commit"})
+        self.assertEqual(fake_socket.sent[-1], {"type": "input_audio_buffer.commit"})
+
+        await connection.send_text("Say a short settings test.")
+        self.assertEqual(fake_socket.sent[-2]["type"], "conversation.item.create")
+        item = fake_socket.sent[-2]["item"]
+        self.assertEqual(item["type"], "message")
+        self.assertEqual(item["role"], "user")
+        self.assertEqual(
+            item["content"],
+            [{"type": "input_text", "text": "Say a short settings test."}],
+        )
         self.assertEqual(fake_socket.sent[-1], {"type": "response.create"})
 
         await connection.cancel_response()

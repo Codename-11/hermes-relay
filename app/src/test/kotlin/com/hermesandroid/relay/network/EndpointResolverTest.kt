@@ -189,7 +189,7 @@ class EndpointResolverTest {
         )
 
         // Stage 3: advance past TTL + re-probe. Now the server's 200 lands.
-        clockMillis.set(EndpointResolver.CACHE_TTL_MS + 1_000L)
+        clockMillis.set(EndpointResolver.NEGATIVE_CACHE_TTL_MS + 1_000L)
         val third = resolver.resolve(listOf(lan))
         assertNotNull("after TTL expiry, resolver re-probes and sees 200", third)
         assertTrue(

@@ -103,6 +103,16 @@ class AuthManager(
          */
         const val CONNECTION_ID_LEGACY: String = "legacy"
 
+        internal fun shouldPreservePairedSessionOnAuthFail(
+            currentState: AuthState,
+            rawReason: String,
+        ): Boolean {
+            val lower = rawReason.lowercase()
+            return currentState is AuthState.Paired &&
+                "timeout" in lower &&
+                ("auth" in lower || "authentication" in lower)
+        }
+
         /**
          * Best-effort read of a connection's stored device id without making
          * that connection active. Used by the connection removal path so it
@@ -888,6 +898,13 @@ class AuthManager(
                 ?: "Unknown error"
             val humanized = humanizeAuthFailReason(rawReason)
             Log.w(TAG, "handleAuthFail: raw=$rawReason humanized=$humanized")
+            if (shouldPreservePairedSessionOnAuthFail(_authState.value, rawReason)) {
+                Log.w(
+                    TAG,
+                    "handleAuthFail: preserving paired session after transient auth timeout"
+                )
+                return
+            }
             clearPendingPairContextAfterAuthFailure(rawReason)
             _authState.value = AuthState.Failed(humanized)
         } catch (e: Exception) {

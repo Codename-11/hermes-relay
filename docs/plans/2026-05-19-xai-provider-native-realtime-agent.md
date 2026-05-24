@@ -105,6 +105,11 @@ Implement `XAIRealtimeAgentConnection` first.
 - Map xAI transcript events to `voice.input_transcript.delta/final`.
 - Map xAI audio deltas to `voice.output_audio.delta` with peak/RMS levels for the waveform.
 - Map xAI function calls to `HermesToolBroker`; do not execute raw Android or Hermes internals directly from provider arguments.
+- For Hermes-required turns, keep the provider-native loop intact: the relay
+  should request a normal provider response, the provider may speak one short
+  pre-Hermes acknowledgement, and the provider should then call
+  `hermes_run_task`. Do not replace this healthy path with relay-injected text
+  prompts or local `/voice/output` TTS status speech.
 - After a Hermes tool result, send `function_call_output`, then wait for Android playback-drained or broker-safe timing before `response.create`.
 
 ## Hermes Tool Loop

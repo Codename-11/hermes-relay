@@ -39,7 +39,6 @@ import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.CardDefaults
@@ -89,7 +88,6 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.purpleGlow
 import com.hermesandroid.relay.ui.theme.radialNavyBackground
 import com.hermesandroid.relay.network.ChatMode
-import com.hermesandroid.relay.network.ConnectivityObserver
 import com.hermesandroid.relay.network.RelayVoiceClient
 import com.hermesandroid.relay.network.RealtimeVoiceConfig
 import com.hermesandroid.relay.network.VoiceOutputConfig
@@ -276,7 +274,6 @@ fun ChatScreen(
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
     val serverModelName by chatViewModel.serverModelName.collectAsState()
-    val networkStatus by connectionViewModel.networkStatus.collectAsState()
     val showThinking by connectionViewModel.showThinking.collectAsState()
     val toolDisplay by connectionViewModel.toolDisplay.collectAsState()
     val smoothAutoScroll by connectionViewModel.smoothAutoScroll.collectAsState()
@@ -1030,34 +1027,6 @@ fun ChatScreen(
                     containerColor = MaterialTheme.colorScheme.surface
                 )
             )
-
-            // Offline banner
-            AnimatedVisibility(
-                visible = networkStatus is ConnectivityObserver.Status.Lost ||
-                    networkStatus is ConnectivityObserver.Status.Unavailable
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.errorContainer)
-                        .padding(8.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        Icons.Filled.WifiOff,
-                        contentDescription = "No internet",
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.onErrorContainer
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        "No internet connection",
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            }
 
             // Error banner with retry
             AnimatedVisibility(visible = error != null) {

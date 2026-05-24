@@ -31,6 +31,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.GraphicEq
@@ -38,6 +39,7 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -48,6 +50,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -70,6 +73,7 @@ import com.hermesandroid.relay.viewmodel.DestructiveCountdownState
 import com.hermesandroid.relay.viewmodel.HermesConfirmationState
 import com.hermesandroid.relay.viewmodel.InteractionMode
 import com.hermesandroid.relay.viewmodel.PermissionDeniedCallout
+import com.hermesandroid.relay.viewmodel.VoiceHandoffStatus
 import com.hermesandroid.relay.viewmodel.VoiceState
 import com.hermesandroid.relay.viewmodel.VoiceUiState
 import kotlinx.coroutines.flow.SharedFlow
@@ -284,6 +288,19 @@ fun VoiceModeOverlay(
                         .padding(horizontal = 32.dp, vertical = 8.dp),
                 )
 
+                AnimatedVisibility(
+                    visible = uiState.handoffStatus != null,
+                    enter = fadeIn(tween(140)),
+                    exit = fadeOut(tween(180)),
+                ) {
+                    VoiceHandoffStrip(
+                        status = uiState.handoffStatus,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp, vertical = 4.dp),
+                    )
+                }
+
                 Spacer(Modifier.height(8.dp))
 
                 DestructiveCountdownRow(
@@ -423,7 +440,7 @@ fun VoiceModeOverlay(
         // Listening → tap stops recording (feeds the audio to STT)
         // Speaking  → tap interrupts TTS and starts fresh recording
         // Idle/Error → tap starts recording
-        // Transcribing/Thinking → tap is a no-op; the state machine is busy
+        // Transcribing/Thinking → tap cancels the in-flight realtime turn
         //
         // The bug before was that Listening fell through to the else branch
         // which called onMicTap (= startListening) a second time instead of
@@ -432,44 +449,43 @@ fun VoiceModeOverlay(
         VoiceMicButton(
             uiState = uiState,
             onTap = {
-                when (uiState.state) {
-                    VoiceState.Listening -> {
-                        try {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        } catch (_: Exception) { /* ignore */ }
-                        if (uiState.interactionMode == InteractionMode.Continuous) {
-                            onPauseAutoMode()
-                        } else {
-                            onMicRelease()
-                        }
-                    }
-                    VoiceState.Speaking -> {
-                        if (uiState.interactionMode == InteractionMode.Continuous) {
-                            onPauseAutoMode()
-                        } else {
-                            onInterrupt()
-                        }
-                    }
-                    VoiceState.Transcribing, VoiceState.Thinking -> {
-                        if (uiState.interactionMode == InteractionMode.Continuous) {
-                            onPauseAutoMode()
-                        }
-                    }
-                    VoiceState.Idle, VoiceState.Error -> {
+                dispatchVoiceMicTap(
+                    uiState = uiState,
+                    onStartListening = {
                         try {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         } catch (_: Exception) { /* ignore */ }
                         onMicTap()
-                    }
-                }
+                    },
+                    onStopListening = {
+                        try {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        } catch (_: Exception) { /* ignore */ }
+                        onMicRelease()
+                    },
+                    onInterrupt = onInterrupt,
+                    onPauseAutoMode = onPauseAutoMode,
+                )
             },
-            onPress = {
-                try {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                } catch (_: Exception) { /* ignore */ }
-                onMicTap()
+            onHoldPress = {
+                dispatchVoiceMicHoldPress(
+                    uiState = uiState,
+                    onStartListening = {
+                        try {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        } catch (_: Exception) { /* ignore */ }
+                        onMicTap()
+                    },
+                    onInterruptAndStart = {
+                        try {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        } catch (_: Exception) { /* ignore */ }
+                        onInterrupt()
+                        onMicTap()
+                    },
+                )
             },
-            onRelease = {
+            onHoldRelease = {
                 try {
                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 } catch (_: Exception) { /* ignore */ }
@@ -487,8 +503,8 @@ fun VoiceModeOverlay(
 private fun VoiceMicButton(
     uiState: VoiceUiState,
     onTap: () -> Unit,
-    onPress: () -> Unit,
-    onRelease: () -> Unit,
+    onHoldPress: () -> Unit,
+    onHoldRelease: () -> Unit,
     modifier: Modifier = Modifier,
     visible: Boolean = true,
     baseSize: Int = 72,
@@ -516,34 +532,34 @@ private fun VoiceMicButton(
     val containerColor = when (uiState.state) {
         VoiceState.Listening -> Color(0xFFE53935)
         VoiceState.Speaking -> Color(0xFFE53935)
-        VoiceState.Transcribing, VoiceState.Thinking ->
-            if (uiState.interactionMode == InteractionMode.Continuous) Color(0xFFE53935)
-            else MaterialTheme.colorScheme.primary
+        VoiceState.Transcribing, VoiceState.Thinking -> Color(0xFFE53935)
         VoiceState.Error -> MaterialTheme.colorScheme.errorContainer
         else -> MaterialTheme.colorScheme.primary
     }
 
     val icon = when (uiState.state) {
         VoiceState.Listening -> Icons.Filled.Stop
-        VoiceState.Transcribing, VoiceState.Thinking ->
-            if (uiState.interactionMode == InteractionMode.Continuous) Icons.Filled.Stop
-            else Icons.Filled.GraphicEq
+        VoiceState.Transcribing, VoiceState.Thinking -> Icons.Filled.Stop
         // Stop icon makes the "tap to interrupt TTS" affordance obvious;
         // VolumeUp looked decorative and users didn't try tapping it.
         VoiceState.Speaking -> Icons.Filled.Stop
         else -> Icons.Filled.Mic
     }
 
+    val currentOnTap by rememberUpdatedState(onTap)
+    val currentOnHoldPress by rememberUpdatedState(onHoldPress)
+    val currentOnHoldRelease by rememberUpdatedState(onHoldRelease)
+
     val gestureModifier = when (uiState.interactionMode) {
         InteractionMode.HoldToTalk -> Modifier.pointerInput(Unit) {
             awaitEachGesture {
                 awaitFirstDown()
-                onPress()
+                currentOnHoldPress()
                 waitForUpOrCancellation()
-                onRelease()
+                currentOnHoldRelease()
             }
         }
-        else -> Modifier.clickable { onTap() }
+        else -> Modifier.clickable { currentOnTap() }
     }
 
     Surface(
@@ -707,7 +723,26 @@ private fun VoiceSessionPill(
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(20.dp),
                 )
+                IconButton(
+                    onClick = onExit,
+                    modifier = Modifier.size(36.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "Exit voice mode",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
             }
+
+            VoiceHandoffStrip(
+                status = uiState.handoffStatus,
+                compact = !expanded,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+            )
 
             AnimatedVisibility(visible = expanded) {
                 Column(
@@ -785,29 +820,73 @@ private fun CompactVoiceMicButton(
     VoiceMicButton(
         uiState = uiState,
         onTap = {
-            when (uiState.state) {
-                VoiceState.Listening -> {
-                    if (uiState.interactionMode == InteractionMode.Continuous) {
-                        onPauseAutoMode()
-                    } else {
-                        onMicRelease()
-                    }
-                }
-                VoiceState.Speaking, VoiceState.Transcribing, VoiceState.Thinking -> {
-                    if (uiState.interactionMode == InteractionMode.Continuous) {
-                        onPauseAutoMode()
-                    } else {
-                        onInterrupt()
-                    }
-                }
-                VoiceState.Idle, VoiceState.Error -> onMicTap()
-            }
+            dispatchVoiceMicTap(
+                uiState = uiState,
+                onStartListening = onMicTap,
+                onStopListening = onMicRelease,
+                onInterrupt = onInterrupt,
+                onPauseAutoMode = onPauseAutoMode,
+            )
         },
-        onPress = onMicTap,
-        onRelease = onMicRelease,
+        onHoldPress = {
+            dispatchVoiceMicHoldPress(
+                uiState = uiState,
+                onStartListening = onMicTap,
+                onInterruptAndStart = {
+                    onInterrupt()
+                    onMicTap()
+                },
+            )
+        },
+        onHoldRelease = onMicRelease,
         baseSize = 40,
         iconSize = 20,
     )
+}
+
+internal fun dispatchVoiceMicTap(
+    uiState: VoiceUiState,
+    onStartListening: () -> Unit,
+    onStopListening: () -> Unit,
+    onInterrupt: () -> Unit,
+    onPauseAutoMode: () -> Unit,
+) {
+    when (uiState.state) {
+        VoiceState.Listening -> {
+            if (uiState.interactionMode == InteractionMode.Continuous) {
+                onPauseAutoMode()
+            } else {
+                onStopListening()
+            }
+        }
+        VoiceState.Speaking -> {
+            if (uiState.interactionMode == InteractionMode.Continuous) {
+                onPauseAutoMode()
+            } else {
+                onInterrupt()
+            }
+        }
+        VoiceState.Transcribing, VoiceState.Thinking -> {
+            if (uiState.interactionMode == InteractionMode.Continuous) {
+                onPauseAutoMode()
+            } else {
+                onInterrupt()
+            }
+        }
+        VoiceState.Idle, VoiceState.Error -> onStartListening()
+    }
+}
+
+internal fun dispatchVoiceMicHoldPress(
+    uiState: VoiceUiState,
+    onStartListening: () -> Unit,
+    onInterruptAndStart: () -> Unit,
+) {
+    when (uiState.state) {
+        VoiceState.Idle, VoiceState.Error -> onStartListening()
+        VoiceState.Speaking -> onInterruptAndStart()
+        VoiceState.Listening, VoiceState.Transcribing, VoiceState.Thinking -> Unit
+    }
 }
 
 @Composable
@@ -875,6 +954,69 @@ private fun StatusPill(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+        }
+    }
+}
+
+@Composable
+private fun VoiceHandoffStrip(
+    status: VoiceHandoffStatus?,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+) {
+    val current = status ?: return
+    val containerColor = when {
+        current.success -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.42f)
+        current.active -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.42f)
+        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
+    }
+    val contentColor = when {
+        current.success -> MaterialTheme.colorScheme.onTertiaryContainer
+        current.active -> MaterialTheme.colorScheme.onSecondaryContainer
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(containerColor)
+            .padding(horizontal = 10.dp, vertical = if (compact) 6.dp else 8.dp),
+        verticalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 4.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = current.title,
+                style = MaterialTheme.typography.labelMedium,
+                color = contentColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            current.route?.takeIf { it.isNotBlank() }?.let { route ->
+                Text(
+                    text = route,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = contentColor.copy(alpha = 0.76f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (!compact) {
+            current.entries.takeLast(3).forEach { entry ->
+                val detail = entry.detail?.takeIf { it.isNotBlank() }
+                Text(
+                    text = if (detail == null) entry.label else "${entry.label} / $detail",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = contentColor.copy(alpha = 0.72f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
     }
 }
@@ -1023,8 +1165,11 @@ private fun VoiceToolStatusRow(toolCall: ToolCall) {
     } else {
         null
     }
-    val preview = toolCall.error?.takeIf { it.isNotBlank() }
+    val rawPreview = toolCall.error?.takeIf { it.isNotBlank() }
         ?: toolCall.result?.takeIf { it.isNotBlank() }
+    val preview = remember(rawPreview) {
+        rawPreview?.let { compactToolDetail(it, maxChars = 280) }
+    }
 
     Surface(
         modifier = Modifier.fillMaxWidth(),

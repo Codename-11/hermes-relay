@@ -5,6 +5,7 @@ import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.HermesCard
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.RealtimeTurnTrace
 import com.hermesandroid.relay.data.ToolCall
 import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.network.models.MessageItem
@@ -378,6 +379,35 @@ class ChatHandler {
                         if (it.syncedToServer) it else it.copy(syncedToServer = true)
                     }
                 )
+            }
+            if (changed) mapped else messages
+        }
+    }
+
+    fun attachRealtimeTurnTrace(messageId: String, trace: RealtimeTurnTrace) {
+        _messages.update { messages ->
+            var changed = false
+            val mapped = messages.map { msg ->
+                if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
+                    changed = true
+                    msg.copy(realtimeTurn = trace)
+                } else {
+                    msg
+                }
+            }
+            if (changed) mapped else messages
+        }
+    }
+
+    fun markRealtimeTurnsSynced() {
+        _messages.update { messages ->
+            var changed = false
+            val mapped = messages.map { msg ->
+                val trace = msg.realtimeTurn
+                if (trace != null && !trace.syncedToServer) {
+                    changed = true
+                    msg.copy(realtimeTurn = trace.copy(syncedToServer = true))
+                } else msg
             }
             if (changed) mapped else messages
         }

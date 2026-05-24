@@ -12,7 +12,11 @@ from typing import Any, Protocol
 
 import aiohttp
 
-from plugin.voice_lab.auth import load_voice_lab_env_file, read_xai_oauth_token
+from plugin.voice_lab.auth import (
+    VoiceLabAuthError,
+    load_voice_lab_env_file,
+    read_xai_oauth_token,
+)
 from plugin.voice_lab.providers.base import ProviderRunError, ProviderUnavailable
 
 from ..models import (
@@ -93,9 +97,9 @@ class XAIRealtimeAgentProvider:
         auth = _resolve_auth_token(config.provider_options)
         if auth is None:
             raise ProviderUnavailable(
-                "xAI Realtime auth is not configured. Set relay-owned xAI API "
-                "auth or sign in with the Hermes xAI OAuth store before using "
-                "the experimental Realtime Agent."
+                "xAI Realtime auth is not configured. Configure relay-side "
+                "xAI realtime provider credentials or sign in with the Hermes "
+                "xAI OAuth store before using Realtime Agent."
             )
         timeout = _float_option(
             config.provider_options,
@@ -110,11 +114,20 @@ class XAIRealtimeAgentProvider:
         ).rstrip("/")
         model = urllib.parse.quote(config.model or DEFAULT_MODEL, safe="")
         url = f"{base_url}?model={model}"
-        socket = await self._socket_factory(
-            url,
-            {"Authorization": f"Bearer {auth.value}"},
-            timeout,
-        )
+        try:
+            socket = await self._socket_factory(
+                url,
+                {"Authorization": f"Bearer {auth.value}"},
+                timeout,
+            )
+        except aiohttp.WSServerHandshakeError as exc:
+            if exc.status in {401, 403}:
+                raise ProviderUnavailable(
+                    "xAI Realtime rejected the relay auth "
+                    f"({exc.status}; source: {auth.source}). Refresh xAI OAuth "
+                    "or configure relay-side xAI realtime provider credentials."
+                ) from exc
+            raise
         connection = XAIRealtimeAgentConnection(
             socket=socket,
             config=config,
@@ -150,6 +163,23 @@ class XAIRealtimeAgentConnection:
 
     async def commit_audio(self) -> None:
         await self.socket.send_json({"type": "input_audio_buffer.commit"})
+
+    async def send_text(self, text: str) -> None:
+        await self.socket.send_json(
+            {
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": text,
+                        }
+                    ],
+                },
+            }
+        )
         await self.socket.send_json({"type": "response.create"})
 
     async def clear_audio(self) -> None:
@@ -445,7 +475,15 @@ def _default_instructions(config: RealtimeAgentSessionConfig) -> str:
         "actions, confirmations, persistent context, research, current facts, "
         "news, external data, live checks, latest/versioned info, personal or "
         "project context, side effects, precision-sensitive answers, or media and "
-        "artifact handling. When speaking, summarize dense machine-readable "
+        "artifact handling. Hermes is the durable conversation memory; use any "
+        "seeded recent chat context for follow-up references when it is enough, "
+        "and route missing/stale/verification-sensitive references through "
+        "Hermes before answering. Do not say you lack context before a Hermes "
+        "call. You may speak one brief acknowledgement such as 'I'll check "
+        "Hermes' or 'I'll check that' before the tool call, then call Hermes "
+        "immediately. Do not give a substantive answer until Hermes returns. "
+        "Android will provide restrained local status while Hermes runs. "
+        "When speaking, summarize dense machine-readable "
         "values instead of reading raw IDs, URLs, paths, JSON, logs, or long "
         f"numbers character by character. Active profile: {profile}. "
         "Do not call web_search, x_search, MCP, or any non-Hermes tool."
@@ -469,7 +507,13 @@ def _resolve_auth_token(options: dict[str, Any]) -> AuthToken | None:
         value = os.getenv(name, "").strip()
         if value:
             return AuthToken(value=value, source=f"env:{name}")
-    oauth = read_xai_oauth_token()
+    try:
+        oauth = read_xai_oauth_token()
+    except VoiceLabAuthError as exc:
+        raise ProviderUnavailable(
+            "xAI Realtime OAuth refresh failed. Refresh xAI OAuth or configure "
+            "relay-side xAI realtime provider credentials."
+        ) from exc
     if oauth:
         return AuthToken(
             value=oauth.access_token,

@@ -9,6 +9,9 @@ import android.util.Log
 import com.hermesandroid.relay.auth.CertPinStore
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.PairingPreferences
+import com.hermesandroid.relay.diagnostics.DiagnosticCategory
+import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
+import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.network.models.Envelope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -121,7 +124,10 @@ class ConnectionManager(
     @Volatile
     private var client: OkHttpClient = buildClient()
 
+    @Volatile
     private var webSocket: WebSocket? = null
+
+    @Volatile
     private var serverUrl: String? = null
     private var reconnectAttempt = 0
     private var shouldReconnect = true
@@ -185,6 +191,12 @@ class ConnectionManager(
         _insecureMode.value = enabled
         if (enabled) {
             Log.w(TAG, "⚠ INSECURE MODE ENABLED — ws:// connections allowed. Do NOT use in production.")
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Relay,
+                severity = DiagnosticSeverity.Warning,
+                title = "Insecure relay mode enabled",
+                detail = "ws:// connections are allowed",
+            )
         }
     }
 
@@ -205,9 +217,23 @@ class ConnectionManager(
                 _activeEndpoint.value = resolved
                 Log.i(TAG, "connect: resolver picked role=${resolved.role} " +
                     "relay=${resolved.relay.url} (fallback would have been $url)")
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Relay,
+                    severity = DiagnosticSeverity.Info,
+                    title = "Relay route selected",
+                    endpointRole = resolved.role,
+                    url = resolved.relay.url,
+                )
             } else {
                 _activeEndpoint.value = null
                 Log.d(TAG, "connect: no resolver winner — using supplied url $url")
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Relay,
+                    severity = DiagnosticSeverity.Warning,
+                    title = "Using configured relay URL",
+                    detail = "No resolver winner",
+                    url = url,
+                )
             }
             connectToUrlOnMainPath(targetUrl)
         }
@@ -220,14 +246,31 @@ class ConnectionManager(
      * the callback from re-running the resolve loop inside another
      * resolve loop.
      */
-    private fun connectToUrlOnMainPath(url: String) {
+    private fun connectToUrlOnMainPath(
+        url: String,
+        replaceReason: String = "Relay socket replaced",
+    ) {
         val isInsecure = url.startsWith("ws://") && !url.startsWith("wss://")
         if (isInsecure && !_insecureMode.value) {
             Log.e(TAG, "Blocked ws:// connection — insecure mode is disabled. Use wss:// or enable insecure mode in Settings.")
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Relay,
+                severity = DiagnosticSeverity.Error,
+                title = "Relay socket blocked",
+                detail = "ws:// is disabled",
+                url = url,
+            )
             return
         }
         if (!url.startsWith("ws://") && !url.startsWith("wss://")) {
             Log.e(TAG, "Invalid URL scheme — must start with ws:// or wss://")
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Relay,
+                severity = DiagnosticSeverity.Error,
+                title = "Relay socket URL invalid",
+                detail = "URL must start with ws:// or wss://",
+                url = url,
+            )
             return
         }
 
@@ -236,16 +279,39 @@ class ConnectionManager(
         // hits the HTTP root and comes back as 404 Not Found during the
         // upgrade handshake. We still accept an explicit path if present.
         val normalized = normalizeRelayUrl(url)
+        val existingState = _connectionState.value
+        if (serverUrl == normalized &&
+            (existingState == ConnectionState.Connecting ||
+                existingState == ConnectionState.Connected ||
+                existingState == ConnectionState.Reconnecting)
+        ) {
+            Log.i(TAG, "connect: already ${existingState.name.lowercase()} to $normalized — skipping duplicate open")
+            return
+        }
+        val previousSocket = webSocket
 
         _isInsecureConnection.value = isInsecure
         if (isInsecure) {
             Log.w(TAG, "⚠ Connecting over INSECURE ws:// to: $normalized")
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Relay,
+                severity = DiagnosticSeverity.Warning,
+                title = "Opening insecure relay socket",
+                url = normalized,
+            )
+        } else {
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Relay,
+                severity = DiagnosticSeverity.Info,
+                title = "Opening relay socket",
+                url = normalized,
+            )
         }
 
         serverUrl = normalized
         shouldReconnect = true
         reconnectAttempt = 0
-        doConnect(normalized)
+        doConnect(normalized, previousSocket, replaceReason)
     }
 
     // ----- ADR 24 — multi-endpoint resolution --------------------------------
@@ -325,8 +391,7 @@ class ConnectionManager(
                 }
             } else if (normalizedTarget != current) {
                 Log.i(TAG, "probeAndReconnect: swapping $current → $normalizedTarget")
-                webSocket?.close(1000, "Endpoint re-probe")
-                connectToUrlOnMainPath(targetUrl)
+                connectToUrlOnMainPath(targetUrl, "Endpoint re-probe")
             } else if (_connectionState.value == ConnectionState.Disconnected &&
                 shouldReconnect &&
                 reconnectGate()
@@ -381,8 +446,7 @@ class ConnectionManager(
             _activeEndpoint.value = resolved
             if (normalizedNew != current) {
                 Log.i(TAG, "endpoint fallback: swapping $current → $normalizedNew")
-                webSocket?.close(1000, closeReason)
-                connectToUrlOnMainPath(newUrl)
+                connectToUrlOnMainPath(newUrl, closeReason)
             } else if (_connectionState.value == ConnectionState.Disconnected &&
                 shouldReconnect &&
                 reconnectGate()
@@ -402,6 +466,7 @@ class ConnectionManager(
                 Log.i(TAG, "network onAvailable — re-evaluating endpoint")
                 if (endpointResolver == null) return
                 val url = serverUrl ?: return
+                endpointResolver.clearCache()
                 scope.launch {
                     val resolved = resolveBestEndpointSafe()
                     val newUrl = resolved?.relay?.url
@@ -419,14 +484,14 @@ class ConnectionManager(
                     // handover that ends up on the same route, etc.).
                     if (normalizedNew != url) {
                         Log.i(TAG, "network change: swapping $url → $normalizedNew")
-                        webSocket?.close(1000, "Network change — switching endpoint")
-                        connectToUrlOnMainPath(newUrl)
+                        connectToUrlOnMainPath(newUrl, "Network change — switching endpoint")
                     }
                 }
             }
 
             override fun onLost(network: Network) {
                 Log.i(TAG, "network onLost — marking active endpoint unreachable and resolving fallback")
+                endpointResolver?.clearCache()
                 markActiveEndpointUnreachable("network lost")
                 resolveAndSwitchIfNeeded("Network lost — switching endpoint")
             }
@@ -475,6 +540,12 @@ class ConnectionManager(
 
     fun disconnect() {
         shouldReconnect = false
+        DiagnosticsLog.record(
+            category = DiagnosticCategory.Relay,
+            severity = DiagnosticSeverity.Info,
+            title = "Relay socket disconnect requested",
+            url = serverUrl,
+        )
         webSocket?.close(1000, "Client disconnect")
         webSocket = null
         _connectionState.value = ConnectionState.Disconnected
@@ -499,17 +570,38 @@ class ConnectionManager(
         webSocket?.send(text)
     }
 
-    private fun doConnect(url: String) {
+    private fun isActiveSocket(socket: WebSocket): Boolean = webSocket === socket
+
+    private fun doConnect(
+        url: String,
+        previousSocketToClose: WebSocket? = null,
+        replaceReason: String = "Relay socket replaced",
+    ) {
+        val existingState = _connectionState.value
+        if (previousSocketToClose == null &&
+            serverUrl == url &&
+            (existingState == ConnectionState.Connecting ||
+                existingState == ConnectionState.Connected ||
+                existingState == ConnectionState.Reconnecting)
+        ) {
+            Log.i(TAG, "doConnect: already ${existingState.name.lowercase()} to $url — skipping duplicate open")
+            return
+        }
+
         _connectionState.value = if (reconnectAttempt > 0) {
             ConnectionState.Reconnecting
         } else {
             ConnectionState.Connecting
         }
 
-        scope.launch { doConnectInternal(url) }
+        scope.launch { doConnectInternal(url, previousSocketToClose, replaceReason) }
     }
 
-    private fun doConnectInternal(url: String) {
+    private fun doConnectInternal(
+        url: String,
+        previousSocketToClose: WebSocket? = null,
+        replaceReason: String = "Relay socket replaced",
+    ) {
         // Rebuild the client so the CertificatePinner picks up the current
         // pin store snapshot — crucial right after applyServerIssuedCodeAndReset
         // wipes a pin for re-pair. buildClient() does a tiny DataStore read
@@ -521,12 +613,24 @@ class ConnectionManager(
             .build()
 
         Log.i(TAG, "doConnect: opening WSS to $url")
-        webSocket = client.newWebSocket(request, object : WebSocketListener() {
+        val newSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                if (!isActiveSocket(webSocket)) {
+                    Log.i(TAG, "onOpen: stale WSS handshake ignored ($url)")
+                    runCatching { webSocket.close(1000, "Stale relay socket") }
+                    webSocket.cancel()
+                    return
+                }
                 reconnectAttempt = 0
                 lastUpgradeResponseCode = null
                 _connectionState.value = ConnectionState.Connected
                 Log.i(TAG, "onOpen: WSS handshake complete ($url)")
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Relay,
+                    severity = DiagnosticSeverity.Info,
+                    title = "Relay socket connected",
+                    url = url,
+                )
 
                 // TOFU: record the peer cert fingerprint if we don't have one
                 // yet. OkHttp populates response.handshake when the connection
@@ -549,6 +653,10 @@ class ConnectionManager(
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                if (!isActiveSocket(webSocket)) {
+                    Log.i(TAG, "onMessage: stale WSS envelope ignored ($url)")
+                    return
+                }
                 try {
                     val envelope = json.decodeFromString<Envelope>(text)
                     multiplexer.route(envelope)
@@ -563,14 +671,40 @@ class ConnectionManager(
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (!isActiveSocket(webSocket)) {
+                    Log.i(TAG, "onClosed: stale WSS close ignored ($url code=$code reason=$reason)")
+                    return
+                }
                 Log.i(TAG, "onClosed: code=$code reason=$reason")
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Relay,
+                    severity = DiagnosticSeverity.Warning,
+                    title = "Relay socket closed",
+                    detail = "code=$code reason=$reason",
+                    url = url,
+                )
                 _connectionState.value = ConnectionState.Disconnected
                 scheduleReconnect()
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (!isActiveSocket(webSocket)) {
+                    Log.i(TAG, "onFailure: stale WSS failure ignored ($url ${t.javaClass.simpleName}: ${t.message})")
+                    return
+                }
                 val code = response?.code
                 Log.w(TAG, "onFailure: ${t.javaClass.simpleName}: ${t.message} (responseCode=$code)")
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Relay,
+                    severity = DiagnosticSeverity.Error,
+                    title = "Relay socket failed",
+                    detail = listOfNotNull(
+                        t.javaClass.simpleName,
+                        t.message,
+                        code?.let { "HTTP $it" },
+                    ).joinToString(": "),
+                    url = url,
+                )
                 lastUpgradeResponseCode = code
                 if (response == null) {
                     markActiveEndpointUnreachable("socket failure")
@@ -579,6 +713,13 @@ class ConnectionManager(
                 scheduleReconnect()
             }
         })
+        webSocket = newSocket
+        previousSocketToClose
+            ?.takeIf { it !== newSocket }
+            ?.let { staleSocket ->
+                runCatching { staleSocket.close(1000, replaceReason) }
+                staleSocket.cancel()
+            }
     }
 
     private fun scheduleReconnect() {
@@ -591,6 +732,13 @@ class ConnectionManager(
         // the rate limiter and block ourselves.
         if (!reconnectGate()) {
             Log.i(TAG, "scheduleReconnect: gate says no pair context — aborting retry")
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Session,
+                severity = DiagnosticSeverity.Warning,
+                title = "Relay reconnect skipped",
+                detail = "No paired session or pending pair code",
+                url = serverUrl,
+            )
             _connectionState.value = ConnectionState.Disconnected
             return
         }
@@ -604,10 +752,26 @@ class ConnectionManager(
         // server's full block window instead.
         val backoffMs = if (lastUpgradeResponseCode == 429) {
             Log.i(TAG, "scheduleReconnect: rate-limited (429) — backing off ${RATE_LIMIT_BACKOFF_MS}ms")
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Relay,
+                severity = DiagnosticSeverity.Warning,
+                title = "Relay reconnect delayed",
+                detail = "Rate limited; retrying in ${RATE_LIMIT_BACKOFF_MS / 1000}s",
+                url = url,
+            )
             RATE_LIMIT_BACKOFF_MS
         } else {
             (BASE_BACKOFF_MS * (1L shl minOf(reconnectAttempt - 1, 4)))
                 .coerceAtMost(MAX_BACKOFF_MS)
+        }
+        if (lastUpgradeResponseCode != 429) {
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Relay,
+                severity = DiagnosticSeverity.Info,
+                title = "Relay reconnect scheduled",
+                detail = "Retrying in ${backoffMs / 1000}s",
+                url = url,
+            )
         }
 
         scope.launch {

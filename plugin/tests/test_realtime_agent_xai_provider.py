@@ -8,12 +8,16 @@ import unittest
 from typing import Any
 from unittest.mock import patch
 
+import aiohttp
+
 from plugin.relay.realtime_agent.models import (
     HERMES_TOOL_SURFACE,
     ProviderEventKind,
     RealtimeAgentSessionConfig,
 )
 from plugin.relay.realtime_agent.providers.xai import XAIRealtimeAgentProvider
+from plugin.voice_lab.auth import VoiceLabAuthError
+from plugin.voice_lab.providers.base import ProviderUnavailable
 
 
 class FakeXAISocket:
@@ -35,6 +39,55 @@ class FakeXAISocket:
 
 
 class XAIRealtimeAgentProviderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_oauth_refresh_failure_reports_reauth_action(self) -> None:
+        provider = XAIRealtimeAgentProvider(socket_factory=lambda *args: None)
+        with patch.dict(os.environ, {}, clear=True), patch(
+            "plugin.relay.realtime_agent.providers.xai.read_xai_oauth_token",
+            side_effect=VoiceLabAuthError("invalid_grant"),
+        ):
+            with self.assertRaisesRegex(
+                ProviderUnavailable,
+                "Refresh xAI OAuth or configure relay-side xAI realtime provider credentials",
+            ):
+                await provider.connect(
+                    RealtimeAgentSessionConfig(
+                        provider="xai_realtime",
+                        model="grok-voice-latest",
+                        voice="leo",
+                        sample_rate=24000,
+                        profile="victor",
+                        hermes_session_id="chat-123",
+                        provider_options={},
+                    )
+                )
+
+    async def test_auth_handshake_failure_reports_reauth_action(self) -> None:
+        async def factory(url: str, headers: dict[str, str], timeout: float):
+            raise aiohttp.WSServerHandshakeError(
+                None,
+                (),
+                status=403,
+                message="Invalid response status",
+            )
+
+        provider = XAIRealtimeAgentProvider(socket_factory=factory)
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(
+                ProviderUnavailable,
+                "Refresh xAI OAuth or configure relay-side xAI realtime provider credentials",
+            ):
+                await provider.connect(
+                    RealtimeAgentSessionConfig(
+                        provider="xai_realtime",
+                        model="grok-voice-latest",
+                        voice="leo",
+                        sample_rate=24000,
+                        profile="victor",
+                        hermes_session_id="chat-123",
+                        provider_options={"oauth_access_token": "xai-test"},
+                    )
+                )
+
     async def test_connect_sends_session_update_with_leo_pcm_manual_turns_and_hermes_tools(self) -> None:
         fake_socket = FakeXAISocket()
         captured: dict[str, Any] = {}
@@ -147,7 +200,17 @@ class XAIRealtimeAgentProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fake_socket.sent[-1], {"type": "response.create"})
 
         await connection.commit_audio()
-        self.assertEqual(fake_socket.sent[-2], {"type": "input_audio_buffer.commit"})
+        self.assertEqual(fake_socket.sent[-1], {"type": "input_audio_buffer.commit"})
+
+        await connection.send_text("Say a short settings test.")
+        self.assertEqual(fake_socket.sent[-2]["type"], "conversation.item.create")
+        item = fake_socket.sent[-2]["item"]
+        self.assertEqual(item["type"], "message")
+        self.assertEqual(item["role"], "user")
+        self.assertEqual(
+            item["content"],
+            [{"type": "input_text", "text": "Say a short settings test."}],
+        )
         self.assertEqual(fake_socket.sent[-1], {"type": "response.create"})
 
 

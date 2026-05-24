@@ -67,6 +67,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.hermesandroid.relay.ui.components.MorphingSphere
+import com.hermesandroid.relay.ui.components.ConnectionStatusBanner
 import com.hermesandroid.relay.ui.components.ConnectionSwitcherSheet
 import com.hermesandroid.relay.ui.components.UnattendedGlobalBanner
 import com.hermesandroid.relay.ui.components.UpdateBanner
@@ -78,6 +79,7 @@ import com.hermesandroid.relay.data.BridgePreferencesRepository
 import com.hermesandroid.relay.data.BridgeSafetyPreferencesRepository
 import com.hermesandroid.relay.data.BuildFlavor
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
 import com.hermesandroid.relay.util.HumanError
 import kotlinx.coroutines.delay
@@ -375,6 +377,10 @@ fun RelayApp() {
                 .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                 .build(),
             relayUrlProvider = { connectionViewModel.effectiveRelayUrl.value },
+            relayRouteChangesProvider = {
+                connectionViewModel.activeEndpoint.mapNotNull { it?.relay?.url }
+            },
+            routeProbeRequester = { connectionViewModel.probeNow() },
             profileNameProvider = {
                 AgentDisplay.profileRequestName(connectionViewModel.selectedProfile.value?.name)
             },
@@ -407,7 +413,7 @@ fun RelayApp() {
     // VoiceSfxPlayer is internally crash-proof — failed AudioTrack builds
     // become null-tracks that no-op — so we don't need an outer try/catch.
     val voiceSfxPlayer = remember { VoiceSfxPlayer(mediaContext) }
-    val realtimePcmPlayer = remember { RealtimePcmPlayer() }
+    val realtimePcmPlayer = remember { RealtimePcmPlayer(mediaContext) }
     LaunchedEffect(Unit) {
         val recorder = VoiceRecorder(mediaContext, voiceViewModel.viewModelScope)
         val player = VoicePlayer(mediaContext)
@@ -446,6 +452,8 @@ fun RelayApp() {
             // app restarts. VoicePreferencesRepository is the same repo
             // VoiceSettingsScreen reads/writes.
             voicePreferences = com.hermesandroid.relay.data.VoicePreferencesRepository(mediaContext),
+            voiceRelayPreflight = { connectionViewModel.verifyRelayForVoice() },
+            voiceHandoffReporter = { connectionViewModel.recordVoiceHandoff(it) },
             bargeInPreferences = com.hermesandroid.relay.data.BargeInPreferencesRepository(mediaContext),
             vadEngineFactory = { com.hermesandroid.relay.audio.VadEngine(mediaContext) },
             bargeInListenerFactory = { vad, audioSessionIdProvider ->
@@ -641,6 +649,7 @@ fun RelayApp() {
         // bottom navigation bar so the voice overlay can own the entire screen
         // without the Chat/Terminal/Bridge/Settings tabs peeking through below.
         val voiceUiState by voiceViewModel.uiState.collectAsState()
+        val globalConnectionStatus by connectionViewModel.globalConnectionStatus.collectAsState()
 
         // Single snackbar host for the whole app — exposed via LocalSnackbarHost
         // so voice/chat/settings screens can call showHumanError from their
@@ -697,6 +706,10 @@ fun RelayApp() {
             unattendedEnabled &&
             !isOnboarding &&
             !voiceUiState.voiceMode
+        val showConnectionStatusBanner =
+            globalConnectionStatus != null &&
+                !isOnboarding &&
+                !voiceUiState.voiceMode
         // === END v0.4.1 polish ===
 
         // Multi-connection switcher has moved into the AgentInfoSheet's
@@ -758,6 +771,17 @@ fun RelayApp() {
             }
         }
 
+        AnimatedVisibility(
+            visible = showConnectionStatusBanner,
+            enter = fadeIn(tween(160)),
+            exit = fadeOut(tween(180)),
+        ) {
+            ConnectionStatusBanner(
+                status = globalConnectionStatus,
+                includeStatusBarPadding = !showUnattendedBanner && availableUpdate == null,
+            )
+        }
+
         // (The app-wide ConnectionChip row that used to live here has been
         // removed. Multi-connection switching is now reachable from the
         // AgentInfoSheet's Connection section — see ConnectionInfoSheet.kt's
@@ -787,7 +811,7 @@ fun RelayApp() {
                     // would otherwise double-pad and render too far down.
                     // Consume the inset here so the Scaffold tree treats
                     // the top edge as already handled.
-                    if (showUnattendedBanner || connectionChipVisible) {
+                    if (showUnattendedBanner || showConnectionStatusBanner || connectionChipVisible) {
                         Modifier.consumeWindowInsets(WindowInsets.statusBars)
                     } else {
                         Modifier

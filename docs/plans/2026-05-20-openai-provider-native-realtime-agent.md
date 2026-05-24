@@ -96,6 +96,29 @@ The adapter must implement the shared connection contract:
 - `close()`
 - `events()`
 
+### 2a. Future: Pluggable WebRTC Transport for OpenAI
+
+The implemented OpenAI native path uses relay-owned WebSocket transport because
+it fits the existing xAI-normalized broker and keeps provider secrets
+server-side. Add a follow-up transport abstraction so OpenAI Realtime can use
+WebRTC from Android when mobile audio quality needs provider-native jitter
+buffering, interruption, and media handling.
+
+Design target:
+
+- keep the existing normalized Realtime Agent broker/tool contract
+- let a provider advertise supported transports such as `websocket`, `webrtc`,
+  and future bridge transports
+- use OpenAI WebRTC as the first implementation target
+- keep relay-side session minting, instructions, profile context, and Hermes
+  tool brokering
+- keep Hermes as the only authority for tools, memory, confirmations, current
+  data, side effects, and durable transcript state
+- avoid hard-coding OpenAI WebRTC details into Android voice UX or broker core
+
+This is tracked in `TODO.md` under **Pluggable Realtime Agent media
+transports**.
+
 ### 3. Map OpenAI Wire Events to Normalized Events
 
 Normalize provider events to the existing broker contract:

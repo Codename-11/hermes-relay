@@ -333,6 +333,8 @@ Client websocket messages:
 
 ```json
 {"type":"session.start"}
+{"type":"session.resume","resume_token":"...","last_event_id":4,"last_audio_event_id":1,"last_played_audio_event_id":1}
+{"type":"client.ack","event_id":5,"audio_event_id":2,"played_audio_event_id":2}
 {"type":"response.create","text":"Final Hermes assistant sentence.","render_mode":"verbatim"}
 {"type":"session.close"}
 ```
@@ -340,12 +342,22 @@ Client websocket messages:
 Server websocket messages:
 
 ```json
-{"type":"voice.session.ready","provider":"xai_tts","model":"xai-tts","voice":"eve","sample_rate":24000,"output_mode":"streaming_tts_renderer"}
-{"type":"voice.response.started","output_mode":"streaming_tts_renderer","render_mode":"verbatim"}
-{"type":"voice.audio.delta","audio_base64":"...","sample_rate":24000,"channels":1,"sample_width":2,"rms_level":0.12}
-{"type":"voice.audio.done"}
-{"type":"voice.response.done","provider":"xai_tts","metrics":{"first_audio_ms":1764.25,"response_done_ms":3637.176},"event_log_path":"...","output_mode":"streaming_tts_renderer"}
+{"type":"voice.session.ready","event_id":1,"provider":"xai_tts","model":"xai-tts","voice":"eve","sample_rate":24000,"output_mode":"streaming_tts_renderer","resume_supported":true,"resume_ttl_ms":30000}
+{"type":"voice.response.started","event_id":2,"output_mode":"streaming_tts_renderer","render_mode":"verbatim"}
+{"type":"voice.audio.delta","event_id":3,"audio_event_id":1,"audio_base64":"...","sample_rate":24000,"channels":1,"sample_width":2,"rms_level":0.12}
+{"type":"voice.audio.done","event_id":4}
+{"type":"voice.response.done","event_id":5,"provider":"xai_tts","metrics":{"first_audio_ms":1764.25,"response_done_ms":3637.176},"event_log_path":"...","output_mode":"streaming_tts_renderer"}
 ```
+
+Voice-output session creation also returns `resume_token`, `resume_supported`,
+and `resume_ttl_ms`. If Android changes route while renderer PCM is in flight,
+the relay keeps the render task alive for the resume TTL, buffers bounded
+status/audio events, validates `session.resume`, and replays missed events after
+the client's last acknowledged `event_id`/`audio_event_id`. This uses the same
+Android `effectiveRelayUrl` route selection as fresh voice sessions. Android
+may proactively resume when that route changes instead of waiting for the old
+websocket to fail; provider renderers never see LAN, Tailscale, or cellular
+details.
 
 Config is relay-owned under `voice_output:` in `~/.hermes-relay/config.yaml`
 or `RELAY_VOICE_OUTPUT_CONFIG`. The authenticated operator/app can patch safe
@@ -433,11 +445,43 @@ API credential from `config.yaml`, `.env`, or `API_SERVER_KEY`; if that
 credential is missing or rejected, the websocket emits
 `error_code=hermes_broker_auth_failed`.
 
+Realtime Agent session creation returns resumable-session metadata so Android
+can survive short route changes without starting a second Hermes turn:
+
+```json
+{
+  "success": true,
+  "session_id": "...",
+  "websocket_path": "/voice/realtime-agent/{session_id}",
+  "resume_token": "...",
+  "resume_supported": true,
+  "resume_ttl_ms": 30000,
+  "context_message_count": 6
+}
+```
+
+The resume token is relay-generated, scoped to that voice session, and accepted
+only from the same voice-auth principal. Relay-session callers may resume from a
+new bearer for the same paired device; Hermes API bearer callers must use the
+same bearer.
+
+Session creation accepts optional `context_messages`, a compact array of recent
+`{"role":"user|assistant|system","content":"...","source":"hermes_chat|realtime_agent"}`
+items from the Android timeline. The broker trims and seeds these into the
+provider instructions so Realtime Agent can answer follow-ups from already
+visible chat/voice context without first calling Hermes. If Android sends no
+context but provides `chat_session_id`, the relay attempts a short
+`GET /api/sessions/{chat_session_id}/messages` fetch and seeds recent Hermes
+messages instead. Provider-native sessions are still ephemeral; Hermes remains
+the durable context store.
+
 Client websocket messages:
 
 ```json
 {"type":"session.start"}
-{"type":"input_audio.append","sample_rate":16000,"audio_base64":"..."}
+{"type":"session.resume","resume_token":"...","last_event_id":12,"last_audio_event_id":4,"last_played_audio_event_id":4,"last_input_chunk_id":8}
+{"type":"input_audio.append","chunk_id":1,"sample_rate":16000,"audio_base64":"..."}
+{"type":"client.ack","event_id":13,"audio_event_id":5,"input_chunk_id":8}
 {"type":"response.create","text":"Test prompt","tool_scaffold":false,"render_mode":"verbatim"}
 {"type":"session.close"}
 ```
@@ -447,13 +491,18 @@ provider-native path (`xai_realtime` or `openai_realtime`), `input_audio.commit`
 finalizes the Android-captured utterance; the relay then asks the active
 realtime provider to create a response. Android does not include a client
 transcript because the provider owns speech recognition inside the
-relay-brokered session.
+relay-brokered session. `client.ack` reports receipt cursors; Android only
+reports heard/drained audio with `playback.drained.played_audio_event_id`.
+Settings tests may instead send `response.create` with
+`text`; the relay forwards that text as a provider-native realtime user message
+and streams the provider's audio back without using legacy TTS.
 
 ```json
 {"type":"session.start"}
-{"type":"input_audio.append","sample_rate":16000,"audio_base64":"..."}
+{"type":"input_audio.append","chunk_id":1,"sample_rate":16000,"audio_base64":"..."}
 {"type":"input_audio.commit"}
-{"type":"playback.drained","call_id":"..."}
+{"type":"response.create","text":"Say a short Realtime Agent test confirmation."}
+{"type":"playback.drained","call_id":"...","played_audio_event_id":1}
 {"type":"response.cancel"}
 {"type":"hermes.confirm","confirmation_id":"...","answer":"yes"}
 {"type":"session.close"}
@@ -462,15 +511,36 @@ relay-brokered session.
 Server websocket messages:
 
 ```json
-{"type":"voice.session.ready","provider":"xai_realtime","model":"grok-voice-latest","voice":"eve","sample_rate":24000}
-{"type":"voice.input_audio.received","byte_count":320,"total_bytes":320}
-{"type":"voice.input_transcript.delta","delta":"please check"}
-{"type":"voice.input_transcript.final","text":"Please check the relay status."}
-{"type":"hermes.run.started","session_id":"...","run_id":"..."}
-{"type":"voice.output_audio.delta","audio_base64":"...","sample_rate":24000,"channels":1,"sample_width":2,"rms_level":0.12}
-{"type":"voice.playback_drain.requested","call_id":"...","timeout_ms":2500}
-{"type":"voice.output_audio.done"}
-{"type":"voice.response.done","event_log_path":"..."}
+{"type":"voice.session.ready","event_id":1,"provider":"xai_realtime","model":"grok-voice-latest","voice":"eve","sample_rate":24000,"resume_supported":true,"resume_ttl_ms":30000}
+{"type":"voice.input_audio.received","event_id":2,"input_chunk_id":1,"byte_count":320,"total_bytes":320}
+{"type":"voice.input_transcript.delta","event_id":3,"delta":"please check"}
+{"type":"voice.input_transcript.final","event_id":4,"text":"Please check the relay status."}
+{"type":"voice.response.started","event_id":5,"provider":"xai_realtime","response_id":"ack-1"}
+{"type":"voice.response.delta","event_id":6,"source":"provider","delta":"I'll check Hermes.","response_id":"ack-1"}
+{"type":"voice.output_audio.delta","event_id":7,"audio_event_id":1,"audio_base64":"...","sample_rate":24000,"channels":1,"sample_width":2,"rms_level":0.12,"response_id":"ack-1"}
+{"type":"voice.output_audio.done","event_id":8,"response_id":"ack-1"}
+{"type":"voice.playback_drain.requested","event_id":9,"call_id":"forced-preamble-1","reason":"pre_hermes_ack","timeout_ms":2500}
+{"type":"hermes.run.started","event_id":10,"session_id":"...","run_id":"..."}
+{"type":"hermes.tool.started","event_id":11,"source":"hermes","run_id":"...","tool_call_id":"...","tool_name":"terminal","message":"Running command."}
+{"type":"hermes.run.progress","event_id":12,"source":"hermes","run_id":"...","status":"running","message":"Running command.","status_key":"tool:terminal:running","should_speak":false,"active_tool_name":"terminal","completed_tool_count":0,"elapsed_ms":12000}
+{"type":"hermes.tool.completed","event_id":13,"source":"hermes","run_id":"...","tool_call_id":"...","tool_name":"terminal","result_preview":"...","success":true}
+{"type":"voice.output_audio.delta","event_id":14,"audio_event_id":2,"audio_base64":"...","sample_rate":24000,"channels":1,"sample_width":2,"rms_level":0.12}
+{"type":"voice.output_audio.done","event_id":15}
+{"type":"voice.response.done","event_id":16,"event_log_path":"..."}
+```
+
+If Android loses the WebSocket while the provider/Hermes turn is still active,
+or Android's route signal changes while the old WebSocket is still half-open,
+the client reconnects with `session.resume`. The relay marks the session
+detached when the old socket disappears, keeps the server-side provider socket
+and Hermes state alive for `resume_ttl_ms`, and buffers bounded status/audio
+events. On a valid `session.resume`, the relay emits:
+
+```json
+{"type":"voice.session.resumed","event_id":12,"session_id":"..."}
+{"type":"voice.replay.started","event_id":13,"from_event_id":4,"from_audio_event_id":0,"replay_event_count":3}
+{"type":"voice.output_audio.delta","event_id":8,"audio_event_id":1,"replayed":true,"audio_base64":"..."}
+{"type":"voice.replay.done","event_id":14,"replay_event_count":3}
 ```
 
 Audio deltas are mono 16-bit little-endian PCM base64 chunks. Android records a
@@ -482,8 +552,28 @@ provider over the server-side WebSocket. Provider PCM output streams back to
 Android for immediate `AudioTrack` playback. Tool execution remains owned by the
 Hermes chat/relay loop; the provider only sees the approved `hermes_run_task`,
 `hermes_get_status`, `hermes_cancel`, and `hermes_confirm` function schemas. The
-relay sends compact function results back to the provider and waits for Android's `playback.drained`
-acknowledgement or a short broker timeout before requesting post-tool audio.
+relay sends compact function results back to the provider and waits for
+Android's `playback.drained` acknowledgement or a short broker timeout before
+requesting post-tool audio. For relay-forced Hermes turns, the relay must first
+ask the active realtime provider to speak a short pre-Hermes acknowledgement,
+wait for that provider audio to drain, and only then start the Hermes run. This
+keeps the provider-native speech loop intact while Hermes remains the governed
+tool authority. Local status speech is only a fallback or long-wait affordance
+and must not create a competing `/voice/output` speech loop in healthy
+provider-native turns. `hermes_run_task` function results include `text`/`answer`,
+a shorter `summary`, `tool_count`, `last_tool_name`, and a provider instruction
+telling the realtime provider to treat Hermes output as authoritative context
+and not claim missing context after a result is present.
+The broker also tracks active/latest Hermes tool state. It forwards
+`hermes.tool.started`, `hermes.tool.delta`, `hermes.tool.completed`, and
+`hermes.tool.failed` when Hermes exposes them, and synthesizes a
+`hermes.tool.started` event if an upstream stream only reports a late completion.
+During longer Hermes runs it emits `hermes.run.progress` with a stable
+`status_key`, `active_tool_name`, `last_tool_name`, `completed_tool_count`, and
+`should_speak`. Android should render these as compact timeline/tool rows. It
+must not route those status lines through `/voice/output` while provider-native
+Realtime Agent audio is active, because that creates competing speech streams.
+Raw tool output should remain relay-log/debug detail.
 Realtime Agent sessions also carry explicit interface context in provider
 instructions and brokered Hermes system messages, including relay-local
 date/time, so the agent can answer whether the active path is `realtime_agent`,
@@ -500,6 +590,13 @@ naturally. Provider instructions also ask for speech-safe formatting: dates,
 times, currency, percentages, versions, measurements, counts, paths, URLs, IDs,
 JSON, logs, stack traces, tables, and dense numeric strings should be spoken as
 human-readable summaries rather than raw character-by-character dumps.
+
+If a provider-native realtime turn answers directly without Hermes, Android
+keeps the local user/assistant bubbles and marks that provider-only assistant
+turn as unsynced. The next normal Hermes chat/run request includes those
+provider-only turns as compact OpenAI-format user/assistant messages before the
+live user message, then marks them synced. Hermes-backed realtime tool turns are
+not duplicated; Hermes already owns their canonical session record.
 
 The render-after-Hermes compatibility bridge remains available for non-native
 providers, but Realtime Agent settings advertise the stricter

@@ -43,6 +43,14 @@ to tool state, safety prompts, or the current task.
 - **Audio quality guardrails** — normalize output volume across realtime and
   fallback TTS providers, keep pronunciation hints/profile voice tuning, and
   measure provider-specific delay, chunk gaps, and tail clipping.
+- **Pluggable Realtime Agent media transports** — add an OpenAI-first WebRTC
+  transport option for Realtime Agent so mobile audio can use provider-native
+  jitter buffering, interruption, and media handling instead of only relay
+  WebSocket PCM. Design this as a provider transport interface
+  (`websocket`, `webrtc`, future `livekit`/SIP-style bridges) so other
+  realtime providers can opt in without forking the Hermes broker/tool
+  contract. Hermes must still own tools, memory, confirmations, current data,
+  and durable transcript state.
 - **Voice engine selector** — implemented as an opt-in experimental Realtime
   Agent engine in `docs/plans/2026-05-19-realtime-hermes-voice-agent.md`.
   Follow-up work is provider-native turn-taking, richer confirmation handling,

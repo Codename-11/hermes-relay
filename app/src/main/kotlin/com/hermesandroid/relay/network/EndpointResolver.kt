@@ -2,6 +2,9 @@ package com.hermesandroid.relay.network
 
 import android.util.Log
 import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.diagnostics.DiagnosticCategory
+import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
+import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
@@ -27,8 +30,9 @@ import java.util.concurrent.TimeUnit
  *    priority over a higher one. Reachability is **only** the tiebreaker
  *    among candidates that share the same priority.
  *  * **Reachability probe.** `HEAD ${api.url}/health` with a 2-second
- *    per-candidate timeout. The cache lives 60 seconds per `(role|host:port)`
- *    key so repeated `connect()` calls don't hammer the network.
+ *    per-candidate timeout. Positive results are cached longer than negative
+ *    results so repeated `connect()` calls don't hammer healthy routes, while
+ *    transient handoff misses do not pin a good fallback offline.
  *  * **Network-change re-evaluate.** `ConnectionManager`'s network callback
  *    bumps the caller into `resolve()` again on `onAvailable`, and marks the
  *    active endpoint unreachable on `onLost` via [markUnreachable].
@@ -77,7 +81,7 @@ class EndpointResolver(
          */
         const val PROBE_TIMEOUT_MS = 4_000L
         /**
-         * Probe-result cache TTL. Widened from ADR 24's 30s to 60s for
+         * Successful probe-result cache TTL. Widened from ADR 24's 30s to 60s for
          * two reasons: (1) HEAD /health on every tab open was burning
          * battery unnecessarily on mobile, (2) NetworkCallback's
          * onAvailable / onLost invalidates the cache on real network
@@ -86,6 +90,14 @@ class EndpointResolver(
          * bypass the cache.
          */
         const val CACHE_TTL_MS = 60_000L
+
+        /**
+         * Failed probe-result cache TTL. Keep this intentionally short:
+         * Android may report a new cellular/VPN network before Tailscale has
+         * finished routing, so a single early ConnectException must not keep a
+         * viable fallback route suppressed through the voice resume window.
+         */
+        const val NEGATIVE_CACHE_TTL_MS = 2_000L
 
         /**
          * Stable cache key for a candidate: `"<role>|<api.host>:<api.port>"`.
@@ -127,11 +139,25 @@ class EndpointResolver(
             if (winner != null) {
                 Log.i(TAG, "resolve winner: role=${winner.role} " +
                     "api=${winner.api.host}:${winner.api.port} priority=$priority")
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Endpoint,
+                    severity = DiagnosticSeverity.Info,
+                    title = "Endpoint selected",
+                    detail = "priority=$priority",
+                    endpointRole = winner.role,
+                    url = winner.relay.url,
+                )
                 return winner
             }
         }
 
         Log.w(TAG, "resolve: no reachable candidate across ${candidates.size} record(s)")
+        DiagnosticsLog.record(
+            category = DiagnosticCategory.Endpoint,
+            severity = DiagnosticSeverity.Warning,
+            title = "No reachable endpoint",
+            detail = "${candidates.size} configured route(s) failed health probes",
+        )
         return null
     }
 
@@ -193,10 +219,8 @@ class EndpointResolver(
         }
 
         val reachable = probe(candidate)
-        probeCache[key] = CacheEntry(
-            expiresAt = now + CACHE_TTL_MS,
-            reachable = reachable,
-        )
+        val ttl = if (reachable) CACHE_TTL_MS else NEGATIVE_CACHE_TTL_MS
+        probeCache[key] = CacheEntry(expiresAt = now + ttl, reachable = reachable)
         return reachable
     }
 
@@ -209,9 +233,18 @@ class EndpointResolver(
      * We never raise: a bad record shouldn't crash the connect loop.
      */
     private suspend fun probe(candidate: EndpointCandidate): Boolean {
+        val startedAtMs = clock()
         val url = "${candidate.api.url}/health".toHttpUrlOrNull()
             ?: run {
                 Log.w(TAG, "probe: invalid url for role=${candidate.role}")
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Endpoint,
+                    severity = DiagnosticSeverity.Error,
+                    title = "Endpoint probe invalid",
+                    detail = "Invalid API URL",
+                    endpointRole = candidate.role,
+                    url = candidate.api.url,
+                )
                 return false
             }
         val fastClient = httpClient.newBuilder()
@@ -229,14 +262,53 @@ class EndpointResolver(
             try {
                 withTimeoutOrNull(PROBE_TIMEOUT_MS + 200L) {
                     fastClient.newCall(request).execute().use { resp ->
-                        resp.isSuccessful
+                        val ok = resp.isSuccessful
+                        DiagnosticsLog.record(
+                            category = DiagnosticCategory.Endpoint,
+                            severity = if (ok) DiagnosticSeverity.Info else DiagnosticSeverity.Warning,
+                            title = if (ok) "Endpoint probe ok" else "Endpoint probe failed",
+                            detail = if (ok) null else "HTTP ${resp.code}",
+                            endpointRole = candidate.role,
+                            url = candidate.api.url,
+                            elapsedMs = clock() - startedAtMs,
+                        )
+                        ok
                     }
-                } ?: false
+                } ?: run {
+                    DiagnosticsLog.record(
+                        category = DiagnosticCategory.Endpoint,
+                        severity = DiagnosticSeverity.Warning,
+                        title = "Endpoint probe timeout",
+                        detail = "No /health response in ${PROBE_TIMEOUT_MS}ms",
+                        endpointRole = candidate.role,
+                        url = candidate.api.url,
+                        elapsedMs = clock() - startedAtMs,
+                    )
+                    false
+                }
             } catch (_: TimeoutCancellationException) {
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Endpoint,
+                    severity = DiagnosticSeverity.Warning,
+                    title = "Endpoint probe timeout",
+                    detail = "No /health response in ${PROBE_TIMEOUT_MS}ms",
+                    endpointRole = candidate.role,
+                    url = candidate.api.url,
+                    elapsedMs = clock() - startedAtMs,
+                )
                 false
             } catch (e: Exception) {
                 Log.d(TAG, "probe failed role=${candidate.role} " +
                     "host=${candidate.api.host}: ${e.javaClass.simpleName}")
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Endpoint,
+                    severity = DiagnosticSeverity.Warning,
+                    title = "Endpoint probe failed",
+                    detail = e.javaClass.simpleName,
+                    endpointRole = candidate.role,
+                    url = candidate.api.url,
+                    elapsedMs = clock() - startedAtMs,
+                )
                 false
             }
         }
@@ -247,14 +319,14 @@ class EndpointResolver(
      * `ConnectionManager`'s `NetworkCallback.onLost` so the next resolve()
      * skips the dead endpoint without waiting for its probe to time out.
      *
-     * The entry is still TTL'd — after 30 seconds it expires and the next
-     * resolve() will re-probe. That matches "ADR 24 — cached for 30 seconds"
-     * and stops a permanently-cached stale result.
+     * The entry is still TTL'd with the short negative TTL so a network-change
+     * transition can skip the known-dead active route without suppressing a
+     * valid fallback for the whole positive cache window.
      */
     fun markUnreachable(candidate: EndpointCandidate) {
         val key = cacheKey(candidate)
         probeCache[key] = CacheEntry(
-            expiresAt = clock() + CACHE_TTL_MS,
+            expiresAt = clock() + NEGATIVE_CACHE_TTL_MS,
             reachable = false,
         )
     }

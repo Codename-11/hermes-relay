@@ -62,6 +62,16 @@ private fun classifyIoMessage(msg: String, context: String?): HumanError? {
             body = "The relay could not authenticate to Hermes. Update the server-side Hermes credential and restart the relay.",
             retryable = false,
         )
+        "xai realtime auth" in msg ||
+            "openai realtime auth" in msg ||
+            "realtime rejected the relay auth" in msg ||
+            "realtime oauth refresh failed" in msg ||
+            "realtime provider credentials" in msg -> HumanError(
+            title = "Realtime provider auth unavailable",
+            body = "The realtime voice provider is missing or rejected server-side auth. Refresh provider auth on the relay or choose another provider.",
+            retryable = false,
+            actionLabel = "Voice settings",
+        )
         (
             "api key" in msg ||
                 "sessions auth failed" in msg ||

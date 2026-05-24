@@ -54,11 +54,10 @@ android {
                 Properties().apply { localProps.inputStream().use { stream -> load(stream) } }
             } else null
 
-            storeFile = file(
-                System.getenv("HERMES_KEYSTORE_PATH")
-                    ?: props?.getProperty("hermes.keystore.path")
-                    ?: "/nonexistent"
-            )
+            val keystorePath = System.getenv("HERMES_KEYSTORE_PATH")
+                ?: props?.getProperty("hermes.keystore.path")
+                ?: "/nonexistent"
+            storeFile = rootProject.file(keystorePath)
             storePassword = System.getenv("HERMES_KEYSTORE_PASSWORD")
                 ?: props?.getProperty("hermes.keystore.password") ?: ""
             keyAlias = System.getenv("HERMES_KEY_ALIAS")

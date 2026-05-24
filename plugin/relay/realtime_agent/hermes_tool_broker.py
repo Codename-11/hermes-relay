@@ -110,6 +110,46 @@ class HermesToolBroker:
                 "message": f"Cannot reach Hermes WebAPI: {exc}",
             }
 
+    async def fetch_context_messages(
+        self,
+        *,
+        session_id: str,
+        bearer_token: str | None,
+        limit: int = 14,
+    ) -> tuple[dict[str, str], ...]:
+        if not session_id:
+            return ()
+        timeout = aiohttp.ClientTimeout(total=5, connect=3)
+        headers = _headers(bearer_token)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as http:
+                async with http.get(
+                    f"{self.webapi_url}/api/sessions/{session_id}/messages",
+                    headers=headers,
+                ) as resp:
+                    if resp.status != 200:
+                        await resp.read()
+                        return ()
+                    payload = await resp.json()
+        except Exception as exc:
+            logger.debug("Hermes context fetch failed for %s: %s", session_id, exc)
+            return ()
+        items = payload.get("items") or payload.get("messages") if isinstance(payload, dict) else None
+        if not isinstance(items, list):
+            return ()
+        messages: list[dict[str, str]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or item.get("type") or "").strip().lower()
+            if role not in {"user", "assistant", "system"}:
+                continue
+            content = _message_content_text(item)
+            if not content:
+                continue
+            messages.append({"role": role, "content": content, "source": "hermes_session"})
+        return tuple(messages[-max(1, limit):])
+
     async def _create_session(
         self,
         http: aiohttp.ClientSession,
@@ -280,8 +320,16 @@ def _map_sse_event(data: dict[str, Any], session_id: str) -> dict[str, Any] | No
             "session_id": session_id,
             "run_id": _run_id(data),
         }
-    if raw_type in {"thinking_delta", "reasoning_delta", "thinking", "tool.progress"}:
+    if raw_type in {
+        "thinking_delta",
+        "reasoning_delta",
+        "thinking",
+        "tool.progress",
+        "reasoning.available",
+    }:
         delta = _text(data.get("delta") or data.get("thinking") or data.get("content"))
+        if not delta:
+            delta = _text(data.get("text") or data.get("message"))
         if not delta:
             return None
         return {
@@ -290,6 +338,16 @@ def _map_sse_event(data: dict[str, Any], session_id: str) -> dict[str, Any] | No
             "run_id": _run_id(data),
             "delta": delta,
             "tool_name": _tool_name(data),
+        }
+    if raw_type in {"memory.updated", "skill.loaded", "artifact.created"}:
+        return {
+            "type": "hermes.tool.completed",
+            "session_id": session_id,
+            "run_id": _run_id(data),
+            "tool_call_id": _tool_call_id(data),
+            "tool_name": _tool_name(data),
+            "result_preview": _result_preview(data),
+            "success": True,
         }
     if raw_type in {"tool.pending", "tool.started", "tool_start", "tool_started"}:
         return {
@@ -398,18 +456,57 @@ def _confirmation_id(data: dict[str, Any]) -> str:
 
 
 def _result_preview(data: dict[str, Any]) -> str | None:
-    for key in ("result_preview", "result", "content"):
+    for key in ("result_preview", "result", "content", "output", "message", "preview", "text"):
         value = data.get(key)
         if value is None:
             continue
         if isinstance(value, str):
             return value[:2000]
         return json.dumps(value, sort_keys=True)[:2000]
+    compact = {
+        key: value
+        for key, value in data.items()
+        if key
+        in {
+            "tool_name",
+            "name",
+            "path",
+            "target",
+            "entry_count",
+            "success",
+            "duration",
+        }
+        and value is not None
+    }
+    if compact:
+        return json.dumps(compact, sort_keys=True)[:2000]
     return None
 
 
 def _text(value: Any) -> str:
     return value if isinstance(value, str) else ""
+
+
+def _message_content_text(item: dict[str, Any]) -> str:
+    value = (
+        item.get("content")
+        or item.get("text")
+        or item.get("message")
+        or item.get("final_response")
+    )
+    if isinstance(value, str):
+        return " ".join(value.strip().split())[:1500]
+    if isinstance(value, list):
+        parts: list[str] = []
+        for part in value:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict):
+                text = part.get("text") or part.get("content")
+                if isinstance(text, str):
+                    parts.append(text)
+        return " ".join(" ".join(parts).split())[:1500]
+    return ""
 
 
 __all__ = ["HermesTaskRequest", "HermesToolBroker"]

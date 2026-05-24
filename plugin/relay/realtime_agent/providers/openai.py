@@ -124,7 +124,18 @@ class OpenAIRealtimeAgentProvider:
         if safety_identifier:
             headers["OpenAI-Safety-Identifier"] = safety_identifier
 
-        socket = await self._socket_factory(url, headers, timeout)
+        try:
+            socket = await self._socket_factory(url, headers, timeout)
+        except aiohttp.WSServerHandshakeError as exc:
+            if exc.status in {401, 403}:
+                raise ProviderUnavailable(
+                    "OpenAI Realtime rejected the relay auth "
+                    f"({exc.status}; source: {auth.source}). Update the "
+                    "relay-side OpenAI realtime provider credentials."
+                ) from exc
+            raise ProviderUnavailable(
+                f"OpenAI Realtime websocket handshake failed with HTTP {exc.status}"
+            ) from exc
         connection = OpenAIRealtimeAgentConnection(
             socket=socket,
             config=config,
@@ -161,6 +172,23 @@ class OpenAIRealtimeAgentConnection:
 
     async def commit_audio(self) -> None:
         await self.socket.send_json({"type": "input_audio_buffer.commit"})
+
+    async def send_text(self, text: str) -> None:
+        await self.socket.send_json(
+            {
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": text,
+                        }
+                    ],
+                },
+            }
+        )
         await self.socket.send_json({"type": "response.create"})
 
     async def clear_audio(self) -> None:
@@ -253,8 +281,8 @@ async def _create_aiohttp_websocket(
         await session.close()
         if exc.status in {401, 403}:
             raise ProviderUnavailable(
-                "OpenAI Realtime rejected the configured API key. Update the "
-                "relay-side OpenAI API key in settings or environment."
+                "OpenAI Realtime rejected the relay auth. Update the relay-side "
+                "OpenAI realtime provider credentials."
             ) from exc
         raise ProviderUnavailable(
             f"OpenAI Realtime websocket handshake failed with HTTP {exc.status}"
@@ -566,7 +594,15 @@ def _default_instructions(config: RealtimeAgentSessionConfig) -> str:
         "actions, confirmations, persistent context, research, current facts, "
         "news, external data, live checks, latest/versioned info, personal or "
         "project context, side effects, precision-sensitive answers, or media and "
-        "artifact handling. When speaking, summarize dense machine-readable "
+        "artifact handling. Hermes is the durable conversation memory; use any "
+        "seeded recent chat context for follow-up references when it is enough, "
+        "and route missing/stale/verification-sensitive references through "
+        "Hermes before answering. Do not say you lack context before a Hermes "
+        "call. You may speak one brief acknowledgement such as 'I'll check "
+        "Hermes' or 'I'll check that' before the tool call, then call Hermes "
+        "immediately. Do not give a substantive answer until Hermes returns. "
+        "Android will provide restrained local status while Hermes runs. "
+        "When speaking, summarize dense machine-readable "
         "values instead of reading raw IDs, URLs, paths, JSON, logs, or long "
         f"numbers character by character. Active profile: {profile}. "
         "Do not call web_search, x_search, MCP, or any non-Hermes tool."
