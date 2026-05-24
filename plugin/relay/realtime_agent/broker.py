@@ -1989,7 +1989,10 @@ class RealtimeAgentHandler:
 
         task = asyncio.create_task(self._execute_brokered_tool(ws, session, call))
         session.hermes_task = task
-        promote_after = self._promote_after_seconds(session)
+        # Tier C: an explicit mode="background" request detaches immediately,
+        # even when grace-period promotion is otherwise off.
+        force_background = str(call.arguments.get("mode") or "").strip().lower() == "background"
+        promote_after = 0.0 if force_background else self._promote_after_seconds(session)
         try:
             if promote_after is None:
                 return await task
@@ -1997,10 +2000,10 @@ class RealtimeAgentHandler:
                 # Shield so a promotion timeout cancels only the wait, not the run.
                 return await asyncio.wait_for(asyncio.shield(task), timeout=promote_after)
             except asyncio.TimeoutError:
-                # Tier B: the run is taking too long — detach it to the background
-                # and hand control back to the pump (ADR 33). The task keeps
-                # running; _deliver_background_result awaits and delivers it.
-                session.hermes_run_tier = "promoted"
+                # Tier B/C: detach the run to the background and hand control back
+                # to the pump (ADR 33). The task keeps running;
+                # _deliver_background_result awaits and delivers it.
+                session.hermes_run_tier = "durable" if force_background else "promoted"
                 session.promoted_transcript = str(call.arguments.get("text") or "").strip()
                 self._log(
                     session,
@@ -2065,7 +2068,7 @@ class RealtimeAgentHandler:
                 "session_id": session.chat_session_id,
                 "chat_session_id": session.chat_session_id,
                 "run_id": session.hermes_run_id,
-                "tier": "promoted",
+                "tier": session.hermes_run_tier if session.hermes_run_tier in ("promoted", "durable") else "promoted",
                 "promote_after_ms": session.promote_after_ms,
                 "spoken_handoff": session.spoken_handoff,
                 "result_delivery": session.result_delivery,
@@ -2646,6 +2649,16 @@ class RealtimeAgentHandler:
             "config_scope": settings["config_scope"],
             "fallback_to_global": settings["fallback_to_global"],
             "tool_surface": list(_TOOL_SURFACE),
+            "promotion": {
+                "enabled": bool(settings["promotion_enabled"]),
+                "promote_after_ms": int(settings["promote_after_ms"]),
+                "background_default_mode": settings["background_default_mode"],
+                "spoken_handoff": bool(settings["spoken_handoff"]),
+                "progress_spoken_after_ms": int(settings["progress_spoken_after_ms"]),
+                "progress_repeat_ms": int(settings["progress_repeat_ms"]),
+                "result_delivery": settings["result_delivery"],
+                "max_background_runs": int(settings["max_background_runs"]),
+            },
             "limits": [
                 "Hermes owns tools, confirmations, memory, and transcript state.",
                 "Native realtime providers receive relay-brokered mic PCM and only the approved Hermes function surface.",
@@ -2963,7 +2976,22 @@ class RealtimeAgentHandler:
 
     def _validate_config_updates(self, payload: dict[str, Any]) -> dict[str, Any]:
         updates: dict[str, Any] = {}
-        allowed = {"enabled", "provider", "model", "voice", "sample_rate"}
+        allowed = {
+            "enabled",
+            "provider",
+            "model",
+            "voice",
+            "sample_rate",
+            # ADR 33 promotion fields.
+            "promotion_enabled",
+            "promote_after_ms",
+            "background_default_mode",
+            "spoken_handoff",
+            "progress_spoken_after_ms",
+            "progress_repeat_ms",
+            "result_delivery",
+            "max_background_runs",
+        }
         unsupported = sorted(set(payload) - allowed)
         if unsupported:
             raise web.HTTPBadRequest(
@@ -2987,6 +3015,43 @@ class RealtimeAgentHandler:
             if sample_rate is None or sample_rate < 8_000 or sample_rate > 96_000:
                 raise web.HTTPBadRequest(text="sample_rate must be between 8000 and 96000")
             updates["sample_rate"] = sample_rate
+        if "promotion_enabled" in payload:
+            value = _bool_value(payload["promotion_enabled"])
+            if value is None:
+                raise web.HTTPBadRequest(text="promotion_enabled must be a boolean")
+            updates["promotion_enabled"] = value
+        if "spoken_handoff" in payload:
+            value = _bool_value(payload["spoken_handoff"])
+            if value is None:
+                raise web.HTTPBadRequest(text="spoken_handoff must be a boolean")
+            updates["spoken_handoff"] = value
+        for ms_field, lo, hi in (
+            ("promote_after_ms", 0, 120_000),
+            ("progress_spoken_after_ms", 0, 600_000),
+            ("progress_repeat_ms", 0, 600_000),
+        ):
+            if ms_field in payload:
+                value = _int_value(payload[ms_field])
+                if value is None or value < lo or value > hi:
+                    raise web.HTTPBadRequest(text=f"{ms_field} must be between {lo} and {hi}")
+                updates[ms_field] = value
+        if "max_background_runs" in payload:
+            value = _int_value(payload["max_background_runs"])
+            if value is None or value < 1 or value > 4:
+                raise web.HTTPBadRequest(text="max_background_runs must be between 1 and 4")
+            updates["max_background_runs"] = value
+        if "background_default_mode" in payload:
+            mode = _bounded_string(payload["background_default_mode"], "background_default_mode", max_len=20)
+            if mode not in ("promote", "foreground"):
+                raise web.HTTPBadRequest(text="background_default_mode must be 'promote' or 'foreground'")
+            updates["background_default_mode"] = mode
+        if "result_delivery" in payload:
+            delivery = _bounded_string(payload["result_delivery"], "result_delivery", max_len=24)
+            if delivery not in ("speak_when_idle", "notify_then_speak", "visual_only"):
+                raise web.HTTPBadRequest(
+                    text="result_delivery must be speak_when_idle, notify_then_speak, or visual_only"
+                )
+            updates["result_delivery"] = delivery
         if not updates:
             raise web.HTTPBadRequest(text="no realtime agent config fields supplied")
         return updates

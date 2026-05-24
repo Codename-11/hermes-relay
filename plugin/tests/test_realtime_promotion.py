@@ -231,7 +231,16 @@ class RealtimePromotionTests(AioHTTPTestCase):
         body["_ready"] = ready
         return ws, fake_provider, body
 
-    async def _emit_tool_call(self, provider: FakeNativeProvider, *, call_id="call-1") -> None:
+    async def _emit_tool_call(
+        self,
+        provider: FakeNativeProvider,
+        *,
+        call_id="call-1",
+        mode: str | None = None,
+    ) -> None:
+        arguments: dict[str, Any] = {"text": "Research the thing.", "session_id": "chat-123"}
+        if mode is not None:
+            arguments["mode"] = mode
         await provider.connection.emit(
             ProviderEvent(
                 ProviderEventKind.FUNCTION_CALL_COMPLETED,
@@ -240,7 +249,7 @@ class RealtimePromotionTests(AioHTTPTestCase):
                     "call": ToolCallEvent(
                         call_id=call_id,
                         name="hermes_run_task",
-                        arguments={"text": "Research the thing.", "session_id": "chat-123"},
+                        arguments=arguments,
                     )
                 },
             )
@@ -318,6 +327,29 @@ class RealtimePromotionTests(AioHTTPTestCase):
                 "running_in_background",
             )
         finally:
+            await ws.close()
+
+    async def test_explicit_background_mode_promotes_immediately(self) -> None:
+        # Tier C: mode="background" detaches immediately, even with grace-period
+        # promotion turned off and a long grace window.
+        broker = GatedHermesToolBroker()
+        ws, provider, body = await self._open(broker=broker)
+        session = self._server().realtime_agent.sessions[body["session_id"]]
+        session.promotion_enabled = False
+        session.promote_after_ms = 60000
+        try:
+            await self._emit_tool_call(provider, mode="background")
+            events = await self._read_until(ws, "hermes.run.promoted")
+            promoted = next(e for e in events if e["type"] == "hermes.run.promoted")
+            self.assertEqual(promoted["tier"], "durable")
+
+            broker.release.set()
+            done = await self._read_until(ws, "hermes.run.background_completed")
+            self.assertTrue(
+                any(e["type"] == "hermes.run.background_completed" for e in done)
+            )
+        finally:
+            broker.release.set()
             await ws.close()
 
     async def test_cancel_during_promoted_run(self) -> None:

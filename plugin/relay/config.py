@@ -108,9 +108,12 @@ class RelayConfig:
     realtime_voice_config_path: str | None = None
     realtime_voice_run_dir: str | None = None
     realtime_voice_xai_oauth_path: str | None = None
-    # ADR 33 background-Hermes-run promotion. Default off until the Phase 0
-    # provider idle-tolerance verdict is recorded (docs/realtime-voice-poc.md).
-    realtime_voice_promotion_enabled: bool = False
+    # ADR 33 background-Hermes-run promotion. Default ON: the promotion path
+    # closes the pending provider call with an interim ack instead of holding an
+    # open response, so the provider socket only sees the normal between-turns
+    # idle gap, not a long open-response stall. The Phase 0 probe
+    # (docs/realtime-voice-poc.md) still confirms per-provider socket survival.
+    realtime_voice_promotion_enabled: bool = True
     realtime_voice_promote_after_ms: int = 6000
     realtime_voice_background_default_mode: str = "promote"
     realtime_voice_spoken_handoff: bool = True

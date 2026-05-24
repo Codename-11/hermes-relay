@@ -43,7 +43,16 @@ HERMES_TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
                 "text": {"type": "string"},
                 "profile": {"type": "string"},
                 "session_id": {"type": "string"},
-                "mode": {"type": "string", "enum": ["chat", "run"]},
+                "mode": {
+                    "type": "string",
+                    "enum": ["chat", "run", "background"],
+                    "description": (
+                        "'run' (default) answers in-line for short tasks and is "
+                        "auto-promoted to the background if it runs long; "
+                        "'background' starts a durable run immediately and reports "
+                        "back when it finishes."
+                    ),
+                },
             },
             "required": ["text"],
         },
