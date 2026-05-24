@@ -2150,6 +2150,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 "voice.response.started", "hermes.run.started" -> {
+                    if (event.type == "hermes.run.started") {
+                        Log.i(
+                            TAG,
+                            "Realtime Hermes run started run=${event.runId ?: "?"} " +
+                                "session=${event.chatSessionId ?: "?"}",
+                        )
+                    }
                     _uiState.update {
                         it.copy(state = VoiceState.Thinking, outputAudioActive = false)
                     }
@@ -2187,6 +2194,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 "hermes.run.progress" -> {
                     val line = realtimeHermesProgressLine(event.message)
+                    Log.i(
+                        TAG,
+                        "Realtime Hermes progress tier=${event.tier ?: "?"} " +
+                            "floor=${event.floor ?: "?"} status=${event.statusKey ?: "?"} " +
+                            "shouldSpeak=${event.shouldSpeak} run=${event.runId ?: "?"}",
+                    )
                     if (event.shouldSpeak) {
                         emitStatus(
                             key = "progress-${event.runId ?: "run"}-${event.statusKey ?: line}",
@@ -2208,6 +2221,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     // handoff. Surface a persistent chip so the user knows a long
                     // task is still in flight (ADR 33 Tier B/C).
                     val tier = event.tier ?: "promoted"
+                    Log.i(
+                        TAG,
+                        "Realtime run promoted to background tier=$tier " +
+                            "run=${event.runId ?: "?"} session=${event.chatSessionId ?: "?"}",
+                    )
                     _uiState.update {
                         it.copy(
                             backgroundRun = BackgroundRunState(
@@ -2225,6 +2243,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 "hermes.run.background_completed" -> {
                     // Background run finished; the spoken summary follows via the
                     // provider's forced-summary turn. Clear the chip.
+                    Log.i(
+                        TAG,
+                        "Realtime background run completed run=${event.runId ?: "?"} " +
+                            "ok=${event.success != false}",
+                    )
                     _uiState.update { it.copy(backgroundRun = null) }
                 }
                 "hermes.confirmation.requested" -> {
@@ -2308,6 +2331,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 "hermes.run.cancelled" -> {
+                    Log.i(TAG, "Realtime Hermes run cancelled run=${event.runId ?: "?"}")
                     realtimeConfirmationControl = null
                     _uiState.update {
                         it.copy(
