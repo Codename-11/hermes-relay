@@ -4,17 +4,17 @@ Hermes-Relay ships in **two flavors** built from the same codebase. Most users w
 
 ## TL;DR
 
-- **Google Play** — easy install, automatic updates, every chat and voice feature, plus the agent can *read* your phone (notifications, what's on screen). The bridge is **read-only** — it cannot tap, type, swipe, send SMS, make calls, or control other apps on your behalf. The toggle is labeled "Bridge Mode."
-- **Sideload** — manual install from GitHub Releases, all of the above plus the agent can *control* your phone — voice-routed bridge intents ("text Sam I'll be late", "open Chrome"), direct SMS/call dispatch, file sharing/MMS attachment handoff, vision-driven navigation, the works. The full `android_*` bridge toolset is available. The toggle is labeled "Agent Control."
+- **Google Play** — easy install, automatic updates, every chat/profile/voice feature, terminal/TUI relay, media handoff, notification companion, relay sessions, and diagnostics. It has **no AccessibilityService** and cannot read the screen, tap, type, swipe, capture screenshots, send SMS, make calls, access contacts/location, or perform unattended phone control.
+- **Sideload** — manual install from GitHub Releases, all of the above plus AccessibilityService-backed Device Control: screen reading, taps, typing, gestures, screenshots, voice-routed bridge intents ("text Sam I'll be late", "open Chrome"), direct SMS/call dispatch, file sharing/MMS attachment handoff, vision-driven navigation, and the full `android_*` bridge toolset. The toggle is labeled "Agent Control."
 - They coexist on a device — you can install both side-by-side and try them both.
 
 ## Why two tracks?
 
-Hermes-Relay's bridge channel uses Android's **Accessibility Service** — a powerful API designed for screen readers and assistive tech that, by extension, lets one app see and control another. It's exactly the right tool for letting an AI assistant act on your behalf, but Google Play scrutinizes accessibility-service apps very carefully because the same API is also a popular vector for malware.
+Hermes-Relay's sideload Device Control channel uses Android's **Accessibility Service** — a powerful API designed for screen readers and assistive tech that, by extension, lets one app see and control another. It's exactly the right tool for letting an AI assistant act on your behalf, but Google Play scrutinizes accessibility-service apps very carefully because the same API is also a popular vector for malware.
 
-To stay inside Google Play's policy without giving up the cool features, the Hermes-Relay APK on Google Play is built from a smaller subset of the source. The accessibility service in that build can read what's on screen and read your notifications, but the part that synthesizes taps and swipes is *not compiled into the APK at all*. It's not "disabled with a flag" — the code is physically absent from the binary Google reviews and you install. That keeps the Play version honest about what it can do.
+To stay inside Google Play's policy without giving up the rest of the app, the Hermes-Relay APK on Google Play is built from a smaller subset of the source. The accessibility service, screen-reading routes, gesture dispatch, screenshots, SMS/call/contact/location helpers, overlays, wake-lock Device Control, and unattended-control code are *not compiled into the APK at all*. It's not "disabled with a flag" — the code is physically absent from the binary Google reviews and you install. Notification companion stays available through Android's separate Notification Access permission.
 
-If you want the full feature set — including the parts where the agent actually performs actions on the phone for you — that's the **sideload** build, distributed straight from GitHub Releases as a signed APK.
+If you want the full feature set — including screen reading or any part where the agent performs actions on the phone for you — that's the **sideload** build, distributed straight from GitHub Releases as a signed APK.
 
 ## What's in each track
 
@@ -23,7 +23,8 @@ If you want the full feature set — including the parts where the agent actuall
 ## How to choose
 
 - **Want the easiest install and automatic updates?** → Google Play.
-- **Want the agent to be a "second pair of hands" — read notifications and summarize them, check your calendar, answer questions about what's on screen?** → Either track. Both can do this.
+- **Want notification summaries, chat, profiles, terminal/TUI, media, and voice without sideloading?** → Google Play.
+- **Want the agent to answer questions about what's on screen?** → Sideload.
 - **Want hands-free voice control of your phone — "text Sam I'll be 10 minutes late" without touching your screen?** → Sideload.
 - **Want the agent to look at your screen and figure out how to drive an unfamiliar app on your behalf?** → Sideload.
 - **Don't know yet?** → Start with Google Play. You can install sideload later — they live side-by-side as separate apps.
@@ -44,7 +45,7 @@ One tap from the Play Store listing. Updates arrive automatically.
 
 ### Sideload
 
-Download the file ending in `-sideload-release.apk` from the latest GitHub Release (for example, `hermes-relay-0.4.0-sideload-release.apk`), allow installs from your browser, and tap the file. Full step-by-step instructions (including how to verify the APK signature) live in [Installation & Setup → Sideload APK](/guide/getting-started#sideload-apk).
+Download the file ending in `-sideload-release.apk` from the latest GitHub Release (for example, `hermes-relay-0.8.0-sideload-release.apk`), allow installs from your browser, and tap the file. Full step-by-step instructions (including how to verify the APK signature) live in [Installation & Setup → Sideload APK](/guide/getting-started#sideload-apk).
 
 [GitHub Android Releases →](https://github.com/Codename-11/hermes-relay/releases)
 
@@ -68,4 +69,4 @@ On the **sideload** track, the full safety rail stack runs:
 - **Persistent notification** — when bridge is on, you always have a system-tray notification with a one-tap kill switch.
 - **Denial is final** — if you tap Deny on the confirmation prompt, the agent receives a structured `error_code: user_denied` response with an explicit "do not retry via UI automation" instruction. The agent cannot work around a denial by driving the Messages app UI instead.
 
-On the **Google Play** track, none of the above fires because the bridge is read-only. The Bridge tab shows only "Bridge Mode" (screen reading), accessibility + notification listener permissions, and the activity log.
+On the **Google Play** track, none of the above fires because Device Control is absent. The Bridge tab shows Bridge Core status and links for Connections, Terminal, Voice, Notification Companion, Media, and Relay Sessions; it does not show Accessibility, screen reading, gesture, screenshot, or safety-rail controls.

@@ -6,7 +6,7 @@
 
 A native Android app (Kotlin + Jetpack Compose) paired with a Python relay server (aiohttp) for the Hermes agent platform. Chat connects directly to the Hermes API Server via HTTP/SSE; bridge and terminal use a relay over WSS.
 
-**Current state:** v0.7.x (unreleased on `dev`) — Phase 0–3 complete. Direct API chat, session management, pairing + security (now multi-endpoint, ADR 24), inbound media, voice mode, bridge/accessibility control, notification companion, safety rails, multi-Connection, agent profiles + inspector, and first-class Tailscale (ADR 25). Two product flavors: `googlePlay` (conservative) and `sideload` (full-capability).
+**Current state:** v0.8.0 (release-prep on `dev`) — Phase 0–3 complete. Direct API chat, session management, pairing + security (now multi-endpoint, ADR 24), inbound media, voice mode (stable Hermes Chat + Voice Output plus opt-in provider-native Realtime Agent with reliable low-latency playback and a text/mic Voice Lab), bridge/accessibility control, notification companion, safety rails, multi-Connection, agent profiles + inspector, connection diagnostics, and first-class Tailscale (ADR 25). Two product flavors: `googlePlay` (conservative, Bridge Core without Device Control) and `sideload` (full-capability).
 
 ## Architecture
 

@@ -209,10 +209,12 @@ hermes.key.password=YOUR_KEY_PASSWORD
 ```
 
 `local.properties`, `*.keystore`, and `*.jks` are already gitignored.
+Relative `hermes.keystore.path` values resolve from the repo root, so
+`release.keystore` works when the keystore lives beside this file.
 
 > If the keystore at `hermes.keystore.path` is missing, `app/build.gradle.kts`
 > silently falls back to debug signing. The build succeeds but Play Console
-> rejects the AAB — always verify with `keytool -list -printcert` (step 3
+> rejects the AAB — always verify with `keytool -printcert` (step 3
 > below).
 
 #### CI builds
@@ -378,7 +380,7 @@ the new app version and a higher `appVersionCode`.
 
 ```bat
 scripts\dev.bat bundle
-keytool -list -printcert -jarfile app\build\outputs\bundle\googlePlayRelease\hermes-relay-*-googlePlay-release.aab
+keytool -printcert -jarfile app\build\outputs\bundle\googlePlayRelease\hermes-relay-*-googlePlay-release.aab
 ```
 
 The `keytool` output must show your release certificate (the CN/OU/O
@@ -606,7 +608,7 @@ Fix: update the file, commit, delete the remote tag
 (`git push --delete origin android-vX`), re-tag, and push again.
 
 **Play Console rejects the AAB as debug-signed**
-Run `keytool -list -printcert -jarfile <aab>` locally — if it shows
+Run `keytool -printcert -jarfile <aab>` locally — if it shows
 `CN=Android Debug`, fix `local.properties` for local builds or
 `HERMES_KEYSTORE_BASE64` for CI. For CI, check the workflow summary; if it
 says "Debug-signed", one of the four `HERMES_*` secrets is missing or the

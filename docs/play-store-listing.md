@@ -34,7 +34,7 @@ Create, switch, rename, and delete chat sessions. Message history is loaded from
 Switch between configured Hermes profiles and personalities. The active profile context stays visible in chat and voice surfaces.
 
 ◆ Voice Mode
-Use optional microphone capture for speech-to-text and relay-rendered assistant speech. Voice provider, model, and voice options come from your relay/Hermes configuration.
+Use optional microphone capture for Hermes Chat + Voice Output, where Hermes owns the chat/tool turn and the relay renders assistant speech. An experimental Realtime Agent engine can use provider-native realtime speech while Hermes remains the tool, profile, confirmation, and memory authority.
 
 ◆ Bridge Core Pairing
 Scan a relay QR code to configure API and relay endpoints, then manage relay sessions and per-feature grants from the app.
@@ -79,7 +79,7 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 
 ## Release Notes
 
-Google Play track now ships Bridge Core without AccessibilityService-based Device Control. Chat, voice, terminal, media, notification companion, relay sessions, and QR pairing remain available for paired self-hosted Hermes users.
+v0.8.0 improves the Google Play-safe Bridge Core build, voice settings, and realtime voice path. Play remains free of AccessibilityService Device Control while keeping chat, profiles, voice, terminal/TUI relay, media, notification companion, relay sessions, QR pairing, diagnostics, and connection health. Voice Settings now clearly separates Hermes Chat + Voice Output from the experimental Realtime Agent, keeps fallback TTS visible as a global safety net, and Realtime Agent supports provider-native Hermes-brokered speech for xAI and OpenAI.
 
 ## Category
 

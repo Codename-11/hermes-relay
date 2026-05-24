@@ -1,17 +1,25 @@
-v0.7.0 - Profiles, voice settings, and realtime voice polish
+v0.8.0 - Play-safe Bridge Core, Realtime Agent, and diagnostics
 
-Profiles
-* Profile switching now keeps profile-specific chat/session state separate.
-* Default/Victor display is normalized so the selected agent name stays visible.
-* Profile API URL handling is safer for remote Hermes profile servers.
+Google Play
+* Google Play keeps chat, profiles, voice, terminal/TUI relay, media,
+  notification companion, relay sessions, QR pairing, and diagnostics.
+* AccessibilityService-backed screen reading, phone control, screenshots,
+  SMS/calls, contacts/location, overlays, wake locks, and unattended control
+  remain sideload-only.
 
 Voice
-* Voice settings can show and save provider/model/voice choices per profile.
-* Voice output uses balanced coalescing for smoother replies.
-* Waveform and playback state better follow real audio output.
-* Continuous mode no longer starts a session just because auto mode is enabled.
-* Barge-in is now clearly marked experimental with known self-capture caveats.
+* Voice Settings now separates Voice Engine from global controls.
+* Hermes Chat + Voice Output and Realtime Agent show their own focused cards.
+* Fallback TTS stays visible as a global safety-net card.
+* Test Current Engine now plays saved stable voice or a provider-native Realtime Agent sample.
+* Realtime Agent uses provider-native xAI/OpenAI speech while Hermes remains
+  the tool, memory, profile, confirmation, and current-data authority.
+* Realtime voice now plays reliably from the first frame with low latency —
+  fixed silent/choppy first-turn audio and added playback diagnostics.
+* The Voice Lab adds a Text demo (raw provider TTS) and a Mic demo (full agent
+  path with tap-to-record/stop); the waveform follows the playback cursor.
 
-Relay
-* Added relay-owned profile voice config, provider options, streaming voice output,
-  and realtime voice playground endpoints for OpenAI/xAI/ElevenLabs testing.
+Diagnostics
+* Settings now has app-level diagnostics.
+* Connection detail sheets show recent API, relay, session, endpoint, and voice
+  activity so relay hangs surface quickly.

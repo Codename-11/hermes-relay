@@ -18,8 +18,8 @@ Three commands get you from zero to connected:
 
 Hermes-Relay ships in **two flavors** built from the same codebase:
 
-- **Google Play** — easy install, automatic updates, the agent can read your screen and notifications. The accessibility-service surface is conservative by design so the build stays inside Play Store policy.
-- **Sideload** — manual install from GitHub Releases, full feature set including hands-free voice control of your phone (the agent can tap, type, swipe, and navigate apps for you).
+- **Google Play** — easy install, automatic updates, chat, profiles, voice, terminal/TUI relay, media, notification companion, relay sessions, and diagnostics. It does not include AccessibilityService-backed screen reading or phone control.
+- **Sideload** — manual install from GitHub Releases, full feature set including hands-free voice control of your phone (the agent can read the screen, tap, type, swipe, and navigate apps for you).
 
 The two builds use different application IDs, so you can install both side-by-side and try them out. Most users want the Google Play version. Read the [Release tracks](/guide/release-tracks) page for the full feature comparison and a decision guide before you pick.
 
@@ -46,10 +46,10 @@ Restart hermes-agent after install.
 
 ::: tip What you get
 - **Full Hermes-Relay Android app features** — sessions browser, conversation history on app restart, personality picker, command palette, memory management. Just install the plugin and it works.
-- **Full `android_*` bridge toolset** (tap, type, read screen, screenshot, open apps, send SMS, call, search contacts, share files/MMS attachments, etc.) — registered by the plugin
+- **Full `android_*` bridge toolset for sideload phones** (tap, type, read screen, screenshot, open apps, send SMS, call, search contacts, share files/MMS attachments, etc.) — registered by the plugin only when `/bridge/status` reports a sideload Device Control phone
 - **`/hermes-relay-pair` slash command** — backed by the `devops/hermes-relay-pair` skill and usable from any Hermes chat surface
 - **`hermes-pair` shell shim** — for scripts and power-user flows
-- **Voice mode endpoints** on relay HTTP routes (transcribe, synthesize, voice config), with Hermes API-key auth first and relay-session fallback
+- **Voice mode endpoints** on relay HTTP routes (transcribe, synthesize, voice config, streaming voice output, and Realtime Agent), with paired relay-session auth first and Hermes API-key fallback for chat+voice-only installs
 
 No separate skill install, no `qrencode` binary needed.
 :::
@@ -111,7 +111,7 @@ This prints a QR code **and** the plain-text connection details (server URL, API
 
 **One scan configures chat *and* the relay.** If you've already started the Hermes-Relay WSS server on the same host (see [Relay Server](#relay-server-optional) below), `hermes-pair` automatically detects it at `localhost:8767`, mints a fresh 6-char pairing code, pre-registers the code with the relay via its loopback-only `/pairing/register` endpoint, and embeds the relay URL and code in the same QR. The phone scans once and is ready for chat, terminal, and bridge.
 
-If the relay isn't running, `hermes-pair` prints an `[info]` line pointing at `hermes relay start` and renders an API-only QR — chat still works, and you can pair with the relay later once it's up. Voice can use the saved Hermes API key too, so chat+voice does not require a paired Relay session. In manual setup, enter the API URL and API key first; the app derives the Relay URL from the same host on port `8767` and only asks for a manual override if `/voice/config` cannot be reached. Bridge Core, terminal/TUI, media, clipboard, and sideload Device Control routes still require pairing. Plain-LAN voice testing with an API key requires HTTPS or a local runtime opt-in on the relay host: `hermes relay insecure-api-key on` while testing, then `hermes relay insecure-api-key off`. You can also force API-only mode explicitly:
+If the relay isn't running, `hermes-pair` prints an `[info]` line pointing at `hermes relay start` and renders an API-only QR — chat still works, and you can pair with the relay later once it's up. Voice can use the saved Hermes API key too, so chat+voice does not require a paired Relay session. In manual setup, enter the API URL and API key first; the app derives the Relay URL from the same host on port `8767` and only asks for a manual override if `/voice/config` cannot be reached. Bridge Core, terminal/TUI, media, and sideload Device Control routes still require pairing. Plain-LAN voice testing with an API key requires HTTPS or a local runtime opt-in on the relay host: `hermes relay insecure-api-key on` while testing, then `hermes relay insecure-api-key off`. You can also force API-only mode explicitly:
 
 ```bash
 hermes-pair --no-relay
@@ -202,10 +202,10 @@ If you'd rather not use Google Play, you can install the signed APK directly fro
 
 ### 1. Download the APK
 
-Head to [github.com/Codename-11/hermes-relay/releases](https://github.com/Codename-11/hermes-relay/releases), open the newest Android release (`android-v*`; historical Android releases used bare `v*`), and grab the file ending in **`-sideload-release.apk`** from the assets list — for example, `hermes-relay-0.4.0-sideload-release.apk`. Every release is version-tagged, so the exact prefix changes each version but the `-sideload-release.apk` suffix stays constant.
+Head to [github.com/Codename-11/hermes-relay/releases](https://github.com/Codename-11/hermes-relay/releases), open the newest Android release (`android-v*`; historical Android releases used bare `v*`), and grab the file ending in **`-sideload-release.apk`** from the assets list — for example, `hermes-relay-0.8.0-sideload-release.apk`. Every release is version-tagged, so the exact prefix changes each version but the `-sideload-release.apk` suffix stays constant.
 
 ::: tip Why "sideload" and not "googlePlay"?
-Each release ships both a `-sideload-release.apk` (full feature set — bridge channel, voice-to-bridge intents, vision-driven navigation) and a `-googlePlay-release.apk` (conservative Play Store build). Most sideloaders want the `-sideload-` flavor. The two builds install with different application IDs, so you can have both side-by-side.
+Each release ships both a `-sideload-release.apk` (full Device Control set — screen reading, bridge channel, voice-to-bridge intents, vision-driven navigation) and a `-googlePlay-release.apk` (conservative Play Store build without AccessibilityService-backed screen reading or phone control). Most sideloaders want the `-sideload-` flavor. The two builds install with different application IDs, so you can have both side-by-side.
 :::
 
 ::: warning Download the .apk, not the .aab

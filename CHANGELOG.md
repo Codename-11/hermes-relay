@@ -6,11 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-23
+
+### Added
+
+- **Provider-native Realtime Agent voice.** Android can opt into a Realtime Agent voice engine where Android streams mic PCM to the relay, xAI or OpenAI owns realtime speech recognition and speech generation, and Hermes remains the governed authority for tools, memory, profiles, confirmations, current-data checks, side effects, and durable transcript context.
+
+- **Hermes-brokered realtime tool timeline.** Realtime Agent turns now mirror transcript, assistant speech, Hermes task state, concise tool-status rows, confirmation state, path badges, and compact result provenance into chat/voice UI without dumping raw tool output aloud.
+
+- **Connection diagnostics and activity logs.** Settings now includes a Diagnostics surface with sanitized recent API, relay, session, endpoint, and voice activity. API / Relay / Session detail drawers also tail the relevant recent activity so hung or unreachable relays are visible without ADB first.
+
+- **Realtime and Voice Settings active-engine layout.** Voice Settings now separates **Voice Engine** from global voice controls, shows only the selected engine's provider card, keeps fallback TTS visible as a global safety-net card, and provides **Test Current Engine**: stable voice plays the saved Voice Output sample, while Realtime Agent opens a provider-native `/voice/realtime-agent/*` test session and plays streamed realtime audio.
+
+- **Voice Lab text and mic demos.** The realtime voice test screen now offers two clearly separated demos: a **Text demo** that plays raw provider TTS, and a **Mic demo** that exercises the full agent path — real speech recognition, Hermes brokering, and a spoken reply — with tap-to-record / tap-to-stop capture. A `scripts/realtime-voice-lab-smoke.ps1` smoke script accompanies the lab.
+
+- **Realtime playback diagnostics.** Playback now records a time-to-first-audio metric, logs requested-vs-actual AudioTrack buffer sizes, runs a first-frame watchdog, and cross-checks playback drain drift so cold-start and underrun regressions surface in the Diagnostics log instead of as silent dead air.
+
 ### Changed
+
+- **Google Play Bridge Core split.** The Google Play Android track keeps relay pairing, chat, profiles, voice, terminal/TUI, media, notification companion, relay sessions, diagnostics, and status while removing AccessibilityService-backed Device Control declarations and permissions. Sideload remains the track for screen reading, gestures, screenshots, SMS/calls, contacts/location, overlays, wake locks, and unattended control.
 
 - **Release lanes now use explicit product tags and names.** Future Android releases use `android-v*`, server/Python releases use `server-v*`, and desktop continues on `desktop-v*`. GitHub Release names now publish as `Hermes-Relay-Android vX.Y.Z`, `Hermes-Relay-Server vX.Y.Z`, and `Hermes-Relay-Desktop vX.Y.Z`; the old relay-named server scripts remain compatibility shims.
 
-- **Google Play Bridge Core split.** The Google Play Android track now keeps relay pairing, chat, voice, terminal/TUI, media, notification companion, relay sessions, and status while removing AccessibilityService-backed Device Control declarations and permissions. Sideload remains the track for screen reading, gestures, screenshots, SMS/calls, contacts/location, overlays, wake locks, and unattended control.
+- **Realtime voice instructions are provider-neutral.** Realtime providers receive active interface context, local date/time, provider/model/voice/profile metadata, and guidance to ask Hermes for current facts, research, device/desktop state, project context, precise/versioned data, and any requested checks instead of guessing from model knowledge.
+
+- **Play/user docs now match the actual artifact.** Release-track docs, feature matrix, getting-started copy, privacy/security references, and Play listing copy now say Google Play has no AccessibilityService, screen reading, gestures, screenshots, or phone-control utility permissions.
+
+### Fixed
+
+- **Silent / choppy first-turn realtime voice playback.** The AudioTrack deep-buffer cold-start was parking the playback head at zero so the first turn dropped or stuttered. The streaming buffer was shrunk from 4000ms to 700ms, the low-latency prebuffer threshold retuned, and a preroll force-start removed, giving reliable low-latency playback from the first frame. Confirmed on-device.
+
+- **Voice Lab waveform now tracks the playback cursor.** The waveform is driven by `RealtimePcmPlayer.playbackAmplitude()` at the playback position instead of socket-arrival time, so the visual matches what is actually being heard.
+
+- **Realtime Hermes calls no longer depend on the phone's saved Hermes API key.** Provider-native Hermes tool calls are brokered by the relay with its server-side Hermes credential, so a phone can be paired for realtime voice without exposing or misusing its saved API bearer.
+
+- **Hung relay voice turns fail visibly.** Voice turns run relay health preflight and shorter realtime/session timeouts so Settings and Voice mode surface unreachable relay state instead of sitting indefinitely on Thinking.
+
+- **OpenAI realtime is no longer treated as render-after-Hermes fallback.** `openai_realtime` is registered as a native Realtime Agent provider path alongside xAI, with provider-native audio events normalized through the same broker contract.
+
+- **Local release signing no longer falls back to debug when `local.properties` uses a repo-root relative keystore path.** The Android Gradle signing config now resolves relative keystore paths from the repo root, matching the documented `release.keystore` setup.
 
 ## [0.7.0] - 2026-05-19
 
@@ -1135,7 +1169,8 @@ MVP release — native Android companion app for Hermes agent with direct API ch
 - **Dev scripts** — build, install, run, test, relay via scripts/dev.bat
 - **ProGuard rules** — okhttp-sse, markdown renderer, intellij-markdown parser
 
-[Unreleased]: https://github.com/Codename-11/hermes-relay/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/Codename-11/hermes-relay/compare/android-v0.8.0...HEAD
+[0.8.0]: https://github.com/Codename-11/hermes-relay/compare/v0.7.0...android-v0.8.0
 [0.7.0]: https://github.com/Codename-11/hermes-relay/compare/v0.6.1...v0.7.0
 [0.1.0]: https://github.com/Codename-11/hermes-relay/compare/v0.1.0-beta...v0.1.0
 [0.1.0-beta]: https://github.com/Codename-11/hermes-relay/releases/tag/v0.1.0-beta

@@ -39,15 +39,15 @@ Phone (WSS/HTTP) → Relay Server (:8767)        [Bridge Core, terminal, TUI, me
 
 Chat connects directly to the Hermes API Server using the Sessions API with SSE streaming. The relay server handles Bridge Core, terminal, TUI, media, notification companion, sessions, and `/voice/*` routes. Sideload builds additionally expose Android Device Control routes.
 
-## Current Status — v0.4.0
+## Current Status — v0.8.0
 
 | Feature | Status |
 |---------|--------|
 | Chat (direct API) | Complete |
 | Session management | Complete |
+| Profiles and personalities | Complete |
 | Markdown + syntax highlighting | Complete |
 | Reasoning display | Complete |
-| Personality picker + agent name on bubbles | Complete |
 | Command palette + inline autocomplete | Complete |
 | QR code pairing | Complete |
 | Token tracking | Complete |
@@ -57,6 +57,9 @@ Chat connects directly to the Hermes API Server using the Sessions API with SSE 
 | Terminal/TUI relay | Beta |
 | Bridge Core | Complete |
 | Device Control | Beta (sideload track) |
+| Hermes Chat + Voice Output | Complete |
+| Realtime Agent | Experimental |
+| Connection diagnostics | Complete |
 
 ## Quick Links
 
