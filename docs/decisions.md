@@ -1525,3 +1525,179 @@ old STT -> Hermes -> TTS pipeline instead of a native realtime agent.
 - `plugin/relay/realtime_agent/broker.py`
 - `plugin/relay/realtime_agent/providers/xai.py`
 - `plugin/relay/realtime_agent/providers/openai.py`
+
+---
+
+## ADR 33 - Realtime Agent foregrounds short Hermes turns and promotes long ones to background tasks
+
+**Status:** Accepted, phased (2026-05-24). Default-on at feature GA, gated by a
+prerequisite provider-idle-tolerance spike (Phase 0). Supersedes the
+blocking-broker assumption inside ADR 32's sequence; ADR 32's preamble ->
+forced-Hermes -> provider-summary shape is preserved for the foreground tier.
+
+**Context.** Today a Realtime Agent turn runs Hermes *synchronously inside the
+provider event pump*: `_pump_provider_events` awaits `_handle_provider_tool_call`
+-> `_run_brokered_tool`, which streams the entire Hermes SSE run to completion
+before the pump consumes the next provider event (`broker.py`). This is correct
+and lowest-latency for short Q&A, but it has two costs that grow with task
+length:
+
+- The provider realtime socket sits attached-but-idle for the whole run (a live,
+  billed, audio-clocked WebSocket parked for tens of seconds during research,
+  multi-tool, or desktop/build tasks).
+- The tool surface already advertises a background vocabulary
+  (`hermes_run_task`, `hermes_get_status`, `hermes_cancel`, `hermes_confirm`)
+  and a `hermes_run_status` state machine, but `hermes_get_status` /
+  `hermes_cancel` as *provider* tool calls are unreachable mid-run because the
+  pump is parked. Only the client->relay `response.cancel` path can interrupt.
+
+The blocking `await` is also an *implicit mutex*: it serializes the three audio
+sources that can produce `voice.output_audio.delta` (see "Who speaks" below) so
+they never overlap. Removing it requires replacing that mutex with an explicit
+floor owner.
+
+**Who speaks (confirmed against both supported providers).** Up to three mouths
+exist; only one is active per phase today because of the blocking await:
+
+1. **Realtime provider** - xAI `grok-voice-latest`, OpenAI `gpt-realtime-2`.
+   Both run with `turn_detection: None` (relay owns turn boundaries; no server
+   VAD) and audio output modality. Speaks the pre-Hermes acknowledgement and the
+   final post-result summary.
+2. **Relay TTS render** - `xai_tts`/`openai_tts` via `_render_provider_audio`.
+   A separate, non-realtime synthesizer used as the forced-summary fallback and
+   the legacy render path. Emits the *same* `voice.output_audio.delta` wire event
+   as the provider, so Android cannot distinguish them.
+3. **Android local TTS** - the `should_speak` long-wait filler, driven by
+   `hermes.run.progress`. Client-side, not the provider.
+
+Because all three converge on one Android `AudioTrack`, **floor arbitration must
+happen relay-side, before bytes reach the socket.**
+
+**Decision.** Keep three turn classes; make promotion automatic and default-on,
+with the relay as the single explicit floor owner.
+
+- **Tier A - Foreground (short Q&A).** Unchanged from ADR 32: provider preamble
+  -> relay-forced Hermes (still awaited) -> provider summary. Lowest latency,
+  trivial floor. This remains the path for any turn that completes inside the
+  promotion grace window.
+- **Tier B - Promoted (long task detected late).** Start in Tier A. If the
+  Hermes run has not produced a final result within a grace window
+  (`promote_after_ms`, default ~6000ms, tunable), the relay *detaches* the run
+  from the pump: the run continues as a tracked `asyncio.Task`, the pump resumes
+  consuming provider events, and the provider speaks a short "I've started that -
+  I'll let you know" handoff. Progress continues via `hermes.run.progress`. When
+  the background run completes, the relay injects the result as a tool result and
+  requests a provider summary at the next floor-idle moment.
+- **Tier C - Explicitly durable.** `hermes_run_task(mode="background")` returns a
+  run handle immediately (no grace window). For tasks the model/profile knows up
+  front are long (research, builds via desktop tools, multi-step). Same
+  completion-injection path as Tier B.
+
+Promotion is the default behavior, not a flag. Grace-period promotion preserves
+Tier A latency for the common case and only forks when a run actually proves
+long, so the user never has to pick a mode.
+
+**The relay is the single floor owner.** A per-session floor state
+(`idle | provider_speaking | hermes_filler | result_pending`) gates every audio
+source:
+
+- Only one mouth may hold the floor. The provider holds it by default.
+- A completed background result does **not** barge in. It is queued as
+  `result_pending` and spoken only when the floor returns to `idle` (provider
+  finished, user not mid-utterance). Provider VAD being off means the relay
+  controls `response.create`, so it can withhold the summary until the floor is
+  clear.
+- Android local filler (`should_speak`) is suppressed whenever the provider holds
+  the floor; it is a Tier B/C long-wait affordance only.
+- Relay TTS render (mouth 2) may only fire when it owns the floor and the
+  provider has drained, exactly as the forced-summary fallback does today.
+
+**Settings (ample, per ADR intent).** Surface in Voice Settings -> Realtime
+Agent, with relay-side `realtime_voice` config as source of truth and per-profile
+override:
+
+- `promotion_enabled` (default true) - master switch; false pins Tier A blocking.
+- `promote_after_ms` (default ~6000) - grace window before Tier B handoff.
+- `background_default_mode` - whether ambiguous long turns prefer promote vs.
+  stay-foreground.
+- `spoken_handoff` (default true) - speak the "I've started that" line on
+  promotion vs. silent + visual only.
+- `progress_spoken_after_ms` / `progress_repeat_ms` - reuse existing
+  `_HERMES_SPOKEN_PROGRESS_*` knobs, now configurable.
+- `result_delivery` - `speak_when_idle` (default) vs. `notify_then_speak`
+  (chime/visual, speak on user re-engage) vs. `visual_only`.
+- `max_background_runs` - concurrent background runs per session (default 1 for
+  the MVP; the existing single-`hermes_task` field assumes 1).
+
+**Protocol additions (relay <-> Android, additive).**
+
+- `hermes.run.promoted` - run moved to background; carries `run_id`,
+  `promote_after_ms`, `spoken_handoff`.
+- `hermes.run.background_completed` - background run finished; precedes the
+  provider/relay summary.
+- Extend `hermes.run.progress` with `tier` and `floor` so the client can render
+  background state distinctly (e.g. a persistent "working on: ..." chip).
+- `hermes_get_status` / `hermes_cancel` become genuinely reachable as provider
+  tool calls in Tier B/C because the pump is no longer parked; no schema change.
+
+**Prerequisite (Phase 0 spike) — RESOLVED 2026-05-24.** The spike asked how xAI
+and OpenAI realtime sessions behave when held open and idle. Verdicts (see
+`docs/realtime-voice-poc.md`): **OpenAI `hold-floor-ok` (empirical** — survived
+10/20/30s idle with clean post-idle audio); **xAI `hold-floor-ok`** (shipping
+Realtime Agent already holds `xai_realtime` sessions open across between-turn
+idle with `turn_detection: None` + resume TTL; relay-host probe retained as a
+regression check, not a precondition). The premise was also superseded in
+implementation: Tier B closes the pending provider call with an interim ack
+rather than holding an open response, so the socket only sees the normal
+between-turns idle gap — no provider needs the `must-reopen` fallback today, and
+default-on is unblocked.
+
+**Rules.**
+
+- Hermes remains the only path for tools, memory, current data, research, side
+  effects, durable context, and confirmations (unchanged from ADR 29/32).
+- Exactly one audio source may hold the floor at a time; the relay enforces this
+  before audio reaches Android. Background results never barge in.
+- Android must not read raw Hermes output aloud; spoken output is always a
+  provider (or relay-fallback) summary of the compact Hermes result.
+- Promotion must be cancel-safe: a promoted/background run is cancelable via both
+  the provider `hermes_cancel` tool and the client `response.cancel` path, reusing
+  `_cancel_active_hermes`.
+- A turn must never strand: if a background run completes while the WS is
+  detached, the result is replayed through the existing event-ring/resume path on
+  reattach.
+
+**Open questions / risks.**
+
+- Floor arbitration is the hard part and the existing `native_forced_*` /
+  `_should_forward_provider_response_event` suppression machinery is already the
+  most fragile code in `broker.py`. Concurrency stresses it most; the floor-owner
+  state machine should *replace* ad-hoc suppression, not stack on top of it.
+- Concurrent background runs (`max_background_runs > 1`) are out of scope for the
+  MVP; the session model assumes a single `hermes_task`.
+- "Notify then speak" result delivery needs an Android affordance (chime +
+  chip + tap-to-hear) that does not yet exist.
+
+**Phased rollout.**
+
+1. **Phase 0** - provider-idle-tolerance spike (above). Gate for default-on.
+2. **Phase 1** - introduce the relay floor-owner state machine under the current
+   blocking behavior (no functional change), with tests that prove single-floor
+   invariants.
+3. **Phase 2** - Tier B grace-period promotion behind `promotion_enabled`,
+   default **off**, validated on long-task transcripts.
+4. **Phase 3** - flip `promotion_enabled` default **on**; add Tier C
+   `mode="background"`; ship the Voice Settings surface.
+
+**Key Files:**
+- `docs/decisions.md` (this ADR; supersedes ADR 32's blocking assumption)
+- `docs/plans/2026-05-24-realtime-background-hermes-runs.md` (companion plan)
+- `plugin/relay/realtime_agent/broker.py`
+- `plugin/relay/realtime_agent/hermes_tool_broker.py`
+- `plugin/relay/realtime_agent/models.py`
+- `plugin/relay/realtime_agent/providers/xai.py`
+- `plugin/relay/realtime_agent/providers/openai.py`
+- `plugin/relay/profile_voice.py`
+- `docs/relay-protocol.md`
+- `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/VoiceViewModel.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/screens/VoiceSettingsScreen.kt`

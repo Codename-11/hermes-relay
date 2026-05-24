@@ -532,6 +532,64 @@ class RelayVoiceClient(
             label = "Realtime agent config update",
         )
 
+    /**
+     * PATCH the ADR 33 background-run promotion settings. Only non-null fields
+     * are sent; the relay echoes back the full [RealtimeVoiceConfig].
+     */
+    suspend fun updateRealtimeAgentPromotion(
+        promotionEnabled: Boolean? = null,
+        promoteAfterMs: Int? = null,
+        spokenHandoff: Boolean? = null,
+        resultDelivery: String? = null,
+        backgroundDefaultMode: String? = null,
+        progressSpokenAfterMs: Int? = null,
+        progressRepeatMs: Int? = null,
+        maxBackgroundRuns: Int? = null,
+    ): Result<RealtimeVoiceConfig> = withContext(Dispatchers.IO) {
+        val httpBase = resolveHttpBase()
+            ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
+        val token = resolveBearerToken()
+        if (token.isNullOrBlank()) {
+            return@withContext Result.failure(missingAuthError())
+        }
+        val payload = buildJsonObject {
+            promotionEnabled?.let { put("promotion_enabled", JsonPrimitive(it)) }
+            promoteAfterMs?.let { put("promote_after_ms", JsonPrimitive(it)) }
+            spokenHandoff?.let { put("spoken_handoff", JsonPrimitive(it)) }
+            resultDelivery?.takeIf { it.isNotBlank() }?.let {
+                put("result_delivery", JsonPrimitive(it.trim()))
+            }
+            backgroundDefaultMode?.takeIf { it.isNotBlank() }?.let {
+                put("background_default_mode", JsonPrimitive(it.trim()))
+            }
+            progressSpokenAfterMs?.let { put("progress_spoken_after_ms", JsonPrimitive(it)) }
+            progressRepeatMs?.let { put("progress_repeat_ms", JsonPrimitive(it)) }
+            maxBackgroundRuns?.let { put("max_background_runs", JsonPrimitive(it)) }
+        }
+        val request = Request.Builder()
+            .url(urlWithProfile("$httpBase/voice/realtime-agent/config"))
+            .patch(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/json")
+            .build()
+        try {
+            okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val body = response.body?.string().orEmpty()
+                    return@withContext Result.failure(
+                        IOException(describeHttpError(response.code, response.message, body))
+                    )
+                }
+                val raw = response.body?.string().orEmpty()
+                Result.success(json.decodeFromString(RealtimeVoiceConfig.serializer(), raw))
+            }
+        } catch (e: IOException) {
+            Result.failure(IOException("Realtime promotion update failed: ${e.message ?: "network error"}"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     suspend fun getVoiceOutputConfig(): Result<VoiceOutputConfig> = withContext(Dispatchers.IO) {
         val httpBase = resolveHttpBase()
             ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
@@ -2080,6 +2138,8 @@ class RelayVoiceClient(
                 eventLogPath = (obj["event_log_path"] as? JsonPrimitive)?.contentOrNull,
                 firstAudioMs = (metrics?.get("first_audio_ms") as? JsonPrimitive)?.doubleOrNull,
                 responseDoneMs = (metrics?.get("response_done_ms") as? JsonPrimitive)?.doubleOrNull,
+                tier = (obj["tier"] as? JsonPrimitive)?.contentOrNull,
+                floor = (obj["floor"] as? JsonPrimitive)?.contentOrNull,
                 raw = raw,
             )
         } catch (e: Exception) {
@@ -2154,6 +2214,28 @@ data class RealtimeVoiceConfig(
     val configScope: String? = null,
     @SerialName("fallback_to_global")
     val fallbackToGlobal: Boolean = false,
+    /** ADR 33 background-run promotion settings. */
+    val promotion: RealtimeVoicePromotion? = null,
+)
+
+/** Wire shape of the `promotion` block on `GET /voice/realtime-agent/config`. */
+@Serializable
+data class RealtimeVoicePromotion(
+    val enabled: Boolean = true,
+    @SerialName("promote_after_ms")
+    val promoteAfterMs: Int = 6000,
+    @SerialName("background_default_mode")
+    val backgroundDefaultMode: String = "promote",
+    @SerialName("spoken_handoff")
+    val spokenHandoff: Boolean = true,
+    @SerialName("progress_spoken_after_ms")
+    val progressSpokenAfterMs: Int = 15000,
+    @SerialName("progress_repeat_ms")
+    val progressRepeatMs: Int = 30000,
+    @SerialName("result_delivery")
+    val resultDelivery: String = "speak_when_idle",
+    @SerialName("max_background_runs")
+    val maxBackgroundRuns: Int = 1,
 )
 
 @Serializable
@@ -2392,6 +2474,9 @@ data class RealtimeVoiceEvent(
     val eventLogPath: String? = null,
     val firstAudioMs: Double? = null,
     val responseDoneMs: Double? = null,
+    // ADR 33: background-run promotion fields.
+    val tier: String? = null,
+    val floor: String? = null,
     val raw: String,
 ) {
     val isAudioDelta: Boolean

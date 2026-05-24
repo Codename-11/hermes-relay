@@ -131,6 +131,21 @@ data class VoiceUiState(
      * fresh turn (mic tap), whichever comes first.
      */
     val permissionDeniedCallout: PermissionDeniedCallout? = null,
+    /**
+     * ADR 33: non-null while a Hermes run has been promoted to (or started as) a
+     * background task. Drives a persistent "working on it" chip so the user
+     * knows a long task is still running after the spoken handoff. Cleared when
+     * the background run completes, is cancelled, or errors.
+     */
+    val backgroundRun: BackgroundRunState? = null,
+)
+
+/** ADR 33 background/promoted Hermes run surface for the voice overlay. */
+data class BackgroundRunState(
+    val runId: String? = null,
+    /** "promoted" (auto-detached long run) or "durable" (explicit mode=background). */
+    val tier: String = "promoted",
+    val message: String = "Working on it in the background…",
 )
 
 data class VoiceHandoffStatus(
@@ -2188,6 +2203,30 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                 }
+                "hermes.run.promoted" -> {
+                    // The run detached to the background; the provider speaks the
+                    // handoff. Surface a persistent chip so the user knows a long
+                    // task is still in flight (ADR 33 Tier B/C).
+                    val tier = event.tier ?: "promoted"
+                    _uiState.update {
+                        it.copy(
+                            backgroundRun = BackgroundRunState(
+                                runId = event.runId,
+                                tier = tier,
+                                message = if (tier == "durable") {
+                                    "Started a background task — I'll report back."
+                                } else {
+                                    "This is taking a moment — working on it in the background."
+                                },
+                            ),
+                        )
+                    }
+                }
+                "hermes.run.background_completed" -> {
+                    // Background run finished; the spoken summary follows via the
+                    // provider's forced-summary turn. Clear the chip.
+                    _uiState.update { it.copy(backgroundRun = null) }
+                }
                 "hermes.confirmation.requested" -> {
                     val confirmationId = event.confirmationId
                     if (!confirmationId.isNullOrBlank()) {
@@ -2276,6 +2315,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                             outputAudioActive = false,
                             responseText = "Cancelled.",
                             hermesConfirmation = null,
+                            backgroundRun = null,
                         )
                     }
                 }

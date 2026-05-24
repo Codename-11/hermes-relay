@@ -43,7 +43,16 @@ HERMES_TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
                 "text": {"type": "string"},
                 "profile": {"type": "string"},
                 "session_id": {"type": "string"},
-                "mode": {"type": "string", "enum": ["chat", "run"]},
+                "mode": {
+                    "type": "string",
+                    "enum": ["chat", "run", "background"],
+                    "description": (
+                        "'run' (default) answers in-line for short tasks and is "
+                        "auto-promoted to the background if it runs long; "
+                        "'background' starts a durable run immediately and reports "
+                        "back when it finishes."
+                    ),
+                },
             },
             "required": ["text"],
         },
@@ -198,6 +207,8 @@ SERVER_EVT_OUTPUT_AUDIO_DONE = "voice.output_audio.done"
 SERVER_EVT_PLAYBACK_DRAIN_REQUESTED = "voice.playback_drain.requested"
 SERVER_EVT_HERMES_RUN_STARTED = "hermes.run.started"
 SERVER_EVT_HERMES_RUN_PROGRESS = "hermes.run.progress"
+SERVER_EVT_HERMES_RUN_PROMOTED = "hermes.run.promoted"
+SERVER_EVT_HERMES_RUN_BACKGROUND_COMPLETED = "hermes.run.background_completed"
 SERVER_EVT_HERMES_TOOL_STARTED = "hermes.tool.started"
 SERVER_EVT_HERMES_TOOL_DELTA = "hermes.tool.delta"
 SERVER_EVT_HERMES_TOOL_COMPLETED = "hermes.tool.completed"
@@ -233,7 +244,9 @@ __all__ = [
     "RealtimeAgentSession",
     "RealtimeAgentSessionConfig",
     "SERVER_EVT_HERMES_CONFIRMATION_REQUESTED",
+    "SERVER_EVT_HERMES_RUN_BACKGROUND_COMPLETED",
     "SERVER_EVT_HERMES_RUN_COMPLETED",
+    "SERVER_EVT_HERMES_RUN_PROMOTED",
     "SERVER_EVT_HERMES_RUN_STARTED",
     "SERVER_EVT_HERMES_TOOL_COMPLETED",
     "SERVER_EVT_HERMES_TOOL_DELTA",

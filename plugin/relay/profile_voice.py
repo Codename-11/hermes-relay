@@ -162,6 +162,29 @@ def realtime_voice_settings(config: Any, profile: str | None) -> dict[str, Any]:
         "model": getattr(config, "realtime_voice_model", "grok-voice-latest"),
         "voice": getattr(config, "realtime_voice_voice", "eve"),
         "sample_rate": getattr(config, "realtime_voice_sample_rate", 24000),
+        # ADR 33 background-Hermes-run promotion.
+        "promotion_enabled": bool(
+            getattr(config, "realtime_voice_promotion_enabled", False)
+        ),
+        "promote_after_ms": int(
+            getattr(config, "realtime_voice_promote_after_ms", 6000)
+        ),
+        "background_default_mode": getattr(
+            config, "realtime_voice_background_default_mode", "promote"
+        ),
+        "spoken_handoff": bool(getattr(config, "realtime_voice_spoken_handoff", True)),
+        "progress_spoken_after_ms": int(
+            getattr(config, "realtime_voice_progress_spoken_after_ms", 15000)
+        ),
+        "progress_repeat_ms": int(
+            getattr(config, "realtime_voice_progress_repeat_ms", 30000)
+        ),
+        "result_delivery": getattr(
+            config, "realtime_voice_result_delivery", "speak_when_idle"
+        ),
+        "max_background_runs": int(
+            getattr(config, "realtime_voice_max_background_runs", 1)
+        ),
     }
 
     applied_scope = "relay"
@@ -269,6 +292,15 @@ def _realtime_voice_overrides(data: dict[str, Any]) -> dict[str, Any]:
     if sample_rate is not None:
         out["sample_rate"] = sample_rate
     _copy_bool(out, section, "enabled")
+    # ADR 33 promotion overrides.
+    _copy_bool(out, section, "promotion_enabled")
+    _copy_int(out, section, "promote_after_ms")
+    _copy_string(out, section, "background_default_mode")
+    _copy_bool(out, section, "spoken_handoff")
+    _copy_int(out, section, "progress_spoken_after_ms")
+    _copy_int(out, section, "progress_repeat_ms")
+    _copy_string(out, section, "result_delivery")
+    _copy_int(out, section, "max_background_runs")
     return out
 
 

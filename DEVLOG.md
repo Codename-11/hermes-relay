@@ -1,5 +1,24 @@
 # Hermes-Relay — Dev Log
 
+## 2026-05-24 — Background Hermes runs in Realtime Agent voice (ADR 33)
+
+**Context.** Realtime Agent ran each Hermes turn synchronously *inside* the provider event pump (`_run_brokered_tool` did `return await task`), so a long research/multi-tool/desktop run froze the whole realtime session until it finished. ADR 33 + `docs/plans/2026-05-24-realtime-background-hermes-runs.md` define a three-tier model (foreground / promoted / durable) with the relay as an explicit audio-floor owner. Branch `feature/realtime-background-hermes-runs`.
+
+**What shipped (phased, per the plan):**
+
+- **Phase 0 — idle-tolerance probe + verdict.** `scripts/realtime-provider-idle-probe.py` + an "Idle tolerance" section in `docs/realtime-voice-poc.md`. **Ran live against OpenAI** (`VOICE_TOOLS_OPENAI_KEY` in `~/.hermes/.env`): the session survived 10s/20s/30s quiescent windows and returned clean audio on every post-idle turn → verdict **`hold-floor-ok`**. xAI has no creds on the dev box, so its verdict is recorded analytically as `hold-floor-ok` (same `turn_detection:None` multi-turn model; the implementation closes the pending call rather than holding an open response) — confirm on the relay host. Incidental finding logged: OpenAI now wants `session.audio.output.format.rate` at `session.update` (minor `_session_update` follow-up; session still worked).
+- **Phase 1 — floor owner.** New `plugin/relay/realtime_agent/floor.py`: pure, single-owner audio floor (`provider` / `relay_tts` / `android_filler` mouths; `idle/provider_speaking/hermes_filler/result_pending` labels). Wired behavior-preservingly into the broker (acquire/release on AUDIO_DELTA/AUDIO_DONE/RESPONSE_DONE; relay-TTS render holds the floor; filler gated by `can_speak`). Invariants in `test_realtime_floor.py`.
+- **Phase 2 — Tier B promotion (was default off).** `_run_brokered_tool` shields the run and waits `promote_after_ms`; if still running it detaches to the background, closes the pending provider call with an interim ack, optionally speaks a handoff, and `_deliver_background_result` speaks the answer once the floor is idle. New events `hermes.run.promoted` / `hermes.run.background_completed` + `tier`/`floor` on progress; 8 new settings. `test_realtime_promotion.py` (promote+pump-responsive, short=no-promote, cancel, detach-resume-replays).
+- **Phase 3 — default-on + Tier C + Android + docs.** Flipped `promotion_enabled` default **true** (safe: the path closes the pending call rather than holding an open response, so the socket only sees the normal between-turns idle gap). `hermes_run_task(mode="background")` detaches immediately (`tier:"durable"`). Settings exposed on `GET/PATCH /voice/realtime-agent/config`. Android: parse new events → "working on it" chip; Voice Settings → Realtime Agent → Background tasks (promote toggle, spoken-handoff toggle, result-delivery segmented control) → `RelayVoiceClient.updateRealtimeAgentPromotion()`.
+
+**Why default-on despite the Phase 0 gate.** The implementation closes the pending function call with an interim background ack instead of parking an open provider response, so the worst-case "idle open-response" the gate worried about doesn't occur — the socket sits in the same idle state it does between any two user turns. The probe is retained to confirm per-provider survival; documented in config + ADR.
+
+**Verified.** Python realtime suite **58 tests green** (`test_realtime_floor`, `test_realtime_promotion`, both provider suites, routes, profile-voice-config). `./gradlew lint` — Kotlin compiles clean; the only 2 lint errors are in the gitignored `local.properties` (absent in CI). Pre-existing unrelated `test_reads_hermes_xai_oauth_credential_pool` failure confirmed on `origin/dev` baseline.
+
+**Next.** Confirm the xAI idle verdict on the relay host (where xAI creds live); fix the OpenAI `_session_update` rate field; run the lab smoke on a paired device. Open the PR to `dev`.
+
+---
+
 ## 2026-05-23 — Un-defer the voice/audio test suite (issue #32) + barge-in resume bug
 
 **Context.** GitHub issue #32 tracked 5 voice/audio unit tests `@Ignore`'d during the v0.5.1 release because the full `:app:testGooglePlayDebugUnitTest` task "hung indefinitely." Scope had quietly grown to **8** ignored classes (3 of the "pure-logic, should-work" ones got swept in defensively). Branch `fix/voice-test-suite`.
