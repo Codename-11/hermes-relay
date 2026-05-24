@@ -50,6 +50,7 @@ from ..provider_options import (
 )
 from ..realtime_voice import _read_relay_xai_oauth_token, _websocket_url_from_base
 from ..voice_auth import AuthPrincipal, require_voice_auth
+from .floor import FloorMouth, RealtimeFloor
 from .hermes_tool_broker import HermesTaskRequest, HermesToolBroker
 from .models import (
     CLIENT_MSG_HERMES_CONFIRM,
@@ -170,6 +171,7 @@ class RealtimeAgentSession:
     native_hermes_required_reason: str | None = None
     hermes_run_id: str | None = None
     hermes_run_status: str = "idle"
+    hermes_run_tier: str = "foreground"
     hermes_answer_started: bool = False
     pending_confirmation_id: str | None = None
     cancel_requested: bool = False
@@ -187,6 +189,7 @@ class RealtimeAgentSession:
     hermes_last_spoken_progress_at: float = 0.0
     hermes_last_spoken_progress_key: str | None = None
     profile_prompt_context: dict[str, Any] = field(default_factory=dict)
+    floor: RealtimeFloor = field(default_factory=RealtimeFloor)
 
 
 class RealtimeAgentHandler:
@@ -1278,6 +1281,9 @@ class RealtimeAgentHandler:
                     },
                 )
             elif event.kind == ProviderEventKind.AUDIO_DELTA:
+                # The provider is producing audio for this response; take the
+                # floor so filler/relay-TTS can't overlap (ADR 33).
+                session.floor.acquire(FloorMouth.PROVIDER)
                 if session.native_forced_preamble_active:
                     if not self._should_forward_forced_preamble_event(session, event):
                         continue
@@ -1297,6 +1303,9 @@ class RealtimeAgentHandler:
                     continue
                 await self._send_provider_audio_delta(ws, session, event)
             elif event.kind == ProviderEventKind.AUDIO_DONE:
+                # Provider finished emitting audio for this response; release the
+                # floor so a pending background result / filler can proceed.
+                session.floor.release(FloorMouth.PROVIDER)
                 if session.native_forced_preamble_active:
                     if not self._should_forward_forced_preamble_event(session, event):
                         continue
@@ -1383,6 +1392,8 @@ class RealtimeAgentHandler:
                     event,
                 )
             elif event.kind == ProviderEventKind.RESPONSE_DONE:
+                # Safety net: a response may end without a clean AUDIO_DONE.
+                session.floor.release(FloorMouth.PROVIDER)
                 if session.native_forced_preamble_active:
                     if not self._should_forward_forced_preamble_event(session, event):
                         continue
@@ -2263,6 +2274,7 @@ class RealtimeAgentHandler:
             should_speak = (
                 speakable_progress
                 and elapsed_seconds >= _HERMES_SPOKEN_PROGRESS_AFTER_SECONDS
+                and session.floor.can_speak(FloorMouth.ANDROID_FILLER)
                 and (
                     session.hermes_last_spoken_progress_key != status_key
                     or now - session.hermes_last_spoken_progress_at
@@ -2285,6 +2297,8 @@ class RealtimeAgentHandler:
                     "message": message,
                     "status_key": status_key,
                     "should_speak": should_speak,
+                    "floor": session.floor.state_label(),
+                    "tier": session.hermes_run_tier,
                     "active_tool_name": session.hermes_active_tool_name,
                     "last_tool_name": session.hermes_last_tool_name,
                     "completed_tool_count": session.hermes_completed_tool_count,
@@ -2519,6 +2533,9 @@ class RealtimeAgentHandler:
         loop = asyncio.get_running_loop()
         output_path = session.event_log_path.with_suffix(".wav")
         provider_options = self._provider_options(session, payload)
+        # Relay TTS is a primary mouth; take the floor for the whole render so it
+        # cannot overlap provider audio or filler (ADR 33).
+        session.floor.acquire(FloorMouth.RELAY_TTS)
 
         def audio_sink(chunk: bytes, meta: dict[str, Any]) -> None:
             peak, rms = _pcm_levels(chunk)
@@ -2565,9 +2582,11 @@ class RealtimeAgentHandler:
                 await self._send(ws, session, event)
             response = await task
         except (ProviderUnavailable, ProviderRunError) as exc:
+            session.floor.release(FloorMouth.RELAY_TTS)
             await self._send_error(ws, session, str(exc), provider=session.provider)
             return
         except Exception as exc:
+            session.floor.release(FloorMouth.RELAY_TTS)
             await self._send_error(
                 ws,
                 session,
@@ -2601,6 +2620,7 @@ class RealtimeAgentHandler:
                 "metadata": _safe_metadata(response.metadata),
             },
         )
+        session.floor.release(FloorMouth.RELAY_TTS)
 
     def _provider_options(
         self,
