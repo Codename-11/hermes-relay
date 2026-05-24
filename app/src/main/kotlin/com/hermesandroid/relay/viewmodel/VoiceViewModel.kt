@@ -2424,19 +2424,22 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 "voice.error" -> {
                     realtimeConfirmationControl = null
+                    val rawDetail = event.message ?: "Realtime agent failed"
                     DiagnosticsLog.record(
                         category = DiagnosticCategory.Voice,
                         severity = DiagnosticSeverity.Error,
                         title = "Realtime voice error",
-                        detail = event.message ?: "Realtime agent failed",
+                        detail = rawDetail,
                     )
-                    _uiState.update {
-                        it.copy(
-                            state = VoiceState.Error,
-                            error = event.message ?: "Realtime agent failed",
-                            hermesConfirmation = null,
-                        )
-                    }
+                    _uiState.update { it.copy(hermesConfirmation = null) }
+                    // Route the raw relay message through the classifier so
+                    // provider-auth (and other) failures surface a clear,
+                    // actionable message + a Voice-settings snackbar action
+                    // instead of a raw "xAI Realtime auth ..." provider string.
+                    surfaceError(
+                        java.io.IOException(rawDetail),
+                        context = "voice_config",
+                    )
                 }
                 }
             }
