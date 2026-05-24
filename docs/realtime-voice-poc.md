@@ -1126,3 +1126,43 @@ Pass criteria:
   `voice.*.session.detached` followed by `voice.session.resumed`.
 - Replayed events are marked `replayed=true`, and the session does not start a
   duplicate Hermes run inside the resume TTL.
+
+## Idle tolerance (ADR 33 Phase 0)
+
+Background-Hermes-run promotion (ADR 33, `docs/plans/2026-05-24-realtime-background-hermes-runs.md`)
+detaches a long Hermes run from the provider event pump and keeps the provider
+session open while the run completes. Whether a provider can hold the floor while
+**quiescent** (no `response.create`, no input audio) for tens of seconds is the
+factual unknown that gates default-on promotion.
+
+Run the probe on the relay host (provider credentials configured) with the repo
+root on `PYTHONPATH`:
+
+```bash
+python scripts/realtime-provider-idle-probe.py --provider xai
+python scripts/realtime-provider-idle-probe.py --provider openai --windows 30,60,120
+```
+
+The probe holds each socket idle across the windows, then issues one short
+post-idle turn to check for VAD/turn artifacts, and prints a verdict.
+
+Record the verdict per provider. The verdict selects that provider's Tier B
+strategy:
+
+| Verdict | Meaning | Tier B strategy |
+|---|---|---|
+| `hold-floor-ok` | Socket survives idle; post-idle turn clean | Hold the provider session open during the background run (default) |
+| `needs-keepalive` | Survives but post-idle turn degraded | Hold open + send a minimal keep-alive; revalidate the first post-idle turn |
+| `must-reopen` | Socket closes/errors while idle | Detach the run but close+reopen (or resume) the provider socket on completion |
+
+### Findings
+
+| Provider | Date | Windows survived | Post-idle turn | Verdict |
+|---|---|---|---|---|
+| xAI (`grok-voice-latest`) | _pending run_ | — | — | **UNKNOWN — run required** |
+| OpenAI (`gpt-realtime-2`) | _pending run_ | — | — | **UNKNOWN — run required** |
+
+Until both verdicts are filled in, ship promotion with `promotion_enabled`
+defaulting per the conservative path (Tier B closes+reopens on completion rather
+than assuming the floor can be held), and treat default-on as blocked on these
+findings.
