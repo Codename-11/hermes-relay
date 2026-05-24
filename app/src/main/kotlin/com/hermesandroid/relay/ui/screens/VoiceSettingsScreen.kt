@@ -975,6 +975,109 @@ fun VoiceSettingsScreen(
                         ProviderRow(label = "Auth", value = realtimeAuthLabel(config))
                     }
 
+                    realtimeConfig?.promotion?.let { promo ->
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        Text("Background tasks", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            text = "Long Hermes tasks keep running in the background so the conversation stays responsive; the answer is spoken when it's ready.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Promote long tasks", style = MaterialTheme.typography.bodyLarge)
+                                Text(
+                                    text = "Detach a slow run after ${promo.promoteAfterMs} ms instead of waiting silently",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = promo.enabled,
+                                onCheckedChange = { enabled ->
+                                    scope.launch {
+                                        val client = voiceClient ?: return@launch
+                                        val result = client.updateRealtimeAgentPromotion(
+                                            promotionEnabled = enabled,
+                                        )
+                                        if (result.isSuccess) realtimeConfig = result.getOrNull()
+                                    }
+                                },
+                            )
+                        }
+                        if (promo.enabled) {
+                            Spacer(Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Spoken handoff", style = MaterialTheme.typography.bodyLarge)
+                                    Text(
+                                        text = "Say a short \"I'm on it\" when a task moves to the background",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Switch(
+                                    checked = promo.spokenHandoff,
+                                    onCheckedChange = { enabled ->
+                                        scope.launch {
+                                            val client = voiceClient ?: return@launch
+                                            val result = client.updateRealtimeAgentPromotion(
+                                                spokenHandoff = enabled,
+                                            )
+                                            if (result.isSuccess) realtimeConfig = result.getOrNull()
+                                        }
+                                    },
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "When the answer is ready",
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            val deliveryOptions = listOf(
+                                "speak_when_idle",
+                                "notify_then_speak",
+                                "visual_only",
+                            )
+                            val deliveryLabels = listOf("Speak", "Notify", "Show only")
+                            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                                deliveryOptions.forEachIndexed { index, option ->
+                                    SegmentedButton(
+                                        shape = SegmentedButtonDefaults.itemShape(
+                                            index = index,
+                                            count = deliveryOptions.size,
+                                        ),
+                                        onClick = {
+                                            scope.launch {
+                                                val client = voiceClient ?: return@launch
+                                                val result = client.updateRealtimeAgentPromotion(
+                                                    resultDelivery = option,
+                                                )
+                                                if (result.isSuccess) realtimeConfig = result.getOrNull()
+                                            }
+                                        },
+                                        selected = option == promo.resultDelivery,
+                                    ) {
+                                        Text(
+                                            deliveryLabels[index],
+                                            style = MaterialTheme.typography.labelSmall,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
                     Row(

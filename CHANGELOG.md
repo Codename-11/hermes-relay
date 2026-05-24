@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Background Hermes runs in Realtime Agent voice (ADR 33).** Long Hermes tasks no longer freeze the realtime conversation. A run that exceeds a grace window is promoted to a tracked background task: the provider speaks a short handoff ("I'm on it"), the conversation stays responsive, and the answer is spoken once the run finishes. `hermes_run_task(mode="background")` starts a durable run immediately. New relay events `hermes.run.promoted` and `hermes.run.background_completed`, plus `tier`/`floor` fields on `hermes.run.progress`.
+
+- **Relay audio floor owner.** A single-owner audio floor (provider / relay-TTS / Android-filler) makes explicit the serialization that the old blocking design provided implicitly, so a completed background result never barges in and two voices never overlap.
+
+- **Voice Settings → Realtime Agent → Background tasks.** New controls to enable/disable promotion, toggle the spoken handoff, and choose result delivery (speak when idle / notify / show only). A persistent "working on it" chip appears in the voice overlay while a background task runs.
+
+- **Provider idle-tolerance probe.** `scripts/realtime-provider-idle-probe.py` records a per-provider verdict (hold-floor-ok / needs-keepalive / must-reopen) for holding a realtime socket quiescent during a background run; see `docs/realtime-voice-poc.md`.
+
 ## [0.8.0] - 2026-05-23
 
 ### Added
