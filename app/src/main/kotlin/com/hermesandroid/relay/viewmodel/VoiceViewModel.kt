@@ -17,6 +17,7 @@ import com.hermesandroid.relay.data.BargeInPreferencesRepository
 import com.hermesandroid.relay.data.BargeInSensitivity
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.RealtimeConversationContextMessage
 import com.hermesandroid.relay.data.ToolCall
 import com.hermesandroid.relay.data.VoiceEngineMode
 import com.hermesandroid.relay.data.VoiceIntentTrace
@@ -26,6 +27,8 @@ import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.RelayVoiceClient
 import com.hermesandroid.relay.network.RealtimeAgentSessionControl
+import com.hermesandroid.relay.network.RealtimeTurnInput
+import com.hermesandroid.relay.network.RealtimeVoiceSummary
 import com.hermesandroid.relay.network.RealtimeVoiceEvent
 import com.hermesandroid.relay.network.VoiceHandoffEvent
 import com.hermesandroid.relay.network.handlers.LocalDispatchResult
@@ -401,8 +404,28 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var voicePreferencesJob: Job? = null
     private var voiceEngineMode: VoiceEngineMode = VoiceEngineMode.HermesVoiceOutput
     private var realtimeTraceDetails: Boolean = false
+    private var realtimePersistentSession: Boolean = true
     private var realtimeAgentControl: RealtimeAgentSessionControl? = null
     private var realtimeConfirmationControl: RealtimeAgentSessionControl? = null
+
+    // === Persistent realtime-agent session (one socket across turns) ===
+    // The long-lived call to RelayVoiceClient.runRealtimeAgent(persistent) runs
+    // in realtimeSessionJob; further utterances are fed on realtimeTurnChannel.
+    // The per-turn event holders below are hoisted to fields so the single
+    // session-lived event callback can serve every turn; submitRealtimeTurn /
+    // the open path reset them at each turn boundary.
+    private var realtimeSessionJob: Job? = null
+    private var realtimeTurnChannel: kotlinx.coroutines.channels.Channel<RealtimeTurnInput>? = null
+    private var rtUserText: String = ""
+    private var rtAssistantMessageId: String = ""
+    private var rtConversationContext: List<RealtimeConversationContextMessage> = emptyList()
+    private val audioSeen = AtomicBoolean(false)
+    private val audioBytes = AtomicInteger(0)
+    private val bargeInStarted = AtomicBoolean(false)
+    private val lastRealtimeAudioEventId = AtomicLong(0L)
+    private var responseText = StringBuilder()
+    private var inputTranscript = StringBuilder()
+    private val spokenStatusKeys = mutableSetOf<String>()
     private var voiceRelayPreflight: (suspend () -> Result<Unit>)? = null
 
     // === PHASE3-voice-intents: voice→bridge intent routing ===
@@ -826,8 +849,18 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                                 "realtimeTraceDetails=${settings.realtimeTraceDetails}",
                         )
                     }
+                    // Switching engine away from Realtime Agent (or disabling the
+                    // persistent toggle) must drop any open persistent session.
+                    if (
+                        (voiceEngineMode == VoiceEngineMode.RealtimeAgent &&
+                            nextEngineMode != VoiceEngineMode.RealtimeAgent) ||
+                        (realtimePersistentSession && !settings.realtimePersistentSession)
+                    ) {
+                        closeRealtimeSession()
+                    }
                     voiceEngineMode = nextEngineMode
                     realtimeTraceDetails = settings.realtimeTraceDetails
+                    realtimePersistentSession = settings.realtimePersistentSession
                     val mode = when (settings.interactionMode.lowercase()) {
                         "hold" -> InteractionMode.HoldToTalk
                         "continuous" -> InteractionMode.Continuous
@@ -1083,6 +1116,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // Chime BEFORE teardown — AudioTrack release would cut it off otherwise.
         try { sfxPlayer?.playExit() } catch (_: Exception) { /* ignore */ }
         cancelRealtimeAgentTurn("exit voice mode")
+        closeRealtimeSession()
         // B4: tear down the barge-in listener + timers before we kill the
         // player so AEC doesn't try to track a released audio session.
         stopBargeInListener()
@@ -1755,6 +1789,31 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     responseText = "",
                 )
             }
+            if (realtimePersistentSession) {
+                // Persistent conversation: one socket across turns. Open lazily on
+                // the first turn (the long-lived call runs in realtimeSessionJob),
+                // then feed further utterances on the channel. Fallback to one-shot
+                // if the toggle is off (Voice Settings).
+                if (realtimeSessionJob?.isActive == true && realtimeTurnChannel != null) {
+                    submitRealtimeTurn(chatVm, inputPcm, inputSampleRate)
+                } else {
+                    closeRealtimeSession()
+                    realtimeTurnChannel = kotlinx.coroutines.channels.Channel(
+                        kotlinx.coroutines.channels.Channel.UNLIMITED,
+                    )
+                    realtimeSessionJob = viewModelScope.launch {
+                        runRealtimeAgentTurn(
+                            client = client,
+                            chatVm = chatVm,
+                            userText = "",
+                            inputPcm = inputPcm,
+                            inputSampleRate = inputSampleRate,
+                            persistentOpen = true,
+                        )
+                    }
+                }
+                return
+            }
             runRealtimeAgentTurn(
                 client = client,
                 chatVm = chatVm,
@@ -2019,6 +2078,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         userText: String,
         inputPcm: ByteArray,
         inputSampleRate: Int,
+        persistentOpen: Boolean = false,
     ) {
         providerRealtimeAgentTurnActive.set(true)
         streamObserverJob?.cancel()
@@ -2046,19 +2106,23 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
 
-        val conversationContext = chatVm.realtimeAgentContextMessages()
-        val assistantMessageId = chatVm.startRealtimeAgentTurn(
+        // Per-turn event state is hoisted to fields so one session-lived callback
+        // serves every turn in persistent mode; reset them for this turn.
+        audioSeen.set(false)
+        audioBytes.set(0)
+        bargeInStarted.set(false)
+        lastRealtimeAudioEventId.set(0L)
+        responseText = StringBuilder()
+        inputTranscript = StringBuilder()
+        spokenStatusKeys.clear()
+        rtUserText = userText
+        rtConversationContext = chatVm.realtimeAgentContextMessages()
+        rtAssistantMessageId = chatVm.startRealtimeAgentTurn(
             userText = userText,
             chatSessionId = chatVm.currentSessionId.value,
         )
+        val conversationContext = rtConversationContext
         val pcmPlayer = realtimePcmPlayer
-        val audioSeen = AtomicBoolean(false)
-        val audioBytes = AtomicInteger(0)
-        val bargeInStarted = AtomicBoolean(false)
-        val lastRealtimeAudioEventId = AtomicLong(0L)
-        val responseText = StringBuilder()
-        val inputTranscript = StringBuilder()
-        val spokenStatusKeys = mutableSetOf<String>()
 
         fun emitStatus(
             key: String,
@@ -2120,10 +2184,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 chatSessionId = chatVm.currentSessionId.value,
                 conversationContext = conversationContext,
                 onHandoff = ::recordVoiceHandoff,
+                turnInputs = if (persistentOpen) realtimeTurnChannel else null,
+                onTurnComplete = { summary -> onRealtimeTurnComplete(summary) },
             ) { event, control ->
                 realtimeAgentControl = control
                 chatVm.applyRealtimeAgentEvent(
-                    assistantMessageId = assistantMessageId,
+                    assistantMessageId = rtAssistantMessageId,
                     event = event,
                     showDetailedTrace = realtimeTraceDetails,
                 )
@@ -2134,13 +2200,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                         it.copy(
                             state = VoiceState.Listening,
                             outputAudioActive = false,
-                            transcribedText = inputTranscript.toString().ifBlank { userText },
+                            transcribedText = inputTranscript.toString().ifBlank { rtUserText },
                         )
                     }
                 }
                 "voice.input_transcript.final" -> {
                     inputTranscript.clear()
-                    inputTranscript.append(event.text ?: userText)
+                    inputTranscript.append(event.text ?: rtUserText)
                     _uiState.update {
                         it.copy(
                             state = VoiceState.Thinking,
@@ -2399,7 +2465,76 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             title = "Realtime voice turn failed",
             detail = err?.message ?: "Unknown error",
         )
+        // A persistent session ending in error must drop so the next turn opens
+        // a fresh one rather than submitting into a dead channel.
+        closeRealtimeSession()
         surfaceError(err, context = "voice_config")
+    }
+
+    /**
+     * Per-turn completion in a persistent realtime session (ADR follow-up). The
+     * socket stays open; this just finalizes the spoken turn and re-arms
+     * continuous listening if enabled.
+     */
+    private fun onRealtimeTurnComplete(summary: RealtimeVoiceSummary) {
+        DiagnosticsLog.record(
+            category = DiagnosticCategory.Voice,
+            severity = DiagnosticSeverity.Info,
+            title = "Realtime voice turn complete",
+        )
+        Log.i(
+            TAG,
+            "Realtime persistent turn complete provider=${summary.provider} " +
+                "audioChunks=${summary.audioChunks}",
+        )
+        pendingInTtsQueue.set(0)
+        maybeAutoResume()
+    }
+
+    /**
+     * Submit a follow-up utterance onto the already-open persistent session
+     * (turns 2+). Mirrors the per-turn reset the open path does for turn 1.
+     */
+    private fun submitRealtimeTurn(chatVm: ChatViewModel, inputPcm: ByteArray, inputSampleRate: Int) {
+        val channel = realtimeTurnChannel ?: return
+        drainQueuedLocalTts()
+        try { player?.stop() } catch (_: Exception) { /* ignore */ }
+        firstFrameWatchdogJob?.cancel(); firstFrameWatchdogJob = null
+        clearSpokenChunksState()
+        audioSeen.set(false)
+        audioBytes.set(0)
+        bargeInStarted.set(false)
+        lastRealtimeAudioEventId.set(0L)
+        responseText = StringBuilder()
+        inputTranscript = StringBuilder()
+        spokenStatusKeys.clear()
+        rtUserText = ""
+        rtConversationContext = chatVm.realtimeAgentContextMessages()
+        rtAssistantMessageId = chatVm.startRealtimeAgentTurn(
+            userText = "",
+            chatSessionId = chatVm.currentSessionId.value,
+        )
+        providerRealtimeAgentTurnActive.set(true)
+        _uiState.update {
+            it.copy(
+                state = VoiceState.Thinking,
+                outputAudioActive = false,
+                transcribedText = null,
+                responseText = "",
+            )
+        }
+        val sent = channel.trySend(RealtimeTurnInput(inputPcm, inputSampleRate)).isSuccess
+        Log.i(TAG, "Realtime persistent turn submitted sent=$sent pcmBytes=${inputPcm.size}")
+    }
+
+    /** Tear down the persistent realtime session (voice-mode exit / engine switch). */
+    private fun closeRealtimeSession() {
+        val hadSession = realtimeTurnChannel != null || realtimeSessionJob != null
+        realtimeTurnChannel?.close()
+        realtimeTurnChannel = null
+        realtimeSessionJob?.cancel()
+        realtimeSessionJob = null
+        if (hadSession) Log.i(TAG, "Realtime persistent session closed")
     }
 
     private fun realtimeToolStatusLine(toolName: String?): String {
@@ -3963,6 +4098,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        closeRealtimeSession()
         // B4: release the listener + VAD engine native resources before
         // anything else. stopBargeInListener is defensive / idempotent.
         stopBargeInListener()

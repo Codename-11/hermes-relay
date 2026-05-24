@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Persistent Realtime Agent conversation.** Realtime Agent voice now keeps one provider session/socket open across turns instead of creating a fresh session per utterance, so the provider retains the live conversation (follow-up references work) and turns skip session-setup latency. The relay needed no change — it already supported multiple turns on one socket. A **Voice Settings → Realtime Agent → Persistent session** toggle (default on) falls back to the legacy per-utterance path. See `docs/plans/2026-05-24-realtime-persistent-session.md`.
+
 - **Background Hermes runs in Realtime Agent voice (ADR 33).** Long Hermes tasks no longer freeze the realtime conversation. A run that exceeds a grace window is promoted to a tracked background task: the provider speaks a short handoff ("I'm on it"), the conversation stays responsive, and the answer is spoken once the run finishes. `hermes_run_task(mode="background")` starts a durable run immediately. New relay events `hermes.run.promoted` and `hermes.run.background_completed`, plus `tier`/`floor` fields on `hermes.run.progress`.
 
 - **Relay audio floor owner.** A single-owner audio floor (provider / relay-TTS / Android-filler) makes explicit the serialization that the old blocking design provided implicitly, so a completed background result never barges in and two voices never overlap.
