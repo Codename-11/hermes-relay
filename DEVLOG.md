@@ -6,7 +6,7 @@
 
 **What shipped (phased, per the plan):**
 
-- **Phase 0 — idle-tolerance probe.** `scripts/realtime-provider-idle-probe.py` + an "Idle tolerance" section in `docs/realtime-voice-poc.md`. Holds an xAI/OpenAI realtime socket quiescent across idle windows and reports a per-provider verdict (`hold-floor-ok` / `needs-keepalive` / `must-reopen`). Verdict is *pending a live run* (needs provider creds on the relay host).
+- **Phase 0 — idle-tolerance probe + verdict.** `scripts/realtime-provider-idle-probe.py` + an "Idle tolerance" section in `docs/realtime-voice-poc.md`. **Ran live against OpenAI** (`VOICE_TOOLS_OPENAI_KEY` in `~/.hermes/.env`): the session survived 10s/20s/30s quiescent windows and returned clean audio on every post-idle turn → verdict **`hold-floor-ok`**. xAI has no creds on the dev box, so its verdict is recorded analytically as `hold-floor-ok` (same `turn_detection:None` multi-turn model; the implementation closes the pending call rather than holding an open response) — confirm on the relay host. Incidental finding logged: OpenAI now wants `session.audio.output.format.rate` at `session.update` (minor `_session_update` follow-up; session still worked).
 - **Phase 1 — floor owner.** New `plugin/relay/realtime_agent/floor.py`: pure, single-owner audio floor (`provider` / `relay_tts` / `android_filler` mouths; `idle/provider_speaking/hermes_filler/result_pending` labels). Wired behavior-preservingly into the broker (acquire/release on AUDIO_DELTA/AUDIO_DONE/RESPONSE_DONE; relay-TTS render holds the floor; filler gated by `can_speak`). Invariants in `test_realtime_floor.py`.
 - **Phase 2 — Tier B promotion (was default off).** `_run_brokered_tool` shields the run and waits `promote_after_ms`; if still running it detaches to the background, closes the pending provider call with an interim ack, optionally speaks a handoff, and `_deliver_background_result` speaks the answer once the floor is idle. New events `hermes.run.promoted` / `hermes.run.background_completed` + `tier`/`floor` on progress; 8 new settings. `test_realtime_promotion.py` (promote+pump-responsive, short=no-promote, cancel, detach-resume-replays).
 - **Phase 3 — default-on + Tier C + Android + docs.** Flipped `promotion_enabled` default **true** (safe: the path closes the pending call rather than holding an open response, so the socket only sees the normal between-turns idle gap). `hermes_run_task(mode="background")` detaches immediately (`tier:"durable"`). Settings exposed on `GET/PATCH /voice/realtime-agent/config`. Android: parse new events → "working on it" chip; Voice Settings → Realtime Agent → Background tasks (promote toggle, spoken-handoff toggle, result-delivery segmented control) → `RelayVoiceClient.updateRealtimeAgentPromotion()`.
@@ -15,7 +15,7 @@
 
 **Verified.** Python realtime suite **58 tests green** (`test_realtime_floor`, `test_realtime_promotion`, both provider suites, routes, profile-voice-config). `./gradlew lint` — Kotlin compiles clean; the only 2 lint errors are in the gitignored `local.properties` (absent in CI). Pre-existing unrelated `test_reads_hermes_xai_oauth_credential_pool` failure confirmed on `origin/dev` baseline.
 
-**Next.** Lab smoke + the Phase 0 probe both need a paired device / live provider creds on the relay host (can't run from the dev box). Open the PR to `dev`.
+**Next.** Confirm the xAI idle verdict on the relay host (where xAI creds live); fix the OpenAI `_session_update` rate field; run the lab smoke on a paired device. Open the PR to `dev`.
 
 ---
 

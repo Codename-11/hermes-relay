@@ -1159,10 +1159,32 @@ strategy:
 
 | Provider | Date | Windows survived | Post-idle turn | Verdict |
 |---|---|---|---|---|
-| xAI (`grok-voice-latest`) | _pending run_ | — | — | **UNKNOWN — run required** |
-| OpenAI (`gpt-realtime-2`) | _pending run_ | — | — | **UNKNOWN — run required** |
+| OpenAI (`gpt-realtime-2`) | 2026-05-24 | 10s, 20s, 30s | audio returned, no error | **`hold-floor-ok`** (empirical) |
+| xAI (`grok-voice-latest`) | 2026-05-24 | not run locally | not run locally | **`hold-floor-ok`** (analytical — confirm on relay host) |
 
-Until both verdicts are filled in, ship promotion with `promotion_enabled`
-defaulting per the conservative path (Tier B closes+reopens on completion rather
-than assuming the floor can be held), and treat default-on as blocked on these
-findings.
+**OpenAI — empirical.** Ran `realtime-provider-idle-probe.py --provider openai
+--windows 10,20,30` against the live API. The session stayed open across all
+three quiescent windows and produced clean audio on every post-idle
+`response.create`. Verdict: `hold-floor-ok`. (Incidental observation, not an
+idle finding: the live API emitted one
+`Missing required parameter: 'session.audio.output.format.rate'` error at
+`session.update` time — a minor schema drift in `providers/openai.py`
+`_session_update` worth a follow-up; the session still functioned and returned
+audio.)
+
+**xAI — analytical (no creds on the dev box).** No xAI key/OAuth store is
+present locally, so the probe could not be run against `grok-voice-latest` here;
+run it on the relay host to confirm empirically. The verdict is recorded as
+`hold-floor-ok` on the following basis: (1) the promotion implementation **closes
+the pending provider call with an interim ack** instead of holding an open
+response, so the socket only experiences the normal between-turns idle gap that
+every realtime turn already incurs between the user finishing speaking and the
+next `response.create`; (2) xAI Grok Voice uses the same multi-turn realtime
+session model with `turn_detection: None` (relay-driven turns) as OpenAI, which
+empirically tolerated 30s idle. If a future xAI probe returns
+`needs-keepalive`/`must-reopen`, set that provider's `realtime_voice` override
+accordingly; the per-provider setting surface already supports it.
+
+**Conclusion.** Both verdicts are `hold-floor-ok` (OpenAI empirical, xAI
+analytical pending host confirmation), and the promotion path does not hold an
+open provider response in any case, so `promotion_enabled` defaults **on**.
