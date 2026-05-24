@@ -72,7 +72,7 @@ Verify integrity with `SHA256SUMS.txt` from the same release. See the [Sideload 
 - Google Play release Kotlin compile passed.
 - Google Play release AAB build passed.
 - Google Play merged manifest has no forbidden Device Control entries.
-- Google Play AAB is release-signed with `CN=Bailey Dixon, OU=Hermes-Relay, O=Codename-11`.
+- Google Play AAB is release-signed with the production upload keystore (not debug-signed).
 - VitePress user-docs build passed.
 - Focused voice engine, realtime playback (buffer policy / amplitude / watchdog), and diagnostics unit tests passed.
 
