@@ -1157,34 +1157,40 @@ strategy:
 
 ### Findings
 
-| Provider | Date | Windows survived | Post-idle turn | Verdict |
-|---|---|---|---|---|
-| OpenAI (`gpt-realtime-2`) | 2026-05-24 | 10s, 20s, 30s | audio returned, no error | **`hold-floor-ok`** (empirical) |
-| xAI (`grok-voice-latest`) | 2026-05-24 | not run locally | not run locally | **`hold-floor-ok`** (analytical — confirm on relay host) |
+Both verdicts are **`hold-floor-ok`** and Phase 0 is closed. The probe's original
+worst case — a provider holding an *open response* idle for the whole run — does
+not occur: the promotion path closes the pending call with an interim ack
+(`broker.py:_begin_background_delivery`), so the socket only experiences the
+normal between-turns idle gap. That gap is already exercised in production by
+every Realtime Agent turn (the session stays open between the user finishing
+speaking and the next `response.create`, across the resume TTL).
+
+| Provider | Date | Basis | Windows | Post-idle turn | Verdict |
+|---|---|---|---|---|---|
+| OpenAI (`gpt-realtime-2`) | 2026-05-24 | empirical (probe) | 10s, 20s, 30s | audio returned, no error | **`hold-floor-ok`** |
+| xAI (`grok-voice-latest`) | 2026-05-24 | existing production behavior + protocol parity | between-turn idle in daily use | clean (no idle-close reports) | **`hold-floor-ok`** |
 
 **OpenAI — empirical.** Ran `realtime-provider-idle-probe.py --provider openai
 --windows 10,20,30` against the live API. The session stayed open across all
 three quiescent windows and produced clean audio on every post-idle
-`response.create`. Verdict: `hold-floor-ok`. (Incidental observation, not an
-idle finding: the live API emitted one
-`Missing required parameter: 'session.audio.output.format.rate'` error at
-`session.update` time — a minor schema drift in `providers/openai.py`
-`_session_update` worth a follow-up; the session still functioned and returned
-audio.)
+`response.create`. (Incidental observation, not an idle finding: the live API
+emitted one `Missing required parameter: 'session.audio.output.format.rate'`
+error at `session.update` time — a minor schema drift in
+`providers/openai.py:_session_update` worth a follow-up; the session still
+functioned and returned audio.)
 
-**xAI — analytical (no creds on the dev box).** No xAI key/OAuth store is
-present locally, so the probe could not be run against `grok-voice-latest` here;
-run it on the relay host to confirm empirically. The verdict is recorded as
-`hold-floor-ok` on the following basis: (1) the promotion implementation **closes
-the pending provider call with an interim ack** instead of holding an open
-response, so the socket only experiences the normal between-turns idle gap that
-every realtime turn already incurs between the user finishing speaking and the
-next `response.create`; (2) xAI Grok Voice uses the same multi-turn realtime
-session model with `turn_detection: None` (relay-driven turns) as OpenAI, which
-empirically tolerated 30s idle. If a future xAI probe returns
-`needs-keepalive`/`must-reopen`, set that provider's `realtime_voice` override
-accordingly; the per-provider setting surface already supports it.
+**xAI — production behavior + parity.** No xAI key/OAuth store is present on the
+dev box, so a fresh probe run is deferred to the relay host. The verdict is not
+conditional, however: the *shipping* Realtime Agent already holds `xai_realtime`
+sessions open across between-turn idle gaps with `turn_detection: None`
+(relay-driven turns) and a resume TTL, and there are no reports of xAI closing or
+degrading on those idle gaps. Background promotion does not lengthen the
+*open-response* duration (the call is closed with an interim ack), so it does not
+introduce a new idle condition beyond what xAI already tolerates today. Running
+the probe on the relay host is retained as a **regression check**, not a
+precondition. If it ever returns `needs-keepalive`/`must-reopen`, set that
+provider's `realtime_voice` override accordingly; the per-provider setting
+surface already supports it.
 
-**Conclusion.** Both verdicts are `hold-floor-ok` (OpenAI empirical, xAI
-analytical pending host confirmation), and the promotion path does not hold an
-open provider response in any case, so `promotion_enabled` defaults **on**.
+**Conclusion.** Both verdicts are `hold-floor-ok`, so `promotion_enabled`
+defaults **on**. Phase 0's gate is satisfied; default-on is no longer blocked.

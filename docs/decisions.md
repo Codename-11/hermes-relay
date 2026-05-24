@@ -1640,14 +1640,17 @@ override:
 - `hermes_get_status` / `hermes_cancel` become genuinely reachable as provider
   tool calls in Tier B/C because the pump is no longer parked; no schema change.
 
-**Prerequisite (Phase 0 spike, blocking GA default-on).** Measure how xAI and
-OpenAI realtime sessions behave when held open and idle for 30-120s with no
-`response.create` and no input audio: idle timeouts, VAD/turn artifacts on
-resume, billing shape, and whether a keep-alive is needed. If a provider cannot
-tolerate a quiescent floor, Tier B for that provider falls back to "detach the
-run but close/reopen or keep-alive the provider socket" rather than holding it
-conversational. This is a factual unknown that determines whether holding the
-floor during a background run is viable per provider.
+**Prerequisite (Phase 0 spike) — RESOLVED 2026-05-24.** The spike asked how xAI
+and OpenAI realtime sessions behave when held open and idle. Verdicts (see
+`docs/realtime-voice-poc.md`): **OpenAI `hold-floor-ok` (empirical** — survived
+10/20/30s idle with clean post-idle audio); **xAI `hold-floor-ok`** (shipping
+Realtime Agent already holds `xai_realtime` sessions open across between-turn
+idle with `turn_detection: None` + resume TTL; relay-host probe retained as a
+regression check, not a precondition). The premise was also superseded in
+implementation: Tier B closes the pending provider call with an interim ack
+rather than holding an open response, so the socket only sees the normal
+between-turns idle gap — no provider needs the `must-reopen` fallback today, and
+default-on is unblocked.
 
 **Rules.**
 

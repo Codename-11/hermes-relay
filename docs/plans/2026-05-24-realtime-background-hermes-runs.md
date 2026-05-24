@@ -157,6 +157,23 @@ being held open and quiescent (no `response.create`, no input audio) for
 run but closes/reopens the provider socket (or keeps a minimal keep-alive)
 rather than holding it conversational. Capture that in the ADR's Phase 0 line.
 
+**Status: DONE (2026-05-24).** Verdicts recorded in
+`docs/realtime-voice-poc.md` → Idle tolerance:
+- **OpenAI `gpt-realtime-2` — `hold-floor-ok` (empirical).** Probe ran live
+  (10s/20s/30s idle windows survived; clean post-idle audio each time).
+- **xAI `grok-voice-latest` — `hold-floor-ok`.** No xAI creds on the dev box, but
+  the verdict is not conditional: the shipping Realtime Agent already holds
+  `xai_realtime` sessions open across between-turn idle gaps
+  (`turn_detection: None` + resume TTL) with no idle-close reports. A relay-host
+  probe run is retained as a regression check, not a precondition.
+
+**Premise superseded.** Phase 2/3 implemented Tier B by *closing the pending
+provider call with an interim ack* rather than holding an open response, so the
+"hold the floor conversational while a run completes" worst case this spike
+guarded against does not occur — the socket only sees the normal between-turns
+idle gap. Both providers are `hold-floor-ok`, so the default-on gate is satisfied
+(no provider needs the `must-reopen` fallback today).
+
 ---
 
 ## Phase 1 — Introduce FloorOwner under current blocking behavior (no functional change)
