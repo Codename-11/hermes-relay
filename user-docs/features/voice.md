@@ -4,7 +4,7 @@ Real-time voice conversation with your Hermes agent. Tap the mic in chat, speak,
 and the agent speaks back through the relay-managed voice output provider while
 STT still follows your Hermes server configuration.
 
-The stable default engine is **Hermes chat + voice output**: Hermes owns the
+The stable default engine is **Hermes Chat + Voice Output**: Hermes owns the
 chat turn, tools, memory, approvals, and transcript, then the relay renders the
 assistant response to speech. An opt-in **Realtime Agent** engine is available
 for experimental provider-native speech work. It is visibly badged as
@@ -15,9 +15,12 @@ stable voice behavior.
 
 Voice mode is a layer on top of chat. In the stable engine, your voice is
 transcribed to text, sent through the normal chat flow, and the agent's response
-is rendered back to speech as it streams in. The MorphingSphere — the same orb
-you see in the chat empty state — expands to fill the screen and reacts to both
-your voice and the agent's.
+is rendered back to speech as it streams in. In the experimental Realtime Agent
+engine, Android streams mic PCM through the relay to a native realtime provider
+such as xAI/Grok Voice Agent or OpenAI Realtime, and the relay mirrors the
+provider's live transcript, audio, and Hermes tool state into the same chat
+timeline. The MorphingSphere — the same orb you see in the chat empty state —
+expands to fill the screen and reacts to both your voice and the agent's.
 
 - **Your voice** drives a subtle blue-purple "listening" state. Gentle breathing, surface wobble with your amplitude.
 - **The agent's voice** drives a dramatic green-teal "speaking" state. The core goes white-hot on peaks, the data ring spins up to 4× speed on loud consonants.
@@ -47,6 +50,11 @@ Common speech output choices:
 | **ElevenLabs** | `ELEVENLABS_API_KEY` | Cascaded streaming TTS comparison target. Relay can refresh account voices, models, and languages server-side. |
 | **Hermes fallback TTS** | Depends on upstream provider | Used if relay voice output fails before audio starts. |
 
+Realtime Agent native providers also run relay-side. `xai_realtime` uses the
+relay-owned xAI API key or OAuth store. `openai_realtime` uses
+`OPENAI_REALTIME_API_KEY`, `OPENAI_API_KEY`, or `VOICE_TOOLS_OPENAI_KEY` on the
+relay host. These keys are never stored on Android.
+
 Five STT providers are supported:
 
 | Provider | API key | Notes |
@@ -63,6 +71,12 @@ Five STT providers are supported:
 - A connected relay at `:8767` with the voice routes available (any hermes-relay build from 0.2.0 onwards).
 
 Phone voice mode can authenticate two ways: a paired Relay session token with `voice:config`, `voice:stt`, and `voice:tts` grants, or the same saved Hermes API key used for chat. That means chat+voice-only phone setups can skip the full Relay pairing flow: enter the API URL and API key, and the app derives the Relay URL from the same host on port `8767`. If the `/voice/config` probe fails, the app reveals a manual Relay URL override. The API-key exception is limited to voice routes and requires HTTPS outside loopback. For a temporary plain-LAN phone test, run `hermes relay insecure-api-key on` on the relay host, then turn it back off with `hermes relay insecure-api-key off`.
+
+Before a voice turn is submitted, Android now runs a fast relay health preflight.
+If the host accepts TCP but does not answer HTTP, voice mode fails quickly with a
+Connections-facing error instead of sitting in Thinking until the long realtime
+turn timeout expires. The check is recorded in **Settings -> Diagnostics** and in
+the Relay detail sheet's recent activity tail.
 
 ## Entering Voice Mode
 
@@ -113,10 +127,19 @@ consistent across the response.
 
 **Settings → Voice** has these core sections:
 
-### Voice Mode
+### Voice Engine
 
-- **Voice engine** — Stable `Hermes chat + voice output` or opt-in
+- **Voice engine** — Stable `Hermes Chat + Voice Output` or opt-in
   `Realtime Agent` with an Experimental badge.
+
+The active engine controls which provider card appears below. Stable voice shows
+the Hermes voice-output renderer settings. Realtime voice shows the Realtime
+Agent provider settings.
+
+### Global Voice Controls
+
+These controls always show and apply to both engines:
+
 - **Interaction mode** — Tap / Hold / Continuous
 - **Silence threshold** — 1-10 seconds, default 3. Only applies in Tap-to-talk mode.
 - **Auto-TTS** — reserved for future: speak all agent responses even when not in voice mode. Currently a placeholder.
@@ -133,14 +156,15 @@ New as of 2026-04-17. Lets you interrupt the agent by speaking while it's replyi
 
 **How it feels in practice.** As soon as you start speaking, the agent's voice briefly ducks in volume (about 30 %) — that's the app acknowledging "I think I heard something" before committing. If you keep speaking, it stops entirely within a fraction of a second and you're back in recording mode. If it was a false trigger (one stray frame of background noise), the volume pops back up to full after ~500 ms with no interruption.
 
-### Voice Output
+### Hermes Chat + Voice Output
 
-Editable streaming voice output defaults for the active profile. Provider, model,
-voice, language, and sample-rate dropdowns come from the relay's advertised
-provider metadata. When you pick a provider, the app asks the relay for that
-provider's latest safe options before saving; account-backed discovery, such as
-ElevenLabs voice/model lists and paginated xAI custom voices, happens on the server
-and is cached briefly to avoid repeated provider API calls.
+Visible when the `Hermes Chat + Voice Output` engine is selected. It edits
+streaming voice output defaults for the active profile. Provider, model, voice,
+language, and sample-rate dropdowns come from the relay's advertised provider
+metadata. When you pick a provider, the app asks the relay for that provider's
+latest safe options before saving; account-backed discovery, such as ElevenLabs
+voice/model lists and paginated xAI custom voices, happens on the server and is
+cached briefly to avoid repeated provider API calls.
 OpenAI voice choices are static from the official API docs because OpenAI does
 not provide a general voice-list endpoint for this surface. The picker groups
 provider voices, supports search for long voice lists, marks recommended/custom
@@ -156,20 +180,30 @@ persists the choice and plays the sample through the active profile voice.
 The older Hermes `tts:` config is still shown as fallback provider information
 and is still used if streaming voice output fails before audio starts.
 
+Stable streaming playback can resume during short connection changes. If the
+phone moves from Wi-Fi to cellular or from LAN to Tailscale while audio is in
+flight, Android reopens the same relay voice-output session through the current
+route and the relay replays missed PCM chunks instead of forcing a new render.
+
 ### Speech-to-Text
 
 Read-only display of the STT provider and model reported by `/voice/config`.
-STT still follows the upstream Hermes `stt:` configuration, resolved through the
-active profile where Hermes has one.
+STT still follows the upstream Hermes `stt:` configuration for the stable
+Hermes Chat + Voice Output engine, resolved through the active profile where
+Hermes has one. Realtime Agent uses the selected provider's native realtime
+transcription instead and does not upload the turn through `/voice/transcribe`.
 
 ### Realtime Agent
 
-Visible when the `Realtime Agent` voice engine is selected, and also visible as
-a development surface when Developer options are unlocked. This experimental
+Visible when the `Realtime Agent` voice engine is selected. This experimental
 section saves profile-scoped realtime provider defaults (`realtime_voice:`) for
-OpenAI-first and xAI-ready provider testing. Provider dropdowns use the same
-relay-owned option refresh, search, grouping, and validation pattern as Voice
-Output.
+provider-native testing. Native Realtime Agent providers currently include
+`xai_realtime` with `grok-voice-latest` and `openai_realtime` with
+`gpt-realtime-2`. Victor's profile can select `leo` for xAI, while OpenAI
+profiles commonly use voices such as `marin` or `cedar`. Provider dropdowns use
+the same relay-owned option refresh, search, grouping, and validation pattern as
+Voice Output, plus a native-agent capability flag so lab/render-only providers
+do not appear as full Realtime Agent choices.
 
 Realtime Agent is still Hermes-first. The provider does not get raw Android
 bridge tools, direct Hermes tool execution, or ownership of memory. The relay
@@ -180,25 +214,117 @@ broker exposes only a small tool surface:
 - `hermes_cancel`
 - `hermes_confirm`
 
-The first integrated Android path sends the client transcript to the relay
-broker, streams Hermes chat/tool events into the existing timeline, and renders
-the approved Hermes response through the selected realtime provider as PCM. If
+When the phone is paired, its Relay session token only authenticates it to the
+realtime route. Hermes tool calls from the realtime broker use the relay
+server's local Hermes API credential from `config.yaml`, `.env`, or
+`API_SERVER_KEY`; the provider never receives the phone's saved API key.
+
+During Hermes tool work, the app shows clean status from the broker instead of
+dumping raw tool output into voice. Normal timeline rows show the active Hermes
+tool, completion state, and provider-spoken provenance. Android keeps those
+status updates UI-only during provider-native realtime playback so a second
+voice-output stream cannot compete with the realtime provider. The final spoken
+answer is generated by the realtime provider after Hermes returns a compact
+result, so tool output is summarized naturally instead of read aloud.
+
+Provider-native Android paths stream mic PCM to a relay-owned realtime provider
+WebSocket session. Android commits the captured utterance, the active provider
+owns input transcription and speech generation, and Hermes still owns profile
+binding, session history, memory, tools, confirmation prompts, cancellation
+policy, and transcript persistence. The relay sends the provider only the
+approved Hermes function schemas, returns compact tool results, and waits for
+Android playback to drain before asking the provider for post-tool narration. If
 the provider disconnects or quality is poor, switch Voice engine back to
-`Hermes chat + voice output`; existing voice routes and settings remain intact.
+`Hermes Chat + Voice Output`; existing voice routes and settings remain intact.
 
-### Test Voice
+Realtime Agent sessions use the same resume window during short connection
+changes. If the phone moves from Wi-Fi to cellular or from LAN to Tailscale
+while a turn is thinking or speaking, Android follows the app's current relay
+route signal and can reopen the same relay voice session before the old
+websocket times out. It sends a session resume token and its last received
+audio/event IDs, and the relay replays missed status or PCM chunks instead of
+starting a second Hermes run. If the resume window expires, the app shows a
+recoverable voice error and the next tap starts a fresh turn.
 
-Plays a sample sentence ("Hello, this is Hermes. Voice mode is working.") through
-the currently saved profile voice output path. Use this to confirm provider,
-model, voice, auth, and playback without burning a chat turn.
+Voice turns include interface context. In stable voice mode the chat agent is
+told the turn came through `Hermes Chat + Voice Output`; in Realtime Agent mode
+the provider and Hermes broker are told the active path is `realtime_agent`,
+including provider, model, voice, profile, and relay-local date/time. If you ask
+which path is active or what today's date is, the agent should answer from that
+context.
+
+Realtime Agent also receives recent shared chat context from the current
+timeline. That means switching from normal chat voice to Realtime Agent, then
+back again, should feel like one conversation. If the realtime provider answers
+a simple prompt-contained question directly, the app syncs that local
+provider-only turn into the next Hermes chat turn. If the turn used Hermes tools,
+Hermes already has the canonical record and the app does not duplicate the tool
+output.
+
+For research, news, current facts beyond the injected date/time, live checks, or
+anything else the realtime provider cannot know from the active context, the
+provider is instructed to call Hermes instead of guessing from model knowledge.
+That also covers latest/versioned data, device or desktop state, personal or
+project context, side effects, precision-sensitive answers, explicit
+check/verify/look-up requests, media or artifact handling, and follow-up
+references like "this", "that", "it", or "that integration" that need durable
+chat/session context. Hermes performs the governed check, then the provider
+speaks a concise summary from Hermes' returned answer.
+
+Realtime Agent also asks the provider to format speech for listening: dates,
+times, currency, percentages, versions, measurements, counts, paths, URLs, IDs,
+JSON, logs, tables, and dense numeric strings should be summarized naturally
+instead of read character by character. When raw values are not useful aloud, the
+voice can say something like "plus a few IDs and raw values" and keep the meaning
+front and center.
+
+The default Realtime Agent timeline stays user-facing: live transcript,
+assistant speech, path badges, confirmation state, and compact tool rows. Turn
+on **Detailed trace** in Voice settings to show compact Hermes status and result
+provenance for debugging. Full raw traces stay in the relay run logs.
+
+**Reliable, low-latency playback.** Realtime audio plays from the first frame
+with minimal latency. Earlier builds could drop or stutter the first turn because
+the AudioTrack deep buffer cold-started with its playback head parked at zero;
+the streaming buffer was reduced to a low-latency size, the prebuffer threshold
+retuned, and the preroll force-start removed. Playback now records a
+time-to-first-audio metric, logs the requested-vs-actual buffer size, runs a
+first-frame watchdog, and cross-checks drain drift. When something goes wrong,
+those signals land in **Settings -> Diagnostics** instead of presenting as silent
+dead air.
+
+### Test Current Engine
+
+When `Hermes Chat + Voice Output` is selected, plays a sample sentence ("Hello,
+this is Hermes. Voice mode is working.") through the currently saved profile
+voice-output path. When `Realtime Agent` is selected, opens a provider-native
+`/voice/realtime-agent/*` session and plays a short realtime sample through the
+relay. The fallback TTS card is global and remains visible for both engines as
+the stable speech safety net.
+
+### Voice Lab
+
+The realtime voice test screen (the "Voice Lab") is a developer-facing harness
+for exercising the realtime path in isolation, with two clearly separated demos:
+
+- **Text demo** — plays raw provider TTS directly, with no agent in the loop. Use
+  it to confirm the provider, voice, and streaming playback are healthy.
+- **Mic demo** — runs the full agent path: real speech recognition, Hermes
+  brokering, and a spoken reply. Capture is tap-to-record / tap-to-stop, so you
+  control exactly when the utterance is committed.
+
+The Voice Lab waveform follows the playback cursor — it is driven by the player's
+amplitude at the current playback position rather than by socket-arrival time, so
+the visual matches what you actually hear. A `scripts/realtime-voice-lab-smoke.ps1`
+script automates a quick end-to-end check of the lab routes.
 
 ## Troubleshooting
 
 **"Microphone permission is required for voice mode"** — tap the mic FAB again. If Android doesn't show a permission prompt (you denied twice), go to Android Settings → Apps → Hermes Relay → Permissions → Microphone and enable it.
 
-**No audio plays when the agent speaks** — check Settings → Voice → Voice Output. If the provider shows "Unknown" or the profile scope is not what you expected, the relay's `/voice/output/config` or `/voice/config` endpoint returned an error or fell back. Try Test Voice; the error message will tell you what's wrong.
+**No audio plays when the agent speaks** — check Settings → Voice → Hermes Chat + Voice Output. If the provider shows "Unknown" or the profile scope is not what you expected, the relay's `/voice/output/config` or `/voice/config` endpoint returned an error or fell back. Try Test Current Engine; the error message will tell you what's wrong.
 
-**Transcript comes back empty or garbled** — check Settings → Voice → Speech-to-Text. Same diagnostic: Test Voice won't catch STT issues, but you can verify by speaking a slow, clear phrase and watching the transcribed text appear in the overlay. If it's wrong, your STT model or language setting is off.
+**Transcript comes back empty or garbled** — check Settings → Voice → Speech-to-Text. Same diagnostic: Test Current Engine won't catch stable STT issues, but you can verify by speaking a slow, clear phrase and watching the transcribed text appear in the overlay. If it's wrong, your STT model or language setting is off.
 
 **The sphere doesn't react during Speaking on my device** — some Android OEMs refuse to construct the `Visualizer` audio-effect object even with `MODIFY_AUDIO_SETTINGS` granted. Hermes-Relay catches this and falls back to a flat amplitude — voice mode still works, the orb just won't pulse with the agent's voice. Listening-mode amplitude (from your mic) is unaffected.
 

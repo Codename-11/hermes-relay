@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -39,11 +40,13 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -58,8 +61,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.data.AgentDisplay
+import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
+import com.hermesandroid.relay.ui.components.DiagnosticsLogPanel
 import com.hermesandroid.relay.ui.components.ProfileInspectorCard
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.viewmodel.ChatViewModel
@@ -155,6 +160,8 @@ fun SettingsScreen(
     // the sheet renders inline over Settings so closing drops the user
     // back where they started.
     var showAgentSheet by remember { mutableStateOf(false) }
+    var showDiagnosticsSheet by remember { mutableStateOf(false) }
+    val diagnosticsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     Scaffold(
         topBar = {
@@ -274,15 +281,17 @@ fun SettingsScreen(
             )
             // === END PHASE3-notif-listener-followup ===
 
-            // === PHASE3-safety-rails: bridge safety entry-point ===
-            SettingsCategoryRow(
-                icon = Icons.Filled.Security,
-                title = "Bridge safety",
-                subtitle = "Blocklist, destructive-verb confirmation, auto-disable",
-                onClick = onNavigateToBridgeSafety,
-                isDarkTheme = isDarkTheme,
-            )
-            // === END PHASE3-safety-rails ===
+            if (BuildFlavor.isSideload) {
+                // === PHASE3-safety-rails: bridge safety entry-point ===
+                SettingsCategoryRow(
+                    icon = Icons.Filled.Security,
+                    title = "Bridge safety",
+                    subtitle = "Blocklist, destructive-verb confirmation, auto-disable",
+                    onClick = onNavigateToBridgeSafety,
+                    isDarkTheme = isDarkTheme,
+                )
+                // === END PHASE3-safety-rails ===
+            }
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Image,
@@ -313,6 +322,14 @@ fun SettingsScreen(
                 title = "Analytics",
                 subtitle = "Stats for nerds — TTFT, tokens, health",
                 onClick = onNavigateToAnalytics,
+                isDarkTheme = isDarkTheme,
+            )
+
+            SettingsCategoryRow(
+                icon = Icons.Filled.Info,
+                title = "Diagnostics",
+                subtitle = "Recent API, relay, session, and voice activity",
+                onClick = { showDiagnosticsSheet = true },
                 isDarkTheme = isDarkTheme,
             )
 
@@ -350,6 +367,36 @@ fun SettingsScreen(
             onDismiss = { showAgentSheet = false },
             onNavigateToConnections = onNavigateToConnections,
         )
+    }
+
+    if (showDiagnosticsSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showDiagnosticsSheet = false },
+            sheetState = diagnosticsSheetState,
+        ) {
+            Column(
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp, vertical = 16.dp)
+                    .navigationBarsPadding(),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    text = "Diagnostics",
+                    style = MaterialTheme.typography.titleLarge,
+                )
+                Text(
+                    text = "Recent app-level connection and voice events. Secrets and raw payloads are hidden.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                DiagnosticsLogPanel(
+                    limit = 80,
+                    showCategory = true,
+                    showClear = true,
+                )
+            }
+        }
     }
 }
 

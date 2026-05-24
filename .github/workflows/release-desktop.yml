@@ -1,4 +1,4 @@
-name: Release desktop
+name: Release Desktop
 
 on:
   push:
@@ -171,6 +171,10 @@ jobs:
       - build-cli-binaries
       - build-windows-tray-installer
     steps:
+      - name: Extract desktop version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#desktop-v}" >> "$GITHUB_OUTPUT"
+
       - uses: actions/download-artifact@v4
         with:
           path: release-assets
@@ -187,13 +191,13 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          name: ${{ github.ref_name }}
+          name: Hermes-Relay-Desktop v${{ steps.version.outputs.version }}
           tag_name: ${{ github.ref_name }}
           draft: false
-          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+          prerelease: ${{ contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'rc') }}
           fail_on_unmatched_files: true
           body: |
-            # Hermes-Relay Desktop - ${{ github.ref_name }}
+            # Hermes-Relay-Desktop v${{ steps.version.outputs.version }}
 
             **Experimental phase.** Assets are unsigned - Windows SmartScreen and macOS Gatekeeper will warn on first launch. Windows now ships a tray installer as the primary desktop surface; CLI binaries remain available for terminal/headless use and for macOS/Linux.
 

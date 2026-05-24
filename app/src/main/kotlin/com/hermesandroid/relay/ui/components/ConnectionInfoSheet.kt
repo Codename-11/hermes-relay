@@ -64,12 +64,12 @@ import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.AppAnalytics
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.network.ChatMode
 import com.hermesandroid.relay.network.ConnectionState
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.launch
 
 // ---------------------------------------------------------------------------
@@ -218,6 +218,7 @@ fun SessionInfoSheet(
     ) {
         Column(
             modifier = Modifier
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 16.dp)
                 .navigationBarsPadding(),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -349,6 +350,17 @@ fun SessionInfoSheet(
                     Text("Regenerate Code")
                 }
             }
+
+            HorizontalDivider()
+            DiagnosticsLogPanel(
+                categories = setOf(
+                    DiagnosticCategory.Session,
+                    DiagnosticCategory.Auth,
+                    DiagnosticCategory.Relay,
+                ),
+                limit = 6,
+                showCategory = true,
+            )
         }
     }
 }
@@ -383,6 +395,7 @@ fun ApiServerInfoSheet(
     ) {
         Column(
             modifier = Modifier
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 16.dp)
                 .navigationBarsPadding(),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -455,6 +468,17 @@ fun ApiServerInfoSheet(
             ) {
                 Text(if (testing) "Testing\u2026" else "Test connection")
             }
+
+            HorizontalDivider()
+            DiagnosticsLogPanel(
+                categories = setOf(
+                    DiagnosticCategory.Api,
+                    DiagnosticCategory.Auth,
+                    DiagnosticCategory.Endpoint,
+                ),
+                limit = 6,
+                showCategory = true,
+            )
         }
     }
 }
@@ -485,6 +509,7 @@ fun RelayInfoSheet(
     ) {
         Column(
             modifier = Modifier
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 16.dp)
                 .navigationBarsPadding(),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -563,6 +588,18 @@ fun RelayInfoSheet(
                     Text("Disconnect")
                 }
             }
+
+            HorizontalDivider()
+            DiagnosticsLogPanel(
+                categories = setOf(
+                    DiagnosticCategory.Relay,
+                    DiagnosticCategory.Endpoint,
+                    DiagnosticCategory.Session,
+                    DiagnosticCategory.Voice,
+                ),
+                limit = 8,
+                showCategory = true,
+            )
         }
     }
 }

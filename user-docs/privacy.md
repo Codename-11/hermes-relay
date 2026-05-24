@@ -6,13 +6,19 @@ description: Privacy policy for the Hermes-Relay Android app
 
 # Privacy Policy
 
-**Hermes-Relay** · Effective date: April 8, 2026
+**Hermes-Relay** · Effective date: May 19, 2026
 
 Hermes-Relay is a native Android app that connects to your self-hosted [Hermes Agent](https://github.com/NousResearch/hermes-agent) server. This policy describes how the app handles your data.
 
 ## Summary
 
-Hermes-Relay does not collect, transmit, or share any personal data with third parties. The app connects only to servers that you configure. There are no accounts, no cloud services, and no analytics sent externally.
+Hermes-Relay does not collect, transmit, or share personal data with third parties. The app connects only to servers that you configure. There are no accounts, no hosted Hermes-Relay cloud service, and no analytics sent externally.
+
+## Google Play Track
+
+The Google Play build ships Hermes Bridge Core: chat, voice, terminal/TUI relay, notification companion, media handoff, relay sessions, and status. It does **not** include AccessibilityService-based Device Control and cannot read your screen, tap/type/swipe, capture screenshots, send SMS, place calls, access contacts or location, or perform unattended phone control.
+
+The sideload build is a separate distribution track for users who intentionally install Device Control outside Google Play.
 
 ## Data Storage
 
@@ -21,7 +27,7 @@ All data is stored locally on your device in the app's private sandbox:
 | Data | Storage Method |
 |------|---------------|
 | Server URLs, preferences | Android DataStore (app-private) |
-| API key, session tokens | AES-256-GCM encryption via Android Keystore |
+| API key, relay session tokens | AES-256-GCM encryption via Android Keystore |
 | Performance counters | Android DataStore (local only) |
 
 Chat messages are **not cached** on your device. They are loaded from your Hermes server on demand and exist only in memory while the app is running.
@@ -30,36 +36,43 @@ Chat messages are **not cached** on your device. They are loaded from your Herme
 
 The app connects only to endpoints you configure:
 
-- **Your Hermes API server** — via HTTP/SSE for chat streaming
-- **Your relay server** — via WSS for terminal and bridge channels (optional)
+- **Your Hermes API server** — HTTP/SSE for chat streaming
+- **Your relay server** — WSS for terminal/TUI relay, Bridge Core status, media handoff, notification companion, and session management
+- **Your relay voice routes** — HTTP(S)/WSS for speech-to-text, voice settings, realtime voice sessions, and text-to-speech audio when you use Voice mode
 
-No connections are made to Google, Anthropic, or any other third-party service. There is no telemetry, no crash reporting, no DNS prefetching, and no background network activity.
+No connections are made to Google, Anthropic, or any other third-party service by the app. There is no telemetry, no crash reporting, no DNS prefetching, and no background network activity to hosted services.
 
 ## Permissions
 
-| Permission | Purpose | Required |
-|------------|---------|----------|
-| Internet | Connect to your Hermes servers | Yes |
-| Network State | Detect connectivity for auto-reconnect | Yes |
-| Camera | QR code scanning for server pairing | No |
+Google Play build:
 
-No access to contacts, location, microphone, storage, or other sensitive data.
+| Permission or access | Purpose | Required |
+|----------------------|---------|----------|
+| Internet | Connect to your Hermes servers | Yes |
+| Network State | Detect connectivity for reconnect behavior | Yes |
+| Camera | QR code scanning for server pairing | No |
+| Microphone | Voice mode speech-to-text | No |
+| Notification Access | Optional notification companion metadata forwarding to your paired relay | No |
+
+Notification Access is granted and revoked from Android system settings. When enabled, Hermes-Relay forwards posted-notification package, title, text, subtext, timestamp, and notification key to your paired relay. It does not forward notifications to a Hermes-Relay cloud service.
+
+Sideload Device Control builds may request additional permissions for overlay, foreground service, wake lock, screenshots, contacts, location, SMS, and calls. Those permissions are not present in the Google Play build.
 
 ## Third-Party Services
 
-Hermes-Relay includes **no** third-party SDKs, advertising, tracking, or analytics services. The app is built entirely with first-party Android components (Jetpack Compose, OkHttp, AndroidX).
+Hermes-Relay includes no advertising, tracking, or analytics services. The app is built with Android platform components and open-source libraries.
 
 ::: info Note
-Your Hermes server may connect to AI providers (OpenAI, Anthropic, etc.) server-side. That network activity is outside the scope of this app and governed by your server's configuration.
+Your Hermes server may connect to AI providers such as OpenAI or Anthropic server-side. That network activity is outside the scope of this app and governed by your server's configuration.
 :::
 
 ## Data Export & Deletion
 
 From the app's Settings screen, you can:
 
-- **Export** your configuration (server URLs, preferences — secrets excluded)
+- **Export** your configuration (server URLs and preferences; secrets excluded)
 - **Import** a saved configuration
-- **Full reset** — permanently deletes all local data including encrypted credentials
+- **Full reset** to permanently delete local data including encrypted credentials
 
 Uninstalling the app removes all stored data from your device.
 

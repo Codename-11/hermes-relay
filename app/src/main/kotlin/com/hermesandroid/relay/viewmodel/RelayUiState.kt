@@ -55,7 +55,7 @@ sealed interface RelayUiState {
      * Paired session token is still valid but the WSS has been down past
      * the grace window. Tapping the row should call
      * [ConnectionViewModel.connectRelay] to force a fresh attempt — no
-     * re-pair needed. Rendered amber with a "tap to reconnect" hint.
+     * re-pair needed. Rendered as unreachable with a "tap to reconnect" hint.
      */
     data object Stale : RelayUiState
 
@@ -87,16 +87,62 @@ data class RelayRowState(
     val activeEndpointRole: String? = null,
 )
 
+data class ConnectionHandoffStatus(
+    val title: String,
+    val route: String? = null,
+    val active: Boolean = true,
+    val success: Boolean = false,
+    val entries: List<ConnectionHandoffTraceEntry> = emptyList(),
+    val updatedAtMs: Long = System.currentTimeMillis(),
+)
+
+data class ConnectionHandoffTraceEntry(
+    val label: String,
+    val detail: String? = null,
+)
+
+enum class ConnectionStatusTone {
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
+data class ConnectionStatusSnapshot(
+    val title: String,
+    val route: String? = null,
+    val active: Boolean = false,
+    val success: Boolean = false,
+    val tone: ConnectionStatusTone = ConnectionStatusTone.Info,
+    val entries: List<ConnectionHandoffTraceEntry> = emptyList(),
+    val updatedAtMs: Long = System.currentTimeMillis(),
+)
+
+fun ConnectionHandoffStatus.asConnectionStatusSnapshot(): ConnectionStatusSnapshot =
+    ConnectionStatusSnapshot(
+        title = title,
+        route = route,
+        active = active,
+        success = success,
+        tone = when {
+            success -> ConnectionStatusTone.Success
+            active -> ConnectionStatusTone.Info
+            else -> ConnectionStatusTone.Info
+        },
+        entries = entries,
+        updatedAtMs = updatedAtMs,
+    )
+
 /**
  * Map a [RelayUiState] onto the four-state [BadgeState] the existing
  * [com.hermesandroid.relay.ui.components.ConnectionStatusRow] renders.
- * [RelayUiState.Stale] is amber because it's recoverable by a tap, not a
- * dead-end error.
+ * [RelayUiState.Stale] is red because the paired session may still be valid
+ * but the live relay path is not usable until reconnect succeeds.
  */
 fun RelayUiState.asBadgeState(): BadgeState = when (this) {
     RelayUiState.Connected -> BadgeState.Connected
-    RelayUiState.Connecting, RelayUiState.Stale -> BadgeState.Connecting
-    RelayUiState.Disconnected, RelayUiState.NotConfigured -> BadgeState.Disconnected
+    RelayUiState.Connecting -> BadgeState.Connecting
+    RelayUiState.Stale, RelayUiState.Disconnected, RelayUiState.NotConfigured -> BadgeState.Disconnected
 }
 
 /** Shortcut — delegate to the phase. */
@@ -112,7 +158,7 @@ fun RelayUiState.statusText(connectedLabel: String): String = when (this) {
     RelayUiState.NotConfigured -> "Not configured"
     RelayUiState.Connected -> connectedLabel
     RelayUiState.Connecting -> "Reconnecting…"
-    RelayUiState.Stale -> "Stale — tap to reconnect"
+    RelayUiState.Stale -> "Relay unreachable - tap to reconnect"
     RelayUiState.Disconnected -> "Disconnected"
 }
 
@@ -138,7 +184,7 @@ fun RelayRowState.statusText(connectedLabel: String): String {
     return when (phase) {
         RelayUiState.Connected -> "$base \u00B7 $display"
         RelayUiState.Connecting -> "$base \u00B7 $display"
-        RelayUiState.Stale -> "Stale \u00B7 $display — tap to reconnect"
+        RelayUiState.Stale -> "Unreachable \u00B7 $display - tap to reconnect"
         RelayUiState.Disconnected -> "$base (last via $display)"
         RelayUiState.NotConfigured -> base
     }

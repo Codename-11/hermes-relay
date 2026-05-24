@@ -30,7 +30,6 @@ interface FeatureRow {
 // about tier numbers — we present features instead.
 
 const features: FeatureRow[] = [
-  // Chat — both tracks
   {
     group: 'Chat & voice',
     name: 'Chat with your agent',
@@ -40,53 +39,74 @@ const features: FeatureRow[] = [
   },
   {
     group: 'Chat & voice',
-    name: 'Voice mode (push-to-talk)',
-    description: 'Hold a button, speak, the agent answers out loud.',
+    name: 'Hermes Chat + Voice Output',
+    description: 'Stable voice mode: Android records speech, Hermes owns the chat/tool turn, and the relay renders the answer aloud.',
     googlePlay: 'full',
     sideload: 'full',
   },
   {
     group: 'Chat & voice',
-    name: 'Sessions, personalities, slash commands',
-    description: 'Full session browser, profile picker, searchable command palette.',
+    name: 'Realtime Agent',
+    description: 'Opt-in provider-native realtime voice with Hermes-brokered tools, confirmations, profiles, and transcript state.',
+    googlePlay: 'full',
+    sideload: 'full',
+    note: 'Experimental in both tracks; provider secrets and Hermes tools stay on the relay.',
+  },
+  {
+    group: 'Chat & voice',
+    name: 'Profiles, personalities, sessions',
+    description: 'Full session browser, profile picker, agent/personality context, and per-profile voice defaults.',
     googlePlay: 'full',
     sideload: 'full',
   },
 
-  // Bridge — read-side
   {
-    group: 'Bridge — read your phone',
-    name: 'Read what is on your screen',
-    description: 'Agent can see the active screen so it can answer "what does this say?"',
+    group: 'Bridge Core',
+    name: 'Relay pairing and status',
+    description: 'Pair by QR/manual code, manage relay sessions, grants, endpoint health, and connection diagnostics.',
     googlePlay: 'full',
     sideload: 'full',
   },
   {
-    group: 'Bridge — read your phone',
+    group: 'Bridge Core',
+    name: 'Terminal/TUI relay',
+    description: 'Use paired relay sessions for terminal and Hermes TUI access to the host.',
+    googlePlay: 'full',
+    sideload: 'full',
+  },
+  {
+    group: 'Bridge Core',
     name: 'Notification triage',
-    description: 'Agent reads incoming notifications and summarizes them for you.',
+    description: 'Optional Android Notification Access forwards posted-notification metadata to your paired relay.',
     googlePlay: 'full',
     sideload: 'full',
   },
   {
-    group: 'Bridge — read your phone',
-    name: 'Calendar read',
-    description: '"What is on my schedule today?" — read-only access to your calendar.',
+    group: 'Bridge Core',
+    name: 'Media handoff',
+    description: 'Relay-registered media renders in chat and can be shared through Android-native flows.',
     googlePlay: 'full',
     sideload: 'full',
   },
 
-  // Bridge — write-side (the policy-sensitive stuff)
   {
-    group: 'Bridge — control your phone',
+    group: 'Sideload Device Control',
+    name: 'Read what is on your screen',
+    description: 'Agent can inspect the accessibility tree so it can answer "what does this say?"',
+    googlePlay: 'none',
+    sideload: 'full',
+    note: 'Google Play has no AccessibilityService or screen-reading surface. Install sideload for Device Control.',
+  },
+  {
+    group: 'Sideload Device Control',
     name: 'Tap, type, and swipe (with confirmation)',
     description: 'Agent can perform UI actions on your behalf.',
-    googlePlay: 'limited',
+    googlePlay: 'none',
     sideload: 'full',
-    note: 'On Google Play, the accessibility service is read-only by design — write actions silently no-op so the build stays inside Play\u2019s policy envelope. Sideload ships the full gesture surface.',
+    note: 'Google Play command probes fail closed with device_control_sideload_only before any AccessibilityService-dependent code can run.',
   },
   {
-    group: 'Bridge — control your phone',
+    group: 'Sideload Device Control',
     name: 'Reply to messages from voice',
     description: '"Text Sam I will be 10 min late" — fully hands-free.',
     googlePlay: 'none',
@@ -94,7 +114,7 @@ const features: FeatureRow[] = [
     note: 'Voice-routed bridge intents are sideload-only.',
   },
   {
-    group: 'Bridge — control your phone',
+    group: 'Sideload Device Control',
     name: 'Vision-driven navigation',
     description: 'Agent looks at the screen and figures out what to tap on its own.',
     googlePlay: 'none',
@@ -102,37 +122,36 @@ const features: FeatureRow[] = [
     note: 'Vision-driven UI navigation requires the unrestricted accessibility surface and is sideload-only.',
   },
   {
-    group: 'Bridge — control your phone',
+    group: 'Sideload Device Control',
     name: 'Workflow recording (future)',
     description: 'Show the agent something once, ask it to repeat the workflow later.',
     googlePlay: 'none',
     sideload: 'full',
   },
 
-  // Safety — both tracks
   {
-    group: 'Safety rails',
+    group: 'Device Control safety rails',
     name: 'App blocklist',
     description: 'Banking, password managers, and work email default-blocked from bridge actions.',
-    googlePlay: 'full',
+    googlePlay: 'none',
     sideload: 'full',
+    note: 'Not needed on Google Play because Device Control is absent from that artifact.',
   },
   {
-    group: 'Safety rails',
+    group: 'Device Control safety rails',
     name: 'Confirmation on destructive verbs',
     description: '"Send", "pay", "delete", "transfer" — always prompt before acting.',
-    googlePlay: 'full',
+    googlePlay: 'none',
     sideload: 'full',
   },
   {
-    group: 'Safety rails',
+    group: 'Device Control safety rails',
     name: 'Auto-disable + activity log',
     description: 'Bridge turns itself off when idle. Every action is logged with a thumbnail.',
-    googlePlay: 'full',
+    googlePlay: 'none',
     sideload: 'full',
   },
 
-  // Distribution — practical differences users will care about
   {
     group: 'Install & updates',
     name: 'One-tap install',

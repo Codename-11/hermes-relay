@@ -5,7 +5,6 @@ import com.hermesandroid.relay.viewmodel.sanitizeForTts
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Test
 
 /**
@@ -20,7 +19,6 @@ import org.junit.Test
  *
  * Pure top-level function; no Android, no coroutines, no ViewModel.
  */
-@Ignore("Tracked in GitHub issue #32 — voice test suite validation deferred (conservative; pure-logic but defer-blocked by v0.5.1 timeline)")
 class VoiceViewModelSanitizerTest {
 
     // ── Code fences ────────────────────────────────────────────────────

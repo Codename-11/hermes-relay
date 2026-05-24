@@ -1,31 +1,33 @@
 # Phone Control Tools
 
-The hermes-relay plugin registers `android_*` tools into the hermes-agent gateway. These tools let the agent read, navigate, and act on your phone through the bridge channel.
+The hermes-relay plugin registers `android_*` Device Control tools into the hermes-agent gateway. These tools let the agent read, navigate, and act on your phone through the bridge channel.
+
+Device Control is **sideload-only**. Google Play builds ship Bridge Core for chat, voice, terminal/TUI relay, notifications, media, sessions, and status, but they do not include AccessibilityService-backed screen reading, gestures, screenshots, SMS, calls, contacts, location, or unattended control.
 
 ## Visibility Gate
 
-All tools except `android_setup` are gated behind a single requirement: `phone_connected=true`. If no phone is paired and connected via WebSocket, the tools are hidden from the agent's tool list entirely. Only `android_setup` (which configures bridge URL and pairing code) remains visible so the agent can guide you through pairing.
+All tools except `android_setup` are gated behind two requirements: `phone_connected=true` and `bridge.device_control_supported=true` from `/bridge/status`. If no sideload Device Control phone is paired and connected via WebSocket, the tools are hidden from the agent's tool list entirely. Google Play Bridge Core phones report `device_control_supported=false`, so the agent sees status/relay features but not phone-control tools.
 
 This is a single gate, not a cascading permission check. Downstream layers handle finer-grained errors with structured responses (see [Structured Errors](#structured-error-responses) below).
 
 ## Tool Reference
 
-| Tool | Category | Sideload only | Description |
+| Tool | Category | Device Control required | Description |
 |------|----------|:---:|-------------|
-| `android_ping` | Connectivity | | Check bridge liveness |
-| `android_read_screen` | Observation | | Get accessibility tree of current screen |
-| `android_tap` | Action | | Tap at coordinates or by node ID |
-| `android_tap_text` | Action | | Tap element by visible text |
-| `android_type` | Action | | Type text into focused input field |
-| `android_swipe` | Action | | Swipe gesture (direction + distance) |
-| `android_scroll` | Action | | Scroll in direction |
-| `android_open_app` | Navigation | | Launch app by package name |
-| `android_press_key` | Navigation | | Press hardware/software key (back, home, recents) |
-| `android_screenshot` | Observation | | Capture screenshot as a relay `MEDIA:` marker |
-| `android_wait` | Observation | | Wait for element to appear on screen |
-| `android_get_apps` | Observation | | List installed apps |
-| `android_current_app` | Observation | | Best-effort foreground app package name |
-| `android_setup` | Configuration | | Configure bridge URL and pairing code |
+| `android_ping` | Connectivity | Yes | Check bridge liveness |
+| `android_read_screen` | Observation | Yes | Get accessibility tree of current screen |
+| `android_tap` | Action | Yes | Tap at coordinates or by node ID |
+| `android_tap_text` | Action | Yes | Tap element by visible text |
+| `android_type` | Action | Yes | Type text into focused input field |
+| `android_swipe` | Action | Yes | Swipe gesture (direction + distance) |
+| `android_scroll` | Action | Yes | Scroll in direction |
+| `android_open_app` | Navigation | Yes | Launch app by package name |
+| `android_press_key` | Navigation | Yes | Press hardware/software key (back, home, recents) |
+| `android_screenshot` | Observation | Yes | Capture screenshot as a relay `MEDIA:` marker |
+| `android_wait` | Observation | Yes | Wait for element to appear on screen |
+| `android_get_apps` | Observation | Yes | List installed apps |
+| `android_current_app` | Observation | Yes | Best-effort foreground app package name |
+| `android_setup` | Configuration | No | Configure bridge URL and pairing code |
 | `android_search_contacts` | Phone utility | Yes | Search contacts by name |
 | `android_send_sms` | Phone utility | Yes | Send text-only SMS via `SmsManager` |
 | `android_share_media` | Phone utility | Yes | Share text, files, and attachments through Android's share UI |
@@ -83,7 +85,7 @@ Key behaviors:
 
 - **Exempt from master toggle** -- works even when the bridge is disabled, so the agent can always wrap up cleanly.
 - **Short-circuits when already foreground** -- if Hermes is already the active app, the call is a no-op.
-- **Works on both flavors** -- no sideload restriction.
+- **Sideload Device Control only** -- Google Play Bridge Core does not expose phone-control tools.
 
 ## Trust Model
 
@@ -125,6 +127,7 @@ When a tool call fails, the response includes machine-readable fields the agent 
 | `user_denied` | User tapped Deny on the on-device safety modal |
 | `bridge_disabled` | The bridge master toggle is off |
 | `sideload_only` | This tool requires the sideload flavor |
+| `device_control_sideload_only` | The connected phone is a Google Play Bridge Core build without Device Control |
 
 ## Contact Phone Format
 

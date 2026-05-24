@@ -28,6 +28,7 @@ data class VoiceSettings(
     val silenceThresholdMs: Long = 3000L,
     val autoTts: Boolean = false,
     val language: String = "",
+    val realtimeTraceDetails: Boolean = false,
 )
 
 enum class VoiceEngineMode(val storageValue: String) {
@@ -50,12 +51,14 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
         private val KEY_SILENCE_THRESHOLD_MS = longPreferencesKey("voice_silence_threshold_ms")
         private val KEY_AUTO_TTS = booleanPreferencesKey("voice_auto_tts")
         private val KEY_LANGUAGE = stringPreferencesKey("voice_language")
+        private val KEY_REALTIME_TRACE_DETAILS = booleanPreferencesKey("voice_realtime_trace_details")
 
         const val DEFAULT_ENGINE_MODE = "hermes_voice_output"
         const val DEFAULT_INTERACTION_MODE = "tap"
         const val DEFAULT_SILENCE_THRESHOLD_MS = 3000L
         const val DEFAULT_AUTO_TTS = false
         const val DEFAULT_LANGUAGE = ""
+        const val DEFAULT_REALTIME_TRACE_DETAILS = false
     }
 
     val settings: Flow<VoiceSettings> = dataStore.data
@@ -68,6 +71,8 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
                 silenceThresholdMs = prefs[KEY_SILENCE_THRESHOLD_MS] ?: DEFAULT_SILENCE_THRESHOLD_MS,
                 autoTts = prefs[KEY_AUTO_TTS] ?: DEFAULT_AUTO_TTS,
                 language = prefs[KEY_LANGUAGE] ?: DEFAULT_LANGUAGE,
+                realtimeTraceDetails = prefs[KEY_REALTIME_TRACE_DETAILS]
+                    ?: DEFAULT_REALTIME_TRACE_DETAILS,
             )
         }
         .distinctUntilChanged()
@@ -90,5 +95,9 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
 
     suspend fun setLanguage(language: String) {
         dataStore.edit { it[KEY_LANGUAGE] = language }
+    }
+
+    suspend fun setRealtimeTraceDetails(enabled: Boolean) {
+        dataStore.edit { it[KEY_REALTIME_TRACE_DETAILS] = enabled }
     }
 }

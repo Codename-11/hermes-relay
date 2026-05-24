@@ -1,5 +1,51 @@
 # Hermes-Relay — Dev Log
 
+## 2026-05-23 — Un-defer the voice/audio test suite (issue #32) + barge-in resume bug
+
+**Context.** GitHub issue #32 tracked 5 voice/audio unit tests `@Ignore`'d during the v0.5.1 release because the full `:app:testGooglePlayDebugUnitTest` task "hung indefinitely." Scope had quietly grown to **8** ignored classes (3 of the "pure-logic, should-work" ones got swept in defensively). Branch `fix/voice-test-suite`.
+
+**Root-cause of the hang.** Not Robolectric's classloader (the v0.5.1 hypothesis) — it was `BargeInPreferencesTest` building its DataStore on a `TestScope(StandardTestDispatcher() + Job())` whose scheduler is **never advanced**. DataStore's reader actor never ran, so `repo.flow.first()` suspended forever. Fixed by backing the DataStore with a real dispatcher scope (`CoroutineScope(Dispatchers.IO + Job())`); the `runTest{}` bodies still drive the suspend calls within the dispatch timeout.
+
+**Real product bug found (not just test infra).** Un-ignoring `VoiceViewModelBargeInTest` surfaced a genuine regression: the barge-in **"resume after interruption"** feature was silently broken. `onBargeInDetected()` → `interruptSpeaking()` → `startTtsConsumer()` restarts the play worker, which immediately hits an empty `audioQueue`, fires `onQueueDrained` → `clearSpokenChunksState()` **synchronously** (on `Dispatchers.Main.immediate`) — wiping `spokenChunks` before the 600 ms resume watchdog reads it. The watchdog always saw an empty tail and dropped the resume. Fixed by snapshotting the un-played tail (`pendingResumeTail`) synchronously in `onBargeInDetected()`, the instant the interrupt fires, instead of re-reading live state later.
+
+**VoicePlayerTest / Robolectric.** No separate source set needed (the issue's proposed Phase 3). The "Robolectric leaks across forks and hangs the suite" symptom was a misattribution of the DataStore hang. With that fixed, VoicePlayerTest runs cleanly in the normal `test` source set under `@RunWith(RobolectricTestRunner) @Config(sdk=[34])` — added `robolectric 4.14.1` (testImplementation) + `unitTests.isIncludeAndroidResources = true`.
+
+**Result.** All 8 issue-#32 classes un-ignored and green. Full suite: **525 completed, 12 skipped, 0 failed, no hang (~30 s)**. The 12 skipped are unrelated pre-existing `@Ignore`s (`ConnectionStoreTest` et al.).
+
+**Also fixed (pre-existing failures surfaced while greening the suite):**
+
+- **`CardDispatchSyncBuilder` bug** — `buildSyntheticMessages` short-circuited on `msg.cards.isEmpty()`, silently dropping dispatches whose card was trimmed from the rolling buffer. This directly contradicted the SUT's own docstring (and `CardDispatchSyncBuilderTest.buildSyntheticMessages_unknownCardKey_stillEmitsBareEnvelope`), which require a bare-envelope audit record in that case. Fixed the guard to gate on `cardDispatches.isEmpty()` only; the `card == null` fallback already handles the missing-card path.
+- **4 lint errors in sideload-only bridge code compiled into googlePlay.** `NotificationPermission` (`AutoDisableWorker`) — the real `hasPostNotificationsPermission()` early-return guard was already correct; the existing `@SuppressLint("MissingPermission")` just used the wrong ID, so added `"NotificationPermission"`. `ForegroundServiceType` ×3 (`BridgeForegroundService`) — the service + its `FOREGROUND_SERVICE_*`/`POST_NOTIFICATIONS` permissions are declared only in the **sideload** manifest; googlePlay deliberately omits them (no device-control, Play-Store compliance), making the code unreachable there. Suppressed with a justification rather than weakening googlePlay.
+
+**Verified.** `:app:testGooglePlayDebugUnitTest` green (0 failures); `:app:lint` green (0 errors).
+
+**Next.** Commit, merge `fix/voice-test-suite` → `dev`, close issue #32.
+
+---
+
+## 2026-05-19 — Experimental Realtime Hermes Voice Agent
+
+**Plan.** [docs/plans/2026-05-19-realtime-hermes-voice-agent.md](docs/plans/2026-05-19-realtime-hermes-voice-agent.md) — add a switchable Android voice engine that brokers a realtime provider session (OpenAI first, xAI ready) while keeping Hermes as authority for profiles, sessions, memory, tool execution, Android bridge safety, confirmations, and cancellation. Stable `Hermes chat + voice output` remains the default and is untouched.
+
+**Surface added.**
+
+- **Relay broker** — `plugin/relay/realtime_agent/` package with `RealtimeAgentHandler` (HTTP + WSS) mounted at `/voice/realtime-agent/*` next to the existing `/voice/realtime/*` lab routes. Five HTTP routes (`config GET/PATCH`, `providers/{id}/options GET`, `providers/{id}/validate POST`, `session POST`) plus a websocket at `/voice/realtime-agent/{session_id}`. Disabled by default — `realtime_agent_enabled=False` until an operator opts in via Settings → Voice or `RELAY_REALTIME_AGENT_ENABLED=1`.
+- **Hermes tool broker** — `realtime_agent/hermes_tool_broker.py` is the narrow bridge from a realtime provider's function call into the Hermes `/v1/runs` SSE surface. Only the four `hermes_*` schemas (`hermes_run_task`, `hermes_get_status`, `hermes_cancel`, `hermes_confirm`) are visible to the provider — the realtime side can ask Hermes to work, check progress, cancel, or answer a confirmation, but never call Android bridge or skill tools directly. Hermes events are normalized into `hermes.*` ws events that mirror into the chat timeline so voice mode never has to be exited to see what happened.
+- **Provider adapters** — `realtime_agent/providers/{base,openai,xai}.py` behind the normalized adapter contract. OpenAI is the first-class implementation; xAI is ready behind the same contract and toggled by configured auth. Both adapters keep all provider-event vocabulary local to the adapter — broker logic switches on the normalized `ProviderEvent` shape only.
+- **Android engine selector** — `VoicePreferences.voiceEngineMode` (DataStore-backed, persists across launches) with a clean radio selector at the top of Settings → Voice. The Realtime Agent option carries an `Experimental` badge and a concise limitation note; defaults always coerce unknown stored values back to the stable engine so a downgraded build cannot strand a user.
+- **Android client + overlay timeline** — `RelayVoiceClient.runRealtimeAgent` drives the brokered ws end-to-end and surfaces realtime transcripts, Hermes tool state, confirmation prompts, and final responses through `RealtimeAgentTimelineMirror` into the same overlay + chat surfaces the stable engine already uses. No exit/reload required to see brokered tool work.
+
+**What is preserved.** `/voice/realtime/*` lab routes, `/voice/output/*`, `/voice/transcribe`, and `/voice/synthesize` are unchanged. Stable voice mode tests still pass. `voice:realtime` capability gates both surfaces, so the existing pairing-grant flow covers the new engine.
+
+**Validation.**
+- `python -m unittest plugin.tests.test_realtime_agent_*` — relay broker + Hermes tool broker + provider adapter tests passing.
+- Sibling Python tests (`test_realtime_voice_routes`, `test_profile_voice_config`, `test_provider_options`) still green — stable voice surface is regression-clean.
+- `:app:compileSideloadDebugKotlin` builds clean. Android UI tests live on-device and were not in scope for this pass (no adb requested).
+
+**Notes.** Realtime providers cannot pre-empt Hermes safety — destructive Android bridge actions still surface as Hermes confirmation prompts and require an operator `hermes_confirm` ws answer routed through the existing approval flow. Provider disconnect surfaces a `voice.error` with `recoverable=true` so the Android client can fall back to stable voice without corrupting the Hermes chat session.
+
+---
+
 ## 2026-04-25 (II) — Remote-PC ergonomics pass: PowerShell / process / job / transfer / health tools
 
 **Context.** Bailey shipped a feedback list from a real remote-PC session: `desktop_terminal` was 502'ing on long-lived launches, no process-management primitives (had to `netstat | taskkill` manually), no bulk file sync, PowerShell echoing instead of executing, and no daemon-health introspection. The biggest single ask was "detached job/process API with persistent logs." Explicit no-go: program-specific shortcuts (no ComfyUI helper).

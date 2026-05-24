@@ -167,9 +167,12 @@ hermes-relay insecure-api-key [status|on|off]
 
 ## Bridge HTTP Routes
 
-The bridge channel (v0.3+) publishes an HTTP surface on the unified relay for the Hermes `android_*` plugin tools. Every route is proxied over the phone's WSS connection to the in-app `BridgeCommandHandler` and runs through the Tier 5 safety pipeline (blocklist → destructive-verb confirmation → auto-disable reschedule) before any gesture fires. A 30-second per-command timeout and fail-fast-on-phone-disconnect semantics keep callers from wedging.
+The bridge channel has two scopes:
 
-As of v0.4 the bridge surface is **34 routes** (33 excluding the legacy `/apps` alias) covering gestures, accessibility-tree reads, clipboard, media control, raw intents, an event stream, a sideload-only phone-utility tier (send_sms, call, search_contacts, location, share_media, send_mms), and a self-foreground route (`/return_to_hermes`). On the **googlePlay** flavor, only read-only routes pass the BridgeCommandHandler whitelist — action routes return 403 `sideload_only`. See the v0.3 release notes and v0.4 changelog for the feature story behind each group.
+- **Bridge Core** is available on Google Play and sideload builds. It covers relay pairing/status plus non-device-control channels such as terminal/TUI relay, voice, media handoff, sessions, and notification companion.
+- **Device Control** is sideload-only. It publishes the HTTP surface below for Hermes `android_*` plugin tools. Every route is proxied over the phone's WSS connection to the in-app `BridgeCommandHandler` and runs through the safety pipeline (blocklist → destructive-verb confirmation → auto-disable reschedule) before any gesture fires.
+
+As of v0.4 the Device Control surface is **34 routes** (33 excluding the legacy `/apps` alias) covering gestures, accessibility-tree reads, clipboard, media control, raw intents, an event stream, a phone-utility tier (send_sms, call, search_contacts, location, share_media, send_mms), and a self-foreground route (`/return_to_hermes`). Google Play Bridge Core phones report `bridge.device_control_supported=false`; the plugin hides the `android_*` Device Control tools, and direct command probes fail closed with `403` / `error_code: device_control_sideload_only`.
 
 | Route | Method | Group | Purpose |
 |-------|--------|-------|---------|
@@ -207,7 +210,7 @@ As of v0.4 the bridge surface is **34 routes** (33 excluding the legacy `/apps` 
 | `/share_media` | POST | sideload-only | Share text/files/relay media through Android's native share UI using `FileProvider` `content://` grants |
 | `/send_mms` | POST | sideload-only | Open a user-mediated MMS compose/share handoff with recipient, text, and attachments |
 
-**Gating.** Every route except `/ping`, `/current_app`, and `/return_to_hermes` is refused with 403 when the in-app master toggle is off. Sideload-only routes fail closed with `403` / `error_code: sideload_only` on Google Play builds. Blocklisted target packages return 403 `{"error": "blocked package <name>"}`; denied destructive-verb confirmations return 403 `{"error": "user denied destructive action", "reason": "confirmation_denied_or_timeout"}`.
+**Gating.** Device Control routes require a sideload phone reporting `bridge.device_control_supported=true`. On the Google Play build, `/ping`, `/events`, and `/setup` can answer harmless probes, while Device Control commands fail closed before any AccessibilityService-dependent code runs. On sideload, every route except `/ping`, `/current_app`, and `/return_to_hermes` is refused with 403 when the in-app master toggle is off. Blocklisted target packages return 403 `{"error": "blocked package <name>"}`; denied destructive-verb confirmations return 403 `{"error": "user denied destructive action", "reason": "confirmation_denied_or_timeout"}`.
 
 ## Pairing Model
 

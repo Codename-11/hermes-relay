@@ -23,6 +23,7 @@ from plugin.tools.android_tool import (
     android_setup,
     _SCHEMAS,
     _HANDLERS,
+    _check_requirements,
 )
 
 
@@ -67,6 +68,32 @@ class TestPing:
         )
         result = json.loads(android_ping())
         assert result["status"] == "error"
+
+
+class TestRequirements:
+    @responses.activate
+    def test_requirements_true_for_device_control_phone(self, bridge_url):
+        responses.add(
+            responses.GET,
+            f"{bridge_url}/bridge/status",
+            json={
+                "phone_connected": True,
+                "bridge": {"device_control_supported": True},
+            },
+        )
+        assert _check_requirements() is True
+
+    @responses.activate
+    def test_requirements_false_for_google_play_bridge_core(self, bridge_url):
+        responses.add(
+            responses.GET,
+            f"{bridge_url}/bridge/status",
+            json={
+                "phone_connected": True,
+                "bridge": {"device_control_supported": False},
+            },
+        )
+        assert _check_requirements() is False
 
 
 class TestReadScreen:

@@ -60,7 +60,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hermesandroid.relay.data.BargeInSensitivity
-import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.VoiceEngineMode
 import com.hermesandroid.relay.data.VoicePreferencesRepository
@@ -84,13 +83,13 @@ import kotlinx.coroutines.launch
  * Dedicated voice-mode settings screen. Reachable from Settings → Voice.
  *
  * Sections:
- *   1. Voice Mode       — interaction mode, silence threshold, auto-TTS
- *   2. Voice Output     — profile-scoped provider/model/voice from /voice/output/config
- *   3. Realtime Agent   — experimental provider defaults from /voice/realtime-agent/config
- *   4. Barge-in         — interrupt TTS by speaking; sensitivity + resume (V barge-in)
- *   5. Text-to-Speech   — fallback provider label + voice from GET /voice/config
- *   6. Speech-to-Text   — provider/model labels from GET /voice/config
- *   7. Test Voice       — saved profile voice-output synth + playback
+ *   1. Voice Engine          — Hermes Chat + Voice Output or Realtime Agent
+ *   2. Global Voice Controls — interaction mode, silence threshold, auto-TTS
+ *   3. Active engine config  — voice output or realtime defaults for the selected engine
+ *   4. Barge-in              — interrupt TTS by speaking; sensitivity + resume (V barge-in)
+ *   5. Global Fallback TTS  — fallback provider label + voice from GET /voice/config
+ *   6. Speech-to-Text        — provider/model labels from GET /voice/config
+ *   7. Test Current Engine   — voice output playback or realtime agent session playback
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -106,8 +105,7 @@ fun VoiceSettingsScreen(
 
     val prefsRepo = remember { VoicePreferencesRepository(context) }
     val voiceSettings by prefsRepo.settings.collectAsState(initial = VoiceSettings())
-    val devOptionsUnlocked by FeatureFlags.devOptionsUnlocked(context)
-        .collectAsState(initial = FeatureFlags.isDevBuild)
+    val currentEngine = VoiceEngineMode.fromStorage(voiceSettings.engineMode)
 
     val bargeInPrefs by settingsViewModel.bargeInPrefs.collectAsState()
     val aecAvailable = settingsViewModel.aecAvailable
@@ -145,6 +143,8 @@ fun VoiceSettingsScreen(
     }
     var realtimeOptionsLoading by remember { mutableStateOf<String?>(null) }
     var realtimeOptionsStatus by remember { mutableStateOf<String?>(null) }
+    var currentEngineTestRunning by remember { mutableStateOf(false) }
+    var currentEngineTestResult by remember { mutableStateOf<String?>(null) }
 
     // Global snackbar host — voice errors routed through the classifier get
     // shown as snackbars here as well as the inline "unavailable" label below.
@@ -318,6 +318,11 @@ fun VoiceSettingsScreen(
         }
     }
 
+    LaunchedEffect(currentEngine) {
+        currentEngineTestRunning = false
+        currentEngineTestResult = null
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -346,21 +351,21 @@ fun VoiceSettingsScreen(
         ) {
             VoiceProfileSummaryCard(
                 selectedProfile = selectedProfile,
+                currentEngine = currentEngine,
                 output = voiceOutputConfig,
                 realtime = realtimeConfig,
             )
 
-            // --- Voice Mode ---
-            SectionCard(title = "Voice Mode") {
+            // --- Voice Engine ---
+            SectionCard(title = "Voice Engine") {
                 Text(
                     text = "Voice engine",
                     style = MaterialTheme.typography.labelLarge,
                 )
-                val currentEngine = VoiceEngineMode.fromStorage(voiceSettings.engineMode)
                 listOf(
                     VoiceEngineMode.HermesVoiceOutput to Triple(
-                        "Hermes chat + voice output",
-                        "Hermes handles chat, tools, memory, and voice rendering.",
+                        "Hermes Chat + Voice Output",
+                        "Hermes handles chat, tools, memory, and renders speech through the relay.",
                         false,
                     ),
                     VoiceEngineMode.RealtimeAgent to Triple(
@@ -403,6 +408,15 @@ fun VoiceSettingsScreen(
                         }
                     }
                 }
+            }
+
+            // --- Global Voice Controls ---
+            SectionCard(title = "Global Voice Controls") {
+                Text(
+                    text = "These settings apply to both voice engines.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
@@ -488,8 +502,50 @@ fun VoiceSettingsScreen(
                 }
             }
 
-            // --- Voice Output ---
-            SectionCard(title = "Voice Output") {
+            // --- Global Fallback Text-to-Speech ---
+            SectionCard(title = "Global Fallback Text-to-Speech") {
+                Text(
+                    text = "Always available as the stable speech safety net when provider-native voice is unavailable.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                ProviderRow(
+                    label = "Provider",
+                    value = voiceConfig?.tts?.provider ?: (voiceConfigError?.let { "unavailable" } ?: "loading..."),
+                )
+                voiceConfig?.tts?.let { tts ->
+                    ProviderRow(label = "Enabled", value = if (tts.isEnabled) "yes" else "no")
+                }
+                voiceConfig?.tts?.model?.let { model ->
+                    ProviderRow(label = "Model", value = model)
+                }
+                voiceConfig?.tts?.displayVoice?.let { voice ->
+                    ProviderRow(label = "Voice", value = voice)
+                }
+                voiceConfig?.let { config ->
+                    ProviderRow(
+                        label = "Profile",
+                        value = voiceProfileLabel(config.profile, selectedProfile),
+                    )
+                    ProviderRow(
+                        label = "Scope",
+                        value = voiceScopeLabel(config.configScope, config.fallbackToGlobal),
+                    )
+                }
+                voiceConfigError?.let { error ->
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = error,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+
+            if (currentEngine == VoiceEngineMode.HermesVoiceOutput) {
+                // --- Hermes Chat + Voice Output ---
+                SectionCard(title = "Hermes Chat + Voice Output") {
                 ProviderRow(
                     label = "Status",
                     value = when {
@@ -853,12 +909,10 @@ fun VoiceSettingsScreen(
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
+                }
             }
 
-            if (
-                voiceSettings.engineMode == VoiceEngineMode.RealtimeAgent.storageValue ||
-                devOptionsUnlocked
-            ) {
+            if (currentEngine == VoiceEngineMode.RealtimeAgent) {
                 // --- Realtime Agent ---
                 SectionCard(title = "Realtime Agent", badge = "Experimental") {
                     Text(
@@ -866,6 +920,27 @@ fun VoiceSettingsScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Detailed trace", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                text = "Show compact Hermes status and result provenance in the timeline",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = voiceSettings.realtimeTraceDetails,
+                            onCheckedChange = { enabled ->
+                                scope.launch { prefsRepo.setRealtimeTraceDetails(enabled) }
+                            },
+                        )
+                    }
                     Spacer(Modifier.height(4.dp))
                     ProviderRow(
                         label = "Status",
@@ -925,7 +1000,7 @@ fun VoiceSettingsScreen(
                         realtimeConfig?.providers.orEmpty(),
                         realtimeProviderOptions,
                     )
-                        .filter { it.supports_realtime }
+                        .filter { it.supports_realtime_agent_native }
                     val selectedRealtimeProvider = providerFor(
                         realtimeProviders,
                         realtimeProvider,
@@ -1236,41 +1311,6 @@ fun VoiceSettingsScreen(
                 }
             }
 
-            // --- Text-to-Speech ---
-            SectionCard(title = "Text-to-Speech") {
-                ProviderRow(
-                    label = "Provider",
-                    value = voiceConfig?.tts?.provider ?: (voiceConfigError?.let { "unavailable" } ?: "loading..."),
-                )
-                voiceConfig?.tts?.let { tts ->
-                    ProviderRow(label = "Enabled", value = if (tts.isEnabled) "yes" else "no")
-                }
-                voiceConfig?.tts?.model?.let { model ->
-                    ProviderRow(label = "Model", value = model)
-                }
-                voiceConfig?.tts?.displayVoice?.let { voice ->
-                    ProviderRow(label = "Voice", value = voice)
-                }
-                voiceConfig?.let { config ->
-                    ProviderRow(
-                        label = "Profile",
-                        value = voiceProfileLabel(config.profile, selectedProfile),
-                    )
-                    ProviderRow(
-                        label = "Scope",
-                        value = voiceScopeLabel(config.configScope, config.fallbackToGlobal),
-                    )
-                }
-                voiceConfigError?.let { error ->
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = error,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-            }
-
             // --- Speech-to-Text ---
             SectionCard(title = "Speech-to-Text") {
                 ProviderRow(
@@ -1337,39 +1377,112 @@ fun VoiceSettingsScreen(
                 }
             }
 
-            // --- Test Voice ---
-            SectionCard(title = "Test Voice") {
+            // --- Test Current Engine ---
+            SectionCard(title = "Test Current Engine") {
                 ProviderRow(
-                    label = "Profile",
-                    value = voiceOutputConfig?.let { config ->
-                        voiceProfileLabel(config.profile, selectedProfile)
-                    } ?: voiceProfileLabel(null, selectedProfile),
+                    label = "Engine",
+                    value = when (currentEngine) {
+                        VoiceEngineMode.HermesVoiceOutput -> "Hermes Chat + Voice Output"
+                        VoiceEngineMode.RealtimeAgent -> "Realtime Agent"
+                    },
                 )
-                ProviderRow(
-                    label = "Voice",
-                    value = listOfNotNull(
-                        voiceOutputConfig?.default_provider,
-                        voiceOutputConfig?.default_model,
-                        voiceOutputConfig?.default_voice,
-                    ).joinToString(" / ").ifBlank { "loading..." },
-                )
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                Text(
-                    text = "Play the currently saved profile voice.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(8.dp))
-                FilledTonalButton(
-                    onClick = { voiceViewModel.testVoice() },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.PlayArrow,
-                        contentDescription = null,
+                if (currentEngine == VoiceEngineMode.HermesVoiceOutput) {
+                    ProviderRow(
+                        label = "Profile",
+                        value = voiceOutputConfig?.let { config ->
+                            voiceProfileLabel(config.profile, selectedProfile)
+                        } ?: voiceProfileLabel(null, selectedProfile),
                     )
-                    Spacer(Modifier.size(8.dp))
-                    Text("Play test")
+                    ProviderRow(
+                        label = "Voice",
+                        value = listOfNotNull(
+                            voiceOutputConfig?.default_provider,
+                            voiceOutputConfig?.default_model,
+                            voiceOutputConfig?.default_voice,
+                        ).joinToString(" / ").ifBlank { "loading..." },
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    Text(
+                        text = "Play the saved Voice Output renderer for the active profile.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    FilledTonalButton(
+                        onClick = {
+                            currentEngineTestRunning = true
+                            currentEngineTestResult = "Playing Voice Output sample..."
+                            voiceViewModel.testVoice { result ->
+                                currentEngineTestRunning = false
+                                currentEngineTestResult = if (result.isSuccess) {
+                                    "Voice Output test successful."
+                                } else {
+                                    "Voice Output test failed: ${result.exceptionOrNull()?.message ?: "playback error"}"
+                                }
+                            }
+                        },
+                        enabled = !currentEngineTestRunning,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.PlayArrow,
+                            contentDescription = null,
+                        )
+                        Spacer(Modifier.size(8.dp))
+                        Text("Play Voice Output Test")
+                    }
+                } else {
+                    ProviderRow(label = "Provider", value = realtimeProvider.ifBlank { "not set" })
+                    ProviderRow(label = "Model", value = realtimeModel.ifBlank { "not set" })
+                    ProviderRow(label = "Voice", value = realtimeVoice.ifBlank { "not set" })
+                    ProviderRow(label = "Sample rate", value = "${realtimeSampleRate.ifBlank { "0" }} Hz")
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    Text(
+                        text = "Open a provider-native Realtime Agent session and play a short sample through the relay.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    FilledTonalButton(
+                        onClick = {
+                            currentEngineTestRunning = true
+                            currentEngineTestResult = "Starting Realtime Agent sample..."
+                            voiceViewModel.testRealtimeAgent { result ->
+                                currentEngineTestRunning = false
+                                currentEngineTestResult = if (result.isSuccess) {
+                                    "Realtime Agent test successful."
+                                } else {
+                                    "Realtime Agent test failed: ${result.exceptionOrNull()?.message ?: "provider error"}"
+                                }
+                            }
+                        },
+                        enabled = !currentEngineTestRunning,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.PlayArrow,
+                            contentDescription = null,
+                        )
+                        Spacer(Modifier.size(8.dp))
+                        Text("Play Realtime Agent Test")
+                    }
+                }
+                currentEngineTestResult?.let { result ->
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = result,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (
+                            result.contains("validated", ignoreCase = true) ||
+                            result.contains("Playing", ignoreCase = true) ||
+                            result.contains("Starting", ignoreCase = true) ||
+                            result.contains("successful", ignoreCase = true)
+                        ) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
+                    )
                 }
             }
         }
@@ -1391,6 +1504,7 @@ private fun realtimeAuthLabel(config: RealtimeVoiceConfig): String {
     return when {
         auth.xai_oauth -> "Hermes xAI OAuth"
         auth.xai_env -> "xAI env"
+        auth.openai_env -> "OpenAI env"
         else -> "server managed"
     }
 }
@@ -1697,6 +1811,7 @@ private fun commonLanguages(current: String, provider: RealtimeProviderInfo?): L
 
 private fun voiceOutputSummary(
     profile: Profile?,
+    currentEngine: VoiceEngineMode,
     output: VoiceOutputConfig?,
     realtime: RealtimeVoiceConfig?,
 ): Pair<String, String> {
@@ -1714,16 +1829,25 @@ private fun voiceOutputSummary(
         val voice = config.default_voice?.takeIf { it.isNotBlank() } ?: "voice ..."
         "$provider / $voice"
     } ?: "realtime loading..."
-    return profileLabel to "$outputLabel · $realtimeLabel"
+    return profileLabel to when (currentEngine) {
+        VoiceEngineMode.HermesVoiceOutput -> "Hermes Chat + Voice Output - $outputLabel"
+        VoiceEngineMode.RealtimeAgent -> "Realtime Agent - $realtimeLabel"
+    }
 }
 
 @Composable
 private fun VoiceProfileSummaryCard(
     selectedProfile: Profile?,
+    currentEngine: VoiceEngineMode,
     output: VoiceOutputConfig?,
     realtime: RealtimeVoiceConfig?,
 ) {
-    val (title, subtitle) = voiceOutputSummary(selectedProfile, output, realtime)
+    val (title, subtitle) = voiceOutputSummary(
+        profile = selectedProfile,
+        currentEngine = currentEngine,
+        output = output,
+        realtime = realtime,
+    )
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),

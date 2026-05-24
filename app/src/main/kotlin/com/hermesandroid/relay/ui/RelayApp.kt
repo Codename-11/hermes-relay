@@ -67,6 +67,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.hermesandroid.relay.ui.components.MorphingSphere
+import com.hermesandroid.relay.ui.components.ConnectionStatusBanner
 import com.hermesandroid.relay.ui.components.ConnectionSwitcherSheet
 import com.hermesandroid.relay.ui.components.UnattendedGlobalBanner
 import com.hermesandroid.relay.ui.components.UpdateBanner
@@ -78,6 +79,7 @@ import com.hermesandroid.relay.data.BridgePreferencesRepository
 import com.hermesandroid.relay.data.BridgeSafetyPreferencesRepository
 import com.hermesandroid.relay.data.BuildFlavor
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
 import com.hermesandroid.relay.util.HumanError
 import kotlinx.coroutines.delay
@@ -85,6 +87,7 @@ import com.hermesandroid.relay.ui.onboarding.OnboardingScreen
 import com.hermesandroid.relay.ui.screens.AboutScreen
 import com.hermesandroid.relay.ui.screens.AnalyticsScreen
 import com.hermesandroid.relay.ui.screens.AppearanceSettingsScreen
+import com.hermesandroid.relay.ui.screens.BridgeCoreScreen
 import com.hermesandroid.relay.ui.screens.BridgeScreen
 // === PHASE3-safety-rails: bridge safety route ===
 import com.hermesandroid.relay.ui.screens.BridgeSafetySettingsScreen
@@ -374,6 +377,10 @@ fun RelayApp() {
                 .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                 .build(),
             relayUrlProvider = { connectionViewModel.effectiveRelayUrl.value },
+            relayRouteChangesProvider = {
+                connectionViewModel.activeEndpoint.mapNotNull { it?.relay?.url }
+            },
+            routeProbeRequester = { connectionViewModel.probeNow() },
             profileNameProvider = {
                 AgentDisplay.profileRequestName(connectionViewModel.selectedProfile.value?.name)
             },
@@ -406,7 +413,7 @@ fun RelayApp() {
     // VoiceSfxPlayer is internally crash-proof — failed AudioTrack builds
     // become null-tracks that no-op — so we don't need an outer try/catch.
     val voiceSfxPlayer = remember { VoiceSfxPlayer(mediaContext) }
-    val realtimePcmPlayer = remember { RealtimePcmPlayer() }
+    val realtimePcmPlayer = remember { RealtimePcmPlayer(mediaContext) }
     LaunchedEffect(Unit) {
         val recorder = VoiceRecorder(mediaContext, voiceViewModel.viewModelScope)
         val player = VoicePlayer(mediaContext)
@@ -435,12 +442,18 @@ fun RelayApp() {
             // wiring fix in commit a568366 that unblocked the dispatch
             // path enough to surface this protocol mismatch.
             bridgeMultiplexer = connectionViewModel.multiplexer,
-            localBridgeDispatcher = connectionViewModel.bridgeCommandHandler::handleLocalCommand,
+            localBridgeDispatcher = if (BuildFlavor.isSideload) {
+                connectionViewModel.bridgeCommandHandler::handleLocalCommand
+            } else {
+                null
+            },
             // === END PHASE3-voice-intents-localdispatch ===
             // 2026-04-17: persist the interaction-mode preference across
             // app restarts. VoicePreferencesRepository is the same repo
             // VoiceSettingsScreen reads/writes.
             voicePreferences = com.hermesandroid.relay.data.VoicePreferencesRepository(mediaContext),
+            voiceRelayPreflight = { connectionViewModel.verifyRelayForVoice() },
+            voiceHandoffReporter = { connectionViewModel.recordVoiceHandoff(it) },
             bargeInPreferences = com.hermesandroid.relay.data.BargeInPreferencesRepository(mediaContext),
             vadEngineFactory = { com.hermesandroid.relay.audio.VadEngine(mediaContext) },
             bargeInListenerFactory = { vad, audioSessionIdProvider ->
@@ -636,6 +649,7 @@ fun RelayApp() {
         // bottom navigation bar so the voice overlay can own the entire screen
         // without the Chat/Terminal/Bridge/Settings tabs peeking through below.
         val voiceUiState by voiceViewModel.uiState.collectAsState()
+        val globalConnectionStatus by connectionViewModel.globalConnectionStatus.collectAsState()
 
         // Single snackbar host for the whole app — exposed via LocalSnackbarHost
         // so voice/chat/settings screens can call showHumanError from their
@@ -692,6 +706,10 @@ fun RelayApp() {
             unattendedEnabled &&
             !isOnboarding &&
             !voiceUiState.voiceMode
+        val showConnectionStatusBanner =
+            globalConnectionStatus != null &&
+                !isOnboarding &&
+                !voiceUiState.voiceMode
         // === END v0.4.1 polish ===
 
         // Multi-connection switcher has moved into the AgentInfoSheet's
@@ -753,6 +771,17 @@ fun RelayApp() {
             }
         }
 
+        AnimatedVisibility(
+            visible = showConnectionStatusBanner,
+            enter = fadeIn(tween(160)),
+            exit = fadeOut(tween(180)),
+        ) {
+            ConnectionStatusBanner(
+                status = globalConnectionStatus,
+                includeStatusBarPadding = !showUnattendedBanner && availableUpdate == null,
+            )
+        }
+
         // (The app-wide ConnectionChip row that used to live here has been
         // removed. Multi-connection switching is now reachable from the
         // AgentInfoSheet's Connection section — see ConnectionInfoSheet.kt's
@@ -782,7 +811,7 @@ fun RelayApp() {
                     // would otherwise double-pad and render too far down.
                     // Consume the inset here so the Scaffold tree treats
                     // the top edge as already handled.
-                    if (showUnattendedBanner || connectionChipVisible) {
+                    if (showUnattendedBanner || showConnectionStatusBanner || connectionChipVisible) {
                         Modifier.consumeWindowInsets(WindowInsets.statusBars)
                     } else {
                         Modifier
@@ -953,29 +982,42 @@ fun RelayApp() {
                     )
                 }
                 composable(Screen.Bridge.route) {
-                    // === PHASE3-bridge-ui: BridgeScreen wiring ===
-                    // BridgeScreen owns its own BridgeViewModel via the
-                    // default `viewModel()` parameter — no shared state with
-                    // ChatViewModel / ConnectionViewModel is plumbed through
-                    // here yet. Once Agent accessibility lands HermesAccessibilityService
-                    // and we need to observe its runtime state from RelayApp
-                    // scope, a shared holder or explicit VM param gets added
-                    // here.
-                    BridgeScreen(
-                        // Pass the connection VM so the screen can render
-                        // the "Relay not connected" banner when the WSS
-                        // isn't in a Paired+Connected state. Without this
-                        // the user can flip master toggle on, pass every
-                        // permission check, and still receive zero
-                        // commands — silently useless.
-                        connectionViewModel = connectionViewModel,
-                        // === PHASE3-safety-rails: bridge safety route ===
-                        onNavigateToBridgeSafety = {
-                            navController.navigate(Screen.BridgeSafetySettings.route)
-                        },
-                        // === END PHASE3-safety-rails ===
-                    )
-                    // === END PHASE3-bridge-ui ===
+                    if (BuildFlavor.isSideload) {
+                        BridgeScreen(
+                            connectionViewModel = connectionViewModel,
+                            onNavigateToBridgeSafety = {
+                                navController.navigate(Screen.BridgeSafetySettings.route)
+                            },
+                        )
+                    } else {
+                        BridgeCoreScreen(
+                            connectionViewModel = connectionViewModel,
+                            onNavigateToConnections = {
+                                navController.navigate(Screen.ConnectionsSettings.route)
+                            },
+                            onNavigateToTerminal = {
+                                navController.navigate(Screen.Terminal.route) {
+                                    popUpTo(navController.graph.findStartDestination().id) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
+                            onNavigateToVoiceSettings = {
+                                navController.navigate(Screen.VoiceSettings.route)
+                            },
+                            onNavigateToNotificationCompanion = {
+                                navController.navigate(Screen.NotificationCompanionSettings.route)
+                            },
+                            onNavigateToMediaSettings = {
+                                navController.navigate(Screen.MediaSettings.route)
+                            },
+                            onNavigateToRelaySessions = {
+                                navController.navigate(Screen.PairedDevices.route)
+                            },
+                        )
+                    }
                 }
                 composable(Screen.Settings.route) {
                     SettingsScreen(
@@ -1046,9 +1088,33 @@ fun RelayApp() {
                 // === END PHASE3-notif-listener-followup ===
                 // === PHASE3-safety-rails: bridge safety route ===
                 composable(Screen.BridgeSafetySettings.route) {
-                    BridgeSafetySettingsScreen(
-                        onBack = { navController.popBackStack() }
-                    )
+                    if (BuildFlavor.isSideload) {
+                        BridgeSafetySettingsScreen(
+                            onBack = { navController.popBackStack() }
+                        )
+                    } else {
+                        BridgeCoreScreen(
+                            connectionViewModel = connectionViewModel,
+                            onNavigateToConnections = {
+                                navController.navigate(Screen.ConnectionsSettings.route)
+                            },
+                            onNavigateToTerminal = {
+                                navController.navigate(Screen.Terminal.route)
+                            },
+                            onNavigateToVoiceSettings = {
+                                navController.navigate(Screen.VoiceSettings.route)
+                            },
+                            onNavigateToNotificationCompanion = {
+                                navController.navigate(Screen.NotificationCompanionSettings.route)
+                            },
+                            onNavigateToMediaSettings = {
+                                navController.navigate(Screen.MediaSettings.route)
+                            },
+                            onNavigateToRelaySessions = {
+                                navController.navigate(Screen.PairedDevices.route)
+                            },
+                        )
+                    }
                 }
                 // === END PHASE3-safety-rails ===
                 composable(Screen.PairedDevices.route) {

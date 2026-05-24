@@ -6,73 +6,8 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-    <!-- === A8 wake-lock: keep CPU awake while dispatching bridge gestures === -->
-    <!-- Normal-protection permission (no runtime prompt). Held only inside
-         WakeLockManager.wakeForAction { ... }, with a 10s hard timeout and
-         ref-counted release. -->
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-
-    <!-- === PHASE3-accessibility: AccessibilityService + bridge permissions === -->
-    <!-- BIND_ACCESSIBILITY_SERVICE is intentionally NOT declared as a
-         <uses-permission> here — it's a system-only permission granted to
-         services that declare android:permission on their <service> tag
-         (see the BridgeAccessibilityService entry below). Declaring it as
-         a uses-permission trips lint's [ProtectedPermissions] check.
-
-         FOREGROUND_SERVICE* are for the persistent notification that
-         Agent safety-rails will wire in Wave 2 for MediaProjection-backed
-         screenshots. POST_NOTIFICATIONS is required on API 33+ for that
-         same foreground-service notification. -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <!-- FOREGROUND_SERVICE_MEDIA_PROJECTION moved to sideload manifest.
-         googlePlay doesn't need screen recording: /screenshot route is
-         gated sideload-only in BridgeCommandHandler. Declaring the
-         permission on the Play track would flag review since our
-         accessibility use-case ("read-only screen reading") doesn't
-         justify screen capture. -->
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- === END PHASE3-accessibility === -->
-
-    <!-- === PHASE3-safety-rails: safety service + overlay === -->
-    <!-- SYSTEM_ALERT_WINDOW is user-granted via Settings.ACTION_MANAGE_OVERLAY_PERMISSION.
-         Used for (a) the destructive-verb confirmation modal that must be
-         visible even when Hermes isn't in the foreground, and (b) the optional
-         floating "Hermes active" status chip. The permission is declared here
-         so the user-visible grant flow triggers, but the overlay itself only
-         appears when the user has explicitly consented.
-
-         FOREGROUND_SERVICE_SPECIAL_USE is required on Android 14+ for the
-         persistent "Bridge active" notification (BridgeForegroundService),
-         because the specialUse type needs its own declared permission.  -->
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <!-- === END PHASE3-safety-rails === -->
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
-
-    <!-- === PHASE3-baseline-handlers: package visibility for /get_apps + /open_app === -->
-    <!-- On Android 11+ (API 30+), apps can only see other packages that
-         are implicitly visible (own UID, system apps, etc.) unless they
-         declare a <queries> filter or hold QUERY_ALL_PACKAGES. The
-         BridgeCommandHandler /get_apps route uses
-         queryIntentActivities(ACTION_MAIN + CATEGORY_LAUNCHER) to enumerate
-         launchable apps, and BridgeSafetySettingsScreen uses the same call
-         to populate the blocklist UI — both need this declaration to see
-         the full launcher set. Without it queryIntentActivities silently
-         returns a near-empty list (typical symptom: blocklist UI shows
-         only Hermes-Relay itself + a handful of system apps).
-
-         Declaring an <intent> filter with ACTION_MAIN + CATEGORY_LAUNCHER
-         is the Play-policy-safe approach — it does NOT require the
-         restricted QUERY_ALL_PACKAGES permission, which Play would
-         otherwise demand a policy declaration for. -->
-    <queries>
-        <intent>
-            <action android:name="android.intent.action.MAIN" />
-            <category android:name="android.intent.category.LAUNCHER" />
-        </intent>
-    </queries>
-    <!-- === END PHASE3-baseline-handlers === -->
 
     <application
         android:name=".HermesRelayApp"
@@ -106,30 +41,6 @@
                 android:resource="@xml/file_provider_paths" />
         </provider>
 
-        <!-- === PHASE3-accessibility: AccessibilityService declaration === -->
-        <!-- The @xml/accessibility_service_config resource is provided by
-             the flavor-specific source sets (app/src/googlePlay/ and
-             app/src/sideload/) owned by Agent flavor-split. Each flavor declares its
-             own accessibility use-case description and flag bitset — the
-             googlePlay track declares a conservative "notifications + reply
-             with confirmation" use case, the sideload track declares the
-             full agent-control use case. Gradle merges the flavor XML into
-             main at build time.
-             -->
-        <service
-            android:name=".accessibility.HermesAccessibilityService"
-            android:exported="true"
-            android:label="@string/a11y_service_label"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_service_config" />
-        </service>
-        <!-- === END PHASE3-accessibility === -->
-
         <!-- === PHASE3-notif-listener: notification companion service === -->
         <service
             android:name=".notifications.HermesNotificationCompanion"
@@ -141,46 +52,6 @@
             </intent-filter>
         </service>
         <!-- === END PHASE3-notif-listener === -->
-
-        <!-- === PHASE3-safety-rails: safety service + overlay === -->
-        <!-- BridgeForegroundService is a plain (non-exported) foreground
-             service driven by BridgeViewModel based on the master toggle.
-             It owns the persistent "Hermes agent has device control"
-             notification.
-
-             foregroundServiceType is the OR of two API 34+ subtypes:
-
-               - specialUse — backs the persistent "bridge active"
-                 indicator we shipped with Tier 5 safety rails. Comes
-                 with the SPECIAL_USE foreground-service permission and
-                 the Play Console policy declaration.
-
-               - mediaProjection — REQUIRED by Android 14+ before any
-                 call to MediaProjectionManager.getMediaProjection().
-                 Without this declaration, getMediaProjection() returns
-                 a projection that the system auto-revokes within a
-                 frame, leaving us with a permanently-null
-                 MediaProjectionHolder.projection. Symptom on the
-                 device: consent dialog appears, user allows full
-                 screen, dialog closes, grant evaporates. Sample-tested
-                 on a Samsung S24 / Android 14 on 2026-04-12.
-
-             Both types share the same notification + same lifecycle —
-             one service, one notification, two type slots.
-
-             Android 14+ requires a <property> tag justifying the
-             specialUse subtype. The mediaProjection subtype does NOT
-             need a property tag because it has its own dedicated
-             permission (FOREGROUND_SERVICE_MEDIA_PROJECTION). -->
-        <service
-            android:name=".bridge.BridgeForegroundService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Maintains a persistent WebSocket connection to the user's Hermes server for real-time chat relay and notification mirroring. The service is dormant until the user explicitly enables Bridge mode in the app." />
-        </service>
-        <!-- === END PHASE3-safety-rails === -->
 
     </application>
 

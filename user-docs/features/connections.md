@@ -38,6 +38,20 @@ Open **Settings → Connections**. Each card shows the connection's label, hostn
 
 Tap **Add connection** to create a new one. This launches the standard QR pairing flow (same as first-time setup). After pairing, the connection is saved with the server's hostname as its default label.
 
+## Live status and diagnostics
+
+Pairing and live reachability are shown separately. A connection can still be
+**paired** while the relay socket or HTTP health check is down; in that case the
+Relay row shows **Relay unreachable - tap to reconnect** rather than treating
+the saved session as proof of a live server.
+
+Tap the API Server, Relay, or Session rows on the active connection card to open
+detail sheets with a compact **Recent activity** tail. The tail shows sanitized
+API, route, relay, session, and voice events such as health timeouts, selected
+routes, reconnect attempts, and voice relay checks. Raw payloads, query strings,
+and token-like values are hidden. The same consolidated log is available from
+**Settings -> Diagnostics**, where you can clear the in-app buffer.
+
 ## Multi-Endpoint Pairing: One QR for Every Network
 
 A pairing QR can carry multiple endpoint candidates for the same server: LAN, Tailscale, public reverse proxy, or an operator-defined VPN route. The app stores the connection once, then chooses the highest-priority reachable route at runtime.

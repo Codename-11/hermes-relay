@@ -267,13 +267,12 @@ class HermesAccessibilityService : AccessibilityService() {
      * # Fallback semantics
      *
      * `service.windows` returns an empty list unless the accessibility
-     * config XML requests `flagRetrieveInteractiveWindows`. That flag is
-     * **only** set in the `sideload` flavor — the `googlePlay` flavor
-     * deliberately runs on the conservative config subset to pass Play
-     * Store policy review. When `windows` is empty (or throws, or every
-     * window's root is null) we fall back to a single-element list
-     * wrapping [rootInActiveWindow], preserving pre-P1 behaviour on
-     * `googlePlay` builds.
+     * config XML requests `flagRetrieveInteractiveWindows`. The service is
+     * declared only by the `sideload` manifest, and that sideload config sets
+     * the flag. When `windows` is empty (or throws, or every window's root is
+     * null) we fall back to a single-element list wrapping
+     * [rootInActiveWindow], preserving pre-P1 behaviour for tests and
+     * defensive runtime fallback.
      *
      * Returns an empty list only if the service cannot read any window
      * root at all (e.g. lock screen, master-off state). Callers should

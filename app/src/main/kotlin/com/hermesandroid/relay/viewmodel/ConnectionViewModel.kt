@@ -20,10 +20,14 @@ import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.ConnectionStore
 import com.hermesandroid.relay.data.ConnectionValidation
 import com.hermesandroid.relay.data.AgentDisplay
+import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.ProfileSessionStore
 import com.hermesandroid.relay.data.ProfileSelectionStore
 import com.hermesandroid.relay.data.relayDataStore
+import com.hermesandroid.relay.diagnostics.DiagnosticCategory
+import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
+import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.util.TailscaleDetector
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.ConnectivityObserver
@@ -37,6 +41,7 @@ import com.hermesandroid.relay.network.ServerCapabilities
 import com.hermesandroid.relay.network.RelayHttpClient
 import com.hermesandroid.relay.network.RelayUrlDeriver
 import com.hermesandroid.relay.network.RelayVoiceClient
+import com.hermesandroid.relay.network.VoiceHandoffEvent
 import com.hermesandroid.relay.network.handlers.ChatHandler
 // === PHASE3-accessibility: bridge channel wiring ===
 import com.hermesandroid.relay.accessibility.BridgeStatusReporter
@@ -293,6 +298,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // Stale. See [RelayUiState] kdoc for the full rationale.
     private val _relayUiState = MutableStateFlow<RelayUiState>(RelayUiState.NotConfigured)
     val relayUiState: StateFlow<RelayUiState> = _relayUiState.asStateFlow()
+    private val _connectionHandoffStatus = MutableStateFlow<ConnectionHandoffStatus?>(null)
+    val connectionHandoffStatus: StateFlow<ConnectionHandoffStatus?> =
+        _connectionHandoffStatus.asStateFlow()
+    private var connectionHandoffClearJob: Job? = null
 
     /**
      * ADR 24 — [relayUiState] bundled with the currently-active endpoint
@@ -705,6 +714,22 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val networkStatus: StateFlow<ConnectivityObserver.Status> = connectivityObserver.observe()
         .stateIn(viewModelScope, SharingStarted.Eagerly, ConnectivityObserver.Status.Available)
 
+    val globalConnectionStatus: StateFlow<ConnectionStatusSnapshot?> = combine(
+        connectionHandoffStatus,
+        relayRowState,
+        apiServerHealth,
+        relayServerHealth,
+        networkStatus,
+    ) { handoff, relayRow, apiHealth, relayHealth, network ->
+        buildGlobalConnectionStatus(
+            handoff = handoff,
+            relayRow = relayRow,
+            apiHealth = apiHealth,
+            relayHealth = relayHealth,
+            network = network,
+        )
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
     // Splash readiness — true once initial DataStore load + onboarding check is done
     private val _isReady = MutableStateFlow(false)
     val isReady: StateFlow<Boolean> = _isReady.asStateFlow()
@@ -926,7 +951,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // constructed before the user has consented to screen capture.
     // [BridgeCommandHandler] will surface a 503 error for /screenshot
     // requests until [MediaProjectionHolder.projection] is non-null.
-    private val screenCapture = ScreenCapture(
+    private val screenCapture = if (BuildFlavor.isSideload) ScreenCapture(
         context = application,
         httpClient = relayOkHttp,
         relayUrlProvider = { effectiveRelayUrlSnapshot() },
@@ -936,22 +961,22 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         mediaProjectionProvider = {
             com.hermesandroid.relay.accessibility.MediaProjectionHolder.projection
         },
-    )
+    ) else null
 
     // === PHASE3-safety-rails: safety manager + overlay wiring ===
     // Process-wide singletons — install() is idempotent and the overlay
     // host wires itself into ConfirmationOverlayHost.instance so the
     // safety manager can reach it without a hard ref.
     private val bridgeSafetyManager =
-        com.hermesandroid.relay.bridge.BridgeSafetyManager.install(
+        if (BuildFlavor.isSideload) com.hermesandroid.relay.bridge.BridgeSafetyManager.install(
             context = application,
             scope = viewModelScope,
         ).also {
             com.hermesandroid.relay.bridge.BridgeStatusOverlay.install(application)
-        }
+        } else null
 
     /** Exposed for BridgeScreen → safety summary card. */
-    val bridgeSafety: com.hermesandroid.relay.bridge.BridgeSafetyManager get() = bridgeSafetyManager
+    val bridgeSafety: com.hermesandroid.relay.bridge.BridgeSafetyManager? get() = bridgeSafetyManager
     // === END PHASE3-safety-rails ===
 
     // v0.4.1 polish: bridge activity log sink. BridgeCommandHandler posts
@@ -965,7 +990,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // Public so RelayApp can hand the local-dispatch entry point to
     // VoiceViewModel. The voice intent handler calls handleLocalCommand()
     // for in-process action dispatch (see BridgeCommandHandler KDoc).
-    val bridgeCommandHandler = BridgeCommandHandler(
+    val bridgeCommandHandler: BridgeCommandHandler = BridgeCommandHandler(
         multiplexer = multiplexer,
         scope = viewModelScope,
         screenCapture = screenCapture,
@@ -1102,6 +1127,202 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      */
     fun registerStreamCancelCallback(callback: () -> Unit) {
         connectionSwitchCoordinator.registerStreamCancelCallback(callback)
+    }
+
+    fun recordVoiceHandoff(event: VoiceHandoffEvent) {
+        val detail = when {
+            !event.previousRoute.isNullOrBlank() && !event.nextRoute.isNullOrBlank() ->
+                "${event.previousRoute} -> ${event.nextRoute}"
+            !event.route.isNullOrBlank() && !event.detail.isNullOrBlank() ->
+                "${event.route} / ${event.detail}"
+            !event.route.isNullOrBlank() -> event.route
+            else -> event.detail?.take(96)
+        }
+        recordConnectionHandoff(
+            title = event.label,
+            route = event.nextRoute ?: event.route,
+            detail = detail,
+            active = event.active,
+            success = event.success,
+        )
+    }
+
+    private fun recordConnectionHandoff(
+        title: String,
+        route: String?,
+        detail: String?,
+        active: Boolean,
+        success: Boolean,
+    ) {
+        val cleanTitle = title.trim().takeIf { it.isNotBlank() } ?: "Connection changed"
+        val cleanRoute = route?.trim()?.takeIf { it.isNotBlank() }
+        val cleanDetail = detail?.trim()?.takeIf { it.isNotBlank() }?.take(120)
+        val entry = ConnectionHandoffTraceEntry(
+            label = cleanTitle,
+            detail = cleanDetail,
+        )
+        val now = System.currentTimeMillis()
+        connectionHandoffClearJob?.cancel()
+        val previousEntries = _connectionHandoffStatus.value?.entries.orEmpty()
+        val nextEntries = if (previousEntries.lastOrNull() == entry) {
+            previousEntries
+        } else {
+            (previousEntries + entry).takeLast(4)
+        }
+        _connectionHandoffStatus.value = ConnectionHandoffStatus(
+            title = cleanTitle,
+            route = cleanRoute,
+            active = active,
+            success = success,
+            entries = nextEntries,
+            updatedAtMs = now,
+        )
+        connectionHandoffClearJob = viewModelScope.launch {
+            delay(
+                when {
+                    active -> 30_000L
+                    success -> 5_000L
+                    else -> 12_000L
+                }
+            )
+            if (_connectionHandoffStatus.value?.updatedAtMs == now) {
+                _connectionHandoffStatus.value = null
+            }
+        }
+    }
+
+    private fun buildGlobalConnectionStatus(
+        handoff: ConnectionHandoffStatus?,
+        relayRow: RelayRowState,
+        apiHealth: HealthStatus,
+        relayHealth: HealthStatus,
+        network: ConnectivityObserver.Status,
+    ): ConnectionStatusSnapshot? {
+        handoff?.let { return it.asConnectionStatusSnapshot() }
+
+        if (network is ConnectivityObserver.Status.Lost ||
+            network is ConnectivityObserver.Status.Unavailable
+        ) {
+            return ConnectionStatusSnapshot(
+                title = "No internet connection",
+                tone = ConnectionStatusTone.Warning,
+                entries = listOf(
+                    ConnectionHandoffTraceEntry(
+                        label = "Network",
+                        detail = "Waiting for Android to report an internet route",
+                    ),
+                ),
+            )
+        }
+
+        val route = displayEndpointRole(relayRow.activeEndpointRole)
+        val probeEntries = buildGlobalConnectionProbeEntries(
+            relayRow = relayRow,
+            apiHealth = apiHealth,
+            relayHealth = relayHealth,
+            route = route,
+        )
+
+        return when {
+            relayRow.phase == RelayUiState.Connecting -> ConnectionStatusSnapshot(
+                title = "Connecting to Hermes",
+                route = route,
+                active = true,
+                tone = ConnectionStatusTone.Info,
+                entries = probeEntries,
+            )
+
+            apiHealth == HealthStatus.Probing || relayHealth == HealthStatus.Probing ->
+                ConnectionStatusSnapshot(
+                    title = "Checking Hermes connection",
+                    route = route,
+                    active = true,
+                    tone = ConnectionStatusTone.Info,
+                    entries = probeEntries,
+                )
+
+            relayRow.phase == RelayUiState.Stale ||
+                (relayHealth == HealthStatus.Unreachable &&
+                    relayRow.phase != RelayUiState.Connected) -> ConnectionStatusSnapshot(
+                    title = "Relay unreachable",
+                    route = route,
+                    tone = ConnectionStatusTone.Warning,
+                    entries = listOfNotNull(
+                        route?.let {
+                            ConnectionHandoffTraceEntry(
+                                label = "Route",
+                                detail = "Last route: $it",
+                            )
+                        },
+                        ConnectionHandoffTraceEntry(
+                            label = "Status",
+                            detail = "Waiting for reconnect or a network change",
+                        ),
+                    ),
+                )
+
+            apiHealth == HealthStatus.Unreachable -> ConnectionStatusSnapshot(
+                title = "Hermes API unreachable",
+                route = route,
+                tone = ConnectionStatusTone.Warning,
+                entries = listOf(
+                    ConnectionHandoffTraceEntry(
+                        label = "API",
+                        detail = "Chat and profile calls may not be available",
+                    ),
+                ),
+            )
+
+            else -> null
+        }
+    }
+
+    private fun buildGlobalConnectionProbeEntries(
+        relayRow: RelayRowState,
+        apiHealth: HealthStatus,
+        relayHealth: HealthStatus,
+        route: String?,
+    ): List<ConnectionHandoffTraceEntry> = buildList {
+        route?.let {
+            add(ConnectionHandoffTraceEntry(label = "Route", detail = it))
+        }
+        when (apiHealth) {
+            HealthStatus.Probing -> add(
+                ConnectionHandoffTraceEntry(label = "API", detail = "Checking Hermes health")
+            )
+            HealthStatus.Unreachable -> add(
+                ConnectionHandoffTraceEntry(label = "API", detail = "Health check failed")
+            )
+            HealthStatus.Reachable -> add(
+                ConnectionHandoffTraceEntry(label = "API", detail = "Ready")
+            )
+            HealthStatus.Unknown -> Unit
+        }
+        when (relayHealth) {
+            HealthStatus.Probing -> add(
+                ConnectionHandoffTraceEntry(label = "Relay", detail = "Checking relay health")
+            )
+            HealthStatus.Unreachable -> add(
+                ConnectionHandoffTraceEntry(label = "Relay", detail = "Health check failed")
+            )
+            HealthStatus.Reachable -> add(
+                ConnectionHandoffTraceEntry(label = "Relay", detail = "Ready")
+            )
+            HealthStatus.Unknown -> Unit
+        }
+        if (relayRow.phase == RelayUiState.Connecting) {
+            add(ConnectionHandoffTraceEntry(label = "Session", detail = "Opening relay socket"))
+        }
+    }.takeLast(3)
+
+    private fun displayEndpointRole(role: String?): String? {
+        val cleaned = role?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        return when (cleaned.lowercase()) {
+            "lan" -> "LAN"
+            "tailscale" -> "Tailscale"
+            "public" -> "Public"
+            else -> cleaned
+        }
     }
 
     /**
@@ -1494,13 +1715,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
 
         // === PHASE3-accessibility: bridge handler registration ===
-        // Route every incoming `bridge` channel envelope to the command
-        // handler. Registering unconditionally is safe — the handler
-        // itself checks whether HermesAccessibilityService is running and
-        // whether the master toggle is enabled before executing anything.
-        // Start the periodic status reporter once too; it ticks every
-        // 30s and is a no-op while the WSS isn't connected (multiplexer
-        // just drops the envelopes).
+        // Device Control commands are sideload-only. Google Play still
+        // registers the bridge channel so direct route probes fail closed with
+        // a clear 403 instead of waiting for a command timeout.
         multiplexer.registerHandler("bridge") { envelope ->
             bridgeCommandHandler.onMessage(envelope)
         }
@@ -1512,77 +1729,81 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // the new master_enabled value right away — not up to 30 s later.
         // drop(1) skips the initial DataStore replay so we don't double
         // up with the first periodic tick on boot.
-        viewModelScope.launch {
-            com.hermesandroid.relay.accessibility.HermesAccessibilityService
-                .masterEnabledFlow(application)
-                .distinctUntilChanged()
-                .drop(1)
-                .collect {
-                    bridgeStatusReporter.pushNow()
-                }
+        if (BuildFlavor.isSideload) {
+            viewModelScope.launch {
+                com.hermesandroid.relay.accessibility.HermesAccessibilityService
+                    .masterEnabledFlow(application)
+                    .distinctUntilChanged()
+                    .drop(1)
+                    .collect {
+                        bridgeStatusReporter.pushNow()
+                    }
+            }
         }
         // === END PHASE3-status ===
 
-        // === v0.4.1 polish: auto-return to Hermes on run.completed ===
-        // BridgeRunTracker wires Chat (SSE run.completed) to Bridge
-        // (foreground-shifting dispatch) via a shared singleton. When
-        // both signals converge in a run, fire a local /return_to_hermes
-        // so the user is never stranded on another app after the agent
-        // finishes — even if the LLM forgot to call the return tool
-        // itself. See BridgeRunTracker KDoc for the full contract.
-        com.hermesandroid.relay.bridge.BridgeRunTracker.registerAutoReturnCallback {
-            viewModelScope.launch {
-                runCatching {
-                    val envelope = com.hermesandroid.relay.network.models.Envelope(
-                        channel = "bridge",
-                        type = "bridge.command",
-                        payload = kotlinx.serialization.json.buildJsonObject {
-                            put(
-                                "request_id",
-                                kotlinx.serialization.json.JsonPrimitive(
-                                    java.util.UUID.randomUUID().toString(),
-                                ),
-                            )
-                            put("method", kotlinx.serialization.json.JsonPrimitive("POST"))
-                            put("path", kotlinx.serialization.json.JsonPrimitive("/return_to_hermes"))
-                            put(
-                                "body",
-                                kotlinx.serialization.json.buildJsonObject { },
-                            )
-                            put(
-                                "source",
-                                kotlinx.serialization.json.JsonPrimitive("auto_return"),
-                            )
-                        },
-                    )
-                    bridgeCommandHandler.handleLocalCommand(envelope)
-                }.onFailure {
-                    android.util.Log.w(
-                        "ConnectionViewModel",
-                        "auto-return dispatch failed: ${it.message}",
-                    )
+        if (BuildFlavor.isSideload) {
+            // === v0.4.1 polish: auto-return to Hermes on run.completed ===
+            // BridgeRunTracker wires Chat (SSE run.completed) to Bridge
+            // (foreground-shifting dispatch) via a shared singleton. When
+            // both signals converge in a run, fire a local /return_to_hermes
+            // so the user is never stranded on another app after the agent
+            // finishes — even if the LLM forgot to call the return tool
+            // itself. See BridgeRunTracker KDoc for the full contract.
+            com.hermesandroid.relay.bridge.BridgeRunTracker.registerAutoReturnCallback {
+                viewModelScope.launch {
+                    runCatching {
+                        val envelope = com.hermesandroid.relay.network.models.Envelope(
+                            channel = "bridge",
+                            type = "bridge.command",
+                            payload = kotlinx.serialization.json.buildJsonObject {
+                                put(
+                                    "request_id",
+                                    kotlinx.serialization.json.JsonPrimitive(
+                                        java.util.UUID.randomUUID().toString(),
+                                    ),
+                                )
+                                put("method", kotlinx.serialization.json.JsonPrimitive("POST"))
+                                put("path", kotlinx.serialization.json.JsonPrimitive("/return_to_hermes"))
+                                put(
+                                    "body",
+                                    kotlinx.serialization.json.buildJsonObject { },
+                                )
+                                put(
+                                    "source",
+                                    kotlinx.serialization.json.JsonPrimitive("auto_return"),
+                                )
+                            },
+                        )
+                        bridgeCommandHandler.handleLocalCommand(envelope)
+                    }.onFailure {
+                        android.util.Log.w(
+                            "ConnectionViewModel",
+                            "auto-return dispatch failed: ${it.message}",
+                        )
+                    }
                 }
             }
-        }
-        // === END v0.4.1 polish ===
+            // === END v0.4.1 polish ===
 
-        // === v0.4.1 polish: push on unattended-access toggle flip ===
-        // Same rationale as the master-toggle push above — the host-side
-        // agent reading `/bridge/status` needs to see the new unattended
-        // state within a second of the user flipping the toggle, not up
-        // to 30 s later. `UnattendedAccessManager.enabled` is a StateFlow
-        // so distinctUntilChanged is implicit (per the StateFlow
-        // "Operator Fusion" rule) — drop(1) still needed to skip the
-        // initial value replay so we don't double up with the first
-        // periodic tick on boot.
-        viewModelScope.launch {
-            com.hermesandroid.relay.bridge.UnattendedAccessManager.enabled
-                .drop(1)
-                .collect {
-                    bridgeStatusReporter.pushNow()
-                }
+            // === v0.4.1 polish: push on unattended-access toggle flip ===
+            // Same rationale as the master-toggle push above — the host-side
+            // agent reading `/bridge/status` needs to see the new unattended
+            // state within a second of the user flipping the toggle, not up
+            // to 30 s later. `UnattendedAccessManager.enabled` is a StateFlow
+            // so distinctUntilChanged is implicit (per the StateFlow
+            // "Operator Fusion" rule) — drop(1) still needed to skip the
+            // initial value replay so we don't double up with the first
+            // periodic tick on boot.
+            viewModelScope.launch {
+                com.hermesandroid.relay.bridge.UnattendedAccessManager.enabled
+                    .drop(1)
+                    .collect {
+                        bridgeStatusReporter.pushNow()
+                    }
+            }
+            // === END v0.4.1 polish ===
         }
-        // === END v0.4.1 polish ===
         // === END PHASE3-accessibility ===
 
         // === PHASE3-notif-listener-followup: notification companion multiplexer wiring ===
@@ -1629,10 +1850,90 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                             pendingStaleJob = launch {
                                 delay(RELAY_RECONNECT_GRACE_MS)
                                 _relayUiState.value = RelayUiState.Stale
+                                DiagnosticsLog.record(
+                                    category = DiagnosticCategory.Relay,
+                                    severity = DiagnosticSeverity.Warning,
+                                    title = "Relay stale",
+                                    detail = "Paired session is present, but the live relay socket did not connect",
+                                    url = url,
+                                )
                             }
                             RelayUiState.Connecting
                         }
                         else -> RelayUiState.Disconnected
+                    }
+                }
+        }
+
+        viewModelScope.launch {
+            var previousState: ConnectionState? = null
+            var previousRole: String? = null
+            combine(
+                relayConnectionState,
+                connectionManager.activeEndpoint,
+            ) { state, endpoint -> state to endpoint?.role }
+                .distinctUntilChanged()
+                .collect { (state, role) ->
+                    val priorState = previousState
+                    val priorRole = previousRole
+                    previousState = state
+                    previousRole = role
+                    if (priorState == null) return@collect
+
+                    when {
+                        state == ConnectionState.Reconnecting -> {
+                            recordConnectionHandoff(
+                                title = "Connection changed",
+                                route = displayEndpointRole(role ?: priorRole),
+                                detail = "Trying relay route",
+                                active = true,
+                                success = false,
+                            )
+                        }
+                        state == ConnectionState.Connected &&
+                            priorState == ConnectionState.Reconnecting -> {
+                            recordConnectionHandoff(
+                                title = "Connection restored",
+                                route = displayEndpointRole(role),
+                                detail = "Relay path ready",
+                                active = false,
+                                success = true,
+                            )
+                        }
+                        state == ConnectionState.Connected &&
+                            priorState != ConnectionState.Connected -> {
+                            recordConnectionHandoff(
+                                title = "Connected to Hermes",
+                                route = displayEndpointRole(role),
+                                detail = "Relay path ready",
+                                active = false,
+                                success = true,
+                            )
+                        }
+                        state == ConnectionState.Connected &&
+                            !priorRole.isNullOrBlank() &&
+                            !role.isNullOrBlank() &&
+                            !priorRole.equals(role, ignoreCase = true) -> {
+                            val from = displayEndpointRole(priorRole)
+                            val to = displayEndpointRole(role)
+                            recordConnectionHandoff(
+                                title = "Connection route changed",
+                                route = to,
+                                detail = listOfNotNull(from, to).joinToString(" -> "),
+                                active = false,
+                                success = true,
+                            )
+                        }
+                        state == ConnectionState.Disconnected &&
+                            priorState == ConnectionState.Connected -> {
+                            recordConnectionHandoff(
+                                title = "Connection interrupted",
+                                route = displayEndpointRole(priorRole),
+                                detail = "Looking for another route",
+                                active = true,
+                                success = false,
+                            )
+                        }
                     }
                 }
         }
@@ -2159,12 +2460,41 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             _relayServerHealth.value = HealthStatus.Unknown
             return
         }
+        val result = relayHttpClient.probeHealth(url, logSuccess = false)
+        _relayServerHealth.value = if (result.isSuccess) {
+            HealthStatus.Reachable
+        } else {
+            HealthStatus.Unreachable
+        }
+    }
+
+    suspend fun verifyRelayForVoice(): Result<Unit> {
+        val url = effectiveRelayUrlSnapshot()
+        if (url.isBlank()) {
+            _relayServerHealth.value = HealthStatus.Unknown
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Voice,
+                severity = DiagnosticSeverity.Error,
+                title = "Voice blocked",
+                detail = "Relay URL is not configured",
+            )
+            return Result.failure(IllegalStateException("Relay URL is not configured"))
+        }
+
+        _relayServerHealth.value = HealthStatus.Probing
+        DiagnosticsLog.record(
+            category = DiagnosticCategory.Voice,
+            severity = DiagnosticSeverity.Info,
+            title = "Checking relay for voice",
+            url = url,
+        )
         val result = relayHttpClient.probeHealth(url)
         _relayServerHealth.value = if (result.isSuccess) {
             HealthStatus.Reachable
         } else {
             HealthStatus.Unreachable
         }
+        return result.map { Unit }
     }
 
     // --- Unified pairing apply ----------------------------------------------
@@ -2495,15 +2825,35 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             if (client == null) {
                 _apiServerReachable.value = false
                 _apiServerHealth.value = HealthStatus.Unknown
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Api,
+                    severity = DiagnosticSeverity.Warning,
+                    title = "API test skipped",
+                    detail = "No API client configured",
+                    url = effectiveApiServerUrlSnapshot(),
+                )
                 onResult(false, "No API client configured")
                 return@launch
             }
 
             _apiServerHealth.value = HealthStatus.Probing
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Api,
+                severity = DiagnosticSeverity.Info,
+                title = "Testing API connection",
+                url = effectiveApiServerUrlSnapshot(),
+            )
             val health = client.checkHealthDetailed()
             if (health is com.hermesandroid.relay.network.HealthCheckResult.Unhealthy) {
                 _apiServerReachable.value = false
                 _apiServerHealth.value = HealthStatus.Unreachable
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Api,
+                    severity = DiagnosticSeverity.Error,
+                    title = "API health failed",
+                    detail = health.message,
+                    url = effectiveApiServerUrlSnapshot(),
+                )
                 onResult(false, health.message)
                 return@launch
             }
@@ -2518,6 +2868,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 is com.hermesandroid.relay.network.HealthCheckResult.Unhealthy ->
                     sessions.message
             }
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Api,
+                severity = if (reachable) DiagnosticSeverity.Info else DiagnosticSeverity.Error,
+                title = if (reachable) "API connection ok" else "API auth failed",
+                detail = message,
+                url = effectiveApiServerUrlSnapshot(),
+            )
             onResult(reachable, message)
         }
     }
@@ -2656,12 +3013,31 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 "ConnectionVM",
                 "connectRelay: no pair context — skipping WSS connect to avoid auth-failure rate-limit (use testRelayReachable for reachability checks)"
             )
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Session,
+                severity = DiagnosticSeverity.Warning,
+                title = "Relay connect skipped",
+                detail = "No paired session or pending pair code",
+                url = url,
+            )
             return
         }
+        DiagnosticsLog.record(
+            category = DiagnosticCategory.Relay,
+            severity = DiagnosticSeverity.Info,
+            title = "Relay connect requested",
+            url = url,
+        )
         connectionManager.connect(url)
     }
 
     fun disconnectRelay() {
+        DiagnosticsLog.record(
+            category = DiagnosticCategory.Relay,
+            severity = DiagnosticSeverity.Info,
+            title = "Relay disconnect requested",
+            url = effectiveRelayUrlSnapshot(),
+        )
         connectionManager.disconnect()
     }
 
@@ -3246,6 +3622,6 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // built by ScreenCapture on the first /screenshot call. Without
         // this, a process-rare VM teardown would leak the capture pipeline
         // until the OS cleans up on exit.
-        runCatching { screenCapture.releaseCache() }
+        runCatching { screenCapture?.releaseCache() }
     }
 }

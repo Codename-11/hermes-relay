@@ -2,6 +2,12 @@
 
 Improvements that would benefit hermes-relay (and other frontends) if added to [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent).
 
+## Current Upstream PR Alignment
+
+- PR #29302 (`feat: add API server session controls`) is the canonical upstream path for `/api/sessions/*`, message history, fork, chat, and chat stream. Hermes-Relay should prefer these native routes when present and keep the bootstrap as a per-route compatibility overlay only for older or partial core builds.
+- PR #8199 (`feat(api): add native audio transcription and speech endpoints`) is the canonical upstream path for core STT/TTS execution through `/v1/audio/transcriptions` and `/v1/audio/speech`. Hermes-Relay should keep `/voice/*` as the paired-device facade but eventually call those native core endpoints internally before falling back to private helper imports.
+- PR #29364 (`feat: add API server audio endpoints`) should not become a competing `/api/audio/*` API if #8199 remains the accepted audio base. Rework it as a discovery/compatibility follow-up or close it after confirming the upstream maintainer preference.
+
 ## 1. `GET /api/commands` — Expose Gateway Slash Commands
 
 **Current state:** Built-in slash commands (29 gateway-compatible commands like `/new`, `/retry`, `/model`, `/yolo`, etc.) are defined in `hermes_cli/commands.py` as `COMMAND_REGISTRY` / `GATEWAY_KNOWN_COMMANDS`. There is no HTTP API to fetch them — the app must hardcode the list.
@@ -97,16 +103,16 @@ except Exception as _exc:
 
 **Proposed — a two-stage arc, each stage a small, independently reviewable PR:**
 
-**Stage 1 — stateless preprocessor (sibling follow-up to PR #8556).** A lightweight preprocessor in `api_server.py`'s `/v1/runs` + `/v1/chat/completions` handlers that detects a leading `/` in the user text, matches the first token against `GATEWAY_KNOWN_COMMANDS`, and splits on command type:
+**Stage 1 — stateless preprocessor (sibling follow-up to PR #29302).** A lightweight preprocessor in `api_server.py`'s `/v1/runs` + `/v1/chat/completions` handlers that detects a leading `/` in the user text, matches the first token against `GATEWAY_KNOWN_COMMANDS`, and splits on command type:
 
 - **Stateless commands** (`/help`, `/commands`, and any others that can execute without touching router-owned state) are dispatched via existing helpers (`gateway_help_lines()` at `hermes_cli/commands.py:340`) and returned as a synthetic SSE stream matching the handlers' existing event shape.
-- **Stateful commands** (`/model`, `/new`, `/retry`, `/undo`, `/compress`, `/title`, `/resume`, `/branch`, `/rollback`, `/yolo`, `/reasoning`, `/personality`, and most of the registry) return a deterministic, helpful SSE notice along the lines of *"The `/model` command requires a persistent session and isn't available on the stateless `/v1/runs` endpoint. Use `/api/sessions/{id}/chat/stream` (from PR #8556) or a channel with session state (Discord, CLI, Telegram)."*
+- **Stateful commands** (`/model`, `/new`, `/retry`, `/undo`, `/compress`, `/title`, `/resume`, `/branch`, `/rollback`, `/yolo`, `/reasoning`, `/personality`, and most of the registry) return a deterministic, helpful SSE notice along the lines of *"The `/model` command requires a persistent session and isn't available on the stateless `/v1/runs` endpoint. Use `/api/sessions/{id}/chat/stream` (from PR #29302) or a channel with session state (Discord, CLI, Telegram)."*
 - **Unknown** and **cli-only** commands fall through to the LLM path unchanged.
 - **Preprocessor exceptions** fall through to the LLM path unchanged — a preprocessor bug must never take down a normal chat request.
 
 This respects upstream's intentional design (api_server stays stateless, no router coupling) while fixing the hallucination symptom and unlocking the commands that *can* run statelessly.
 
-**Stage 2 — stateful dispatch on `/api/sessions/{id}/chat/stream` (after PR #8556 lands).** Once session management primitives ship, a separate PR adds a preprocessor **scoped to the session chat stream endpoint only**, using the URL's `session_id` as the persistence handle. Stateful commands become session-scoped dict writes (`session.model_override = new_model`) without refactoring `GatewayRouter` or plumbing api_server into the router. This matches upstream's partition cleanly: `/v1/*` remains stateless and OpenAI-compatible; statefulness lives on `/api/sessions/*`.
+**Stage 2 — stateful dispatch on `/api/sessions/{id}/chat/stream` (after PR #29302 lands).** Once session management primitives ship, a separate PR adds a preprocessor **scoped to the session chat stream endpoint only**, using the URL's `session_id` as the persistence handle. Stateful commands become session-scoped dict writes (`session.model_override = new_model`) without refactoring `GatewayRouter` or plumbing api_server into the router. This matches upstream's partition cleanly: `/v1/*` remains stateless and OpenAI-compatible; statefulness lives on `/api/sessions/*`.
 
 **Why not one big PR:** a full GatewayRouter refactor plus api_server plumbing was considered and rejected. It would touch 10+ files across subsystems normally owned separately, fight the documented "api_server is excluded from router notification" design decision, and review as a much larger change than the value added. The two-stage arc ships faster, reviews cleaner, and matches the upstream partition better.
 
@@ -114,7 +120,26 @@ This respects upstream's intentional design (api_server stays stateless, no rout
 
 **Workaround (current / near-term):** `hermes_relay_bootstrap/_command_middleware.py` (planned for v0.4.1) mirrors Stage 1 as an aiohttp middleware injected at bootstrap time, so vanilla upstream installs that ship with the relay get the hallucination fix and the stateless commands without waiting for an upstream release. The bootstrap middleware fork-detects the same way the existing route injection does — it no-ops once Stage 1 lands upstream.
 
-## 6a. Rich Card Rendering Across Platform Adapters (ADR 26 Phase B)
+## 6. API Server Audio Endpoints for Relay-Compatible STT/TTS
+
+**Current state:** Hermes-Relay exposes `/voice/config`, `/voice/transcribe`, and `/voice/synthesize` on the relay server because upstream Hermes voice tooling historically lived in CLI/TUI helpers rather than the API server. That works for mobile pairing and grants, but the relay still has to import private STT/TTS helpers through `plugin.relay.upstream_voice`.
+
+**Canonical upstream path:** PR #8199 adds OpenAI-style core endpoints:
+
+- `POST /v1/audio/transcriptions`
+- `POST /v1/audio/speech`
+
+Those should be treated as the canonical Hermes core STT/TTS execution surface once merged.
+
+**Relay follow-up shape:** Keep `/voice/*` as the relay-owned mobile facade for pairing/session grants, profile labeling, transport guards, and backwards-compatible Android clients. Internally, relay should prefer core `/v1/audio/*` when present and fall back to helper imports only when running against older core builds.
+
+**Avoid:** Do not establish `/api/audio/*` or `/voice/*` as competing Hermes core APIs if `/v1/audio/*` is accepted upstream. Any PR based on our earlier `/api/audio/*` exploration should be closed or reduced to capability-discovery/compatibility metadata on top of the canonical audio PR.
+
+**Impact:** Hermes-Relay can stop depending on private voice helper imports over time while still preserving its paired-device trust model and existing Android wire contract.
+
+**Workaround (current):** Relay calls `tools.transcription_tools.transcribe_audio` and `tools.tts_tool.text_to_speech_tool` through `plugin.relay.upstream_voice`, with route auth constrained in `plugin.relay.voice_auth`.
+
+## 7. Rich Card Rendering Across Platform Adapters (ADR 26 Phase B)
 
 **Current state (upstream).** `gateway/platforms/base.py` exposes no rich-content abstraction — just `send()` / `send_image()` / `edit_message()`. Confirmed:
 - `discord.py` contains zero `discord.Embed()` instantiations; all assistant output flows as plain text chunks + native file attachments.
@@ -151,7 +176,7 @@ Adapters would gain a `send_card()` method with a default fallback that renders 
 
 **Workaround (current):** Rich cards only render on hermes-relay Android today. Other platforms receive the raw `CARD:{json}` line as plain text — visible as a JSON string in the message, which is ugly but functionally harmless (users can still read the content). A quick-fix middleware in `hermes_relay_bootstrap/` could strip the markers on platforms that don't consume them, but we haven't prioritized it since Hermes-Relay is currently the only UI on this pipeline.
 
-## 6. Terminal HTTP API (for non-relay setups)
+## 8. Terminal HTTP API (for non-relay setups)
 
 **Current state:** hermes-agent's `terminal_tool.py` supports 6 backends (local, Docker, SSH, Modal, Daytona, Singularity) but is only callable internally by the agent during conversations. There is no HTTP API for interactive terminal sessions.
 

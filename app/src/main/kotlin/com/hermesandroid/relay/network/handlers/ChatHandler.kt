@@ -5,6 +5,7 @@ import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.HermesCard
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.RealtimeTurnTrace
 import com.hermesandroid.relay.data.ToolCall
 import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.network.models.MessageItem
@@ -199,6 +200,18 @@ class ChatHandler {
         }
     }
 
+    fun replaceMessageContent(messageId: String, content: String) {
+        _messages.update { messages ->
+            messages.map { message ->
+                if (message.id == messageId) {
+                    message.copy(content = content)
+                } else {
+                    message
+                }
+            }
+        }
+    }
+
     /**
      * Append a local-only voice-intent trace to the chat scroll. Used by
      * the sideload voice intent flow (`RealVoiceBridgeIntentHandler`) so
@@ -366,6 +379,35 @@ class ChatHandler {
                         if (it.syncedToServer) it else it.copy(syncedToServer = true)
                     }
                 )
+            }
+            if (changed) mapped else messages
+        }
+    }
+
+    fun attachRealtimeTurnTrace(messageId: String, trace: RealtimeTurnTrace) {
+        _messages.update { messages ->
+            var changed = false
+            val mapped = messages.map { msg ->
+                if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
+                    changed = true
+                    msg.copy(realtimeTurn = trace)
+                } else {
+                    msg
+                }
+            }
+            if (changed) mapped else messages
+        }
+    }
+
+    fun markRealtimeTurnsSynced() {
+        _messages.update { messages ->
+            var changed = false
+            val mapped = messages.map { msg ->
+                val trace = msg.realtimeTurn
+                if (trace != null && !trace.syncedToServer) {
+                    changed = true
+                    msg.copy(realtimeTurn = trace.copy(syncedToServer = true))
+                } else msg
             }
             if (changed) mapped else messages
         }
@@ -1557,7 +1599,30 @@ class ChatHandler {
         return null
     }
 
-    fun onToolCallStart(messageId: String, toolCallId: String, toolName: String) {
+    fun setMessageBadges(messageId: String, badges: List<String>) {
+        val cleaned = badges
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .take(4)
+        _messages.update { messages ->
+            messages.map { msg ->
+                if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
+                    msg.copy(badges = cleaned)
+                } else {
+                    msg
+                }
+            }
+        }
+    }
+
+    fun onToolCallStart(
+        messageId: String,
+        toolCallId: String,
+        toolName: String,
+        runId: String? = null,
+        provenance: String? = null,
+    ) {
         _isStreaming.value = true
 
         val toolCall = ToolCall(
@@ -1566,7 +1631,9 @@ class ChatHandler {
             args = null,
             result = null,
             success = null,
-            isComplete = false
+            isComplete = false,
+            runId = runId,
+            provenance = provenance,
         )
 
         _messages.update { messages ->
@@ -1595,7 +1662,12 @@ class ChatHandler {
         }
     }
 
-    fun onToolCallComplete(messageId: String, toolCallId: String, resultPreview: String? = null) {
+    fun onToolCallComplete(
+        messageId: String,
+        toolCallId: String,
+        resultPreview: String? = null,
+        provenance: String? = null,
+    ) {
         // Snapshot the matching tool call's name BEFORE mutating — we need it
         // to decide whether to emit a phone-action result bubble below.
         val toolName = _messages.value
@@ -1613,6 +1685,7 @@ class ChatHandler {
                                 success = true,
                                 isComplete = true,
                                 result = resultPreview ?: call.result,
+                                provenance = provenance ?: call.provenance,
                                 completedAt = System.currentTimeMillis()
                             )
                         } else {

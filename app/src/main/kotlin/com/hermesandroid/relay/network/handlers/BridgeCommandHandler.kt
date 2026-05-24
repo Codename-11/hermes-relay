@@ -127,13 +127,16 @@ import kotlinx.serialization.json.contentOrNull
  * contract documented on the Python `android_tap` / `android_scroll` tools.
  * A non-resolvable nodeId returns a 404-style error envelope.
  *
- * # Master enable gate
+ * # Device Control gate
  *
- * Before dispatching any action we check
+ * The Google Play flavor ships Bridge Core without AccessibilityService or
+ * Device Control. It answers harmless bridge liveness/status probes above
+ * the dispatch layer, but any command that reaches Device Control fails closed
+ * before touching [HermesAccessibilityService]. The sideload flavor then checks
  * [HermesAccessibilityService.instance] — if the user hasn't enabled the
- * service in Android Settings, we fail fast with status 503. If the
- * service is running but the soft master toggle is off we fail with 403
- * and a body explaining that Bridge is disabled in the app.
+ * service in Android Settings, we fail fast with status 503. If the service is
+ * running but the soft master toggle is off we fail with 403 and a body
+ * explaining that Bridge is disabled in the app.
  */
 class BridgeCommandHandler(
     private val multiplexer: ChannelMultiplexer,
@@ -528,6 +531,28 @@ class BridgeCommandHandler(
             return
         }
 
+        if (!BuildFlavor.isSideload) {
+            respond(
+                requestId, 403,
+                buildJsonObject {
+                    put(
+                        "error",
+                        "Device Control is not included in the Google Play build " +
+                            "of Hermes Relay. This build keeps Hermes Bridge Core " +
+                            "features such as chat, voice, terminal, media, " +
+                            "notifications, and relay status, but it does not " +
+                            "ship AccessibilityService, screen reading, taps, " +
+                            "typing, screenshots, SMS, calls, or unattended " +
+                            "phone control. Install the sideload build for " +
+                            "Device Control.",
+                    )
+                    put("error_code", "device_control_sideload_only")
+                    put("flavor", "googlePlay")
+                }
+            )
+            return
+        }
+
         val service = HermesAccessibilityService.instance
             ?: return respond(
                 requestId, 503,
@@ -676,57 +701,6 @@ class BridgeCommandHandler(
         }
         // === END v0.4.1 unattended-access ===
 
-        // === Google Play flavor route gate ===
-        // The googlePlay build's AccessibilityService config declares a
-        // narrow use case ("read notifications, summarize messages") with
-        // NO gesture dispatch (canPerformGestures is absent) and NO
-        // flagRetrieveInteractiveWindows. Only READ-ONLY routes that
-        // match this declared scope are whitelisted; everything else
-        // returns a 403 so reviewers tracing the code see a capability
-        // surface that matches the manifest declaration.
-        //
-        // The whitelist is FAIL-CLOSED: any new route we add to the when
-        // block below defaults to sideload-only on the Play flavor unless
-        // explicitly added here. This prevents future routes from
-        // accidentally widening the Play APK's capability surface.
-        //
-        // Early-return routes (/ping, /events, /setup) are above this
-        // point so they work on both flavors — they're harmless liveness
-        // probes and don't need the a11y service. /return_to_hermes is
-        // whitelisted because it only foregrounds our OWN app (not a
-        // phone-control action). /clipboard is whitelisted for GET
-        // (read-only); POST (write) is gated inside the /clipboard case.
-        if (!BuildFlavor.isSideload) {
-            val playAllowed = setOf(
-                "/current_app",
-                "/screen",
-                "/get_apps",
-                "/apps",
-                "/clipboard",
-                "/return_to_hermes",
-            )
-            if (path !in playAllowed) {
-                respond(
-                    requestId, 403,
-                    buildJsonObject {
-                        put(
-                            "error",
-                            "This bridge route ($path) is only available on the " +
-                                "sideload flavor of Hermes Relay. The Google Play " +
-                                "build supports read-only bridge operations (screen " +
-                                "reading, app status, clipboard read) but not " +
-                                "phone-control actions (tap, type, swipe, SMS, call). " +
-                                "Install the sideload APK for full phone control.",
-                        )
-                        put("error_code", "sideload_only")
-                        put("flavor", "googlePlay")
-                    }
-                )
-                return
-            }
-        }
-        // === END Google Play flavor route gate ===
-
         val executor = service.actionExecutor
 
         when (path) {
@@ -843,9 +817,8 @@ class BridgeCommandHandler(
             // server-side agent as the final step of any multi-app task
             // (e.g. after driving Messages to send an SMS) so the user
             // sees the agent's reply in-context without manually switching
-            // apps. The phone knows its own package name via service — no
-            // parameter needed, works transparently on both sideload and
-            // googlePlay flavors.
+            // apps. The sideload phone knows its own package name via the
+            // accessibility service, so no parameter is needed.
             //
             // Allowed even when the master toggle is off: returning focus
             // to our own app isn't a destructive action, and this tool

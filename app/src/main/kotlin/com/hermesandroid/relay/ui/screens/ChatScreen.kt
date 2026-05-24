@@ -39,7 +39,6 @@ import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.CardDefaults
@@ -89,8 +88,8 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.purpleGlow
 import com.hermesandroid.relay.ui.theme.radialNavyBackground
 import com.hermesandroid.relay.network.ChatMode
-import com.hermesandroid.relay.network.ConnectivityObserver
 import com.hermesandroid.relay.network.RelayVoiceClient
+import com.hermesandroid.relay.network.RealtimeVoiceConfig
 import com.hermesandroid.relay.network.VoiceOutputConfig
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateFloatAsState
@@ -246,7 +245,9 @@ fun ChatScreen(
 
     val messages by chatViewModel.messages.collectAsState()
     val isStreaming by chatViewModel.isStreaming.collectAsState()
+    val voiceStats by voiceViewModel.voiceStats.collectAsState()
     var voiceOutputConfig by remember { mutableStateOf<VoiceOutputConfig?>(null) }
+    var realtimeAgentConfig by remember { mutableStateOf<RealtimeVoiceConfig?>(null) }
     val chatReady by connectionViewModel.chatReady.collectAsState()
     // Voice mode's /voice/transcribe and /voice/synthesize calls both go
     // over the relay, but voice can authenticate with the saved Hermes API
@@ -273,7 +274,6 @@ fun ChatScreen(
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
     val serverModelName by chatViewModel.serverModelName.collectAsState()
-    val networkStatus by connectionViewModel.networkStatus.collectAsState()
     val showThinking by connectionViewModel.showThinking.collectAsState()
     val toolDisplay by connectionViewModel.toolDisplay.collectAsState()
     val smoothAutoScroll by connectionViewModel.smoothAutoScroll.collectAsState()
@@ -348,6 +348,32 @@ fun ChatScreen(
     val clipboard = LocalClipboard.current
     val haptic = LocalHapticFeedback.current
     val snackbarHostState = remember { SnackbarHostState() }
+    val realtimeAgentActive = voiceStats.voiceEngineMode == "realtime_agent"
+    val activeVoiceProvider = if (realtimeAgentActive) {
+        realtimeAgentConfig?.default_provider
+    } else {
+        voiceOutputConfig?.default_provider
+    }
+    val activeVoiceModel = if (realtimeAgentActive) {
+        realtimeAgentConfig?.default_model
+    } else {
+        voiceOutputConfig?.default_model
+    }
+    val activeVoiceName = if (realtimeAgentActive) {
+        realtimeAgentConfig?.default_voice
+    } else {
+        voiceOutputConfig?.default_voice
+    }
+    val activeVoiceScope = if (realtimeAgentActive) {
+        realtimeAgentConfig?.configScope
+    } else {
+        voiceOutputConfig?.configScope
+    }
+    val activeVoiceEnabled = if (realtimeAgentActive) {
+        realtimeAgentConfig?.enabled
+    } else {
+        voiceOutputConfig?.enabled
+    }
 
     val showVoiceSystemOverlay: () -> Unit = {
         if (!voiceOverlayHost.hasOverlayPermission()) {
@@ -370,13 +396,14 @@ fun ChatScreen(
             val shown = voiceOverlayHost.show(
                 VoiceOverlaySession(
                     uiState = voiceViewModel.uiState,
-                    provider = voiceOutputConfig?.default_provider,
-                    model = voiceOutputConfig?.default_model,
-                    voice = voiceOutputConfig?.default_voice,
+                    engineMode = voiceStats.voiceEngineMode,
+                    provider = activeVoiceProvider,
+                    model = activeVoiceModel,
+                    voice = activeVoiceName,
                     profileName = selectedProfile?.description?.takeIf { it.isNotBlank() }
                         ?: selectedProfile?.name,
-                    configScope = voiceOutputConfig?.configScope,
-                    outputEnabled = voiceOutputConfig?.enabled,
+                    configScope = activeVoiceScope,
+                    outputEnabled = activeVoiceEnabled,
                     fallbackEnabled = voiceOutputConfig?.fallback_enabled,
                     onStartListening = { voiceViewModel.startListening() },
                     onStopListening = { voiceViewModel.stopListening() },
@@ -417,6 +444,8 @@ fun ChatScreen(
         pendingVoiceOverlayPermission,
         voiceUiState.voiceMode,
         voiceOutputConfig,
+        realtimeAgentConfig,
+        voiceStats.voiceEngineMode,
     ) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME && pendingVoiceOverlayPermission) {
@@ -447,6 +476,10 @@ fun ChatScreen(
         val result = client.getVoiceOutputConfig()
         if (result.isSuccess) {
             voiceOutputConfig = result.getOrNull()
+        }
+        val realtimeResult = client.getRealtimeAgentConfig()
+        if (realtimeResult.isSuccess) {
+            realtimeAgentConfig = realtimeResult.getOrNull()
         }
     }
 
@@ -994,34 +1027,6 @@ fun ChatScreen(
                     containerColor = MaterialTheme.colorScheme.surface
                 )
             )
-
-            // Offline banner
-            AnimatedVisibility(
-                visible = networkStatus is ConnectivityObserver.Status.Lost ||
-                    networkStatus is ConnectivityObserver.Status.Unavailable
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.errorContainer)
-                        .padding(8.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        Icons.Filled.WifiOff,
-                        contentDescription = "No internet",
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.onErrorContainer
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        "No internet connection",
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            }
 
             // Error banner with retry
             AnimatedVisibility(visible = error != null) {
@@ -1664,13 +1669,14 @@ fun ChatScreen(
                 // preserving enough recent tool/context rows for voice turns.
                 transcriptMessages = messages.takeLast(12),
                 showThinking = showThinking,
-                voiceOutputProvider = voiceOutputConfig?.default_provider,
-                voiceOutputModel = voiceOutputConfig?.default_model,
-                voiceOutputVoice = voiceOutputConfig?.default_voice,
+                voiceEngineMode = voiceStats.voiceEngineMode,
+                voiceOutputProvider = activeVoiceProvider,
+                voiceOutputModel = activeVoiceModel,
+                voiceOutputVoice = activeVoiceName,
                 voiceProfileName = selectedProfile?.description?.takeIf { it.isNotBlank() }
                     ?: selectedProfile?.name,
-                voiceConfigScope = voiceOutputConfig?.configScope,
-                voiceOutputEnabled = voiceOutputConfig?.enabled,
+                voiceConfigScope = activeVoiceScope,
+                voiceOutputEnabled = activeVoiceEnabled,
                 voiceOutputFallbackEnabled = voiceOutputConfig?.fallback_enabled,
                 onOverlayRequest = showVoiceSystemOverlay,
                 onCompactModeChange = { compact ->
@@ -1695,6 +1701,9 @@ fun ChatScreen(
                         context.startActivity(intent)
                     }
                     voiceViewModel.clearPermissionDeniedCallout()
+                },
+                onHermesConfirmationAnswer = { answer ->
+                    voiceViewModel.answerHermesConfirmation(answer)
                 },
                 // === END v0.4.1 ===
             )

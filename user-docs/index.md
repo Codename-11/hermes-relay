@@ -4,13 +4,13 @@ layout: home
 hero:
   name: Hermes-Relay
   text: One Hermes agent. Two ways to use it.
-  tagline: An Android remote-control app for your phone, plus a desktop CLI that lets you use a server-deployed Hermes from your laptop as if it were running locally.
+  tagline: An Android companion for self-hosted Hermes chat, voice, relay pairing, and optional sideload phone control, plus a desktop CLI that lets you use a server-deployed Hermes from your laptop as if it were running locally.
   actions:
     - theme: brand
       text: Use Hermes from my desktop
       link: /desktop/
     - theme: alt
-      text: Control my phone with Hermes
+      text: Use Hermes on Android
       link: /guide/getting-started
 
 features:
@@ -36,8 +36,8 @@ features:
       src: /icons/personalities.svg
       width: 40
       height: 40
-    title: Phone control (Android)
-    details: The agent reads your screen and acts on it — tap, type, swipe, screenshots, clipboard, media, notifications. Voice mode, multi-Connection, agent profiles, full safety rails.
+    title: Android Bridge Core
+    details: Google Play keeps chat, voice, terminal/TUI relay, notifications, media, and sessions. Sideload builds add AccessibilityService-backed phone control for screen reading, taps, typing, screenshots, and safety rails.
   - icon:
       src: /icons/tokens.svg
       width: 40
@@ -113,13 +113,13 @@ features:
 <div class="surface-grid">
   <div class="surface-card">
     <div class="surface-tag">Surface 1</div>
-    <h3>Android — phone control</h3>
-    <p>Native app. Talks directly to the Hermes API server for chat, plus a WSS relay for voice, bridge (the agent reads your screen and acts on it), and notification companion.</p>
+    <h3>Android — Bridge Core</h3>
+    <p>Native app. Talks directly to the Hermes API server for chat, plus a WSS relay for voice, terminal/TUI relay, media, sessions, status, and notification companion.</p>
     <ul>
       <li>Streaming chat, multi-Connection, agent profiles, personalities</li>
       <li>Voice mode with the morphing sphere + your server's TTS/STT</li>
-      <li>Screen reading, gestures, clipboard, media control, macros</li>
-      <li>Per-app blocklist, destructive-verb confirmation, auto-disable</li>
+      <li>Google Play track: no AccessibilityService, screen reading, taps, typing, screenshots, SMS, calls, contacts, location, or unattended control</li>
+      <li>Sideload track: AccessibilityService-backed Device Control with per-app blocklist, destructive-verb confirmation, and auto-disable</li>
     </ul>
     <a class="cta" href="./guide/getting-started.html">Install the Android app →</a>
   </div>
