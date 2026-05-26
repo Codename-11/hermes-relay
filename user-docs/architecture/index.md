@@ -4,6 +4,8 @@
 
 The app maintains two independent connection paths — direct HTTP/SSE for chat, persistent WSS for relay channels.
 
+For a compact shareable reference covering connection paths, transport boundaries, pairing/session lifecycle, and operator controls, see the [Relay Architecture Spec](/architecture/relay-architecture-spec).
+
 <HermesFlow diagram="architecture" height="260px" />
 
 | Path | Protocol | Server | Purpose |
