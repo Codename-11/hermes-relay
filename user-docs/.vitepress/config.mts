@@ -104,6 +104,7 @@ export default defineConfig({
           text: 'Architecture',
           items: [
             { text: 'Overview', link: '/architecture/' },
+            { text: 'Relay Architecture Spec', link: '/architecture/relay-architecture-spec' },
             { text: 'Decisions', link: '/architecture/decisions' },
             { text: 'Security', link: '/architecture/security' },
             { text: 'Privacy', link: '/architecture/privacy' },
