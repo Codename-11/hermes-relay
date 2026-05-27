@@ -10,7 +10,7 @@
 
 **Tests.** Added `VoicePlayerTest` coverage: getter reflects the analytics-listener-cached id, never re-invokes `exoPlayer.audioSessionId` (the off-main call), and defaults to 0 before allocation. Captured the `AnalyticsListener` in the MockK harness. Verified locally: `:app:lintGooglePlayDebug` + `:app:testGooglePlayDebugUnitTest --tests VoicePlayerTest` both green (BUILD SUCCESSFUL).
 
-**Next.** Branch `fix/voice-barge-in-wrong-thread` off `dev`, PR to `dev`.
+**Next.** Landed on `dev` via PR #60, then shipped as the focused patch release `android-v0.8.1` (cherry-picked off the `android-v0.8.0` tag, PR #62); `main` merged back to `dev`.
 
 ---
 
