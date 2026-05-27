@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import io.mockk.Runs
 import io.mockk.every
 import io.mockk.just
@@ -72,6 +73,7 @@ class VoicePlayerTest {
     private lateinit var context: Context
     private lateinit var exoPlayer: ExoPlayer
     private var listener: Player.Listener? = null
+    private var analyticsListener: AnalyticsListener? = null
 
     // Mirrors the real ExoPlayer's counter so the test's view and the
     // VoicePlayer's view agree without having to drive every listener
@@ -97,6 +99,14 @@ class VoicePlayerTest {
         val listenerSlot = slot<Player.Listener>()
         every { exoPlayer.addListener(capture(listenerSlot)) } answers {
             listener = listenerSlot.captured
+        }
+
+        // Capture the AnalyticsListener too — VoicePlayer registers one to
+        // mirror the audio session id onto the main thread (the barge-in
+        // wrong-thread crash fix).
+        val analyticsSlot = slot<AnalyticsListener>()
+        every { exoPlayer.addAnalyticsListener(capture(analyticsSlot)) } answers {
+            analyticsListener = analyticsSlot.captured
         }
 
         // Queue + state inspection read from the fake counters so the
@@ -139,6 +149,7 @@ class VoicePlayerTest {
     fun tearDown() {
         unmockkAll()
         listener = null
+        analyticsListener = null
         fakeMediaItemCount = 0
         fakeIsPlaying = false
         fakePlaybackState = Player.STATE_IDLE
@@ -226,5 +237,34 @@ class VoicePlayerTest {
 
         verify { exoPlayer.volume = 1.0f }
         assertEquals(1.0f, fakeVolume, 0.0001f)
+    }
+
+    @Test
+    fun `audioSessionId is served from the cached id, not the thread-confined getter`() {
+        // Regression: ExoPlayer is thread-confined, so reading
+        // exoPlayer.audioSessionId off the main thread (BargeInListener's
+        // Dispatchers.IO reader) throws "Player is accessed on the wrong
+        // thread" and crashed voice mode mid-playback. The getter must read
+        // a cached value instead — populated from main-thread callbacks.
+        val voicePlayer = VoicePlayer(context) { exoPlayer }
+
+        // Media3 reports a freshly-allocated session id on the main thread.
+        analyticsListener?.onAudioSessionIdChanged(mockk(relaxed = true), 42)
+
+        assertEquals(42, voicePlayer.audioSessionId)
+
+        // Reading the property again must not touch the raw ExoPlayer getter
+        // (that's the off-main call that throws). The only legitimate read of
+        // exoPlayer.audioSessionId happens inside onIsPlayingChanged on the
+        // main thread, which this test never triggers.
+        voicePlayer.audioSessionId
+        voicePlayer.audioSessionId
+        verify(exactly = 0) { exoPlayer.audioSessionId }
+    }
+
+    @Test
+    fun `audioSessionId defaults to zero before any session is allocated`() {
+        val voicePlayer = VoicePlayer(context) { exoPlayer }
+        assertEquals(0, voicePlayer.audioSessionId)
     }
 }
