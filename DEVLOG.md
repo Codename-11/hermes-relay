@@ -1,5 +1,19 @@
 # Hermes-Relay — Dev Log
 
+## 2026-05-26 — Fix voice-mode crash: ExoPlayer audio session id read off-main (barge-in + legacy TTS)
+
+**Report.** Discord user, sideload latest: voice chat crashes the instant Hermes starts answering — "I hear just 2 letters and it crashes." Stack: `IllegalStateException: Player is accessed on the wrong thread. Current thread: 'DefaultDispatcher-worker-4', Expected thread: 'main'` with the Media3 `player-accessed-on-wrong-thread` doc link and a `Suppressed: ... Dispatchers.IO`.
+
+**Root cause.** `Dispatchers.IO` threads are named `DefaultDispatcher-worker-N` (IO and Default share one scheduler pool), so the crash is on an IO coroutine. `BargeInListener` runs its mic reader on `Dispatchers.IO` and, to attach `AcousticEchoCanceler`, polls an `audioSessionIdProvider` lambda. On the **legacy `/voice/synthesize` (Media3) playback path**, `VoiceViewModel` wires that provider to `{ player.audioSessionId }` → `exoPlayer.audioSessionId`. ExoPlayer is thread-confined; its `getAudioSessionId()` getter calls `verifyApplicationThread()` and throws when read off-main. The realtime PCM path is unaffected because it wires the provider to an `AudioTrack` session id (thread-safe), which is why the bug only hit legacy/fallback setups. Sequence: first sentence starts → `runPlayWorker.onFileReady` → `startBargeInListenerIfEnabled()` → IO reader → `awaitNonZeroSessionId()` → off-main getter → crash ~2 syllables in.
+
+**Fix.** `VoicePlayer.audioSessionId` now serves a `@Volatile cachedAudioSessionId` instead of the raw thread-confined getter. The cache is populated from main-thread Media3 callbacks: an `AnalyticsListener.onAudioSessionIdChanged` hook (authoritative, fires when Media3 allocates/reallocates the AudioTrack) plus a belt-and-braces read inside the existing `onIsPlayingChanged`. Reads from any thread are now safe.
+
+**Tests.** Added `VoicePlayerTest` coverage: getter reflects the analytics-listener-cached id, never re-invokes `exoPlayer.audioSessionId` (the off-main call), and defaults to 0 before allocation. Captured the `AnalyticsListener` in the MockK harness. Verified locally: `:app:lintGooglePlayDebug` + `:app:testGooglePlayDebugUnitTest --tests VoicePlayerTest` both green (BUILD SUCCESSFUL).
+
+**Next.** Cherry-picked onto `android-v0.8.1` hotfix branch (off the `android-v0.8.0` tag) for a focused patch release; merges back to `dev` after.
+
+---
+
 ## 2026-05-23 — Un-defer the voice/audio test suite (issue #32) + barge-in resume bug
 
 **Context.** GitHub issue #32 tracked 5 voice/audio unit tests `@Ignore`'d during the v0.5.1 release because the full `:app:testGooglePlayDebugUnitTest` task "hung indefinitely." Scope had quietly grown to **8** ignored classes (3 of the "pure-logic, should-work" ones got swept in defensively). Branch `fix/voice-test-suite`.
