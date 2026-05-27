@@ -1,5 +1,19 @@
 # Hermes-Relay — Dev Log
 
+## 2026-05-26 — Fix voice-mode crash: ExoPlayer audio session id read off-main (barge-in + legacy TTS)
+
+**Report.** Discord user, sideload latest: voice chat crashes the instant Hermes starts answering — "I hear just 2 letters and it crashes." Stack: `IllegalStateException: Player is accessed on the wrong thread. Current thread: 'DefaultDispatcher-worker-4', Expected thread: 'main'` with the Media3 `player-accessed-on-wrong-thread` doc link and a `Suppressed: ... Dispatchers.IO`.
+
+**Root cause.** `Dispatchers.IO` threads are named `DefaultDispatcher-worker-N` (IO and Default share one scheduler pool), so the crash is on an IO coroutine. `BargeInListener` runs its mic reader on `Dispatchers.IO` and, to attach `AcousticEchoCanceler`, polls an `audioSessionIdProvider` lambda. On the **legacy `/voice/synthesize` (Media3) playback path**, `VoiceViewModel` wires that provider to `{ player.audioSessionId }` → `exoPlayer.audioSessionId`. ExoPlayer is thread-confined; its `getAudioSessionId()` getter calls `verifyApplicationThread()` and throws when read off-main. The realtime PCM path is unaffected because it wires the provider to an `AudioTrack` session id (thread-safe), which is why the bug only hit legacy/fallback setups. Sequence: first sentence starts → `runPlayWorker.onFileReady` → `startBargeInListenerIfEnabled()` → IO reader → `awaitNonZeroSessionId()` → off-main getter → crash ~2 syllables in.
+
+**Fix.** `VoicePlayer.audioSessionId` now serves a `@Volatile cachedAudioSessionId` instead of the raw thread-confined getter. The cache is populated from main-thread Media3 callbacks: an `AnalyticsListener.onAudioSessionIdChanged` hook (authoritative, fires when Media3 allocates/reallocates the AudioTrack) plus a belt-and-braces read inside the existing `onIsPlayingChanged`. Reads from any thread are now safe.
+
+**Tests.** Added `VoicePlayerTest` coverage: getter reflects the analytics-listener-cached id, never re-invokes `exoPlayer.audioSessionId` (the off-main call), and defaults to 0 before allocation. Captured the `AnalyticsListener` in the MockK harness. Verified locally: `:app:lintGooglePlayDebug` + `:app:testGooglePlayDebugUnitTest --tests VoicePlayerTest` both green (BUILD SUCCESSFUL).
+
+**Next.** Branch `fix/voice-barge-in-wrong-thread` off `dev`, PR to `dev`.
+
+---
+
 ## 2026-05-24 — Background Hermes runs in Realtime Agent voice (ADR 33)
 
 **Context.** Realtime Agent ran each Hermes turn synchronously *inside* the provider event pump (`_run_brokered_tool` did `return await task`), so a long research/multi-tool/desktop run froze the whole realtime session until it finished. ADR 33 + `docs/plans/2026-05-24-realtime-background-hermes-runs.md` define a three-tier model (foreground / promoted / durable) with the relay as an explicit audio-floor owner. Branch `feature/realtime-background-hermes-runs`.
