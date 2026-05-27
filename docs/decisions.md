@@ -928,7 +928,7 @@ The plan called for adding a `// VOICE HOOK` callback to `ChatViewModel` so `Voi
 - `plugin/relay/server.py` — route registration alongside `/media/*`
 - `plugin/tests/test_voice_routes.py` — 14 unit tests, `unittest`-based (pytest conftest issue documented in `CLAUDE.md`)
 - `app/src/main/kotlin/.../audio/VoiceRecorder.kt` — MediaRecorder amplitude StateFlow
-- `app/src/main/kotlin/.../audio/VoicePlayer.kt` — MediaPlayer + Visualizer amplitude StateFlow with OEM fallback
+- `app/src/main/kotlin/.../audio/VoicePlayer.kt` — Media3 ExoPlayer (gapless TTS queue) + Visualizer amplitude StateFlow with OEM fallback; `audioSessionId` served from a thread-safe `@Volatile` cache (read off-main by barge-in)
 - `app/src/main/kotlin/.../network/RelayVoiceClient.kt` — OkHttp multipart + JSON clients
 - `app/src/main/kotlin/.../viewmodel/VoiceViewModel.kt` — turn state machine, sentence detection, TTS queue consumer, `ChatViewModel` observation pattern
 - `app/src/main/kotlin/.../ui/components/VoiceModeOverlay.kt` — full-screen overlay, VoiceState→SphereState mapping, three interaction modes

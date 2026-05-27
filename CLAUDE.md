@@ -197,7 +197,7 @@ hermes-android/
 | **App — Voice** | |
 | `voice/VoiceViewModel.kt` | Voice turn state machine; TTS queue; `ignoreAssistantId`; `errorEvents: SharedFlow` |
 | `audio/VoiceRecorder.kt` | MediaRecorder wrapper; perceptual amplitude curve; `.m4a` at 16kHz/64kbps |
-| `audio/VoicePlayer.kt` | MediaPlayer + Visualizer; amplitude StateFlow; `awaitCompletion()` via coroutine |
+| `audio/VoicePlayer.kt` | Media3 ExoPlayer (gapless TTS queue) + Visualizer; amplitude StateFlow; `awaitCompletion()` via coroutine; `audioSessionId` is a thread-safe `@Volatile` cache |
 | `network/RelayVoiceClient.kt` | OkHttp for `/voice/transcribe`, `/synthesize`, `/config` |
 | `voice/VoiceBridgeIntentHandler.kt` | Interface routing voice utterances to bridge; impls per flavor via factory |
 | `voice/VoiceIntentClassifier.kt` | Regex phone-control classifier (sideload only); false-negatives preferred over false-positives |
