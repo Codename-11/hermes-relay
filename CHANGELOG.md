@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-05-26
+
+### Fixed
+
+- **Voice mode crash with barge-in on legacy TTS playback.** When barge-in was enabled and the relay served audio over the legacy `/voice/synthesize` (Media3) path, the first agent sentence played for ~2 syllables and then the app crashed with `IllegalStateException: Player is accessed on the wrong thread`. The barge-in listener's `Dispatchers.IO` reader was reading `ExoPlayer.getAudioSessionId()` (a thread-confined accessor) to attach the echo canceller. `VoicePlayer.audioSessionId` now serves a `@Volatile` cache populated from main-thread Media3 callbacks, so it is safe to read from any thread.
+
 ## [0.8.0] - 2026-05-23
 
 ### Added
