@@ -1,25 +1,7 @@
-v0.8.0 - Play-safe Bridge Core, Realtime Agent, and diagnostics
-
-Google Play
-* Google Play keeps chat, profiles, voice, terminal/TUI relay, media,
-  notification companion, relay sessions, QR pairing, and diagnostics.
-* AccessibilityService-backed screen reading, phone control, screenshots,
-  SMS/calls, contacts/location, overlays, wake locks, and unattended control
-  remain sideload-only.
+v0.8.1 - Voice mode crash fix
 
 Voice
-* Voice Settings now separates Voice Engine from global controls.
-* Hermes Chat + Voice Output and Realtime Agent show their own focused cards.
-* Fallback TTS stays visible as a global safety-net card.
-* Test Current Engine now plays saved stable voice or a provider-native Realtime Agent sample.
-* Realtime Agent uses provider-native xAI/OpenAI speech while Hermes remains
-  the tool, memory, profile, confirmation, and current-data authority.
-* Realtime voice now plays reliably from the first frame with low latency —
-  fixed silent/choppy first-turn audio and added playback diagnostics.
-* The Voice Lab adds a Text demo (raw provider TTS) and a Mic demo (full agent
-  path with tap-to-record/stop); the waveform follows the playback cursor.
-
-Diagnostics
-* Settings now has app-level diagnostics.
-* Connection detail sheets show recent API, relay, session, endpoint, and voice
-  activity so relay hangs surface quickly.
+* Fixed a crash that could hit voice mode when barge-in was enabled on the
+  legacy text-to-speech path — the agent's first words no longer cut off
+  into a crash. Barge-in is opt-in; the Realtime Agent and Voice Output
+  paths were never affected.
