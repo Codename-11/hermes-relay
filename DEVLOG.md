@@ -1,5 +1,15 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-05 — Prefer upstream `/v1/skills` with legacy fallback
+
+**Context.** Upstream Hermes Agent now has baseline skill/session API surface area, while Axiom's fork still preserves richer Relay-specific `/api/*` compatibility routes. The Android client should begin consuming upstream-compatible skill listings when present without breaking older fork/bootstrap installs.
+
+**What changed.** `HermesApiClient.getSkills()` now tries `/v1/skills` first, then falls back to `/api/skills`. Skill parsing accepts upstream OpenAI-style list envelopes (`{"object":"list","data":[...]}`), legacy fork envelopes (`{"skills":[...]}` / `{"items":[...]}`), and direct arrays.
+
+**Verification.** Added pure Kotlin unit coverage for endpoint order and `/v1/skills` `data` parsing. Verified with `ANDROID_HOME=$HOME/Android/Sdk ./gradlew :app:testGooglePlayDebugUnitTest --tests 'com.hermesandroid.relay.network.HermesApiClientTest'` → BUILD SUCCESSFUL. `git diff --check` passes.
+
+---
+
 ## 2026-05-26 — Fix voice-mode crash: ExoPlayer audio session id read off-main (barge-in + legacy TTS)
 
 **Report.** Discord user, sideload latest: voice chat crashes the instant Hermes starts answering — "I hear just 2 letters and it crashes." Stack: `IllegalStateException: Player is accessed on the wrong thread. Current thread: 'DefaultDispatcher-worker-4', Expected thread: 'main'` with the Media3 `player-accessed-on-wrong-thread` doc link and a `Suppressed: ... Dispatchers.IO`.
