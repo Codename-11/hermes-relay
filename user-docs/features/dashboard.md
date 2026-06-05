@@ -12,7 +12,7 @@ The plugin is a thin observer — it never modifies state, never writes to your 
 
 **On your server:**
 
-- hermes-agent with the Dashboard Plugin System (upstream commit `01214a7f` on `axiom`, or any later `main` once [PR #8556](https://github.com/NousResearch/hermes-agent/pull/8556) and its dashboard followups merge). `hermes dashboard start` must already work for you.
+- hermes-agent with the Dashboard Plugin System (upstream commit `01214a7f` on `axiom`, or any later `main` that includes the dashboard plugin follow-ups). `hermes dashboard start` must already work for you.
 - The canonical Hermes-Relay install — if you ran the one-liner on the [Quick Start](/guide/getting-started), you're done. The installer symlinks `~/.hermes/plugins/hermes-relay` → the plugin subtree and the dashboard scanner picks up `plugin/dashboard/manifest.json` automatically.
 - A gateway restart after install: `systemctl --user restart hermes-gateway`.
 

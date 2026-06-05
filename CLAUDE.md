@@ -33,25 +33,26 @@ Chat goes directly to the API server via HTTP/SSE. The API key (Bearer token) is
 | `GET /health` | Health check | — |
 | `GET/POST/PATCH/DELETE /api/jobs/*` | Cron job management (api_server surface) | — |
 
-**Non-standard endpoints (provided by fork OR by plugin bootstrap):**
+**Baseline upstream endpoints vs compatibility endpoints:**
 
-These endpoints are not in stock upstream `gateway/platforms/api_server.py`. There are three ways a hermes-agent install can serve them:
+Upstream hermes-agent now has a native baseline for API Server session control and skill/toolset discovery:
 
-1. **Codename-11 fork** (`feat/session-api` branch, deployed on the `axiom` branch) — adds them natively. Submitted upstream as PR [#8556](https://github.com/NousResearch/hermes-agent/pull/8556) *"feat(api-server): add session management API for frontend clients"* — scope is broader than the title: sessions CRUD + session chat/stream + memory + skills + config + available-models.
-2. **Bootstrap injection** (`hermes_relay_bootstrap/`) — monkey-patches aiohttp on startup via `.pth` file. Does NOT inject `/api/sessions/{id}/chat/stream` — use `/v1/runs` for chat.
-3. **Upstream-merged** (post PR #8556) — bootstrap auto-detects and no-ops.
+1. **Native upstream** — commit [`f7527b0`](https://github.com/NousResearch/hermes-agent/commit/f7527b0fdb54f01691547df03fc65a6d367f9fde), merged via PR [#33134](https://github.com/NousResearch/hermes-agent/pull/33134), salvaged the focused session-control work from closed PR [#29302](https://github.com/NousResearch/hermes-agent/pull/29302). It provides `/api/sessions/*`, session chat/stream, fork/messages, plus `/v1/skills` and `/v1/toolsets`.
+2. **Codename-11 `axiom` fork** — still carries compatibility/client-metadata routes that upstream does not provide yet: `/api/sessions/search`, `/api/memory`, `/api/skills` detail routes, `/api/config`, and `/api/available-models`.
+3. **Bootstrap injection** (`hermes_relay_bootstrap/`) — monkey-patches aiohttp on startup via `.pth` file and injects only missing compatibility routes for older or partial upstream builds. It should remain per-route/per-feature, not all-or-nothing.
 
 | Endpoint | Purpose | Provided by |
 |----------|---------|-------------|
-| `GET /api/sessions` (CRUD) | Session list/create/rename/delete/fork | Fork OR bootstrap OR upstream-merged |
-| `GET /api/sessions/{id}/messages` | Conversation history | Fork OR bootstrap OR upstream-merged |
-| `GET /api/sessions/search` | Full-text message search | Fork OR bootstrap OR upstream-merged |
-| `POST /api/sessions/{id}/chat/stream` | Session-based SSE chat | Fork OR upstream-merged ONLY (NOT bootstrap) |
-| `GET /api/config`, `PATCH /api/config` | Personalities + model config | Fork OR bootstrap OR upstream-merged |
-| `GET /api/skills`, `/{name}` | Skill discovery (list + detail) | Fork OR bootstrap OR upstream-merged |
+| `GET /api/sessions` (CRUD) | Session list/create/rename/delete/fork | Native upstream OR fork OR bootstrap |
+| `GET /api/sessions/{id}/messages` | Conversation history | Native upstream OR fork OR bootstrap |
+| `GET /api/sessions/search` | Full-text message search | Fork OR bootstrap only |
+| `POST /api/sessions/{id}/chat/stream` | Session-based SSE chat | Native upstream OR fork only (NOT bootstrap) |
+| `GET /v1/skills` | Skill list metadata | Native upstream OR fork |
+| `GET /api/config`, `PATCH /api/config` | Personalities + model config | Fork OR bootstrap only |
+| `GET /api/skills`, `/{name}` | Legacy skill discovery/detail routes | Fork OR bootstrap only; Android prefers `/v1/skills` first |
 | `PUT /api/skills/toggle` | Enable/disable installed skill | `hermes_cli/web_server.py` dashboard surface; mirrored into bootstrap |
-| `GET/POST/PATCH/DELETE /api/memory` | Memory CRUD | Fork OR bootstrap OR upstream-merged |
-| `GET /api/available-models` | Provider model list | Fork OR bootstrap OR upstream-merged |
+| `GET/POST/PATCH/DELETE /api/memory` | Memory CRUD | Fork OR bootstrap only |
+| `GET /api/available-models` | Provider-aware model list | Fork OR bootstrap only |
 
 The Android client probes per-endpoint capability via `HermesApiClient.probeCapabilities()` (returns `ServerCapabilities`). When `streamingEndpoint = "auto"`, `ConnectionViewModel.resolveStreamingEndpoint()` picks `sessions` or `runs` based on the capability snapshot.
 
@@ -67,7 +68,7 @@ hermes-agent ships a second web server at `hermes_cli/web_server.py` that hosts 
 ## Key Instructions
 - **Always verify upstream before assuming an endpoint exists.** Check `gateway/platforms/api_server.py` in hermes-agent. If an endpoint isn't there, document whether bootstrap injects it or it requires the fork.
 - If we use a non-standard endpoint, ensure `probeCapabilities()` covers it and the auto-resolver degrades gracefully.
-- **Bootstrap maintenance:** Remove `hermes_relay_bootstrap/` in one PR once PR #8556 merges. It's no-op-compatible, so leaving it in place during rollout is harmless.
+- **Bootstrap maintenance:** Do not remove `hermes_relay_bootstrap/` just because upstream has native sessions. It can start shrinking only after each Relay-consuming compatibility route has a native replacement or the Android/Desktop clients have migrated away from it.
 
 ## Repository Layout
 
@@ -107,7 +108,7 @@ hermes-android/
 │   ├── tools/               # android_navigate.py, android_notifications.py
 │   └── dashboard/           # hermes-agent dashboard plugin — manifest, React UI, FastAPI proxy
 ├── relay_server/            ← Thin compat shim → plugin.relay (legacy entrypoint)
-├── hermes_relay_bootstrap/  ← Runtime patch for vanilla upstream; removable after PR #8556
+├── hermes_relay_bootstrap/  ← Runtime patch for vanilla/partial upstream compatibility routes
 ├── skills/devops/hermes-relay-pair/  ← /hermes-relay-pair slash command
 ├── scripts/                 ← dev.bat, bridge-smoke.sh, bump-version.sh
 └── docs/                    ← spec, decisions, security, relay-server, mcp-tooling
@@ -230,7 +231,7 @@ hermes-android/
 | `plugin/pair.py` | QR payload builder + CLI; `build_payload(sign=True)`; `--register-code` fallback |
 | `install.sh` | Canonical installer — 6 steps; idempotent; drops `hermes-relay-update` shim |
 | `uninstall.sh` | Canonical uninstaller; reverses install.sh; never touches `.env` or `state.db` |
-| `hermes_relay_bootstrap/` | Runtime patch for vanilla upstream; no-op on fork/upstream-merged; remove after PR #8556 |
+| `hermes_relay_bootstrap/` | Runtime patch for vanilla/partial upstream compatibility routes; shrink per route group after native parity or client migration |
 | **Plugin — Dashboard** | |
 | `plugin/dashboard/manifest.json` | Declares tab, entry bundle, and FastAPI module for hermes-agent discovery |
 | `plugin/dashboard/plugin_api.py` | FastAPI router proxying 5 routes to relay over loopback; `/pairing` body = API-server overrides (host/port/tls/api_key), relay URL auto-derived |

@@ -2,9 +2,11 @@
 
 Improvements that would benefit hermes-relay (and other frontends) if added to [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent).
 
-## Current Upstream PR Alignment
+## Current Upstream Alignment
 
-- PR #29302 (`feat: add API server session controls`) is the canonical upstream path for `/api/sessions/*`, message history, fork, chat, and chat stream. Hermes-Relay should prefer these native routes when present and keep the bootstrap as a per-route compatibility overlay only for older or partial core builds.
+- PR #33134 (`feat(api-server): session control API — sessions/chat/fork/SSE-stream (salvages #29302)`) landed upstream as commit [`f7527b0`](https://github.com/NousResearch/hermes-agent/commit/f7527b0fdb54f01691547df03fc65a6d367f9fde). It is now the canonical baseline for `/api/sessions/*`, message history, fork, chat, and chat stream.
+- `GET /v1/skills` and `GET /v1/toolsets` are native upstream capability-discovery routes. Hermes-Relay's Android client prefers `/v1/skills` first and falls back to legacy `/api/skills` for older/fork/bootstrap installs.
+- Keep `hermes_relay_bootstrap` as a per-route compatibility overlay only for older or partial core builds. Do not remove it wholesale while Relay still needs routes without native upstream parity: `/api/sessions/search`, `/api/memory`, `/api/config`, legacy skill detail routes under `/api/skills`, `/api/available-models`, and voice aliases.
 - PR #8199 (`feat(api): add native audio transcription and speech endpoints`) is the canonical upstream path for core STT/TTS execution through `/v1/audio/transcriptions` and `/v1/audio/speech`. Hermes-Relay should keep `/voice/*` as the paired-device facade but eventually call those native core endpoints internally before falling back to private helper imports.
 - PR #29364 (`feat: add API server audio endpoints`) should not become a competing `/api/audio/*` API if #8199 remains the accepted audio base. Rework it as a discovery/compatibility follow-up or close it after confirming the upstream maintainer preference.
 
@@ -38,7 +40,7 @@ Improvements that would benefit hermes-relay (and other frontends) if added to [
 
 **Impact:** All frontends (hermes-relay, hermes-workspace, ClawPort) could dynamically show available commands without hardcoding. New commands added upstream would appear automatically.
 
-**Workaround (current):** 29 gateway commands hardcoded in `ChatScreen.kt`, manually synced with `hermes_cli/commands.py`. Personality commands generated from `GET /api/config`. Skills from `GET /api/skills`.
+**Workaround (current):** 29 gateway commands hardcoded in `ChatScreen.kt`, manually synced with `hermes_cli/commands.py`. Personality commands generated from `GET /api/config`. Skills prefer native `GET /v1/skills` and fall back to legacy `GET /api/skills`.
 
 ## 2. Personality Switching via Dedicated API Parameter
 
@@ -103,16 +105,16 @@ except Exception as _exc:
 
 **Proposed — a two-stage arc, each stage a small, independently reviewable PR:**
 
-**Stage 1 — stateless preprocessor (sibling follow-up to PR #29302).** A lightweight preprocessor in `api_server.py`'s `/v1/runs` + `/v1/chat/completions` handlers that detects a leading `/` in the user text, matches the first token against `GATEWAY_KNOWN_COMMANDS`, and splits on command type:
+**Stage 1 — stateless preprocessor (follow-up to PR #33134 / commit `f7527b0`).** A lightweight preprocessor in `api_server.py`'s `/v1/runs` + `/v1/chat/completions` handlers that detects a leading `/` in the user text, matches the first token against `GATEWAY_KNOWN_COMMANDS`, and splits on command type:
 
 - **Stateless commands** (`/help`, `/commands`, and any others that can execute without touching router-owned state) are dispatched via existing helpers (`gateway_help_lines()` at `hermes_cli/commands.py:340`) and returned as a synthetic SSE stream matching the handlers' existing event shape.
-- **Stateful commands** (`/model`, `/new`, `/retry`, `/undo`, `/compress`, `/title`, `/resume`, `/branch`, `/rollback`, `/yolo`, `/reasoning`, `/personality`, and most of the registry) return a deterministic, helpful SSE notice along the lines of *"The `/model` command requires a persistent session and isn't available on the stateless `/v1/runs` endpoint. Use `/api/sessions/{id}/chat/stream` (from PR #29302) or a channel with session state (Discord, CLI, Telegram)."*
+- **Stateful commands** (`/model`, `/new`, `/retry`, `/undo`, `/compress`, `/title`, `/resume`, `/branch`, `/rollback`, `/yolo`, `/reasoning`, `/personality`, and most of the registry) return a deterministic, helpful SSE notice along the lines of *"The `/model` command requires a persistent session and isn't available on the stateless `/v1/runs` endpoint. Use `/api/sessions/{id}/chat/stream` or a channel with session state (Discord, CLI, Telegram)."*
 - **Unknown** and **cli-only** commands fall through to the LLM path unchanged.
 - **Preprocessor exceptions** fall through to the LLM path unchanged — a preprocessor bug must never take down a normal chat request.
 
 This respects upstream's intentional design (api_server stays stateless, no router coupling) while fixing the hallucination symptom and unlocking the commands that *can* run statelessly.
 
-**Stage 2 — stateful dispatch on `/api/sessions/{id}/chat/stream` (after PR #29302 lands).** Once session management primitives ship, a separate PR adds a preprocessor **scoped to the session chat stream endpoint only**, using the URL's `session_id` as the persistence handle. Stateful commands become session-scoped dict writes (`session.model_override = new_model`) without refactoring `GatewayRouter` or plumbing api_server into the router. This matches upstream's partition cleanly: `/v1/*` remains stateless and OpenAI-compatible; statefulness lives on `/api/sessions/*`.
+**Stage 2 — stateful dispatch on `/api/sessions/{id}/chat/stream` (now unblocked).** Now that session management primitives have landed upstream, a separate PR can add a preprocessor **scoped to the session chat stream endpoint only**, using the URL's `session_id` as the persistence handle. Stateful commands become session-scoped dict writes (`session.model_override = new_model`) without refactoring `GatewayRouter` or plumbing api_server into the router. This matches upstream's partition cleanly: `/v1/*` remains stateless and OpenAI-compatible; statefulness lives on `/api/sessions/*`.
 
 **Why not one big PR:** a full GatewayRouter refactor plus api_server plumbing was considered and rejected. It would touch 10+ files across subsystems normally owned separately, fight the documented "api_server is excluded from router notification" design decision, and review as a much larger change than the value added. The two-stage arc ships faster, reviews cleaner, and matches the upstream partition better.
 
