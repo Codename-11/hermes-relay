@@ -293,8 +293,10 @@ which probes `hermes gateway run --help | grep tailscale`. When
 that returns true (PR #9295 has landed in your hermes-agent install),
 the helper still works but the canonical path
 (`hermes gateway run --tailscale`) is preferred and the helper will
-be removed in a future release. Same retirement pattern as
-`hermes_relay_bootstrap/` after PR #8556.
+be removed in a future release. Treat helper retirement like
+`hermes_relay_bootstrap/`: remove it only after the native path has parity
+for every Relay-consuming route/group, not merely after one upstream
+baseline lands.
 
 ### Forward-auth gateways (Authelia, Cloudflare Access) in front of the API server
 

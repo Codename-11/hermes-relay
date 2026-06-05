@@ -80,15 +80,19 @@ The app supports two streaming endpoints, selectable in Settings:
 | **Sessions** (`/api/sessions/{id}/chat/stream`) | Inline text annotations (`` `💻 terminal` ``) — client parses from markdown | Hermes-native SSE (assistant.delta, tool.progress, etc.) or OpenAI-format (delta.content) |
 | **Runs** (`/v1/runs` + `/v1/runs/{run_id}/events`) | **Structured events** (tool.started, tool.completed) — real-time tool cards | Hermes lifecycle events (message.delta, tool.started, tool.completed, run.completed) |
 
-**Important upstream note:** The `/api/sessions` CRUD endpoints are moving
-toward upstream Hermes core through focused PR
-[#29302](https://github.com/NousResearch/hermes-agent/pull/29302), which covers
+**Important upstream note:** The `/api/sessions` CRUD/chat endpoints landed in
+upstream Hermes core via PR
+[#33134](https://github.com/NousResearch/hermes-agent/pull/33134) / commit
+[`f7527b0`](https://github.com/NousResearch/hermes-agent/commit/f7527b0fdb54f01691547df03fc65a6d367f9fde),
+which salvaged the focused PR
+[#29302](https://github.com/NousResearch/hermes-agent/pull/29302). It covers
 session list/create/read/update/delete, messages, fork, chat, and chat stream.
-Until that reaches a released core build, `hermes_relay_bootstrap/` still ships
-with the plugin and runs at Python interpreter startup via `.pth`. The bootstrap
-now composes with partial upstream support: native routes win per method/path,
-and the relay only injects missing compatibility gaps such as config, skills, or
-memory when core does not provide them.
+`hermes_relay_bootstrap/` still ships with the plugin and runs at Python
+interpreter startup via `.pth` for older cores and for compatibility gaps that
+upstream still does not provide. The bootstrap composes with partial upstream
+support: native routes win per method/path, and the relay only injects missing
+compatibility gaps such as search, config, legacy skills detail routes,
+available-models, or memory when core does not provide them.
 
 The app's `probeCapabilities()` returns a per-endpoint snapshot, and `ConnectionViewModel.resolveStreamingEndpoint()` collapses `streamingEndpoint = "auto"` (the default for new installs) to a concrete `"sessions"` or `"runs"` choice based on what the server actually exposes.
 
@@ -499,11 +503,14 @@ Adopting from ARC's workflow patterns:
 ### 16. Runtime API Server Patch via .pth Bootstrap (2026-04-12)
 
 **Context:** The Android app depends on API-server routes for session history,
-profile/config metadata, skills, and memory-backed UI. Upstream core is now
-moving in focused pieces rather than one large frontend API patch: PR
-[#29302](https://github.com/NousResearch/hermes-agent/pull/29302) covers the
-canonical `/api/sessions/*` surface, while config/skills/memory still remain
-compatibility routes in this repo until core exposes stable equivalents. Without
+profile/config metadata, skills, and memory-backed UI. Upstream core has started
+absorbing the surface in focused pieces rather than one large frontend API patch:
+PR [#33134](https://github.com/NousResearch/hermes-agent/pull/33134) / commit
+[`f7527b0`](https://github.com/NousResearch/hermes-agent/commit/f7527b0fdb54f01691547df03fc65a6d367f9fde)
+now covers the canonical `/api/sessions/*` surface, and `/v1/skills` covers
+skill list metadata. Config, legacy skill detail routes, memory, search, and
+provider-aware model metadata still remain compatibility routes in this repo
+until core exposes stable equivalents or clients migrate away from them. Without
 the bootstrap, users on older vanilla upstream builds lose session browsing,
 metadata-backed settings, and history-on-restart behavior.
 
@@ -520,16 +527,17 @@ We considered four options:
 1. **Zero modifications to hermes-agent's filesystem.** `git pull` / `hermes update` see no local changes, so they always work cleanly. The patch lives entirely in `hermes_relay_bootstrap/` inside our own repo.
 2. **Single-file containment of all ported logic.** `_handlers.py` is 500 lines of straight-line aiohttp handler code with explicit `adapter` parameters (closures, not bound methods). Easy to audit, easy to delete.
 3. **Feature detection by method/path, not broad route family.** Native upstream
-   routes win one method/path at a time. This matters because PR #29302 can land
-   `/api/sessions/*` before core has stable config/skills/memory APIs; the
-   bootstrap must not skip those remaining compatibility routes just because a
-   sessions route exists.
+   routes win one method/path at a time. This matters because PR #33134 landed
+   `/api/sessions/*` before core had stable config/legacy skill detail/memory/search
+   APIs; the bootstrap must not skip those remaining compatibility routes just
+   because a sessions or `/v1/skills` route exists.
 4. **Trust model already established.** The user installed our plugin into their hermes-agent venv. They've already consented to having the plugin import hermes-agent internals (it does this for relay tools, voice endpoints, media registry). Monkey-patching `aiohttp.web.Application` is in the same trust bucket.
-5. **Surface-by-surface removal.** When PR #29302 or equivalent reaches a
-   released hermes-agent version, the sessions compatibility routes should go
-   quiet automatically. Config, skills, memory, and command preprocessing remain
-   until their native replacements exist. Full bootstrap deletion happens only
-   after every compatibility route group has a stable core equivalent.
+5. **Surface-by-surface removal.** When a supported hermes-agent baseline includes
+   PR #33134 / `f7527b0`, the sessions compatibility routes should go quiet
+   automatically. Config, legacy skills detail routes, memory, search,
+   available-models, and command preprocessing remain until their native
+   replacements exist or the clients migrate. Full bootstrap deletion happens
+   only after every compatibility route group has a stable core equivalent.
 6. **`/v1/runs` is genuinely better for chat than `/api/sessions/{id}/chat/stream`.** It's standard upstream, supports `X-Hermes-Session-Id` for continuation, and emits live structured tool events. The fork's chat handler exists because upstream didn't HAVE this clean structured-event runs API at the time the fork was cut — but upstream does now.
 
 **The Android client adapts via `streamingEndpoint = "auto"`.** New `ServerCapabilities` data class returned by `HermesApiClient.probeCapabilities()` captures per-endpoint presence (`sessionsApi`, `sessionsChatStream`, `runs`, `portable`, `healthy`). `ConnectionViewModel.resolveStreamingEndpoint()` collapses `"auto"` to `"sessions"` (when chat-stream handler is present, i.e. fork or upstream-merged) or `"runs"` (otherwise, i.e. bootstrap-injected vanilla upstream). The setting still supports manual `"sessions"` / `"runs"` overrides for debugging.
@@ -548,10 +556,11 @@ We considered four options:
 - `install.sh` step 2 — copies the `.pth` into the venv site-packages
 
 **Removal path** is now per surface:
-1. Sessions: after PR #29302 or equivalent ships in released core, keep the
+1. Sessions: with PR #33134 / `f7527b0` in the supported core baseline, keep the
    bootstrap installed but verify it skips native `/api/sessions/*` routes.
-2. Config/skills/memory: remove those compatibility handlers only after stable
-   core APIs exist and Android probes prefer them.
+2. Config/legacy skills/memory/search/available-models: remove those
+   compatibility handlers only after stable core APIs exist and Android probes
+   prefer them, or after clients migrate away from the legacy route group.
 3. Slash middleware: remove after native API-server slash preprocessing exists.
 4. Full cleanup: delete `hermes_relay_bootstrap/`, delete
    `hermes_relay_bootstrap.pth`, remove the `.pth` install block, and update

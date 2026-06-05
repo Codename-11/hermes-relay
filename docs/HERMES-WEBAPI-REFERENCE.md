@@ -259,8 +259,9 @@ GET /api/memory?target=memory    // or target=user
 
 ### Skills
 ```
-GET /api/skills          # optional ?category= filter
-GET /api/skills/{name}
+GET /v1/skills           # native upstream list metadata
+GET /api/skills          # legacy fallback, optional ?category= filter
+GET /api/skills/{name}   # legacy detail route when provided by fork/bootstrap
 ```
 > `/api/skills/categories` was removed from upstream as dead code (commit 8d023e43) and is not re-injected by the bootstrap.
 
@@ -272,7 +273,8 @@ Probe endpoints to detect what's available:
 GET /health              -> basic connectivity
 GET /api/sessions        -> enhanced Hermes session API
 GET /v1/models           -> model listing (OpenAI-compatible)
-GET /api/skills          -> skills support
+GET /v1/skills           -> native skills support
+GET /api/skills          -> legacy skills fallback
 GET /api/memory          -> memory support
 GET /api/config          -> config API
 

@@ -1,5 +1,15 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-05 — Refresh upstream baseline docs after native session merge
+
+**Context.** Upstream Hermes Agent merged native API Server session controls as commit `f7527b0` via PR #33134, and Android now prefers native `/v1/skills` with legacy fallback. Several Relay docs still treated PR #8556/#29302 as the future removal trigger for `hermes_relay_bootstrap/`.
+
+**What changed.** Updated contributor/user docs to separate native upstream baseline routes (`/api/sessions/*`, `/v1/skills`, `/v1/toolsets`) from Relay compatibility routes that still require `axiom` or bootstrap (`/api/sessions/search`, `/api/memory`, `/api/config`, legacy skill detail routes, `/api/available-models`, voice aliases). The bootstrap retirement rule is now per route group, not wholesale deletion after one upstream session merge.
+
+**Verification.** Ran stale-reference searches for `#8556`, `#29302`, and legacy skills routes after edits; remaining references are historical devlog/plans or explicitly marked compatibility/fallback.
+
+---
+
 ## 2026-06-05 — Prefer upstream `/v1/skills` with legacy fallback
 
 **Context.** Upstream Hermes Agent now has baseline skill/session API surface area, while Axiom's fork still preserves richer Relay-specific `/api/*` compatibility routes. The Android client should begin consuming upstream-compatible skill listings when present without breaking older fork/bootstrap installs.

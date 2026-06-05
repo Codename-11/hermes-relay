@@ -55,7 +55,7 @@ All commands are fetched dynamically from the server where possible:
 - **Configuration**: `/model`, `/personality`, `/reasoning`, `/yolo`, `/verbose`, `/voice`
 - **Info**: `/help`, `/status`, `/usage`, `/insights`, `/commands`
 - **Personalities**: generated from server config (`config.agent.personalities`) — `/personality victor`, `/personality creative`, etc.
-- **Skills**: dynamically fetched from `GET /api/skills` — 90+ server skills grouped by category (creative, devops, research, etc.)
+- **Skills**: dynamically fetched from `GET /v1/skills` with fallback to legacy `GET /api/skills` — server skills grouped by category (creative, devops, research, etc.)
 
 ## Tool Execution
 
