@@ -300,5 +300,6 @@ data class SkillInfo(
 @Serializable
 data class SkillListResponse(
     val skills: List<SkillInfo>? = null,
-    val items: List<SkillInfo>? = null
+    val items: List<SkillInfo>? = null,
+    val data: List<SkillInfo>? = null
 )

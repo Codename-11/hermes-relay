@@ -99,6 +99,24 @@ data class ServerCapabilities(
     }
 }
 
+internal val HERMES_SKILL_ENDPOINTS = listOf("/v1/skills", "/api/skills")
+
+internal fun parseSkillListBody(json: Json, body: String): List<SkillInfo>? {
+    try {
+        val parsed = json.decodeFromString<SkillListResponse>(body)
+        val skills = parsed.skills ?: parsed.items ?: parsed.data
+        if (skills != null) return skills
+    } catch (_: Exception) {
+        // Fall through to direct-array compatibility below.
+    }
+
+    try {
+        return json.decodeFromString<List<SkillInfo>>(body)
+    } catch (_: Exception) {
+        return null
+    }
+}
+
 /**
  * Direct HTTP/SSE client for the Hermes API Server.
  *
@@ -342,27 +360,21 @@ class HermesApiClient(
     // --- Skills ---
 
     suspend fun getSkills(): List<SkillInfo> = withContext(Dispatchers.IO) {
-        try {
-            val request = authRequest("$baseUrl/api/skills").get().build()
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext emptyList()
-                val body = response.body?.string() ?: return@withContext emptyList()
-                // Try structured response: { "skills": [...] } or { "items": [...] }
-                try {
-                    val parsed = json.decodeFromString<SkillListResponse>(body)
-                    val skills = parsed.skills ?: parsed.items
+        for (endpoint in HERMES_SKILL_ENDPOINTS) {
+            try {
+                val request = authRequest("$baseUrl$endpoint").get().build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@use
+                    val body = response.body?.string() ?: return@use
+                    val skills = parseSkillListBody(json, body)
                     if (skills != null) return@withContext skills
-                } catch (_: Exception) { /* fall through */ }
-                // Try direct array: [...]
-                try {
-                    return@withContext json.decodeFromString<List<SkillInfo>>(body)
-                } catch (_: Exception) { /* fall through */ }
-                emptyList()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to fetch skills from $endpoint: ${e.message}")
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to fetch skills: ${e.message}")
-            emptyList()
         }
+
+        emptyList()
     }
 
     // --- Server personalities ---

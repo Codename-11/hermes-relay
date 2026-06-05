@@ -1,5 +1,7 @@
 package com.hermesandroid.relay.network
 
+import com.hermesandroid.relay.network.models.SkillListResponse
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -218,6 +220,46 @@ class HermesApiClientTest {
         val baseUrl = "http://localhost:8642"
         val url = "$baseUrl/v1/models"
         assertEquals("http://localhost:8642/v1/models", url)
+    }
+
+    // --- Skills endpoint compatibility ---
+
+    @Test
+    fun skillEndpointOrder_prefersUpstreamV1ThenLegacyApiFallback() {
+        assertEquals(listOf("/v1/skills", "/api/skills"), HERMES_SKILL_ENDPOINTS)
+    }
+
+    @Test
+    fun skillListResponse_parsesUpstreamV1DataEnvelope() {
+        val body = """
+            {
+                "object": "list",
+                "data": [
+                    {"name": "android", "description": "Control phone", "category": "android"}
+                ]
+            }
+        """.trimIndent()
+
+        val parsed = Json { ignoreUnknownKeys = true }.decodeFromString<SkillListResponse>(body)
+
+        assertEquals(1, parsed.data?.size)
+        assertEquals("android", parsed.data?.first()?.name)
+    }
+
+    @Test
+    fun parseSkillListBody_acceptsUpstreamV1DataEnvelope() {
+        val body = """
+            {
+                "object": "list",
+                "data": [
+                    {"name": "android", "description": "Control phone", "category": "android"}
+                ]
+            }
+        """.trimIndent()
+
+        val parsed = parseSkillListBody(Json { ignoreUnknownKeys = true }, body)
+
+        assertEquals(listOf("android"), parsed?.map { it.name })
     }
 
     @Test
