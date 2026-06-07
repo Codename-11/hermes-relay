@@ -3,6 +3,15 @@ package com.hermesandroid.relay.data
 import kotlinx.serialization.Serializable
 import java.net.URI
 
+@Serializable
+data class DashboardConnectionStatus(
+    val checkedAtMillis: Long? = null,
+    val reachable: Boolean = false,
+    val authRequired: Boolean? = null,
+    val authProviders: List<String> = emptyList(),
+    val message: String? = null,
+)
+
 /**
  * A "connection" = a distinct Hermes server connection the app can switch between.
  *
@@ -41,6 +50,15 @@ data class Connection(
     val apiServerUrl: String,
     val relayUrl: String,
     val tokenStoreKey: String,
+    /**
+     * Hermes dashboard/admin URL. Dashboard management features use this
+     * separately from the relay pairing channel; a blank/null value means
+     * "derive from [apiServerUrl] using the conventional same-host :9119".
+     */
+    val dashboardUrl: String? = null,
+    val dashboardAuthRequired: Boolean? = null,
+    val dashboardAuthProviders: List<String> = emptyList(),
+    val dashboardLastStatus: DashboardConnectionStatus? = null,
     /** Epoch milliseconds. Pass `System.currentTimeMillis()`; do not pass seconds. */
     val pairedAt: Long? = null,
     val lastActiveSessionId: String? = null,
@@ -48,6 +66,12 @@ data class Connection(
     /** Epoch milliseconds. The auth.ok `expires_at` field is seconds — multiply by 1000 at the call site. */
     val expiresAt: Long? = null,
 ) {
+    val resolvedDashboardUrl: String
+        get() = dashboardUrl
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: deriveDefaultDashboardUrl(apiServerUrl).orEmpty()
+
     companion object {
         /**
          * The pre-multi-connection EncryptedSharedPreferences filename. Matches
@@ -56,6 +80,8 @@ data class Connection(
          * existing paired device keeps working across the upgrade.
          */
         const val LEGACY_TOKEN_STORE_KEY: String = "hermes_companion_auth_hw"
+
+        const val DEFAULT_DASHBOARD_PORT: Int = 9119
 
         /**
          * Derive a stable per-connection EncryptedSharedPreferences filename
@@ -79,6 +105,35 @@ data class Connection(
             } catch (_: Exception) {
                 apiServerUrl
             }
+        }
+
+        fun deriveDefaultDashboardUrl(
+            apiServerUrl: String,
+            dashboardPort: Int = DEFAULT_DASHBOARD_PORT,
+        ): String? {
+            val trimmed = apiServerUrl.trim().trimEnd('/')
+            if (trimmed.isEmpty()) return null
+
+            val uri = runCatching { URI(trimmed) }.getOrNull() ?: return null
+            val scheme = when (uri.scheme?.lowercase()) {
+                "http" -> "http"
+                "https" -> "https"
+                else -> return null
+            }
+            val host = uri.host?.takeIf { it.isNotBlank() } ?: return null
+            val hostPart = if (host.contains(":") && !host.startsWith("[")) {
+                "[$host]"
+            } else {
+                host
+            }
+            return "$scheme://$hostPart:$dashboardPort"
+        }
+
+        fun isAutoManagedDashboardUrl(dashboardUrl: String?, apiServerUrl: String): Boolean {
+            val trimmed = dashboardUrl?.trim()?.trimEnd('/').orEmpty()
+            if (trimmed.isEmpty()) return true
+            val derived = deriveDefaultDashboardUrl(apiServerUrl) ?: return false
+            return trimmed.equals(derived, ignoreCase = true)
         }
     }
 }

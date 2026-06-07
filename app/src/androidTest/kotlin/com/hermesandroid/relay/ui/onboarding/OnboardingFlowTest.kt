@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.ui.onboarding
 
+import android.app.Application
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotDisplayed
@@ -8,7 +9,9 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.test.core.app.ApplicationProvider
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
+import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import org.junit.Rule
 import org.junit.Test
 
@@ -24,10 +27,13 @@ class OnboardingFlowTest {
     val composeTestRule = createComposeRule()
 
     private fun setOnboardingContent() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val connectionViewModel = ConnectionViewModel(app)
         composeTestRule.setContent {
             HermesRelayTheme {
                 OnboardingScreen(
-                    onComplete = { _, _, _ -> }
+                    connectionViewModel = connectionViewModel,
+                    onComplete = {},
                 )
             }
         }

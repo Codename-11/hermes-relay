@@ -6,6 +6,16 @@ Hermes-Relay stores its settings using Android's DataStore, Android Keystore (fo
 
 These are configured during onboarding or from the **Settings → Connections** screen. That screen is the single authoritative home for everything connection-related (as of the 2026-04-21 unification — the legacy singular *Settings → Connection* subpage was folded in here). Each paired server appears as its own card in the list; the currently-active card expands inline to surface all deep-configuration UI.
 
+Hermes-Relay now treats connection auth as three related but separate contexts:
+
+- **API connection** (`:8642`) — chat, sessions, and portable API calls. Networked servers should set `API_SERVER_KEY`; the Android app stores that key separately from relay pairing.
+- **Dashboard sign-in** (`:9119`) — standard management surfaces such as Skills, Cron, MCP, Profiles, Models, and Config. Android derives the dashboard URL from the API host by default and keeps dashboard cookies separate from relay tokens.
+- **Pairing** (`:8767`) — relay grants for Terminal, Bridge, relay sessions, media relay inspection, and profile memory file editing. Pairing is not required for standard dashboard/API use, but it is required for relay power tools.
+
+The default bottom navigation is **Chat**, **Manage**, and **Settings**. Terminal and Bridge are still available from **Settings → Power tools** and deep links, but unpaired devices see a clear **Requires pairing** / **Pair to unlock** gate before those relay-only screens load.
+
+The **Manage** tab uses the dashboard session, not relay pairing. It covers Skills, Cron jobs, MCP servers, the MCP catalog, Profiles, Models, and Config. Actions that write dashboard state use upstream dashboard endpoints; profile SOUL is view-only here, while SOUL/memory file editing remains a paired power tool.
+
 **On any card (active or not) — the per-connection action row:**
 - **Reconnect** (only on Stale state)
 - **Rename**, **Re-pair**, **Revoke**, **Remove**
@@ -24,7 +34,9 @@ These are configured during onboarding or from the **Settings → Connections** 
 | Setting | Storage | Description |
 |---------|---------|-------------|
 | API Server URL | EncryptedSharedPreferences | Base URL of the Hermes API Server (e.g., `http://192.168.1.100:8642`) |
-| API Key (optional) | EncryptedSharedPreferences | Bearer token for API authentication — only needed if server has `API_SERVER_KEY` set |
+| API Key | EncryptedSharedPreferences | Bearer token for API authentication. Latest Hermes deployments should set `API_SERVER_KEY` when exposed beyond loopback. |
+| Dashboard URL | DataStore | Hermes dashboard/admin URL, conventionally the same host as the API server on port `9119`. Derived automatically from the API URL unless explicitly overridden. |
+| Dashboard session cookies | EncryptedSharedPreferences | Auth cookies for the dashboard/admin server. Stored separately from API keys and relay session tokens. |
 | Relay URL | EncryptedSharedPreferences | WebSocket URL for the Relay Server (optional, for bridge/terminal) |
 | Relay Session Token | **Keystore** (StrongBox when available), with fallback to EncryptedSharedPreferences | Persistent token from relay pairing flow. Migrated automatically from the legacy EncryptedSharedPreferences file on first launch post-upgrade. |
 | TOFU Cert Pins | DataStore (`tofu_pins`) | SHA-256 SPKI fingerprints per `host:port`. Recorded on the first successful `wss://` connect, verified on subsequent connects via OkHttp `CertificatePinner`. Wiped explicitly when the user re-pairs via QR (taken as consent to new cert material). |
@@ -50,7 +62,7 @@ Per-channel grants (`chat`, `terminal`, `bridge`, `tui`, `voice:config`, `voice:
 
 ### Relay sessions
 
-**Settings → Connections → [active card] → Security → Relay sessions** (or **Settings → Relay sessions**) opens a full-screen list of every phone currently paired with the relay. The screen leads with a short intro paragraph explaining that each row is a server-side session (not a Bluetooth pairing, not an account), then renders one card per session:
+**Settings → Connections → [active card] → Security → Relay sessions** (or **Settings → Power tools → Relay sessions**) opens a full-screen list of every phone currently paired with the relay. This is a relay power tool: if the current connection is not paired, Android shows **Requires pairing** with a **Pair to unlock** action instead of an empty session list. When paired, the screen leads with a short intro paragraph explaining that each row is a server-side session (not a Bluetooth pairing, not an account), then renders one card per session:
 
 - Device name + device ID
 - **Current device** badge if this is the device you're looking at the list on
