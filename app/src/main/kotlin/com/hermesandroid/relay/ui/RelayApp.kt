@@ -69,6 +69,8 @@ import androidx.navigation.navArgument
 import com.hermesandroid.relay.ui.components.MorphingSphere
 import com.hermesandroid.relay.ui.components.ConnectionStatusBanner
 import com.hermesandroid.relay.ui.components.ConnectionSwitcherSheet
+import com.hermesandroid.relay.ui.components.PowerFeatureGateScreen
+import com.hermesandroid.relay.ui.components.PowerFeatureGateStatus
 import com.hermesandroid.relay.ui.components.UnattendedGlobalBanner
 import com.hermesandroid.relay.ui.components.UpdateBanner
 import com.hermesandroid.relay.update.UpdateCheckResult
@@ -94,6 +96,7 @@ import com.hermesandroid.relay.ui.screens.BridgeSafetySettingsScreen
 // === END PHASE3-safety-rails ===
 import com.hermesandroid.relay.ui.screens.ChatScreen
 import com.hermesandroid.relay.ui.screens.ChatSettingsScreen
+import com.hermesandroid.relay.ui.screens.DashboardManagementScreen
 import com.hermesandroid.relay.ui.screens.DeveloperSettingsScreen
 import com.hermesandroid.relay.ui.screens.MediaSettingsScreen
 import com.hermesandroid.relay.ui.screens.PairedDevicesScreen
@@ -166,6 +169,7 @@ sealed class Screen(
     }
     data object Terminal : Screen("terminal", "Terminal", Icons.Filled.Code)
     data object Bridge : Screen("bridge", "Bridge", Icons.Filled.PhoneAndroid)
+    data object Manage : Screen("manage", "Manage", Icons.Filled.Settings)
     data object Settings : Screen("settings", "Settings", Icons.Filled.Settings)
 
     // Non-bottom-nav destinations — reached by explicit navigation, not the
@@ -280,8 +284,7 @@ sealed class Screen(
 
 private val bottomNavScreens = listOf(
     Screen.Chat,
-    Screen.Terminal,
-    Screen.Bridge,
+    Screen.Manage,
     Screen.Settings
 )
 
@@ -975,48 +978,78 @@ fun RelayApp() {
                         },
                     )
                 }
-                composable(Screen.Terminal.route) {
-                    TerminalScreen(
-                        terminalViewModel = terminalViewModel,
-                        connectionViewModel = connectionViewModel
+                composable(Screen.Manage.route) {
+                    DashboardManagementScreen(
+                        connectionViewModel = connectionViewModel,
+                        onNavigateToConnections = {
+                            navController.navigate(Screen.ConnectionsSettings.route)
+                        },
                     )
                 }
+                composable(Screen.Terminal.route) {
+                    if (coldStartAuthState is AuthState.Paired) {
+                        TerminalScreen(
+                            terminalViewModel = terminalViewModel,
+                            connectionViewModel = connectionViewModel
+                        )
+                    } else {
+                        PowerFeatureGateScreen(
+                            title = "Terminal",
+                            summary = "Open a server shell through your paired relay session.",
+                            status = PowerFeatureGateStatus.fromRelayAuth(coldStartAuthState),
+                            onPrimaryAction = {
+                                navController.navigate(Screen.Pair.route())
+                            },
+                        )
+                    }
+                }
                 composable(Screen.Bridge.route) {
-                    if (BuildFlavor.isSideload) {
-                        BridgeScreen(
-                            connectionViewModel = connectionViewModel,
-                            onNavigateToBridgeSafety = {
-                                navController.navigate(Screen.BridgeSafetySettings.route)
+                    if (coldStartAuthState !is AuthState.Paired) {
+                        PowerFeatureGateScreen(
+                            title = "Bridge",
+                            summary = "Let Hermes send approved bridge commands to this phone.",
+                            status = PowerFeatureGateStatus.fromRelayAuth(coldStartAuthState),
+                            onPrimaryAction = {
+                                navController.navigate(Screen.Pair.route())
                             },
                         )
                     } else {
-                        BridgeCoreScreen(
-                            connectionViewModel = connectionViewModel,
-                            onNavigateToConnections = {
-                                navController.navigate(Screen.ConnectionsSettings.route)
-                            },
-                            onNavigateToTerminal = {
-                                navController.navigate(Screen.Terminal.route) {
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
+                        if (BuildFlavor.isSideload) {
+                            BridgeScreen(
+                                connectionViewModel = connectionViewModel,
+                                onNavigateToBridgeSafety = {
+                                    navController.navigate(Screen.BridgeSafetySettings.route)
+                                },
+                            )
+                        } else {
+                            BridgeCoreScreen(
+                                connectionViewModel = connectionViewModel,
+                                onNavigateToConnections = {
+                                    navController.navigate(Screen.ConnectionsSettings.route)
+                                },
+                                onNavigateToTerminal = {
+                                    navController.navigate(Screen.Terminal.route) {
+                                        popUpTo(navController.graph.findStartDestination().id) {
+                                            saveState = true
+                                        }
+                                        launchSingleTop = true
+                                        restoreState = true
                                     }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            },
-                            onNavigateToVoiceSettings = {
-                                navController.navigate(Screen.VoiceSettings.route)
-                            },
-                            onNavigateToNotificationCompanion = {
-                                navController.navigate(Screen.NotificationCompanionSettings.route)
-                            },
-                            onNavigateToMediaSettings = {
-                                navController.navigate(Screen.MediaSettings.route)
-                            },
-                            onNavigateToRelaySessions = {
-                                navController.navigate(Screen.PairedDevices.route)
-                            },
-                        )
+                                },
+                                onNavigateToVoiceSettings = {
+                                    navController.navigate(Screen.VoiceSettings.route)
+                                },
+                                onNavigateToNotificationCompanion = {
+                                    navController.navigate(Screen.NotificationCompanionSettings.route)
+                                },
+                                onNavigateToMediaSettings = {
+                                    navController.navigate(Screen.MediaSettings.route)
+                                },
+                                onNavigateToRelaySessions = {
+                                    navController.navigate(Screen.PairedDevices.route)
+                                },
+                            )
+                        }
                     }
                 }
                 composable(Screen.Settings.route) {
@@ -1032,8 +1065,17 @@ fun RelayApp() {
                         onNavigateToConnections = {
                             navController.navigate(Screen.ConnectionsSettings.route)
                         },
+                        onNavigateToManage = {
+                            navController.navigate(Screen.Manage.route)
+                        },
                         onNavigateToChatSettings = {
                             navController.navigate(Screen.ChatSettings.route)
+                        },
+                        onNavigateToTerminal = {
+                            navController.navigate(Screen.Terminal.route)
+                        },
+                        onNavigateToBridge = {
+                            navController.navigate(Screen.Bridge.route)
                         },
                         onNavigateToMediaSettings = {
                             navController.navigate(Screen.MediaSettings.route)
@@ -1118,16 +1160,25 @@ fun RelayApp() {
                 }
                 // === END PHASE3-safety-rails ===
                 composable(Screen.PairedDevices.route) {
-                    PairedDevicesScreen(
-                        connectionViewModel = connectionViewModel,
-                        onBack = { navController.popBackStack() },
-                        onRequestRepair = {
-                            // Pop back to Settings so the user lands on the
-                            // "Scan Pairing QR" button rather than getting
-                            // stranded on an empty devices list.
-                            navController.popBackStack(Screen.Settings.route, inclusive = false)
-                        }
-                    )
+                    if (coldStartAuthState is AuthState.Paired) {
+                        PairedDevicesScreen(
+                            connectionViewModel = connectionViewModel,
+                            onBack = { navController.popBackStack() },
+                            onRequestRepair = {
+                                navController.navigate(Screen.Pair.route())
+                            }
+                        )
+                    } else {
+                        PowerFeatureGateScreen(
+                            title = "Relay sessions",
+                            summary = "Review and revoke devices paired with this relay.",
+                            status = PowerFeatureGateStatus.fromRelayAuth(coldStartAuthState),
+                            onPrimaryAction = {
+                                navController.navigate(Screen.Pair.route())
+                            },
+                            onBack = { navController.popBackStack() },
+                        )
+                    }
                 }
                 // (The `composable(Screen.ConnectionSettings.route)` block
                 // that used to live here — hosting the singular, legacy
@@ -1355,6 +1406,18 @@ fun RelayApp() {
                     val sectionArg = backStackEntry.arguments
                         ?.getString(Screen.ProfileInspector.ARG_SECTION)
                         ?: Screen.ProfileInspector.SECTION_CONFIG
+                    if (coldStartAuthState !is AuthState.Paired) {
+                        PowerFeatureGateScreen(
+                            title = "Profile Inspector",
+                            summary = "Inspect relay-backed profile config, SOUL, memory files, and skills.",
+                            status = PowerFeatureGateStatus.fromRelayAuth(coldStartAuthState),
+                            onPrimaryAction = {
+                                navController.navigate(Screen.Pair.route())
+                            },
+                            onBack = { navController.popBackStack() },
+                        )
+                        return@composable
+                    }
                     val inspectorViewModel: ProfileInspectorViewModel = viewModel(
                         viewModelStoreOwner = backStackEntry,
                         key = "profile-inspector-$profileNameArg",

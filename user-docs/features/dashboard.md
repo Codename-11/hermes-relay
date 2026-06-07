@@ -26,6 +26,12 @@ Open the hermes-agent dashboard in your browser (default: `http://localhost:<das
 
 The plugin's header shows the relay version, overall health (green / red dot), and an **Auto-refresh** toggle that persists to `localStorage`. Turn auto-refresh off if you're reading a specific activity row and don't want it to scroll out from under you.
 
+## Android Manage Surface
+
+The Android app also uses the Hermes dashboard/admin API as its standard management data plane. The **Manage** tab derives the dashboard URL from the active API server URL by default (`:8642` → `:9119`) and reads Skills, Cron, MCP, MCP catalog, Profiles, Models, and Config from dashboard endpoints when the server supports them. The native tab supports skill toggles, cron pause/resume/run/delete plus recent runs, MCP enable/test/remove, catalog installs that do not require inline credentials, profile activation/delete, and read-only profile SOUL details.
+
+This is separate from relay pairing. A standard user can connect with API/dashboard credentials and use the Manage tab without pairing the relay. Relay-only capabilities — Terminal, Bridge, Relay sessions, Media inspector, and profile memory file editing — stay under **Settings → Power tools** and show **Requires pairing** until the phone has a paired relay session. Editing profile SOUL or memory files remains in the paired profile inspector.
+
 ## The Four Tabs
 
 ### Relay Management

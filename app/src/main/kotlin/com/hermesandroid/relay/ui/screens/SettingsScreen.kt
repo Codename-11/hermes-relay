@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Security
 // === END PHASE3-safety-rails ===
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -109,7 +110,10 @@ fun SettingsScreen(
     // + manual URL + insecure toggle + manual pairing code surface via
     // expandable sections, so there's nothing left to link to twice.
     onNavigateToConnections: () -> Unit,
+    onNavigateToManage: () -> Unit,
     onNavigateToChatSettings: () -> Unit,
+    onNavigateToTerminal: () -> Unit,
+    onNavigateToBridge: () -> Unit,
     onNavigateToMediaSettings: () -> Unit,
     onNavigateToAppearanceSettings: () -> Unit,
     onNavigateToAnalytics: () -> Unit,
@@ -256,6 +260,14 @@ fun SettingsScreen(
             )
 
             SettingsCategoryRow(
+                icon = Icons.Filled.Link,
+                title = "Hermes management",
+                subtitle = "Skills, cron, MCP, profiles, models, config",
+                onClick = onNavigateToManage,
+                isDarkTheme = isDarkTheme,
+            )
+
+            SettingsCategoryRow(
                 icon = Icons.AutoMirrored.Filled.Chat,
                 title = "Chat",
                 subtitle = "Reasoning, tool display, endpoints, message length",
@@ -281,18 +293,6 @@ fun SettingsScreen(
             )
             // === END PHASE3-notif-listener-followup ===
 
-            if (BuildFlavor.isSideload) {
-                // === PHASE3-safety-rails: bridge safety entry-point ===
-                SettingsCategoryRow(
-                    icon = Icons.Filled.Security,
-                    title = "Bridge safety",
-                    subtitle = "Blocklist, destructive-verb confirmation, auto-disable",
-                    onClick = onNavigateToBridgeSafety,
-                    isDarkTheme = isDarkTheme,
-                )
-                // === END PHASE3-safety-rails ===
-            }
-
             SettingsCategoryRow(
                 icon = Icons.Filled.Image,
                 title = "Media",
@@ -309,6 +309,24 @@ fun SettingsScreen(
                 isDarkTheme = isDarkTheme,
             )
 
+            SettingsSectionHeader("Power tools")
+
+            SettingsCategoryRow(
+                icon = Icons.Filled.Code,
+                title = "Terminal",
+                subtitle = "Server shell access through a paired relay session",
+                onClick = onNavigateToTerminal,
+                isDarkTheme = isDarkTheme,
+            )
+
+            SettingsCategoryRow(
+                icon = Icons.Filled.PhoneAndroid,
+                title = "Bridge",
+                subtitle = "Relay-granted phone bridge controls",
+                onClick = onNavigateToBridge,
+                isDarkTheme = isDarkTheme,
+            )
+
             SettingsCategoryRow(
                 icon = Icons.Filled.Devices,
                 title = "Relay sessions",
@@ -316,6 +334,18 @@ fun SettingsScreen(
                 onClick = onNavigateToPairedDevices,
                 isDarkTheme = isDarkTheme,
             )
+
+            if (BuildFlavor.isSideload) {
+                // === PHASE3-safety-rails: bridge safety entry-point ===
+                SettingsCategoryRow(
+                    icon = Icons.Filled.Security,
+                    title = "Bridge safety",
+                    subtitle = "Blocklist, destructive-verb confirmation, auto-disable",
+                    onClick = onNavigateToBridgeSafety,
+                    isDarkTheme = isDarkTheme,
+                )
+                // === END PHASE3-safety-rails ===
+            }
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Analytics,
@@ -501,6 +531,18 @@ private fun ActiveAgentCard(
             )
         }
     }
+}
+
+@Composable
+private fun SettingsSectionHeader(label: String) {
+    Text(
+        text = label,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp, bottom = 2.dp),
+    )
 }
 
 /**

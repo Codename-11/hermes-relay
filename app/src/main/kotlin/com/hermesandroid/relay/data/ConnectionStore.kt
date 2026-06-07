@@ -158,7 +158,8 @@ class ConnectionStore private constructor(
                 // callers shouldn't rely on insertion order of a duplicate
                 // add, and the alternative (throwing) makes migration code
                 // more brittle than it needs to be.
-                val next = current.filterNot { it.id == connection.id } + connection
+                val normalized = connection.withDashboardDefaults()
+                val next = current.filterNot { it.id == connection.id } + normalized
                 prefs[KEY_CONNECTIONS] = encodeConnections(next)
                 _connections.value = next
             }
@@ -177,7 +178,8 @@ class ConnectionStore private constructor(
                     Log.w(TAG, "updateConnection: no connection with id=${connection.id} — ignored")
                     return@edit
                 }
-                val next = current.map { if (it.id == connection.id) connection else it }
+                val normalized = connection.withDashboardDefaults()
+                val next = current.map { if (it.id == connection.id) normalized else it }
                 prefs[KEY_CONNECTIONS] = encodeConnections(next)
                 _connections.value = next
             }
@@ -294,6 +296,8 @@ class ConnectionStore private constructor(
                             pairedAt = pairedAtMillis,
                             transportHint = transportHint,
                             expiresAt = expiresAtMillis,
+                            dashboardUrl = target.dashboardUrl
+                                ?: Connection.deriveDefaultDashboardUrl(target.apiServerUrl),
                         )
                     } else {
                         it
@@ -340,6 +344,7 @@ class ConnectionStore private constructor(
                     apiServerUrl = apiUrl,
                     relayUrl = relayUrl,
                     tokenStoreKey = Connection.LEGACY_TOKEN_STORE_KEY,
+                    dashboardUrl = Connection.deriveDefaultDashboardUrl(apiUrl),
                     pairedAt = null,
                     lastActiveSessionId = legacyLastSessionId,
                     transportHint = null,
@@ -355,6 +360,33 @@ class ConnectionStore private constructor(
         }
     }
 
+    suspend fun setDashboardStatus(
+        connectionId: String,
+        status: DashboardConnectionStatus,
+    ) {
+        writeMutex.withLock {
+            dataStore.edit { prefs ->
+                val current = decodeConnections(prefs[KEY_CONNECTIONS])
+                val target = current.firstOrNull { it.id == connectionId } ?: return@edit
+                val next = current.map {
+                    if (it.id == connectionId) {
+                        target.copy(
+                            dashboardUrl = target.dashboardUrl
+                                ?: Connection.deriveDefaultDashboardUrl(target.apiServerUrl),
+                            dashboardAuthRequired = status.authRequired,
+                            dashboardAuthProviders = status.authProviders,
+                            dashboardLastStatus = status,
+                        )
+                    } else {
+                        it
+                    }
+                }
+                prefs[KEY_CONNECTIONS] = encodeConnections(next)
+                _connections.value = next
+            }
+        }
+    }
+
     // --- Encoding helpers ---------------------------------------------------
 
     private fun encodeConnections(list: List<Connection>): String =
@@ -364,9 +396,19 @@ class ConnectionStore private constructor(
         if (raw.isNullOrBlank()) return emptyList()
         return try {
             json.decodeFromString(connectionListSerializer, raw)
+                .map { it.withDashboardDefaults() }
         } catch (e: Exception) {
             Log.w(TAG, "decodeConnections failed, returning empty list: ${e.message}")
             emptyList()
+        }
+    }
+
+    private fun Connection.withDashboardDefaults(): Connection {
+        val derivedDashboardUrl = Connection.deriveDefaultDashboardUrl(apiServerUrl)
+        return if (dashboardUrl.isNullOrBlank() && derivedDashboardUrl != null) {
+            copy(dashboardUrl = derivedDashboardUrl)
+        } else {
+            this
         }
     }
 

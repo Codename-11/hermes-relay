@@ -1,3 +1,14 @@
+# Unreleased
+
+## Changed
+
+- Android now defaults to a standard Hermes layout with **Chat**, **Manage**, and **Settings** in bottom navigation. Terminal and Bridge remain available under **Settings → Power tools** and through existing routes.
+- Added a native **Manage** surface backed by the Hermes dashboard/admin API for Skills, Cron, MCP servers/catalog, Profiles, Models, and Config. It supports dashboard sign-in, common management actions, cron run details, and read-only profile SOUL details without requiring relay pairing.
+- Relay-only features now show a consistent **Requires pairing** / **Pair to unlock** gate when the active connection is not paired.
+- Connections now model API auth, dashboard auth, and relay pairing separately. Dashboard URLs derive from the API host on port `9119` by default.
+
+---
+
 # Hermes-Relay-Android v0.8.1
 
 **Release Date:** May 26, 2026

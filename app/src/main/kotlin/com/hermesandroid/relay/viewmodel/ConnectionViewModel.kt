@@ -2649,13 +2649,22 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     .firstOrNull { it.id == activeId }
                 if (current != null) {
                     val newRelayUrl = payload.relay?.url ?: current.relayUrl
+                    val newDashboardUrl = if (
+                        Connection.isAutoManagedDashboardUrl(current.dashboardUrl, current.apiServerUrl)
+                    ) {
+                        Connection.deriveDefaultDashboardUrl(payload.serverUrl)
+                    } else {
+                        current.dashboardUrl
+                    }
                     val needsUpdate = current.apiServerUrl != payload.serverUrl ||
-                        current.relayUrl != newRelayUrl
+                        current.relayUrl != newRelayUrl ||
+                        current.dashboardUrl != newDashboardUrl
                     if (needsUpdate) {
                         connectionStore.updateConnection(
                             current.copy(
                                 apiServerUrl = payload.serverUrl,
                                 relayUrl = newRelayUrl,
+                                dashboardUrl = newDashboardUrl,
                             )
                         )
                     }
@@ -3216,11 +3225,25 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     ) {
         val activeId = connectionStore.activeConnectionId.value ?: return
         val current = connectionStore.connections.value.firstOrNull { it.id == activeId } ?: return
-        if (current.apiServerUrl == apiServerUrl && current.relayUrl == relayUrl) return
+        val nextDashboardUrl = if (
+            Connection.isAutoManagedDashboardUrl(current.dashboardUrl, current.apiServerUrl)
+        ) {
+            Connection.deriveDefaultDashboardUrl(apiServerUrl)
+        } else {
+            current.dashboardUrl
+        }
+        if (
+            current.apiServerUrl == apiServerUrl &&
+            current.relayUrl == relayUrl &&
+            current.dashboardUrl == nextDashboardUrl
+        ) {
+            return
+        }
         connectionStore.updateConnection(
             current.copy(
                 apiServerUrl = apiServerUrl,
                 relayUrl = relayUrl,
+                dashboardUrl = nextDashboardUrl,
             ),
         )
     }
