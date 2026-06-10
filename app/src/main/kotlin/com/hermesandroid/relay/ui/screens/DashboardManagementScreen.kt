@@ -4,20 +4,31 @@ import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -30,6 +41,7 @@ import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -60,13 +72,13 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import androidx.compose.foundation.background
 import com.hermesandroid.relay.network.EncryptedDashboardCookieStore
 import com.hermesandroid.relay.network.DashboardApiClient
 import com.hermesandroid.relay.network.DashboardAuthProvider
@@ -81,6 +93,8 @@ import com.hermesandroid.relay.ui.components.RelayPrimaryMode
 import com.hermesandroid.relay.ui.components.RelaySectionCaption
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.relayGridTexture
+import com.hermesandroid.relay.ui.theme.relayMetadataStyle
+import com.hermesandroid.relay.ui.theme.relayPanel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -182,6 +196,7 @@ fun DashboardManagementScreen(
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
     val dashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
     var selectedTab by remember { mutableStateOf(0) }
+    var showingDetail by remember { mutableStateOf(false) }
     var reloadNonce by remember { mutableStateOf(0) }
     val payloadStates = remember { mutableStateMapOf<String, DashboardPayloadState>() }
     val refreshingPayloads = remember { mutableStateMapOf<String, Boolean>() }
@@ -199,6 +214,20 @@ fun DashboardManagementScreen(
     }
     val payloadState = payloadStates[payloadKey] ?: DashboardPayloadState.Idle
     val isRefreshing = refreshingPayloads[payloadKey] == true
+    val dashboardStatus = when (val state = payloadState) {
+        is DashboardPayloadState.Loaded -> state.status
+        is DashboardPayloadState.Error -> state.status
+        else -> null
+    }
+    val dashboardSession = when (val state = payloadState) {
+        is DashboardPayloadState.Loaded -> state.session
+        else -> null
+    }
+    val dashboardAuthenticated = when (val state = payloadState) {
+        is DashboardPayloadState.Loaded -> state.session?.authenticated
+        is DashboardPayloadState.Error -> false
+        else -> null
+    }
     val cookieStoreFactory = remember(context, connectionId) {
         {
             EncryptedDashboardCookieStore(
@@ -518,138 +547,299 @@ fun DashboardManagementScreen(
                 },
             )
             val loadedCount = (payloadState as? DashboardPayloadState.Loaded)?.items?.size ?: 0
-            Column(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                RelaySectionCaption(
-                    title = "Relay Hub",
-                    meta = "standard install path",
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    RelayMetricCard(
-                        value = if (loadedCount > 0) loadedCount.toString() else "-",
-                        label = section.label.lowercase(),
-                        modifier = Modifier.weight(1f),
-                    )
-                    RelayMetricCard(
-                        value = when (payloadState) {
-                            is DashboardPayloadState.Loaded -> "ok"
-                            is DashboardPayloadState.Loading -> "..."
-                            is DashboardPayloadState.Error -> "!"
-                            DashboardPayloadState.Idle -> "-"
-                        },
-                        label = "dashboard",
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                RelayNavTile(
-                    icon = Icons.Filled.Link,
-                    title = "Connections",
-                    subtitle = "Pair, switch, verify routes",
-                    onClick = onNavigateToConnections,
-                    selected = false,
-                )
-                RelayNavTile(
-                    icon = Icons.Filled.Person,
-                    title = "Profiles",
-                    subtitle = "SOUL, memory, skills, sessions",
-                    onClick = {
-                        managementSections.indexOfFirst { it.label == "Profiles" }
-                            .takeIf { it >= 0 }
-                            ?.let { selectedTab = it }
-                    },
-                    selected = section.label == "Profiles",
-                )
-                RelayNavTile(
-                    icon = Icons.Filled.AutoAwesome,
-                    title = "Skills + Tools",
-                    subtitle = "Browse, enable, configure",
-                    onClick = {
-                        managementSections.indexOfFirst { it.label == "Skills" }
-                            .takeIf { it >= 0 }
-                            ?.let { selectedTab = it }
-                    },
-                    selected = section.label == "Skills",
-                )
-                RelayNavTile(
-                    icon = Icons.Filled.Schedule,
-                    title = "Automations",
-                    subtitle = "Cron, background runs, delivery",
-                    onClick = {
-                        managementSections.indexOfFirst { it.label == "Cron" }
-                            .takeIf { it >= 0 }
-                            ?.let { selectedTab = it }
-                    },
-                    selected = section.label == "Cron",
-                )
-            }
-            PrimaryScrollableTabRow(selectedTabIndex = selectedTab) {
-                managementSections.forEachIndexed { index, tab ->
-                    Tab(
-                        selected = selectedTab == index,
-                        onClick = { selectedTab = index },
-                        text = { Text(tab.label) },
-                    )
-                }
-            }
-            DashboardConnectionHeader(
-                dashboardUrl = dashboardUrl,
-                status = when (val state = payloadState) {
-                    is DashboardPayloadState.Loaded -> state.status
-                    is DashboardPayloadState.Error -> state.status
-                    else -> null
+            AnimatedContent(
+                targetState = showingDetail,
+                modifier = Modifier.weight(1f),
+                transitionSpec = {
+                    if (targetState) {
+                        (
+                            slideInVertically(animationSpec = tween(220)) { it / 3 } +
+                                fadeIn(animationSpec = tween(160))
+                        ) togetherWith (
+                            slideOutVertically(animationSpec = tween(220)) { -it / 2 } +
+                                fadeOut(animationSpec = tween(120))
+                        )
+                    } else {
+                        (
+                            slideInVertically(animationSpec = tween(220)) { -it / 3 } +
+                                fadeIn(animationSpec = tween(160))
+                        ) togetherWith (
+                            slideOutVertically(animationSpec = tween(180)) { it / 2 } +
+                                fadeOut(animationSpec = tween(120))
+                        )
+                    }
                 },
-                session = when (val state = payloadState) {
-                    is DashboardPayloadState.Loaded -> state.session
-                    else -> null
-                },
-                authenticated = when (val state = payloadState) {
-                    is DashboardPayloadState.Loaded -> state.session?.authenticated
-                    is DashboardPayloadState.Error -> false
-                    else -> null
-                },
-                lastCheckedAtMillis = activeConnection?.dashboardLastStatus?.checkedAtMillis,
-                onClearSession = { confirmClearDashboardSession = true },
-                onNavigateToConnections = onNavigateToConnections,
-            )
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
-            if (isRefreshing && payloadState !is DashboardPayloadState.Loading) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            }
-            Box(modifier = Modifier.weight(1f)) {
-                when (val state = payloadState) {
-                    DashboardPayloadState.Idle,
-                    DashboardPayloadState.Loading -> LoadingBody(section.label)
-                    is DashboardPayloadState.Error -> ErrorBody(
-                        message = state.message,
-                        status = state.status,
-                        dashboardUrl = dashboardUrl,
-                        actionInFlight = actionInFlight,
-                        actionMessage = actionMessage,
-                        onRetry = { reloadNonce += 1 },
-                        onSignIn = ::submitDashboardSignIn,
-                        onOAuthSignIn = { provider -> oauthProvider = provider },
-                    )
-                    is DashboardPayloadState.Loaded -> LoadedBody(
-                        section = section,
-                        state = state,
-                        actionInFlight = actionInFlight,
-                        actionMessage = actionMessage,
-                        onAction = { item, action ->
-                            if (action.destructive) {
-                                pendingAction = PendingDashboardAction(item, action)
-                            } else {
-                                runAction(item, action)
+                label = "manage-content-mode",
+            ) { detailMode ->
+                if (detailMode) {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        ManageSelectedSectionHeader(
+                            section = section,
+                            onBackToOverview = { showingDetail = false },
+                        )
+                        PrimaryScrollableTabRow(selectedTabIndex = selectedTab) {
+                            managementSections.forEachIndexed { index, tab ->
+                                Tab(
+                                    selected = selectedTab == index,
+                                    onClick = { selectedTab = index },
+                                    text = { Text(tab.label) },
+                                )
                             }
+                        }
+                        DashboardConnectionHeader(
+                            dashboardUrl = dashboardUrl,
+                            status = dashboardStatus,
+                            session = dashboardSession,
+                            authenticated = dashboardAuthenticated,
+                            lastCheckedAtMillis = activeConnection?.dashboardLastStatus?.checkedAtMillis,
+                            onClearSession = { confirmClearDashboardSession = true },
+                            onNavigateToConnections = onNavigateToConnections,
+                        )
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
+                        if (isRefreshing && payloadState !is DashboardPayloadState.Loading) {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        }
+                        Box(modifier = Modifier.weight(1f)) {
+                            when (val state = payloadState) {
+                                DashboardPayloadState.Idle,
+                                DashboardPayloadState.Loading -> LoadingBody(section.label)
+                                is DashboardPayloadState.Error -> ErrorBody(
+                                    message = state.message,
+                                    status = state.status,
+                                    dashboardUrl = dashboardUrl,
+                                    actionInFlight = actionInFlight,
+                                    actionMessage = actionMessage,
+                                    onRetry = { reloadNonce += 1 },
+                                    onSignIn = ::submitDashboardSignIn,
+                                    onOAuthSignIn = { provider -> oauthProvider = provider },
+                                )
+                                is DashboardPayloadState.Loaded -> LoadedBody(
+                                    section = section,
+                                    state = state,
+                                    actionInFlight = actionInFlight,
+                                    actionMessage = actionMessage,
+                                    onAction = { item, action ->
+                                        if (action.destructive) {
+                                            pendingAction = PendingDashboardAction(item, action)
+                                        } else {
+                                            runAction(item, action)
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    ManageOverviewBody(
+                        loadedCount = loadedCount,
+                        section = section,
+                        payloadState = payloadState,
+                        dashboardUrl = dashboardUrl,
+                        status = dashboardStatus,
+                        session = dashboardSession,
+                        authenticated = dashboardAuthenticated,
+                        lastCheckedAtMillis = activeConnection?.dashboardLastStatus?.checkedAtMillis,
+                        onClearSession = { confirmClearDashboardSession = true },
+                        onNavigateToConnections = onNavigateToConnections,
+                        onSelectSection = { label ->
+                            managementSections.indexOfFirst { it.label == label }
+                                .takeIf { it >= 0 }
+                                ?.let {
+                                    selectedTab = it
+                                    showingDetail = true
+                                }
                         },
                     )
                 }
             }
         }
+    }
+}
+
+private data class ManageTileSpec(
+    val icon: ImageVector,
+    val title: String,
+    val subtitle: String,
+)
+
+private fun manageTileSpec(section: DashboardManagementSection): ManageTileSpec = when (section.label) {
+    "Profiles" -> ManageTileSpec(
+        icon = Icons.Filled.Person,
+        title = "Profiles",
+        subtitle = "SOUL, memory, skills, sessions",
+    )
+    "Skills" -> ManageTileSpec(
+        icon = Icons.Filled.AutoAwesome,
+        title = "Skills + Tools",
+        subtitle = "Browse, enable, configure",
+    )
+    "Cron" -> ManageTileSpec(
+        icon = Icons.Filled.Schedule,
+        title = "Automations",
+        subtitle = "Cron, background runs, delivery",
+    )
+    "MCP" -> ManageTileSpec(
+        icon = Icons.Filled.Code,
+        title = "MCP Servers",
+        subtitle = "Servers, status, tools",
+    )
+    "Catalog" -> ManageTileSpec(
+        icon = Icons.Filled.AutoAwesome,
+        title = "Catalog",
+        subtitle = "Discover upstream servers",
+    )
+    "Models" -> ManageTileSpec(
+        icon = Icons.Filled.Tune,
+        title = "Models",
+        subtitle = "Provider and model state",
+    )
+    "Config" -> ManageTileSpec(
+        icon = Icons.Filled.Tune,
+        title = "Config",
+        subtitle = "Schema and runtime options",
+    )
+    else -> ManageTileSpec(
+        icon = Icons.Filled.Link,
+        title = section.label,
+        subtitle = section.path,
+    )
+}
+
+@Composable
+private fun ManageOverviewBody(
+    loadedCount: Int,
+    section: DashboardManagementSection,
+    payloadState: DashboardPayloadState,
+    dashboardUrl: String,
+    status: DashboardStatus?,
+    session: DashboardAuthSession?,
+    authenticated: Boolean?,
+    lastCheckedAtMillis: Long?,
+    onClearSession: () -> Unit,
+    onNavigateToConnections: () -> Unit,
+    onSelectSection: (String) -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        item {
+            RelaySectionCaption(
+                title = "Relay Hub",
+                meta = "overview",
+            )
+        }
+        item {
+            DashboardConnectionHeader(
+                dashboardUrl = dashboardUrl,
+                status = status,
+                session = session,
+                authenticated = authenticated,
+                lastCheckedAtMillis = lastCheckedAtMillis,
+                onClearSession = onClearSession,
+                onNavigateToConnections = onNavigateToConnections,
+            )
+        }
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                RelayMetricCard(
+                    value = if (loadedCount > 0) loadedCount.toString() else "-",
+                    label = section.label.lowercase(),
+                    modifier = Modifier.weight(1f),
+                )
+                RelayMetricCard(
+                    value = when (payloadState) {
+                        is DashboardPayloadState.Loaded -> "ok"
+                        is DashboardPayloadState.Loading -> "..."
+                        is DashboardPayloadState.Error -> "!"
+                        DashboardPayloadState.Idle -> "-"
+                    },
+                    label = "dashboard",
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+        item {
+            RelayNavTile(
+                icon = Icons.Filled.Link,
+                title = "Connections",
+                subtitle = "Pair, switch, verify routes",
+                onClick = onNavigateToConnections,
+            )
+        }
+        item {
+            RelayNavTile(
+                icon = Icons.Filled.Person,
+                title = "Profiles",
+                subtitle = "SOUL, memory, skills, sessions",
+                onClick = { onSelectSection("Profiles") },
+            )
+        }
+        item {
+            RelayNavTile(
+                icon = Icons.Filled.AutoAwesome,
+                title = "Skills + Tools",
+                subtitle = "Browse, enable, configure",
+                onClick = { onSelectSection("Skills") },
+            )
+        }
+        item {
+            RelayNavTile(
+                icon = Icons.Filled.Schedule,
+                title = "Automations",
+                subtitle = "Cron, background runs, delivery",
+                onClick = { onSelectSection("Cron") },
+            )
+        }
+        item {
+            RelayNavTile(
+                icon = Icons.Filled.Code,
+                title = "MCP Servers",
+                subtitle = "Servers, status, tools",
+                onClick = { onSelectSection("MCP") },
+            )
+        }
+        item {
+            RelayNavTile(
+                icon = Icons.Filled.AutoAwesome,
+                title = "Catalog",
+                subtitle = "Discover upstream servers",
+                onClick = { onSelectSection("Catalog") },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ManageSelectedSectionHeader(
+    section: DashboardManagementSection,
+    onBackToOverview: () -> Unit,
+) {
+    val spec = manageTileSpec(section)
+    Column(
+        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        RelayNavTile(
+            icon = spec.icon,
+            title = spec.title,
+            subtitle = spec.subtitle,
+            selected = true,
+            onClick = onBackToOverview,
+            trailing = {
+                TextButton(
+                    onClick = onBackToOverview,
+                    modifier = Modifier.height(30.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                ) {
+                    Text("Overview")
+                }
+            },
+        )
     }
 }
 
@@ -679,49 +869,62 @@ private fun DashboardConnectionHeader(
         dashboardUrl.ifBlank { "No dashboard URL" },
         lastCheckedAtMillis?.let { "Checked ${formatDashboardCheckedAt(it)}" },
     ).joinToString(" · ")
+    val bannerText = listOf(authLabel, secondary)
+        .filter { it.isNotBlank() }
+        .joinToString(" · ")
+    val statusColor = when {
+        status == null -> RelayRefresh.Amber
+        status.authRequired && authenticated != true -> RelayRefresh.Danger
+        else -> RelayRefresh.Green
+    }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+            .relayPanel(background = RelayRefresh.Background.copy(alpha = 0.72f))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = authLabel,
-                style = MaterialTheme.typography.labelLarge,
-                color = if (authenticated == false && status?.authRequired == true) {
-                    MaterialTheme.colorScheme.error
-                } else {
-                    MaterialTheme.colorScheme.onSurface
-                },
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (secondary.isNotBlank()) {
-                Text(
-                    text = secondary,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontFamily = if (identity == null) FontFamily.Monospace else null,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+        Box(
+            modifier = Modifier
+                .size(7.dp)
+                .background(statusColor, CircleShape),
+        )
+        Text(
+            text = bannerText,
+            style = relayMetadataStyle(),
+            color = if (authenticated == false && status?.authRequired == true) {
+                RelayRefresh.Danger
+            } else {
+                RelayRefresh.Muted
+            },
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (authenticated == true) {
+            TextButton(
+                onClick = onClearSession,
+                modifier = Modifier.height(30.dp),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                colors = ButtonDefaults.textButtonColors(
+                    contentColor = RelayRefresh.Relay,
+                ),
+            ) {
+                Text("Sign out")
             }
         }
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        TextButton(
+            onClick = onNavigateToConnections,
+            modifier = Modifier.height(30.dp),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+            colors = ButtonDefaults.textButtonColors(
+                contentColor = RelayRefresh.Relay,
+            ),
         ) {
-            if (authenticated == true) {
-                TextButton(onClick = onClearSession) {
-                    Text("Sign out")
-                }
-            }
-            TextButton(onClick = onNavigateToConnections) {
-                Text("Connection")
-            }
+            Text("Connection")
         }
     }
 }
