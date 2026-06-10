@@ -25,6 +25,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
@@ -68,6 +69,7 @@ import com.hermesandroid.relay.ui.components.RelayChromeIconButton
 import com.hermesandroid.relay.ui.components.RelayHeroPanel
 import com.hermesandroid.relay.ui.components.RelayModeStrip
 import com.hermesandroid.relay.ui.components.RelayPrimaryMode
+import com.hermesandroid.relay.ui.components.RelayReturnStrip
 import com.hermesandroid.relay.ui.components.RelayStatusPill
 // === v0.4.1 unattended-access ===
 import com.hermesandroid.relay.ui.components.UnattendedAccessRow
@@ -117,6 +119,10 @@ fun BridgeScreen(
     onNavigateToChat: () -> Unit = {},
     onNavigateToManage: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
+    returnTitle: String? = null,
+    returnSubtitle: String = "",
+    returnLabel: String = "Back",
+    onReturn: (() -> Unit)? = null,
 ) {
     val masterToggle by viewModel.masterToggle.collectAsState()
     val permissionStatus by viewModel.permissionStatus.collectAsState()
@@ -243,6 +249,15 @@ fun BridgeScreen(
                     }
                 },
             )
+            if (returnTitle != null && onReturn != null) {
+                RelayReturnStrip(
+                    icon = Icons.AutoMirrored.Filled.ArrowBack,
+                    title = returnTitle,
+                    subtitle = returnSubtitle,
+                    label = returnLabel,
+                    onClick = onReturn,
+                )
+            }
             RelayHeroPanel(
                 title = if (relayReady) "Phone bridge is paired" else "Bridge controls are staged",
                 subtitle = if (relayReady) {

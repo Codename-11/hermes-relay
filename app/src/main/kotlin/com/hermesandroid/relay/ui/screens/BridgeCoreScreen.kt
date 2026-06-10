@@ -15,6 +15,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Devices
@@ -47,6 +48,7 @@ import com.hermesandroid.relay.ui.components.RelayHeroPanel
 import com.hermesandroid.relay.ui.components.RelayModeStrip
 import com.hermesandroid.relay.ui.components.RelayNavTile
 import com.hermesandroid.relay.ui.components.RelayPrimaryMode
+import com.hermesandroid.relay.ui.components.RelayReturnStrip
 import com.hermesandroid.relay.ui.components.RelaySectionCaption
 import com.hermesandroid.relay.ui.components.RelayStatusPill
 import com.hermesandroid.relay.ui.theme.RelayRefresh
@@ -75,6 +77,10 @@ fun BridgeCoreScreen(
     onNavigateToMediaSettings: () -> Unit,
     onNavigateToRelaySessions: () -> Unit,
     onNavigateToSettings: () -> Unit = {},
+    returnTitle: String? = null,
+    returnSubtitle: String = "",
+    returnLabel: String = "Back",
+    onReturn: (() -> Unit)? = null,
 ) {
     val relayState by connectionViewModel.relayUiState.collectAsState()
     val relayConnected = relayState == RelayUiState.Connected
@@ -124,6 +130,15 @@ fun BridgeCoreScreen(
                 },
                 modifier = Modifier.padding(horizontal = 0.dp, vertical = 0.dp),
             )
+            if (returnTitle != null && onReturn != null) {
+                RelayReturnStrip(
+                    icon = Icons.AutoMirrored.Filled.ArrowBack,
+                    title = returnTitle,
+                    subtitle = returnSubtitle,
+                    label = returnLabel,
+                    onClick = onReturn,
+                )
+            }
             RelayHeroPanel(
                 title = if (relayConnected) "Phone bridge is paired" else "Bridge Core is waiting",
                 subtitle = if (relayConnected) {

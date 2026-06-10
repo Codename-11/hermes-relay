@@ -4,8 +4,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -49,7 +47,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
@@ -67,7 +64,6 @@ import com.hermesandroid.relay.ui.components.ConnectionStatusBanner
 import com.hermesandroid.relay.ui.components.ConnectionSwitcherSheet
 import com.hermesandroid.relay.ui.components.PowerFeatureGateScreen
 import com.hermesandroid.relay.ui.components.PowerFeatureGateStatus
-import com.hermesandroid.relay.ui.components.RelayReturnStrip
 import com.hermesandroid.relay.ui.components.RelayStatusStrip
 import com.hermesandroid.relay.ui.components.UnattendedGlobalBanner
 import com.hermesandroid.relay.ui.components.UpdateBanner
@@ -111,6 +107,7 @@ import com.hermesandroid.relay.ui.screens.NotificationCompanionSettingsScreen
 import com.hermesandroid.relay.ui.screens.VoiceSettingsScreen
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
 import com.hermesandroid.relay.ui.theme.RelayRefresh
+import com.hermesandroid.relay.ui.theme.relayGridTexture
 import com.hermesandroid.relay.network.RelayProfileInspectorClient
 import com.hermesandroid.relay.network.AutoVoiceAudioClient
 import com.hermesandroid.relay.network.ProfileApiUrlResolver
@@ -649,13 +646,6 @@ fun RelayApp() {
     val fontScale by connectionViewModel.fontScale.collectAsState()
 
     HermesRelayTheme(themePreference = themePreference, fontScale = fontScale) {
-        // Brief sphere intro after system splash fades
-        var introComplete by remember { mutableStateOf(false) }
-        LaunchedEffect(Unit) {
-            delay(3000L) // show sphere intro for 3s
-            introComplete = true
-        }
-
         val navController = rememberNavController()
         var postOnboardingRoute by remember { mutableStateOf<String?>(null) }
 
@@ -693,17 +683,48 @@ fun RelayApp() {
         val navBackStackEntry by navController.currentBackStackEntryAsState()
         val currentRoute = navBackStackEntry?.destination?.route
         val isOnboarding = currentRoute == Screen.Onboarding.route
-        val bridgeReturnRoutes = remember {
-            setOf(
-                Screen.Terminal.route,
-                Screen.VoiceSettings.route,
-                Screen.NotificationCompanionSettings.route,
-                Screen.MediaSettings.route,
-                Screen.PairedDevices.route,
-                Screen.BridgeSafetySettings.route,
-            )
+        var bridgePrimaryReturnRoute by remember { mutableStateOf<String?>(null) }
+        var bridgePrimaryReturnLabel by remember { mutableStateOf<String?>(null) }
+
+        fun rememberBridgeReturn(route: String, label: String) {
+            bridgePrimaryReturnRoute = route
+            bridgePrimaryReturnLabel = label
         }
-        val bridgeReturnVisible = currentRoute in bridgeReturnRoutes && !isOnboarding
+
+        fun clearBridgeReturn() {
+            bridgePrimaryReturnRoute = null
+            bridgePrimaryReturnLabel = null
+        }
+
+        val bridgeReturnTitle = bridgePrimaryReturnLabel?.let { "Return to $it" }
+        val bridgeReturnSubtitle = when (bridgePrimaryReturnLabel) {
+            "Chat" -> "Back to conversation"
+            "Manage" -> "Back to management"
+            else -> "Back to previous tab"
+        }
+        val bridgeReturnAction: (() -> Unit)? = bridgePrimaryReturnRoute?.let { route ->
+            {
+                clearBridgeReturn()
+                navController.navigate(route) {
+                    popUpTo(navController.graph.findStartDestination().id) {
+                        saveState = true
+                    }
+                    launchSingleTop = true
+                    restoreState = true
+                }
+            }
+        }
+
+        LaunchedEffect(currentRoute) {
+            if (
+                currentRoute == Screen.Chat.route ||
+                currentRoute == Screen.Manage.route ||
+                currentRoute == Screen.Settings.route ||
+                currentRoute == Screen.Onboarding.route
+            ) {
+                clearBridgeReturn()
+            }
+        }
 
         val density = LocalDensity.current
         val imeBottom = WindowInsets.ime.getBottom(density)
@@ -715,10 +736,52 @@ fun RelayApp() {
         val voiceUiState by voiceViewModel.uiState.collectAsState()
         val globalConnectionStatus by connectionViewModel.globalConnectionStatus.collectAsState()
         val apiReachable by connectionViewModel.apiServerReachable.collectAsState()
+        val apiHealth by connectionViewModel.apiServerHealth.collectAsState()
         val relayReady by connectionViewModel.relayReady.collectAsState()
         val activeConnection by connectionViewModel.activeConnection.collectAsState()
         val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
         val serverModelName by chatViewModel.serverModelName.collectAsState()
+        val appReady by connectionViewModel.isReady.collectAsState()
+        var startupGateMinElapsed by remember { mutableStateOf(false) }
+        var startupGateTimedOut by remember { mutableStateOf(false) }
+        var startupGateReleased by remember { mutableStateOf(false) }
+
+        LaunchedEffect(Unit) {
+            delay(650L)
+            startupGateMinElapsed = true
+        }
+        LaunchedEffect(Unit) {
+            delay(5_500L)
+            startupGateTimedOut = true
+        }
+
+        val hasStartupConnection = activeConnection?.apiServerUrl?.isNotBlank() == true
+        val startupConnectionResolved = appReady && (
+            !hasStartupConnection ||
+                apiReachable ||
+                apiHealth == ConnectionViewModel.HealthStatus.Reachable ||
+                apiHealth == ConnectionViewModel.HealthStatus.Unreachable ||
+                startupGateTimedOut
+            )
+        LaunchedEffect(
+            onboardingCompleted,
+            startupGateMinElapsed,
+            startupConnectionResolved,
+        ) {
+            if (
+                onboardingCompleted &&
+                !startupGateReleased &&
+                startupGateMinElapsed &&
+                startupConnectionResolved
+            ) {
+                startupGateReleased = true
+            }
+        }
+        val showStartupSphere =
+            onboardingCompleted &&
+                !startupGateReleased &&
+                !startupGateTimedOut &&
+                !voiceUiState.voiceMode
 
         // Single snackbar host for the whole app — exposed via LocalSnackbarHost
         // so voice/chat/settings screens can call showHumanError from their
@@ -774,10 +837,12 @@ fun RelayApp() {
             masterEnabled &&
             unattendedEnabled &&
             !isOnboarding &&
+            !showStartupSphere &&
             !voiceUiState.voiceMode
         val showConnectionStatusBanner =
             globalConnectionStatus != null &&
                 !isOnboarding &&
+                !showStartupSphere &&
                 !voiceUiState.voiceMode
         val onConnectionStatusBannerClick: () -> Unit = {
             val title = globalConnectionStatus?.title.orEmpty()
@@ -901,7 +966,7 @@ fun RelayApp() {
             contentWindowInsets = WindowInsets(0),
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
-                if (!isOnboarding && !isKeyboardVisible && !voiceUiState.voiceMode) {
+                if (!isOnboarding && !isKeyboardVisible && !showStartupSphere && !voiceUiState.voiceMode) {
                     val leading = when {
                         apiReachable -> "api online"
                         relayReady -> "relay connected"
@@ -936,28 +1001,6 @@ fun RelayApp() {
                     .fillMaxSize()
                     .padding(innerPadding),
             ) {
-                AnimatedVisibility(
-                    visible = bridgeReturnVisible,
-                    enter = slideInVertically(tween(180)) { -it } + fadeIn(tween(140)),
-                    exit = slideOutVertically(tween(140)) { -it } + fadeOut(tween(120)),
-                ) {
-                    RelayReturnStrip(
-                        icon = Icons.Filled.PhoneAndroid,
-                        title = "Return to Bridge",
-                        subtitle = "Back to bridge controls",
-                        label = "Bridge",
-                        onClick = {
-                            navController.navigate(Screen.Bridge.route) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
-                                }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                    )
-                }
                 NavHost(
                     navController = navController,
                     startDestination = startDestination,
@@ -1060,6 +1103,10 @@ fun RelayApp() {
                             }
                         },
                         onNavigateToBridge = {
+                            rememberBridgeReturn(
+                                route = Screen.Chat.route(openAgentSheet = false),
+                                label = "Chat",
+                            )
                             navController.navigate(Screen.Bridge.route) {
                                 popUpTo(navController.graph.findStartDestination().id) {
                                     saveState = true
@@ -1101,6 +1148,10 @@ fun RelayApp() {
                             }
                         },
                         onNavigateToBridge = {
+                            rememberBridgeReturn(
+                                route = Screen.Manage.route,
+                                label = "Manage",
+                            )
                             navController.navigate(Screen.Bridge.route) {
                                 popUpTo(navController.graph.findStartDestination().id) {
                                     saveState = true
@@ -1147,15 +1198,21 @@ fun RelayApp() {
                             onPrimaryAction = {
                                 navController.navigate(Screen.Pair.route())
                             },
+                            onBack = bridgeReturnAction,
                         )
                     } else {
                         if (BuildFlavor.isSideload) {
                             BridgeScreen(
                                 connectionViewModel = connectionViewModel,
+                                returnTitle = bridgeReturnTitle,
+                                returnSubtitle = bridgeReturnSubtitle,
+                                returnLabel = bridgePrimaryReturnLabel ?: "Back",
+                                onReturn = bridgeReturnAction,
                                 onNavigateToBridgeSafety = {
                                     navController.navigate(Screen.BridgeSafetySettings.route)
                                 },
                                 onNavigateToChat = {
+                                    clearBridgeReturn()
                                     navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
                                         popUpTo(navController.graph.findStartDestination().id) {
                                             saveState = true
@@ -1165,6 +1222,7 @@ fun RelayApp() {
                                     }
                                 },
                                 onNavigateToManage = {
+                                    clearBridgeReturn()
                                     navController.navigate(Screen.Manage.route) {
                                         popUpTo(navController.graph.findStartDestination().id) {
                                             saveState = true
@@ -1182,10 +1240,15 @@ fun RelayApp() {
                         } else {
                             BridgeCoreScreen(
                                 connectionViewModel = connectionViewModel,
+                                returnTitle = bridgeReturnTitle,
+                                returnSubtitle = bridgeReturnSubtitle,
+                                returnLabel = bridgePrimaryReturnLabel ?: "Back",
+                                onReturn = bridgeReturnAction,
                                 onNavigateToConnections = {
                                     navController.navigate(Screen.ConnectionsSettings.route)
                                 },
                                 onNavigateToChat = {
+                                    clearBridgeReturn()
                                     navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
                                         popUpTo(navController.graph.findStartDestination().id) {
                                             saveState = true
@@ -1195,6 +1258,7 @@ fun RelayApp() {
                                     }
                                 },
                                 onNavigateToManage = {
+                                    clearBridgeReturn()
                                     navController.navigate(Screen.Manage.route) {
                                         popUpTo(navController.graph.findStartDestination().id) {
                                             saveState = true
@@ -1256,6 +1320,7 @@ fun RelayApp() {
                             navController.navigate(Screen.Terminal.route)
                         },
                         onNavigateToBridge = {
+                            clearBridgeReturn()
                             navController.navigate(Screen.Bridge.route)
                         },
                         onNavigateToMediaSettings = {
@@ -1689,16 +1754,18 @@ fun RelayApp() {
         // ConnectionSwitcherSheet.kt itself is kept so any future programmatic
         // callers (deep links, automation) can still invoke it if needed.)
 
-        // Sphere intro overlay — fades out after 1.5s to reveal main UI
+        // Startup connection gate. Keeps transient "connect" prompts hidden
+        // until the first saved-connection health decision resolves.
         AnimatedVisibility(
-            visible = !introComplete && onboardingCompleted,
+            visible = showStartupSphere,
             enter = fadeIn(tween(300)),
             exit = fadeOut(tween(600))
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xFF1A1A2E)),
+                    .background(RelayRefresh.Background)
+                    .relayGridTexture(alpha = 0.14f),
                 contentAlignment = Alignment.Center
             ) {
                 // Sphere fills background
@@ -1714,13 +1781,13 @@ fun RelayApp() {
                     Text(
                         text = "Hermes-Relay",
                         style = MaterialTheme.typography.headlineMedium,
-                        color = Color.White.copy(alpha = 0.9f)
+                        color = RelayRefresh.Paper.copy(alpha = 0.92f)
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = "agent interface",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = 0.5f),
+                        color = RelayRefresh.Muted.copy(alpha = 0.72f),
                         letterSpacing = 2.sp
                     )
                 }
