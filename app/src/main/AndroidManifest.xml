@@ -24,6 +24,7 @@
             android:exported="true"
             android:launchMode="singleTask"
             android:configChanges="uiMode|fontScale|locale|density|orientation|screenSize|screenLayout|keyboardHidden"
+            android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.HermesRelay.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

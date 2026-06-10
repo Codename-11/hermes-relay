@@ -24,8 +24,8 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.Forum
-import androidx.compose.material.icons.outlined.PhonelinkSetup
 import androidx.compose.material.icons.outlined.RocketLaunch
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.AlertDialog
@@ -48,13 +48,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.compose.runtime.collectAsState
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hermesandroid.relay.R
-import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.ui.components.MorphingSphere
 import com.hermesandroid.relay.ui.components.SphereState
 import com.hermesandroid.relay.ui.components.ConnectionWizard
@@ -63,18 +62,16 @@ import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.launch
 
 /** Page identifiers for dynamic onboarding flow. */
-private enum class OnboardingPage { Welcome, Chat, Terminal, Bridge, Connect }
+private enum class OnboardingPage { Welcome, Chat, Manage, Power, Connect }
 
 /**
- * Three-stage onboarding:
+ * Standard-first onboarding:
  *
- *  1. **Feature pages** (Welcome / Chat / Terminal / Bridge) — informational
- *     swipe-able introduction. Bridge / Terminal pages only show when the
- *     relay feature is enabled (Developer Options).
+ *  1. **Feature pages** (Welcome / Chat / Manage / Power tools) — standard
+ *     Hermes API/dashboard features first, Relay-only power tools second.
  *  2. **Connect page** — embeds the shared [ConnectionWizard] so onboarding
- *     uses the exact same scan → confirm → verify flow as Settings → Connection.
- *     The wizard owns credential application; on success / skip it calls back
- *     into [onComplete] to finish onboarding and navigate to chat.
+ *     uses the exact same Standard API/dashboard and optional Relay pairing
+ *     flow as Settings → Connections.
  *
  * The previous separate "ConnectPage" + "RelayPage" pair has been removed —
  * it discarded the QR's relay block, never applied per-channel grants, never
@@ -102,19 +99,14 @@ fun OnboardingScreen(
     // lands on the right VM and survives the Onboarding→Chat transition.
     connectionViewModel: ConnectionViewModel,
     onComplete: () -> Unit,
+    onManageSignIn: () -> Unit = onComplete,
 ) {
-    val context = LocalContext.current
-    val relayEnabled by FeatureFlags.relayEnabled(context).collectAsState(initial = FeatureFlags.isDevBuild)
-
-    // Build page list dynamically based on feature flags
-    val pages = remember(relayEnabled) {
+    val pages = remember {
         buildList {
             add(OnboardingPage.Welcome)
             add(OnboardingPage.Chat)
-            if (relayEnabled) {
-                add(OnboardingPage.Terminal)
-                add(OnboardingPage.Bridge)
-            }
+            add(OnboardingPage.Manage)
+            add(OnboardingPage.Power)
             add(OnboardingPage.Connect)
         }
     }
@@ -134,7 +126,11 @@ fun OnboardingScreen(
                 onDismissRequest = { showSkipConfirm = false },
                 title = { Text("Skip setup?") },
                 text = {
-                    Text("You can configure your server connection later in Settings → Connection. Without pairing, chat and voice features won't work yet.")
+                    Text(
+                        "You can configure your Hermes connection later in Settings → Connections. " +
+                            "Without a connection, Chat and Manage won't load. Relay pairing can " +
+                            "be added later for power tools."
+                    )
                 },
                 confirmButton = {
                     TextButton(onClick = {
@@ -185,11 +181,12 @@ fun OnboardingScreen(
                     when (pages[pageIndex]) {
                         OnboardingPage.Welcome -> WelcomePage()
                         OnboardingPage.Chat -> ChatPage()
-                        OnboardingPage.Terminal -> TerminalPage()
-                        OnboardingPage.Bridge -> BridgePage()
+                        OnboardingPage.Manage -> ManagePage()
+                        OnboardingPage.Power -> PowerToolsPage()
                         OnboardingPage.Connect -> ConnectPage(
                             connectionViewModel = connectionViewModel,
                             onComplete = onComplete,
+                            onManageSignIn = onManageSignIn,
                             onSkip = { showSkipConfirm = true },
                         )
                     }
@@ -260,14 +257,15 @@ private fun WelcomePage() {
     val context = LocalContext.current
     OnboardingPage(
         icon = Icons.Outlined.RocketLaunch,
-        title = "Hermes-Relay",
-        description = "Your Hermes agent, in your pocket.",
+        title = "Hermes-Relay for Android",
+        description = "Chat with Hermes and manage your dashboard from your phone.",
+        transparentHero = true,
         heroContent = {
             Box(modifier = Modifier.fillMaxSize()) {
                 MorphingSphere(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
                     state = SphereState.Idle,
                     intensity = 0.12f,
                 )
@@ -287,27 +285,48 @@ private fun WelcomePage() {
                     )
                 }
 
-                Box(
+                Row(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(bottom = 18.dp)
-                        .size(60.dp)
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.88f)),
-                    contentAlignment = Alignment.Center
+                        .padding(bottom = 6.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.86f))
+                        .padding(start = 7.dp, end = 12.dp, top = 5.dp, bottom = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Image(
                         painter = painterResource(R.drawable.ic_launcher_foreground),
-                        contentDescription = "Hermes-Relay logo",
-                        modifier = Modifier.size(42.dp)
+                        contentDescription = "Hermes logo",
+                        modifier = Modifier.size(30.dp)
+                    )
+                    Text(
+                        text = "Hermes-Relay",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
                     )
                 }
             }
         }
     ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SetupPathSummary(
+                label = "Standard",
+                description = "Connect to your running Hermes dashboard and API. No Relay install or pairing required.",
+            )
+            SetupPathSummary(
+                label = "Advanced",
+                description = "Add Hermes-Relay for Terminal, Bridge, relay sessions, and channel grants.",
+            )
+        }
+
         Text(
-            text = "Read the app guide, browse the repo, or jump to Hermes Agent docs while you finish server setup.",
-            style = MaterialTheme.typography.bodyMedium,
+            text = "The setup guide has copy/paste commands when you need to start Hermes on a computer or server.",
+            style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
@@ -318,7 +337,7 @@ private fun WelcomePage() {
             OutlinedButton(
                 onClick = {
                     context.startActivity(
-                        Intent(Intent.ACTION_VIEW, Uri.parse("https://codename-11.github.io/hermes-relay/"))
+                        Intent(Intent.ACTION_VIEW, Uri.parse("https://codename-11.github.io/hermes-relay/guide/getting-started"))
                     )
                 },
                 modifier = Modifier.weight(1f)
@@ -329,37 +348,69 @@ private fun WelcomePage() {
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("User Guide")
+                Text("Setup Guide")
             }
 
             OutlinedButton(
                 onClick = {
                     context.startActivity(
-                        Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Codename-11/hermes-relay"))
+                        Intent(Intent.ACTION_VIEW, Uri.parse("https://hermes-agent.nousresearch.com/docs"))
                     )
                 },
                 modifier = Modifier.weight(1f)
             ) {
                 Icon(
-                    painter = painterResource(R.drawable.ic_github),
+                    imageVector = Icons.AutoMirrored.Outlined.MenuBook,
                     contentDescription = null,
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("GitHub")
+                Text("Hermes Docs")
             }
         }
 
         Text(
-            text = "hermes-agent.nousresearch.com",
+            text = "Hermes API server docs",
             style = MaterialTheme.typography.bodySmall.copy(
                 textDecoration = TextDecoration.Underline
             ),
             color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.clickable {
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://hermes-agent.nousresearch.com")))
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://hermes-agent.nousresearch.com/docs/user-guide/features/api-server")))
             }
         )
+    }
+}
+
+@Composable
+private fun SetupPathSummary(
+    label: String,
+    description: String,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.42f),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.width(78.dp),
+            )
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+        }
     }
 }
 
@@ -368,25 +419,25 @@ private fun ChatPage() {
     OnboardingPage(
         icon = Icons.Outlined.Forum,
         title = "Chat",
-        description = "Talk to any Hermes agent profile with real-time streaming responses, tool progress, and full markdown."
+        description = "Talk to any Hermes profile with real-time streaming responses, tool progress, and full markdown."
     )
 }
 
 @Composable
-private fun TerminalPage() {
+private fun ManagePage() {
+    OnboardingPage(
+        icon = Icons.Filled.Settings,
+        title = "Manage",
+        description = "Use dashboard-backed Skills, Cron, MCP, Profiles, Models, Config, and Settings without Relay pairing."
+    )
+}
+
+@Composable
+private fun PowerToolsPage() {
     OnboardingPage(
         icon = Icons.Outlined.Terminal,
-        title = "Terminal",
-        description = "Secure remote shell access to your server via tmux. Coming soon."
-    )
-}
-
-@Composable
-private fun BridgePage() {
-    OnboardingPage(
-        icon = Icons.Outlined.PhonelinkSetup,
-        title = "Bridge",
-        description = "Let your agent control your device — taps, typing, screenshots, and automation. Coming soon."
+        title = "Power tools",
+        description = "Terminal, Bridge, Relay sessions, grants, and relay-backed device features require Relay pairing. Sideload builds can unlock device control."
     )
 }
 
@@ -394,6 +445,7 @@ private fun BridgePage() {
 private fun ConnectPage(
     connectionViewModel: ConnectionViewModel,
     onComplete: () -> Unit,
+    onManageSignIn: () -> Unit,
     onSkip: () -> Unit,
 ) {
     Box(
@@ -406,6 +458,7 @@ private fun ConnectPage(
             connectionViewModel = connectionViewModel,
             onComplete = onComplete,
             onCancel = onSkip,
+            onManageSignIn = onManageSignIn,
             showSkip = true,
         )
     }

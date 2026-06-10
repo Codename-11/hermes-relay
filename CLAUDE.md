@@ -29,45 +29,53 @@ Chat goes directly to the API server via HTTP/SSE. The API key (Bearer token) is
 | `POST /v1/runs` | Start an agent run | Returns `run_id` |
 | `GET /v1/runs/{run_id}/events` | SSE stream of run lifecycle events | **Structured events**: `tool.started`, `tool.completed`, `message.delta`, `reasoning.available`, `run.completed`, `run.failed` |
 | `POST /v1/responses` | OpenAI Responses API format | Structured `function_call` objects (non-streaming only) |
+| `GET /v1/capabilities` | Machine-readable feature + endpoint discovery | Use before assuming optional surfaces exist |
 | `GET /v1/models` | List available models | — |
+| `GET /v1/skills` | Read-only skill list for the API-server agent | `{"object":"list","data":[...]}` |
+| `GET /v1/toolsets` | Read-only API-server toolset inventory | `{"object":"list","platform":"api_server","data":[...]}` |
+| `GET/POST/PATCH/DELETE /api/sessions/*` | Native session CRUD, messages, fork, sync chat, SSE chat | Upstream merged via NousResearch/hermes-agent PR #33134 |
 | `GET /health` | Health check | — |
 | `GET/POST/PATCH/DELETE /api/jobs/*` | Cron job management (api_server surface) | — |
 
-**Non-standard endpoints (provided by fork OR by plugin bootstrap):**
+**Compatibility endpoints (not all native upstream API-server routes):**
 
-These endpoints are not in stock upstream `gateway/platforms/api_server.py`. There are three ways a hermes-agent install can serve them:
+Upstream main now contains the focused session-control API (`#33134`) and read-only skills/toolsets (`#33016`). The original broad PR [#8556](https://github.com/NousResearch/hermes-agent/pull/8556) was closed as superseded. Keep these distinctions straight:
 
-1. **Codename-11 fork** (`feat/session-api` branch, deployed on the `axiom` branch) — adds them natively. Submitted upstream as PR [#8556](https://github.com/NousResearch/hermes-agent/pull/8556) *"feat(api-server): add session management API for frontend clients"* — scope is broader than the title: sessions CRUD + session chat/stream + memory + skills + config + available-models.
-2. **Bootstrap injection** (`hermes_relay_bootstrap/`) — monkey-patches aiohttp on startup via `.pth` file. Does NOT inject `/api/sessions/{id}/chat/stream` — use `/v1/runs` for chat.
-3. **Upstream-merged** (post PR #8556) — bootstrap auto-detects and no-ops.
+1. **Native upstream** — `/api/sessions`, `/api/sessions/{id}/messages`, `/api/sessions/{id}/chat`, `/api/sessions/{id}/chat/stream`, `/v1/capabilities`, `/v1/skills`, and `/v1/toolsets` exist in current `gateway/platforms/api_server.py`.
+2. **Bootstrap compatibility** (`hermes_relay_bootstrap/`) — monkey-patches aiohttp on startup via `.pth` file for older or partial core builds. It skips native routes per method/path and should be retired per surface, not treated as the preferred path.
+3. **Legacy fork branches** — useful as lineage only. Do not cite `feat/session-api` / `#8556` as the current upstream contract.
 
 | Endpoint | Purpose | Provided by |
 |----------|---------|-------------|
-| `GET /api/sessions` (CRUD) | Session list/create/rename/delete/fork | Fork OR bootstrap OR upstream-merged |
-| `GET /api/sessions/{id}/messages` | Conversation history | Fork OR bootstrap OR upstream-merged |
-| `GET /api/sessions/search` | Full-text message search | Fork OR bootstrap OR upstream-merged |
-| `POST /api/sessions/{id}/chat/stream` | Session-based SSE chat | Fork OR upstream-merged ONLY (NOT bootstrap) |
-| `GET /api/config`, `PATCH /api/config` | Personalities + model config | Fork OR bootstrap OR upstream-merged |
-| `GET /api/skills`, `/{name}` | Skill discovery (list + detail) | Fork OR bootstrap OR upstream-merged |
-| `PUT /api/skills/toggle` | Enable/disable installed skill | `hermes_cli/web_server.py` dashboard surface; mirrored into bootstrap |
-| `GET/POST/PATCH/DELETE /api/memory` | Memory CRUD | Fork OR bootstrap OR upstream-merged |
-| `GET /api/available-models` | Provider model list | Fork OR bootstrap OR upstream-merged |
+| `GET /api/sessions` (CRUD) | Session list/create/rename/delete/fork | Native upstream (#33134); bootstrap only for old builds |
+| `GET /api/sessions/{id}/messages` | Conversation history | Native upstream (#33134); bootstrap only for old builds |
+| `POST /api/sessions/{id}/chat` | Synchronous session chat | Native upstream (#33134) |
+| `POST /api/sessions/{id}/chat/stream` | Session-based SSE chat | Native upstream (#33134); bootstrap does NOT inject |
+| `GET /v1/skills`, `GET /v1/toolsets` | Read-only skill/toolset discovery | Native upstream (#33016) |
+| `GET /api/sessions/search` | Full-text message search | Bootstrap/fork legacy; not in current upstream main |
+| `GET /api/config`, `PATCH /api/config` | Personalities + model config | Bootstrap/fork legacy or dashboard web-server surface; not current API-server upstream |
+| `GET /api/skills`, `/{name}` | Legacy skill discovery/detail | Bootstrap/fork legacy; prefer native `/v1/skills` for lists |
+| `PUT /api/skills/toggle` | Enable/disable installed skill | `hermes_cli/web_server.py` dashboard surface; bootstrap stub returns 501 |
+| `GET/POST/PATCH/DELETE /api/memory` | Memory CRUD | Bootstrap/fork legacy; not current API-server upstream |
+| `GET /api/available-models` | Provider model list | Bootstrap/fork legacy; not current API-server upstream |
 
-The Android client probes per-endpoint capability via `HermesApiClient.probeCapabilities()` (returns `ServerCapabilities`). When `streamingEndpoint = "auto"`, `ConnectionViewModel.resolveStreamingEndpoint()` picks `sessions` or `runs` based on the capability snapshot.
+The Android client probes per-endpoint capability via `HermesApiClient.probeCapabilities()` (returns `ServerCapabilities`). When `streamingEndpoint = "auto"`, `ConnectionViewModel.resolveStreamingEndpoint()` picks `sessions`, `completions`, or `runs` based on the capability snapshot.
 
-**Dashboard web server (separate surface — loopback-only):**
+**Dashboard web server (separate surface — standard Manage / Desktop remote gateway):**
 
-hermes-agent ships a second web server at `hermes_cli/web_server.py` that hosts the React admin dashboard at `hermes_cli/web_dist/`. It has its **own** `/api/*` routes that **do not live on `api_server.py`** — notably: `GET/PUT /api/config` (full tree), `GET /api/config/schema`, `GET /api/config/defaults`, `GET/PUT /api/config/raw` (YAML text), `GET/PUT/DELETE /api/env` + `POST /api/env/reveal`, `PUT /api/skills/toggle`, `/api/cron/jobs/*` (different shape from `/api/jobs/*`), `/api/providers/oauth/*`, `/api/dashboard/themes`, `/api/dashboard/plugins`, `/api/model/info`, `/api/logs`, `/api/analytics/usage`. Auth is a page-injected `window.__HERMES_SESSION_TOKEN__` — loopback-only, no external issuance. **Do not proxy this surface over the relay.** Phone consumes the narrower, fork/bootstrap `api_server.py` surface or relay-native profile-scoped endpoints.
+hermes-agent ships a second web server at `hermes_cli/web_server.py` that hosts the React admin dashboard at `hermes_cli/web_dist/`. It has its **own** `/api/*` routes that **do not live on `api_server.py`** — notably: `GET/PUT /api/config` (full tree), `GET /api/config/schema`, `GET /api/config/defaults`, `GET/PUT /api/config/raw` (YAML text), `GET/PUT/DELETE /api/env` + `POST /api/env/reveal`, `PUT /api/skills/toggle`, `/api/cron/jobs/*` (different shape from `/api/jobs/*`), `/api/providers/oauth/*`, `/api/dashboard/themes`, `/api/dashboard/plugins`, `/api/model/info`, `/api/logs`, `/api/analytics/usage`.
+
+Current upstream supports two auth modes on this surface. Loopback dashboards still use the injected `window.__HERMES_SESSION_TOKEN__` path. Remote/non-loopback dashboards use the Desktop-style dashboard auth gate: `/api/status` advertises `auth_required` and providers, `/auth/password-login` handles password providers, `/auth/login?provider=...` handles Nous/OIDC redirects, `/api/auth/me` returns the verified session, and `/api/auth/ws-ticket` mints a short-lived ticket for `/api/ws` / `/api/pty`. This dashboard session is **not** an `API_SERVER_KEY`; Android Chat still uses the API-server bearer path until a dashboard `/api/ws` chat adapter is wired. Android Manage may consume this dashboard surface directly, but relay-only capabilities remain behind Relay pairing. **Do not proxy dashboard auth or dashboard admin APIs over the relay.**
 
 **Tool call rendering paths:**
 1. **Runs API** — Emits `tool.started`/`tool.completed` as real SSE events → `ToolProgressCard` in real-time.
-2. **Sessions API** — No structured tool events during streaming; reloads message history on stream complete ("session_end reload" pattern).
+2. **Sessions API** — Native upstream emits structured SSE (`run.started`, `message.started`, `assistant.delta`, `tool.progress`, `tool.started/completed/failed`, `assistant.completed`, `run.completed`, `done`). `run.completed.messages` can reconcile authoritative per-turn transcript.
 3. **Annotation parser** — Fallback for servers emitting inline markdown annotations (`` `💻 terminal` ``).
 
 ## Key Instructions
 - **Always verify upstream before assuming an endpoint exists.** Check `gateway/platforms/api_server.py` in hermes-agent. If an endpoint isn't there, document whether bootstrap injects it or it requires the fork.
 - If we use a non-standard endpoint, ensure `probeCapabilities()` covers it and the auto-resolver degrades gracefully.
-- **Bootstrap maintenance:** Remove `hermes_relay_bootstrap/` in one PR once PR #8556 merges. It's no-op-compatible, so leaving it in place during rollout is harmless.
+- **Bootstrap maintenance:** Retire `hermes_relay_bootstrap/` per surface. Sessions and read-only skills/toolsets now have native upstream replacements; config, memory, legacy skill detail/toggle, available-models, and slash middleware still need explicit replacement decisions before full removal.
 
 ## Repository Layout
 
@@ -107,7 +115,7 @@ hermes-android/
 │   ├── tools/               # android_navigate.py, android_notifications.py
 │   └── dashboard/           # hermes-agent dashboard plugin — manifest, React UI, FastAPI proxy
 ├── relay_server/            ← Thin compat shim → plugin.relay (legacy entrypoint)
-├── hermes_relay_bootstrap/  ← Runtime patch for vanilla upstream; removable after PR #8556
+├── hermes_relay_bootstrap/  ← Runtime compatibility patch; retire per surface as upstream replaces it
 ├── skills/devops/hermes-relay-pair/  ← /hermes-relay-pair slash command
 ├── scripts/                 ← dev.bat, bridge-smoke.sh, bump-version.sh
 └── docs/                    ← spec, decisions, security, relay-server, mcp-tooling
@@ -230,7 +238,7 @@ hermes-android/
 | `plugin/pair.py` | QR payload builder + CLI; `build_payload(sign=True)`; `--register-code` fallback |
 | `install.sh` | Canonical installer — 6 steps; idempotent; drops `hermes-relay-update` shim |
 | `uninstall.sh` | Canonical uninstaller; reverses install.sh; never touches `.env` or `state.db` |
-| `hermes_relay_bootstrap/` | Runtime patch for vanilla upstream; no-op on fork/upstream-merged; remove after PR #8556 |
+| `hermes_relay_bootstrap/` | Runtime compatibility patch; skips native routes per method/path; retire only after remaining config/memory/legacy skill/slash gaps are handled |
 | **Plugin — Dashboard** | |
 | `plugin/dashboard/manifest.json` | Declares tab, entry bundle, and FastAPI module for hermes-agent discovery |
 | `plugin/dashboard/plugin_api.py` | FastAPI router proxying 5 routes to relay over loopback; `/pairing` body = API-server overrides (host/port/tls/api_key), relay URL auto-derived |
@@ -374,10 +382,10 @@ See [RELEASE.md](RELEASE.md) for the full recipe.
 
 | Surface | Endpoint | Notes |
 |---------|----------|-------|
-| Chat streaming | `POST /v1/runs` → `GET /v1/runs/{id}/events` | Structured tool events; preferred |
-| Chat (sessions) | `POST /api/sessions/{id}/chat/stream` | No live tool events; reloads history on stream complete |
+| Chat streaming | `POST /v1/runs` → `GET /v1/runs/{id}/events` | Structured tool events; async run-control path |
+| Chat (sessions) | `POST /api/sessions/{id}/chat/stream` | Native upstream session-persisted SSE; preferred when capability probe finds it |
 | Chat (compat) | `POST /v1/chat/completions` (stream=true) | Inline tool annotations only |
-| Session CRUD | `GET/POST/PATCH/DELETE /api/sessions` | Non-standard; bootstrap or fork |
+| Session CRUD | `GET/POST/PATCH/DELETE /api/sessions` | Native upstream (#33134); bootstrap fallback only for old builds |
 | Pairing (QR) | `POST /pairing/register` (loopback only) | Via `/hermes-relay-pair` or `hermes-pair` shim; accepts optional `endpoints` for multi-endpoint QRs |
 | Pairing (multi-endpoint) | QR `endpoints` array (ADR 24) | `hermes: 3` schema; ordered `lan`/`tailscale`/`public`/... candidates; phone re-probes on network change |
 | Pairing auth | WSS `auth.ok` payload | Includes `expires_at`, `grants`, `transport_hint` |
@@ -390,7 +398,7 @@ See [RELEASE.md](RELEASE.md) for the full recipe.
 | Voice config | `GET /voice/config` | Returns current tts/stt provider info |
 | Notifications | `GET /notifications/recent?limit=N` | Loopback callers skip bearer |
 | Relay health | `GET /health` on `:8767` | Used by `RelayHttpClient.probeHealth()` |
-| Capabilities | `HEAD /api/sessions`, `HEAD /v1/runs`, etc. | HEAD avoids CORS 403 on OPTIONS preflight |
+| Capabilities | `GET /v1/capabilities` plus targeted `HEAD` probes | Prefer capabilities when present; HEAD probes keep mixed-version fallback working |
 | Desktop CLI (tui channel) | WSS `tui.attach` / `tui.rpc.request` / `tui.rpc.event` | Same channel + envelopes as the Ink TUI — the CLI just renders events as plain lines. Zero server changes. |
 | Desktop CLI (terminal channel) | WSS `terminal.attach` / `terminal.input` / `terminal.output` / `terminal.resize` / `terminal.detached` | Existing channel (shared with Android). CLI `shell` subcommand attaches, injects `clear; exec hermes\n` 350ms after ack, pipes raw bytes. `Ctrl+A .` detaches (tmux preserved), `Ctrl+A k` kills. |
 | Desktop CLI tool visibility | `tools.list` RPC on the shared tui channel | Returns `{toolsets: [{name, description, tool_count, enabled, tools:[]}]}`; surfaced by `hermes-relay tools` |

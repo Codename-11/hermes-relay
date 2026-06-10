@@ -81,12 +81,21 @@ class ConnectionManager(
     private val context: Context? = null,
     /**
      * ADR 24 multi-endpoint resolver. When provided alongside [context] and
-     * a non-null [deviceIdProvider], every call to [connect] first consults
-     * the resolver before opening the WSS; on network changes the resolver
-     * is re-run and we hot-swap to the new winner. When null the manager
-     * uses the caller-supplied URL verbatim (pre-ADR-24 behavior).
+     * either [endpointCandidatesProvider] or a non-null [deviceIdProvider],
+     * every call to [connect] first consults the resolver before opening the
+     * WSS; on network changes the resolver is re-run and we hot-swap to the
+     * new winner. When null the manager uses the caller-supplied URL verbatim
+     * (pre-ADR-24 behavior).
      */
     private val endpointResolver: EndpointResolver? = null,
+    /**
+     * Candidate supplier for the active saved connection. This is the
+     * standard-Hermes route source: it works before Relay pairing, so API,
+     * dashboard, voice, and future Relay calls can hand off between LAN and
+     * Tailscale using the same resolver. If it returns an empty list, we fall
+     * back to the legacy per-device PairingPreferences source below.
+     */
+    private val endpointCandidatesProvider: (suspend () -> List<EndpointCandidate>)? = null,
     /**
      * Suspending supplier for the active device id. Used to key into
      * [PairingPreferences.getDeviceEndpoints] during resolution. `null`
@@ -331,21 +340,30 @@ class ConnectionManager(
     private suspend fun resolveBestEndpointSafe(): EndpointCandidate? {
         val resolver = endpointResolver ?: return null
         val ctx = context ?: return null
-        val devicePull = deviceIdProvider ?: return null
 
-        val deviceId = try {
-            withTimeoutOrNull(1_000L) { devicePull() }
-        } catch (_: Exception) {
-            null
-        } ?: return null
-
-        val endpoints: List<EndpointCandidate> = try {
+        val endpoints = try {
             withTimeoutOrNull(1_000L) {
-                PairingPreferences.getDeviceEndpoints(ctx, deviceId).first()
+                endpointCandidatesProvider?.invoke()
+                    ?.takeIf { it.isNotEmpty() }
             }
         } catch (_: Exception) {
             null
-        } ?: emptyList()
+        } ?: run {
+            val devicePull = deviceIdProvider ?: return null
+            val deviceId = try {
+                withTimeoutOrNull(1_000L) { devicePull() }
+            } catch (_: Exception) {
+                null
+            } ?: return null
+
+            try {
+                withTimeoutOrNull(1_000L) {
+                    PairingPreferences.getDeviceEndpoints(ctx, deviceId).first()
+                }
+            } catch (_: Exception) {
+                null
+            } ?: emptyList()
+        }
 
         if (endpoints.isEmpty()) return null
 

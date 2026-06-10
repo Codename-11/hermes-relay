@@ -1,6 +1,8 @@
 package com.hermesandroid.relay.network
 
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonArray
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
@@ -35,7 +37,7 @@ class DashboardApiClientTest {
                     {
                       "version": "0.16.0",
                       "auth_required": true,
-                      "auth_providers": ["password", "nous"]
+                      "auth_providers": ["basic", "nous"]
                     }
                     """.trimIndent(),
                 ),
@@ -47,7 +49,8 @@ class DashboardApiClientTest {
 
         assertEquals("/api/status", request.path)
         assertTrue(status.authRequired)
-        assertEquals(listOf("password", "nous"), status.authProviders)
+        assertEquals(listOf("basic", "nous"), status.authProviders)
+        assertEquals("basic", status.authProviderDetails.first().name)
         assertEquals("0.16.0", status.version)
     }
 
@@ -62,7 +65,7 @@ class DashboardApiClientTest {
                       "auth": {
                         "required": true,
                         "providers": [
-                          {"id": "password", "label": "Password"},
+                          {"id": "basic", "label": "Username & Password"},
                           {"type": "oauth", "name": "nous"}
                         ]
                       }
@@ -75,7 +78,135 @@ class DashboardApiClientTest {
         val status = client.getStatus().getOrThrow()
 
         assertTrue(status.authRequired)
-        assertEquals(listOf("password", "nous"), status.authProviders)
+        assertEquals(listOf("basic", "nous"), status.authProviders)
+        assertTrue(status.authProviderDetails.first { it.name == "basic" }.supportsPassword)
+        assertFalse(status.authProviderDetails.first { it.name == "nous" }.supportsPassword)
+    }
+
+    @Test
+    fun getAuthProviders_parsesProviderMetadata() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "providers": [
+                        {
+                          "name": "basic",
+                          "display_name": "Username & Password",
+                          "supports_password": true
+                        },
+                        {
+                          "name": "nous",
+                          "display_name": "Nous Research",
+                          "supports_password": false
+                        }
+                      ]
+                    }
+                    """.trimIndent(),
+                ),
+        )
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        val providers = client.getAuthProviders().getOrThrow()
+
+        assertEquals("/api/auth/providers", server.takeRequest().path)
+        assertEquals("Username & Password", providers[0].displayName)
+        assertTrue(providers[0].supportsPassword)
+        assertEquals("nous", providers[1].name)
+        assertTrue(providers[1].isRedirectProvider)
+    }
+
+    @Test
+    fun getAuthProviders_acceptsProviderMapMetadata() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "providers": {
+                        "basic": {
+                          "display_name": "Username & Password",
+                          "supports_password": true
+                        },
+                        "nous": {
+                          "type": "oauth",
+                          "display_name": "Nous Research"
+                        }
+                      }
+                    }
+                    """.trimIndent(),
+                ),
+        )
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        val providers = client.getAuthProviders().getOrThrow()
+
+        assertEquals(listOf("basic", "nous"), providers.map { it.name })
+        assertTrue(providers.first { it.name == "basic" }.supportsPassword)
+        assertEquals("Nous Research", providers.first { it.name == "nous" }.displayName)
+        assertTrue(providers.first { it.name == "nous" }.isRedirectProvider)
+    }
+
+    @Test
+    fun authUrlAndGatewayWebSocketUrl_preserveReverseProxyPrefix() {
+        val authUrl = DashboardApiClient.authLoginUrl(
+            baseUrl = "https://example.com/hermes/",
+            provider = "nous",
+            next = "/chat",
+        )
+        val wsUrl = DashboardApiClient.gatewayWebSocketUrl(
+            baseUrl = "https://example.com/hermes/",
+            ticket = "abc/123",
+        )
+        val landingPath = DashboardApiClient.authLandingPath("https://example.com/hermes/")
+
+        assertEquals(
+            "https://example.com/hermes/auth/login?provider=nous&next=%2Fchat",
+            authUrl,
+        )
+        assertEquals(
+            "wss://example.com/hermes/api/ws?ticket=abc%2F123",
+            wsUrl,
+        )
+        assertEquals("/hermes/", landingPath)
+    }
+
+    @Test
+    fun importDashboardCookieHeader_storesWebViewCookiesForDashboardClient() {
+        val store = InMemoryDashboardCookieStore()
+        val imported = importDashboardCookieHeader(
+            store = store,
+            url = "https://example.com/hermes/",
+            cookieHeader = "hermes_session_at=access; hermes_session_rt=refresh",
+        )
+        val client = DashboardCookieJar(store)
+        val cookies = client.loadForRequest(
+            "https://example.com/hermes/api/auth/me".toHttpUrl(),
+        )
+
+        assertEquals(2, imported)
+        assertEquals(listOf("hermes_session_at", "hermes_session_rt"), cookies.map { it.name })
+        assertTrue(cookies.all { it.secure })
+    }
+
+    @Test
+    fun importDashboardCookieHeader_callbackPathStillMatchesApiSession() {
+        val store = InMemoryDashboardCookieStore()
+        val imported = importDashboardCookieHeader(
+            store = store,
+            url = "https://example.com/auth/callback?nous=ok",
+            cookieHeader = "hermes_session=abc123",
+        )
+        val client = DashboardCookieJar(store)
+        val cookies = client.loadForRequest(
+            "https://example.com/api/auth/me".toHttpUrl(),
+        )
+
+        assertEquals(1, imported)
+        assertEquals(listOf("hermes_session"), cookies.map { it.name })
     }
 
     @Test
@@ -107,12 +238,11 @@ class DashboardApiClientTest {
             MockResponse()
                 .setResponseCode(200)
                 .setHeader("Content-Type", "application/json")
-                .setBody("""{"authenticated": true, "username": "bailey", "provider": "password"}"""),
+                .setBody("""{"authenticated": true, "username": "bailey", "provider": "basic"}"""),
         )
 
         val client = DashboardApiClient(baseUrl = server.url("/").toString())
         val login = client.loginPassword(
-            provider = "password",
             username = "bailey",
             password = "secret",
         ).getOrThrow()
@@ -123,7 +253,7 @@ class DashboardApiClientTest {
 
         assertEquals("/auth/password-login", loginRequest.path)
         val body = loginRequest.body.readUtf8()
-        assertTrue(body.contains(""""provider":"password""""))
+        assertTrue(body.contains(""""provider":"basic""""))
         assertTrue(body.contains(""""username":"bailey""""))
         assertTrue(body.contains(""""password":"secret""""))
         assertTrue(login.ok)
@@ -133,7 +263,7 @@ class DashboardApiClientTest {
         assertEquals("hermes_session=abc123", sessionRequest.getHeader("Cookie"))
         assertTrue(session.authenticated)
         assertEquals("bailey", session.username)
-        assertEquals("password", session.provider)
+        assertEquals("basic", session.provider)
     }
 
     @Test
@@ -144,6 +274,33 @@ class DashboardApiClientTest {
         val session = client.currentSession().getOrThrow()
 
         assertFalse(session.authenticated)
+    }
+
+    @Test
+    fun currentSession_acceptsUpstreamFlatDashboardSession() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "user_id": "user_123",
+                      "email": "bailey@example.com",
+                      "display_name": "Bailey",
+                      "provider": "nous",
+                      "expires_at": 1893456000
+                    }
+                    """.trimIndent(),
+                ),
+        )
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        val session = client.currentSession().getOrThrow()
+
+        assertEquals("/api/auth/me", server.takeRequest().path)
+        assertTrue(session.authenticated)
+        assertEquals("Bailey", session.username)
+        assertEquals("nous", session.provider)
     }
 
     @Test
@@ -159,6 +316,22 @@ class DashboardApiClientTest {
 
         assertEquals("/api/mcp/servers", server.takeRequest().path)
         assertTrue(failure?.message.orEmpty().contains("/api/mcp/servers failed - HTTP 404"))
+    }
+
+    @Test
+    fun getJsonElement_acceptsTopLevelArray() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""[{"name":"default"}]"""),
+        )
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        val root = client.getJsonElement("/api/profiles").getOrThrow()
+
+        assertEquals("/api/profiles", server.takeRequest().path)
+        assertTrue(root is JsonArray)
+        assertEquals(1, (root as JsonArray).size)
     }
 
     @Test

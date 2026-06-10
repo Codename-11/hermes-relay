@@ -9,6 +9,9 @@ data class DashboardConnectionStatus(
     val reachable: Boolean = false,
     val authRequired: Boolean? = null,
     val authProviders: List<String> = emptyList(),
+    val authenticated: Boolean? = null,
+    val authProvider: String? = null,
+    val gatewayTicketAvailable: Boolean? = null,
     val message: String? = null,
 )
 
@@ -39,9 +42,9 @@ data class DashboardConnectionStatus(
  *
  * **Terminology note (2026-04-18):** earlier drafts of this feature called the
  * concept "Profile". Renamed to [Connection] so that the term "Profile" is
- * free to mean what Hermes's server config means by it (agent profiles —
- * name + model + description defined under `agent.profiles` in config.yaml).
- * A follow-up pass will introduce the new `Profile` concept on top.
+ * free to mean upstream Hermes profiles: separate host-side Hermes homes
+ * under `~/.hermes/profiles/<name>/`, each with its own config, SOUL, memory,
+ * sessions, skills, cron, and provider state.
  */
 @Serializable
 data class Connection(
@@ -59,6 +62,15 @@ data class Connection(
     val dashboardAuthRequired: Boolean? = null,
     val dashboardAuthProviders: List<String> = emptyList(),
     val dashboardLastStatus: DashboardConnectionStatus? = null,
+    /**
+     * Candidate host routes for this saved Hermes server. Standard setup
+     * stores at least one candidate here so API, dashboard, voice, and Relay
+     * helpers can follow LAN/Tailscale/public handoff before Relay pairing.
+     * Older installs and legacy serialized records default to an empty list.
+     */
+    val routeCandidates: List<EndpointCandidate> = emptyList(),
+    /** Optional user preference such as "lan" or "tailscale"; null means Auto. */
+    val preferredRouteRole: String? = null,
     /** Epoch milliseconds. Pass `System.currentTimeMillis()`; do not pass seconds. */
     val pairedAt: Long? = null,
     val lastActiveSessionId: String? = null,
@@ -134,6 +146,127 @@ data class Connection(
             if (trimmed.isEmpty()) return true
             val derived = deriveDefaultDashboardUrl(apiServerUrl) ?: return false
             return trimmed.equals(derived, ignoreCase = true)
+        }
+
+        fun deriveDefaultRelayUrl(
+            apiServerUrl: String,
+            relayPort: Int = 8767,
+        ): String? {
+            val trimmed = apiServerUrl.trim().trimEnd('/')
+            if (trimmed.isEmpty()) return null
+
+            val uri = runCatching { URI(trimmed) }.getOrNull() ?: return null
+            val scheme = when (uri.scheme?.lowercase()) {
+                "http" -> "ws"
+                "https" -> "wss"
+                else -> return null
+            }
+            val host = uri.host?.takeIf { it.isNotBlank() } ?: return null
+            val hostPart = if (host.contains(":") && !host.startsWith("[")) {
+                "[$host]"
+            } else {
+                host
+            }
+            return "$scheme://$hostPart:$relayPort"
+        }
+
+        fun buildRouteCandidates(
+            apiServerUrl: String,
+            relayUrl: String,
+            extraApiUrls: List<Pair<String, String>> = emptyList(),
+        ): List<EndpointCandidate> {
+            val routes = buildList {
+                endpointCandidateFromApiUrl(
+                    role = inferRouteRole(apiServerUrl),
+                    priority = 0,
+                    apiServerUrl = apiServerUrl,
+                    relayUrl = relayUrl.takeIf { it.isNotBlank() }
+                        ?: deriveDefaultRelayUrl(apiServerUrl).orEmpty(),
+                )?.let(::add)
+
+                extraApiUrls
+                    .map { it.first.trim() to it.second.trim() }
+                    .filter { (_, url) -> url.isNotBlank() }
+                    .forEachIndexed { index, (role, url) ->
+                        endpointCandidateFromApiUrl(
+                            role = role.ifBlank { inferRouteRole(url) },
+                            priority = index + 1,
+                            apiServerUrl = url,
+                            relayUrl = deriveDefaultRelayUrl(url).orEmpty(),
+                        )?.let(::add)
+                    }
+            }
+
+            return routes
+                .distinctBy {
+                    "${it.role.lowercase()}|${it.api.host.lowercase()}:${it.api.port}"
+                }
+                .sortedWith(compareBy<EndpointCandidate> { it.priority }.thenBy { it.role })
+        }
+
+        fun endpointCandidateFromApiUrl(
+            role: String,
+            priority: Int,
+            apiServerUrl: String,
+            relayUrl: String,
+        ): EndpointCandidate? {
+            val uri = runCatching { URI(apiServerUrl.trim().trimEnd('/')) }.getOrNull()
+                ?: return null
+            val scheme = uri.scheme?.lowercase()
+            val tls = when (scheme) {
+                "http" -> false
+                "https" -> true
+                else -> return null
+            }
+            val host = uri.host?.takeIf { it.isNotBlank() } ?: return null
+            val port = if (uri.port > 0) uri.port else 8642
+            val resolvedRelayUrl = relayUrl.trim().takeIf { it.isNotBlank() }
+                ?: deriveDefaultRelayUrl(apiServerUrl)
+                ?: return null
+            val transportHint = when {
+                resolvedRelayUrl.startsWith("wss://", ignoreCase = true) -> "wss"
+                resolvedRelayUrl.startsWith("ws://", ignoreCase = true) -> "ws"
+                else -> null
+            }
+            return EndpointCandidate(
+                role = role.ifBlank { inferRouteRole(apiServerUrl) },
+                priority = priority,
+                api = ApiEndpoint(host = host, port = port, tls = tls),
+                relay = RelayEndpoint(url = resolvedRelayUrl, transportHint = transportHint),
+            )
+        }
+
+        fun inferRouteRole(apiServerUrl: String): String {
+            val host = runCatching { URI(apiServerUrl.trim().trimEnd('/')).host }
+                .getOrNull()
+                ?.lowercase()
+                ?: return "custom"
+            return when {
+                host.endsWith(".ts.net") || isTailscaleIpv4(host) -> "tailscale"
+                host == "localhost" ||
+                    host == "127.0.0.1" ||
+                    host == "::1" ||
+                    isPrivateLanIpv4(host) -> "lan"
+                else -> "public"
+            }
+        }
+
+        private fun isTailscaleIpv4(host: String): Boolean {
+            val parts = host.split('.').mapNotNull { it.toIntOrNull() }
+            if (parts.size != 4) return false
+            return parts[0] == 100 && parts[1] in 64..127
+        }
+
+        private fun isPrivateLanIpv4(host: String): Boolean {
+            val parts = host.split('.').mapNotNull { it.toIntOrNull() }
+            if (parts.size != 4) return false
+            return when {
+                parts[0] == 10 -> true
+                parts[0] == 172 && parts[1] in 16..31 -> true
+                parts[0] == 192 && parts[1] == 168 -> true
+                parts[0] == 169 && parts[1] == 254 -> true
+                else -> false
+            }
         }
     }
 }

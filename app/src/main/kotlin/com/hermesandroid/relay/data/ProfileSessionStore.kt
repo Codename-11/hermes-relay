@@ -63,6 +63,12 @@ class ProfileSessionStore(
                 .forEach { prefs.remove(it) }
         }
     }
+
+    suspend fun clearAll() {
+        dataStore.edit { prefs ->
+            prefs.clear()
+        }
+    }
 }
 
 internal val Context.profileSessionsDataStore: DataStore<Preferences>

@@ -70,7 +70,9 @@ Your Hermes server may connect to AI providers such as OpenAI or Anthropic serve
 
 From the app's Settings screen, you can:
 
-- **Export** your configuration (server URLs and preferences; secrets excluded)
+- **Export** a full connection backup. The file includes server URLs, preferences,
+  API keys, relay session tokens, device IDs, and dashboard cookies so restored
+  connections can work without manual re-entry. Keep it private.
 - **Import** a saved configuration
 - **Full reset** to permanently delete local data including encrypted credentials
 

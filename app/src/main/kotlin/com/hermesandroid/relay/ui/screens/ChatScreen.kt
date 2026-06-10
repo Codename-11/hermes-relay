@@ -36,11 +36,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ChatBubble
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Surface
@@ -128,6 +131,9 @@ import com.hermesandroid.relay.ui.components.CompactToolCall
 import com.hermesandroid.relay.ui.components.InlineAutocomplete
 import com.hermesandroid.relay.ui.components.MessageBubble
 import com.hermesandroid.relay.ui.components.MorphingSphere
+import com.hermesandroid.relay.ui.components.RelayChromeIconButton
+import com.hermesandroid.relay.ui.components.RelayModeStrip
+import com.hermesandroid.relay.ui.components.RelayPrimaryMode
 import com.hermesandroid.relay.ui.components.SphereState
 import com.hermesandroid.relay.ui.components.SessionDrawerContent
 import com.hermesandroid.relay.ui.components.SlashCommand
@@ -136,6 +142,8 @@ import com.hermesandroid.relay.ui.components.ToolProgressCard
 import com.hermesandroid.relay.ui.components.VoiceModeOverlay
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.showHumanError
+import com.hermesandroid.relay.ui.theme.RelayRefresh
+import com.hermesandroid.relay.ui.theme.relayGridTexture
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
@@ -187,6 +195,12 @@ fun ChatScreen(
     // screen. Default no-op preserves existing test/preview call sites that
     // don't wire navigation.
     onNavigateToConnections: () -> Unit = {},
+    onNavigateToConnect: () -> Unit = onNavigateToConnections,
+    onNavigateToManage: () -> Unit = {},
+    onNavigateToBridge: () -> Unit = {},
+    onNavigateToTerminal: () -> Unit = {},
+    onNavigateToSettings: () -> Unit = {},
+    onNavigateToProfileInspector: (String) -> Unit = {},
 ) {
     val voiceUiState by voiceViewModel.uiState.collectAsState()
     var voiceCompactMode by remember { mutableStateOf(false) }
@@ -249,10 +263,8 @@ fun ChatScreen(
     var voiceOutputConfig by remember { mutableStateOf<VoiceOutputConfig?>(null) }
     var realtimeAgentConfig by remember { mutableStateOf<RealtimeVoiceConfig?>(null) }
     val chatReady by connectionViewModel.chatReady.collectAsState()
-    // Voice mode's /voice/transcribe and /voice/synthesize calls both go
-    // over the relay, but voice can authenticate with the saved Hermes API
-    // key or a paired Relay session. Gate the Mic button on voiceReady
-    // so chat+voice-only setups don't need the full pairing flow.
+    // Stable voice can use the official Hermes API audio routes or the
+    // optional Relay voice routes. Gate the mic on either route being usable.
     val voiceReady by connectionViewModel.voiceReady.collectAsState()
     val apiReachable by connectionViewModel.apiServerReachable.collectAsState()
     val chatMode by connectionViewModel.chatMode.collectAsState()
@@ -835,7 +847,8 @@ fun ChatScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .radialNavyBackground(isDarkTheme = isDarkTheme)
+                .background(RelayRefresh.Background)
+                .relayGridTexture(alpha = 0.14f)
                 .imePadding()
                 .alpha(chatAlpha)
         ) {
@@ -992,7 +1005,7 @@ fun ChatScreen(
                     activeEndpoint?.let { ep ->
                         Surface(
                             shape = RoundedCornerShape(10.dp),
-                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            color = RelayRefresh.Navy3.copy(alpha = 0.78f),
                             modifier = Modifier
                                 .padding(end = 4.dp)
                                 .clickable { onNavigateToConnections() },
@@ -1000,7 +1013,7 @@ fun ChatScreen(
                             Text(
                                 text = ep.displayLabel(),
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                color = RelayRefresh.Relay,
                                 modifier = Modifier.padding(
                                     horizontal = 8.dp,
                                     vertical = 4.dp,
@@ -1008,6 +1021,18 @@ fun ChatScreen(
                             )
                         }
                     }
+                    RelayChromeIconButton(
+                        icon = Icons.Filled.Code,
+                        contentDescription = "Terminal",
+                        onClick = onNavigateToTerminal,
+                        modifier = Modifier.padding(end = 4.dp),
+                    )
+                    RelayChromeIconButton(
+                        icon = Icons.Filled.Tune,
+                        contentDescription = "Settings",
+                        onClick = onNavigateToSettings,
+                        modifier = Modifier.padding(end = 4.dp),
+                    )
                     // Ambient mode toggle (show/hide sphere visualization).
                     // Profile + personality pickers moved into the agent sheet
                     // that opens on title tap — the top bar no longer owns
@@ -1024,8 +1049,18 @@ fun ChatScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
+                    containerColor = RelayRefresh.Background.copy(alpha = 0.96f)
                 )
+            )
+            RelayModeStrip(
+                selected = RelayPrimaryMode.Chat,
+                onModeSelected = { mode ->
+                    when (mode) {
+                        RelayPrimaryMode.Chat -> Unit
+                        RelayPrimaryMode.Manage -> onNavigateToManage()
+                        RelayPrimaryMode.Bridge -> onNavigateToBridge()
+                    }
+                },
             )
 
             // Error banner with retry
@@ -1129,42 +1164,61 @@ fun ChatScreen(
                         }
 
                         Text(
-                            text = "Start a conversation",
+                            text = if (chatReady) "Start a conversation" else "Connect to Hermes",
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurface
                         )
 
                         if (!chatReady) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = "Configure API server in Settings",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(20.dp))
-
-                        // Suggestion chips
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            suggestions.forEach { suggestion ->
-                                AssistChip(
-                                    onClick = { inputText = suggestion },
-                                    label = {
-                                        Text(
-                                            text = suggestion,
-                                            style = MaterialTheme.typography.bodySmall
-                                        )
-                                    },
-                                    colors = AssistChipDefaults.assistChipColors(
-                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                                        labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            Spacer(modifier = Modifier.height(12.dp))
+                            ElevatedCard(
+                                colors = CardDefaults.elevatedCardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.86f),
+                                ),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    Text(
+                                        text = "Chat needs a Standard Hermes API connection.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
-                                )
+                                    Button(
+                                        onClick = onNavigateToConnect,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Text("Connect Standard Hermes")
+                                    }
+                                }
+                            }
+                        } else {
+                            Spacer(modifier = Modifier.height(20.dp))
+
+                            // Suggestion chips
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                suggestions.forEach { suggestion ->
+                                    AssistChip(
+                                        onClick = { inputText = suggestion },
+                                        label = {
+                                            Text(
+                                                text = suggestion,
+                                                style = MaterialTheme.typography.bodySmall
+                                            )
+                                        },
+                                        colors = AssistChipDefaults.assistChipColors(
+                                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                                            labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    )
+                                }
                             }
                         }
 
@@ -1556,10 +1610,6 @@ fun ChatScreen(
                             )
                         }
                     } else {
-                        // Gate on voiceReady — voice mode needs a relay
-                        // route, but the app can derive it from the API URL
-                        // and authenticate with the saved Hermes API key or
-                        // a paired Relay session.
                         IconButton(
                             onClick = {
                                 if (voiceReady) {
@@ -1567,7 +1617,7 @@ fun ChatScreen(
                                 } else {
                                     android.widget.Toast.makeText(
                                         context,
-                                        "Voice needs API key or pairing, plus a reachable relay route",
+                                        "Voice needs a reachable Hermes API or Relay voice route",
                                         android.widget.Toast.LENGTH_SHORT,
                                     ).show()
                                 }
@@ -1734,6 +1784,7 @@ fun ChatScreen(
             chatViewModel = chatViewModel,
             onDismiss = { showAgentInfo = false },
             onNavigateToConnections = onNavigateToConnections,
+            onNavigateToProfileInspector = onNavigateToProfileInspector,
         )
     }
 }

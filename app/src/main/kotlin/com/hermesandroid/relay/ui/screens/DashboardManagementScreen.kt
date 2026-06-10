@@ -1,11 +1,15 @@
 package com.hermesandroid.relay.ui.screens
 
+import android.webkit.CookieManager
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -16,16 +20,23 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -40,10 +51,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -52,17 +65,34 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.foundation.background
 import com.hermesandroid.relay.network.EncryptedDashboardCookieStore
 import com.hermesandroid.relay.network.DashboardApiClient
+import com.hermesandroid.relay.network.DashboardAuthProvider
+import com.hermesandroid.relay.network.DashboardAuthSession
 import com.hermesandroid.relay.network.DashboardStatus
+import com.hermesandroid.relay.network.importDashboardCookieHeader
+import com.hermesandroid.relay.ui.components.RelayChromeIconButton
+import com.hermesandroid.relay.ui.components.RelayMetricCard
+import com.hermesandroid.relay.ui.components.RelayModeStrip
+import com.hermesandroid.relay.ui.components.RelayNavTile
+import com.hermesandroid.relay.ui.components.RelayPrimaryMode
+import com.hermesandroid.relay.ui.components.RelaySectionCaption
+import com.hermesandroid.relay.ui.theme.RelayRefresh
+import com.hermesandroid.relay.ui.theme.relayGridTexture
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
+import java.text.DateFormat
+import java.util.Date
 
 private data class DashboardManagementSection(
     val label: String,
@@ -84,10 +114,14 @@ private sealed interface DashboardPayloadState {
     data object Loading : DashboardPayloadState
     data class Loaded(
         val status: DashboardStatus?,
+        val session: DashboardAuthSession?,
         val items: List<DashboardSummaryItem>,
         val rawSummary: String,
     ) : DashboardPayloadState
-    data class Error(val message: String) : DashboardPayloadState
+    data class Error(
+        val message: String,
+        val status: DashboardStatus? = null,
+    ) : DashboardPayloadState
 }
 
 private data class DashboardSummaryItem(
@@ -138,29 +172,47 @@ private data class PendingDashboardAction(
 fun DashboardManagementScreen(
     connectionViewModel: ConnectionViewModel,
     onNavigateToConnections: () -> Unit,
+    onNavigateToChat: () -> Unit = {},
+    onNavigateToBridge: () -> Unit = {},
+    onNavigateToTerminal: () -> Unit = {},
+    onNavigateToSettings: () -> Unit = {},
 ) {
     val context = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
-    val dashboardUrl = activeConnection?.resolvedDashboardUrl.orEmpty()
+    val dashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
     var selectedTab by remember { mutableStateOf(0) }
     var reloadNonce by remember { mutableStateOf(0) }
-    var payloadState by remember { mutableStateOf<DashboardPayloadState>(DashboardPayloadState.Idle) }
+    val payloadStates = remember { mutableStateMapOf<String, DashboardPayloadState>() }
+    val refreshingPayloads = remember { mutableStateMapOf<String, Boolean>() }
     var actionMessage by remember { mutableStateOf<String?>(null) }
     var actionInFlight by remember { mutableStateOf(false) }
     var pendingAction by remember { mutableStateOf<PendingDashboardAction?>(null) }
     var detailResult by remember { mutableStateOf<DashboardDetailResult?>(null) }
+    var oauthProvider by remember { mutableStateOf<DashboardAuthProvider?>(null) }
+    var confirmClearDashboardSession by remember { mutableStateOf(false) }
 
     val section = managementSections[selectedTab]
-    val clientFactory = remember(context, activeConnection?.id, dashboardUrl) {
+    val connectionId = activeConnection?.id ?: "default"
+    val payloadKey = remember(connectionId, dashboardUrl, section.path) {
+        "$connectionId|$dashboardUrl|${section.path}"
+    }
+    val payloadState = payloadStates[payloadKey] ?: DashboardPayloadState.Idle
+    val isRefreshing = refreshingPayloads[payloadKey] == true
+    val cookieStoreFactory = remember(context, connectionId) {
+        {
+            EncryptedDashboardCookieStore(
+                context = context,
+                connectionId = connectionId,
+            )
+        }
+    }
+    val clientFactory = remember(dashboardUrl, cookieStoreFactory) {
         {
             DashboardApiClient(
                 baseUrl = dashboardUrl,
                 okHttpClient = DashboardApiClient.defaultClient(
-                    cookieStore = EncryptedDashboardCookieStore(
-                        context = context,
-                        connectionId = activeConnection?.id ?: "default",
-                    ),
+                    cookieStore = cookieStoreFactory(),
                 ),
             )
         }
@@ -168,14 +220,16 @@ fun DashboardManagementScreen(
 
     fun runAction(item: DashboardSummaryItem, action: DashboardItemAction) {
         if (dashboardUrl.isBlank() || actionInFlight) return
+        val actionPayloadKey = payloadKey
         actionInFlight = true
         actionMessage = null
         scope.launch {
-            val client = clientFactory()
             val result = try {
-                client.runDashboardAction(item, action)
-            } finally {
-                client.shutdown()
+                withDashboardClient(clientFactory) { client ->
+                    client.runDashboardAction(item, action)
+                }
+            } catch (e: Exception) {
+                Result.failure(e)
             }
             actionMessage = result.fold(
                 onSuccess = { root ->
@@ -186,6 +240,11 @@ fun DashboardManagementScreen(
                         )
                         null
                     } else {
+                        val loaded = payloadStates[actionPayloadKey] as? DashboardPayloadState.Loaded
+                        loaded?.optimisticAfter(item, action)?.let { next ->
+                            payloadStates[actionPayloadKey] = next
+                        }
+                        refreshingPayloads[actionPayloadKey] = true
                         reloadNonce += 1
                         "${action.label} completed"
                     }
@@ -198,50 +257,123 @@ fun DashboardManagementScreen(
 
     LaunchedEffect(dashboardUrl, selectedTab, reloadNonce, activeConnection?.id) {
         if (dashboardUrl.isBlank()) {
-            payloadState = DashboardPayloadState.Error("No dashboard URL is configured for this connection.")
+            payloadStates[payloadKey] = DashboardPayloadState.Error("No dashboard URL is configured for this connection.")
             return@LaunchedEffect
         }
-        payloadState = DashboardPayloadState.Loading
-        val client = clientFactory()
+        val previousState = payloadStates[payloadKey]
+        if (previousState is DashboardPayloadState.Loaded) {
+            refreshingPayloads[payloadKey] = true
+        } else {
+            payloadStates[payloadKey] = DashboardPayloadState.Loading
+        }
         try {
-            val status = client.getStatus().getOrNull()
-            val session = if (status?.authRequired == true) {
-                client.currentSession().getOrNull()
-            } else {
-                null
-            }
-            payloadState = if (status?.authRequired == true && session?.authenticated != true) {
-                DashboardPayloadState.Error("Dashboard sign-in required")
-            } else {
-                val result = client.getJsonObject(section.path)
-                result.fold(
-                    onSuccess = { root ->
-                        DashboardPayloadState.Loaded(
-                            status = status,
-                            items = summarize(section, root),
-                            rawSummary = summarizeRoot(root),
-                        )
-                    },
-                    onFailure = { err ->
-                        DashboardPayloadState.Error(err.message ?: "Dashboard request failed")
-                    },
+            val nextState = withDashboardClient(clientFactory) { client ->
+                val probedStatus = client.getStatus().getOrNull()
+                val providerDetails = if (probedStatus?.authRequired == true) {
+                    client.getAuthProviders().getOrNull().orEmpty()
+                } else {
+                    emptyList()
+                }
+                val status = if (probedStatus != null && providerDetails.isNotEmpty()) {
+                    probedStatus.copy(
+                        authProviders = providerDetails.map { it.name },
+                        authProviderDetails = providerDetails,
+                    )
+                } else {
+                    probedStatus
+                }
+                val session = if (status?.authRequired == true) {
+                    client.currentSession().getOrNull()
+                } else {
+                    null
+                }
+                val gatewayTicketAvailable = if (session?.authenticated == true) {
+                    client.requestWsTicket().isSuccess
+                } else {
+                    null
+                }
+                connectionViewModel.recordDashboardStatus(
+                    status = status,
+                    session = session,
+                    reachable = status != null,
+                    gatewayTicketAvailable = gatewayTicketAvailable,
                 )
+                if (status?.authRequired == true && session?.authenticated != true) {
+                    DashboardPayloadState.Error("Dashboard sign-in required", status = status)
+                } else {
+                    val result = client.getJsonElement(section.path)
+                    result.fold(
+                        onSuccess = { root ->
+                            DashboardPayloadState.Loaded(
+                                status = status,
+                                session = session,
+                                items = summarize(section, root),
+                                rawSummary = summarizeRoot(root),
+                            )
+                        },
+                        onFailure = { err ->
+                            DashboardPayloadState.Error(
+                                message = err.message ?: "Dashboard request failed",
+                                status = status,
+                            )
+                        },
+                    )
+                }
             }
+            val latestState = payloadStates[payloadKey]
+            if (
+                nextState is DashboardPayloadState.Error &&
+                latestState is DashboardPayloadState.Loaded &&
+                nextState.status?.authRequired != true
+            ) {
+                actionMessage = nextState.message
+            } else {
+                payloadStates[payloadKey] = nextState
+            }
+        } catch (e: Exception) {
+            payloadStates[payloadKey] = DashboardPayloadState.Error(
+                message = e.message ?: "Dashboard request failed",
+            )
         } finally {
-            client.shutdown()
+            refreshingPayloads[payloadKey] = false
         }
     }
 
-    fun submitDashboardSignIn(username: String, password: String) {
+    fun submitDashboardSignIn(provider: String, username: String, password: String) {
         if (dashboardUrl.isBlank() || actionInFlight) return
         actionInFlight = true
         actionMessage = null
         scope.launch {
-            val client = clientFactory()
             val result = try {
-                client.loginPassword(username = username, password = password)
-            } finally {
-                client.shutdown()
+                withDashboardClient(clientFactory) { client ->
+                    client.loginPassword(
+                        provider = provider,
+                        username = username,
+                        password = password,
+                    ).mapCatching {
+                        val status = client.getStatus().getOrNull()
+                        val session = client.currentSession().getOrNull()
+                        val gatewayTicketAvailable = if (session?.authenticated == true) {
+                            client.requestWsTicket().isSuccess
+                        } else {
+                            null
+                        }
+                        connectionViewModel.recordDashboardStatus(
+                            status = status,
+                            session = session,
+                            reachable = status != null,
+                            gatewayTicketAvailable = gatewayTicketAvailable,
+                        )
+                        if (session?.authenticated != true) {
+                            throw IllegalStateException(
+                                "Sign-in completed, but the dashboard did not return an authenticated session.",
+                            )
+                        }
+                        it
+                    }
+                }
+            } catch (e: Exception) {
+                Result.failure(e)
             }
             actionMessage = result.fold(
                 onSuccess = {
@@ -287,12 +419,75 @@ fun DashboardManagementScreen(
         )
     }
 
+    if (confirmClearDashboardSession) {
+        AlertDialog(
+            onDismissRequest = { confirmClearDashboardSession = false },
+            title = { Text("Clear dashboard session?") },
+            text = {
+                Text(
+                    text = "This signs this connection out of the Hermes dashboard on this device. Your API key, saved connection, and Relay pairing stay unchanged.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmClearDashboardSession = false
+                        connectionViewModel.clearDashboardSession {
+                            actionMessage = "Dashboard session cleared"
+                            reloadNonce += 1
+                        }
+                    },
+                ) {
+                    Text("Clear session")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClearDashboardSession = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
+    oauthProvider?.let { provider ->
+        DashboardOAuthSignInDialog(
+            dashboardUrl = dashboardUrl,
+            provider = provider,
+            cookieStoreFactory = cookieStoreFactory,
+            onDismiss = { oauthProvider = null },
+            onAuthenticated = { session ->
+                oauthProvider = null
+                actionMessage = "Signed in${session.provider?.let { " with $it" }.orEmpty()}"
+                reloadNonce += 1
+            },
+            onError = { message ->
+                actionMessage = message
+            },
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Manage") },
                 actions = {
-                    IconButton(onClick = { reloadNonce += 1 }) {
+                    RelayChromeIconButton(
+                        icon = Icons.Filled.Code,
+                        contentDescription = "Terminal",
+                        onClick = onNavigateToTerminal,
+                        modifier = Modifier.padding(end = 4.dp),
+                    )
+                    RelayChromeIconButton(
+                        icon = Icons.Filled.Tune,
+                        contentDescription = "Settings",
+                        onClick = onNavigateToSettings,
+                        modifier = Modifier.padding(end = 4.dp),
+                    )
+                    IconButton(
+                        onClick = { reloadNonce += 1 },
+                        enabled = !isRefreshing,
+                    ) {
                         Icon(
                             imageVector = Icons.Filled.Refresh,
                             contentDescription = "Refresh",
@@ -300,7 +495,7 @@ fun DashboardManagementScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = RelayRefresh.Background.copy(alpha = 0.96f),
                 ),
             )
         },
@@ -308,8 +503,90 @@ fun DashboardManagementScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding),
+                .padding(innerPadding)
+                .background(RelayRefresh.Background)
+                .relayGridTexture(alpha = 0.12f)
         ) {
+            RelayModeStrip(
+                selected = RelayPrimaryMode.Manage,
+                onModeSelected = { mode ->
+                    when (mode) {
+                        RelayPrimaryMode.Chat -> onNavigateToChat()
+                        RelayPrimaryMode.Manage -> Unit
+                        RelayPrimaryMode.Bridge -> onNavigateToBridge()
+                    }
+                },
+            )
+            val loadedCount = (payloadState as? DashboardPayloadState.Loaded)?.items?.size ?: 0
+            Column(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                RelaySectionCaption(
+                    title = "Relay Hub",
+                    meta = "standard install path",
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    RelayMetricCard(
+                        value = if (loadedCount > 0) loadedCount.toString() else "-",
+                        label = section.label.lowercase(),
+                        modifier = Modifier.weight(1f),
+                    )
+                    RelayMetricCard(
+                        value = when (payloadState) {
+                            is DashboardPayloadState.Loaded -> "ok"
+                            is DashboardPayloadState.Loading -> "..."
+                            is DashboardPayloadState.Error -> "!"
+                            DashboardPayloadState.Idle -> "-"
+                        },
+                        label = "dashboard",
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                RelayNavTile(
+                    icon = Icons.Filled.Link,
+                    title = "Connections",
+                    subtitle = "Pair, switch, verify routes",
+                    onClick = onNavigateToConnections,
+                    selected = false,
+                )
+                RelayNavTile(
+                    icon = Icons.Filled.Person,
+                    title = "Profiles",
+                    subtitle = "SOUL, memory, skills, sessions",
+                    onClick = {
+                        managementSections.indexOfFirst { it.label == "Profiles" }
+                            .takeIf { it >= 0 }
+                            ?.let { selectedTab = it }
+                    },
+                    selected = section.label == "Profiles",
+                )
+                RelayNavTile(
+                    icon = Icons.Filled.AutoAwesome,
+                    title = "Skills + Tools",
+                    subtitle = "Browse, enable, configure",
+                    onClick = {
+                        managementSections.indexOfFirst { it.label == "Skills" }
+                            .takeIf { it >= 0 }
+                            ?.let { selectedTab = it }
+                    },
+                    selected = section.label == "Skills",
+                )
+                RelayNavTile(
+                    icon = Icons.Filled.Schedule,
+                    title = "Automations",
+                    subtitle = "Cron, background runs, delivery",
+                    onClick = {
+                        managementSections.indexOfFirst { it.label == "Cron" }
+                            .takeIf { it >= 0 }
+                            ?.let { selectedTab = it }
+                    },
+                    selected = section.label == "Cron",
+                )
+            }
             PrimaryScrollableTabRow(selectedTabIndex = selectedTab) {
                 managementSections.forEachIndexed { index, tab ->
                     Tab(
@@ -321,34 +598,56 @@ fun DashboardManagementScreen(
             }
             DashboardConnectionHeader(
                 dashboardUrl = dashboardUrl,
-                status = (payloadState as? DashboardPayloadState.Loaded)?.status,
+                status = when (val state = payloadState) {
+                    is DashboardPayloadState.Loaded -> state.status
+                    is DashboardPayloadState.Error -> state.status
+                    else -> null
+                },
+                session = when (val state = payloadState) {
+                    is DashboardPayloadState.Loaded -> state.session
+                    else -> null
+                },
+                authenticated = when (val state = payloadState) {
+                    is DashboardPayloadState.Loaded -> state.session?.authenticated
+                    is DashboardPayloadState.Error -> false
+                    else -> null
+                },
+                lastCheckedAtMillis = activeConnection?.dashboardLastStatus?.checkedAtMillis,
+                onClearSession = { confirmClearDashboardSession = true },
                 onNavigateToConnections = onNavigateToConnections,
             )
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
-            when (val state = payloadState) {
-                DashboardPayloadState.Idle,
-                DashboardPayloadState.Loading -> LoadingBody()
-                is DashboardPayloadState.Error -> ErrorBody(
-                    message = state.message,
-                    dashboardUrl = dashboardUrl,
-                    actionInFlight = actionInFlight,
-                    actionMessage = actionMessage,
-                    onRetry = { reloadNonce += 1 },
-                    onSignIn = ::submitDashboardSignIn,
-                )
-                is DashboardPayloadState.Loaded -> LoadedBody(
-                    section = section,
-                    state = state,
-                    actionInFlight = actionInFlight,
-                    actionMessage = actionMessage,
-                    onAction = { item, action ->
-                        if (action.destructive) {
-                            pendingAction = PendingDashboardAction(item, action)
-                        } else {
-                            runAction(item, action)
-                        }
-                    },
-                )
+            if (isRefreshing && payloadState !is DashboardPayloadState.Loading) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+            Box(modifier = Modifier.weight(1f)) {
+                when (val state = payloadState) {
+                    DashboardPayloadState.Idle,
+                    DashboardPayloadState.Loading -> LoadingBody(section.label)
+                    is DashboardPayloadState.Error -> ErrorBody(
+                        message = state.message,
+                        status = state.status,
+                        dashboardUrl = dashboardUrl,
+                        actionInFlight = actionInFlight,
+                        actionMessage = actionMessage,
+                        onRetry = { reloadNonce += 1 },
+                        onSignIn = ::submitDashboardSignIn,
+                        onOAuthSignIn = { provider -> oauthProvider = provider },
+                    )
+                    is DashboardPayloadState.Loaded -> LoadedBody(
+                        section = section,
+                        state = state,
+                        actionInFlight = actionInFlight,
+                        actionMessage = actionMessage,
+                        onAction = { item, action ->
+                            if (action.destructive) {
+                                pendingAction = PendingDashboardAction(item, action)
+                            } else {
+                                runAction(item, action)
+                            }
+                        },
+                    )
+                }
             }
         }
     }
@@ -358,74 +657,177 @@ fun DashboardManagementScreen(
 private fun DashboardConnectionHeader(
     dashboardUrl: String,
     status: DashboardStatus?,
+    session: DashboardAuthSession?,
+    authenticated: Boolean?,
+    lastCheckedAtMillis: Long?,
+    onClearSession: () -> Unit,
     onNavigateToConnections: () -> Unit,
 ) {
-    Card(
+    val authLabel = when {
+        status == null -> "Checking dashboard"
+        status.authRequired && authenticated == true -> "Dashboard signed in"
+        status.authRequired -> "Dashboard sign-in required"
+        else -> "Dashboard available"
+    }
+    val identity = if (authenticated == true) {
+        session?.username ?: session?.provider?.let { "Provider: $it" }
+    } else {
+        null
+    }
+    val secondary = listOfNotNull(
+        identity,
+        dashboardUrl.ifBlank { "No dashboard URL" },
+        lastCheckedAtMillis?.let { "Checked ${formatDashboardCheckedAt(it)}" },
+    ).joinToString(" · ")
+
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-        ),
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Row(
-            modifier = Modifier.padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = authLabel,
+                style = MaterialTheme.typography.labelLarge,
+                color = if (authenticated == false && status?.authRequired == true) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (secondary.isNotBlank()) {
                 Text(
-                    text = dashboardUrl.ifBlank { "No dashboard URL" },
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontFamily = FontFamily.Monospace,
+                    text = secondary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontFamily = if (identity == null) FontFamily.Monospace else null,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                val authLabel = when {
-                    status == null -> "Checking dashboard"
-                    status.authRequired -> "Dashboard sign-in required"
-                    else -> "Dashboard available"
-                }
-                Text(
-                    text = authLabel,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
-            Button(onClick = onNavigateToConnections) {
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (authenticated == true) {
+                TextButton(onClick = onClearSession) {
+                    Text("Sign out")
+                }
+            }
+            TextButton(onClick = onNavigateToConnections) {
                 Text("Connection")
             }
         }
     }
 }
 
+private fun formatDashboardCheckedAt(checkedAtMillis: Long): String {
+    val deltaMs = System.currentTimeMillis() - checkedAtMillis
+    return when {
+        deltaMs in 0 until 60_000L -> "just now"
+        deltaMs in 60_000L until 3_600_000L -> "${deltaMs / 60_000L}m ago"
+        deltaMs in 3_600_000L until 86_400_000L -> "${deltaMs / 3_600_000L}h ago"
+        else -> DateFormat.getDateTimeInstance(
+            DateFormat.MEDIUM,
+            DateFormat.SHORT,
+        ).format(Date(checkedAtMillis))
+    }
+}
+
+private suspend fun <T> withDashboardClient(
+    clientFactory: () -> DashboardApiClient,
+    block: suspend (DashboardApiClient) -> T,
+): T {
+    val client = withContext(Dispatchers.IO) { clientFactory() }
+    return try {
+        block(client)
+    } finally {
+        withContext(Dispatchers.IO) { client.shutdown() }
+    }
+}
+
 @Composable
-private fun LoadingBody() {
+private fun LoadingBody(sectionLabel: String) {
+    val sectionName = sectionLabel.lowercase()
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        CircularProgressIndicator()
-        Spacer(Modifier.height(12.dp))
-        Text(
-            text = "Loading dashboard data",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            ),
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "Loading $sectionName",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    text = "Manage is ready. Dashboard data is still coming in.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+        }
+        repeat(3) { index ->
+            LoadingSummaryPlaceholder(index)
+        }
+    }
+}
+
+@Composable
+private fun LoadingSummaryPlaceholder(index: Int) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = when (index) {
+                    0 -> "Preparing summary"
+                    1 -> "Checking dashboard session"
+                    else -> "Reading server state"
+                },
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp),
+            )
+        }
     }
 }
 
 @Composable
 private fun ErrorBody(
     message: String,
+    status: DashboardStatus?,
     dashboardUrl: String,
     actionInFlight: Boolean,
     actionMessage: String?,
     onRetry: () -> Unit,
-    onSignIn: (String, String) -> Unit,
+    onSignIn: (String, String, String) -> Unit,
+    onOAuthSignIn: (DashboardAuthProvider) -> Unit,
 ) {
     val signInRequired = message.contains("401") ||
         message.contains("403") ||
@@ -439,9 +841,11 @@ private fun ErrorBody(
         if (signInRequired) {
             DashboardSignInCard(
                 dashboardUrl = dashboardUrl,
+                providers = status?.authProviderDetails.orEmpty(),
                 actionInFlight = actionInFlight,
                 actionMessage = actionMessage,
                 onSignIn = onSignIn,
+                onOAuthSignIn = onOAuthSignIn,
             )
         } else {
             Card(
@@ -593,12 +997,16 @@ private fun DashboardSummaryCard(
 @Composable
 private fun DashboardSignInCard(
     dashboardUrl: String,
+    providers: List<DashboardAuthProvider>,
     actionInFlight: Boolean,
     actionMessage: String?,
-    onSignIn: (String, String) -> Unit,
+    onSignIn: (String, String, String) -> Unit,
+    onOAuthSignIn: (DashboardAuthProvider) -> Unit,
 ) {
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    val passwordProvider = providers.firstOrNull { it.supportsPassword }
+    val redirectProviders = providers.filter { it.isRedirectProvider }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -619,33 +1027,200 @@ private fun DashboardSignInCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            OutlinedTextField(
-                value = username,
-                onValueChange = { username = it },
-                label = { Text("Username") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-            OutlinedTextField(
-                value = password,
-                onValueChange = { password = it },
-                label = { Text("Password") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-            )
-            Button(
-                onClick = { onSignIn(username, password) },
-                enabled = !actionInFlight && username.isNotBlank() && password.isNotBlank(),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(if (actionInFlight) "Signing in..." else "Sign in")
+
+            redirectProviders.forEach { provider ->
+                Button(
+                    onClick = { onOAuthSignIn(provider) },
+                    enabled = !actionInFlight,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Sign in with ${provider.displayName ?: provider.name}")
+                }
+            }
+
+            if (passwordProvider != null || providers.isEmpty()) {
+                if (redirectProviders.isNotEmpty()) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.24f))
+                }
+                Text(
+                    text = passwordProvider?.displayName ?: "Username & Password",
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                OutlinedTextField(
+                    value = username,
+                    onValueChange = { username = it },
+                    label = { Text("Username") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Password") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                )
+                Button(
+                    onClick = { onSignIn(passwordProvider?.name ?: "basic", username, password) },
+                    enabled = !actionInFlight && username.isNotBlank() && password.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (actionInFlight) "Signing in..." else "Sign in")
+                }
+            } else if (redirectProviders.isEmpty()) {
+                Text(
+                    text = "This dashboard did not advertise a supported Android sign-in provider.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
             }
             actionMessage?.let { message ->
+                val isError = message.contains("failed", ignoreCase = true) ||
+                    message.contains("not accepted", ignoreCase = true) ||
+                    message.contains("not return", ignoreCase = true)
                 Text(
                     text = message,
                     style = MaterialTheme.typography.bodySmall,
+                    color = if (isError) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DashboardOAuthSignInDialog(
+    dashboardUrl: String,
+    provider: DashboardAuthProvider,
+    cookieStoreFactory: () -> EncryptedDashboardCookieStore,
+    onDismiss: () -> Unit,
+    onAuthenticated: (DashboardAuthSession) -> Unit,
+    onError: (String) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var statusText by remember { mutableStateOf("Complete sign-in in the secure dashboard page.") }
+    var checking by remember { mutableStateOf(false) }
+    val loginUrl = remember(dashboardUrl, provider.name) {
+        DashboardApiClient.authLoginUrl(
+            baseUrl = dashboardUrl,
+            provider = provider.name,
+            next = DashboardApiClient.authLandingPath(dashboardUrl),
+        )
+    }
+
+    fun maybeImportAndVerify(url: String?) {
+        val loadedUrl = url?.takeIf { it.isNotBlank() } ?: return
+        if (!isDashboardReturnUrl(dashboardUrl, loadedUrl) || isDashboardAuthFlowUrl(dashboardUrl, loadedUrl)) {
+            return
+        }
+        val cookieManager = CookieManager.getInstance()
+        cookieManager.flush()
+        val imported = importDashboardCookieHeader(
+            store = cookieStoreFactory(),
+            url = loadedUrl,
+            cookieHeader = cookieManager.getCookie(loadedUrl),
+        )
+        if (checking || imported == 0) return
+
+        checking = true
+        statusText = "Verifying dashboard session..."
+        scope.launch {
+            try {
+                val session = withDashboardClient(
+                    clientFactory = {
+                        DashboardApiClient(
+                            baseUrl = dashboardUrl,
+                            okHttpClient = DashboardApiClient.defaultClient(
+                                cookieStore = cookieStoreFactory(),
+                            ),
+                        )
+                    },
+                ) { client ->
+                    client.currentSession().getOrNull()
+                }
+                if (session?.authenticated == true) {
+                    onAuthenticated(session)
+                } else {
+                    checking = false
+                    statusText = "Sign-in was not accepted yet. Finish the dashboard flow to continue."
+                }
+            } catch (e: Exception) {
+                checking = false
+                val message = e.message ?: "Dashboard sign-in verification failed"
+                statusText = message
+                onError(message)
+            }
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 640.dp),
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Sign in with ${provider.displayName ?: provider.name}",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Text(
+                            text = dashboardUrl,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Close sign-in",
+                        )
+                    }
+                }
+                Text(
+                    text = statusText,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                AndroidView(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    factory = { viewContext ->
+                        CookieManager.getInstance().setAcceptCookie(true)
+                        WebView(viewContext).apply {
+                            settings.javaScriptEnabled = true
+                            settings.domStorageEnabled = true
+                            webViewClient = object : WebViewClient() {
+                                override fun shouldOverrideUrlLoading(
+                                    view: WebView,
+                                    request: WebResourceRequest,
+                                ): Boolean = false
+
+                                override fun onPageFinished(view: WebView, url: String?) {
+                                    super.onPageFinished(view, url)
+                                    maybeImportAndVerify(url)
+                                }
+                            }
+                            loadUrl(loginUrl)
+                        }
+                    },
                 )
             }
         }
@@ -696,47 +1271,49 @@ private fun DashboardDetailDialog(
     )
 }
 
+private fun isDashboardReturnUrl(dashboardUrl: String, loadedUrl: String): Boolean {
+    val root = dashboardUrl.trim().trimEnd('/')
+    return root.isNotBlank() && loadedUrl.trim().startsWith(root, ignoreCase = true)
+}
+
+private fun isDashboardAuthFlowUrl(dashboardUrl: String, loadedUrl: String): Boolean {
+    val root = dashboardUrl.trim().trimEnd('/')
+    val relative = loadedUrl.trim().removePrefix(root)
+    return relative.startsWith("/login", ignoreCase = true) ||
+        relative.startsWith("/auth/login", ignoreCase = true) ||
+        relative.startsWith("/auth/callback", ignoreCase = true)
+}
+
 private fun summarize(
     section: DashboardManagementSection,
-    root: JsonObject,
+    root: JsonElement,
 ): List<DashboardSummaryItem> {
     return when (section.label) {
-        "Skills" -> root.arrayField("skills", "items")
+        "Skills" -> root.arrayItems("skills", "items")
             ?.mapIndexed { index, item -> summarizeObjectItem(item, "Skill ${index + 1}") }
             ?: emptyList()
-        "Cron" -> root.arrayField("jobs", "items")
+        "Cron" -> root.arrayItems("jobs", "items")
             ?.mapIndexed { index, item -> summarizeObjectItem(item, "Job ${index + 1}") }
             ?: emptyList()
-        "MCP" -> root.arrayField("servers", "items")
+        "MCP" -> root.arrayItems("servers", "items")
             ?.mapIndexed { index, item -> summarizeObjectItem(item, "Server ${index + 1}") }
             ?: emptyList()
-        "Catalog" -> root.arrayField("entries", "catalog", "items")
+        "Catalog" -> root.arrayItems("entries", "catalog", "items")
             ?.mapIndexed { index, item -> summarizeObjectItem(item, "Catalog ${index + 1}") }
             ?: emptyList()
         "Profiles" -> {
-            root.arrayField("profiles", "items")
+            root.arrayItems("profiles", "items")
                 ?.mapIndexed { index, item -> summarizeObjectItem(item, "Profile ${index + 1}") }
-                ?: (root["profiles"] as? JsonObject)
+                ?: ((root as? JsonObject)?.get("profiles") as? JsonObject)
                     ?.entries
                     ?.map { (name, value) -> summarizeObjectItem(value, name) }
-                ?: root.entries.map { (name, value) -> summarizeObjectItem(value, name) }
+                ?: (root as? JsonObject)
+                    ?.entries
+                    ?.map { (name, value) -> summarizeObjectItem(value, name) }
+                ?: listOf(summarizeObjectItem(root, "Profile"))
         }
-        "Models" -> root.entries.map { (name, value) ->
-            DashboardSummaryItem(
-                id = name,
-                title = name,
-                subtitle = value.shortDisplay(),
-                meta = value.typeLabel(),
-            )
-        }
-        "Config" -> root.entries.map { (name, value) ->
-            DashboardSummaryItem(
-                id = name,
-                title = name,
-                subtitle = value.shortDisplay(),
-                meta = value.typeLabel(),
-            )
-        }
+        "Models" -> summarizeKeyValueOrList(root, "Model")
+        "Config" -> summarizeKeyValueOrList(root, "Config")
         else -> emptyList()
     }
 }
@@ -865,9 +1442,125 @@ private fun dashboardActionsFor(obj: JsonObject): List<DashboardItemAction> {
     }
 }
 
-private fun summarizeRoot(root: JsonObject): String {
-    val keys = root.keys.take(8).joinToString(", ")
-    return if (keys.isBlank()) "{ }" else "Fields: $keys"
+private fun summarizeRoot(root: JsonElement): String {
+    return when (root) {
+        is JsonObject -> {
+            val keys = root.keys.take(8).joinToString(", ")
+            if (keys.isBlank()) "{ }" else "Fields: $keys"
+        }
+        is JsonArray -> "${root.size} item${if (root.size == 1) "" else "s"}"
+        is JsonPrimitive -> root.contentOrNull ?: root.toString()
+    }
+}
+
+private fun DashboardPayloadState.Loaded.optimisticAfter(
+    item: DashboardSummaryItem,
+    action: DashboardItemAction,
+): DashboardPayloadState.Loaded {
+    val nextItems = items.mapNotNull { existing ->
+        if (existing.id != item.id || existing.title != item.title) {
+            existing
+        } else {
+            existing.optimisticAfter(action)
+        }
+    }
+    return copy(items = nextItems)
+}
+
+private fun DashboardSummaryItem.optimisticAfter(action: DashboardItemAction): DashboardSummaryItem? {
+    return when (action.kind) {
+        DashboardActionKind.EnableSkill -> withEnabledMeta(true).withActionSwap(
+            from = DashboardActionKind.EnableSkill,
+            to = DashboardItemAction("Disable", DashboardActionKind.DisableSkill),
+        )
+        DashboardActionKind.DisableSkill -> withEnabledMeta(false).withActionSwap(
+            from = DashboardActionKind.DisableSkill,
+            to = DashboardItemAction("Enable", DashboardActionKind.EnableSkill),
+        )
+        DashboardActionKind.EnableMcp -> withEnabledMeta(true).withActionSwap(
+            from = DashboardActionKind.EnableMcp,
+            to = DashboardItemAction("Disable", DashboardActionKind.DisableMcp),
+        )
+        DashboardActionKind.DisableMcp -> withEnabledMeta(false).withActionSwap(
+            from = DashboardActionKind.DisableMcp,
+            to = DashboardItemAction("Enable", DashboardActionKind.EnableMcp),
+        )
+        DashboardActionKind.PauseCron -> withActionSwap(
+            from = DashboardActionKind.PauseCron,
+            to = DashboardItemAction("Resume", DashboardActionKind.ResumeCron),
+        )
+        DashboardActionKind.ResumeCron -> withActionSwap(
+            from = DashboardActionKind.ResumeCron,
+            to = DashboardItemAction("Pause", DashboardActionKind.PauseCron),
+        )
+        DashboardActionKind.DeleteCron,
+        DashboardActionKind.RemoveMcp,
+        DashboardActionKind.DeleteProfile -> null
+        DashboardActionKind.InstallMcpCatalog -> copy(
+            meta = appendMeta(meta, "installed"),
+            actions = emptyList(),
+        )
+        DashboardActionKind.ViewCronRuns,
+        DashboardActionKind.TriggerCron,
+        DashboardActionKind.TestMcp,
+        DashboardActionKind.ViewProfileSoul,
+        DashboardActionKind.ActivateProfile -> this
+    }
+}
+
+private fun DashboardSummaryItem.withActionSwap(
+    from: DashboardActionKind,
+    to: DashboardItemAction,
+): DashboardSummaryItem = copy(
+    actions = actions.map { action ->
+        if (action.kind == from) to else action
+    },
+)
+
+private fun DashboardSummaryItem.withEnabledMeta(enabled: Boolean): DashboardSummaryItem {
+    val enabledText = if (enabled) "enabled" else "disabled"
+    val parts = meta
+        ?.split(" · ")
+        ?.filterNot { it == "enabled" || it == "disabled" }
+        .orEmpty()
+    return copy(meta = listOf(enabledText).plus(parts).joinToString(" · "))
+}
+
+private fun appendMeta(meta: String?, value: String): String {
+    val parts = meta?.split(" · ").orEmpty()
+    return if (parts.any { it.equals(value, ignoreCase = true) }) {
+        meta.orEmpty()
+    } else {
+        parts.plus(value).filter { it.isNotBlank() }.joinToString(" · ")
+    }
+}
+
+private fun summarizeKeyValueOrList(
+    root: JsonElement,
+    fallbackTitle: String,
+): List<DashboardSummaryItem> {
+    return when (root) {
+        is JsonObject -> root.entries.map { (name, value) ->
+            DashboardSummaryItem(
+                id = name,
+                title = name,
+                subtitle = value.shortDisplay(),
+                meta = value.typeLabel(),
+            )
+        }
+        is JsonArray -> root.mapIndexed { index, item ->
+            summarizeObjectItem(item, "$fallbackTitle ${index + 1}")
+        }
+        else -> listOf(summarizeObjectItem(root, fallbackTitle))
+    }
+}
+
+private fun JsonElement.arrayItems(vararg names: String): JsonArray? {
+    return when (this) {
+        is JsonArray -> this
+        is JsonObject -> arrayField(*names)
+        else -> null
+    }
 }
 
 private fun JsonObject.arrayField(vararg names: String): JsonArray? {

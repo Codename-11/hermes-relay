@@ -1,5 +1,9 @@
-"""Ported handlers from the `feat/session-api` branch on Codename-11/hermes-agent
-(submitted upstream as PR #8556).
+"""Compatibility handlers from the pre-upstream Hermes-Relay API branch.
+
+The original broad branch was superseded upstream. Current Hermes main has
+native session controls via PR #33134 and read-only skills/toolsets via PR
+#33016; these handlers remain for older core builds and for compatibility-only
+surfaces that do not yet have stable API-server replacements.
 
 This file mirrors the management endpoints from the fork branch, adapted to
 take the `APIServerAdapter` instance as an explicit parameter rather than
@@ -40,11 +44,12 @@ Endpoints injected (all bearer-auth gated via `adapter._check_auth`):
 
 NOT injected:
 
-- `POST /api/sessions/{session_id}/chat/stream` — chat streaming intentionally
-  goes through upstream's standard `/v1/runs`, which emits structured
-  `tool.started`/`tool.completed` SSE events in real time. Injecting the
-  sessions chat handler would require coordinating with `_create_agent` /
-  `run_conversation` — the fork's riskiest cross-cutting dependencies.
+- `POST /api/sessions/{session_id}/chat/stream` — native upstream provides
+  this in PR #33134. The bootstrap does not inject a chat-stream handler for
+  older builds because that path requires coordinating with `_create_agent` /
+  `run_conversation` — the fork's riskiest cross-cutting dependencies. Clients
+  should fall back to `/v1/chat/completions` or `/v1/runs` when chat streaming
+  is not advertised.
 
 - `GET /api/skills/categories` — removed from upstream as dead code in commit
   8d023e43 ("refactor: remove dead code — 1,784 lines across 77 files"). The
@@ -55,8 +60,10 @@ Removal note: upstream is moving toward focused native surfaces rather than one
 large frontend API patch. As each method/path lands in hermes-agent, route
 registration below skips that native route and keeps only the missing
 compatibility gaps. Cleanup should therefore happen per surface: sessions can
-retire after native session controls are released, while config/skills/memory
-remain until core exposes stable equivalents.
+retire once the supported core baseline includes PR #33134, read-only skill
+lists should use `/v1/skills` from PR #33016, while config/memory/legacy skill
+detail/toggle/available-models remain until core exposes stable equivalents or
+Hermes-Relay stops depending on them.
 """
 
 from __future__ import annotations

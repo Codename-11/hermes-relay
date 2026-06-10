@@ -7,6 +7,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -59,6 +60,7 @@ fun ConnectionStatusBanner(
     status: ConnectionStatusSnapshot?,
     modifier: Modifier = Modifier,
     includeStatusBarPadding: Boolean = false,
+    onClick: (() -> Unit)? = null,
 ) {
     val current = status ?: return
     val containerColor = when {
@@ -95,6 +97,7 @@ fun ConnectionStatusBanner(
             tonalElevation = 0.dp,
             modifier = Modifier
                 .fillMaxWidth()
+                .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
                 .animateContentSize(animationSpec = tween(durationMillis = 180)),
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
@@ -150,6 +153,15 @@ fun ConnectionStatusBanner(
                                     text = route,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = contentColor.copy(alpha = 0.76f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            current.actionLabel?.takeIf { it.isNotBlank() }?.let { label ->
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = contentColor.copy(alpha = 0.86f),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )

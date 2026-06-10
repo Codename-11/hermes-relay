@@ -14,10 +14,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -36,9 +40,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.data.ChatSession
+import com.hermesandroid.relay.ui.theme.RelayRefresh
+import com.hermesandroid.relay.ui.theme.relayMetadataStyle
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+private enum class SessionDrawerFilter(val label: String) {
+    All("All"),
+    Pinned("Pinned"),
+    Archive("Archive"),
+}
 
 @Composable
 fun SessionDrawerContent(
@@ -53,8 +65,35 @@ fun SessionDrawerContent(
 ) {
     var renameDialogSession by remember { mutableStateOf<ChatSession?>(null) }
     var deleteDialogSession by remember { mutableStateOf<ChatSession?>(null) }
+    var query by remember { mutableStateOf("") }
+    var filter by remember { mutableStateOf(SessionDrawerFilter.All) }
+    var pinnedSessionIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var archivedSessionIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    val visibleSessions = sessions
+        .asSequence()
+        .filter { session ->
+            when (filter) {
+                SessionDrawerFilter.All -> session.sessionId !in archivedSessionIds
+                SessionDrawerFilter.Pinned ->
+                    session.sessionId in pinnedSessionIds &&
+                        session.sessionId !in archivedSessionIds
+                SessionDrawerFilter.Archive -> session.sessionId in archivedSessionIds
+            }
+        }
+        .filter { session ->
+            val needle = query.trim()
+            needle.isBlank() ||
+                session.sessionId.contains(needle, ignoreCase = true) ||
+                session.title.orEmpty().contains(needle, ignoreCase = true) ||
+                session.model.orEmpty().contains(needle, ignoreCase = true)
+        }
+        .toList()
 
-    ModalDrawerSheet(modifier = Modifier.width(300.dp)) {
+    ModalDrawerSheet(
+        modifier = Modifier.width(320.dp),
+        drawerContainerColor = RelayRefresh.Background,
+        drawerContentColor = RelayRefresh.Ink,
+    ) {
         Column(modifier = Modifier.padding(16.dp)) {
             // Header
             Text(
@@ -85,11 +124,40 @@ fun SessionDrawerContent(
             }
 
             Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                leadingIcon = {
+                    Icon(Icons.Filled.Search, contentDescription = null)
+                },
+                placeholder = { Text("Search sessions or id...") },
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                SessionDrawerFilter.entries.forEach { item ->
+                    FilterChip(
+                        selected = filter == item,
+                        onClick = { filter = item },
+                        label = {
+                            Text(
+                                text = item.label,
+                                style = relayMetadataStyle(),
+                            )
+                        },
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
             HorizontalDivider()
             Spacer(modifier = Modifier.height(8.dp))
         }
 
-        if (sessions.isEmpty()) {
+        if (visibleSessions.isEmpty()) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -97,7 +165,7 @@ fun SessionDrawerContent(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "No sessions yet",
+                    text = if (sessions.isEmpty()) "No sessions yet" else "No matching sessions",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -109,11 +177,27 @@ fun SessionDrawerContent(
             }
         } else {
             LazyColumn {
-                items(sessions, key = { it.sessionId }) { session ->
+                items(visibleSessions, key = { it.sessionId }) { session ->
                     SessionItem(
                         session = session,
                         isActive = session.sessionId == currentSessionId,
+                        pinned = session.sessionId in pinnedSessionIds,
+                        archived = session.sessionId in archivedSessionIds,
                         onClick = { onSelectSession(session.sessionId) },
+                        onTogglePinned = {
+                            pinnedSessionIds = if (session.sessionId in pinnedSessionIds) {
+                                pinnedSessionIds - session.sessionId
+                            } else {
+                                pinnedSessionIds + session.sessionId
+                            }
+                        },
+                        onToggleArchived = {
+                            archivedSessionIds = if (session.sessionId in archivedSessionIds) {
+                                archivedSessionIds - session.sessionId
+                            } else {
+                                archivedSessionIds + session.sessionId
+                            }
+                        },
                         onRename = { renameDialogSession = session },
                         onDelete = { deleteDialogSession = session }
                     )
@@ -184,7 +268,11 @@ fun SessionDrawerContent(
 private fun SessionItem(
     session: ChatSession,
     isActive: Boolean,
+    pinned: Boolean,
+    archived: Boolean,
     onClick: () -> Unit,
+    onTogglePinned: () -> Unit,
+    onToggleArchived: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -234,6 +322,20 @@ private fun SessionItem(
             }
         }
 
+        IconButton(onClick = onTogglePinned, modifier = Modifier.padding(0.dp)) {
+            Icon(
+                Icons.Filled.Star,
+                contentDescription = if (pinned) "Unpin session" else "Pin session",
+                tint = if (pinned) RelayRefresh.Amber else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        IconButton(onClick = onToggleArchived, modifier = Modifier.padding(0.dp)) {
+            Icon(
+                Icons.Filled.Archive,
+                contentDescription = if (archived) "Restore session" else "Archive session",
+                tint = if (archived) RelayRefresh.Relay else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         IconButton(onClick = onRename, modifier = Modifier.padding(0.dp)) {
             Icon(
                 Icons.Filled.Edit,

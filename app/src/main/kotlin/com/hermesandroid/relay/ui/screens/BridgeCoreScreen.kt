@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -22,6 +23,7 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -40,7 +42,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.ui.components.RelayChromeIconButton
+import com.hermesandroid.relay.ui.components.RelayHeroPanel
+import com.hermesandroid.relay.ui.components.RelayModeStrip
+import com.hermesandroid.relay.ui.components.RelayNavTile
+import com.hermesandroid.relay.ui.components.RelayPrimaryMode
+import com.hermesandroid.relay.ui.components.RelaySectionCaption
+import com.hermesandroid.relay.ui.components.RelayStatusPill
+import com.hermesandroid.relay.ui.theme.RelayRefresh
+import com.hermesandroid.relay.ui.theme.relayGridTexture
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import com.hermesandroid.relay.viewmodel.RelayUiState
 import com.hermesandroid.relay.viewmodel.statusText
 
 /**
@@ -55,20 +67,38 @@ import com.hermesandroid.relay.viewmodel.statusText
 fun BridgeCoreScreen(
     connectionViewModel: ConnectionViewModel,
     onNavigateToConnections: () -> Unit,
+    onNavigateToChat: () -> Unit = {},
+    onNavigateToManage: () -> Unit = {},
     onNavigateToTerminal: () -> Unit,
     onNavigateToVoiceSettings: () -> Unit,
     onNavigateToNotificationCompanion: () -> Unit,
     onNavigateToMediaSettings: () -> Unit,
     onNavigateToRelaySessions: () -> Unit,
+    onNavigateToSettings: () -> Unit = {},
 ) {
     val relayState by connectionViewModel.relayUiState.collectAsState()
+    val relayConnected = relayState == RelayUiState.Connected
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Bridge") },
+                actions = {
+                    RelayChromeIconButton(
+                        icon = Icons.Filled.Code,
+                        contentDescription = "Terminal",
+                        onClick = onNavigateToTerminal,
+                        modifier = Modifier.padding(end = 4.dp),
+                    )
+                    RelayChromeIconButton(
+                        icon = Icons.Filled.Tune,
+                        contentDescription = "Settings",
+                        onClick = onNavigateToSettings,
+                        modifier = Modifier.padding(end = 4.dp),
+                    )
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = RelayRefresh.Background.copy(alpha = 0.96f),
                 ),
             )
         },
@@ -77,10 +107,43 @@ fun BridgeCoreScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .background(RelayRefresh.Background)
+                .relayGridTexture(alpha = 0.12f)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 16.dp),
+                .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            RelayModeStrip(
+                selected = RelayPrimaryMode.Bridge,
+                onModeSelected = { mode ->
+                    when (mode) {
+                        RelayPrimaryMode.Chat -> onNavigateToChat()
+                        RelayPrimaryMode.Manage -> onNavigateToManage()
+                        RelayPrimaryMode.Bridge -> Unit
+                    }
+                },
+                modifier = Modifier.padding(horizontal = 0.dp, vertical = 0.dp),
+            )
+            RelayHeroPanel(
+                title = if (relayConnected) "Phone bridge is paired" else "Bridge Core is waiting",
+                subtitle = if (relayConnected) {
+                    "Terminal, voice, notification, media, and relay-session controls share this grant."
+                } else {
+                    "Pair Relay to use Terminal and phone bridge tools. Chat and Manage continue over standard Hermes API."
+                },
+                action = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        RelayStatusPill(
+                            text = relayState.statusText("connected").lowercase(),
+                            active = relayConnected,
+                        )
+                        RelayStatusPill(
+                            text = "safety on",
+                            active = true,
+                        )
+                    }
+                },
+            )
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(8.dp),
@@ -161,59 +224,47 @@ fun BridgeCoreScreen(
                 }
             }
 
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(8.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                ),
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "Bridge Features",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    BridgeCoreRow(
-                        icon = Icons.Filled.Link,
-                        title = "Connections",
-                        subtitle = "Pair, switch, and verify relay routes",
-                        onClick = onNavigateToConnections,
-                    )
-                    BridgeCoreRow(
-                        icon = Icons.Filled.Code,
-                        title = "Terminal",
-                        subtitle = "Attach to your Hermes relay terminal",
-                        onClick = onNavigateToTerminal,
-                    )
-                    BridgeCoreRow(
-                        icon = Icons.Filled.GraphicEq,
-                        title = "Voice",
-                        subtitle = "Configure STT, TTS, provider, and voice mode",
-                        onClick = onNavigateToVoiceSettings,
-                    )
-                    BridgeCoreRow(
-                        icon = Icons.Filled.Notifications,
-                        title = "Notification companion",
-                        subtitle = "Forward notifications you grant Android access to share",
-                        onClick = onNavigateToNotificationCompanion,
-                    )
-                    BridgeCoreRow(
-                        icon = Icons.Filled.Image,
-                        title = "Media",
-                        subtitle = "Manage inbound attachments and cache behavior",
-                        onClick = onNavigateToMediaSettings,
-                    )
-                    BridgeCoreRow(
-                        icon = Icons.Filled.Devices,
-                        title = "Relay sessions",
-                        subtitle = "Review active grants for this server",
-                        onClick = onNavigateToRelaySessions,
-                    )
-                }
-            }
+            RelaySectionCaption(
+                title = "Bridge Surface",
+                meta = "not hidden in settings",
+            )
+            RelayNavTile(
+                icon = Icons.Filled.Link,
+                title = "Connections",
+                subtitle = "Pair, switch, and verify relay routes",
+                onClick = onNavigateToConnections,
+            )
+            RelayNavTile(
+                icon = Icons.Filled.Code,
+                title = "Terminal",
+                subtitle = "Attach to your Hermes relay terminal",
+                onClick = onNavigateToTerminal,
+                selected = relayConnected,
+            )
+            RelayNavTile(
+                icon = Icons.Filled.GraphicEq,
+                title = "Voice",
+                subtitle = "Provider, model, output voice",
+                onClick = onNavigateToVoiceSettings,
+            )
+            RelayNavTile(
+                icon = Icons.Filled.Notifications,
+                title = "Notifications",
+                subtitle = "Shared app notifications",
+                onClick = onNavigateToNotificationCompanion,
+            )
+            RelayNavTile(
+                icon = Icons.Filled.Image,
+                title = "Media",
+                subtitle = "Inbound attachments and cache behavior",
+                onClick = onNavigateToMediaSettings,
+            )
+            RelayNavTile(
+                icon = Icons.Filled.Devices,
+                title = "Relay sessions",
+                subtitle = "Review active grants for this server",
+                onClick = onNavigateToRelaySessions,
+            )
 
             Spacer(modifier = Modifier.height(16.dp))
         }

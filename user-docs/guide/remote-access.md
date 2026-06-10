@@ -4,12 +4,15 @@ Hermes-Relay can keep one paired phone connected as it moves between LAN, Tailsc
 
 ## What Uses Which Connection
 
-One pairing QR can configure both parts of the app:
+Standard setup saves the API server URL and API key directly. If you also enter
+the host's Tailscale API URL in Standard setup, Android stores both routes and
+uses the highest-priority reachable one. A Relay pairing QR can also carry both
+parts of the app when you enable the optional relay:
 
 - **Chat and API-backed voice** use the Hermes API server URL and the Hermes API bearer key when one is configured.
 - **Terminal, bridge, TUI, media/session management, clipboard, profile writes, Android control, and relay-token voice fallback** use the relay URL and require a paired relay session token.
 
-The app stores your base API URL and relay URL on the connection, then uses the active route selected from the QR's endpoint list at runtime. That means a single scan can stay valid when LAN is reachable at home and Tailscale is the reachable route away from home.
+The app stores your base API URL, optional Tailscale API URL, and relay URL on the connection, then uses the active route selected from saved route candidates at runtime. That means one saved connection can use LAN at home and Tailscale away from home.
 
 ## Recommended: Tailscale
 
@@ -17,7 +20,7 @@ On the Hermes host:
 
 ```bash
 hermes-relay-tailscale enable
-hermes-pair --mode auto --prefer tailscale
+hermes pair --mode auto --prefer tailscale
 ```
 
 The Tailscale helper publishes both required loopback services:
@@ -40,19 +43,19 @@ hermes-relay-tailscale status
 Use `--mode auto` for the normal multi-endpoint QR:
 
 ```bash
-hermes-pair --mode auto
+hermes pair --mode auto
 ```
 
 It emits LAN when available, adds Tailscale when the helper detects a tailnet hostname, and adds a public route when you pass `--public-url`:
 
 ```bash
-hermes-pair --mode auto --public-url https://hermes.example.com/relay
+hermes pair --mode auto --public-url https://hermes.example.com/relay
 ```
 
 Use `--prefer tailscale` when you want the phone to try Tailscale first but still keep LAN as a fallback:
 
 ```bash
-hermes-pair --mode auto --prefer tailscale
+hermes pair --mode auto --prefer tailscale
 ```
 
 You can also override from the phone: **Settings -> Connections -> active connection -> Routes -> Prefer this route**.

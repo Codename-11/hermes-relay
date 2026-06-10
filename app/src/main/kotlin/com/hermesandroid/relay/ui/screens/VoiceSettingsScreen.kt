@@ -61,6 +61,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hermesandroid.relay.data.BargeInSensitivity
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.VoiceAudioRoute
 import com.hermesandroid.relay.data.VoiceEngineMode
 import com.hermesandroid.relay.data.VoicePreferencesRepository
 import com.hermesandroid.relay.data.VoiceSettings
@@ -106,6 +107,7 @@ fun VoiceSettingsScreen(
     val prefsRepo = remember { VoicePreferencesRepository(context) }
     val voiceSettings by prefsRepo.settings.collectAsState(initial = VoiceSettings())
     val currentEngine = VoiceEngineMode.fromStorage(voiceSettings.engineMode)
+    val currentAudioRoute = VoiceAudioRoute.fromStorage(voiceSettings.audioRoute)
 
     val bargeInPrefs by settingsViewModel.bargeInPrefs.collectAsState()
     val aecAvailable = settingsViewModel.aecAvailable
@@ -405,6 +407,62 @@ fun VoiceSettingsScreen(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                        }
+                    }
+                }
+            }
+
+            if (currentEngine == VoiceEngineMode.HermesVoiceOutput) {
+                SectionCard(title = "Stable STT/TTS Route") {
+                    listOf(
+                        VoiceAudioRoute.Auto to Triple(
+                            "Auto",
+                            "Use standard Hermes audio first, then Relay when needed.",
+                            false,
+                        ),
+                        VoiceAudioRoute.Standard to Triple(
+                            "Standard Hermes",
+                            "Use the upstream API audio path used by Hermes Desktop.",
+                            false,
+                        ),
+                        VoiceAudioRoute.Relay to Triple(
+                            "Relay",
+                            "Use Relay voice providers and streaming voice output.",
+                            true,
+                        ),
+                    ).forEach { (route, copy) ->
+                        val (label, detail, relayOnly) = copy
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .selectable(
+                                    selected = currentAudioRoute == route,
+                                    onClick = {
+                                        scope.launch { prefsRepo.setAudioRoute(route) }
+                                    },
+                                )
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(
+                                selected = currentAudioRoute == route,
+                                onClick = null,
+                            )
+                            Spacer(Modifier.size(8.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Text(label, style = MaterialTheme.typography.bodyMedium)
+                                    if (relayOnly) ExperimentalBadge("Optional")
+                                }
+                                Text(
+                                    text = detail,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                 }

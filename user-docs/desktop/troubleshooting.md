@@ -50,7 +50,7 @@ rm ~/.hermes/remote-sessions.json      # or delete just this URL's entry
 hermes-relay pair --remote ws://<host>:8767
 ```
 
-Mint a fresh code on the server first: `hermes-pair --ttl 600`.
+Mint a fresh code on the server first: `hermes pair --ttl 600`.
 
 ## `disconnected before auth`
 

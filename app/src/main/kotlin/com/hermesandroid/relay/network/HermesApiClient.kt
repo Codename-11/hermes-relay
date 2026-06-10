@@ -23,6 +23,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
 import okhttp3.MediaType.Companion.toMediaType
@@ -62,9 +63,9 @@ enum class ChatMode {
  * returns an SSE stream, while `/v1/runs` may be an async JSON run-start API.
  */
 data class ServerCapabilities(
-    /** `/api/sessions` (CRUD) — true on fork, upstream-merged, OR bootstrap-injected. */
+    /** `/api/sessions` (CRUD) — true on native upstream, fork, OR bootstrap-injected older builds. */
     val sessionsApi: Boolean,
-    /** `/api/sessions/{id}/chat/stream` (SSE) — true ONLY on fork or upstream-merged. */
+    /** `/api/sessions/{id}/chat/stream` (SSE) — true on native upstream or legacy fork builds. */
     val sessionsChatStream: Boolean,
     /** `/v1/runs` (structured-event SSE) — true only when explicitly advertised as SSE-compatible. */
     val runs: Boolean,
@@ -97,6 +98,44 @@ data class ServerCapabilities(
             healthy = false,
         )
     }
+}
+
+private fun JsonObject.childObject(key: String): JsonObject? = this[key] as? JsonObject
+
+private fun JsonObject.booleanFlag(key: String): Boolean =
+    (this[key] as? JsonPrimitive)?.booleanOrNull == true
+
+private fun JsonObject.hasEndpoint(key: String): Boolean {
+    val path = ((this[key] as? JsonObject)?.get("path") as? JsonPrimitive)?.contentOrNull
+    return !path.isNullOrBlank()
+}
+
+internal fun parseCapabilitiesBody(json: Json, body: String): ServerCapabilities? {
+    val root = try {
+        json.decodeFromString<JsonObject>(body)
+    } catch (_: Exception) {
+        return null
+    }
+
+    val features = root.childObject("features")
+    val endpoints = root.childObject("endpoints")
+    if (features == null && endpoints == null) return null
+
+    fun feature(name: String): Boolean = features?.booleanFlag(name) == true
+    fun endpoint(name: String): Boolean = endpoints?.hasEndpoint(name) == true
+
+    return ServerCapabilities(
+        sessionsApi = feature("session_resources") ||
+            endpoint("sessions") ||
+            endpoint("session_create"),
+        sessionsChatStream = feature("session_chat_streaming") ||
+            endpoint("session_chat_stream"),
+        runs = feature("run_events_sse") || endpoint("run_events"),
+        portable = feature("chat_completions_streaming") ||
+            feature("chat_completions") ||
+            endpoint("chat_completions"),
+        healthy = true,
+    )
 }
 
 internal val HERMES_SKILL_ENDPOINTS = listOf("/v1/skills", "/api/skills")
@@ -260,7 +299,7 @@ class HermesApiClient(
                     return@withContext Result.failure(IOException("List sessions returned an empty response"))
                 }
                 val parsed = json.decodeFromString<SessionListResponse>(body)
-                Result.success(parsed.items ?: parsed.sessions ?: emptyList())
+                Result.success(parsed.data ?: parsed.items ?: parsed.sessions ?: emptyList())
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to list sessions: ${e.message}")
@@ -349,7 +388,7 @@ class HermesApiClient(
                 if (!response.isSuccessful) return@withContext emptyList()
                 val body = response.body?.string() ?: return@withContext emptyList()
                 val parsed = json.decodeFromString<MessageListResponse>(body)
-                parsed.items ?: parsed.messages ?: emptyList()
+                parsed.data ?: parsed.items ?: parsed.messages ?: emptyList()
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to get messages: ${e.message}")
@@ -1141,14 +1180,15 @@ class HermesApiClient(
      *
      * Probe order:
      *   1. `/health` — if this fails, everything else is moot.
-     *   2. `HEAD /api/sessions?limit=1` — sessions CRUD (true on fork OR
-     *      bootstrap-injected upstream).
-     *   3. `HEAD /api/sessions/probe/chat/stream` — chat-stream handler
+     *   2. `GET /v1/capabilities` — native upstream feature + endpoint map.
+     *   3. `HEAD /api/sessions?limit=1` — sessions CRUD (true on fork,
+     *      native upstream, OR bootstrap-injected older upstream).
+     *   4. `HEAD /api/sessions/probe/chat/stream` — chat-stream handler
      *      presence. The handler only accepts POST, so HEAD returns 405
      *      (Method Not Allowed) when the route is registered. 404 means
      *      the route doesn't exist at all.
-     *   4. `HEAD /v1/chat/completions` — OpenAI-compatible SSE fallback.
-     *   5. `HEAD /v1/runs` with `Accept: text/event-stream` — accepted only
+     *   5. `HEAD /v1/chat/completions` — OpenAI-compatible SSE fallback.
+     *   6. `HEAD /v1/runs` with `Accept: text/event-stream` — accepted only
      *      when the response explicitly advertises event-stream compatibility.
      *
      * **Why HEAD instead of OPTIONS:** The hermes-agent gateway runs CORS
@@ -1179,6 +1219,20 @@ class HermesApiClient(
             false
         }
         if (!healthy) return@withContext ServerCapabilities.DISCONNECTED
+
+        val advertisedCapabilities = try {
+            val req = authRequest("$baseUrl/v1/capabilities").get().build()
+            client.newCall(req).execute().use { response ->
+                if (!response.isSuccessful) {
+                    null
+                } else {
+                    parseCapabilitiesBody(json, response.body.string())
+                }
+            }
+        } catch (_: Exception) {
+            null
+        }
+        if (advertisedCapabilities != null) return@withContext advertisedCapabilities
 
         // Reusable HEAD probe — returns true if the route is registered
         // (any status except 404 + network errors). Already inside the
@@ -1224,6 +1278,25 @@ class HermesApiClient(
             portable = portable,
             healthy = true,
         )
+    }
+
+    suspend fun probeAudioApi(): Boolean = withContext(Dispatchers.IO) {
+        val healthy = try {
+            val req = authRequest("$baseUrl/health").get().build()
+            client.newCall(req).execute().use { it.isSuccessful }
+        } catch (_: Exception) {
+            false
+        }
+        if (!healthy) return@withContext false
+
+        fun routeExists(path: String): Boolean = try {
+            val req = authRequest("$baseUrl$path").head().build()
+            client.newCall(req).execute().use { response -> response.code != 404 }
+        } catch (_: Exception) {
+            false
+        }
+
+        routeExists("/api/audio/transcribe") && routeExists("/api/audio/speak")
     }
 
     // --- Lifecycle ---

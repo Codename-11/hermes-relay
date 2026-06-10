@@ -355,7 +355,7 @@ script automates a quick end-to-end check of the lab routes.
 
 **"Relay returned 413" on synthesize** — you're trying to synthesize more than 5000 characters at once. This is a safety cap on the relay side to avoid runaway TTS costs. Client-side sentence chunking should normally keep individual requests well under this, so a 413 usually means the agent returned one enormous uninterrupted sentence.
 
-**"That pairing code was already used"** — Relay pairing codes are one-shot. Generate a fresh QR from the dashboard Relay tab or `hermes-pair` and scan again. If you only need chat plus voice, skip the Relay pairing path and save the Hermes API URL/key instead; the app will derive the conventional Relay voice URL and probe `/voice/config`.
+**"That pairing code was already used"** — Relay pairing codes are one-shot. Generate a fresh QR from the dashboard Relay tab or `hermes pair` and scan again. If you only need chat plus voice, skip the Relay pairing path and save the Hermes API URL/key instead; the app will derive the conventional Relay voice URL and probe `/voice/config`.
 
 ## Privacy Note
 

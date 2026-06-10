@@ -627,6 +627,7 @@ fun AgentInfoSheet(
     chatViewModel: ChatViewModel,
     onDismiss: () -> Unit,
     onNavigateToConnections: () -> Unit,
+    onNavigateToProfileInspector: (String) -> Unit = {},
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -741,7 +742,7 @@ fun AgentInfoSheet(
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     SectionLabel(
                         title = "Profile",
-                        hint = "Overlay an agent's model + SOUL",
+                        hint = "Host-side Hermes contexts",
                     )
 
                     val defaultDotColor = serverDefaultProfile?.let { profile ->
@@ -868,6 +869,13 @@ fun AgentInfoSheet(
                                 append("profile: ")
                                 append(profile.name)
                             }
+                            if (profile.hasIsolatedApi) {
+                                if (isNotEmpty()) append(" \u2022 ")
+                                append("isolated API")
+                            } else {
+                                if (isNotEmpty()) append(" \u2022 ")
+                                append("compatibility overlay")
+                            }
                             if (isApparentActive && selectedProfile == null) {
                                 if (isNotEmpty()) append(" \u2022 ")
                                 append("This is the server's active profile")
@@ -884,6 +892,19 @@ fun AgentInfoSheet(
                             leadingDotContentDescription = dotA11y,
                             secondaryTrailing = if (profile.hasSoul || profile.skillCount > 0) {
                                 {
+                                    ProfileMetadataBadge(
+                                        text = if (profile.hasIsolatedApi) "API" else "Overlay",
+                                        background = if (profile.hasIsolatedApi) {
+                                            MaterialTheme.colorScheme.tertiaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.surfaceVariant
+                                        },
+                                        contentColor = if (profile.hasIsolatedApi) {
+                                            MaterialTheme.colorScheme.onTertiaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                    )
                                     if (profile.skillCount > 0) {
                                         ProfileMetadataBadge(
                                             text = "${profile.skillCount} skills",
@@ -904,7 +925,9 @@ fun AgentInfoSheet(
                                 if (selectedProfile?.name != profile.name) {
                                     connectionViewModel.selectProfile(profile)
                                     val display = primaryLabel
-                                    val suffix = if (profile.systemMessage?.isNotBlank() == true) {
+                                    val suffix = if (profile.hasIsolatedApi) {
+                                        " — profile API active"
+                                    } else if (profile.systemMessage?.isNotBlank() == true) {
                                         " — model + SOUL applied"
                                     } else {
                                         " — model applied"
@@ -913,6 +936,21 @@ fun AgentInfoSheet(
                                 }
                             },
                         )
+                    }
+
+                    val inspectorTarget = selectedProfile
+                        ?: serverDefaultProfile
+                        ?: selectableProfiles.firstOrNull()
+                    inspectorTarget?.let { profile ->
+                        TextButton(
+                            onClick = {
+                                onDismiss()
+                                onNavigateToProfileInspector(profile.name)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Inspect ${AgentDisplay.profileDisplayName(profile) ?: profile.name}")
+                        }
                     }
 
                     if (profileOverridesPersonality) {
@@ -1065,7 +1103,7 @@ fun AgentInfoSheet(
                             val hostname = com.hermesandroid.relay.data.Connection
                                 .extractDefaultLabel(connection.apiServerUrl)
                             val statusLine = when {
-                                connection.pairedAt == null -> "$hostname • Not paired"
+                                connection.pairedAt == null -> "$hostname • Standard"
                                 else -> "$hostname • Paired"
                             }
                             ProfileRadioRow(

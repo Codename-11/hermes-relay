@@ -26,11 +26,13 @@ import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.network.ChannelMultiplexer
 import com.hermesandroid.relay.network.RelayVoiceClient
+import com.hermesandroid.relay.network.RelayVoiceAudioClientAdapter
 import com.hermesandroid.relay.network.RealtimeAgentSessionControl
 import com.hermesandroid.relay.network.RealtimeTurnInput
 import com.hermesandroid.relay.network.RealtimeVoiceSummary
 import com.hermesandroid.relay.network.RealtimeVoiceEvent
 import com.hermesandroid.relay.network.VoiceHandoffEvent
+import com.hermesandroid.relay.network.VoiceAudioClient
 import com.hermesandroid.relay.network.handlers.LocalDispatchResult
 import com.hermesandroid.relay.util.HumanError
 import com.hermesandroid.relay.util.classifyError
@@ -66,6 +68,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import com.hermesandroid.relay.data.VoicePreferencesRepository
+import com.hermesandroid.relay.data.VoiceAudioRoute
 
 /**
  * Where we are in the voice conversation cycle. Used to drive the UI
@@ -256,9 +259,9 @@ data class VoiceStats(
  *   Idle → Listening (record mic) → Transcribing (upload) → Thinking
  *        → Speaking (sentence-buffered TTS) → Idle
  *
- * Requires [VoiceRecorder], [VoicePlayer], [RelayVoiceClient], and a
+ * Requires [VoiceRecorder], [VoicePlayer], [VoiceAudioClient], and a
  * [ChatViewModel] for sending the transcribed text through the normal
- * chat pipeline. All four are wired via [initialize] after construction.
+ * chat pipeline. Realtime Agent still uses [RelayVoiceClient].
  *
  * ### Sentence-boundary streaming TTS
  * The SSE stream emits text one token at a time, but TTS wants whole
@@ -283,10 +286,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         private const val TTS_CACHE_CAP = 6 // keep the last N mp3s on disk
         private const val MAX_BROKERED_TOOL_STATUS_PER_MESSAGE = 2
         private const val STABLE_VOICE_INTERFACE_CONTEXT =
-            "Hermes Relay interface context for this turn:\n" +
+            "Hermes Android voice interface context for this turn:\n" +
                 "- Active voice engine: Hermes chat + voice output (hermes_voice_output).\n" +
-                "- Active route: Android mic -> relay STT /voice/transcribe -> " +
-                "normal Hermes chat stream -> relay voice output playback.\n" +
+                "- Active route: Android mic -> selected Hermes STT route -> " +
+                "normal Hermes chat stream -> selected Hermes TTS route playback.\n" +
                 "- This is not Realtime Agent mode. If the user asks which " +
                 "interface, path, or mode is active, answer from this context."
 
@@ -391,6 +394,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // --- Dependencies (injected via initialize) --------------------------
 
     private var voiceClient: RelayVoiceClient? = null
+    private var voiceAudioClient: VoiceAudioClient? = null
     private var chatViewModel: ChatViewModel? = null
     private var recorder: VoiceRecorder? = null
     private var player: VoicePlayer? = null
@@ -735,6 +739,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun initialize(
         voiceClient: RelayVoiceClient,
+        voiceAudioClient: VoiceAudioClient? = null,
         chatViewModel: ChatViewModel,
         recorder: VoiceRecorder,
         player: VoicePlayer,
@@ -772,6 +777,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         voiceHandoffReporter: ((VoiceHandoffEvent) -> Unit)? = null,
     ) {
         this.voiceClient = voiceClient
+        this.voiceAudioClient = voiceAudioClient ?: RelayVoiceAudioClientAdapter(voiceClient)
         this.chatViewModel = chatViewModel
         this.recorder = recorder
         this.player = player
@@ -1563,9 +1569,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         onResult: (Result<Unit>) -> Unit = {},
     ) {
         val app = getApplication<Application>()
-        val client = voiceClient
+        val audioClient = voiceAudioClient
+        val relayClient = voiceClient
         val p = player
-        if (client == null || p == null) {
+        if (audioClient == null || p == null) {
             onResult(Result.failure(IllegalStateException("Voice pipeline not initialized")))
             Toast.makeText(app, "Voice test failed: pipeline not initialized", Toast.LENGTH_SHORT).show()
             setError("Voice pipeline not initialized")
@@ -1573,7 +1580,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
         val triggerToast = Toast.makeText(app, "Testing voice…", Toast.LENGTH_SHORT).also { it.show() }
         viewModelScope.launch {
-            val profileAwareResult = testVoiceViaVoiceOutput(client, sample)
+            val profileAwareResult = if (audioClient.route == VoiceAudioRoute.Relay && relayClient != null) {
+                testVoiceViaVoiceOutput(relayClient, sample)
+            } else {
+                null
+            }
             val result = if (profileAwareResult != null) {
                 if (profileAwareResult.isSuccess) {
                     triggerToast.cancel()
@@ -1582,9 +1593,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
                 Log.w(TAG, "profile-aware voice test failed; falling back to legacy synthesize: ${profileAwareResult.exceptionOrNull()?.message}")
-                client.synthesize(sample)
+                audioClient.synthesize(sample)
             } else {
-                client.synthesize(sample)
+                audioClient.synthesize(sample)
             }
             if (result.isFailure) {
                 triggerToast.cancel()
@@ -1754,9 +1765,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         inputPcm: ByteArray,
         inputSampleRate: Int,
     ) {
-        val client = voiceClient
+        val relayClient = voiceClient
+        val audioClient = voiceAudioClient
         val chatVm = chatViewModel
-        if (client == null || chatVm == null) {
+        if (audioClient == null || chatVm == null) {
             setError("Voice pipeline not initialized")
             return
         }
@@ -1773,6 +1785,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         if (engineModeForTurn == VoiceEngineMode.RealtimeAgent) {
+            val client = relayClient
+            if (client == null) {
+                setError("Realtime Agent needs a Relay voice route")
+                return
+            }
             Log.i(TAG, "Voice input routed to Realtime Agent")
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Voice,
@@ -1829,15 +1846,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             category = DiagnosticCategory.Voice,
             severity = DiagnosticSeverity.Info,
             title = "Voice turn started",
-            detail = "Hermes voice output",
+            detail = "Hermes voice output (${audioClient.route.storageValue})",
         )
-        if (!runVoiceRelayPreflight("Hermes voice output")) return
 
         // Transcribe
         _uiState.update { it.copy(state = VoiceState.Transcribing, outputAudioActive = false) }
         val sttStartedAtMs = System.currentTimeMillis()
         val audioBytes = try { audioFile.length() } catch (_: Exception) { 0L }
-        val transcribeResult = client.transcribe(audioFile)
+        val transcribeResult = audioClient.transcribe(audioFile)
         val sttLatencyMs = System.currentTimeMillis() - sttStartedAtMs
         if (transcribeResult.isFailure) {
             val err = transcribeResult.exceptionOrNull()
@@ -2817,7 +2833,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private fun shouldPreferRealtimeVoice(): Boolean =
         voiceOutputAvailable != false &&
             realtimePcmPlayer != null &&
-            voiceClient != null
+            voiceClient != null &&
+            voiceAudioClient?.route == VoiceAudioRoute.Relay
 
     private fun drainSentences() {
         while (true) {
@@ -2888,12 +2905,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // TTS consumer — two-coroutine pipeline: synth runs ahead of playback
     // ---------------------------------------------------------------------
     //
-    // Provider-neutral voice output is now the preferred path. It uses
-    // /voice/output/* to stream renderer PCM through the relay and writes
-    // those chunks directly to AudioTrack. The legacy synth/play workers stay
-    // alive underneath as the fallback path when the relay does not expose the
-    // output route, provider auth is missing, or a renderer fails before
-    // audio starts.
+    // Relay-selected voice output can stream renderer PCM through
+    // /voice/output/* and write chunks directly to AudioTrack. Standard
+    // upstream audio and Relay fallback both use the synth/play workers.
 
     private fun startRealtimeTtsConsumer() {
         realtimeTtsConsumerJob?.cancel()
@@ -3227,9 +3241,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             synthesize = { sentence ->
                 val synthStartedAtMs = System.currentTimeMillis()
                 try {
-                    val client = voiceClient
+                    val client = voiceAudioClient
                     val result = if (client == null) {
-                        Result.failure(IllegalStateException("voiceClient not initialized"))
+                        Result.failure(IllegalStateException("voice audio client not initialized"))
                     } else {
                         client.synthesize(sentence)
                     }

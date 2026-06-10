@@ -18,6 +18,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -39,6 +40,15 @@ sealed class AuthState {
     data class Paired(val token: String) : AuthState()
     data class Failed(val reason: String) : AuthState()
 }
+
+@Serializable
+data class ConnectionAuthSecrets(
+    val sessionToken: String? = null,
+    val refreshToken: String? = null,
+    val deviceId: String? = null,
+    val apiKey: String? = null,
+    val pairedSessionMetaJson: String? = null,
+)
 
 /**
  * Orchestrates pairing + session token lifecycle for the relay channel.
@@ -133,6 +143,56 @@ class AuthManager(
                         null
                     }
             }
+
+        suspend fun exportStoredSecrets(
+            context: Context,
+            tokenStoreKey: String,
+        ): ConnectionAuthSecrets = withContext(Dispatchers.IO) {
+            val store = tokenStoreForBackup(context, tokenStoreKey)
+            ConnectionAuthSecrets(
+                sessionToken = store.getString(KEY_SESSION_TOKEN),
+                refreshToken = store.getString(KEY_REFRESH_TOKEN),
+                deviceId = store.getString(KEY_DEVICE_ID),
+                apiKey = store.getString(KEY_API_KEY),
+                pairedSessionMetaJson = store.getString(KEY_PAIRED_META),
+            )
+        }
+
+        suspend fun importStoredSecrets(
+            context: Context,
+            tokenStoreKey: String,
+            secrets: ConnectionAuthSecrets,
+        ) {
+            withContext(Dispatchers.IO) {
+                val store = tokenStoreForBackup(context, tokenStoreKey)
+                writeOrRemove(store, KEY_SESSION_TOKEN, secrets.sessionToken)
+                writeOrRemove(store, KEY_REFRESH_TOKEN, secrets.refreshToken)
+                writeOrRemove(store, KEY_DEVICE_ID, secrets.deviceId)
+                writeOrRemove(store, KEY_API_KEY, secrets.apiKey)
+                writeOrRemove(store, KEY_PAIRED_META, secrets.pairedSessionMetaJson)
+            }
+        }
+
+        private fun tokenStoreForBackup(
+            context: Context,
+            tokenStoreKey: String,
+        ): SessionTokenStore {
+            val appContext = context.applicationContext
+            return KeystoreTokenStore.tryCreate(appContext, tokenStoreKey)
+                ?: LegacyEncryptedPrefsTokenStore(appContext, tokenStoreKey)
+        }
+
+        private fun writeOrRemove(
+            store: SessionTokenStore,
+            key: String,
+            value: String?,
+        ) {
+            if (value == null) {
+                store.remove(key)
+            } else {
+                store.putString(key, value)
+            }
+        }
 
         /**
          * Parse the `profiles` array from an `auth.ok` payload into a list of

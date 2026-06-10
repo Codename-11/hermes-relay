@@ -12,12 +12,12 @@ A **<span class="track-badge track-badge--sideload">Sideload only</span>** badge
 | [Voice Mode](/features/voice) | Real-time voice conversation — sphere listens, agent speaks back via your server's configured TTS/STT providers |
 | [Markdown Rendering](/features/markdown) | Full markdown with syntax-highlighted code blocks |
 | [Reasoning Display](/features/reasoning) | Collapsible extended-thinking blocks |
-| [Connections](/features/connections) | Pair with multiple Hermes servers — one-tap switch from the top-bar chip |
+| [Connections](/features/connections) | Save multiple Hermes servers — one-tap switch from the top-bar chip |
 | [Profiles](/features/profiles) | Auto-discovered upstream agent directories — overlay model + SOUL on chat turns |
 | [Personalities](/features/personalities) | Dynamic from `GET /api/config` — picker, agent name on bubbles |
 | [Command Palette](/guide/chat#command-palette) | Searchable command browser — 29 gateway commands, personalities, 90+ skills |
 | [Slash Commands](/guide/chat#inline-autocomplete) | Inline autocomplete as you type `/` |
-| [QR Code Pairing](/guide/getting-started#qr-code-pairing-recommended) | Scan `hermes-pair` QR to auto-configure connection |
+| [Standard Setup](/guide/getting-started#connect-android-to-hermes) | Connect by API URL/key first; scan a QR only when you want Relay pairing |
 | [Token Tracking](/features/tokens) | Per-message usage and cost |
 | [Tool Progress](/features/tools) | Configurable display — Off, Compact, or Detailed |
 

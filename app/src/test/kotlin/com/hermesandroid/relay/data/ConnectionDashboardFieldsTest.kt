@@ -75,6 +75,31 @@ class ConnectionDashboardFieldsTest {
         assertNull(connection.dashboardUrl)
         assertEquals("http://localhost:9119", connection.resolvedDashboardUrl)
         assertTrue(Connection.isAutoManagedDashboardUrl(connection.dashboardUrl, connection.apiServerUrl))
+        assertEquals(0, connection.routeCandidates.size)
+    }
+
+    @Test
+    fun buildRouteCandidates_createsLanAndTailscaleRoutes() {
+        val routes = Connection.buildRouteCandidates(
+            apiServerUrl = "http://192.168.1.25:8642",
+            relayUrl = "ws://192.168.1.25:8767",
+            extraApiUrls = listOf("tailscale" to "https://hermes.tail1234.ts.net:8642"),
+        )
+
+        assertEquals(2, routes.size)
+        assertEquals("lan", routes[0].role)
+        assertEquals("192.168.1.25", routes[0].api.host)
+        assertEquals("ws://192.168.1.25:8767", routes[0].relay.url)
+        assertEquals("tailscale", routes[1].role)
+        assertEquals("hermes.tail1234.ts.net", routes[1].api.host)
+        assertEquals("wss://hermes.tail1234.ts.net:8767", routes[1].relay.url)
+    }
+
+    @Test
+    fun inferRouteRole_detectsTailscaleCgnat() {
+        assertEquals("tailscale", Connection.inferRouteRole("https://100.75.1.2:8642"))
+        assertEquals("lan", Connection.inferRouteRole("http://10.0.0.5:8642"))
+        assertEquals("public", Connection.inferRouteRole("https://hermes.example.com:8642"))
     }
 
     private fun sampleConnection(

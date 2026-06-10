@@ -22,6 +22,7 @@ import kotlinx.serialization.json.put
 import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -34,9 +35,19 @@ import java.util.concurrent.TimeUnit
 data class DashboardStatus(
     val authRequired: Boolean,
     val authProviders: List<String> = emptyList(),
+    val authProviderDetails: List<DashboardAuthProvider> = emptyList(),
     val version: String? = null,
     val message: String? = null,
 )
+
+data class DashboardAuthProvider(
+    val name: String,
+    val displayName: String? = null,
+    val supportsPassword: Boolean = false,
+) {
+    val isRedirectProvider: Boolean
+        get() = !supportsPassword
+}
 
 data class DashboardLoginResponse(
     val ok: Boolean,
@@ -78,9 +89,24 @@ class DashboardApiClient(
         getJson("/api/status").mapCatching { parseStatus(it) }
     }
 
+    suspend fun getAuthProviders(): Result<List<DashboardAuthProvider>> = withContext(Dispatchers.IO) {
+        getJson("/api/auth/providers").mapCatching { root ->
+            parseProviders(root["providers"])
+        }
+    }
+
     suspend fun getJsonObject(path: String): Result<JsonObject> = withContext(Dispatchers.IO) {
         val normalized = if (path.startsWith("/")) path else "/$path"
         getJson(normalized)
+    }
+
+    suspend fun getJsonElement(path: String): Result<JsonElement> = withContext(Dispatchers.IO) {
+        val normalized = if (path.startsWith("/")) path else "/$path"
+        val request = Request.Builder()
+            .url("$baseUrl$normalized")
+            .get()
+            .build()
+        executeJsonElement(request, normalized)
     }
 
     suspend fun postJsonObject(
@@ -188,7 +214,7 @@ class DashboardApiClient(
         deleteJsonObject("/api/profiles/${pathSegment(name)}")
 
     suspend fun loginPassword(
-        provider: String = "password",
+        provider: String = "basic",
         username: String,
         password: String,
         next: String = "/",
@@ -248,6 +274,12 @@ class DashboardApiClient(
         }
     }
 
+    fun authLoginUrl(provider: String, next: String = "/"): String =
+        authLoginUrl(baseUrl = baseUrl, provider = provider, next = next)
+
+    fun gatewayWebSocketUrl(ticket: String, path: String = "/api/ws"): String? =
+        gatewayWebSocketUrl(baseUrl = baseUrl, ticket = ticket, path = path)
+
     fun shutdown() {
         okHttpClient.dispatcher.executorService.shutdown()
         okHttpClient.connectionPool.evictAll()
@@ -274,11 +306,62 @@ class DashboardApiClient(
         }
     }
 
+    private fun executeJsonElement(request: Request, operation: String): Result<JsonElement> {
+        return try {
+            okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    return Result.failure(apiFailure(response, operation))
+                }
+                Result.success(response.readJsonElement(json))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     companion object {
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 
         fun pathSegment(value: String): String =
             URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+
+        private fun queryValue(value: String): String =
+            URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+
+        fun authLoginUrl(baseUrl: String, provider: String, next: String = "/"): String {
+            val root = baseUrl.trim().trimEnd('/')
+            return "$root/auth/login?provider=${queryValue(provider)}&next=${queryValue(next)}"
+        }
+
+        fun authLandingPath(baseUrl: String): String {
+            val httpUrl = baseUrl.trim().trimEnd('/').toHttpUrlOrNull() ?: return "/"
+            val basePath = httpUrl.encodedPath.trimEnd('/')
+            return when {
+                basePath.isBlank() || basePath == "/" -> "/"
+                else -> "$basePath/"
+            }
+        }
+
+        fun gatewayWebSocketUrl(baseUrl: String, ticket: String, path: String = "/api/ws"): String? {
+            val httpUrl = baseUrl.trim().trimEnd('/').toHttpUrlOrNull() ?: return null
+            val websocketPrefix = when (httpUrl.scheme) {
+                "https" -> "wss://"
+                "http" -> "ws://"
+                else -> return null
+            }
+            val normalizedPath = if (path.startsWith("/")) path else "/$path"
+            val basePath = httpUrl.encodedPath.trimEnd('/')
+            val encodedPath = when {
+                basePath.isBlank() || basePath == "/" -> normalizedPath
+                else -> "$basePath$normalizedPath"
+            }
+            val url = httpUrl.newBuilder()
+                .encodedPath(encodedPath)
+                .addQueryParameter("ticket", ticket)
+                .build()
+                .toString()
+            return websocketPrefix + url.substringAfter("://")
+        }
 
         private fun profileQuery(profile: String?): String {
             val trimmed = profile?.trim().orEmpty()
@@ -308,11 +391,13 @@ class DashboardApiClient(
             val providersElement = root["auth_providers"]
                 ?: root["providers"]
                 ?: authObject?.get("providers")
+            val providers = parseProviders(providersElement)
             return DashboardStatus(
                 authRequired = root.booleanField("auth_required")
                     ?: authObject.booleanField("required")
                     ?: false,
-                authProviders = parseProviderIds(providersElement),
+                authProviders = providers.map { it.name },
+                authProviderDetails = providers,
                 version = root.stringField("version"),
                 message = root.stringField("message") ?: root.stringField("detail"),
             )
@@ -321,12 +406,22 @@ class DashboardApiClient(
         fun parseAuthSession(root: JsonObject): DashboardAuthSession {
             val user = root["user"] as? JsonObject
             val session = root["session"] as? JsonObject
-            val authenticated = root.booleanField("authenticated")
+            val explicitAuthenticated = root.booleanField("authenticated")
                 ?: root.booleanField("ok")
-                ?: (user != null || session != null)
+            val flatIdentityPresent =
+                root.stringField("user_id") != null ||
+                    root.stringField("email") != null ||
+                    root.stringField("display_name") != null ||
+                    root.stringField("provider") != null ||
+                    root["expires_at"] != null
+            val authenticated = explicitAuthenticated
+                ?: (user != null || session != null || flatIdentityPresent)
             return DashboardAuthSession(
                 authenticated = authenticated,
                 username = root.stringField("username")
+                    ?: root.stringField("display_name")
+                    ?: root.stringField("email")
+                    ?: root.stringField("user_id")
                     ?: user.stringField("username")
                     ?: user.stringField("name")
                     ?: session.stringField("username"),
@@ -336,26 +431,53 @@ class DashboardApiClient(
             )
         }
 
-        private fun parseProviderIds(element: JsonElement?): List<String> {
+        fun parseProviders(element: JsonElement?): List<DashboardAuthProvider> {
             return when (element) {
-                is JsonArray -> element.mapNotNull { providerId(it) }
+                is JsonArray -> element.mapNotNull { provider(it) }
                 is JsonObject -> element.entries.mapNotNull { (key, value) ->
-                    providerId(value) ?: key.takeIf { it.isNotBlank() }
+                    val name = key.trim().takeIf { it.isNotBlank() }
+                    if (name != null && value is JsonObject) {
+                        provider(name, value)
+                    } else {
+                        provider(value) ?: name?.let {
+                            DashboardAuthProvider(name = it, supportsPassword = isPasswordProvider(it))
+                        }
+                    }
                 }
                 else -> emptyList()
-            }.distinct()
+            }.distinctBy { it.name }
         }
 
-        private fun providerId(element: JsonElement?): String? {
+        private fun provider(element: JsonElement?): DashboardAuthProvider? {
             return when (element) {
-                is JsonPrimitive -> element.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
-                is JsonObject -> element.stringField("id")
-                    ?: element.stringField("name")
-                    ?: element.stringField("type")
-                    ?: element.stringField("provider")
+                is JsonPrimitive -> element.contentOrNull
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { DashboardAuthProvider(name = it, supportsPassword = isPasswordProvider(it)) }
+                is JsonObject -> {
+                    val name = element.stringField("id")
+                        ?: element.stringField("name")
+                        ?: element.stringField("provider")
+                        ?: element.stringField("type")
+                    name?.let { provider(it, element) }
+                }
                 else -> null
             }
         }
+
+        private fun provider(name: String, element: JsonObject): DashboardAuthProvider =
+            DashboardAuthProvider(
+                name = name,
+                displayName = element.stringField("display_name")
+                    ?: element.stringField("label")
+                    ?: element.stringField("title"),
+                supportsPassword = element.booleanField("supports_password")
+                    ?: isPasswordProvider(name),
+            )
+
+        private fun isPasswordProvider(name: String): Boolean =
+            name.equals("basic", ignoreCase = true) ||
+                name.equals("password", ignoreCase = true)
     }
 }
 
@@ -441,6 +563,51 @@ class DashboardCookieJar(
     }
 }
 
+fun importDashboardCookieHeader(
+    store: DashboardCookieStore,
+    url: String,
+    cookieHeader: String?,
+    clockMillis: () -> Long = { System.currentTimeMillis() },
+): Int {
+    val httpUrl = url.toHttpUrlOrNull() ?: return 0
+    val raw = cookieHeader?.trim().orEmpty()
+    if (raw.isBlank()) return 0
+
+    val now = clockMillis()
+    // CookieManager.getCookie(url) returns only "name=value" pairs; it does
+    // not expose the original Set-Cookie Path attribute. Store imported
+    // WebView auth cookies at root so a cookie observed on /auth/callback is
+    // still sent to /api/auth/me during native session verification.
+    val cookiePath = "/"
+    val imported = raw.split(";")
+        .mapNotNull { part ->
+            val index = part.indexOf('=')
+            if (index <= 0) return@mapNotNull null
+            val name = part.substring(0, index).trim()
+            val value = part.substring(index + 1).trim()
+            if (name.isBlank()) return@mapNotNull null
+            StoredDashboardCookie(
+                name = name,
+                value = value,
+                expiresAt = Long.MAX_VALUE,
+                domain = httpUrl.host,
+                path = cookiePath,
+                secure = httpUrl.isHttps,
+                httpOnly = true,
+                hostOnly = true,
+                persistent = false,
+            )
+        }
+        .filterNot { it.isExpired(now) }
+    if (imported.isEmpty()) return 0
+
+    val retained = store.load()
+        .filterNot { it.isExpired(now) }
+        .filterNot { old -> imported.any { it.key == old.key } }
+    store.save(retained + imported)
+    return imported.size
+}
+
 @Serializable
 data class StoredDashboardCookie(
     val name: String,
@@ -499,6 +666,12 @@ private fun Response.readJsonObject(json: Json): JsonObject {
     val raw = body.string()
     if (raw.isBlank()) return JsonObject(emptyMap())
     return json.parseToJsonElement(raw).jsonObject
+}
+
+private fun Response.readJsonElement(json: Json): JsonElement {
+    val raw = body.string()
+    if (raw.isBlank()) return JsonObject(emptyMap())
+    return json.parseToJsonElement(raw)
 }
 
 private fun apiFailure(response: Response, operation: String): IOException {

@@ -214,27 +214,83 @@ class ConnectionStore private constructor(
                     _activeConnectionId.value = null
                 }
             }
-            removed?.let { connection ->
-                context?.let { ctx ->
-                    val storeKeys = buildSet {
-                        add(connection.tokenStoreKey)
-                        if (connection.tokenStoreKey == Connection.LEGACY_TOKEN_STORE_KEY) {
-                            // Pre-StrongBox fallback path used this file. If
-                            // connection 0 is removed, scrub it alongside the
-                            // hardware-backed legacy filename.
-                            add("hermes_companion_auth")
-                        }
-                    }
-                    for (storeKey in storeKeys) {
-                        try {
-                            ctx.deleteSharedPreferences(storeKey)
-                        } catch (e: Exception) {
-                            Log.w(
-                                TAG,
-                                "deleteSharedPreferences($storeKey) failed: ${e.message}",
-                            )
-                        }
-                    }
+            removed?.let { deleteTokenStoresFor(it) }
+        }
+    }
+
+    /**
+     * Factory-reset helper: clear the persisted connection list, active
+     * pointer, legacy profile aliases, and every known per-connection auth
+     * store. Unlike removing one connection, this intentionally does not pick
+     * a successor; callers are resetting the app back to "no connection".
+     */
+    suspend fun clearAllConnections() {
+        writeMutex.withLock {
+            var removed: List<Connection> = emptyList()
+            dataStore.edit { prefs ->
+                removed = decodeConnections(prefs[KEY_CONNECTIONS])
+                prefs.remove(KEY_CONNECTIONS)
+                prefs.remove(KEY_ACTIVE_CONNECTION_ID)
+                prefs.remove(KEY_LEGACY_PROFILES)
+                prefs.remove(KEY_LEGACY_ACTIVE_PROFILE_ID)
+                _connections.value = emptyList()
+                _activeConnectionId.value = null
+            }
+            removed.forEach { deleteTokenStoresFor(it) }
+        }
+    }
+
+    suspend fun replaceConnections(
+        connections: List<Connection>,
+        activeConnectionId: String? = null,
+    ) {
+        writeMutex.withLock {
+            var removed: List<Connection> = emptyList()
+            val normalizedConnections = connections.map { it.withDashboardDefaults() }
+            val normalizedActiveId = activeConnectionId
+                ?.takeIf { id -> normalizedConnections.any { it.id == id } }
+                ?: normalizedConnections.firstOrNull()?.id
+
+            dataStore.edit { prefs ->
+                removed = decodeConnections(prefs[KEY_CONNECTIONS])
+                if (normalizedConnections.isEmpty()) {
+                    prefs.remove(KEY_CONNECTIONS)
+                } else {
+                    prefs[KEY_CONNECTIONS] = encodeConnections(normalizedConnections)
+                }
+                if (normalizedActiveId == null) {
+                    prefs.remove(KEY_ACTIVE_CONNECTION_ID)
+                } else {
+                    prefs[KEY_ACTIVE_CONNECTION_ID] = normalizedActiveId
+                }
+                prefs.remove(KEY_LEGACY_PROFILES)
+                prefs.remove(KEY_LEGACY_ACTIVE_PROFILE_ID)
+                _connections.value = normalizedConnections
+                _activeConnectionId.value = normalizedActiveId
+            }
+            removed.forEach { deleteTokenStoresFor(it) }
+        }
+    }
+
+    private fun deleteTokenStoresFor(connection: Connection) {
+        context?.let { ctx ->
+            val storeKeys = buildSet {
+                add(connection.tokenStoreKey)
+                if (connection.tokenStoreKey == Connection.LEGACY_TOKEN_STORE_KEY) {
+                    // Pre-StrongBox fallback path used this file. If
+                    // connection 0 is removed, scrub it alongside the
+                    // hardware-backed legacy filename.
+                    add("hermes_companion_auth")
+                }
+            }
+            for (storeKey in storeKeys) {
+                try {
+                    ctx.deleteSharedPreferences(storeKey)
+                } catch (e: Exception) {
+                    Log.w(
+                        TAG,
+                        "deleteSharedPreferences($storeKey) failed: ${e.message}",
+                    )
                 }
             }
         }
@@ -345,6 +401,7 @@ class ConnectionStore private constructor(
                     relayUrl = relayUrl,
                     tokenStoreKey = Connection.LEGACY_TOKEN_STORE_KEY,
                     dashboardUrl = Connection.deriveDefaultDashboardUrl(apiUrl),
+                    routeCandidates = Connection.buildRouteCandidates(apiUrl, relayUrl),
                     pairedAt = null,
                     lastActiveSessionId = legacyLastSessionId,
                     transportHint = null,
@@ -405,8 +462,22 @@ class ConnectionStore private constructor(
 
     private fun Connection.withDashboardDefaults(): Connection {
         val derivedDashboardUrl = Connection.deriveDefaultDashboardUrl(apiServerUrl)
-        return if (dashboardUrl.isNullOrBlank() && derivedDashboardUrl != null) {
-            copy(dashboardUrl = derivedDashboardUrl)
+        val normalizedRoutes = routeCandidates.ifEmpty {
+            Connection.buildRouteCandidates(apiServerUrl, relayUrl)
+        }
+        val normalizedPreferredRouteRole = preferredRouteRole?.takeIf { preferred ->
+            normalizedRoutes.any { it.role.equals(preferred, ignoreCase = true) }
+        }
+        return if (
+            (dashboardUrl.isNullOrBlank() && derivedDashboardUrl != null) ||
+            normalizedRoutes != routeCandidates ||
+            normalizedPreferredRouteRole != preferredRouteRole
+        ) {
+            copy(
+                dashboardUrl = dashboardUrl?.takeIf { it.isNotBlank() } ?: derivedDashboardUrl,
+                routeCandidates = normalizedRoutes,
+                preferredRouteRole = normalizedPreferredRouteRole,
+            )
         } else {
             this
         }

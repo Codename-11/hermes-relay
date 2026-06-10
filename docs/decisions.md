@@ -80,15 +80,16 @@ The app supports two streaming endpoints, selectable in Settings:
 | **Sessions** (`/api/sessions/{id}/chat/stream`) | Inline text annotations (`` `💻 terminal` ``) — client parses from markdown | Hermes-native SSE (assistant.delta, tool.progress, etc.) or OpenAI-format (delta.content) |
 | **Runs** (`/v1/runs` + `/v1/runs/{run_id}/events`) | **Structured events** (tool.started, tool.completed) — real-time tool cards | Hermes lifecycle events (message.delta, tool.started, tool.completed, run.completed) |
 
-**Important upstream note:** The `/api/sessions` CRUD endpoints are moving
-toward upstream Hermes core through focused PR
-[#29302](https://github.com/NousResearch/hermes-agent/pull/29302), which covers
-session list/create/read/update/delete, messages, fork, chat, and chat stream.
-Until that reaches a released core build, `hermes_relay_bootstrap/` still ships
-with the plugin and runs at Python interpreter startup via `.pth`. The bootstrap
-now composes with partial upstream support: native routes win per method/path,
-and the relay only injects missing compatibility gaps such as config, skills, or
-memory when core does not provide them.
+**Important upstream note:** The `/api/sessions` CRUD/chat endpoints are now in
+upstream Hermes core via focused PR
+[#33134](https://github.com/NousResearch/hermes-agent/pull/33134), which
+salvaged the useful session-control portion of #29302 and covers session
+list/create/read/update/delete, messages, fork, chat, and chat stream. Read-only
+skill/toolset discovery is also native via
+[#33016](https://github.com/NousResearch/hermes-agent/pull/33016). The bootstrap
+still ships for older core builds and for surfaces that remain compatibility-only
+(config, memory, legacy skill detail/toggle, available-models, slash middleware),
+but sessions and read-only skill lists should now be upstream-first.
 
 The app's `probeCapabilities()` returns a per-endpoint snapshot, and `ConnectionViewModel.resolveStreamingEndpoint()` collapses `streamingEndpoint = "auto"` (the default for new installs) to a concrete `"sessions"` or `"runs"` choice based on what the server actually exposes.
 
@@ -132,12 +133,12 @@ Phone (WSS)      → Relay Server (:8767)          [bridge, terminal]
 
 #### 6a. QR Carries Both API and Relay Credentials (updated 2026-05-03)
 
-**Decision:** The Hermes pairing QR payload bundles the API server credentials AND the relay URL + pairing code into a single scan. The pair command (`/hermes-relay-pair` skill or `hermes-pair` shell shim, both backed by `plugin/pair.py`) runs on the Hermes host; if a relay is reachable at `localhost:RELAY_PORT`, the command mints a fresh 6-char code, pre-registers it with the relay via a new loopback-only `POST /pairing/register` endpoint, and embeds `{url, code}` under a nullable `relay` key alongside the existing `host`/`port`/`key`/`tls` fields. The dashboard pairing flow uses the relay's loopback-only `POST /pairing/mint` endpoint instead; when the dashboard omits `api_key`, the relay reads the same host-local Hermes API key config as `hermes-pair` and places it in top-level `key`.
+**Decision:** The Hermes pairing QR payload bundles the API server credentials AND the relay URL + pairing code into a single scan. The pair command (`hermes pair`, `/hermes-relay-pair`, or the compatibility `hermes-pair` shell shim, all backed by `plugin/pair.py`) runs on the Hermes host; if a relay is reachable at `localhost:RELAY_PORT`, the command mints a fresh 6-char code, pre-registers it with the relay via a new loopback-only `POST /pairing/register` endpoint, and embeds `{url, code}` under a nullable `relay` key alongside the existing `host`/`port`/`key`/`tls` fields. The dashboard pairing flow uses the relay's loopback-only `POST /pairing/mint` endpoint instead; when the dashboard omits `api_key`, the relay reads the same host-local Hermes API key config as `hermes pair` and places it in top-level `key`.
 
 **Trust anchor:** the operator with shell access on the host. Only a process running on the same machine as the relay can hit `/pairing/register` — the handler rejects any non-loopback `request.remote` with HTTP 403. A LAN attacker cannot inject codes. This matches the model we already rely on for reading `~/.hermes/.env` and `~/.hermes/config.yaml`: if you have shell access to the host, you have enough privilege to authorize a device.
 
 **Why the change was necessary:**
-- Previously the phone generated its own 6-char pairing code locally via `AuthManager.generatePairingCode()` and sent it to the relay on WSS connect. The relay had no way to know what code to accept, so relay pairing was effectively broken — only API-direct-chat pairing worked via the QR.
+- Previously the phone generated its own 6-char pairing code locally via `AuthManager.generatePairingCode()` and sent it to the relay on WSS connect. The relay had no way to know what code to accept, so relay pairing was effectively broken — only direct API chat pairing worked via the QR.
 - Pushing the code flow through the host means the operator always has the source of truth, and a single scan configures both chat and terminal/bridge with no manual steps.
 
 **Schema evolution:**
@@ -341,7 +342,7 @@ Key data classes: `MessageEvent` (inbound), `SendResult` (outbound), `SessionSou
 
 **Why the old `skills/hermes-pairing-qr/` was deleted:** It was the pre-plugin bash script era — `hermes-pair` as a shell script + a flat-file `SKILL.md`. The plugin now owns the QR generation (`plugin/pair.py`, pure Python, no `qrencode` dependency), the skill at `skills/devops/hermes-relay-pair/` owns the slash-command surface, and the shell shim at `~/.local/bin/hermes-pair` covers the script-friendly CLI entry point. Keeping the deprecated skill around would have been two sources of truth for the same operation.
 
-**Upstream CLI gap (documented for posterity):** hermes-agent v0.8.0's `PluginContext.register_cli_command()` is wired up on the plugin side, and `plugin/cli.py` calls it correctly. However, `hermes_cli/main.py:5236` only reads `plugins.memory.discover_plugin_cli_commands()` (memory-plugin-specific) and never consults the generic `_cli_commands` dict. Third-party plugin CLI commands never reach the top-level argparser. Documented in DEVLOG as an upstream fix target. Until it lands, `hermes pair` (with a space) is **not** a working entry point — docs point users at `/hermes-relay-pair` (skill-driven slash command) and `hermes-pair` (dashed shell shim) instead.
+**Plugin CLI status (updated 2026-06-07):** hermes-agent v0.8.0 had a top-level argparse gap where third-party `PluginContext.register_cli_command()` entries did not reach `hermes <subcommand>`. Current upstream now discovers plugin CLI registrations in `hermes_cli/main.py`, so `hermes pair` and `hermes relay` are the preferred shell entry points when the plugin is enabled. `/hermes-relay-pair` and the dashed `hermes-pair` shim stay as older-build and script compatibility paths until our supported baseline includes the upstream fix.
 
 **References:**
 - `install.sh` — canonical installer
@@ -453,7 +454,7 @@ The bare-path fetch is therefore safe as long as operators treat the allowed-roo
 
 - **Grants on a single token (not multiple tokens)** — one WSS connection, one auth envelope, one session lookup. Per-channel expiry is checked at channel message dispatch time via `Session.channel_is_expired(name)`. Simpler to reason about than multiple parallel tokens, and the phone only needs one storage slot.
 - **`math.inf` for never-expire** — represents "truly unbounded" in code, serializes to `null` on the wire (JSON doesn't have an infinity literal, and null maps cleanly to Kotlin's nullable `Long?`). `canonicalize()` uses `allow_nan=False` so accidentally trying to sign a payload with a raw `math.inf` crashes loudly — callers must explicitly emit `None`/`0`. Prevents silent serialization bugs.
-- **Metadata on pairing entries, host wins over phone** — when the host operator runs `hermes-pair --ttl 7d` and the phone sends `ttl_seconds=30d` in the auth envelope (because the user picked a different value on the TTL dialog), the host value wins. Operator policy is authoritative. If the host didn't specify anything, the phone's value applies.
+- **Metadata on pairing entries, host wins over phone** — when the host operator runs `hermes pair --ttl 7d` and the phone sends `ttl_seconds=30d` in the auth envelope (because the user picked a different value on the TTL dialog), the host value wins. Operator policy is authoritative. If the host didn't specify anything, the phone's value applies.
 - **Token prefix (not full token) in `/sessions` responses** — a caller already holds their own full token; they should never see another session's full token. First 8 chars are enough to identify devices in a practical deployment (one operator, 1-3 phones) and enough entropy to avoid collisions. Collisions return 409 with the match count.
 - **Always open the TTL picker (no skip)** — even when the QR carries an operator-chosen TTL, the dialog opens with that value preselected. The user is always in the loop for the trust decision. A future "don't ask again if QR specifies a TTL" toggle is a plausible refinement but not in this cut.
 
@@ -499,13 +500,17 @@ Adopting from ARC's workflow patterns:
 ### 16. Runtime API Server Patch via .pth Bootstrap (2026-04-12)
 
 **Context:** The Android app depends on API-server routes for session history,
-profile/config metadata, skills, and memory-backed UI. Upstream core is now
-moving in focused pieces rather than one large frontend API patch: PR
-[#29302](https://github.com/NousResearch/hermes-agent/pull/29302) covers the
-canonical `/api/sessions/*` surface, while config/skills/memory still remain
-compatibility routes in this repo until core exposes stable equivalents. Without
-the bootstrap, users on older vanilla upstream builds lose session browsing,
-metadata-backed settings, and history-on-restart behavior.
+profile/config metadata, skills, and memory-backed UI. Upstream core moved in
+focused pieces rather than one large frontend API patch: PR
+[#33134](https://github.com/NousResearch/hermes-agent/pull/33134) now covers the
+canonical `/api/sessions/*` surface, and PR
+[#33016](https://github.com/NousResearch/hermes-agent/pull/33016) covers
+read-only `/v1/skills` + `/v1/toolsets`. Config, memory, legacy skill
+detail/toggle, available-models, and slash-command preprocessing still remain
+compatibility routes in this repo until core exposes stable equivalents or the
+local UI no longer depends on them. Without the bootstrap, users on older
+vanilla upstream builds lose session browsing, metadata-backed settings, and
+history-on-restart behavior.
 
 We considered four options:
 - **A. Stay fork-only.** Reject vanilla upstream users until the relevant core API surfaces land. Penalises onboarding.
@@ -520,19 +525,24 @@ We considered four options:
 1. **Zero modifications to hermes-agent's filesystem.** `git pull` / `hermes update` see no local changes, so they always work cleanly. The patch lives entirely in `hermes_relay_bootstrap/` inside our own repo.
 2. **Single-file containment of all ported logic.** `_handlers.py` is 500 lines of straight-line aiohttp handler code with explicit `adapter` parameters (closures, not bound methods). Easy to audit, easy to delete.
 3. **Feature detection by method/path, not broad route family.** Native upstream
-   routes win one method/path at a time. This matters because PR #29302 can land
-   `/api/sessions/*` before core has stable config/skills/memory APIs; the
+   routes win one method/path at a time. This matters because #33134 landed
+   `/api/sessions/*` before core had stable config/memory/legacy skill APIs; the
    bootstrap must not skip those remaining compatibility routes just because a
    sessions route exists.
 4. **Trust model already established.** The user installed our plugin into their hermes-agent venv. They've already consented to having the plugin import hermes-agent internals (it does this for relay tools, voice endpoints, media registry). Monkey-patching `aiohttp.web.Application` is in the same trust bucket.
-5. **Surface-by-surface removal.** When PR #29302 or equivalent reaches a
-   released hermes-agent version, the sessions compatibility routes should go
-   quiet automatically. Config, skills, memory, and command preprocessing remain
-   until their native replacements exist. Full bootstrap deletion happens only
-   after every compatibility route group has a stable core equivalent.
-6. **`/v1/runs` is genuinely better for chat than `/api/sessions/{id}/chat/stream`.** It's standard upstream, supports `X-Hermes-Session-Id` for continuation, and emits live structured tool events. The fork's chat handler exists because upstream didn't HAVE this clean structured-event runs API at the time the fork was cut — but upstream does now.
+5. **Surface-by-surface removal.** With #33134/#33016 merged, sessions and
+   read-only skill lists should go quiet automatically on current upstream.
+   Config, memory, legacy skill detail/toggle, available-models, and command
+   preprocessing remain until their native replacements exist or the local UI
+   stops depending on them. Full bootstrap deletion happens only after every
+   compatibility route group has a stable core equivalent or a deliberate local
+   removal.
+6. **`/v1/runs` remains the fallback run-control path.** Native
+   `/api/sessions/{id}/chat/stream` is now the preferred session-persisted chat
+   path when advertised. `/v1/runs` still matters for async run lifecycle/control
+   and for older builds without native sessions chat.
 
-**The Android client adapts via `streamingEndpoint = "auto"`.** New `ServerCapabilities` data class returned by `HermesApiClient.probeCapabilities()` captures per-endpoint presence (`sessionsApi`, `sessionsChatStream`, `runs`, `portable`, `healthy`). `ConnectionViewModel.resolveStreamingEndpoint()` collapses `"auto"` to `"sessions"` (when chat-stream handler is present, i.e. fork or upstream-merged) or `"runs"` (otherwise, i.e. bootstrap-injected vanilla upstream). The setting still supports manual `"sessions"` / `"runs"` overrides for debugging.
+**The Android client adapts via `streamingEndpoint = "auto"`.** `ServerCapabilities` returned by `HermesApiClient.probeCapabilities()` captures per-endpoint presence (`sessionsApi`, `sessionsChatStream`, `runs`, `portable`, `healthy`). `ConnectionViewModel.resolveStreamingEndpoint()` collapses `"auto"` to `"sessions"` when native session chat is present, then falls back to OpenAI-compatible completions or runs according to the probe. The setting still supports manual `"sessions"` / `"completions"` / `"runs"` overrides for debugging.
 
 **Risks accepted:**
 - **Plugin load order** — verified: `.pth` files are processed by Python's `site` module BEFORE any application code runs, so our import hook is in place before hermes-agent imports `aiohttp.web`.
@@ -548,15 +558,19 @@ We considered four options:
 - `install.sh` step 2 — copies the `.pth` into the venv site-packages
 
 **Removal path** is now per surface:
-1. Sessions: after PR #29302 or equivalent ships in released core, keep the
-   bootstrap installed but verify it skips native `/api/sessions/*` routes.
-2. Config/skills/memory: remove those compatibility handlers only after stable
-   core APIs exist and Android probes prefer them.
-3. Slash middleware: remove after native API-server slash preprocessing exists.
-4. Full cleanup: delete `hermes_relay_bootstrap/`, delete
+1. Sessions: once the supported Hermes baseline includes #33134, remove the
+   sessions compatibility handlers and any docs that require bootstrap for
+   history/chat. Until then, verify native `/api/sessions/*` routes win.
+2. Read-only skills/toolsets: clients should prefer native `/v1/skills` and
+   `/v1/toolsets` from #33016. Retire `/api/skills` list dependence; keep legacy
+   detail/toggle only if the UI still needs it.
+3. Config/memory/available-models: remove those compatibility handlers only
+   after stable core APIs exist or the dependent Android surfaces are redesigned.
+4. Slash middleware: remove after native API-server slash preprocessing exists.
+5. Full cleanup: delete `hermes_relay_bootstrap/`, delete
    `hermes_relay_bootstrap.pth`, remove the `.pth` install block, and update
    local agent docs only after all compatibility groups have native replacements.
-5. The Android client `probeCapabilities()` and `streamingEndpoint = "auto"` plumbing stays — it's permanent infrastructure that handles mixed-version deployments.
+6. The Android client `probeCapabilities()` and `streamingEndpoint = "auto"` plumbing stays — it's permanent infrastructure that handles mixed-version deployments.
 
 ---
 
@@ -1151,9 +1165,9 @@ session-API endpoints.
   All shell out to `tailscale` CLI and return structured dicts; no new
   daemon, no new state.
 - `scripts/hermes-relay-tailscale` — shell shim mirroring `hermes-pair`
-  pattern (see `project_hermes_plugin_cli_gap.md` memory — plugin
-  `register_cli_command` doesn't reach `main.py` argparse on v0.8.0,
-  so shell shim is the working path).
+  pattern for scriptability and older Hermes builds. Current upstream supports
+  generic plugin CLI command dispatch, so native `hermes <subcommand>` should
+  be preferred when available.
 - `install.sh` gets an optional step [7/7]: detect `tailscale` binary;
   if present and the operator hasn't declined, offer to run
   `tailscale serve --bg --https=8767 http://127.0.0.1:8767`. Skipped

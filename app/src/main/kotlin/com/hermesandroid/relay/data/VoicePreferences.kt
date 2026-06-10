@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.map
  */
 data class VoiceSettings(
     val engineMode: String = VoiceEngineMode.HermesVoiceOutput.storageValue,
+    val audioRoute: String = VoiceAudioRoute.Auto.storageValue,
     val interactionMode: String = "tap",
     val silenceThresholdMs: Long = 3000L,
     val autoTts: Boolean = false,
@@ -48,12 +49,24 @@ enum class VoiceEngineMode(val storageValue: String) {
     }
 }
 
+enum class VoiceAudioRoute(val storageValue: String) {
+    Auto("auto"),
+    Standard("standard"),
+    Relay("relay");
+
+    companion object {
+        fun fromStorage(value: String?): VoiceAudioRoute =
+            values().firstOrNull { it.storageValue == value } ?: Auto
+    }
+}
+
 class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) {
 
     constructor(context: Context) : this(context.relayDataStore)
 
     companion object {
         private val KEY_ENGINE_MODE = stringPreferencesKey("voice_engine_mode")
+        private val KEY_AUDIO_ROUTE = stringPreferencesKey("voice_audio_route")
         private val KEY_INTERACTION_MODE = stringPreferencesKey("voice_interaction_mode")
         private val KEY_SILENCE_THRESHOLD_MS = longPreferencesKey("voice_silence_threshold_ms")
         private val KEY_AUTO_TTS = booleanPreferencesKey("voice_auto_tts")
@@ -63,6 +76,7 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
             booleanPreferencesKey("voice_realtime_persistent_session")
 
         const val DEFAULT_ENGINE_MODE = "hermes_voice_output"
+        const val DEFAULT_AUDIO_ROUTE = "auto"
         const val DEFAULT_INTERACTION_MODE = "tap"
         const val DEFAULT_SILENCE_THRESHOLD_MS = 3000L
         const val DEFAULT_AUTO_TTS = false
@@ -76,6 +90,9 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
             VoiceSettings(
                 engineMode = VoiceEngineMode.fromStorage(
                     prefs[KEY_ENGINE_MODE] ?: DEFAULT_ENGINE_MODE,
+                ).storageValue,
+                audioRoute = VoiceAudioRoute.fromStorage(
+                    prefs[KEY_AUDIO_ROUTE] ?: DEFAULT_AUDIO_ROUTE,
                 ).storageValue,
                 interactionMode = prefs[KEY_INTERACTION_MODE] ?: DEFAULT_INTERACTION_MODE,
                 silenceThresholdMs = prefs[KEY_SILENCE_THRESHOLD_MS] ?: DEFAULT_SILENCE_THRESHOLD_MS,
@@ -91,6 +108,10 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
 
     suspend fun setEngineMode(mode: VoiceEngineMode) {
         dataStore.edit { it[KEY_ENGINE_MODE] = mode.storageValue }
+    }
+
+    suspend fun setAudioRoute(route: VoiceAudioRoute) {
+        dataStore.edit { it[KEY_AUDIO_ROUTE] = route.storageValue }
     }
 
     suspend fun setInteractionMode(mode: String) {

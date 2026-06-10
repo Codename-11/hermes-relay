@@ -1,22 +1,23 @@
 # Hermes-Relay — Android
 
-This section covers the **Android client** for [Hermes Agent](https://hermes-agent.nousresearch.com): chat, voice, relay pairing, terminal/TUI relay, notifications, and optional sideload Device Control.
+This section covers the **Android client** for [Hermes Agent](https://hermes-agent.nousresearch.com): standard API/dashboard setup, chat, Manage, voice, optional Relay pairing, terminal/TUI relay, notifications, and optional sideload Device Control.
 
 ::: tip Looking for the desktop CLI?
-The desktop terminal client (Windows / macOS / Linux) lives in its own section: **[Desktop CLI →](/desktop/)**. Both clients pair against the same Hermes-Relay server and share `~/.hermes/remote-sessions.json` — pair once from either, both work.
+The desktop terminal client (Windows / macOS / Linux) lives in its own section: **[Desktop CLI →](/desktop/)**. Desktop Relay pairing and Android Relay pairing use the same Hermes-Relay server and `~/.hermes/remote-sessions.json`.
 :::
 
-Hermes-Relay is a native Android app for [Hermes Agent](https://hermes-agent.nousresearch.com). Chat with your agent, manage sessions, use voice, pair to the relay, and access remote terminal/TUI surfaces. The Google Play build ships Bridge Core only; sideload builds add AccessibilityService-backed Device Control.
+Hermes-Relay is a native Android app for [Hermes Agent](https://hermes-agent.nousresearch.com). Chat with your agent through the Hermes API server, manage Skills/Cron/MCP/Profile surfaces through the dashboard, use voice, and optionally pair Relay for terminal/TUI and bridge power tools. The Google Play build ships Bridge Core only; sideload builds add AccessibilityService-backed Device Control.
 
-## Quick Install
+## Quick Start
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
-```
+1. Install Hermes and run the API server/dashboard on your host.
+2. Install the Android app.
+3. Choose **Standard Hermes** and enter the API URL/key.
+4. Add Relay pairing later only if you want Terminal, Bridge, Relay sessions, or device-control power tools.
 
-This installs the server-side plugin. One command, full features — sessions browser, conversation history, personality picker, command palette, memory management, relay WSS for terminal/TUI and Bridge Core, sideload Device Control routes, and relay HTTP voice routes all work out of the box on any standard `hermes-agent` install. Grab the Android app from [GitHub Releases](https://github.com/Codename-11/hermes-relay/releases), then either type `/hermes-relay-pair` in any Hermes chat surface or run `hermes-pair` from a shell to generate a pairing QR. See [Installation & Setup](/guide/getting-started) for the full walkthrough.
+See [Installation & Setup](/guide/getting-started) for copy/paste host commands and upstream Hermes links.
 
-To uninstall later:
+If you installed the optional Relay plugin and want to uninstall it later:
 
 ```bash
 bash ~/.hermes/hermes-relay/uninstall.sh

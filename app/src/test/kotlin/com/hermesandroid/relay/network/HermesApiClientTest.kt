@@ -5,6 +5,7 @@ import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -171,6 +172,47 @@ class HermesApiClientTest {
 
         assertEquals("completions", capabilities.preferredChatEndpoint())
         assertEquals(ChatMode.ENHANCED_HERMES, capabilities.toChatMode())
+    }
+
+    @Test
+    fun parseCapabilitiesBody_prefersNativeUpstreamSessionFeatures() {
+        val body = """
+            {
+                "object": "hermes.api_server.capabilities",
+                "features": {
+                    "chat_completions": true,
+                    "run_events_sse": true,
+                    "session_resources": true,
+                    "session_chat_streaming": true,
+                    "skills_api": true
+                },
+                "endpoints": {
+                    "chat_completions": {"method": "POST", "path": "/v1/chat/completions"},
+                    "run_events": {"method": "GET", "path": "/v1/runs/{run_id}/events"},
+                    "sessions": {"method": "GET", "path": "/api/sessions"},
+                    "session_chat_stream": {"method": "POST", "path": "/api/sessions/{session_id}/chat/stream"},
+                    "skills": {"method": "GET", "path": "/v1/skills"},
+                    "toolsets": {"method": "GET", "path": "/v1/toolsets"}
+                }
+            }
+        """.trimIndent()
+
+        val capabilities = parseCapabilitiesBody(Json { ignoreUnknownKeys = true }, body)
+
+        assertEquals(true, capabilities?.sessionsApi)
+        assertEquals(true, capabilities?.sessionsChatStream)
+        assertEquals(true, capabilities?.portable)
+        assertEquals(true, capabilities?.runs)
+        assertEquals("sessions", capabilities?.preferredChatEndpoint())
+    }
+
+    @Test
+    fun parseCapabilitiesBody_returnsNullForUnrelatedJson() {
+        val body = """{"status":"ok"}"""
+
+        val capabilities = parseCapabilitiesBody(Json { ignoreUnknownKeys = true }, body)
+
+        assertNull(capabilities)
     }
 
     // --- URL construction patterns ---

@@ -109,23 +109,44 @@ hermes-relay update                            # self-update via GitHub Releases
 - **Release track**: tagged `desktop-v*`, [separate from Android](https://github.com/Codename-11/hermes-relay/releases?q=desktop)
 - **AI-agent setup recipe**: `/hermes-relay-desktop-setup` (the agent can run `desktop_terminal` on your machine to diagnose install/pair issues live)
 
-### 2. Install the server plugin (one-liner)
+### 2. Connect Android to standard Hermes first
 
-On the machine running your Hermes agent:
+For normal Android use, run upstream Hermes with its API server and dashboard enabled, then choose **Standard Hermes** in onboarding:
+
+```bash
+hermes setup --portal
+
+mkdir -p ~/.hermes
+API_SERVER_KEY="$(openssl rand -hex 32)"
+cat >> ~/.hermes/.env <<EOF
+API_SERVER_ENABLED=true
+API_SERVER_HOST=0.0.0.0
+API_SERVER_PORT=8642
+API_SERVER_KEY=$API_SERVER_KEY
+EOF
+
+echo "Android API URL: http://<this-computer-ip>:8642"
+echo "Android API key: $API_SERVER_KEY"
+hermes gateway
+```
+
+Android Chat uses the direct Hermes API server (`:8642`) and the API key above. Android Manage uses the Hermes dashboard (`:9119`) and signs in separately with dashboard cookies, including Nous/OIDC when the dashboard advertises it. Relay pairing is not required for Chat or Manage. If the phone also has a Tailscale route, enter it in the optional Tailscale API URL field; the app will use LAN at home and Tailscale when LAN is not reachable.
+
+For the full copy/paste setup, Windows commands, dashboard auth notes, and upstream Hermes links, see the [Getting Started guide](https://codename-11.github.io/hermes-relay/guide/getting-started).
+
+### 3. Optional: install Relay for power tools
+
+Install the Relay plugin only when you want Terminal, Bridge, Relay sessions, media/device-control routes, or relay-backed voice paths:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
+hermes relay start --no-ssl
+hermes pair
 ```
 
-The installer clones Hermes-Relay to `~/.hermes/hermes-relay/` (override with `$HERMES_RELAY_HOME`), `pip install -e`s the package into the hermes-agent venv, registers the `skills/` directory in your `~/.hermes/config.yaml` under `skills.external_dirs` (so updates flow through `git pull`), symlinks the plugin into `~/.hermes/plugins/hermes-relay`, drops a thin `hermes-pair` shim into `~/.local/bin/`, and (optionally) installs a systemd user service for the WSS relay. After restart, pair your client via either of these equivalent entry points:
+The installer clones Hermes-Relay to `~/.hermes/hermes-relay/`, registers the skill/plugin paths, installs compatibility shims, and can install a systemd user service for the WSS relay. Current upstream Hermes supports plugin-registered CLI commands; after the Hermes-Relay plugin is installed and enabled, prefer the plugin-provided `hermes pair`. `/hermes-relay-pair` and the dashed `hermes-pair` shim remain available for chat-surface and older-build compatibility. If you cannot scan a QR, use `hermes pair --register-code ABCD12` with the manual code shown in Android **Settings -> Connections -> Advanced**.
 
-- **From any Hermes chat surface** (CLI, Discord, Telegram, etc.): type `/hermes-relay-pair` and the `hermes-relay-pair` skill renders the QR + 6-char code inline. Shortest path if you're already chatting with the agent.
-- **From a shell**: `hermes-pair` (dashed) — a thin wrapper around `python -m plugin.pair` in the hermes-agent venv. Use this in scripts or when you want the raw output.
-- **No camera?** `hermes-pair --register-code ABCD12` — manual fallback for SSH-only / camera-less setups. For Android: read the 6-char code from the app's **Settings → Connection → Manual pairing code (fallback)** card, pre-register it on the host with this command, then tap **Connect** in the app. For the desktop CLI: just pass it as `hermes-relay pair ABCD12 --remote ws://<host>:8767`. Composes with `--ttl` / `--grants`.
-
-Scan the QR from the Android app's onboarding screen, OR paste the 6-char code into `hermes-relay pair --remote ws://<host>:8767` on your laptop, and you're connected. One pair configures **both** the direct-chat API server **and** the relay (WSS for terminal / bridge / TUI / desktop tools, HTTP for voice routes) — if a local relay is running at `localhost:8767`, the pair command pre-registers a fresh 6-char pairing code with it and embeds the relay URL + code in the same QR. If you only want direct chat from the Android app, pass `--no-relay` (or just don't start the relay). Plain-text connection details are always printed alongside the QR so you can copy values by hand if your terminal can't render QR blocks.
-
-**Dashboard plugin.** If your hermes-agent install has the Dashboard Plugin System (upstream `axiom` branch), Hermes-Relay ships a plugin at `plugin/dashboard/` that surfaces paired devices, bridge command activity, and active inbound-media tokens in the gateway's web UI. It auto-registers through the same `~/.hermes/plugins/hermes-relay` symlink created by `install.sh` — restart the gateway and a "Relay" tab appears. See [docs/relay-server.md](docs/relay-server.md) and `user-docs/features/dashboard.md` for details.
+**Dashboard plugin.** If your hermes-agent install has the Dashboard Plugin System, Hermes-Relay ships a plugin at `plugin/dashboard/` that surfaces paired devices, bridge command activity, and active inbound-media tokens in the gateway's web UI. It auto-registers through the same `~/.hermes/plugins/hermes-relay` symlink created by `install.sh` — restart the gateway and a "Relay" tab appears. See [docs/relay-server.md](docs/relay-server.md) and `user-docs/features/dashboard.md` for details.
 
 **Updating:** `hermes-relay-update` (shortest path — installed as part of the one-liner) or re-run the same `curl … | bash` from above. Both are equivalent and fully idempotent: pulls latest main, refreshes the editable install, recreates all three shims, restarts `hermes-relay`, and prompts before restarting `hermes-gateway`. Set `HERMES_RELAY_RESTART_GATEWAY=1` to opt into the gateway restart non-interactively. For routine plugin/skill updates without restarting anything, a plain `cd ~/.hermes/hermes-relay && git pull` is enough — the editable install picks up the new code on next process start.
 
@@ -146,7 +167,7 @@ Read the canonical setup recipe before acting:
 Then guide me through:
 - Verifying hermes-agent is already installed (it's a prerequisite — Hermes-Relay is a plugin, not standalone)
 - Running the server-plugin install one-liner: `curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash`
-- Pairing my phone via `hermes-pair` or `/hermes-relay-pair` (Android), OR pairing my laptop via the `hermes-relay` desktop CLI (binary one-liner: `curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.sh | sh` or `irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex` on Windows, then `hermes-relay pair --remote ws://<host>:8767`)
+- Connecting my phone by Standard Hermes API URL/key first, then optionally pairing Relay via the plugin-provided `hermes pair` or `/hermes-relay-pair` for power tools; OR pairing my laptop via the `hermes-relay` desktop CLI (binary one-liner: `curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.sh | sh` or `irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex` on Windows, then `hermes-relay pair --remote ws://<host>:8767`)
 - Verifying with `hermes-status` (server) or `hermes-relay doctor` (desktop CLI)
 
 Always confirm before running shell commands. Never restart hermes-gateway without asking. If any step fails, consult the Troubleshooting section in the SKILL.md and ask me for the exact error.
@@ -214,13 +235,13 @@ See the [changelog](CHANGELOG.md) for the full list.
 **Android:**
 
 1. **Install the app** from the [link above](#1a-android-app)
-2. **Enter your Hermes server URL** (e.g. `http://192.168.1.100:8642`) during onboarding, or scan a QR via `/hermes-relay-pair`
+2. **Choose Standard Hermes** during onboarding and enter your API URL/key (e.g. `http://192.168.1.100:8642`)
 3. **Start chatting** — the app connects directly to the Hermes API Server
 
 **Desktop CLI:**
 
 1. **Install the binary** — [PowerShell `irm`](#1b-desktop-cli-experimental) (Windows) / curl (macOS / Linux) one-liner
-2. **Pair once** — `hermes-relay pair --remote ws://<host>:8767` (mint code via `hermes-pair` or `/hermes-relay-pair` on the server first)
+2. **Pair once** — `hermes-relay pair --remote ws://<host>:8767` (mint code via plugin-provided `hermes pair` or `/hermes-relay-pair` on the server first)
 3. **Drop into the shell** — bare `hermes-relay` opens the full Hermes TUI in tmux on the host
 
 For detailed setup, server configuration, and feature guides, see the **[full documentation](https://codename-11.github.io/hermes-relay/)**.
@@ -333,7 +354,7 @@ cp -r plugin ~/.hermes/plugins/hermes-relay
 ln -s "$PWD/plugin" ~/.hermes/plugins/hermes-relay
 ```
 
-Then restart hermes and run `hermes-pair` (dashed shell shim) or type `/hermes-relay-pair` in any Hermes chat surface to verify pairing. The 18 `android_*` and 9 `desktop_*` tools register regardless of hermes-agent version. **Note:** a top-level `hermes pair` CLI sub-command is *not* currently exposed — hermes-agent v0.8.0's top-level argparser doesn't yet forward to third-party plugins' `register_cli_command()` dict. Use the slash command or the dashed shim instead.
+Then restart hermes and run the plugin-provided `hermes pair` to verify pairing. The 18 `android_*` and 9 `desktop_*` tools register regardless of hermes-agent version. `/hermes-relay-pair` and the dashed `hermes-pair` shim remain available for chat-surface and older-build compatibility.
 
 ## Hermes Agent
 

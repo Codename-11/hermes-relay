@@ -396,6 +396,7 @@ fun SettingsScreen(
             chatViewModel = chatViewModel,
             onDismiss = { showAgentSheet = false },
             onNavigateToConnections = onNavigateToConnections,
+            onNavigateToProfileInspector = onNavigateToProfileInspector,
         )
     }
 

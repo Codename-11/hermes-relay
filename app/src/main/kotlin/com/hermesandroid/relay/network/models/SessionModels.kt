@@ -81,6 +81,7 @@ object FlexibleIdNonNullSerializer : KSerializer<String> {
 data class SessionListResponse(
     val items: List<SessionItem>? = null,
     val sessions: List<SessionItem>? = null, // alternate key
+    val data: List<SessionItem>? = null, // upstream /api/sessions list envelope
     val total: Int? = null
 )
 
@@ -127,6 +128,7 @@ data class RenameSessionRequest(
 data class MessageListResponse(
     val items: List<MessageItem>? = null,
     val messages: List<MessageItem>? = null, // alternate key
+    val data: List<MessageItem>? = null, // upstream /api/sessions/{id}/messages list envelope
     val total: Int? = null
 )
 

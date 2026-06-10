@@ -38,7 +38,7 @@ The Google Play build can request camera for QR pairing, microphone for Voice mo
 
 ## Data export and reset
 
-From **Settings**, you can export your configuration (secrets excluded), import a backup, or perform a full reset that wipes local data including encrypted credentials.
+From **Settings**, you can export a full connection backup, import a backup, or perform a full reset that wipes local data including encrypted credentials. Full backups include sensitive connection material such as API keys, relay session tokens, device IDs, and dashboard cookies so restored connections can work without manual re-entry. Keep exported backup files private.
 
 ## Open source
 
