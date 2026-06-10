@@ -199,6 +199,7 @@ fun DashboardManagementScreen(
     var selectedTab by remember { mutableStateOf(0) }
     var showingDetail by remember { mutableStateOf(false) }
     var reloadNonce by remember { mutableStateOf(0) }
+    var forceReloadKey by remember { mutableStateOf<String?>(null) }
     val payloadStates = remember { mutableStateMapOf<String, DashboardPayloadState>() }
     val refreshingPayloads = remember { mutableStateMapOf<String, Boolean>() }
     var actionMessage by remember { mutableStateOf<String?>(null) }
@@ -210,9 +211,10 @@ fun DashboardManagementScreen(
 
     val section = managementSections[selectedTab]
     val connectionId = activeConnection?.id ?: "default"
-    val payloadKey = remember(connectionId, dashboardUrl, section.path) {
-        "$connectionId|$dashboardUrl|${section.path}"
-    }
+    fun payloadKeyFor(targetSection: DashboardManagementSection): String =
+        "$connectionId|$dashboardUrl|${targetSection.path}"
+
+    val payloadKey = payloadKeyFor(section)
     val payloadState = payloadStates[payloadKey] ?: DashboardPayloadState.Idle
     val isRefreshing = refreshingPayloads[payloadKey] == true
     val dashboardStatus = when (val state = payloadState) {
@@ -248,53 +250,32 @@ fun DashboardManagementScreen(
         }
     }
 
-    fun runAction(item: DashboardSummaryItem, action: DashboardItemAction) {
-        if (dashboardUrl.isBlank() || actionInFlight) return
-        val actionPayloadKey = payloadKey
-        actionInFlight = true
-        actionMessage = null
-        scope.launch {
-            val result = try {
-                withDashboardClient(clientFactory) { client ->
-                    client.runDashboardAction(item, action)
-                }
-            } catch (e: Exception) {
-                Result.failure(e)
-            }
-            actionMessage = result.fold(
-                onSuccess = { root ->
-                    if (action.kind.isDetailAction) {
-                        detailResult = DashboardDetailResult(
-                            title = "${item.title} · ${action.label}",
-                            body = detailBodyFor(action.kind, root),
-                        )
-                        null
-                    } else {
-                        val loaded = payloadStates[actionPayloadKey] as? DashboardPayloadState.Loaded
-                        loaded?.optimisticAfter(item, action)?.let { next ->
-                            payloadStates[actionPayloadKey] = next
-                        }
-                        refreshingPayloads[actionPayloadKey] = true
-                        reloadNonce += 1
-                        "${action.label} completed"
-                    }
-                },
-                onFailure = { err -> err.message ?: "${action.label} failed" },
-            )
-            actionInFlight = false
-        }
-    }
-
-    LaunchedEffect(dashboardUrl, selectedTab, reloadNonce, activeConnection?.id) {
+    suspend fun loadDashboardSection(
+        targetSection: DashboardManagementSection,
+        targetKey: String,
+        foreground: Boolean,
+        force: Boolean = false,
+    ) {
         if (dashboardUrl.isBlank()) {
-            payloadStates[payloadKey] = DashboardPayloadState.Error("No dashboard URL is configured for this connection.")
-            return@LaunchedEffect
+            if (foreground) {
+                payloadStates[targetKey] = DashboardPayloadState.Error(
+                    "No dashboard URL is configured for this connection.",
+                )
+            }
+            return
         }
-        val previousState = payloadStates[payloadKey]
-        if (previousState is DashboardPayloadState.Loaded) {
-            refreshingPayloads[payloadKey] = true
-        } else {
-            payloadStates[payloadKey] = DashboardPayloadState.Loading
+        val previousState = payloadStates[targetKey]
+        if (!force && (previousState is DashboardPayloadState.Loaded ||
+                previousState is DashboardPayloadState.Loading)
+        ) {
+            return
+        }
+        if (foreground) {
+            if (previousState is DashboardPayloadState.Loaded) {
+                refreshingPayloads[targetKey] = true
+            } else {
+                payloadStates[targetKey] = DashboardPayloadState.Loading
+            }
         }
         try {
             val nextState = withDashboardClient(clientFactory) { client ->
@@ -331,13 +312,13 @@ fun DashboardManagementScreen(
                 if (status?.authRequired == true && session?.authenticated != true) {
                     DashboardPayloadState.Error("Dashboard sign-in required", status = status)
                 } else {
-                    val result = client.getJsonElement(section.path)
+                    val result = client.getJsonElement(targetSection.path)
                     result.fold(
                         onSuccess = { root ->
                             DashboardPayloadState.Loaded(
                                 status = status,
                                 session = session,
-                                items = summarize(section, root),
+                                items = summarize(targetSection, root),
                                 rawSummary = summarizeRoot(root),
                             )
                         },
@@ -350,22 +331,100 @@ fun DashboardManagementScreen(
                     )
                 }
             }
-            val latestState = payloadStates[payloadKey]
+            val latestState = payloadStates[targetKey]
             if (
+                foreground &&
                 nextState is DashboardPayloadState.Error &&
                 latestState is DashboardPayloadState.Loaded &&
                 nextState.status?.authRequired != true
             ) {
                 actionMessage = nextState.message
             } else {
-                payloadStates[payloadKey] = nextState
+                payloadStates[targetKey] = nextState
             }
         } catch (e: Exception) {
-            payloadStates[payloadKey] = DashboardPayloadState.Error(
-                message = e.message ?: "Dashboard request failed",
-            )
+            if (foreground || previousState !is DashboardPayloadState.Loaded) {
+                payloadStates[targetKey] = DashboardPayloadState.Error(
+                    message = e.message ?: "Dashboard request failed",
+                )
+            }
         } finally {
-            refreshingPayloads[payloadKey] = false
+            if (foreground) {
+                refreshingPayloads[targetKey] = false
+            }
+        }
+    }
+
+    fun runAction(item: DashboardSummaryItem, action: DashboardItemAction) {
+        if (dashboardUrl.isBlank() || actionInFlight) return
+        val actionPayloadKey = payloadKey
+        actionInFlight = true
+        actionMessage = null
+        scope.launch {
+            val result = try {
+                withDashboardClient(clientFactory) { client ->
+                    client.runDashboardAction(item, action)
+                }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+            actionMessage = result.fold(
+                onSuccess = { root ->
+                    if (action.kind.isDetailAction) {
+                        detailResult = DashboardDetailResult(
+                            title = "${item.title} · ${action.label}",
+                            body = detailBodyFor(action.kind, root),
+                        )
+                        null
+                    } else {
+                        val loaded = payloadStates[actionPayloadKey] as? DashboardPayloadState.Loaded
+                        loaded?.optimisticAfter(item, action)?.let { next ->
+                            payloadStates[actionPayloadKey] = next
+                        }
+                        refreshingPayloads[actionPayloadKey] = true
+                        forceReloadKey = actionPayloadKey
+                        reloadNonce += 1
+                        "${action.label} completed"
+                    }
+                },
+                onFailure = { err -> err.message ?: "${action.label} failed" },
+            )
+            actionInFlight = false
+        }
+    }
+
+    LaunchedEffect(dashboardUrl, selectedTab, reloadNonce, activeConnection?.id) {
+        val forceCurrent = forceReloadKey == payloadKey
+        loadDashboardSection(
+            targetSection = section,
+            targetKey = payloadKey,
+            foreground = true,
+            force = forceCurrent,
+        )
+        if (forceCurrent && forceReloadKey == payloadKey) {
+            forceReloadKey = null
+        }
+    }
+
+    LaunchedEffect(dashboardUrl, activeConnection?.id, payloadState) {
+        val loadedState = payloadState as? DashboardPayloadState.Loaded ?: return@LaunchedEffect
+        if (dashboardUrl.isBlank()) return@LaunchedEffect
+        if (loadedState.status?.authRequired == true && loadedState.session?.authenticated != true) {
+            return@LaunchedEffect
+        }
+        managementSections.forEach { prewarmSection ->
+            val prewarmKey = payloadKeyFor(prewarmSection)
+            if (prewarmKey == payloadKey) return@forEach
+            val existingState = payloadStates[prewarmKey]
+            if (existingState !is DashboardPayloadState.Loaded &&
+                existingState !is DashboardPayloadState.Loading
+            ) {
+                loadDashboardSection(
+                    targetSection = prewarmSection,
+                    targetKey = prewarmKey,
+                    foreground = false,
+                )
+            }
         }
     }
 
@@ -407,6 +466,9 @@ fun DashboardManagementScreen(
             }
             actionMessage = result.fold(
                 onSuccess = {
+                    payloadStates.clear()
+                    refreshingPayloads.clear()
+                    forceReloadKey = null
                     reloadNonce += 1
                     "Dashboard signed in"
                 },
@@ -464,6 +526,9 @@ fun DashboardManagementScreen(
                     onClick = {
                         confirmClearDashboardSession = false
                         connectionViewModel.clearDashboardSession {
+                            payloadStates.clear()
+                            refreshingPayloads.clear()
+                            forceReloadKey = null
                             actionMessage = "Dashboard session cleared"
                             reloadNonce += 1
                         }
@@ -488,6 +553,9 @@ fun DashboardManagementScreen(
             onDismiss = { oauthProvider = null },
             onAuthenticated = { session ->
                 oauthProvider = null
+                payloadStates.clear()
+                refreshingPayloads.clear()
+                forceReloadKey = null
                 actionMessage = "Signed in${session.provider?.let { " with $it" }.orEmpty()}"
                 reloadNonce += 1
             },
@@ -515,7 +583,10 @@ fun DashboardManagementScreen(
                         modifier = Modifier.padding(end = 4.dp),
                     )
                     IconButton(
-                        onClick = { reloadNonce += 1 },
+                        onClick = {
+                            forceReloadKey = payloadKey
+                            reloadNonce += 1
+                        },
                         enabled = !isRefreshing,
                     ) {
                         Icon(
@@ -601,7 +672,10 @@ fun DashboardManagementScreen(
                                     dashboardUrl = dashboardUrl,
                                     actionInFlight = actionInFlight,
                                     actionMessage = actionMessage,
-                                    onRetry = { reloadNonce += 1 },
+                                    onRetry = {
+                                        forceReloadKey = payloadKey
+                                        reloadNonce += 1
+                                    },
                                     onSignIn = ::submitDashboardSignIn,
                                     onOAuthSignIn = { provider -> oauthProvider = provider },
                                 )

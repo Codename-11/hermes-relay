@@ -110,13 +110,12 @@ fun RelayStatusStrip(
                 WindowInsets.safeDrawing.only(
                     WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
                 ),
-            )
-            .padding(bottom = 2.dp),
+            ),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(26.dp)
+                .height(22.dp)
                 .padding(horizontal = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,

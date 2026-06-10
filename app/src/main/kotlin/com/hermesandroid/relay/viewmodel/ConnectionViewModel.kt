@@ -587,13 +587,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     /**
      * Standard voice follows official Hermes Desktop: mic audio and speech
      * output go through the normal Hermes API server when it is reachable.
+     * Audio-route probes are kept as diagnostics only; they must not hide the
+     * voice entry point because some upstream routes do not advertise cleanly
+     * to preflight requests and can still fail gracefully on the real call.
      */
     val standardVoiceReady: StateFlow<Boolean> = combine(
         _apiClient,
         _apiServerReachable,
-        _standardAudioApiReachable,
-    ) { client, reachable, audioReachable ->
-        client != null && reachable && audioReachable
+    ) { client, reachable ->
+        client != null && reachable
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     /**

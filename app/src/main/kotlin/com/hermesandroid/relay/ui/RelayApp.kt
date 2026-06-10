@@ -43,7 +43,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.lifecycle.Lifecycle
@@ -694,19 +693,17 @@ fun RelayApp() {
         val navBackStackEntry by navController.currentBackStackEntryAsState()
         val currentRoute = navBackStackEntry?.destination?.route
         val isOnboarding = currentRoute == Screen.Onboarding.route
-        var bridgeReturnRoute by rememberSaveable { mutableStateOf<String?>(null) }
-        val bridgeReturnVisible = bridgeReturnRoute != null && currentRoute == bridgeReturnRoute
-        LaunchedEffect(currentRoute) {
-            if (
-                currentRoute == Screen.Bridge.route ||
-                currentRoute == Screen.Chat.route ||
-                currentRoute == Screen.Manage.route ||
-                currentRoute == Screen.Settings.route ||
-                currentRoute == Screen.Onboarding.route
-            ) {
-                bridgeReturnRoute = null
-            }
+        val bridgeReturnRoutes = remember {
+            setOf(
+                Screen.Terminal.route,
+                Screen.VoiceSettings.route,
+                Screen.NotificationCompanionSettings.route,
+                Screen.MediaSettings.route,
+                Screen.PairedDevices.route,
+                Screen.BridgeSafetySettings.route,
+            )
         }
+        val bridgeReturnVisible = currentRoute in bridgeReturnRoutes && !isOnboarding
 
         val density = LocalDensity.current
         val imeBottom = WindowInsets.ime.getBottom(density)
@@ -950,7 +947,6 @@ fun RelayApp() {
                         subtitle = "Back to bridge controls",
                         label = "Bridge",
                         onClick = {
-                            bridgeReturnRoute = null
                             navController.navigate(Screen.Bridge.route) {
                                 popUpTo(navController.graph.findStartDestination().id) {
                                     saveState = true
@@ -1157,7 +1153,6 @@ fun RelayApp() {
                             BridgeScreen(
                                 connectionViewModel = connectionViewModel,
                                 onNavigateToBridgeSafety = {
-                                    bridgeReturnRoute = Screen.BridgeSafetySettings.route
                                     navController.navigate(Screen.BridgeSafetySettings.route)
                                 },
                                 onNavigateToChat = {
@@ -1209,7 +1204,6 @@ fun RelayApp() {
                                     }
                                 },
                                 onNavigateToTerminal = {
-                                    bridgeReturnRoute = Screen.Terminal.route
                                     navController.navigate(Screen.Terminal.route) {
                                         popUpTo(navController.graph.findStartDestination().id) {
                                             saveState = true
@@ -1219,19 +1213,15 @@ fun RelayApp() {
                                     }
                                 },
                                 onNavigateToVoiceSettings = {
-                                    bridgeReturnRoute = Screen.VoiceSettings.route
                                     navController.navigate(Screen.VoiceSettings.route)
                                 },
                                 onNavigateToNotificationCompanion = {
-                                    bridgeReturnRoute = Screen.NotificationCompanionSettings.route
                                     navController.navigate(Screen.NotificationCompanionSettings.route)
                                 },
                                 onNavigateToMediaSettings = {
-                                    bridgeReturnRoute = Screen.MediaSettings.route
                                     navController.navigate(Screen.MediaSettings.route)
                                 },
                                 onNavigateToRelaySessions = {
-                                    bridgeReturnRoute = Screen.PairedDevices.route
                                     navController.navigate(Screen.PairedDevices.route)
                                 },
                                 onNavigateToSettings = {
@@ -1350,23 +1340,18 @@ fun RelayApp() {
                                 }
                             },
                             onNavigateToTerminal = {
-                                bridgeReturnRoute = Screen.Terminal.route
                                 navController.navigate(Screen.Terminal.route)
                             },
                             onNavigateToVoiceSettings = {
-                                bridgeReturnRoute = Screen.VoiceSettings.route
                                 navController.navigate(Screen.VoiceSettings.route)
                             },
                             onNavigateToNotificationCompanion = {
-                                bridgeReturnRoute = Screen.NotificationCompanionSettings.route
                                 navController.navigate(Screen.NotificationCompanionSettings.route)
                             },
                             onNavigateToMediaSettings = {
-                                bridgeReturnRoute = Screen.MediaSettings.route
                                 navController.navigate(Screen.MediaSettings.route)
                             },
                             onNavigateToRelaySessions = {
-                                bridgeReturnRoute = Screen.PairedDevices.route
                                 navController.navigate(Screen.PairedDevices.route)
                             },
                             onNavigateToSettings = {
