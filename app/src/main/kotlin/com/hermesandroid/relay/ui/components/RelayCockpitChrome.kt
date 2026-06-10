@@ -7,13 +7,19 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
@@ -92,34 +98,119 @@ fun RelayStatusStrip(
     modifier: Modifier = Modifier,
     leadingColor: Color = RelayRefresh.Green,
 ) {
-    Row(
+    Column(
         modifier = modifier
             .fillMaxWidth()
-            .height(26.dp)
             .relayPanel(
                 shape = RoundedCornerShape(0.dp),
                 background = RelayRefresh.Background.copy(alpha = 0.94f),
                 borderColor = RelayRefresh.Line,
             )
-            .padding(horizontal = 12.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
+            .windowInsetsPadding(
+                WindowInsets.safeDrawing.only(
+                    WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
+                ),
+            )
+            .padding(bottom = 2.dp),
     ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(26.dp)
+                .padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = leading,
+                style = relayMetadataStyle(),
+                color = leadingColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(
+                text = trailing,
+                style = relayMetadataStyle(),
+                color = RelayRefresh.Muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+fun RelayReturnStrip(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    label: String = "Back",
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(RelayRefresh.CardRadius))
+            .relaySelectedPanel()
+            .clickable(onClick = onClick)
+            .padding(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Surface(
+            modifier = Modifier.size(32.dp),
+            shape = RoundedCornerShape(7.dp),
+            color = RelayRefresh.Background.copy(alpha = 0.58f),
+            border = BorderStroke(1.dp, RelayRefresh.LineStrong),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = null,
+                    tint = RelayRefresh.Paper,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+        Surface(
+            modifier = Modifier.size(32.dp),
+            shape = RoundedCornerShape(7.dp),
+            color = RelayRefresh.Navy3.copy(alpha = 0.72f),
+            border = BorderStroke(1.dp, RelayRefresh.Line),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = RelayRefresh.Relay,
+                    modifier = Modifier.size(17.dp),
+                )
+            }
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.ExtraBold),
+                color = RelayRefresh.Paper,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = RelayRefresh.Muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         Text(
-            text = leading,
+            text = label,
             style = relayMetadataStyle(),
-            color = leadingColor,
+            color = RelayRefresh.Relay,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        Spacer(modifier = Modifier.width(10.dp))
-        Text(
-            text = trailing,
-            style = relayMetadataStyle(),
-            color = RelayRefresh.Muted,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
         )
     }
 }
@@ -337,4 +428,3 @@ fun RelayChromeIconButton(
         }
     }
 }
-

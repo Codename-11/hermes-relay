@@ -90,6 +90,7 @@ import com.hermesandroid.relay.ui.components.RelayMetricCard
 import com.hermesandroid.relay.ui.components.RelayModeStrip
 import com.hermesandroid.relay.ui.components.RelayNavTile
 import com.hermesandroid.relay.ui.components.RelayPrimaryMode
+import com.hermesandroid.relay.ui.components.RelayReturnStrip
 import com.hermesandroid.relay.ui.components.RelaySectionCaption
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.relayGridTexture
@@ -586,15 +587,6 @@ fun DashboardManagementScreen(
                                 )
                             }
                         }
-                        DashboardConnectionHeader(
-                            dashboardUrl = dashboardUrl,
-                            status = dashboardStatus,
-                            session = dashboardSession,
-                            authenticated = dashboardAuthenticated,
-                            lastCheckedAtMillis = activeConnection?.dashboardLastStatus?.checkedAtMillis,
-                            onClearSession = { confirmClearDashboardSession = true },
-                            onNavigateToConnections = onNavigateToConnections,
-                        )
                         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
                         if (isRefreshing && payloadState !is DashboardPayloadState.Loading) {
                             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
@@ -731,17 +723,6 @@ private fun ManageOverviewBody(
             )
         }
         item {
-            DashboardConnectionHeader(
-                dashboardUrl = dashboardUrl,
-                status = status,
-                session = session,
-                authenticated = authenticated,
-                lastCheckedAtMillis = lastCheckedAtMillis,
-                onClearSession = onClearSession,
-                onNavigateToConnections = onNavigateToConnections,
-            )
-        }
-        item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -762,6 +743,17 @@ private fun ManageOverviewBody(
                     modifier = Modifier.weight(1f),
                 )
             }
+        }
+        item {
+            DashboardConnectionHeader(
+                dashboardUrl = dashboardUrl,
+                status = status,
+                session = session,
+                authenticated = authenticated,
+                lastCheckedAtMillis = lastCheckedAtMillis,
+                onClearSession = onClearSession,
+                onNavigateToConnections = onNavigateToConnections,
+            )
         }
         item {
             RelayNavTile(
@@ -824,21 +816,12 @@ private fun ManageSelectedSectionHeader(
         modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        RelayNavTile(
+        RelayReturnStrip(
             icon = spec.icon,
             title = spec.title,
             subtitle = spec.subtitle,
-            selected = true,
             onClick = onBackToOverview,
-            trailing = {
-                TextButton(
-                    onClick = onBackToOverview,
-                    modifier = Modifier.height(30.dp),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                ) {
-                    Text("Overview")
-                }
-            },
+            label = "Overview",
         )
     }
 }
