@@ -28,6 +28,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Softened the active connection card.** The full-card Electric blue fill on the active connection was overpowering against body text; it now uses a muted indigo wash while small accents keep the vivid brand blue.
 
+- **Connection wizard capability card now includes Voice.** Finishing setup shows Chat / Manage / Voice / Relay readiness in one card — voice availability (ready / unlocks with dashboard sign-in / build too old) is probed in the same pass, so the result is accurate the moment you connect.
+
+- **No more relay warnings on standard-only connections.** Voice Settings no longer fetches Relay voice configs (and no longer shows "unavailable" rows or error snackbars) when no Relay is configured — relay-backed sections are replaced by a quiet note that speech uses the server's configured TTS/STT, with Relay pairing called out as the way to pick providers from the phone.
+
+- **Skills hub opens with featured content.** The browse dialog lists the configured hub sources and the index's featured skills before the first search instead of starting blank.
+
+- **Onboarding feature pages got real content.** Chat / Manage / Power tools pages now show three concrete feature rows each (streaming + profiles + voice; control + skills hub + one sign-in; terminal + bridge + realtime) instead of a single sentence.
+
 ## [0.8.1] - 2026-05-26
 
 ### Fixed
