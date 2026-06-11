@@ -108,7 +108,7 @@ enum class StandardVoiceAvailability {
     /** Dashboard URL configured but `/api/status` did not answer. */
     Unreachable,
 
-    /** Dashboard answered but has no `/api/audio/*` routes — hermes-agent build too old. */
+    /** Dashboard answered but has no audio routes (`/api/audio`) — hermes-agent build too old. */
     Unsupported,
 }
 
@@ -651,7 +651,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     /**
      * Standard voice follows official Hermes Desktop: STT/TTS go through the
-     * dashboard web server's `/api/audio/*` routes. Ready means the dashboard
+     * dashboard web server's `/api/audio` routes. Ready means the dashboard
      * answered `/api/status`, the cookie session satisfies its auth gate (or
      * none is required), and the audio routes exist on this build — the
      * `/api/status` discovery endpoint is designed for preflight, unlike the

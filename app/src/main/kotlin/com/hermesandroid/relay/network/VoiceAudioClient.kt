@@ -124,7 +124,8 @@ class AutoVoiceAudioClient(
  * cookie session (gated_auth_middleware), so [okHttpClient] must carry the
  * same per-connection cookie jar the Manage tab signs in with; an API bearer
  * header is meaningless on this surface. Revisit when upstream PR #8199
- * lands `/v1/audio/*` on the API server (see docs/upstream-contributions.md §6).
+ * lands the `/v1/audio` routes on the API server (docs/upstream-contributions.md §6).
+ * (No glob spellings in block comments — Kotlin block comments nest.)
  */
 class StandardHermesVoiceClient(
     private val context: Context,
