@@ -259,6 +259,7 @@ fun RelayMetricCard(
     value: String,
     label: String,
     modifier: Modifier = Modifier,
+    valueColor: Color = RelayRefresh.Paper,
 ) {
     Column(
         modifier = modifier
@@ -269,7 +270,7 @@ fun RelayMetricCard(
         Text(
             text = value,
             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold),
-            color = RelayRefresh.Paper,
+            color = valueColor,
             maxLines = 1,
         )
         Text(

@@ -49,6 +49,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -105,6 +106,7 @@ import com.hermesandroid.relay.ui.screens.SettingsScreen
 import com.hermesandroid.relay.ui.screens.TerminalScreen
 import com.hermesandroid.relay.ui.screens.NotificationCompanionSettingsScreen
 import com.hermesandroid.relay.ui.screens.VoiceSettingsScreen
+import com.hermesandroid.relay.ui.screens.prewarmDashboardManage
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.relayGridTexture
@@ -784,6 +786,30 @@ fun RelayApp() {
                 !startupGateReleased &&
                 !startupGateTimedOut &&
                 !voiceUiState.voiceMode
+
+        // Pre-warm the Manage tab's payload cache when the persisted
+        // dashboard snapshot says this connection was reachable and signed
+        // in (or auth-free) — a cold app start then lands on populated
+        // Manage data instead of skeletons. Keyed on the effective URL so a
+        // LAN↔Tailscale handoff re-warms the new host's cache; the delay
+        // debounces resolver flaps during startup (each key change cancels
+        // the previous run). The pre-warm itself only fills cold keys.
+        val effectiveDashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
+        val prewarmContext = LocalContext.current.applicationContext
+        LaunchedEffect(activeConnection?.id, effectiveDashboardUrl) {
+            val connection = activeConnection ?: return@LaunchedEffect
+            if (effectiveDashboardUrl.isBlank()) return@LaunchedEffect
+            val snapshot = connection.dashboardLastStatus ?: return@LaunchedEffect
+            val dashboardUsable = snapshot.reachable &&
+                (snapshot.authRequired == false || snapshot.authenticated == true)
+            if (!dashboardUsable) return@LaunchedEffect
+            delay(1_500L)
+            prewarmDashboardManage(
+                context = prewarmContext,
+                connectionId = connection.id,
+                dashboardUrl = effectiveDashboardUrl,
+            )
+        }
 
         // Single snackbar host for the whole app — exposed via LocalSnackbarHost
         // so voice/chat/settings screens can call showHumanError from their
