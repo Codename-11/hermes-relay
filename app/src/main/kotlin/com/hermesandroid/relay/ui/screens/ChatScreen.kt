@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AssistChip
@@ -1025,6 +1026,14 @@ fun ChatScreen(
                             )
                         }
                     }
+                    if (messages.isNotEmpty()) {
+                        RelayChromeIconButton(
+                            icon = Icons.Filled.Share,
+                            contentDescription = "Share conversation",
+                            onClick = { shareConversation(context, messages) },
+                            modifier = Modifier.padding(end = 4.dp),
+                        )
+                    }
                     RelayChromeIconButton(
                         icon = Icons.Filled.Code,
                         contentDescription = "Terminal",
@@ -1337,6 +1346,18 @@ fun ChatScreen(
                                         chatViewModel.dispatchCardAction(msgId, cardKey, action)
                                     }
                                 },
+                                onQuoteMessage = { text ->
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    val quoted = text.take(600)
+                                        .trim()
+                                        .lines()
+                                        .joinToString("\n") { line -> "> $line" }
+                                    inputText = if (inputText.isBlank()) {
+                                        "$quoted\n\n"
+                                    } else {
+                                        "$inputText\n$quoted\n\n"
+                                    }
+                                },
                                 onCopyMessage = { text ->
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     // The new Clipboard API is suspend-based, so the
@@ -1440,6 +1461,7 @@ fun ChatScreen(
                         inputText = if (cmd.command.contains(" ")) cmd.command + " " else "$base "
                     },
                     modifier = Modifier.padding(horizontal = 16.dp)
+
                 )
             }
 
@@ -1882,4 +1904,38 @@ private fun DateSeparator(timestamp: Long) {
             )
         }
     }
+}
+
+/**
+ * Share the visible conversation as Markdown via the system share sheet.
+ * Role names are matched as strings so this helper stays decoupled from the
+ * MessageRole enum's package.
+ */
+private fun shareConversation(
+    context: android.content.Context,
+    messages: List<com.hermesandroid.relay.data.ChatMessage>,
+) {
+    val body = buildString {
+        appendLine("# Hermes conversation")
+        appendLine()
+        messages.forEach { message ->
+            if (message.content.isBlank()) return@forEach
+            val speaker = when {
+                message.role.name.equals("user", ignoreCase = true) -> "**You:**"
+                message.role.name.equals("assistant", ignoreCase = true) -> "**Hermes:**"
+                else -> "**System:**"
+            }
+            appendLine(speaker)
+            appendLine(message.content.trim())
+            appendLine()
+        }
+    }
+    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(android.content.Intent.EXTRA_TEXT, body)
+        putExtra(android.content.Intent.EXTRA_SUBJECT, "Hermes conversation")
+    }
+    context.startActivity(
+        android.content.Intent.createChooser(intent, "Share conversation"),
+    )
 }

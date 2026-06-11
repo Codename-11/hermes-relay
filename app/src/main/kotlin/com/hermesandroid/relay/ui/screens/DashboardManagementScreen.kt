@@ -48,6 +48,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -1694,15 +1696,47 @@ private fun DashboardSummaryCard(
                 )
             }
             if (item.actions.isNotEmpty()) {
+                // Five-plus buttons (profiles carry six) wrap into a noisy
+                // two-row block — keep the three most-used inline and fold
+                // the rest behind "More".
+                val inlineActions =
+                    if (item.actions.size > 4) item.actions.take(3) else item.actions
+                val overflowActions =
+                    if (item.actions.size > 4) item.actions.drop(3) else emptyList()
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    item.actions.forEach { action ->
+                    inlineActions.forEach { action ->
                         OutlinedButton(
                             onClick = { onAction(action) },
                             enabled = !actionInFlight,
                         ) {
                             Text(action.label)
+                        }
+                    }
+                    if (overflowActions.isNotEmpty()) {
+                        Box {
+                            var menuOpen by remember { mutableStateOf(false) }
+                            OutlinedButton(
+                                onClick = { menuOpen = true },
+                                enabled = !actionInFlight,
+                            ) {
+                                Text("More")
+                            }
+                            DropdownMenu(
+                                expanded = menuOpen,
+                                onDismissRequest = { menuOpen = false },
+                            ) {
+                                overflowActions.forEach { action ->
+                                    DropdownMenuItem(
+                                        text = { Text(action.label) },
+                                        onClick = {
+                                            menuOpen = false
+                                            onAction(action)
+                                        },
+                                    )
+                                }
+                            }
                         }
                     }
                 }
