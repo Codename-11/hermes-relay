@@ -1362,11 +1362,14 @@ fun RelayApp() {
                     )
                 }
                 composable(Screen.VoiceSettings.route) {
+                    val standardVoiceSignInRouteHint by
+                        connectionViewModel.standardVoiceSignInRouteHint.collectAsState()
                     VoiceSettingsScreen(
                         voiceViewModel = voiceViewModel,
                         voiceClient = voiceClient,
                         selectedProfile = selectedProfile,
                         standardVoiceAvailability = standardVoiceAvailability,
+                        standardVoiceSignInRouteHint = standardVoiceSignInRouteHint,
                         relayVoiceReady = relayVoiceReady,
                         onOpenManage = {
                             navController.navigate(Screen.Manage.route) {

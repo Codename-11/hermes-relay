@@ -390,6 +390,27 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    /**
+     * Rebuild the primary route candidate from freshly-saved URLs while
+     * preserving the active connection's extra routes (priority > 0 — e.g.
+     * the setup wizard's Tailscale URL, or extra endpoints from a pairing
+     * payload). Editing the API or Relay URL used to call
+     * [Connection.buildRouteCandidates] with no extras, silently collapsing
+     * the stored list to a single candidate and killing roaming.
+     */
+    private fun mergedRouteCandidates(
+        apiServerUrl: String,
+        relayUrl: String,
+        extraApiUrls: List<Pair<String, String>> = emptyList(),
+    ): List<EndpointCandidate> = Connection.mergeRouteCandidates(
+        rebuilt = Connection.buildRouteCandidates(
+            apiServerUrl = apiServerUrl,
+            relayUrl = relayUrl,
+            extraApiUrls = extraApiUrls,
+        ),
+        existing = activeConnection.value?.routeCandidates.orEmpty(),
+    )
+
     private fun effectiveApiServerUrlSnapshot(): String =
         connectionManager.activeEndpoint.value?.api?.url ?: _apiServerUrl.value
 
@@ -663,6 +684,33 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val standardVoiceReady: StateFlow<Boolean> = standardVoiceAvailability
         .map { it == StandardVoiceAvailability.Ready }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    /**
+     * Route context for the standard-voice sign-in gate. Non-null (the
+     * active endpoint's role, e.g. `"tailscale"`) only when voice is gated
+     * on dashboard sign-in AND the resolver has moved the dashboard surface
+     * off the connection's persisted URL. Dashboard session cookies are
+     * host-scoped, so a sign-in performed on the LAN host does not
+     * authenticate the Tailscale host — the UI uses this to explain that a
+     * one-time sign-in *on this route* unlocks voice, instead of a bare
+     * "sign-in required" that looks broken to someone who already signed in
+     * at home.
+     */
+    val standardVoiceSignInRouteHint: StateFlow<String?> = combine(
+        standardVoiceAvailability,
+        effectiveDashboardUrl,
+        activeConnection,
+        connectionManager.activeEndpoint,
+    ) { availability, dashboardUrl, connection, endpoint ->
+        if (availability != StandardVoiceAvailability.SignInRequired) return@combine null
+        val persisted = connection?.resolvedDashboardUrl?.trim()?.trimEnd('/').orEmpty()
+        val effective = dashboardUrl.trim().trimEnd('/')
+        if (effective.isBlank() || persisted.isBlank() || effective.equals(persisted, ignoreCase = true)) {
+            null
+        } else {
+            endpoint?.role ?: "fallback"
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /**
      * Relay voice remains available for users who paired or explicitly
@@ -1994,16 +2042,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             authManager.authenticate()
         }
 
-        viewModelScope.launch {
-            networkStatus
-                .drop(1)
-                .distinctUntilChanged()
-                .collect { status ->
-                    if (status is ConnectivityObserver.Status.Available) {
-                        revalidate()
-                    }
-                }
-        }
+        // (The networkStatus → revalidate() collector lives further down in
+        // this init block, next to the other health-probe wiring — a second
+        // identical copy used to sit here; one is enough.)
 
         // === PHASE3-accessibility: bridge handler registration ===
         // Device Control commands are sideload-only. Google Play still
@@ -2567,11 +2608,28 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Periodic API health check — only runs when an API client is configured.
         // 30s cadence matches the prior loop. Updates both the legacy boolean
         // and the new tri-state HealthStatus flow so existing callers don't break.
+        //
+        // Escalation: two consecutive Unreachable probes kick a full route
+        // re-resolve with the probe cache cleared. This is the safety net for
+        // network changes the NetworkCallback never saw (e.g. an always-on
+        // VPN keeping "internet available" true through a Wi-Fi → cell
+        // handoff) — without it, an open app keeps probing the dead LAN URL
+        // forever. The effectiveApiServerUrl collector below rebuilds the
+        // HTTP clients when the resolved route actually moves.
         viewModelScope.launch {
+            var consecutiveApiFailures = 0
             while (true) {
                 delay(30_000)
-                if (_apiClient.value != null) {
-                    probeApiHealth()
+                if (_apiClient.value == null) continue
+                probeApiHealth()
+                if (_apiServerHealth.value == HealthStatus.Unreachable) {
+                    consecutiveApiFailures++
+                    if (consecutiveApiFailures >= 2) {
+                        consecutiveApiFailures = 0
+                        connectionManager.refreshActiveEndpoint(clearProbeCache = true)
+                    }
+                } else {
+                    consecutiveApiFailures = 0
                 }
             }
         }
@@ -2824,6 +2882,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             }
             _standardVoiceAvailability.value = availability
             _standardAudioApiReachable.value = availability == StandardVoiceAvailability.Ready
+            if (availability == StandardVoiceAvailability.SignInRequired) {
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Voice,
+                    severity = DiagnosticSeverity.Warning,
+                    title = "Standard voice needs dashboard sign-in",
+                    detail = "Dashboard sessions are per-host — a sign-in from another " +
+                        "route does not carry over; sign in once via Manage on this one",
+                    url = dashboardUrl,
+                )
+            }
         } finally {
             client.shutdown()
         }
@@ -3152,7 +3220,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 } else {
                     _relayUrl.value
                 },
-                routeCandidates = Connection.buildRouteCandidates(
+                routeCandidates = mergedRouteCandidates(
                     apiServerUrl = trimmed,
                     relayUrl = refreshedRelayUrl ?: _relayUrl.value,
                 ),
@@ -3277,10 +3345,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
         _apiServerUrl.value = trimmedApiUrl
         val routeRelayUrl = refreshedRelayUrl ?: derivedRelayUrl ?: _relayUrl.value
+        // No override → rebuild from the typed URLs but keep any stored
+        // extra routes: the wizard does NOT pre-fill the Tailscale field, so
+        // a blank field on a re-run means "unchanged", not "remove it".
         val routeCandidates = routeCandidatesOverride
             ?.takeIf { it.isNotEmpty() }
             ?.let { normalizeStandardRouteCandidates(it) }
-            ?: Connection.buildRouteCandidates(
+            ?: mergedRouteCandidates(
                 apiServerUrl = trimmedApiUrl,
                 relayUrl = routeRelayUrl,
                 extraApiUrls = listOfNotNull(
@@ -3537,7 +3608,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             persistActiveConnectionUrls(
                 apiServerUrl = trimmedApiUrl,
                 relayUrl = nextRelayUrl,
-                routeCandidates = Connection.buildRouteCandidates(
+                routeCandidates = mergedRouteCandidates(
                     apiServerUrl = trimmedApiUrl,
                     relayUrl = nextRelayUrl,
                 ),
@@ -3783,7 +3854,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             persistActiveConnectionUrls(
                 apiServerUrl = _apiServerUrl.value,
                 relayUrl = trimmed,
-                routeCandidates = Connection.buildRouteCandidates(
+                routeCandidates = mergedRouteCandidates(
                     apiServerUrl = _apiServerUrl.value,
                     relayUrl = trimmed,
                 ),
@@ -3964,7 +4035,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             persistActiveConnectionUrls(
                 apiServerUrl = _apiServerUrl.value,
                 relayUrl = trimmed,
-                routeCandidates = Connection.buildRouteCandidates(
+                routeCandidates = mergedRouteCandidates(
                     apiServerUrl = _apiServerUrl.value,
                     relayUrl = trimmed,
                 ),
@@ -4021,7 +4092,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             persistActiveConnectionUrls(
                 apiServerUrl = _apiServerUrl.value,
                 relayUrl = trimmed,
-                routeCandidates = Connection.buildRouteCandidates(
+                routeCandidates = mergedRouteCandidates(
                     apiServerUrl = _apiServerUrl.value,
                     relayUrl = trimmed,
                 ),

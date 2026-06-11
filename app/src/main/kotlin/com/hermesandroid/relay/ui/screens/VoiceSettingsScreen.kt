@@ -100,6 +100,12 @@ fun VoiceSettingsScreen(
     voiceClient: RelayVoiceClient?,
     selectedProfile: Profile? = null,
     standardVoiceAvailability: StandardVoiceAvailability = StandardVoiceAvailability.Unknown,
+    /**
+     * Non-null endpoint role (e.g. "tailscale") when the sign-in gate is up
+     * because the resolver moved the dashboard to a route the user hasn't
+     * signed in on yet — dashboard cookies are per-host.
+     */
+    standardVoiceSignInRouteHint: String? = null,
     relayVoiceReady: Boolean = false,
     onOpenManage: (() -> Unit)? = null,
     onBack: () -> Unit,
@@ -540,9 +546,16 @@ fun VoiceSettingsScreen(
                         StandardVoiceAvailability.SignInRequired -> {
                             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                             Text(
-                                text = "Your Hermes dashboard requires sign-in before standard " +
-                                    "voice can transcribe or speak. Signing in once in Manage " +
-                                    "unlocks it for this connection.",
+                                text = if (standardVoiceSignInRouteHint != null) {
+                                    "You're connected over the $standardVoiceSignInRouteHint " +
+                                        "route, and dashboard sign-ins are per-host — a sign-in " +
+                                        "from your home network doesn't carry over. Sign in once " +
+                                        "in Manage while on this route to unlock voice here too."
+                                } else {
+                                    "Your Hermes dashboard requires sign-in before standard " +
+                                        "voice can transcribe or speak. Signing in once in Manage " +
+                                        "unlocks it for this connection."
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

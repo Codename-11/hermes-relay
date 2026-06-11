@@ -204,6 +204,34 @@ data class Connection(
                 .sortedWith(compareBy<EndpointCandidate> { it.priority }.thenBy { it.role })
         }
 
+        /**
+         * Overlay a freshly-rebuilt candidate list onto an existing stored
+         * one, preserving the stored extras (priority > 0) that the rebuild
+         * doesn't already cover. URL edits rebuild only the route(s) the
+         * user actually touched — without this merge, saving an API or
+         * Relay URL collapsed the stored list to a single candidate,
+         * silently dropping the setup wizard's Tailscale route (or a
+         * pairing payload's extra endpoints) and killing LAN/VPN roaming.
+         *
+         * Stored extras are preserved **verbatim** (role, priority, relay
+         * URL) rather than re-derived, so payload-specified relay URLs
+         * survive. Host:port collisions defer to the rebuilt entry.
+         */
+        fun mergeRouteCandidates(
+            rebuilt: List<EndpointCandidate>,
+            existing: List<EndpointCandidate>,
+        ): List<EndpointCandidate> {
+            val rebuiltHostPorts = rebuilt
+                .map { "${it.api.host.lowercase()}:${it.api.port}" }
+                .toSet()
+            val preserved = existing
+                .filter { it.priority > 0 }
+                .filterNot { "${it.api.host.lowercase()}:${it.api.port}" in rebuiltHostPorts }
+            return (rebuilt + preserved)
+                .distinctBy { "${it.role.lowercase()}|${it.api.host.lowercase()}:${it.api.port}" }
+                .sortedWith(compareBy<EndpointCandidate> { it.priority }.thenBy { it.role })
+        }
+
         fun endpointCandidateFromApiUrl(
             role: String,
             priority: Int,
