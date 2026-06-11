@@ -550,18 +550,30 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         effectiveDashboardUrl.value.takeIf { it.isNotBlank() }
 
     /**
+     * Cookie store for [connectionId] — ONE instance per connection,
+     * process-wide. Every dashboard-surface consumer (Manage, standard
+     * voice, connection validation, app-start pre-warm) must come through
+     * here: each EncryptedDashboardCookieStore instance lazily builds its
+     * own Keystore-backed prefs, and that build serializes through a
+     * process-global Tink lock — N instances for the same file means N
+     * multi-second lock holds instead of one.
+     */
+    fun dashboardCookieStoreFor(connectionId: String): DashboardCookieStore =
+        dashboardCookieStores.getOrPut(connectionId) {
+            EncryptedDashboardCookieStore(
+                context = getApplication(),
+                connectionId = connectionId,
+            )
+        }
+
+    /**
      * Cookie store for the active connection — the same encrypted store the
      * Manage tab's sign-in flow writes, so a dashboard session established
      * there authenticates voice (and any other dashboard-surface client).
      */
     fun activeDashboardCookieStore(): DashboardCookieStore? {
         val connectionId = connectionStore.activeConnectionId.value ?: return null
-        return dashboardCookieStores.getOrPut(connectionId) {
-            EncryptedDashboardCookieStore(
-                context = getApplication(),
-                connectionId = connectionId,
-            )
-        }
+        return dashboardCookieStoreFor(connectionId)
     }
 
     // Chat is ready when a chat-routed API client exists and the base server is reachable.
@@ -3336,10 +3348,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         val active = connectionStore.connections.value.firstOrNull { it.id == connectionId }
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
-                EncryptedDashboardCookieStore(
-                    context = getApplication(),
-                    connectionId = connectionId,
-                ).clear()
+                dashboardCookieStoreFor(connectionId).clear()
             }
             connectionStore.setDashboardStatus(
                 connectionId = connectionId,
@@ -3544,10 +3553,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     val dashboardClient = DashboardApiClient(
                         baseUrl = dashboardUrlForProbe,
                         okHttpClient = DashboardApiClient.defaultClient(
-                            cookieStore = EncryptedDashboardCookieStore(
-                                context = getApplication(),
-                                connectionId = connectionId,
-                            ),
+                            cookieStore = dashboardCookieStoreFor(connectionId),
                         ),
                     )
                     try {

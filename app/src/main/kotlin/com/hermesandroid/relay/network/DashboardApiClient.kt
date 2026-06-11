@@ -687,9 +687,20 @@ class EncryptedDashboardCookieStore(
     private val json: Json = Json { ignoreUnknownKeys = true },
 ) : DashboardCookieStore {
     private val serializer = ListSerializer(StoredDashboardCookie.serializer())
-    private val store: SessionTokenStore =
-        KeystoreTokenStore.tryCreate(context.applicationContext, prefsName(connectionId))
-            ?: LegacyEncryptedPrefsTokenStore(context.applicationContext, prefsName(connectionId))
+    private val appContext = context.applicationContext
+    private val prefsName = prefsName(connectionId)
+
+    // DEFERRED on purpose. Building the Keystore-backed prefs takes 1-4s
+    // on StrongBox devices and serializes through a process-GLOBAL Tink
+    // lock (AndroidKeysetManager.Builder.build) — eager construction here
+    // froze the main thread for ~11s at app start when several stores were
+    // built concurrently (frozen-sphere incident, 2026-06-11). Construction
+    // is now free on any thread; the expensive build happens on the first
+    // actual cookie access, which is always an OkHttp/IO thread.
+    private val store: SessionTokenStore by lazy {
+        KeystoreTokenStore.tryCreate(appContext, prefsName)
+            ?: LegacyEncryptedPrefsTokenStore(appContext, prefsName)
+    }
 
     override fun load(): List<StoredDashboardCookie> {
         val raw = store.getString(KEY_COOKIES) ?: return emptyList()
