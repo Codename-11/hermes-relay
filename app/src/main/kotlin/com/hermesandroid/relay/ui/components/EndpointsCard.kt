@@ -58,8 +58,14 @@ import kotlinx.coroutines.launch
  * ADR 24 — per-endpoint visibility + override card for the Connection
  * settings screen. Renders one row per [EndpointCandidate] stored for the
  * active device, with a health chip, a 3-dot menu (Prefer / Probe now /
- * View pin), and a bottom "Clear manual override" action when a preferred
- * role is set.
+ * View pin), and bottom clear actions when a switch/preference is set.
+ *
+ * Two distinct route actions, deliberately separated:
+ * - "Use now" (row button) — one-time switch. Holds until the next
+ *   disconnect, never persisted, cancelled by [onCancelUseNow].
+ * - "Prefer this route" (3-dot menu) — sticky policy. Persisted, restored
+ *   on app start, tried first on every resolve; cleared by
+ *   [onClearPreferred].
  *
  * Verbose by design — Bailey explicitly asked for per-row visibility, so we
  * do NOT collapse into a master row. The card itself is wrapped in a
@@ -73,9 +79,18 @@ import kotlinx.coroutines.launch
 fun EndpointsCard(
     endpoints: List<EndpointCandidate>,
     activeEndpoint: EndpointCandidate?,
+    /** Persisted sticky preference ([Connection.preferredRouteRole]). */
     preferredRole: String?,
+    /**
+     * Live transient override installed by "Use now" (or by preference
+     * restoration — equal to [preferredRole] in that case). Drives the
+     * automatic / preferred / manual annotation on the Current line.
+     */
+    manualOverrideRole: String?,
+    onUseNow: (EndpointCandidate) -> Unit,
+    onCancelUseNow: () -> Unit,
     onPreferEndpoint: (EndpointCandidate) -> Unit,
-    onClearOverride: () -> Unit,
+    onClearPreferred: () -> Unit,
     onProbeNow: () -> Unit,
     onViewPin: suspend (EndpointCandidate) -> String?,
     /** True while a user-triggered route probe is in flight. */
@@ -115,9 +130,19 @@ fun EndpointsCard(
         return
     }
 
+    // A manual "Use now" switch is in effect when the live override differs
+    // from the sticky preference (preference restoration writes the same
+    // role into both, so equality means "preferred", not "manual").
+    val manualSwitchActive = manualOverrideRole != null &&
+        !manualOverrideRole.equals(preferredRole, ignoreCase = true)
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            text = "Current: ${activeEndpoint?.displayLabel() ?: "Resolving"}",
+            text = "Current: ${activeEndpoint?.displayLabel() ?: "Resolving"}" + when {
+                manualSwitchActive -> " · manual (until disconnect)"
+                manualOverrideRole != null -> " · preferred"
+                else -> " · automatic"
+            },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -132,7 +157,9 @@ fun EndpointsCard(
                 isPreferred = preferredRole?.equals(candidate.role, ignoreCase = true) == true,
                 isProbing = isProbing,
                 outcome = outcomeFor(candidate),
+                onUseNow = { onUseNow(candidate) },
                 onPrefer = { onPreferEndpoint(candidate) },
+                onClearPrefer = onClearPreferred,
                 onProbeNow = onProbeNow,
                 onViewPin = onViewPin,
                 onEdit = onEditRoute?.takeIf { candidate.priority > 0 }
@@ -149,10 +176,18 @@ fun EndpointsCard(
             }
         }
 
+        if (manualSwitchActive) {
+            HorizontalDivider()
+            TextButton(onClick = onCancelUseNow, modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "Cancel manual switch (back to ${preferredRole ?: "automatic"})",
+                )
+            }
+        }
         if (preferredRole != null) {
             HorizontalDivider()
-            TextButton(onClick = onClearOverride, modifier = Modifier.fillMaxWidth()) {
-                Text("Clear manual override (preferring $preferredRole)")
+            TextButton(onClick = onClearPreferred, modifier = Modifier.fillMaxWidth()) {
+                Text("Stop preferring $preferredRole (back to automatic)")
             }
         }
     }
@@ -168,7 +203,9 @@ private fun EndpointRow(
     isPreferred: Boolean,
     isProbing: Boolean = false,
     outcome: RouteProbeOutcome? = null,
+    onUseNow: () -> Unit,
     onPrefer: () -> Unit,
+    onClearPrefer: () -> Unit,
     onProbeNow: () -> Unit,
     onViewPin: suspend (EndpointCandidate) -> String?,
     onEdit: (() -> Unit)? = null,
@@ -258,8 +295,11 @@ private fun EndpointRow(
             // without needing to expand into a detail sheet. "View pin"
             // suspends to read CertPinStore, so we resolve it into a dialog
             // when the user taps it.
+            //
+            // "Use now" is the TRANSIENT switch (until disconnect); the
+            // sticky "Prefer this route" lives in the menu below.
             if (!isActive) {
-                TextButton(onClick = onPrefer) {
+                TextButton(onClick = onUseNow) {
                     Text("Use now")
                 }
             }
@@ -275,10 +315,25 @@ private fun EndpointRow(
                     onDismissRequest = { menuOpen = false },
                 ) {
                     DropdownMenuItem(
-                        text = { Text("Prefer this route") },
+                        text = {
+                            Column {
+                                Text(
+                                    if (isPreferred) "Stop preferring" else "Prefer this route",
+                                )
+                                Text(
+                                    text = if (isPreferred) {
+                                        "Back to automatic choice"
+                                    } else {
+                                        "Always try this route first"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        },
                         onClick = {
                             menuOpen = false
-                            onPrefer()
+                            if (isPreferred) onClearPrefer() else onPrefer()
                         },
                     )
                     DropdownMenuItem(

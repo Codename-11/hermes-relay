@@ -173,11 +173,16 @@ class ConnectionManager(
      * user-preferred endpoint that doesn't respond to HEAD /health falls
      * back through the normal priority chain.
      *
-     * Cleared on [disconnect] per ADR 24's "clears on disconnect" semantics
-     * from the UI card.
+     * Two writers feed this: a sticky [Connection.preferredRouteRole] is
+     * restored into it on connection load, and the Routes card's transient
+     * "Use now" writes it directly without persisting. Cleared on
+     * [disconnect] per ADR 24's "clears on disconnect" semantics.
+     *
+     * Exposed as [manualRoleOverrideFlow] so the Routes card can label the
+     * current route as automatic / preferred / manually switched.
      */
-    @Volatile
-    private var manualRoleOverride: String? = null
+    private val _manualRoleOverride = MutableStateFlow<String?>(null)
+    val manualRoleOverrideFlow: StateFlow<String?> = _manualRoleOverride.asStateFlow()
 
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
@@ -394,7 +399,7 @@ class ConnectionManager(
         // Manual override: if the user pinned a role in the Endpoints card,
         // try that one first; fall through to the strict-priority algorithm
         // if it isn't reachable.
-        manualRoleOverride?.let { preferredRole ->
+        _manualRoleOverride.value?.let { preferredRole ->
             val preferred = endpoints.firstOrNull {
                 it.role.equals(preferredRole, ignoreCase = true)
             }
@@ -498,11 +503,11 @@ class ConnectionManager(
      * cycle — call [probeAndReconnect] to apply immediately.
      */
     fun setManualRoleOverride(role: String?) {
-        manualRoleOverride = role?.takeIf { it.isNotBlank() }
-        Log.i(TAG, "manualRoleOverride now=${manualRoleOverride ?: "(cleared)"}")
+        _manualRoleOverride.value = role?.takeIf { it.isNotBlank() }
+        Log.i(TAG, "manualRoleOverride now=${_manualRoleOverride.value ?: "(cleared)"}")
     }
 
-    fun getManualRoleOverride(): String? = manualRoleOverride
+    fun getManualRoleOverride(): String? = _manualRoleOverride.value
 
     private fun markActiveEndpointUnreachable(reason: String) {
         val active = _activeEndpoint.value ?: return
@@ -629,10 +634,11 @@ class ConnectionManager(
         webSocket = null
         _connectionState.value = ConnectionState.Disconnected
         _isInsecureConnection.value = false
-        // ADR 24: clear manual override on explicit disconnect — the
-        // Routes card's "Prefer this route" menu contract is that it lasts
-        // until the user disconnects, then resets to resolver-picked.
-        manualRoleOverride = null
+        // ADR 24: clear manual override on explicit disconnect — a "Use
+        // now" switch lasts until the user disconnects, then resets to
+        // resolver-picked. A sticky preferredRouteRole is re-installed by
+        // the ViewModel on the next connection load.
+        _manualRoleOverride.value = null
         _activeEndpoint.value = null
     }
 

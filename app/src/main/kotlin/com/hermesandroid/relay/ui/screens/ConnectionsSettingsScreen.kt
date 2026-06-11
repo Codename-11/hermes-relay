@@ -555,6 +555,13 @@ private fun ConnectionCard(
                     var preferredRole by remember(connection.id) {
                         mutableStateOf(activeConnectionViewModel.getPreferredEndpointRole())
                     }
+                    // Live transient override — set by "Use now" (or by
+                    // preference restoration, in which case it equals
+                    // preferredRole). A manual switch is the differing case.
+                    val manualOverrideRole by
+                        activeConnectionViewModel.manualRouteOverride.collectAsState()
+                    val manualSwitchActive = manualOverrideRole != null &&
+                        !manualOverrideRole.equals(preferredRole, ignoreCase = true)
                     var routeEditorOpen by remember(connection.id) { mutableStateOf(false) }
                     var routeEditorOriginal by remember(connection.id) {
                         mutableStateOf<EndpointCandidate?>(null)
@@ -739,9 +746,11 @@ private fun ConnectionCard(
                         ) {
                             Text(if (isRouteProbing) "Checking…" else "Re-check")
                         }
-                        if (preferredRole != null) {
+                        if (preferredRole != null || manualSwitchActive) {
                             TextButton(
                                 onClick = {
+                                    // Clears both layers: the persisted
+                                    // preference and any live manual switch.
                                     activeConnectionViewModel.setPreferredEndpointRole(null)
                                     preferredRole = null
                                 },
@@ -781,11 +790,19 @@ private fun ConnectionCard(
                                 routeProbeOutcomes[activeConnectionViewModel.routeOutcomeKey(candidate)]
                             },
                             preferredRole = preferredRole,
+                            manualOverrideRole = manualOverrideRole,
+                            onUseNow = { candidate ->
+                                // Transient switch — no preference write.
+                                activeConnectionViewModel.useRouteNow(candidate.role)
+                            },
+                            onCancelUseNow = {
+                                activeConnectionViewModel.useRouteNow(null)
+                            },
                             onPreferEndpoint = { candidate ->
                                 activeConnectionViewModel.setPreferredEndpointRole(candidate.role)
                                 preferredRole = candidate.role
                             },
-                            onClearOverride = {
+                            onClearPreferred = {
                                 activeConnectionViewModel.setPreferredEndpointRole(null)
                                 preferredRole = null
                             },
