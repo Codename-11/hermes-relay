@@ -514,14 +514,17 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     private val dashboardCookieStores =
         java.util.concurrent.ConcurrentHashMap<String, EncryptedDashboardCookieStore>()
 
-    /** Resolved dashboard URL of the active connection (explicit or derived :9119). */
-    fun activeDashboardUrl(): String? {
-        val connectionId = connectionStore.activeConnectionId.value ?: return null
-        return connectionStore.connections.value
-            .firstOrNull { it.id == connectionId }
-            ?.resolvedDashboardUrl
-            ?.takeIf { it.isNotBlank() }
-    }
+    /**
+     * Dashboard URL for the active connection **on the currently-resolved
+     * route** — snapshot twin of [effectiveDashboardUrl], which it delegates
+     * to. Standard voice and the availability probe read this per call, so
+     * an auto-managed dashboard URL follows LAN/Tailscale handoffs the same
+     * way Manage does; an explicit dashboard override stays pinned. (This
+     * used to read the persisted `resolvedDashboardUrl`, which kept voice
+     * aimed at the LAN host after the resolver had moved chat to Tailscale.)
+     */
+    fun activeDashboardUrl(): String? =
+        effectiveDashboardUrl.value.takeIf { it.isNotBlank() }
 
     /**
      * Cookie store for the active connection — the same encrypted store the
@@ -2721,7 +2724,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         if (revalidationJob?.isActive == true) return
         revalidationJob = viewModelScope.launch {
             val apiRouteBefore = effectiveApiServerUrlSnapshot()
-            connectionManager.refreshActiveEndpoint()
+            // Clear the probe cache: revalidate() fires on resume / network
+            // change, where a cached-reachable entry for the route we just
+            // walked away from would win the resolve for up to 60s.
+            connectionManager.refreshActiveEndpoint(clearProbeCache = true)
             if (effectiveApiServerUrlSnapshot() != apiRouteBefore) {
                 rebuildApiClient()
             }
