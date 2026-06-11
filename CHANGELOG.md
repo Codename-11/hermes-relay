@@ -36,6 +36,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Onboarding feature pages got real content.** Chat / Manage / Power tools pages now show three concrete feature rows each (streaming + profiles + voice; control + skills hub + one sign-in; terminal + bridge + realtime) instead of a single sentence.
 
+- **Floating status pill.** The bottom status strip is now an inset rounded capsule floating above the gesture area instead of an edge-to-edge bordered bar that clashed with rounded display corners.
+
+- **Ambient mode is now a gesture.** The top-bar sphere toggle is gone; long-press the conversation background to enter the fullscreen sphere, tap anywhere to return (a transient "tap to return to chat" pill teaches the exit on entry). Message long-press (copy) is unaffected.
+
+- **Media settings labeled Relay-only.** The Media screen now states that its inbound-attachment controls apply to Relay-delivered files only, not to standard connections or images you attach in chat.
+
 ## [0.8.1] - 2026-05-26
 
 ### Fixed

@@ -30,6 +30,15 @@
 - **Hub featured view** — `GET /api/skills/hub/sources` on dialog open: "Sources: Official (Nous), skills.sh, ..." line + featured skills (from the centralized index) listed before the first search, marked installed via the same lock map. Best-effort: silent on failure.
 - **Onboarding** — the rechrome (55a4227) reworked Welcome (sphere hero + Standard/Advanced paths) and the Connect step (shared ConnectionWizard), but Chat/Manage/Power remained icon + one sentence. They now carry three concrete feature rows each (reusing the Welcome page's row style): Chat = streaming/profiles/voice-no-install; Manage = control/skills-hub/one-sign-in; Power = terminal/bridge/realtime. Copy emphasizes the standard-first story ("no extra install", "signing in once also unlocks voice").
 
+**Follow-up 3 (same day) — release polish: floating status pill, gesture ambient mode, media-settings scoping, voice.md standard route.**
+
+- `RelayStatusStrip` is now a floating capsule (insets → 14dp side / 8dp bottom margins → pill clip) instead of a zero-radius bordered bar — the full-width rectangle clashed with rounded display corners. Gate caught a real overload error: Compose `padding()` can't mix `horizontal` with `top`/`bottom` — use start/end/top/bottom.
+- Ambient (fullscreen sphere) lost its top-bar toggle: long-press the conversation background to enter (bubbles keep their copy long-press — they consume first), tap/long-press anywhere to exit, transient "tap to return to chat" pill on every entry. Note: inside a Box nested in a Column, bare `AnimatedVisibility` resolves to the ColumnScope extension and fails — fully qualify `androidx.compose.animation.AnimatedVisibility`.
+- Media settings confirmed **Relay-only** (they govern `MEDIA:hermes-relay://<token>` fetches via MediaSettingsRepository) and now say so on-screen.
+- `user-docs/features/voice.md` intro rewritten: standard (no-Relay) voice via the dashboard audio routes is now the lead story, with a two-route tip block (Auto prefers Relay when paired) and Realtime marked relay-required. Remaining docs debt logged below.
+
+**Docs debt (user-docs) for the release:** `features/dashboard.md` lacks the new Manage surfaces (Keys tab, model picker, profile create/describe/SOUL editor, skills-hub browse/featured); `guide/getting-started.md` (17.5KB) should split into a short Quick Start page + separate Install-options/Advanced pages; `features/voice.md` body still describes relay-era requirements beyond the new intro.
+
 **Next.** When upstream PR #8199 lands `/v1/audio/*` on the API server, add it as the preferred standard route (capabilities already advertise `audio_api`) and demote the dashboard path to fallback. Remaining deferred parity: MCP manual add-server form (catalog install covers onboarding), per-profile cron/skill scoping in Manage.
 
 ---

@@ -1,15 +1,28 @@
 # Voice Mode
 
 Real-time voice conversation with your Hermes agent. Tap the mic in chat, speak,
-and the agent speaks back through the relay-managed voice output provider while
-STT still follows your Hermes server configuration.
+and the agent speaks back. **No Relay required**: on a standard connection,
+speech runs through your Hermes dashboard's audio routes — the same path the
+official Hermes Desktop voice mode uses — with the server's configured STT/TTS
+providers.
+
+::: tip Two speech routes, picked automatically
+- **Standard** — works on a vanilla Hermes install. The phone talks to your
+  Hermes dashboard; if the dashboard requires sign-in, signing in once under
+  **Manage** also unlocks voice for that connection.
+- **Relay** — when the optional Relay is paired, voice prefers it: per-profile
+  voice providers, streaming voice output, and the Realtime Agent engine.
+
+You can pin either route under **Settings → Voice → Stable STT/TTS Route**;
+the default *Auto* uses Relay when paired, otherwise Standard.
+:::
 
 The stable default engine is **Hermes Chat + Voice Output**: Hermes owns the
-chat turn, tools, memory, approvals, and transcript, then the relay renders the
-assistant response to speech. An opt-in **Realtime Agent** engine is available
-for experimental provider-native speech work. It is visibly badged as
-Experimental in Voice Settings and can be switched off without changing the
-stable voice behavior.
+chat turn, tools, memory, approvals, and transcript, then the active speech
+route renders the assistant response to audio. An opt-in **Realtime Agent**
+engine is available for experimental provider-native speech work — it requires
+a paired Relay, is visibly badged as Experimental in Voice Settings, and can be
+switched off without changing the stable voice behavior.
 
 ## What It Is
 
