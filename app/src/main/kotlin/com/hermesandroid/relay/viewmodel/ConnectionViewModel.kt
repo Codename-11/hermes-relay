@@ -15,6 +15,7 @@ import com.hermesandroid.relay.auth.PairedDeviceInfo
 import com.hermesandroid.relay.auth.PairedSession
 import com.hermesandroid.relay.data.DataManager
 import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.PairingPreferences
 import com.hermesandroid.relay.data.RelayEndpoint
@@ -38,10 +39,12 @@ import com.hermesandroid.relay.network.ConnectionManager
 import com.hermesandroid.relay.network.ConnectionState
 import com.hermesandroid.relay.network.DashboardApiClient
 import com.hermesandroid.relay.network.DashboardAuthSession
+import com.hermesandroid.relay.network.DashboardCookieStore
 import com.hermesandroid.relay.network.DashboardStatus
 import com.hermesandroid.relay.network.EncryptedDashboardCookieStore
 import com.hermesandroid.relay.network.EndpointResolver
 import com.hermesandroid.relay.network.HermesApiClient
+import com.hermesandroid.relay.network.RouteProbeOutcome
 import com.hermesandroid.relay.network.ProfileApiUrlResolver
 import com.hermesandroid.relay.network.ServerCapabilities
 import com.hermesandroid.relay.network.RelayHttpClient
@@ -88,6 +91,28 @@ private data class RelayUiInputs(
     val url: String,
     val configured: Boolean,
 )
+
+/**
+ * Why the standard (no-plugin) voice route is or isn't usable right now.
+ * Drives the mic gate, the Auto route ordering, and the Voice Settings
+ * status line + CTA ("Sign in via Manage" / "Update hermes-agent").
+ */
+enum class StandardVoiceAvailability {
+    /** No probe has completed yet (startup, connection switch). */
+    Unknown,
+
+    /** Dashboard reachable, authenticated (or auth not required), audio routes present. */
+    Ready,
+
+    /** Dashboard reachable and gated, but no signed-in session — Manage sign-in unlocks it. */
+    SignInRequired,
+
+    /** Dashboard URL configured but `/api/status` did not answer. */
+    Unreachable,
+
+    /** Dashboard answered but has no audio routes (`/api/audio`) — hermes-agent build too old. */
+    Unsupported,
+}
 
 class ConnectionViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -367,6 +392,27 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    /**
+     * Rebuild the primary route candidate from freshly-saved URLs while
+     * preserving the active connection's extra routes (priority > 0 — e.g.
+     * the setup wizard's Tailscale URL, or extra endpoints from a pairing
+     * payload). Editing the API or Relay URL used to call
+     * [Connection.buildRouteCandidates] with no extras, silently collapsing
+     * the stored list to a single candidate and killing roaming.
+     */
+    private fun mergedRouteCandidates(
+        apiServerUrl: String,
+        relayUrl: String,
+        extraApiUrls: List<Pair<String, String>> = emptyList(),
+    ): List<EndpointCandidate> = Connection.mergeRouteCandidates(
+        rebuilt = Connection.buildRouteCandidates(
+            apiServerUrl = apiServerUrl,
+            relayUrl = relayUrl,
+            extraApiUrls = extraApiUrls,
+        ),
+        existing = activeConnection.value?.routeCandidates.orEmpty(),
+    )
+
     private fun effectiveApiServerUrlSnapshot(): String =
         connectionManager.activeEndpoint.value?.api?.url ?: _apiServerUrl.value
 
@@ -470,8 +516,53 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     private val _serverCapabilities = MutableStateFlow(ServerCapabilities.DISCONNECTED)
     val serverCapabilities: StateFlow<ServerCapabilities> = _serverCapabilities.asStateFlow()
 
+    /**
+     * Standard (no-plugin) voice rides the upstream **dashboard web server**
+     * (`/api/audio/transcribe` + `/api/audio/speak`, the hermes-desktop voice
+     * contract) — not the API server, whose current upstream advertises
+     * `audio_api: false`. Availability therefore tracks dashboard state:
+     * reachability via the public `/api/status`, auth via `/api/auth/me`
+     * against the same per-connection cookie store Manage signs in with, and
+     * route presence via a HEAD probe (405 = exists, 404 = build too old).
+     */
+    private val _standardVoiceAvailability =
+        MutableStateFlow(StandardVoiceAvailability.Unknown)
+    val standardVoiceAvailability: StateFlow<StandardVoiceAvailability> =
+        _standardVoiceAvailability.asStateFlow()
+
     private val _standardAudioApiReachable = MutableStateFlow(false)
     val standardAudioApiReachable: StateFlow<Boolean> = _standardAudioApiReachable.asStateFlow()
+
+    /** Per-connection encrypted cookie stores, cached to avoid Keystore churn. */
+    private val dashboardCookieStores =
+        java.util.concurrent.ConcurrentHashMap<String, EncryptedDashboardCookieStore>()
+
+    /**
+     * Dashboard URL for the active connection **on the currently-resolved
+     * route** — snapshot twin of [effectiveDashboardUrl], which it delegates
+     * to. Standard voice and the availability probe read this per call, so
+     * an auto-managed dashboard URL follows LAN/Tailscale handoffs the same
+     * way Manage does; an explicit dashboard override stays pinned. (This
+     * used to read the persisted `resolvedDashboardUrl`, which kept voice
+     * aimed at the LAN host after the resolver had moved chat to Tailscale.)
+     */
+    fun activeDashboardUrl(): String? =
+        effectiveDashboardUrl.value.takeIf { it.isNotBlank() }
+
+    /**
+     * Cookie store for the active connection — the same encrypted store the
+     * Manage tab's sign-in flow writes, so a dashboard session established
+     * there authenticates voice (and any other dashboard-surface client).
+     */
+    fun activeDashboardCookieStore(): DashboardCookieStore? {
+        val connectionId = connectionStore.activeConnectionId.value ?: return null
+        return dashboardCookieStores.getOrPut(connectionId) {
+            EncryptedDashboardCookieStore(
+                context = getApplication(),
+                connectionId = connectionId,
+            )
+        }
+    }
 
     // Chat is ready when a chat-routed API client exists and the base server is reachable.
     val chatReady: StateFlow<Boolean> = combine(_chatApiClient, _apiServerReachable) { client, reachable ->
@@ -585,18 +676,43 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     /**
-     * Standard voice follows official Hermes Desktop: mic audio and speech
-     * output go through the normal Hermes API server when it is reachable.
-     * Audio-route probes are kept as diagnostics only; they must not hide the
-     * voice entry point because some upstream routes do not advertise cleanly
-     * to preflight requests and can still fail gracefully on the real call.
+     * Standard voice follows official Hermes Desktop: STT/TTS go through the
+     * dashboard web server's `/api/audio` routes. Ready means the dashboard
+     * answered `/api/status`, the cookie session satisfies its auth gate (or
+     * none is required), and the audio routes exist on this build — the
+     * `/api/status` discovery endpoint is designed for preflight, unlike the
+     * old API-server HEAD probe this replaces.
      */
-    val standardVoiceReady: StateFlow<Boolean> = combine(
-        _apiClient,
-        _apiServerReachable,
-    ) { client, reachable ->
-        client != null && reachable
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    val standardVoiceReady: StateFlow<Boolean> = standardVoiceAvailability
+        .map { it == StandardVoiceAvailability.Ready }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    /**
+     * Route context for the standard-voice sign-in gate. Non-null (the
+     * active endpoint's display label, e.g. `"Tailscale"`) only when voice
+     * is gated on dashboard sign-in AND the resolver has moved the dashboard
+     * surface off the connection's persisted URL. Dashboard session cookies
+     * are host-scoped, so a sign-in performed on the LAN host does not
+     * authenticate the Tailscale host — the UI uses this to explain that a
+     * one-time sign-in *on this route* unlocks voice, instead of a bare
+     * "sign-in required" that looks broken to someone who already signed in
+     * at home.
+     */
+    val standardVoiceSignInRouteHint: StateFlow<String?> = combine(
+        standardVoiceAvailability,
+        effectiveDashboardUrl,
+        activeConnection,
+        connectionManager.activeEndpoint,
+    ) { availability, dashboardUrl, connection, endpoint ->
+        if (availability != StandardVoiceAvailability.SignInRequired) return@combine null
+        val persisted = connection?.resolvedDashboardUrl?.trim()?.trimEnd('/').orEmpty()
+        val effective = dashboardUrl.trim().trimEnd('/')
+        if (effective.isBlank() || persisted.isBlank() || effective.equals(persisted, ignoreCase = true)) {
+            null
+        } else {
+            endpoint?.displayLabel() ?: "fallback"
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /**
      * Relay voice remains available for users who paired or explicitly
@@ -1361,18 +1477,45 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         )
 
         return when {
-            apiHealth == HealthStatus.Unreachable -> ConnectionStatusSnapshot(
-                title = "Hermes API unreachable",
-                route = route,
-                actionLabel = "Connections",
-                tone = ConnectionStatusTone.Warning,
-                entries = listOf(
+            apiHealth == HealthStatus.Unreachable -> {
+                // Diagnose, don't just report: for a single-route connection
+                // the most likely cause is "phone left the server's network
+                // and there's no remote route to roam to" — say so and point
+                // at the fix. Multi-route connections already roam; tell the
+                // user every route was tried instead.
+                val routeCount = activeConnection.routeCandidates.size
+                val routesEntry = if (routeCount <= 1) {
                     ConnectionHandoffTraceEntry(
-                        label = "API",
-                        detail = "Chat and profile calls may not be available",
+                        label = "Routes",
+                        detail = if (tailscaleDetector.isTailscaleDetected.value) {
+                            "Phone is on Tailscale — add your server's Tailscale " +
+                                "URL under Connections → Routes"
+                        } else {
+                            "Away from the server's network? Add a Tailscale or " +
+                                "public route under Connections → Routes"
+                        },
+                    )
+                } else {
+                    ConnectionHandoffTraceEntry(
+                        label = "Routes",
+                        detail = "None of the $routeCount configured routes " +
+                            "responded — fallbacks are retried automatically",
+                    )
+                }
+                ConnectionStatusSnapshot(
+                    title = "Hermes API unreachable",
+                    route = route,
+                    actionLabel = "Connections",
+                    tone = ConnectionStatusTone.Warning,
+                    entries = listOf(
+                        ConnectionHandoffTraceEntry(
+                            label = "API",
+                            detail = "Chat and profile calls may not be available",
+                        ),
+                        routesEntry,
                     ),
-                ),
-            )
+                )
+            }
 
             relayRow.phase == RelayUiState.Connecting &&
                 apiHealth != HealthStatus.Reachable -> ConnectionStatusSnapshot(
@@ -1928,16 +2071,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             authManager.authenticate()
         }
 
-        viewModelScope.launch {
-            networkStatus
-                .drop(1)
-                .distinctUntilChanged()
-                .collect { status ->
-                    if (status is ConnectivityObserver.Status.Available) {
-                        revalidate()
-                    }
-                }
-        }
+        // (The networkStatus → revalidate() collector lives further down in
+        // this init block, next to the other health-probe wiring — a second
+        // identical copy used to sit here; one is enough.)
 
         // === PHASE3-accessibility: bridge handler registration ===
         // Device Control commands are sideload-only. Google Play still
@@ -2501,11 +2637,31 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Periodic API health check — only runs when an API client is configured.
         // 30s cadence matches the prior loop. Updates both the legacy boolean
         // and the new tri-state HealthStatus flow so existing callers don't break.
+        //
+        // Escalation: two consecutive Unreachable probes kick a full route
+        // re-resolve with the probe cache cleared. This is the safety net for
+        // network changes the NetworkCallback never saw (e.g. an always-on
+        // VPN keeping "internet available" true through a Wi-Fi → cell
+        // handoff) — without it, an open app keeps probing the dead LAN URL
+        // forever. The effectiveApiServerUrl collector below rebuilds the
+        // HTTP clients when the resolved route actually moves.
         viewModelScope.launch {
+            var consecutiveApiFailures = 0
             while (true) {
                 delay(30_000)
-                if (_apiClient.value != null) {
-                    probeApiHealth()
+                if (_apiClient.value == null) {
+                    consecutiveApiFailures = 0
+                    continue
+                }
+                probeApiHealth()
+                if (_apiServerHealth.value == HealthStatus.Unreachable) {
+                    consecutiveApiFailures++
+                    if (consecutiveApiFailures >= 2) {
+                        consecutiveApiFailures = 0
+                        connectionManager.refreshActiveEndpoint(clearProbeCache = true)
+                    }
+                } else {
+                    consecutiveApiFailures = 0
                 }
             }
         }
@@ -2658,7 +2814,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         if (revalidationJob?.isActive == true) return
         revalidationJob = viewModelScope.launch {
             val apiRouteBefore = effectiveApiServerUrlSnapshot()
-            connectionManager.refreshActiveEndpoint()
+            // Clear the probe cache: revalidate() fires on resume / network
+            // change, where a cached-reachable entry for the route we just
+            // walked away from would win the resolve for up to 60s.
+            connectionManager.refreshActiveEndpoint(clearProbeCache = true)
             if (effectiveApiServerUrlSnapshot() != apiRouteBefore) {
                 rebuildApiClient()
             }
@@ -2702,13 +2861,95 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         if (client == null) {
             _apiServerHealth.value = HealthStatus.Unknown
             _apiServerReachable.value = false
-            _standardAudioApiReachable.value = false
+            probeStandardVoice()
             return
         }
         val ok = client.checkHealth()
         _apiServerReachable.value = ok
         _apiServerHealth.value = if (ok) HealthStatus.Reachable else HealthStatus.Unreachable
-        _standardAudioApiReachable.value = ok && client.probeAudioApi()
+        // Standard voice lives on the dashboard surface, not the API server,
+        // so its probe runs regardless of API health.
+        probeStandardVoice()
+    }
+
+    /**
+     * Probe the standard (dashboard-surface) voice route and update
+     * [standardVoiceAvailability]. Cheap: GET `/api/status` (public by
+     * design), GET `/api/auth/me` only when the dashboard is gated, then a
+     * HEAD existence check on the audio route (405 = present, 404 = absent).
+     * Also refreshes the persisted dashboard status snapshot when it
+     * materially changed, so the Manage header stays honest without the user
+     * visiting the tab.
+     */
+    private suspend fun probeStandardVoice() {
+        val connectionId = connectionStore.activeConnectionId.value
+        val dashboardUrl = activeDashboardUrl()
+        if (connectionId == null || dashboardUrl.isNullOrBlank()) {
+            _standardVoiceAvailability.value = StandardVoiceAvailability.Unknown
+            _standardAudioApiReachable.value = false
+            return
+        }
+        val client = DashboardApiClient(
+            baseUrl = dashboardUrl,
+            okHttpClient = DashboardApiClient.defaultClient(
+                cookieStore = activeDashboardCookieStore()
+                    ?: com.hermesandroid.relay.network.InMemoryDashboardCookieStore(),
+            ),
+        )
+        try {
+            val status = client.getStatus().getOrNull()
+            if (status == null) {
+                _standardVoiceAvailability.value = StandardVoiceAvailability.Unreachable
+                _standardAudioApiReachable.value = false
+                recordDashboardStatusIfChanged(connectionId, status = null, session = null)
+                return
+            }
+            val session = if (status.authRequired) client.currentSession().getOrNull() else null
+            val authed = !status.authRequired || session?.authenticated == true
+            recordDashboardStatusIfChanged(connectionId, status, session)
+            val availability = when {
+                !authed -> StandardVoiceAvailability.SignInRequired
+                client.audioRoutesPresent() -> StandardVoiceAvailability.Ready
+                else -> StandardVoiceAvailability.Unsupported
+            }
+            _standardVoiceAvailability.value = availability
+            _standardAudioApiReachable.value = availability == StandardVoiceAvailability.Ready
+            if (availability == StandardVoiceAvailability.SignInRequired) {
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Voice,
+                    severity = DiagnosticSeverity.Warning,
+                    title = "Standard voice needs dashboard sign-in",
+                    detail = "Dashboard sessions are per-host — a sign-in from another " +
+                        "route does not carry over; sign in once via Manage on this one",
+                    url = dashboardUrl,
+                )
+            }
+        } finally {
+            client.shutdown()
+        }
+    }
+
+    /**
+     * [recordDashboardStatus] persists to the ConnectionStore; the voice probe
+     * runs on every health cycle, so gate the write on a material change to
+     * avoid chatty DataStore commits that would only refresh a timestamp.
+     */
+    private fun recordDashboardStatusIfChanged(
+        connectionId: String,
+        status: DashboardStatus?,
+        session: DashboardAuthSession?,
+    ) {
+        val previous = connectionStore.connections.value
+            .firstOrNull { it.id == connectionId }
+            ?.dashboardLastStatus
+        val reachable = status != null
+        val materiallySame = previous != null &&
+            previous.reachable == reachable &&
+            previous.authRequired == status?.authRequired &&
+            previous.authenticated == session?.authenticated
+        if (!materiallySame) {
+            recordDashboardStatus(status = status, session = session, reachable = reachable)
+        }
     }
 
     /**
@@ -2980,7 +3221,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // --- API Server methods ---
 
     fun updateApiServerUrl(url: String) {
-        val trimmed = url.trim()
+        // Same bare-host normalization as the wizard: `192.168.1.10`
+        // becomes `http://192.168.1.10:8642`; explicit schemes pass verbatim.
+        val trimmed = Connection.normalizeApiUrlInput(url)
         val previousApiUrl = _apiServerUrl.value
         val previousRelayUrl = _relayUrl.value
         val derivedRelayUrl = RelayUrlDeriver.deriveFromApiUrl(trimmed)
@@ -3011,7 +3254,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 } else {
                     _relayUrl.value
                 },
-                routeCandidates = Connection.buildRouteCandidates(
+                routeCandidates = mergedRouteCandidates(
                     apiServerUrl = trimmed,
                     relayUrl = refreshedRelayUrl ?: _relayUrl.value,
                 ),
@@ -3031,7 +3274,17 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         val dashboardReachable: Boolean? = null,
         val dashboardSignInRequired: Boolean = false,
         val dashboardAuthenticated: Boolean? = null,
+        /** Standard (dashboard-surface) voice readiness, probed in the same pass. */
+        val voiceAvailability: StandardVoiceAvailability = StandardVoiceAvailability.Unknown,
         val relayPaired: Boolean = false,
+        /**
+         * True when the saved connection has at least one fallback route
+         * (priority > 0 — Tailscale, public, custom VPN). Drives the setup
+         * result card's "Remote" readiness line so a LAN-only connection is
+         * called out at the moment of maximum user attention, not discovered
+         * the first time the phone leaves home.
+         */
+        val remoteRouteConfigured: Boolean = false,
     )
 
     fun recordDashboardStatus(
@@ -3059,6 +3312,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    /**
+     * Re-run the standard-voice probe outside the periodic health cycle.
+     * Call after dashboard sign-in/sign-out so the mic gate and Voice
+     * Settings status react immediately instead of on the next probe tick.
+     */
+    fun refreshStandardVoice() {
+        viewModelScope.launch { probeStandardVoice() }
+    }
+
     fun clearDashboardSession(onComplete: (() -> Unit)? = null) {
         val connectionId = connectionStore.activeConnectionId.value ?: return
         val active = connectionStore.connections.value.firstOrNull { it.id == connectionId }
@@ -3082,6 +3344,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     message = "Dashboard session cleared",
                 ),
             )
+            probeStandardVoice()
             onComplete?.invoke()
         }
     }
@@ -3100,9 +3363,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         routeCandidatesOverride: List<EndpointCandidate>? = null,
         onResult: (StandardApiSetupResult) -> Unit,
     ) {
-        val trimmedApiUrl = apiUrl.trim()
-        val trimmedTailscaleApiUrl = tailscaleApiUrl.trim()
-        val trimmedDashboardUrl = dashboardUrl.trim()
+        // Bare host/IP input gets http:// and the surface's default port —
+        // typing `192.168.1.10` or a Tailscale `100.x.y.z` without a scheme
+        // is the common case and used to either block the wizard or silently
+        // drop the route. Explicitly-schemed URLs pass through verbatim.
+        val trimmedApiUrl = Connection.normalizeApiUrlInput(apiUrl)
+        val trimmedTailscaleApiUrl = Connection.normalizeApiUrlInput(tailscaleApiUrl)
+        val trimmedDashboardUrl = Connection.normalizeApiUrlInput(
+            dashboardUrl,
+            defaultPort = Connection.DEFAULT_DASHBOARD_PORT,
+        )
         if (trimmedApiUrl.isBlank()) {
             onResult(
                 StandardApiSetupResult(
@@ -3124,10 +3394,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
         _apiServerUrl.value = trimmedApiUrl
         val routeRelayUrl = refreshedRelayUrl ?: derivedRelayUrl ?: _relayUrl.value
+        // No override → rebuild from the typed URLs but keep any stored
+        // extra routes: the wizard does NOT pre-fill the Tailscale field, so
+        // a blank field on a re-run means "unchanged", not "remove it".
         val routeCandidates = routeCandidatesOverride
             ?.takeIf { it.isNotEmpty() }
             ?.let { normalizeStandardRouteCandidates(it) }
-            ?: Connection.buildRouteCandidates(
+            ?: mergedRouteCandidates(
                 apiServerUrl = trimmedApiUrl,
                 relayUrl = routeRelayUrl,
                 extraApiUrls = listOfNotNull(
@@ -3248,6 +3521,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             var dashboardSignInRequired = false
             var dashboardReachable: Boolean? = null
             var dashboardAuthenticated: Boolean? = null
+            var voiceAvailability = StandardVoiceAvailability.Unknown
             if (reachable) {
                 val connectionId = connectionStore.activeConnectionId.value
                 val dashboardUrlForProbe = connectionId?.let { id ->
@@ -3277,6 +3551,18 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                             status?.authRequired == true && session?.authenticated != true
                         dashboardReachable = status != null
                         dashboardAuthenticated = session?.authenticated
+                        // Voice rides this same surface — settle availability in
+                        // the same pass so the wizard's capability card and the
+                        // mic gate are correct the moment setup completes.
+                        voiceAvailability = when {
+                            status == null -> StandardVoiceAvailability.Unreachable
+                            dashboardSignInRequired -> StandardVoiceAvailability.SignInRequired
+                            dashboardClient.audioRoutesPresent() -> StandardVoiceAvailability.Ready
+                            else -> StandardVoiceAvailability.Unsupported
+                        }
+                        _standardVoiceAvailability.value = voiceAvailability
+                        _standardAudioApiReachable.value =
+                            voiceAvailability == StandardVoiceAvailability.Ready
                         recordDashboardStatus(
                             status = status,
                             session = session,
@@ -3313,7 +3599,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     dashboardReachable = dashboardReachable,
                     dashboardSignInRequired = dashboardSignInRequired,
                     dashboardAuthenticated = dashboardAuthenticated,
+                    voiceAvailability = voiceAvailability,
                     relayPaired = authState.value is AuthState.Paired,
+                    remoteRouteConfigured = routeCandidates.any { it.priority > 0 },
                 ),
             )
         }
@@ -3370,7 +3658,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             persistActiveConnectionUrls(
                 apiServerUrl = trimmedApiUrl,
                 relayUrl = nextRelayUrl,
-                routeCandidates = Connection.buildRouteCandidates(
+                routeCandidates = mergedRouteCandidates(
                     apiServerUrl = trimmedApiUrl,
                     relayUrl = nextRelayUrl,
                 ),
@@ -3383,7 +3671,17 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             val standardVoiceResult = if (_standardAudioApiReachable.value) {
                 Result.success(Unit)
             } else {
-                Result.failure(IllegalStateException("Standard Hermes audio API is not available"))
+                Result.failure(
+                    IllegalStateException(
+                        when (_standardVoiceAvailability.value) {
+                            StandardVoiceAvailability.SignInRequired ->
+                                "Standard voice needs dashboard sign-in (Manage tab)"
+                            StandardVoiceAvailability.Unsupported ->
+                                "This Hermes build has no dashboard audio routes"
+                            else -> "Standard Hermes voice is not available"
+                        },
+                    ),
+                )
             }
             val voiceResult = if (standardVoiceResult.isSuccess) {
                 standardVoiceResult
@@ -3525,7 +3823,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             val caps = client.probeCapabilities()
             _serverCapabilities.value = caps
             _chatMode.value = caps.toChatMode()
-            _standardAudioApiReachable.value = ok && client.probeAudioApi()
+            probeStandardVoice()
         } else {
             _apiClient.value = null
             shutdownClientOffMain(oldClient)
@@ -3533,7 +3831,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             _apiServerHealth.value = HealthStatus.Unknown
             _chatMode.value = ChatMode.DISCONNECTED
             _serverCapabilities.value = ServerCapabilities.DISCONNECTED
-            _standardAudioApiReachable.value = false
+            probeStandardVoice()
         }
         rebuildChatApiClient()
     }
@@ -3606,7 +3904,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             persistActiveConnectionUrls(
                 apiServerUrl = _apiServerUrl.value,
                 relayUrl = trimmed,
-                routeCandidates = Connection.buildRouteCandidates(
+                routeCandidates = mergedRouteCandidates(
                     apiServerUrl = _apiServerUrl.value,
                     relayUrl = trimmed,
                 ),
@@ -3703,6 +4001,161 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     /**
+     * Add or replace an extra fallback route on the active connection — the
+     * standard path's manual equivalent of a v3 pairing QR's `endpoints`
+     * array. The primary route (priority 0) mirrors the connection's main
+     * API URL and is edited through the URL fields / wizard, never here.
+     *
+     * Legacy candidate sources (per-device PairingPreferences from old QR
+     * pairings, or a bare single-URL config) are seeded onto the connection
+     * first, so an edit never hides routes the card was already showing.
+     *
+     * @param original non-null = edit-in-place: the matching stored entry is
+     *   replaced and keeps its priority; null = append after the last route.
+     * @param onResult called with a user-facing error string, or null on
+     *   success — drives the dialog's inline error text.
+     */
+    fun saveExtraRoute(
+        role: String,
+        apiUrl: String,
+        original: EndpointCandidate? = null,
+        onResult: (String?) -> Unit,
+    ) {
+        if (original?.priority == 0) {
+            onResult("The primary route mirrors the connection's API URL — edit that instead")
+            return
+        }
+        viewModelScope.launch {
+            val current = activeConnectionSnapshot()
+            if (current == null) {
+                onResult("No active connection")
+                return@launch
+            }
+            // Accept bare hosts/IPs — http:// is assumed (see
+            // [Connection.normalizeApiUrlInput]); the port defaults to 8642
+            // downstream in [Connection.endpointCandidateFromApiUrl].
+            val trimmedUrl = Connection.normalizeApiUrlInput(apiUrl)
+            val existing = seedRouteCandidates(current)
+            if (existing.isEmpty()) {
+                onResult("Set the connection's API server URL first")
+                return@launch
+            }
+            val withoutOriginal = if (original != null) {
+                existing.filterNot { it.sameRouteAs(original) }
+            } else {
+                existing
+            }
+            val candidate = Connection.endpointCandidateFromApiUrl(
+                role = role.trim().ifBlank { Connection.inferRouteRole(trimmedUrl) },
+                priority = original?.priority
+                    ?: ((withoutOriginal.maxOfOrNull { it.priority } ?: 0) + 1),
+                apiServerUrl = trimmedUrl,
+                relayUrl = Connection.deriveDefaultRelayUrl(trimmedUrl).orEmpty(),
+            )
+            if (candidate == null) {
+                onResult(
+                    "Enter the API server URL — e.g. 100.71.8.56 or " +
+                        "http://host:8642 (http/https only; port defaults to 8642)",
+                )
+                return@launch
+            }
+            val collision = withoutOriginal.firstOrNull {
+                it.api.host.equals(candidate.api.host, ignoreCase = true) &&
+                    it.api.port == candidate.api.port
+            }
+            if (collision != null) {
+                onResult(
+                    if (collision.priority == 0) {
+                        "That host is already the primary route"
+                    } else {
+                        "The ${collision.displayLabel()} route already uses that host"
+                    },
+                )
+                return@launch
+            }
+            val next = (withoutOriginal + candidate)
+                .sortedWith(compareBy<EndpointCandidate> { it.priority }.thenBy { it.role })
+            connectionStore.updateConnection(current.copy(routeCandidates = next))
+            // Full probe cycle (not a bare refresh) so the just-saved route
+            // immediately shows a reachability verdict in the Routes card.
+            probeNow()
+            onResult(null)
+        }
+    }
+
+    /**
+     * Remove an extra fallback route. The primary route (priority 0) is
+     * protected — it mirrors the connection's API URL. Clears a preferred-
+     * route override that pointed at the removed route, mirroring
+     * [persistActiveConnectionUrls]' stale-preference handling.
+     */
+    fun removeExtraRoute(candidate: EndpointCandidate, onResult: (String?) -> Unit = {}) {
+        if (candidate.priority == 0) {
+            onResult("The primary route can't be removed — edit the connection's API URL instead")
+            return
+        }
+        viewModelScope.launch {
+            val current = activeConnectionSnapshot()
+            if (current == null) {
+                onResult("No active connection")
+                return@launch
+            }
+            val existing = seedRouteCandidates(current)
+            val next = existing.filterNot { it.sameRouteAs(candidate) }
+            if (next.size == existing.size) {
+                onResult(null)
+                return@launch
+            }
+            val preferredNowStale = current.preferredRouteRole != null &&
+                next.none { it.role.equals(current.preferredRouteRole, ignoreCase = true) }
+            connectionStore.updateConnection(
+                current.copy(
+                    routeCandidates = next,
+                    preferredRouteRole = if (preferredNowStale) null else current.preferredRouteRole,
+                ),
+            )
+            if (preferredNowStale) {
+                connectionManager.setManualRoleOverride(null)
+            }
+            // Same visible probe cycle as saveExtraRoute — removing the
+            // active route should immediately re-resolve and show where the
+            // app landed.
+            probeNow()
+            onResult(null)
+        }
+    }
+
+    private fun activeConnectionSnapshot(): Connection? {
+        val activeId = connectionStore.activeConnectionId.value ?: return null
+        return connectionStore.connections.value.firstOrNull { it.id == activeId }
+    }
+
+    /**
+     * The connection's stored candidates, or — mirroring
+     * [observeDeviceEndpoints]' fallback chain — the per-device pairing
+     * endpoints, or a primary synthesized from the saved URLs. Whatever the
+     * Routes card is currently displaying is what an edit starts from.
+     */
+    private suspend fun seedRouteCandidates(current: Connection): List<EndpointCandidate> {
+        current.routeCandidates.takeIf { it.isNotEmpty() }?.let { return it }
+        val fromPairing = runCatching {
+            val deviceId = authManager.getOrCreateDeviceId()
+            PairingPreferences.getDeviceEndpoints(getApplication(), deviceId).first()
+        }.getOrDefault(emptyList())
+        if (fromPairing.isNotEmpty()) return fromPairing
+        val apiUrl = current.apiServerUrl.takeIf { it.isNotBlank() } ?: return emptyList()
+        return Connection.buildRouteCandidates(
+            apiServerUrl = apiUrl,
+            relayUrl = current.relayUrl,
+        )
+    }
+
+    private fun EndpointCandidate.sameRouteAs(other: EndpointCandidate): Boolean =
+        role.equals(other.role, ignoreCase = true) &&
+            api.host.equals(other.api.host, ignoreCase = true) &&
+            api.port == other.api.port
+
+    /**
      * Pin [role] as the preferred endpoint until the next disconnect. Calls
      * [ConnectionManager.setManualRoleOverride] and kicks [probeNow] so the
      * swap takes effect immediately if the override is reachable. Passing
@@ -3724,21 +4177,82 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun getPreferredEndpointRole(): String? =
         activeConnection.value?.preferredRouteRole ?: connectionManager.getManualRoleOverride()
 
+    /**
+     * Route-probe lifecycle for the Routes card. [Probing] disables the
+     * Re-check affordances and shows progress; [Done] carries the winner (or
+     * null when every saved route failed its probe) so the UI can say "no
+     * route reachable" out loud instead of sitting on "Resolving" forever.
+     */
+    sealed interface RouteProbeStatus {
+        data object Idle : RouteProbeStatus
+        data object Probing : RouteProbeStatus
+        data class Done(
+            val winner: EndpointCandidate?,
+            val atMillis: Long,
+        ) : RouteProbeStatus
+    }
+
+    private val _routeProbeStatus = MutableStateFlow<RouteProbeStatus>(RouteProbeStatus.Idle)
+    val routeProbeStatus: StateFlow<RouteProbeStatus> = _routeProbeStatus.asStateFlow()
+
+    /** Last probe verdict per route — see [EndpointResolver.probeOutcomes]. */
+    val routeProbeOutcomes: StateFlow<Map<String, RouteProbeOutcome>> =
+        endpointResolver.probeOutcomes
+
+    /** Key into [routeProbeOutcomes] for one route row. */
+    fun routeOutcomeKey(candidate: EndpointCandidate): String =
+        EndpointResolver.cacheKey(candidate)
+
+    // Set when probeNow() is requested while a probe is already in flight
+    // (e.g. "Use now" tapped mid-Re-check) — the override the caller just
+    // installed must still win, so the finished probe immediately re-runs
+    // once instead of silently dropping the request. Main-thread confined.
+    private var routeProbeRerunRequested = false
+
     /** User-triggered re-probe — Endpoints card's "Probe now" row action. */
     fun probeNow() {
-        val apiRouteBefore = effectiveApiServerUrlSnapshot()
-        connectionManager.probeAndReconnect()
+        if (_routeProbeStatus.value is RouteProbeStatus.Probing) {
+            routeProbeRerunRequested = true
+            return
+        }
+        _routeProbeStatus.value = RouteProbeStatus.Probing
         viewModelScope.launch {
-            // probeAndReconnect runs on ConnectionManager's IO scope. Give it
-            // a short turn to publish activeEndpoint, then refresh HTTP-only
-            // clients too; standard connections may have no WSS socket to
-            // reconnect, but Chat/Manage still need the selected API route.
-            delay(100L)
-            if (effectiveApiServerUrlSnapshot() != apiRouteBefore) {
-                rebuildApiClient()
+            try {
+                val apiRouteBefore = effectiveApiServerUrlSnapshot()
+                // Await the actual resolve (LAN timing out can take 4s+)
+                // instead of the old fixed 100ms guess, which always lost the
+                // race and left the health probes pointed at the stale route.
+                val winner = connectionManager.probeAndReconnectNow()
+                if (effectiveApiServerUrlSnapshot() != apiRouteBefore) {
+                    rebuildApiClient()
+                }
+                probeApiHealth()
+                probeRelayHealth()
+                _routeProbeStatus.value = RouteProbeStatus.Done(
+                    winner = winner,
+                    atMillis = System.currentTimeMillis(),
+                )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                _routeProbeStatus.value = RouteProbeStatus.Idle
+                throw e
+            } catch (e: Exception) {
+                // Never strand the UI in Probing — surface "nothing won" and
+                // let the per-route outcomes explain the details.
+                _routeProbeStatus.value = RouteProbeStatus.Done(
+                    winner = null,
+                    atMillis = System.currentTimeMillis(),
+                )
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Endpoint,
+                    severity = DiagnosticSeverity.Warning,
+                    title = "Route re-check failed",
+                    detail = e.javaClass.simpleName,
+                )
             }
-            probeApiHealth()
-            probeRelayHealth()
+            if (routeProbeRerunRequested) {
+                routeProbeRerunRequested = false
+                probeNow()
+            }
         }
     }
 
@@ -3787,7 +4301,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             persistActiveConnectionUrls(
                 apiServerUrl = _apiServerUrl.value,
                 relayUrl = trimmed,
-                routeCandidates = Connection.buildRouteCandidates(
+                routeCandidates = mergedRouteCandidates(
                     apiServerUrl = _apiServerUrl.value,
                     relayUrl = trimmed,
                 ),
@@ -3844,7 +4358,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             persistActiveConnectionUrls(
                 apiServerUrl = _apiServerUrl.value,
                 relayUrl = trimmed,
-                routeCandidates = Connection.buildRouteCandidates(
+                routeCandidates = mergedRouteCandidates(
                     apiServerUrl = _apiServerUrl.value,
                     relayUrl = trimmed,
                 ),

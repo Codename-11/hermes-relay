@@ -76,6 +76,7 @@ import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.util.classifyError
 import com.hermesandroid.relay.viewmodel.InteractionMode
+import com.hermesandroid.relay.viewmodel.StandardVoiceAvailability
 import com.hermesandroid.relay.viewmodel.VoiceSettingsViewModel
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
 import kotlinx.coroutines.launch
@@ -98,6 +99,15 @@ fun VoiceSettingsScreen(
     voiceViewModel: VoiceViewModel,
     voiceClient: RelayVoiceClient?,
     selectedProfile: Profile? = null,
+    standardVoiceAvailability: StandardVoiceAvailability = StandardVoiceAvailability.Unknown,
+    /**
+     * Non-null endpoint display label (e.g. "Tailscale") when the sign-in
+     * gate is up because the resolver moved the dashboard to a route the
+     * user hasn't signed in on yet — dashboard cookies are per-host.
+     */
+    standardVoiceSignInRouteHint: String? = null,
+    relayVoiceReady: Boolean = false,
+    onOpenManage: (() -> Unit)? = null,
     onBack: () -> Unit,
     settingsViewModel: VoiceSettingsViewModel = viewModel(),
 ) {
@@ -152,8 +162,21 @@ fun VoiceSettingsScreen(
     // shown as snackbars here as well as the inline "unavailable" label below.
     val snackbarHost = LocalSnackbarHost.current
 
-    LaunchedEffect(voiceClient, selectedProfile?.name) {
+    LaunchedEffect(voiceClient, selectedProfile?.name, relayVoiceReady) {
         val client = voiceClient ?: return@LaunchedEffect
+        if (!relayVoiceReady) {
+            // Standard-only connection: there is no Relay voice surface to
+            // query. Fetching anyway would only manufacture error snackbars
+            // for a route the user isn't using — stay quiet and let the
+            // relay-backed sections render their "not configured" line.
+            voiceConfig = null
+            voiceConfigError = null
+            voiceOutputConfig = null
+            voiceOutputConfigError = null
+            realtimeConfig = null
+            realtimeConfigError = null
+            return@LaunchedEffect
+        }
         val voiceResult = client.getVoiceConfig()
         if (voiceResult.isSuccess) {
             voiceConfig = voiceResult.getOrNull()
@@ -367,12 +390,13 @@ fun VoiceSettingsScreen(
                 listOf(
                     VoiceEngineMode.HermesVoiceOutput to Triple(
                         "Hermes Chat + Voice Output",
-                        "Hermes handles chat, tools, memory, and renders speech through the relay.",
+                        "Hermes handles chat, tools, and memory; speech runs over the standard " +
+                            "Hermes dashboard or Relay — whichever the STT/TTS route below picks.",
                         false,
                     ),
                     VoiceEngineMode.RealtimeAgent to Triple(
                         "Realtime Agent",
-                        "Provider-native realtime speech with Hermes-brokered tools.",
+                        "Provider-native realtime speech with Hermes-brokered tools. Requires a paired Relay.",
                         true,
                     ),
                 ).forEach { (engine, copy) ->
@@ -410,42 +434,85 @@ fun VoiceSettingsScreen(
                         }
                     }
                 }
+                if (currentEngine == VoiceEngineMode.RealtimeAgent && !relayVoiceReady) {
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Warning,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.size(8.dp))
+                        Text(
+                            text = "No Relay is configured for this connection, so the Realtime " +
+                                "Agent can't start. Pair Relay in Settings → Connections, or " +
+                                "switch back to Hermes Chat + Voice Output.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
             }
 
             if (currentEngine == VoiceEngineMode.HermesVoiceOutput) {
                 SectionCard(title = "Stable STT/TTS Route") {
+                    val standardStatus = when (standardVoiceAvailability) {
+                        StandardVoiceAvailability.Ready -> "Ready"
+                        StandardVoiceAvailability.SignInRequired -> "Dashboard sign-in required"
+                        StandardVoiceAvailability.Unreachable -> "Dashboard unreachable"
+                        StandardVoiceAvailability.Unsupported -> "Not available on this Hermes build"
+                        StandardVoiceAvailability.Unknown -> "Checking..."
+                    }
+                    val standardOk = standardVoiceAvailability == StandardVoiceAvailability.Ready
+                    val relayStatus = if (relayVoiceReady) "Ready" else "Relay not configured"
+                    val autoStatus = when {
+                        relayVoiceReady -> "Ready — using Relay"
+                        standardOk -> "Ready — using standard Hermes"
+                        else -> "No route available yet"
+                    }
                     listOf(
-                        VoiceAudioRoute.Auto to Triple(
-                            "Auto",
-                            "Use standard Hermes audio first, then Relay when needed.",
-                            false,
+                        RouteOption(
+                            route = VoiceAudioRoute.Auto,
+                            label = "Auto",
+                            detail = "Relay when paired; otherwise the standard Hermes dashboard. Recommended.",
+                            status = autoStatus,
+                            statusOk = relayVoiceReady || standardOk,
                         ),
-                        VoiceAudioRoute.Standard to Triple(
-                            "Standard Hermes",
-                            "Use the upstream API audio path used by Hermes Desktop.",
-                            false,
+                        RouteOption(
+                            route = VoiceAudioRoute.Standard,
+                            label = "Standard Hermes",
+                            detail = "The dashboard audio path Hermes Desktop uses — works on a " +
+                                "vanilla Hermes install, no Relay plugin required.",
+                            status = standardStatus,
+                            statusOk = standardOk,
                         ),
-                        VoiceAudioRoute.Relay to Triple(
-                            "Relay",
-                            "Use Relay voice providers and streaming voice output.",
-                            true,
+                        RouteOption(
+                            route = VoiceAudioRoute.Relay,
+                            label = "Relay",
+                            detail = "Relay plugin voice — profile-aware providers and streaming voice output.",
+                            status = relayStatus,
+                            statusOk = relayVoiceReady,
+                            badge = "Optional",
                         ),
-                    ).forEach { (route, copy) ->
-                        val (label, detail, relayOnly) = copy
+                    ).forEach { option ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .selectable(
-                                    selected = currentAudioRoute == route,
+                                    selected = currentAudioRoute == option.route,
                                     onClick = {
-                                        scope.launch { prefsRepo.setAudioRoute(route) }
+                                        scope.launch { prefsRepo.setAudioRoute(option.route) }
                                     },
                                 )
                                 .padding(vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             RadioButton(
-                                selected = currentAudioRoute == route,
+                                selected = currentAudioRoute == option.route,
                                 onClick = null,
                             )
                             Spacer(Modifier.size(8.dp))
@@ -454,16 +521,61 @@ fun VoiceSettingsScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
-                                    Text(label, style = MaterialTheme.typography.bodyMedium)
-                                    if (relayOnly) ExperimentalBadge("Optional")
+                                    Text(option.label, style = MaterialTheme.typography.bodyMedium)
+                                    option.badge?.let { ExperimentalBadge(it) }
                                 }
                                 Text(
-                                    text = detail,
+                                    text = option.detail,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+                                Text(
+                                    text = option.status,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (option.statusOk) {
+                                        MaterialTheme.colorScheme.tertiary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                )
                             }
                         }
+                    }
+
+                    when (standardVoiceAvailability) {
+                        StandardVoiceAvailability.SignInRequired -> {
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                            Text(
+                                text = if (standardVoiceSignInRouteHint != null) {
+                                    "You're connected over the $standardVoiceSignInRouteHint " +
+                                        "route, and dashboard sign-ins are per-host — a sign-in " +
+                                        "from your home network doesn't carry over. Sign in once " +
+                                        "in Manage while on this route to unlock voice here too."
+                                } else {
+                                    "Your Hermes dashboard requires sign-in before standard " +
+                                        "voice can transcribe or speak. Signing in once in Manage " +
+                                        "unlocks it for this connection."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            if (onOpenManage != null) {
+                                TextButton(onClick = onOpenManage) {
+                                    Text("Sign in via Manage")
+                                }
+                            }
+                        }
+                        StandardVoiceAvailability.Unsupported -> {
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                            Text(
+                                text = "This Hermes server build doesn't expose the dashboard " +
+                                    "audio routes yet. Update hermes-agent on the server, or " +
+                                    "pair Relay to use Relay voice.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        else -> Unit
                     }
                 }
             }
@@ -561,7 +673,20 @@ fun VoiceSettingsScreen(
             }
 
             // --- Global Fallback Text-to-Speech ---
-            SectionCard(title = "Global Fallback Text-to-Speech") {
+            if (!relayVoiceReady) {
+                SectionCard(title = "Voice Providers") {
+                    Text(
+                        text = "This connection speaks through your Hermes server's " +
+                            "configured TTS and STT (config.yaml on the server, or the " +
+                            "dashboard's Audio settings). Pair Relay to pick providers, " +
+                            "models, and voices from the phone.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            if (relayVoiceReady) SectionCard(title = "Global Fallback Text-to-Speech") {
                 Text(
                     text = "Always available as the stable speech safety net when provider-native voice is unavailable.",
                     style = MaterialTheme.typography.bodySmall,
@@ -601,8 +726,10 @@ fun VoiceSettingsScreen(
                 }
             }
 
-            if (currentEngine == VoiceEngineMode.HermesVoiceOutput) {
+            if (currentEngine == VoiceEngineMode.HermesVoiceOutput && relayVoiceReady) {
                 // --- Hermes Chat + Voice Output ---
+                // Relay-backed provider editing; standard-only connections get
+                // the quiet "Voice Providers" card above instead.
                 SectionCard(title = "Hermes Chat + Voice Output") {
                 ProviderRow(
                     label = "Status",
@@ -970,8 +1097,11 @@ fun VoiceSettingsScreen(
                 }
             }
 
-            if (currentEngine == VoiceEngineMode.RealtimeAgent) {
+            if (currentEngine == VoiceEngineMode.RealtimeAgent && relayVoiceReady) {
                 // --- Realtime Agent ---
+                // Relay-only engine; without Relay the engine picker above
+                // already shows the requirement, so skip the config card
+                // rather than rendering permanent "loading..." rows.
                 SectionCard(title = "Realtime Agent", badge = "Experimental") {
                     Text(
                         text = "Hermes still owns tools and confirmations. Realtime mode may fall back to stable voice if the provider disconnects.",
@@ -1494,25 +1624,34 @@ fun VoiceSettingsScreen(
 
             // --- Speech-to-Text ---
             SectionCard(title = "Speech-to-Text") {
-                ProviderRow(
-                    label = "Provider",
-                    value = voiceConfig?.stt?.provider ?: (voiceConfigError?.let { "unavailable" } ?: "loading..."),
-                )
-                voiceConfig?.stt?.let { stt ->
-                    ProviderRow(label = "Enabled", value = if (stt.isEnabled) "yes" else "no")
-                }
-                voiceConfig?.stt?.model?.let { model ->
-                    ProviderRow(label = "Model", value = model)
-                }
-                voiceConfig?.let { config ->
-                    ProviderRow(
-                        label = "Profile",
-                        value = voiceProfileLabel(config.profile, selectedProfile),
+                if (!relayVoiceReady) {
+                    Text(
+                        text = "Transcription runs on your Hermes server with its " +
+                            "configured STT provider.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                } else {
                     ProviderRow(
-                        label = "Scope",
-                        value = voiceScopeLabel(config.configScope, config.fallbackToGlobal),
+                        label = "Provider",
+                        value = voiceConfig?.stt?.provider ?: (voiceConfigError?.let { "unavailable" } ?: "loading..."),
                     )
+                    voiceConfig?.stt?.let { stt ->
+                        ProviderRow(label = "Enabled", value = if (stt.isEnabled) "yes" else "no")
+                    }
+                    voiceConfig?.stt?.model?.let { model ->
+                        ProviderRow(label = "Model", value = model)
+                    }
+                    voiceConfig?.let { config ->
+                        ProviderRow(
+                            label = "Profile",
+                            value = voiceProfileLabel(config.profile, selectedProfile),
+                        )
+                        ProviderRow(
+                            label = "Scope",
+                            value = voiceScopeLabel(config.configScope, config.fallbackToGlobal),
+                        )
+                    }
                 }
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
@@ -1568,23 +1707,28 @@ fun VoiceSettingsScreen(
                     },
                 )
                 if (currentEngine == VoiceEngineMode.HermesVoiceOutput) {
-                    ProviderRow(
-                        label = "Profile",
-                        value = voiceOutputConfig?.let { config ->
-                            voiceProfileLabel(config.profile, selectedProfile)
-                        } ?: voiceProfileLabel(null, selectedProfile),
-                    )
-                    ProviderRow(
-                        label = "Voice",
-                        value = listOfNotNull(
-                            voiceOutputConfig?.default_provider,
-                            voiceOutputConfig?.default_model,
-                            voiceOutputConfig?.default_voice,
-                        ).joinToString(" / ").ifBlank { "loading..." },
-                    )
+                    if (relayVoiceReady) {
+                        ProviderRow(
+                            label = "Profile",
+                            value = voiceOutputConfig?.let { config ->
+                                voiceProfileLabel(config.profile, selectedProfile)
+                            } ?: voiceProfileLabel(null, selectedProfile),
+                        )
+                        ProviderRow(
+                            label = "Voice",
+                            value = listOfNotNull(
+                                voiceOutputConfig?.default_provider,
+                                voiceOutputConfig?.default_model,
+                                voiceOutputConfig?.default_voice,
+                            ).joinToString(" / ").ifBlank { "loading..." },
+                        )
+                    } else {
+                        ProviderRow(label = "Route", value = "standard Hermes")
+                        ProviderRow(label = "Voice", value = "server-configured TTS")
+                    }
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                     Text(
-                        text = "Play the saved Voice Output renderer for the active profile.",
+                        text = "Play a short sample through the active voice route.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1722,6 +1866,15 @@ private fun voiceScopeLabel(scope: String?, fallbackToGlobal: Boolean): String {
     }
     return if (fallbackToGlobal) "$base fallback" else base
 }
+
+private data class RouteOption(
+    val route: VoiceAudioRoute,
+    val label: String,
+    val detail: String,
+    val status: String,
+    val statusOk: Boolean,
+    val badge: String? = null,
+)
 
 private data class VoiceChoice(
     val value: String,

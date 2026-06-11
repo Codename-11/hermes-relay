@@ -18,6 +18,66 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Provider idle-tolerance probe.** `scripts/realtime-provider-idle-probe.py` records a per-provider verdict (hold-floor-ok / needs-keepalive / must-reopen) for holding a realtime socket quiescent during a background run; see `docs/realtime-voice-poc.md`.
 
+- **Per-route reachability verdicts in the Routes card.** Every route row now shows the result of its last health probe — "Reachable", or "Unreachable" with the actual reason ("TLS failed — server may be http://, not https://", "Connection refused", "No answer (timed out)", "HTTP 404 from /health") — and "Re-check" shows a live checking state instead of doing invisible background work. Verdicts persist between probes so you can see what the network last said.
+
+- **Manage parity with the hermes-desktop dashboard.** The Manage tab can now do what the desktop dashboard can: **Models** — change the main model from the full provider/model catalog (`/api/model/options` → `/api/model/set`), including the expensive-model confirmation round-trip; new **Keys** tab — view, set (write-only, masked), reveal (server rate-limited), and clear provider keys / env secrets; **Profiles** — create profiles (clone-from-default), edit descriptions, set per-profile models, and **edit SOUL.md** in a full-file editor; **Skills** — browse the multi-source skills hub with search, SKILL.md preview-before-install, install/uninstall (async server-side), and update-all.
+
+### Changed
+
+- **Standard (no-plugin) voice now rides the Hermes dashboard surface.** STT/TTS for the standard route uses the dashboard's `/api/audio/transcribe` + `/api/audio/speak` (the hermes-desktop voice contract) with the same cookie session Manage signs in with — a vanilla hermes-agent install needs no Relay plugin for voice. Previously the client targeted the API server, which has no audio routes, so standard-only voice always failed.
+
+- **Auto STT/TTS route prefers Relay when paired.** Paired Relay voice is profile-aware and needs no dashboard sign-in; the standard dashboard route is the zero-plugin fallback. Voice Settings now shows live per-route status (ready / sign-in required / unreachable / unsupported build) with a "Sign in via Manage" shortcut, and the Realtime Agent engine is clearly marked as requiring a paired Relay.
+
+- **Softened the active connection card.** The full-card Electric blue fill on the active connection was overpowering against body text; it now uses a muted indigo wash while small accents keep the vivid brand blue.
+
+- **Connection wizard capability card now includes Voice.** Finishing setup shows Chat / Manage / Voice / Relay readiness in one card — voice availability (ready / unlocks with dashboard sign-in / build too old) is probed in the same pass, so the result is accurate the moment you connect.
+
+- **No more relay warnings on standard-only connections.** Voice Settings no longer fetches Relay voice configs (and no longer shows "unavailable" rows or error snackbars) when no Relay is configured — relay-backed sections are replaced by a quiet note that speech uses the server's configured TTS/STT, with Relay pairing called out as the way to pick providers from the phone.
+
+- **Skills hub opens with featured content.** The browse dialog lists the configured hub sources and the index's featured skills before the first search instead of starting blank.
+
+- **Onboarding feature pages got real content.** Chat / Manage / Power tools pages now show three concrete feature rows each (streaming + profiles + voice; control + skills hub + one sign-in; terminal + bridge + realtime) instead of a single sentence.
+
+- **Floating status pill.** The bottom status strip is now an inset rounded capsule floating above the gesture area instead of an edge-to-edge bordered bar that clashed with rounded display corners.
+
+- **Ambient mode is now a gesture.** The top-bar sphere toggle is gone; long-press the conversation background to enter the fullscreen sphere, tap anywhere to return (a transient "tap to return to chat" pill teaches the exit on entry). Message long-press (copy) is unaffected.
+
+- **Media settings labeled Relay-only.** The Media screen now states that its inbound-attachment controls apply to Relay-delivered files only, not to standard connections or images you attach in chat.
+
+- **Quote in reply.** Long-pressing a message now offers Copy and "Quote in reply" — quoting drops the message into the input as a Markdown blockquote.
+
+- **Share conversation.** A share icon in the chat top bar exports the visible conversation as Markdown through the system share sheet.
+
+- **Manage cards declutter.** Cards with five or more actions (profiles) keep the three most-used buttons inline and fold the rest behind "More".
+
+- **Ambient gesture is documented in Appearance.** Settings → Appearance now explains the long-press-to-enter / tap-to-return gesture, keeping it discoverable (including for screen-reader users) without a visible control.
+
+- **User docs: Quick Start.** New two-minute Quick Start page leads the guide; the dashboard page documents the full phone Manage surface (skills hub, models, keys, profile + SOUL editing); voice docs lead with the standard no-Relay route.
+
+- **Routes are now editable in Settings → Connections.** The Routes card gains "Add route" plus per-route Edit/Remove (the primary route mirrors the connection's API URL and stays protected) — the standard path's manual equivalent of the Relay QR's multi-endpoint provisioning. Add your server's Tailscale or public URL after the fact and the phone roams to it automatically; the wizard's optional Tailscale field remains the setup-time shortcut.
+
+- **URL fields accept bare hosts and explain their ports.** Typing `100.71.8.56` (or any bare host/IP) into the API URL, wizard Tailscale, or route-editor fields now saves `http://100.71.8.56:8642` — scheme and API port defaulted, and the route editor previews exactly what will be saved ("Will save: http://100.71.8.56:8642") before you commit. Field copy now states which port is which (API `8642`, dashboard `9119`) and that `https://` should only be used when the server actually has TLS. Route rows display the full URL including the scheme, since an invisible `https` was the classic cause of a route that never won a probe.
+
+- **Remote access is discoverable, not an easter egg.** The standard setup form now shows a "Remote access — Tailscale URL (optional)" field in the main flow (previously buried under Advanced), with a hint when Tailscale is detected on the phone; the setup result card gains a "Remote" readiness line that calls out LAN-only connections; the "Hermes API unreachable" status now diagnoses the likely cause ("Away from the server's network? Add a Tailscale or public route") instead of just reporting; and the Connections card offers an "Add Tailscale route" shortcut when the phone is on Tailscale but the connection has no Tailscale route.
+
+- **README + Play listing refresh.** Both rewritten around the standard-first story. The README quick start now mirrors the app's capability card (Chat / Manage / Voice / Remote / Relay), voice is no longer described as relay-only, Manage and remote access become headline features, the desktop CLI section is trimmed and clearly marked alpha (with its planned refocus into a remote "hands" connector), and the stale CI badge, broken in-page anchors, and version-pinned "What's new in v0.6.0" section are gone. The Play listing (`docs/play-store-listing.md`) gets an end-user-first short description, a quick-start beat, Manage/remote-access feature blocks, a corrected no-plugin voice story, and v0.8.1 release notes.
+
+### Fixed
+
+- **"Re-check" / "Use now" no longer fail silently.** When every saved route failed its probe, the user-triggered re-probe early-returned without publishing anything: the Routes card sat on "Current: Resolving" forever (showing the internal relay URL underneath, which read as "stuck on the internal route") with zero feedback. The probe now always publishes its outcome, the card states "No route reachable — using saved URL …" explicitly, and per-route rows show why each candidate failed. The old 100 ms post-probe delay — always shorter than a real resolve, leaving the follow-up health checks pointed at the stale route — is replaced by actually awaiting the resolve.
+
+- **Standard (no-Relay) connections now follow LAN ↔ Tailscale network changes.** The ADR 24 network-aware route switching only activated when a Relay socket was open: the connectivity callback registered inside `connect()` and bailed without a socket URL, so a standard connection that left home Wi-Fi kept probing the dead LAN route until the app was backgrounded and reopened. The callback now registers at construction and re-resolves routes (debounced) even with no socket — chat, Manage, and standard voice follow the resolved endpoint automatically.
+
+- **Standard voice follows the resolved route.** The standard voice client and its availability probe targeted the connection's persisted dashboard URL instead of the resolver's active route, so voice stayed pinned to the LAN host (and gated off) while away from home even after chat had switched to Tailscale. Both now ride `effectiveDashboardUrl`.
+
+- **Stale probe cache can't pin a dead route.** App-resume and network-change revalidation now clear the endpoint resolver's probe cache, so a route that died moments ago can't win re-resolution for the remainder of its 60-second positive cache window. The periodic health check also escalates two consecutive unreachable probes into a full cache-cleared re-resolve — the safety net for handoffs Android never surfaces as connectivity changes (always-on VPN keeps "internet available" true throughout).
+
+- **Editing URLs no longer wipes fallback routes.** Saving an API or Relay URL rebuilt the connection's route-candidate list from just the edited URL, silently dropping the setup wizard's Tailscale route (or extra endpoints from a pairing payload). Edits now merge: the touched route is rebuilt, stored extras are preserved verbatim.
+
+- **Per-route sign-in is explained.** Dashboard sessions are cookie-based and per-host, so a Manage sign-in at home doesn't carry to the Tailscale host. When voice is gated on sign-in because the route moved, Voice Settings and the chat mic toast now say so ("sign in once in Manage on this route") instead of showing a bare sign-in nag that looks broken.
+
+- **A network change can no longer resurrect a deliberately disconnected relay socket.** The route-switch path force-reconnected whenever the resolved winner differed from the last URL, even after an explicit Disconnect; socket actions are now gated on reconnect intent while route publication for HTTP surfaces continues.
+
 ## [0.8.1] - 2026-05-26
 
 ### Fixed

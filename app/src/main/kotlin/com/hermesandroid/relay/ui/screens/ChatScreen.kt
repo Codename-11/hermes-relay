@@ -30,7 +30,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -39,6 +41,7 @@ import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AssistChip
@@ -263,9 +266,13 @@ fun ChatScreen(
     var voiceOutputConfig by remember { mutableStateOf<VoiceOutputConfig?>(null) }
     var realtimeAgentConfig by remember { mutableStateOf<RealtimeVoiceConfig?>(null) }
     val chatReady by connectionViewModel.chatReady.collectAsState()
-    // Stable voice can use the official Hermes API audio routes or the
-    // optional Relay voice routes. Gate the mic on either route being usable.
+    // Stable voice can use the standard Hermes dashboard audio routes or the
+    // optional Relay voice routes. Gate the mic on either route being usable;
+    // availability picks the actionable toast when neither is.
     val voiceReady by connectionViewModel.voiceReady.collectAsState()
+    val standardVoiceAvailability by connectionViewModel.standardVoiceAvailability.collectAsState()
+    val standardVoiceSignInRouteHint by
+        connectionViewModel.standardVoiceSignInRouteHint.collectAsState()
     val apiReachable by connectionViewModel.apiServerReachable.collectAsState()
     val chatMode by connectionViewModel.chatMode.collectAsState()
     val error by chatViewModel.error.collectAsState()
@@ -1021,6 +1028,14 @@ fun ChatScreen(
                             )
                         }
                     }
+                    if (messages.isNotEmpty()) {
+                        RelayChromeIconButton(
+                            icon = Icons.Filled.Share,
+                            contentDescription = "Share conversation",
+                            onClick = { shareConversation(context, messages) },
+                            modifier = Modifier.padding(end = 4.dp),
+                        )
+                    }
                     RelayChromeIconButton(
                         icon = Icons.Filled.Code,
                         contentDescription = "Terminal",
@@ -1033,20 +1048,10 @@ fun ChatScreen(
                         onClick = onNavigateToSettings,
                         modifier = Modifier.padding(end = 4.dp),
                     )
-                    // Ambient mode toggle (show/hide sphere visualization).
-                    // Profile + personality pickers moved into the agent sheet
-                    // that opens on title tap — the top bar no longer owns
-                    // those chips, reclaiming the horizontal space for a
-                    // cleaner title block.
-                    if (animationEnabled) {
-                        IconButton(onClick = { ambientMode = !ambientMode }) {
-                            Icon(
-                                imageVector = if (ambientMode) Icons.Filled.ChatBubble else Icons.Filled.AutoAwesome,
-                                contentDescription = if (ambientMode) "Show chat" else "Ambient mode",
-                                tint = if (ambientMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
+                    // Ambient mode (fullscreen sphere) has no top-bar toggle —
+                    // it's a quiet gesture: long-press the conversation
+                    // background to enter, tap anywhere to return. A hint pill
+                    // on entry teaches the way back.
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = RelayRefresh.Background.copy(alpha = 0.96f)
@@ -1108,12 +1113,25 @@ fun ChatScreen(
                 }
             }
 
-            // Ambient mode: fullscreen sphere visualization
+            // Ambient mode: fullscreen sphere visualization. Tap (or
+            // long-press) anywhere to return; a transient hint pill teaches
+            // the exit on every entry.
             if (ambientMode && animationEnabled) {
+                var showAmbientHint by remember { mutableStateOf(true) }
+                LaunchedEffect(Unit) {
+                    kotlinx.coroutines.delay(2_800)
+                    showAmbientHint = false
+                }
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .fillMaxWidth(),
+                        .fillMaxWidth()
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onTap = { ambientMode = false },
+                                onLongPress = { ambientMode = false },
+                            )
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     MorphingSphere(
@@ -1122,6 +1140,24 @@ fun ChatScreen(
                         intensity = streamingIntensity,
                         toolCallBurst = toolCallBurst
                     )
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = showAmbientHint,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 18.dp),
+                        enter = fadeIn(),
+                        exit = fadeOut(),
+                    ) {
+                        Text(
+                            text = "tap to return to chat",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.78f))
+                                .padding(horizontal = 12.dp, vertical = 5.dp),
+                        )
+                    }
                 }
             }
             // Message list or empty state
@@ -1230,6 +1266,17 @@ fun ChatScreen(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
+                        // Quiet entry to ambient mode: long-press the
+                        // conversation background. Bubbles keep their own
+                        // long-press (copy) — they consume the gesture first,
+                        // so only presses on empty space land here.
+                        .pointerInput(animationEnabled) {
+                            detectTapGestures(
+                                onLongPress = {
+                                    if (animationEnabled) ambientMode = true
+                                },
+                            )
+                        }
                 ) {
                     // Ambient sphere behind messages
                     if (animationEnabled && animationBehindChat && !ambientMode) {
@@ -1299,6 +1346,18 @@ fun ChatScreen(
                                         )
                                     } else {
                                         chatViewModel.dispatchCardAction(msgId, cardKey, action)
+                                    }
+                                },
+                                onQuoteMessage = { text ->
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    val quoted = text.take(600)
+                                        .trim()
+                                        .lines()
+                                        .joinToString("\n") { line -> "> $line" }
+                                    inputText = if (inputText.isBlank()) {
+                                        "$quoted\n\n"
+                                    } else {
+                                        "$inputText\n$quoted\n\n"
                                     }
                                 },
                                 onCopyMessage = { text ->
@@ -1404,6 +1463,7 @@ fun ChatScreen(
                         inputText = if (cmd.command.contains(" ")) cmd.command + " " else "$base "
                     },
                     modifier = Modifier.padding(horizontal = 16.dp)
+
                 )
             }
 
@@ -1617,7 +1677,16 @@ fun ChatScreen(
                                 } else {
                                     android.widget.Toast.makeText(
                                         context,
-                                        "Voice needs a reachable Hermes API or Relay voice route",
+                                        when (standardVoiceAvailability) {
+                                            com.hermesandroid.relay.viewmodel.StandardVoiceAvailability.SignInRequired ->
+                                                standardVoiceSignInRouteHint?.let { route ->
+                                                    "Voice needs a one-time sign-in on the $route route — open Manage"
+                                                } ?: "Voice needs dashboard sign-in — open Manage to sign in"
+                                            com.hermesandroid.relay.viewmodel.StandardVoiceAvailability.Unsupported ->
+                                                "This Hermes build has no voice routes — update hermes-agent or pair Relay"
+                                            else ->
+                                                "Voice needs a reachable Hermes dashboard or Relay voice route"
+                                        },
                                         android.widget.Toast.LENGTH_SHORT,
                                     ).show()
                                 }
@@ -1839,4 +1908,38 @@ private fun DateSeparator(timestamp: Long) {
             )
         }
     }
+}
+
+/**
+ * Share the visible conversation as Markdown via the system share sheet.
+ * Role names are matched as strings so this helper stays decoupled from the
+ * MessageRole enum's package.
+ */
+private fun shareConversation(
+    context: android.content.Context,
+    messages: List<com.hermesandroid.relay.data.ChatMessage>,
+) {
+    val body = buildString {
+        appendLine("# Hermes conversation")
+        appendLine()
+        messages.forEach { message ->
+            if (message.content.isBlank()) return@forEach
+            val speaker = when {
+                message.role.name.equals("user", ignoreCase = true) -> "**You:**"
+                message.role.name.equals("assistant", ignoreCase = true) -> "**Hermes:**"
+                else -> "**System:**"
+            }
+            appendLine(speaker)
+            appendLine(message.content.trim())
+            appendLine()
+        }
+    }
+    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(android.content.Intent.EXTRA_TEXT, body)
+        putExtra(android.content.Intent.EXTRA_SUBJECT, "Hermes conversation")
+    }
+    context.startActivity(
+        android.content.Intent.createChooser(intent, "Share conversation"),
+    )
 }

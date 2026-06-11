@@ -27,8 +27,13 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -56,6 +61,11 @@ fun MessageBubble(
     isFirstInGroup: Boolean = true,
     isLastInGroup: Boolean = true,
     onCopyMessage: (String) -> Unit = {},
+    /**
+     * Quote this message into the input field. Null hides the Quote entry in
+     * the long-press menu, so legacy call sites keep the copy-only behavior.
+     */
+    onQuoteMessage: ((String) -> Unit)? = null,
     /**
      * Invoked when the user taps a FAILED inbound attachment card.
      * `attachmentIndex` is the position in [ChatMessage.attachments] so the
@@ -191,6 +201,31 @@ fun MessageBubble(
                         .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.85f))
                 )
             }
+        // Long-press opens a compact action menu when a quote handler is
+        // wired; with copy as the only action it stays a direct copy so the
+        // one-action case doesn't pay a menu tap.
+        var showMessageActions by remember { mutableStateOf(false) }
+        if (onQuoteMessage != null) {
+            DropdownMenu(
+                expanded = showMessageActions,
+                onDismissRequest = { showMessageActions = false },
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Copy") },
+                    onClick = {
+                        showMessageActions = false
+                        onCopyMessage(message.content)
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("Quote in reply") },
+                    onClick = {
+                        showMessageActions = false
+                        onQuoteMessage(message.content)
+                    },
+                )
+            }
+        }
         Surface(
             shape = bubbleShape,
             color = backgroundColor,
@@ -206,7 +241,13 @@ fun MessageBubble(
                 )
                 .combinedClickable(
                     onClick = {},
-                    onLongClick = { onCopyMessage(message.content) }
+                    onLongClick = {
+                        if (onQuoteMessage != null) {
+                            showMessageActions = true
+                        } else {
+                            onCopyMessage(message.content)
+                        }
+                    }
                 )
                 .semantics { contentDescription = a11yDescription }
         ) {

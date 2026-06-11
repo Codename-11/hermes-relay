@@ -419,8 +419,26 @@ private fun ChatPage() {
     OnboardingPage(
         icon = Icons.Outlined.Forum,
         title = "Chat",
-        description = "Talk to any Hermes profile with real-time streaming responses, tool progress, and full markdown."
-    )
+        description = "Your Hermes agent, streaming in real time.",
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SetupPathSummary(
+                label = "Streaming",
+                description = "Live responses with tool progress, markdown, and rich cards as the agent works.",
+            )
+            SetupPathSummary(
+                label = "Profiles",
+                description = "Switch agent profiles mid-flow — each keeps its own sessions, model, and persona.",
+            )
+            SetupPathSummary(
+                label = "Voice",
+                description = "Tap the mic to talk. Speech runs through your Hermes server — no extra install.",
+            )
+        }
+    }
 }
 
 @Composable
@@ -428,8 +446,26 @@ private fun ManagePage() {
     OnboardingPage(
         icon = Icons.Filled.Settings,
         title = "Manage",
-        description = "Use dashboard-backed Skills, Cron, MCP, Profiles, Models, Config, and Settings without Relay pairing."
-    )
+        description = "Your Hermes dashboard, pocket-sized.",
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SetupPathSummary(
+                label = "Control",
+                description = "Profiles, skills, automations, MCP servers, models, and provider keys.",
+            )
+            SetupPathSummary(
+                label = "Skills hub",
+                description = "Search the hub, read a skill before installing, and install from your phone.",
+            )
+            SetupPathSummary(
+                label = "One sign-in",
+                description = "Signing into the dashboard once also unlocks voice for this connection.",
+            )
+        }
+    }
 }
 
 @Composable
@@ -437,8 +473,26 @@ private fun PowerToolsPage() {
     OnboardingPage(
         icon = Icons.Outlined.Terminal,
         title = "Power tools",
-        description = "Terminal, Bridge, Relay sessions, grants, and relay-backed device features require Relay pairing. Sideload builds can unlock device control."
-    )
+        description = "Pair the optional Relay when you want more than standard.",
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SetupPathSummary(
+                label = "Terminal",
+                description = "A real tmux session on your server, in your pocket.",
+            )
+            SetupPathSummary(
+                label = "Bridge",
+                description = "Let the agent operate this phone — with safety rails (sideload builds).",
+            )
+            SetupPathSummary(
+                label = "Realtime",
+                description = "Provider-native realtime voice agent and profile-aware voice providers.",
+            )
+        }
+    }
 }
 
 @Composable

@@ -1280,25 +1280,6 @@ class HermesApiClient(
         )
     }
 
-    suspend fun probeAudioApi(): Boolean = withContext(Dispatchers.IO) {
-        val healthy = try {
-            val req = authRequest("$baseUrl/health").get().build()
-            client.newCall(req).execute().use { it.isSuccessful }
-        } catch (_: Exception) {
-            false
-        }
-        if (!healthy) return@withContext false
-
-        fun routeExists(path: String): Boolean = try {
-            val req = authRequest("$baseUrl$path").head().build()
-            client.newCall(req).execute().use { response -> response.code != 404 }
-        } catch (_: Exception) {
-            false
-        }
-
-        routeExists("/api/audio/transcribe") && routeExists("/api/audio/speak")
-    }
-
     // --- Lifecycle ---
 
     fun shutdown() {

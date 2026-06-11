@@ -34,6 +34,15 @@ object RelayRefresh {
     val Relay = Color(0xFFAEBFFF)
     val Purple = Color(0xFF8C5CFF)
     val Electric = Color(0xFF111DFF)
+
+    /**
+     * Softened Electric for large filled surfaces (e.g. the active
+     * connection card). Full-strength Electric stays for small accents and
+     * the alpha-blended selected panels, where the saturation reads as brand
+     * rather than glare — 2026-06-10/11 feedback: the blue was right
+     * everywhere except as a full-card fill against body text.
+     */
+    val ElectricMuted = Color(0xFF4F5BD5)
     val Cyan = Color(0xFF6BDCFF)
     val Green = Color(0xFF58D36F)
     val Amber = Color(0xFFF2B14B)

@@ -110,7 +110,7 @@ import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.relayGridTexture
 import com.hermesandroid.relay.network.RelayProfileInspectorClient
 import com.hermesandroid.relay.network.AutoVoiceAudioClient
-import com.hermesandroid.relay.network.ProfileApiUrlResolver
+import com.hermesandroid.relay.network.DynamicDashboardCookieJar
 import com.hermesandroid.relay.network.RelayVoiceAudioClientAdapter
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
@@ -370,6 +370,7 @@ fun RelayApp() {
     val selectedAudioRoute = VoiceAudioRoute.fromStorage(voiceSettings.audioRoute)
     val selectedAudioRouteState = rememberUpdatedState(selectedAudioRoute)
     val standardVoiceReady by connectionViewModel.standardVoiceReady.collectAsState()
+    val standardVoiceAvailability by connectionViewModel.standardVoiceAvailability.collectAsState()
     val relayVoiceReady by connectionViewModel.relayVoiceReady.collectAsState()
     val standardVoiceReadyState = rememberUpdatedState(standardVoiceReady)
     val relayVoiceReadyState = rememberUpdatedState(relayVoiceReady)
@@ -401,23 +402,24 @@ fun RelayApp() {
             },
         )
     }
+    // Standard voice talks to the dashboard web server (hermes-desktop's
+    // /api/audio/* contract) and authenticates with the same per-connection
+    // cookie session Manage signs in with. Dashboard URLs are connection-level
+    // (no per-profile dashboard exists), so unlike chat this client does not
+    // route through ProfileApiUrlResolver.
     val standardVoiceClient = remember {
         StandardHermesVoiceClient(
             context = mediaContext,
             okHttpClient = okhttp3.OkHttpClient.Builder()
+                .cookieJar(
+                    DynamicDashboardCookieJar {
+                        connectionViewModel.activeDashboardCookieStore()
+                    },
+                )
                 .readTimeout(2, java.util.concurrent.TimeUnit.MINUTES)
                 .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                 .build(),
-            apiUrlProvider = {
-                val baseApiUrl = ProfileApiUrlResolver.normalize(
-                    connectionViewModel.effectiveApiServerUrl.value,
-                )
-                ProfileApiUrlResolver.resolveForConnection(
-                    profileApiUrl = connectionViewModel.selectedProfile.value?.apiServerUrl,
-                    baseApiUrl = baseApiUrl,
-                ) ?: connectionViewModel.effectiveApiServerUrl.value
-            },
-            apiBearerTokenProvider = { connectionViewModel.getApiKey() },
+            dashboardUrlProvider = { connectionViewModel.activeDashboardUrl() },
         )
     }
     val voiceAudioClient = remember {
@@ -1360,10 +1362,24 @@ fun RelayApp() {
                     )
                 }
                 composable(Screen.VoiceSettings.route) {
+                    val standardVoiceSignInRouteHint by
+                        connectionViewModel.standardVoiceSignInRouteHint.collectAsState()
                     VoiceSettingsScreen(
                         voiceViewModel = voiceViewModel,
                         voiceClient = voiceClient,
                         selectedProfile = selectedProfile,
+                        standardVoiceAvailability = standardVoiceAvailability,
+                        standardVoiceSignInRouteHint = standardVoiceSignInRouteHint,
+                        relayVoiceReady = relayVoiceReady,
+                        onOpenManage = {
+                            navController.navigate(Screen.Manage.route) {
+                                popUpTo(navController.graph.findStartDestination().id) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        },
                         onBack = { navController.popBackStack() }
                     )
                 }
