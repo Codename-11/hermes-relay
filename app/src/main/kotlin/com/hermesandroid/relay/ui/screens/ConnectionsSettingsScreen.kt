@@ -332,8 +332,11 @@ private fun ConnectionCard(
     var showRemoveConfirm by remember { mutableStateOf(false) }
     var endpointsExpanded by remember { mutableStateOf(false) }
 
+    // Active card: muted indigo wash instead of the full-strength Electric
+    // primaryContainer — a card-sized fill of the brand blue overwhelmed the
+    // body text (2026-06-10 feedback); small accents keep the vivid blue.
     val containerColor = if (isActive) {
-        MaterialTheme.colorScheme.primaryContainer
+        com.hermesandroid.relay.ui.theme.RelayRefresh.ElectricMuted.copy(alpha = 0.42f)
     } else {
         MaterialTheme.colorScheme.surfaceVariant
     }
