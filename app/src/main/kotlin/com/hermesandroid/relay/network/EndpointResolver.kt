@@ -331,7 +331,13 @@ class EndpointResolver(
         )
     }
 
-    /** Test-only: wipe the probe cache so a fresh run starts clean. */
+    /**
+     * Wipe the probe cache so the next resolve runs fresh probes. Called on
+     * "the world changed" triggers — NetworkCallback events, manual "Probe
+     * now", and [refreshActiveEndpoint][ConnectionManager.refreshActiveEndpoint]
+     * with `clearProbeCache = true` — where a positive entry for a
+     * just-died route must not outlive the handoff.
+     */
     internal fun clearCache() {
         probeCache.clear()
     }
