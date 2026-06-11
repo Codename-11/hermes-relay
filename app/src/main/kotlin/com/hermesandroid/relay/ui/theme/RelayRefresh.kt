@@ -33,7 +33,14 @@ object RelayRefresh {
     val Navy3 = Color(0xFF22243C)
     val Relay = Color(0xFFAEBFFF)
     val Purple = Color(0xFF8C5CFF)
-    val Electric = Color(0xFF111DFF)
+
+    /**
+     * Brand accent for selected panels + Material primary slots. Softened
+     * from the mockups' #111DFF (2026-06-10 feedback): near-pure RGB blue was
+     * too saturated against the muted navy/periwinkle palette and too dark
+     * under Paper text. This indigo stays on the Relay/Purple hue axis.
+     */
+    val Electric = Color(0xFF4F5BD5)
     val Cyan = Color(0xFF6BDCFF)
     val Green = Color(0xFF58D36F)
     val Amber = Color(0xFFF2B14B)
