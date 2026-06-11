@@ -1,5 +1,25 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-10 — Standard voice retargeted at the dashboard surface + Manage parity (model/keys/profiles) + softened brand blue
+
+**Context.** Release verification found the just-landed `StandardHermesVoiceClient` implemented the right upstream contract (`/api/audio/transcribe` + `/api/audio/speak`, base64 data-url — hermes-desktop's voice path) but aimed it at the **API server** (:8642) with a bearer header. Verified against upstream/main (tip `d1383a6b1`, fetched 2026-06-10 into `hermes-agent-pr-prep`): `api_server.py` has **no audio routes** (`/v1/capabilities` says `audio_api: false`; PR #8199 unmerged) — the routes live on the **dashboard web server** (`hermes_cli/web_server.py:1877/2012`) behind its cookie-session auth gate. Net effect: standard-only users got an enabled mic and a guaranteed 404 per turn; relay users silently paid a full base64 upload to a 404 before each fallback.
+
+**What changed (branch `feature/standard-voice-dashboard-surface`).**
+
+- **Voice retarget.** `StandardHermesVoiceClient` now takes a `dashboardUrlProvider` (`Connection.resolvedDashboardUrl`, :9119 derived) and an OkHttpClient carrying the **same per-connection encrypted cookie jar Manage signs in with** (new `DynamicDashboardCookieJar` resolves the store per-request so connection switches stay correct). Bearer header dropped — meaningless on this surface. 401/404 error copy now points at Manage sign-in / server update.
+- **Availability model.** New `StandardVoiceAvailability` (Unknown/Ready/SignInRequired/Unreachable/Unsupported) in ConnectionViewModel, fed by `probeStandardVoice()`: `GET /api/status` (public) → `GET /api/auth/me` when gated → HEAD existence check on the audio route (405 = present, 404 = old build). Replaces `HermesApiClient.probeAudioApi()` (deleted). Probe runs in the health cycle + `rebuildApiClient()`, refreshes the persisted dashboard snapshot only on material change, and re-runs immediately after Manage sign-in/sign-out (`refreshStandardVoice()`).
+- **Route preference.** `AutoVoiceAudioClient` Auto order is now **Relay first, then Standard**: paired Relay is profile-aware and needs no dashboard sign-in; Standard is the zero-plugin path for vanilla installs. Power users can force either in Voice Settings.
+- **Voice Settings UX.** Stable STT/TTS Route section shows live per-route status (Standard: Ready / sign-in required / unreachable / unsupported; Relay: ready / not configured; Auto: which route it would use) with a "Sign in via Manage" CTA (navigates to the Manage tab) and an "update hermes-agent or pair Relay" hint. Realtime Agent engine now states "Requires a paired Relay" and shows an inline error + guidance when selected without one. Chat mic toast is availability-aware.
+- **Manage parity with hermes-desktop.** New `DashboardApiClient` methods + UI: **Models** tab gets "Change main model" (`/api/model/options` picker → `POST /api/model/set`, with the upstream expensive-model `confirm_required` round-trip); new **Keys** tab (`GET /api/env` inventory → Set (write-only, password-masked) / Reveal (`POST /api/env/reveal`, server rate-limited) / Clear (`DELETE /api/env` with JSON body)); **Profiles** tab gets New profile (`POST /api/profiles`, clone-from-default), Describe (`PUT .../description`), and per-profile Model (`PUT .../model`, shared picker). Overview gains Models + Keys tiles. Channel-managed env vars stay visible (tagged `channel`) since the app has no Channels page to defer to.
+- **Theme.** `RelayRefresh.Electric` softened `#111DFF` → `#4F5BD5` (user feedback: connections card too saturated/"blue" vs text + palette). Drives `relaySelectedPanel`, dark `primaryContainer`, light `primary`.
+- **Docs.** CLAUDE.md dashboard-surface paragraph now lists the audio/model/env/profile routes and the standard-voice auth model.
+
+**Verified.** `:app:compileSideloadDebugKotlin`, `:app:lint`, and `:app:testGooglePlayDebugUnitTest` all green locally. On-device verification needed: Manage sign-in → standard voice turn on an API-only connection; Auto fallback with relay paired; model picker payload shape against the live dashboard (`parseModelOptions` is tolerant but unverified against real `build_models_payload` output).
+
+**Next.** When upstream PR #8199 lands `/v1/audio/*` on the API server, add it as the preferred standard route (capabilities already advertise `audio_api`) and demote the dashboard path to fallback. Deferred parity items: MCP manual add-server form, skills-hub install/search, SOUL editing from phone.
+
+---
+
 ## 2026-06-05 — Prefer upstream `/v1/skills` with legacy fallback
 
 **Context.** Upstream Hermes Agent now has baseline skill/session API surface area, while Axiom's fork still preserves richer Relay-specific `/api/*` compatibility routes. The Android client should begin consuming upstream-compatible skill listings when present without breaking older fork/bootstrap installs.
