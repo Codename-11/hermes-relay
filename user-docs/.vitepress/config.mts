@@ -67,6 +67,7 @@ export default defineConfig({
           text: 'Android (phone control)',
           items: [
             { text: 'Overview', link: '/guide/' },
+            { text: 'Quick Start', link: '/guide/quick-start' },
             { text: 'Installation & Setup', link: '/guide/getting-started' },
             { text: 'Remote access', link: '/guide/remote-access' },
             { text: 'Release tracks', link: '/guide/release-tracks' },

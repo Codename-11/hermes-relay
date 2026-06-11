@@ -28,11 +28,23 @@ The plugin's header shows the relay version, overall health (green / red dot), a
 
 ## Android Manage Surface
 
-The Android app also uses the Hermes dashboard/admin API as its standard management data plane. The **Manage** tab derives the dashboard URL from the active API server URL by default (`:8642` → `:9119`) and reads Skills, Cron, MCP, MCP catalog, Profiles, Models, and Config from dashboard endpoints when the server supports them. The native tab supports skill toggles, cron pause/resume/run/delete plus recent runs, MCP enable/test/remove, catalog installs that do not require inline credentials, profile activation/delete, and read-only profile SOUL details.
+The Android app also uses the Hermes dashboard/admin API as its standard management data plane. The **Manage** tab derives the dashboard URL from the active API server URL by default (`:8642` → `:9119`) and reads Skills, Cron, MCP, MCP catalog, Profiles, Models, Keys, and Config from dashboard endpoints when the server supports them.
+
+What you can do from the phone, per section:
+
+- **Skills** — toggle installed skills, plus full **skills-hub** access: browse the configured hub sources (featured skills shown before you search), search across them, read a skill's `SKILL.md` *before* installing, install/uninstall (these run asynchronously on the server), and update everything hub-installed.
+- **Cron** — pause/resume/run/delete jobs and view recent runs.
+- **MCP** — enable/disable, test, and remove servers; install catalog entries that don't require inline credentials.
+- **Profiles** — create profiles (clone-from-default), activate, edit the role description, set a per-profile model, **edit SOUL.md** in a full-file editor, and delete.
+- **Models** — change the main model from the full provider/model catalog, including the server's expensive-model confirmation step. Providers without keys appear greyed with a pointer to Keys.
+- **Keys** — view the curated env/key inventory (values redacted), set keys (write-only, masked), reveal one (server rate-limited and audit-logged), or clear them.
+- **Config** — read the config schema.
+
+A successful dashboard sign-in here also unlocks **standard voice** for the connection — speech uses the same dashboard session (see [Voice Mode](./voice)).
 
 Dashboard sign-in is the upstream-preferred remote auth path. Android supports the bundled `basic` username/password provider and redirect providers such as `nous` or self-hosted OIDC through the dashboard's `/auth/login?provider=...` flow. Successful sign-in stores dashboard cookies, verifies the flat upstream `/api/auth/me` session response, and probes `/api/auth/ws-ticket`. This matches the Hermes Desktop remote-gateway model: sign in once to the dashboard, then reuse that dashboard session for `/api/ws` with a short-lived ticket.
 
-This is separate from relay pairing and from `API_SERVER_KEY`. A dashboard session does not become an API bearer token; Android Chat still uses the API key fallback until its dashboard JSON-RPC chat adapter is enabled. Relay-only capabilities — Terminal, Bridge, Relay sessions, Media inspector, and profile memory file editing — stay under **Settings → Power tools** and show **Requires pairing** until the phone has a paired relay session. Editing profile SOUL or memory files remains in the paired profile inspector.
+This is separate from relay pairing and from `API_SERVER_KEY`. A dashboard session does not become an API bearer token; Android Chat still uses the API key fallback until its dashboard JSON-RPC chat adapter is enabled. Relay-only capabilities — Terminal, Bridge, Relay sessions, Media inspector, and profile memory file editing — stay under **Settings → Power tools** and show **Requires pairing** until the phone has a paired relay session. Profile **SOUL.md editing is available without Relay** (Manage → Profiles → Edit SOUL, via the dashboard); memory file editing remains in the paired profile inspector.
 
 Server-side dashboard auth is owned by upstream Hermes. For current provider registration, Nous OAuth, username/password, and remote dashboard guidance, use the Hermes [Web Dashboard docs](https://hermes-agent.nousresearch.com/docs/user-guide/features/web-dashboard).
 

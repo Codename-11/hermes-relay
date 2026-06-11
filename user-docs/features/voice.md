@@ -48,11 +48,17 @@ happened.
 
 **On your server:**
 
-Voice mode uses Hermes `stt:` settings for transcription and the relay-managed
-`voice_output:` renderer for normal assistant speech. The legacy Hermes `tts:`
-section remains the fallback path. Voice output defaults live in
-`~/.hermes-relay/config.yaml` or in a selected profile's experimental
-`voice_output:` section; provider secrets stay server-side.
+- **Standard route (no Relay):** a current hermes-agent whose dashboard
+  exposes the audio endpoints, with `stt:` and `tts:` configured in
+  `~/.hermes/config.yaml`. If the dashboard is auth-gated, sign in once under
+  **Manage** on the phone. Older builds without dashboard audio routes show
+  "Not available on this Hermes build" in Voice Settings — update
+  hermes-agent or pair Relay.
+- **Relay route:** Hermes `stt:` settings for transcription and the
+  relay-managed `voice_output:` renderer for assistant speech, with the
+  legacy Hermes `tts:` section as the fallback path. Voice output defaults
+  live in `~/.hermes-relay/config.yaml` or in a selected profile's
+  experimental `voice_output:` section; provider secrets stay server-side.
 
 Common speech output choices:
 
