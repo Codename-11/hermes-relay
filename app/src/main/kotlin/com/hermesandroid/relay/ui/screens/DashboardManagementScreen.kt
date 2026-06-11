@@ -5,6 +5,10 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -140,12 +144,42 @@ private sealed interface DashboardPayloadState {
         val session: DashboardAuthSession?,
         val items: List<DashboardSummaryItem>,
         val rawSummary: String,
+        /** Wall-clock fetch time — drives the stale-while-revalidate window. */
+        val fetchedAtMillis: Long = 0L,
     ) : DashboardPayloadState
     data class Error(
         val message: String,
         val status: DashboardStatus? = null,
     ) : DashboardPayloadState
 }
+
+/**
+ * Process-lifetime cache of dashboard section payloads, keyed
+ * `"connectionId|dashboardUrl|sectionPath"` (see [dashboardPayloadKey]).
+ *
+ * This used to live in `remember {}` inside the screen, which meant every
+ * navigation away from Manage threw the data away and every entry replayed
+ * the full skeleton. Hoisting it to a file-level singleton makes re-entry
+ * instant (stale-while-revalidate: cached content renders immediately,
+ * entries older than [FRESH_WINDOW_MS] refresh in the background) and gives
+ * the app-start pre-warm somewhere to put its results. Keys are partitioned
+ * by connection AND dashboard URL, so connection switches and LAN↔Tailscale
+ * route handoffs never serve each other's data. Sign-in/sign-out paths call
+ * `states.clear()` exactly as they did against the remembered map.
+ */
+private object DashboardPayloadCache {
+    val states = mutableStateMapOf<String, DashboardPayloadState>()
+    val refreshing = mutableStateMapOf<String, Boolean>()
+
+    /** Loaded entries younger than this are served without a re-fetch. */
+    const val FRESH_WINDOW_MS = 30_000L
+}
+
+private fun dashboardPayloadKey(
+    connectionId: String,
+    dashboardUrl: String,
+    sectionPath: String,
+): String = "$connectionId|$dashboardUrl|$sectionPath"
 
 private data class DashboardSummaryItem(
     val id: String = "",
@@ -244,8 +278,9 @@ fun DashboardManagementScreen(
     var showingDetail by remember { mutableStateOf(false) }
     var reloadNonce by remember { mutableStateOf(0) }
     var forceReloadKey by remember { mutableStateOf<String?>(null) }
-    val payloadStates = remember { mutableStateMapOf<String, DashboardPayloadState>() }
-    val refreshingPayloads = remember { mutableStateMapOf<String, Boolean>() }
+    // Process-lifetime cache (NOT remember{}) — see [DashboardPayloadCache].
+    val payloadStates = DashboardPayloadCache.states
+    val refreshingPayloads = DashboardPayloadCache.refreshing
     var actionMessage by remember { mutableStateOf<String?>(null) }
     var actionInFlight by remember { mutableStateOf(false) }
     var pendingAction by remember { mutableStateOf<PendingDashboardAction?>(null) }
@@ -262,7 +297,7 @@ fun DashboardManagementScreen(
     val section = managementSections[selectedTab]
     val connectionId = activeConnection?.id ?: "default"
     fun payloadKeyFor(targetSection: DashboardManagementSection): String =
-        "$connectionId|$dashboardUrl|${targetSection.path}"
+        dashboardPayloadKey(connectionId, dashboardUrl, targetSection.path)
 
     val payloadKey = payloadKeyFor(section)
     val payloadState = payloadStates[payloadKey] ?: DashboardPayloadState.Idle
@@ -315,10 +350,15 @@ fun DashboardManagementScreen(
             return
         }
         val previousState = payloadStates[targetKey]
-        if (!force && (previousState is DashboardPayloadState.Loaded ||
-                previousState is DashboardPayloadState.Loading)
-        ) {
-            return
+        if (!force) {
+            if (previousState is DashboardPayloadState.Loading) return
+            if (previousState is DashboardPayloadState.Loaded) {
+                val isFresh = System.currentTimeMillis() - previousState.fetchedAtMillis <
+                    DashboardPayloadCache.FRESH_WINDOW_MS
+                if (isFresh) return
+                // Stale-while-revalidate: the cached content stays on screen
+                // (refreshing bar only) while we re-fetch below.
+            }
         }
         if (foreground) {
             if (previousState is DashboardPayloadState.Loaded) {
@@ -328,58 +368,16 @@ fun DashboardManagementScreen(
             }
         }
         try {
-            val nextState = withDashboardClient(clientFactory) { client ->
-                val probedStatus = client.getStatus().getOrNull()
-                val providerDetails = if (probedStatus?.authRequired == true) {
-                    client.getAuthProviders().getOrNull().orEmpty()
-                } else {
-                    emptyList()
-                }
-                val status = if (probedStatus != null && providerDetails.isNotEmpty()) {
-                    probedStatus.copy(
-                        authProviders = providerDetails.map { it.name },
-                        authProviderDetails = providerDetails,
-                    )
-                } else {
-                    probedStatus
-                }
-                val session = if (status?.authRequired == true) {
-                    client.currentSession().getOrNull()
-                } else {
-                    null
-                }
-                val gatewayTicketAvailable = if (session?.authenticated == true) {
-                    client.requestWsTicket().isSuccess
-                } else {
-                    null
-                }
+            val nextState = fetchDashboardSectionState(
+                clientFactory = clientFactory,
+                targetSection = targetSection,
+            ) { status, session, gatewayTicketAvailable ->
                 connectionViewModel.recordDashboardStatus(
                     status = status,
                     session = session,
                     reachable = status != null,
                     gatewayTicketAvailable = gatewayTicketAvailable,
                 )
-                if (status?.authRequired == true && session?.authenticated != true) {
-                    DashboardPayloadState.Error("Dashboard sign-in required", status = status)
-                } else {
-                    val result = client.getJsonElement(targetSection.path)
-                    result.fold(
-                        onSuccess = { root ->
-                            DashboardPayloadState.Loaded(
-                                status = status,
-                                session = session,
-                                items = summarize(targetSection, root),
-                                rawSummary = summarizeRoot(root),
-                            )
-                        },
-                        onFailure = { err ->
-                            DashboardPayloadState.Error(
-                                message = err.message ?: "Dashboard request failed",
-                                status = status,
-                            )
-                        },
-                    )
-                }
             }
             val latestState = payloadStates[targetKey]
             if (
@@ -1229,23 +1227,44 @@ private fun ManageOverviewBody(
             )
         }
         item {
+            // KPI strip — words, not glyphs. "ok / ... / ! / -" required the
+            // user to already know what each symbol meant; state words plus
+            // a tone color answer "is Manage healthy?" at a glance, and the
+            // server version confirms WHICH server answered (useful when
+            // routes roam between LAN and Tailscale hosts).
+            val signInNeeded = status?.authRequired == true && authenticated != true
+            val dashboardWord = when {
+                payloadState is DashboardPayloadState.Loading ||
+                    payloadState is DashboardPayloadState.Idle -> "…"
+                signInNeeded -> "sign-in"
+                payloadState is DashboardPayloadState.Error && status == null -> "offline"
+                payloadState is DashboardPayloadState.Error -> "error"
+                else -> "ready"
+            }
+            val dashboardTone = when (dashboardWord) {
+                "ready" -> RelayRefresh.Green
+                "sign-in" -> RelayRefresh.Amber
+                "offline", "error" -> RelayRefresh.Danger
+                else -> RelayRefresh.Muted
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 RelayMetricCard(
-                    value = if (loadedCount > 0) loadedCount.toString() else "-",
+                    value = if (loadedCount > 0) loadedCount.toString() else "—",
                     label = section.label.lowercase(),
                     modifier = Modifier.weight(1f),
                 )
                 RelayMetricCard(
-                    value = when (payloadState) {
-                        is DashboardPayloadState.Loaded -> "ok"
-                        is DashboardPayloadState.Loading -> "..."
-                        is DashboardPayloadState.Error -> "!"
-                        DashboardPayloadState.Idle -> "-"
-                    },
+                    value = dashboardWord,
                     label = "dashboard",
+                    modifier = Modifier.weight(1f),
+                    valueColor = dashboardTone,
+                )
+                RelayMetricCard(
+                    value = status?.version ?: "—",
+                    label = "server",
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -1259,7 +1278,6 @@ private fun ManageOverviewBody(
                 authenticated = authenticated,
                 lastCheckedAtMillis = lastCheckedAtMillis,
                 onClearSession = onClearSession,
-                onNavigateToConnections = onNavigateToConnections,
             )
         }
         item {
@@ -1349,6 +1367,16 @@ private fun ManageSelectedSectionHeader(
     }
 }
 
+/**
+ * Two-line dashboard status panel. The old single-line banner crammed
+ * auth state, identity, URL, route, and checked-time into one ellipsized
+ * Text fighting two trailing buttons for width — the interesting tail
+ * (URL + route) was the first thing to get cut. Line 1 carries state +
+ * identity with the lone Sign out action; line 2 carries the target
+ * (URL · route · checked). The "Connection" button is gone: the
+ * Connections nav tile rendered directly below this panel already does
+ * exactly that.
+ */
 @Composable
 private fun DashboardConnectionHeader(
     dashboardUrl: String,
@@ -1358,7 +1386,6 @@ private fun DashboardConnectionHeader(
     authenticated: Boolean?,
     lastCheckedAtMillis: Long?,
     onClearSession: () -> Unit,
-    onNavigateToConnections: () -> Unit,
 ) {
     val authLabel = when {
         status == null -> "Checking dashboard"
@@ -1371,18 +1398,16 @@ private fun DashboardConnectionHeader(
     } else {
         null
     }
-    val secondary = listOfNotNull(
-        identity,
+    val primaryLine = listOfNotNull(authLabel, identity).joinToString(" · ")
+    val secondaryLine = listOfNotNull(
         dashboardUrl.ifBlank { "No dashboard URL" },
         routeHint?.let { "$it route" },
         lastCheckedAtMillis?.let { "Checked ${formatDashboardCheckedAt(it)}" },
     ).joinToString(" · ")
-    val bannerText = listOf(authLabel, secondary)
-        .filter { it.isNotBlank() }
-        .joinToString(" · ")
+    val signInNeeded = status?.authRequired == true && authenticated != true
     val statusColor = when {
         status == null -> RelayRefresh.Amber
-        status.authRequired && authenticated != true -> RelayRefresh.Danger
+        signInNeeded -> RelayRefresh.Danger
         else -> RelayRefresh.Green
     }
 
@@ -1400,18 +1425,25 @@ private fun DashboardConnectionHeader(
                 .size(7.dp)
                 .background(statusColor, CircleShape),
         )
-        Text(
-            text = bannerText,
-            style = relayMetadataStyle(),
-            color = if (authenticated == false && status?.authRequired == true) {
-                RelayRefresh.Danger
-            } else {
-                RelayRefresh.Muted
-            },
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+        Column(
             modifier = Modifier.weight(1f),
-        )
+            verticalArrangement = Arrangement.spacedBy(1.dp),
+        ) {
+            Text(
+                text = primaryLine,
+                style = relayMetadataStyle(),
+                color = if (signInNeeded) RelayRefresh.Danger else RelayRefresh.Paper,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = secondaryLine,
+                style = relayMetadataStyle(),
+                color = RelayRefresh.Muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         if (authenticated == true) {
             TextButton(
                 onClick = onClearSession,
@@ -1423,16 +1455,6 @@ private fun DashboardConnectionHeader(
             ) {
                 Text("Sign out")
             }
-        }
-        TextButton(
-            onClick = onNavigateToConnections,
-            modifier = Modifier.height(30.dp),
-            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-            colors = ButtonDefaults.textButtonColors(
-                contentColor = RelayRefresh.Relay,
-            ),
-        ) {
-            Text("Connection")
         }
     }
 }
@@ -1462,68 +1484,188 @@ private suspend fun <T> withDashboardClient(
     }
 }
 
+/**
+ * One full section fetch: status → providers → session → ws-ticket →
+ * section payload, summarized into a [DashboardPayloadState]. Shared by the
+ * screen's loader and [prewarmDashboardManage]; [recordStatus] receives
+ * (status, session, gatewayTicketAvailable) so the screen can mirror the
+ * snapshot into the connection record while the pre-warm passes a no-op.
+ */
+private suspend fun fetchDashboardSectionState(
+    clientFactory: () -> DashboardApiClient,
+    targetSection: DashboardManagementSection,
+    recordStatus: (DashboardStatus?, DashboardAuthSession?, Boolean?) -> Unit = { _, _, _ -> },
+): DashboardPayloadState = withDashboardClient(clientFactory) { client ->
+    val probedStatus = client.getStatus().getOrNull()
+    val providerDetails = if (probedStatus?.authRequired == true) {
+        client.getAuthProviders().getOrNull().orEmpty()
+    } else {
+        emptyList()
+    }
+    val status = if (probedStatus != null && providerDetails.isNotEmpty()) {
+        probedStatus.copy(
+            authProviders = providerDetails.map { it.name },
+            authProviderDetails = providerDetails,
+        )
+    } else {
+        probedStatus
+    }
+    val session = if (status?.authRequired == true) {
+        client.currentSession().getOrNull()
+    } else {
+        null
+    }
+    val gatewayTicketAvailable = if (session?.authenticated == true) {
+        client.requestWsTicket().isSuccess
+    } else {
+        null
+    }
+    recordStatus(status, session, gatewayTicketAvailable)
+    if (status?.authRequired == true && session?.authenticated != true) {
+        DashboardPayloadState.Error("Dashboard sign-in required", status = status)
+    } else {
+        val result = client.getJsonElement(targetSection.path)
+        result.fold(
+            onSuccess = { root ->
+                DashboardPayloadState.Loaded(
+                    status = status,
+                    session = session,
+                    items = summarize(targetSection, root),
+                    rawSummary = summarizeRoot(root),
+                    fetchedAtMillis = System.currentTimeMillis(),
+                )
+            },
+            onFailure = { err ->
+                DashboardPayloadState.Error(
+                    message = err.message ?: "Dashboard request failed",
+                    status = status,
+                )
+            },
+        )
+    }
+}
+
+/**
+ * App-start (and route-handoff) pre-warm for the Manage tab. Fills COLD
+ * cache keys only — it never overwrites a Loaded entry, never marks
+ * anything Loading (so it can't fight the open screen), and never surfaces
+ * errors. The first unreachable/unauthenticated fetch aborts the sweep:
+ * if the dashboard isn't answering or wants a sign-in, seven more requests
+ * won't change that, and the screen's own loader owns error presentation.
+ *
+ * Called from RelayApp when the active connection's persisted snapshot says
+ * the dashboard was reachable and signed-in (or auth-free), so a cold app
+ * start lands on an already-populated Manage tab.
+ */
+internal suspend fun prewarmDashboardManage(
+    context: android.content.Context,
+    connectionId: String,
+    dashboardUrl: String,
+) {
+    if (dashboardUrl.isBlank()) return
+    val clientFactory = {
+        DashboardApiClient(
+            baseUrl = dashboardUrl,
+            okHttpClient = DashboardApiClient.defaultClient(
+                cookieStore = EncryptedDashboardCookieStore(
+                    context = context,
+                    connectionId = connectionId,
+                ),
+            ),
+        )
+    }
+    for (targetSection in managementSections) {
+        val key = dashboardPayloadKey(connectionId, dashboardUrl, targetSection.path)
+        val existing = DashboardPayloadCache.states[key]
+        if (existing is DashboardPayloadState.Loaded ||
+            existing is DashboardPayloadState.Loading
+        ) {
+            continue
+        }
+        val state = try {
+            fetchDashboardSectionState(clientFactory, targetSection)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+        if (state is DashboardPayloadState.Loaded) {
+            DashboardPayloadCache.states[key] = state
+        } else {
+            break
+        }
+    }
+}
+
+/**
+ * Cold-load skeleton: ONE progress indicator + quiet ghost cards. The old
+ * version stacked four progress bars with fake narrative labels ("Checking
+ * dashboard session"…), which read as three different things being broken.
+ * With the process-lifetime payload cache this body only appears on the
+ * true first load per connection/route — every later entry shows cached
+ * content with a thin refresh bar instead.
+ */
 @Composable
 private fun LoadingBody(sectionLabel: String) {
-    val sectionName = sectionLabel.lowercase()
+    val pulse = rememberInfiniteTransition(label = "manage-skeleton-pulse")
+    val ghostAlpha by pulse.animateFloat(
+        initialValue = 0.45f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 700),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "manage-skeleton-alpha",
+    )
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant,
-            ),
-        ) {
-            Column(
-                modifier = Modifier.padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    text = "Loading $sectionName",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Text(
-                    text = "Manage is ready. Dashboard data is still coming in.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            }
-        }
-        repeat(3) { index ->
-            LoadingSummaryPlaceholder(index)
+        Text(
+            text = "Loading ${sectionLabel.lowercase()}…",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        repeat(3) {
+            GhostSummaryCard(blockAlpha = ghostAlpha)
         }
     }
 }
 
+/** One content-shaped ghost card — no text, no per-card spinner. */
 @Composable
-private fun LoadingSummaryPlaceholder(index: Int) {
+private fun GhostSummaryCard(blockAlpha: Float) {
+    val blockColor = MaterialTheme.colorScheme.onSurfaceVariant
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
         ),
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(
-                text = when (index) {
-                    0 -> "Preparing summary"
-                    1 -> "Checking dashboard session"
-                    else -> "Reading server state"
-                },
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            LinearProgressIndicator(
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(3.dp),
+                    .fillMaxWidth(fraction = 0.42f)
+                    .height(14.dp)
+                    .background(
+                        blockColor.copy(alpha = 0.18f * blockAlpha),
+                        RoundedCornerShape(4.dp),
+                    ),
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(fraction = 0.72f)
+                    .height(10.dp)
+                    .background(
+                        blockColor.copy(alpha = 0.12f * blockAlpha),
+                        RoundedCornerShape(4.dp),
+                    ),
             )
         }
     }
