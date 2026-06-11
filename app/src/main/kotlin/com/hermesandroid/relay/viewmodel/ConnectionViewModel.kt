@@ -688,23 +688,18 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     /**
-     * Route context for the standard-voice sign-in gate. Non-null (the
-     * active endpoint's display label, e.g. `"Tailscale"`) only when voice
-     * is gated on dashboard sign-in AND the resolver has moved the dashboard
-     * surface off the connection's persisted URL. Dashboard session cookies
-     * are host-scoped, so a sign-in performed on the LAN host does not
-     * authenticate the Tailscale host — the UI uses this to explain that a
-     * one-time sign-in *on this route* unlocks voice, instead of a bare
-     * "sign-in required" that looks broken to someone who already signed in
-     * at home.
+     * Non-null (the active endpoint's display label, e.g. `"Tailscale"`)
+     * when the resolver has moved the dashboard surface off the connection's
+     * persisted URL. Dashboard session cookies are host-scoped, so a sign-in
+     * performed on the LAN host does not authenticate the Tailscale host —
+     * every dashboard-riding surface (Manage, standard voice) uses this to
+     * say *which* route it's on and why sign-in state didn't follow.
      */
-    val standardVoiceSignInRouteHint: StateFlow<String?> = combine(
-        standardVoiceAvailability,
+    val dashboardRouteMovedHint: StateFlow<String?> = combine(
         effectiveDashboardUrl,
         activeConnection,
         connectionManager.activeEndpoint,
-    ) { availability, dashboardUrl, connection, endpoint ->
-        if (availability != StandardVoiceAvailability.SignInRequired) return@combine null
+    ) { dashboardUrl, connection, endpoint ->
         val persisted = connection?.resolvedDashboardUrl?.trim()?.trimEnd('/').orEmpty()
         val effective = dashboardUrl.trim().trimEnd('/')
         if (effective.isBlank() || persisted.isBlank() || effective.equals(persisted, ignoreCase = true)) {
@@ -712,6 +707,21 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         } else {
             endpoint?.displayLabel() ?: "fallback"
         }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /**
+     * Route context for the standard-voice sign-in gate. Non-null only when
+     * voice is gated on dashboard sign-in AND the route has moved (see
+     * [dashboardRouteMovedHint]) — the UI uses this to explain that a
+     * one-time sign-in *on this route* unlocks voice, instead of a bare
+     * "sign-in required" that looks broken to someone who already signed in
+     * at home.
+     */
+    val standardVoiceSignInRouteHint: StateFlow<String?> = combine(
+        standardVoiceAvailability,
+        dashboardRouteMovedHint,
+    ) { availability, hint ->
+        hint.takeIf { availability == StandardVoiceAvailability.SignInRequired }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /**

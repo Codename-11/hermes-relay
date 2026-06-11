@@ -236,6 +236,10 @@ fun DashboardManagementScreen(
     val scope = rememberCoroutineScope()
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
     val dashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
+    // Non-null route label ("Tailscale") when the resolver has moved the
+    // dashboard off the connection's persisted URL — drives the target line
+    // and the per-host sign-in explanation below.
+    val dashboardRouteHint by connectionViewModel.dashboardRouteMovedHint.collectAsState()
     var selectedTab by remember { mutableStateOf(0) }
     var showingDetail by remember { mutableStateOf(false) }
     var reloadNonce by remember { mutableStateOf(0) }
@@ -1009,6 +1013,12 @@ fun DashboardManagementScreen(
                     }
                 },
             )
+            if (dashboardUrl.isNotBlank()) {
+                ManageDashboardTargetLine(
+                    dashboardUrl = dashboardUrl,
+                    routeHint = dashboardRouteHint,
+                )
+            }
             val loadedCount = (payloadState as? DashboardPayloadState.Loaded)?.items?.size ?: 0
             AnimatedContent(
                 targetState = showingDetail,
@@ -1061,6 +1071,7 @@ fun DashboardManagementScreen(
                                     message = state.message,
                                     status = state.status,
                                     dashboardUrl = dashboardUrl,
+                                    routeHint = dashboardRouteHint,
                                     actionInFlight = actionInFlight,
                                     actionMessage = actionMessage,
                                     onRetry = {
@@ -1115,6 +1126,7 @@ fun DashboardManagementScreen(
                         section = section,
                         payloadState = payloadState,
                         dashboardUrl = dashboardUrl,
+                        routeHint = dashboardRouteHint,
                         status = dashboardStatus,
                         session = dashboardSession,
                         authenticated = dashboardAuthenticated,
@@ -1196,6 +1208,7 @@ private fun ManageOverviewBody(
     section: DashboardManagementSection,
     payloadState: DashboardPayloadState,
     dashboardUrl: String,
+    routeHint: String?,
     status: DashboardStatus?,
     session: DashboardAuthSession?,
     authenticated: Boolean?,
@@ -1240,6 +1253,7 @@ private fun ManageOverviewBody(
         item {
             DashboardConnectionHeader(
                 dashboardUrl = dashboardUrl,
+                routeHint = routeHint,
                 status = status,
                 session = session,
                 authenticated = authenticated,
@@ -1338,6 +1352,7 @@ private fun ManageSelectedSectionHeader(
 @Composable
 private fun DashboardConnectionHeader(
     dashboardUrl: String,
+    routeHint: String?,
     status: DashboardStatus?,
     session: DashboardAuthSession?,
     authenticated: Boolean?,
@@ -1359,6 +1374,7 @@ private fun DashboardConnectionHeader(
     val secondary = listOfNotNull(
         identity,
         dashboardUrl.ifBlank { "No dashboard URL" },
+        routeHint?.let { "$it route" },
         lastCheckedAtMillis?.let { "Checked ${formatDashboardCheckedAt(it)}" },
     ).joinToString(" · ")
     val bannerText = listOf(authLabel, secondary)
@@ -1513,11 +1529,34 @@ private fun LoadingSummaryPlaceholder(index: Int) {
     }
 }
 
+/**
+ * Always-visible one-liner naming the dashboard URL Manage is talking to
+ * right now. The effective URL follows the resolved route (LAN ↔ Tailscale)
+ * while the connection's saved URLs stay put — when something here fails,
+ * the first debugging question is "which host was that against?", so the
+ * answer lives on screen instead of in DiagnosticsLog. The route suffix
+ * appears only when the resolver has moved Manage off the persisted URL.
+ */
+@Composable
+private fun ManageDashboardTargetLine(dashboardUrl: String, routeHint: String?) {
+    Text(
+        text = "Dashboard: $dashboardUrl" +
+            (routeHint?.let { " · $it route" } ?: ""),
+        style = MaterialTheme.typography.labelSmall,
+        fontFamily = FontFamily.Monospace,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+    )
+}
+
 @Composable
 private fun ErrorBody(
     message: String,
     status: DashboardStatus?,
     dashboardUrl: String,
+    routeHint: String?,
     actionInFlight: Boolean,
     actionMessage: String?,
     onRetry: () -> Unit,
@@ -1536,6 +1575,7 @@ private fun ErrorBody(
         if (signInRequired) {
             DashboardSignInCard(
                 dashboardUrl = dashboardUrl,
+                routeHint = routeHint,
                 providers = status?.authProviderDetails.orEmpty(),
                 actionInFlight = actionInFlight,
                 actionMessage = actionMessage,
@@ -1556,6 +1596,17 @@ private fun ErrorBody(
                     Text(
                         text = "Dashboard unavailable",
                         style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                    // Name the exact target: the dashboard (:9119) is a
+                    // separate server from the API (:8642), so "chat works"
+                    // proves nothing about this URL — and on a moved route
+                    // the host may differ from what the user configured.
+                    Text(
+                        text = "Couldn't load from $dashboardUrl" +
+                            (routeHint?.let { " ($it route)" } ?: ""),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
                         color = MaterialTheme.colorScheme.onErrorContainer,
                     )
                     Text(
@@ -1753,6 +1804,7 @@ private fun DashboardSignInCard(
     actionMessage: String?,
     onSignIn: (String, String, String) -> Unit,
     onOAuthSignIn: (DashboardAuthProvider) -> Unit,
+    routeHint: String? = null,
 ) {
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -1778,6 +1830,27 @@ private fun DashboardSignInCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (routeHint != null) {
+                // Same per-host cookie reality the voice gate explains:
+                // a sign-in on the home host does not authenticate this
+                // one. Without this strip, a user who signed in at home
+                // reads the prompt above as a broken session.
+                Text(
+                    text = "You're on the $routeHint route. Dashboard " +
+                        "sign-ins are per host, so your sign-in from the " +
+                        "other route doesn't carry over — sign in once " +
+                        "here and the app keeps both sessions.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            MaterialTheme.colorScheme.tertiaryContainer,
+                            RoundedCornerShape(8.dp),
+                        )
+                        .padding(10.dp),
+                )
+            }
 
             redirectProviders.forEach { provider ->
                 Button(
