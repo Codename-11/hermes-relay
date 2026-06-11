@@ -4172,10 +4172,17 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             api.port == other.api.port
 
     /**
-     * Pin [role] as the preferred endpoint until the next disconnect. Calls
-     * [ConnectionManager.setManualRoleOverride] and kicks [probeNow] so the
-     * swap takes effect immediately if the override is reachable. Passing
-     * `null` clears the override.
+     * Sticky route policy — the Routes card's "Prefer this route". Persists
+     * [Connection.preferredRouteRole] (restored as the live override on every
+     * connection load / app start) AND installs it via
+     * [ConnectionManager.setManualRoleOverride], then kicks [probeNow] so the
+     * swap takes effect immediately if the route is reachable. Reachability
+     * still gates: an unreachable preferred route falls back through strict
+     * priority. Passing `null` clears both the persisted preference and the
+     * live override.
+     *
+     * For a one-time switch that should NOT survive disconnects or restarts,
+     * use [useRouteNow] instead.
      */
     fun setPreferredEndpointRole(role: String?) {
         connectionManager.setManualRoleOverride(role)
@@ -4190,8 +4197,37 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         probeNow()
     }
 
+    /**
+     * One-time route switch — the Routes card's "Use now". Installs a
+     * transient [ConnectionManager.setManualRoleOverride] and re-probes, but
+     * does NOT persist anything: the switch dies on the next explicit
+     * disconnect and is replaced by the persisted preference (if any) on the
+     * next connection load. Passing `null` cancels a manual switch and
+     * restores the sticky preference, or full automatic resolution when no
+     * preference is set.
+     *
+     * "Use now" used to route through [setPreferredEndpointRole], so a
+     * one-time switch silently became a persistent preference — this split
+     * keeps "act now" and "policy" separate.
+     */
+    fun useRouteNow(role: String?) {
+        connectionManager.setManualRoleOverride(
+            role ?: activeConnection.value?.preferredRouteRole,
+        )
+        probeNow()
+    }
+
+    /**
+     * Live transient override — what [useRouteNow] / preference restoration
+     * installed. The Routes card compares this against the persisted
+     * preference to label the current route automatic / preferred / manual.
+     */
+    val manualRouteOverride: StateFlow<String?>
+        get() = connectionManager.manualRoleOverrideFlow
+
+    /** The persisted sticky preference only — never the transient override. */
     fun getPreferredEndpointRole(): String? =
-        activeConnection.value?.preferredRouteRole ?: connectionManager.getManualRoleOverride()
+        activeConnection.value?.preferredRouteRole
 
     /**
      * Route-probe lifecycle for the Routes card. [Probing] disables the

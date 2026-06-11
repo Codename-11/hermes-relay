@@ -32,6 +32,9 @@ import java.io.IOException
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
+// Status/session/provider snapshots are @Serializable so the Manage tab's
+// disk cache (DashboardManageDiskCache) can persist Loaded entries verbatim.
+@Serializable
 data class DashboardStatus(
     val authRequired: Boolean,
     val authProviders: List<String> = emptyList(),
@@ -40,6 +43,7 @@ data class DashboardStatus(
     val message: String? = null,
 )
 
+@Serializable
 data class DashboardAuthProvider(
     val name: String,
     val displayName: String? = null,
@@ -55,6 +59,7 @@ data class DashboardLoginResponse(
     val message: String? = null,
 )
 
+@Serializable
 data class DashboardAuthSession(
     val authenticated: Boolean,
     val username: String? = null,
