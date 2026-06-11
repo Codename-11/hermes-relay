@@ -98,25 +98,31 @@ fun RelayStatusStrip(
     modifier: Modifier = Modifier,
     leadingColor: Color = RelayRefresh.Green,
 ) {
+    // Floating capsule, not an edge-to-edge bar: a full-width bordered
+    // rectangle clashes with rounded display corners and reads as a hard
+    // shelf. Insets are applied BEFORE the margins so the pill floats above
+    // the gesture area with the app background showing around it.
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .relayPanel(
-                shape = RoundedCornerShape(0.dp),
-                background = RelayRefresh.Background.copy(alpha = 0.94f),
-                borderColor = RelayRefresh.Line,
-            )
             .windowInsetsPadding(
                 WindowInsets.safeDrawing.only(
                     WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
                 ),
+            )
+            .padding(start = 14.dp, end = 14.dp, top = 2.dp, bottom = 8.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .relayPanel(
+                shape = RoundedCornerShape(999.dp),
+                background = RelayRefresh.Navy2.copy(alpha = 0.88f),
+                borderColor = RelayRefresh.Line,
             ),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(22.dp)
-                .padding(horizontal = 12.dp),
+                .padding(horizontal = 14.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {

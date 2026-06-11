@@ -30,7 +30,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -1035,20 +1037,10 @@ fun ChatScreen(
                         onClick = onNavigateToSettings,
                         modifier = Modifier.padding(end = 4.dp),
                     )
-                    // Ambient mode toggle (show/hide sphere visualization).
-                    // Profile + personality pickers moved into the agent sheet
-                    // that opens on title tap — the top bar no longer owns
-                    // those chips, reclaiming the horizontal space for a
-                    // cleaner title block.
-                    if (animationEnabled) {
-                        IconButton(onClick = { ambientMode = !ambientMode }) {
-                            Icon(
-                                imageVector = if (ambientMode) Icons.Filled.ChatBubble else Icons.Filled.AutoAwesome,
-                                contentDescription = if (ambientMode) "Show chat" else "Ambient mode",
-                                tint = if (ambientMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
+                    // Ambient mode (fullscreen sphere) has no top-bar toggle —
+                    // it's a quiet gesture: long-press the conversation
+                    // background to enter, tap anywhere to return. A hint pill
+                    // on entry teaches the way back.
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = RelayRefresh.Background.copy(alpha = 0.96f)
@@ -1110,12 +1102,25 @@ fun ChatScreen(
                 }
             }
 
-            // Ambient mode: fullscreen sphere visualization
+            // Ambient mode: fullscreen sphere visualization. Tap (or
+            // long-press) anywhere to return; a transient hint pill teaches
+            // the exit on every entry.
             if (ambientMode && animationEnabled) {
+                var showAmbientHint by remember { mutableStateOf(true) }
+                LaunchedEffect(Unit) {
+                    kotlinx.coroutines.delay(2_800)
+                    showAmbientHint = false
+                }
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .fillMaxWidth(),
+                        .fillMaxWidth()
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onTap = { ambientMode = false },
+                                onLongPress = { ambientMode = false },
+                            )
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     MorphingSphere(
@@ -1124,6 +1129,24 @@ fun ChatScreen(
                         intensity = streamingIntensity,
                         toolCallBurst = toolCallBurst
                     )
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = showAmbientHint,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 18.dp),
+                        enter = fadeIn(),
+                        exit = fadeOut(),
+                    ) {
+                        Text(
+                            text = "tap to return to chat",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.78f))
+                                .padding(horizontal = 12.dp, vertical = 5.dp),
+                        )
+                    }
                 }
             }
             // Message list or empty state
@@ -1232,6 +1255,17 @@ fun ChatScreen(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
+                        // Quiet entry to ambient mode: long-press the
+                        // conversation background. Bubbles keep their own
+                        // long-press (copy) — they consume the gesture first,
+                        // so only presses on empty space land here.
+                        .pointerInput(animationEnabled) {
+                            detectTapGestures(
+                                onLongPress = {
+                                    if (animationEnabled) ambientMode = true
+                                },
+                            )
+                        }
                 ) {
                     // Ambient sphere behind messages
                     if (animationEnabled && animationBehindChat && !ambientMode) {
