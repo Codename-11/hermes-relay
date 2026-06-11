@@ -101,9 +101,9 @@ fun VoiceSettingsScreen(
     selectedProfile: Profile? = null,
     standardVoiceAvailability: StandardVoiceAvailability = StandardVoiceAvailability.Unknown,
     /**
-     * Non-null endpoint role (e.g. "tailscale") when the sign-in gate is up
-     * because the resolver moved the dashboard to a route the user hasn't
-     * signed in on yet — dashboard cookies are per-host.
+     * Non-null endpoint display label (e.g. "Tailscale") when the sign-in
+     * gate is up because the resolver moved the dashboard to a route the
+     * user hasn't signed in on yet — dashboard cookies are per-host.
      */
     standardVoiceSignInRouteHint: String? = null,
     relayVoiceReady: Boolean = false,

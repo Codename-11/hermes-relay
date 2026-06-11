@@ -15,6 +15,7 @@ import com.hermesandroid.relay.auth.PairedDeviceInfo
 import com.hermesandroid.relay.auth.PairedSession
 import com.hermesandroid.relay.data.DataManager
 import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.PairingPreferences
 import com.hermesandroid.relay.data.RelayEndpoint
@@ -687,10 +688,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     /**
      * Route context for the standard-voice sign-in gate. Non-null (the
-     * active endpoint's role, e.g. `"tailscale"`) only when voice is gated
-     * on dashboard sign-in AND the resolver has moved the dashboard surface
-     * off the connection's persisted URL. Dashboard session cookies are
-     * host-scoped, so a sign-in performed on the LAN host does not
+     * active endpoint's display label, e.g. `"Tailscale"`) only when voice
+     * is gated on dashboard sign-in AND the resolver has moved the dashboard
+     * surface off the connection's persisted URL. Dashboard session cookies
+     * are host-scoped, so a sign-in performed on the LAN host does not
      * authenticate the Tailscale host — the UI uses this to explain that a
      * one-time sign-in *on this route* unlocks voice, instead of a bare
      * "sign-in required" that looks broken to someone who already signed in
@@ -708,7 +709,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         if (effective.isBlank() || persisted.isBlank() || effective.equals(persisted, ignoreCase = true)) {
             null
         } else {
-            endpoint?.role ?: "fallback"
+            endpoint?.displayLabel() ?: "fallback"
         }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
@@ -2620,7 +2621,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             var consecutiveApiFailures = 0
             while (true) {
                 delay(30_000)
-                if (_apiClient.value == null) continue
+                if (_apiClient.value == null) {
+                    consecutiveApiFailures = 0
+                    continue
+                }
                 probeApiHealth()
                 if (_apiServerHealth.value == HealthStatus.Unreachable) {
                     consecutiveApiFailures++

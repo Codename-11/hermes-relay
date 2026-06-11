@@ -271,6 +271,8 @@ fun ChatScreen(
     // availability picks the actionable toast when neither is.
     val voiceReady by connectionViewModel.voiceReady.collectAsState()
     val standardVoiceAvailability by connectionViewModel.standardVoiceAvailability.collectAsState()
+    val standardVoiceSignInRouteHint by
+        connectionViewModel.standardVoiceSignInRouteHint.collectAsState()
     val apiReachable by connectionViewModel.apiServerReachable.collectAsState()
     val chatMode by connectionViewModel.chatMode.collectAsState()
     val error by chatViewModel.error.collectAsState()
@@ -1677,7 +1679,9 @@ fun ChatScreen(
                                         context,
                                         when (standardVoiceAvailability) {
                                             com.hermesandroid.relay.viewmodel.StandardVoiceAvailability.SignInRequired ->
-                                                "Voice needs dashboard sign-in — open Manage to sign in"
+                                                standardVoiceSignInRouteHint?.let { route ->
+                                                    "Voice needs a one-time sign-in on the $route route — open Manage"
+                                                } ?: "Voice needs dashboard sign-in — open Manage to sign in"
                                             com.hermesandroid.relay.viewmodel.StandardVoiceAvailability.Unsupported ->
                                                 "This Hermes build has no voice routes — update hermes-agent or pair Relay"
                                             else ->

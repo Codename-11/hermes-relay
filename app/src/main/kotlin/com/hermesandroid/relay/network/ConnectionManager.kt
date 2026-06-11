@@ -458,6 +458,13 @@ class ConnectionManager(
     suspend fun refreshActiveEndpoint(clearProbeCache: Boolean = false): EndpointCandidate? {
         if (clearProbeCache) endpointResolver?.clearCache()
         val resolved = resolveBestEndpointSafe()
+        if (resolved == null && _connectionState.value == ConnectionState.Connected) {
+            // Transient probe miss while the relay socket is demonstrably up
+            // (slow resume, mid-handoff blip) — keep publishing the live
+            // route instead of downgrading every HTTP surface to the saved
+            // URL. Mirrors scheduleNetworkReResolve's guard.
+            return _activeEndpoint.value
+        }
         _activeEndpoint.value = resolved
         return resolved
     }
@@ -507,12 +514,18 @@ class ConnectionManager(
             }
             _activeEndpoint.value = resolved
             if (current == null) return@launch
+            // After an explicit disconnect() the route still publishes above
+            // (HTTP surfaces keep roaming), but no socket action: without
+            // this gate a network event whose winner differs from the last
+            // URL would resurrect a socket the user deliberately closed.
+            // (connectToUrlOnMainPath force-sets shouldReconnect = true, so
+            // the swap path never re-checked it.)
+            if (!shouldReconnect) return@launch
             val normalizedNew = normalizeRelayUrl(resolved.relay.url)
             if (normalizedNew != current) {
                 Log.i(TAG, "network change: swapping $current → $normalizedNew")
                 connectToUrlOnMainPath(resolved.relay.url, closeReason)
             } else if (_connectionState.value == ConnectionState.Disconnected &&
-                shouldReconnect &&
                 reconnectGate()
             ) {
                 Log.i(TAG, "network change: same winner is disconnected — reconnecting $current")
