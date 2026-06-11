@@ -91,6 +91,7 @@ import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.network.HermesLanDiscovery
 import com.hermesandroid.relay.network.HermesLanDiscoveryResult
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import com.hermesandroid.relay.viewmodel.StandardVoiceAvailability
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -1596,6 +1597,19 @@ private fun StandardSetupResultCard(
                 },
                 ok = result.dashboardAuthenticated == true ||
                     result.dashboardReachable == true && !result.dashboardSignInRequired,
+            )
+            ReadinessLine(
+                label = "Voice",
+                detail = when (result.voiceAvailability) {
+                    StandardVoiceAvailability.Ready -> "Speech ready via your Hermes server"
+                    StandardVoiceAvailability.SignInRequired -> "Unlocks with dashboard sign-in"
+                    StandardVoiceAvailability.Unsupported ->
+                        "Hermes build has no voice routes — update or pair Relay"
+                    StandardVoiceAvailability.Unreachable -> "Checked once the dashboard is reachable"
+                    StandardVoiceAvailability.Unknown -> "Checked after connecting"
+                },
+                ok = result.voiceAvailability == StandardVoiceAvailability.Ready,
+                neutralWhenFalse = true,
             )
             ReadinessLine(
                 label = "Relay",

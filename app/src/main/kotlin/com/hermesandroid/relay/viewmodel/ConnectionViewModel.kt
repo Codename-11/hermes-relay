@@ -3166,6 +3166,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         val dashboardReachable: Boolean? = null,
         val dashboardSignInRequired: Boolean = false,
         val dashboardAuthenticated: Boolean? = null,
+        /** Standard (dashboard-surface) voice readiness, probed in the same pass. */
+        val voiceAvailability: StandardVoiceAvailability = StandardVoiceAvailability.Unknown,
         val relayPaired: Boolean = false,
     )
 
@@ -3393,6 +3395,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             var dashboardSignInRequired = false
             var dashboardReachable: Boolean? = null
             var dashboardAuthenticated: Boolean? = null
+            var voiceAvailability = StandardVoiceAvailability.Unknown
             if (reachable) {
                 val connectionId = connectionStore.activeConnectionId.value
                 val dashboardUrlForProbe = connectionId?.let { id ->
@@ -3422,6 +3425,18 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                             status?.authRequired == true && session?.authenticated != true
                         dashboardReachable = status != null
                         dashboardAuthenticated = session?.authenticated
+                        // Voice rides this same surface — settle availability in
+                        // the same pass so the wizard's capability card and the
+                        // mic gate are correct the moment setup completes.
+                        voiceAvailability = when {
+                            status == null -> StandardVoiceAvailability.Unreachable
+                            dashboardSignInRequired -> StandardVoiceAvailability.SignInRequired
+                            dashboardClient.audioRoutesPresent() -> StandardVoiceAvailability.Ready
+                            else -> StandardVoiceAvailability.Unsupported
+                        }
+                        _standardVoiceAvailability.value = voiceAvailability
+                        _standardAudioApiReachable.value =
+                            voiceAvailability == StandardVoiceAvailability.Ready
                         recordDashboardStatus(
                             status = status,
                             session = session,
@@ -3458,6 +3473,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     dashboardReachable = dashboardReachable,
                     dashboardSignInRequired = dashboardSignInRequired,
                     dashboardAuthenticated = dashboardAuthenticated,
+                    voiceAvailability = voiceAvailability,
                     relayPaired = authState.value is AuthState.Paired,
                 ),
             )
