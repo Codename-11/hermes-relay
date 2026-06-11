@@ -16,7 +16,14 @@
 
 **Verified.** `:app:compileSideloadDebugKotlin`, `:app:lint`, and `:app:testGooglePlayDebugUnitTest` all green locally. On-device verification needed: Manage sign-in → standard voice turn on an API-only connection; Auto fallback with relay paired; model picker payload shape against the live dashboard (`parseModelOptions` is tolerant but unverified against real `build_models_payload` output).
 
-**Next.** When upstream PR #8199 lands `/v1/audio/*` on the API server, add it as the preferred standard route (capabilities already advertise `audio_api`) and demote the dashboard path to fallback. Deferred parity items: MCP manual add-server form, skills-hub install/search, SOUL editing from phone.
+**Follow-up (same day).** Closed the deferred parity items + re-scoped the blue:
+
+- **Skills hub** — "Browse hub" on the Skills tab: multi-source search (`GET /api/skills/hub/search`, results marked installed via the lock-file map), SKILL.md **preview before install** (`/api/skills/hub/preview` → detail dialog), install (`POST .../install {identifier}`) / uninstall (`POST .../uninstall {name}`) / "Update installed" (`POST .../update`). All three mutations are **async spawns server-side** (`{ok, pid}`) — UI messages say "started — refresh Skills shortly" and install rows stay disabled to prevent double-fires. Dashboard client read timeout raised 30s→45s so the server's 30s search fan-out can't die client-side at the edge.
+- **SOUL editor** — "Edit SOUL" profile action fetches the **full** file (`GET /api/profiles/{name}/soul` is untruncated upstream, unlike the relay Inspector's 200KB cap), opens a monospace full-file editor dialog, `PUT {content}` on save; creates the file when absent.
+- **Blue re-scoped** — Bailey liked the original Electric elsewhere; reverted `Electric` to `#111DFF` and added `ElectricMuted` (`#4F5BD5`), applied only to the **active connection card** (was a full-opacity `primaryContainer` fill — the actual complaint) as a 0.42-alpha wash. Cockpit selected panels, pills, and light-theme primary keep the vivid brand blue.
+- **CHANGELOG** — `[Unreleased]` entries added (missed in the first commit batch; the dev-branch convention expects per-PR appends).
+
+**Next.** When upstream PR #8199 lands `/v1/audio/*` on the API server, add it as the preferred standard route (capabilities already advertise `audio_api`) and demote the dashboard path to fallback. Remaining deferred parity: MCP manual add-server form (catalog install covers onboarding), skills-hub sources/featured browse (`/api/skills/hub/sources`), per-profile cron/skill scoping in Manage.
 
 ---
 

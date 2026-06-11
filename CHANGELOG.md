@@ -18,6 +18,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Provider idle-tolerance probe.** `scripts/realtime-provider-idle-probe.py` records a per-provider verdict (hold-floor-ok / needs-keepalive / must-reopen) for holding a realtime socket quiescent during a background run; see `docs/realtime-voice-poc.md`.
 
+- **Manage parity with the hermes-desktop dashboard.** The Manage tab can now do what the desktop dashboard can: **Models** — change the main model from the full provider/model catalog (`/api/model/options` → `/api/model/set`), including the expensive-model confirmation round-trip; new **Keys** tab — view, set (write-only, masked), reveal (server rate-limited), and clear provider keys / env secrets; **Profiles** — create profiles (clone-from-default), edit descriptions, set per-profile models, and **edit SOUL.md** in a full-file editor; **Skills** — browse the multi-source skills hub with search, SKILL.md preview-before-install, install/uninstall (async server-side), and update-all.
+
+### Changed
+
+- **Standard (no-plugin) voice now rides the Hermes dashboard surface.** STT/TTS for the standard route uses the dashboard's `/api/audio/transcribe` + `/api/audio/speak` (the hermes-desktop voice contract) with the same cookie session Manage signs in with — a vanilla hermes-agent install needs no Relay plugin for voice. Previously the client targeted the API server, which has no audio routes, so standard-only voice always failed.
+
+- **Auto STT/TTS route prefers Relay when paired.** Paired Relay voice is profile-aware and needs no dashboard sign-in; the standard dashboard route is the zero-plugin fallback. Voice Settings now shows live per-route status (ready / sign-in required / unreachable / unsupported build) with a "Sign in via Manage" shortcut, and the Realtime Agent engine is clearly marked as requiring a paired Relay.
+
+- **Softened the active connection card.** The full-card Electric blue fill on the active connection was overpowering against body text; it now uses a muted indigo wash while small accents keep the vivid brand blue.
+
 ## [0.8.1] - 2026-05-26
 
 ### Fixed
