@@ -54,6 +54,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Routes are now editable in Settings → Connections.** The Routes card gains "Add route" plus per-route Edit/Remove (the primary route mirrors the connection's API URL and stays protected) — the standard path's manual equivalent of the Relay QR's multi-endpoint provisioning. Add your server's Tailscale or public URL after the fact and the phone roams to it automatically; the wizard's optional Tailscale field remains the setup-time shortcut.
 
+- **Remote access is discoverable, not an easter egg.** The standard setup form now shows a "Remote access — Tailscale URL (optional)" field in the main flow (previously buried under Advanced), with a hint when Tailscale is detected on the phone; the setup result card gains a "Remote" readiness line that calls out LAN-only connections; the "Hermes API unreachable" status now diagnoses the likely cause ("Away from the server's network? Add a Tailscale or public route") instead of just reporting; and the Connections card offers an "Add Tailscale route" shortcut when the phone is on Tailscale but the connection has no Tailscale route.
+
 ### Fixed
 
 - **Standard (no-Relay) connections now follow LAN ↔ Tailscale network changes.** The ADR 24 network-aware route switching only activated when a Relay socket was open: the connectivity callback registered inside `connect()` and bailed without a socket URL, so a standard connection that left home Wi-Fi kept probing the dead LAN route until the app was backgrounded and reopened. The callback now registers at construction and re-resolves routes (debounced) even with no socket — chat, Manage, and standard voice follow the resolved endpoint automatically.
