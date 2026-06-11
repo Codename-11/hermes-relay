@@ -61,6 +61,32 @@ hermes pair --mode auto --prefer tailscale
 
 You can also override from the phone: **Settings -> Connections -> active connection -> Routes -> Prefer this route**.
 
+## Which URL Do I Enter?
+
+Route fields want the **API server** (port `8642` by default) — never the
+dashboard (`9119`) or relay (`8767`); those are derived from the host
+automatically. You can type just a host or IP: `100.71.8.56` is saved as
+`http://100.71.8.56:8642`, and the editor previews the exact URL before you
+save.
+
+Pick the scheme by how the server is reached:
+
+- **Raw Tailscale IP (`100.x.y.z`) or LAN IP** → `http://` (the default).
+  The Hermes API server speaks plain HTTP; an `https://` route against it
+  fails its TLS handshake on every probe and never wins. This also requires
+  the API server to listen beyond loopback (`0.0.0.0:8642` or the tailnet
+  interface).
+- **`*.ts.net` hostname fronted by `hermes-relay-tailscale enable`** →
+  `https://` — Tailscale terminates TLS for the MagicDNS hostname (the cert
+  is only valid for that name, not for the raw `100.x` IP).
+- **Public reverse proxy** → `https://` with whatever host/port the proxy
+  exposes.
+
+After saving, the Routes card probes immediately and each row shows its
+verdict — "Reachable", or "Unreachable" with the reason (TLS failure,
+connection refused, timeout, HTTP status). A route that never shows
+"Reachable" is misconfigured, not just unlucky.
+
 ## Add or Edit Routes on the Phone
 
 You don't need to re-run setup (or use a QR) to add remote access later.
