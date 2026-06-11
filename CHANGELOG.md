@@ -42,6 +42,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Media settings labeled Relay-only.** The Media screen now states that its inbound-attachment controls apply to Relay-delivered files only, not to standard connections or images you attach in chat.
 
+- **Quote in reply.** Long-pressing a message now offers Copy and "Quote in reply" — quoting drops the message into the input as a Markdown blockquote.
+
+- **Share conversation.** A share icon in the chat top bar exports the visible conversation as Markdown through the system share sheet.
+
+- **Manage cards declutter.** Cards with five or more actions (profiles) keep the three most-used buttons inline and fold the rest behind "More".
+
+- **Ambient gesture is documented in Appearance.** Settings → Appearance now explains the long-press-to-enter / tap-to-return gesture, keeping it discoverable (including for screen-reader users) without a visible control.
+
+- **User docs: Quick Start.** New two-minute Quick Start page leads the guide; the dashboard page documents the full phone Manage surface (skills hub, models, keys, profile + SOUL editing); voice docs lead with the standard no-Relay route.
+
 ## [0.8.1] - 2026-05-26
 
 ### Fixed
