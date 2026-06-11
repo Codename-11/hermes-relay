@@ -44,6 +44,7 @@ import com.hermesandroid.relay.network.DashboardStatus
 import com.hermesandroid.relay.network.EncryptedDashboardCookieStore
 import com.hermesandroid.relay.network.EndpointResolver
 import com.hermesandroid.relay.network.HermesApiClient
+import com.hermesandroid.relay.network.RouteProbeOutcome
 import com.hermesandroid.relay.network.ProfileApiUrlResolver
 import com.hermesandroid.relay.network.ServerCapabilities
 import com.hermesandroid.relay.network.RelayHttpClient
@@ -3220,7 +3221,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // --- API Server methods ---
 
     fun updateApiServerUrl(url: String) {
-        val trimmed = url.trim()
+        // Same bare-host normalization as the wizard: `192.168.1.10`
+        // becomes `http://192.168.1.10:8642`; explicit schemes pass verbatim.
+        val trimmed = Connection.normalizeApiUrlInput(url)
         val previousApiUrl = _apiServerUrl.value
         val previousRelayUrl = _relayUrl.value
         val derivedRelayUrl = RelayUrlDeriver.deriveFromApiUrl(trimmed)
@@ -3360,9 +3363,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         routeCandidatesOverride: List<EndpointCandidate>? = null,
         onResult: (StandardApiSetupResult) -> Unit,
     ) {
-        val trimmedApiUrl = apiUrl.trim()
-        val trimmedTailscaleApiUrl = tailscaleApiUrl.trim()
-        val trimmedDashboardUrl = dashboardUrl.trim()
+        // Bare host/IP input gets http:// and the surface's default port —
+        // typing `192.168.1.10` or a Tailscale `100.x.y.z` without a scheme
+        // is the common case and used to either block the wizard or silently
+        // drop the route. Explicitly-schemed URLs pass through verbatim.
+        val trimmedApiUrl = Connection.normalizeApiUrlInput(apiUrl)
+        val trimmedTailscaleApiUrl = Connection.normalizeApiUrlInput(tailscaleApiUrl)
+        val trimmedDashboardUrl = Connection.normalizeApiUrlInput(
+            dashboardUrl,
+            defaultPort = Connection.DEFAULT_DASHBOARD_PORT,
+        )
         if (trimmedApiUrl.isBlank()) {
             onResult(
                 StandardApiSetupResult(
@@ -4021,7 +4031,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 onResult("No active connection")
                 return@launch
             }
-            val trimmedUrl = apiUrl.trim().trimEnd('/')
+            // Accept bare hosts/IPs — http:// is assumed (see
+            // [Connection.normalizeApiUrlInput]); the port defaults to 8642
+            // downstream in [Connection.endpointCandidateFromApiUrl].
+            val trimmedUrl = Connection.normalizeApiUrlInput(apiUrl)
             val existing = seedRouteCandidates(current)
             if (existing.isEmpty()) {
                 onResult("Set the connection's API server URL first")
@@ -4040,7 +4053,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 relayUrl = Connection.deriveDefaultRelayUrl(trimmedUrl).orEmpty(),
             )
             if (candidate == null) {
-                onResult("Enter a full URL like https://host:8642")
+                onResult(
+                    "Enter the API server URL — e.g. 100.71.8.56 or " +
+                        "http://host:8642 (http/https only; port defaults to 8642)",
+                )
                 return@launch
             }
             val collision = withoutOriginal.firstOrNull {
@@ -4060,7 +4076,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             val next = (withoutOriginal + candidate)
                 .sortedWith(compareBy<EndpointCandidate> { it.priority }.thenBy { it.role })
             connectionStore.updateConnection(current.copy(routeCandidates = next))
-            connectionManager.refreshActiveEndpoint(clearProbeCache = true)
+            // Full probe cycle (not a bare refresh) so the just-saved route
+            // immediately shows a reachability verdict in the Routes card.
+            probeNow()
             onResult(null)
         }
     }
@@ -4099,7 +4117,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             if (preferredNowStale) {
                 connectionManager.setManualRoleOverride(null)
             }
-            connectionManager.refreshActiveEndpoint(clearProbeCache = true)
+            // Same visible probe cycle as saveExtraRoute — removing the
+            // active route should immediately re-resolve and show where the
+            // app landed.
+            probeNow()
             onResult(null)
         }
     }
@@ -4156,21 +4177,82 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun getPreferredEndpointRole(): String? =
         activeConnection.value?.preferredRouteRole ?: connectionManager.getManualRoleOverride()
 
+    /**
+     * Route-probe lifecycle for the Routes card. [Probing] disables the
+     * Re-check affordances and shows progress; [Done] carries the winner (or
+     * null when every saved route failed its probe) so the UI can say "no
+     * route reachable" out loud instead of sitting on "Resolving" forever.
+     */
+    sealed interface RouteProbeStatus {
+        data object Idle : RouteProbeStatus
+        data object Probing : RouteProbeStatus
+        data class Done(
+            val winner: EndpointCandidate?,
+            val atMillis: Long,
+        ) : RouteProbeStatus
+    }
+
+    private val _routeProbeStatus = MutableStateFlow<RouteProbeStatus>(RouteProbeStatus.Idle)
+    val routeProbeStatus: StateFlow<RouteProbeStatus> = _routeProbeStatus.asStateFlow()
+
+    /** Last probe verdict per route — see [EndpointResolver.probeOutcomes]. */
+    val routeProbeOutcomes: StateFlow<Map<String, RouteProbeOutcome>> =
+        endpointResolver.probeOutcomes
+
+    /** Key into [routeProbeOutcomes] for one route row. */
+    fun routeOutcomeKey(candidate: EndpointCandidate): String =
+        EndpointResolver.cacheKey(candidate)
+
+    // Set when probeNow() is requested while a probe is already in flight
+    // (e.g. "Use now" tapped mid-Re-check) — the override the caller just
+    // installed must still win, so the finished probe immediately re-runs
+    // once instead of silently dropping the request. Main-thread confined.
+    private var routeProbeRerunRequested = false
+
     /** User-triggered re-probe — Endpoints card's "Probe now" row action. */
     fun probeNow() {
-        val apiRouteBefore = effectiveApiServerUrlSnapshot()
-        connectionManager.probeAndReconnect()
+        if (_routeProbeStatus.value is RouteProbeStatus.Probing) {
+            routeProbeRerunRequested = true
+            return
+        }
+        _routeProbeStatus.value = RouteProbeStatus.Probing
         viewModelScope.launch {
-            // probeAndReconnect runs on ConnectionManager's IO scope. Give it
-            // a short turn to publish activeEndpoint, then refresh HTTP-only
-            // clients too; standard connections may have no WSS socket to
-            // reconnect, but Chat/Manage still need the selected API route.
-            delay(100L)
-            if (effectiveApiServerUrlSnapshot() != apiRouteBefore) {
-                rebuildApiClient()
+            try {
+                val apiRouteBefore = effectiveApiServerUrlSnapshot()
+                // Await the actual resolve (LAN timing out can take 4s+)
+                // instead of the old fixed 100ms guess, which always lost the
+                // race and left the health probes pointed at the stale route.
+                val winner = connectionManager.probeAndReconnectNow()
+                if (effectiveApiServerUrlSnapshot() != apiRouteBefore) {
+                    rebuildApiClient()
+                }
+                probeApiHealth()
+                probeRelayHealth()
+                _routeProbeStatus.value = RouteProbeStatus.Done(
+                    winner = winner,
+                    atMillis = System.currentTimeMillis(),
+                )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                _routeProbeStatus.value = RouteProbeStatus.Idle
+                throw e
+            } catch (e: Exception) {
+                // Never strand the UI in Probing — surface "nothing won" and
+                // let the per-route outcomes explain the details.
+                _routeProbeStatus.value = RouteProbeStatus.Done(
+                    winner = null,
+                    atMillis = System.currentTimeMillis(),
+                )
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Endpoint,
+                    severity = DiagnosticSeverity.Warning,
+                    title = "Route re-check failed",
+                    detail = e.javaClass.simpleName,
+                )
             }
-            probeApiHealth()
-            probeRelayHealth()
+            if (routeProbeRerunRequested) {
+                routeProbeRerunRequested = false
+                probeNow()
+            }
         }
     }
 

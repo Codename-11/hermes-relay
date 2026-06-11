@@ -413,35 +413,58 @@ class ConnectionManager(
     /**
      * User-triggered re-probe. Forces a fresh resolve + reconnect regardless
      * of cache state. Backs the "Probe now" row action in the Endpoints card.
+     * Fire-and-forget wrapper around [probeAndReconnectNow] for callers that
+     * don't need the outcome.
      */
     fun probeAndReconnect() {
+        scope.launch { probeAndReconnectNow() }
+    }
+
+    /**
+     * Awaitable body of [probeAndReconnect]. Returns the resolved winner —
+     * or null when no candidate answered — so callers (probe-status UI) can
+     * report the outcome instead of guessing with a fixed delay.
+     *
+     * Unlike the pre-2026-06 version this ALWAYS publishes the resolve
+     * outcome to [activeEndpoint]: a standard (no relay socket) connection
+     * whose probes all failed used to early-return before publishing,
+     * leaving the Routes card stuck on "Resolving" with no feedback. The
+     * only exception is the live-socket transient-miss guard shared with
+     * [refreshActiveEndpoint].
+     */
+    suspend fun probeAndReconnectNow(): EndpointCandidate? {
         endpointResolver?.clearCache()
         val current = serverUrl
-        scope.launch {
-            val resolved = resolveBestEndpointSafe()
-            val targetUrl = resolved?.relay?.url ?: current ?: return@launch
-            val normalizedTarget = normalizeRelayUrl(targetUrl)
-            _activeEndpoint.value = resolved
-            // Reconnect when the winner changed, and also when the socket is
-            // stale/disconnected on the same winner. The latter makes the
-            // "Use now" route action an actual recovery path after Wi-Fi drop
-            // instead of a no-op that only updates preference state.
-            if (current == null) {
-                if (shouldReconnect && reconnectGate()) {
-                    Log.i(TAG, "probeAndReconnect: no current socket — connecting to $normalizedTarget")
-                    connectToUrlOnMainPath(targetUrl)
-                }
-            } else if (normalizedTarget != current) {
-                Log.i(TAG, "probeAndReconnect: swapping $current → $normalizedTarget")
-                connectToUrlOnMainPath(targetUrl, "Endpoint re-probe")
-            } else if (_connectionState.value == ConnectionState.Disconnected &&
-                shouldReconnect &&
-                reconnectGate()
-            ) {
-                Log.i(TAG, "probeAndReconnect: current route is stale — reconnecting $current")
-                doConnect(current)
-            }
+        val resolved = resolveBestEndpointSafe()
+        if (resolved == null && _connectionState.value == ConnectionState.Connected) {
+            // Transient probe miss while the relay socket is demonstrably up
+            // — keep the live route published rather than downgrading every
+            // HTTP surface to the saved URL. Mirrors refreshActiveEndpoint.
+            return _activeEndpoint.value
         }
+        _activeEndpoint.value = resolved
+        val targetUrl = resolved?.relay?.url ?: current ?: return resolved
+        val normalizedTarget = normalizeRelayUrl(targetUrl)
+        // Reconnect when the winner changed, and also when the socket is
+        // stale/disconnected on the same winner. The latter makes the
+        // "Use now" route action an actual recovery path after Wi-Fi drop
+        // instead of a no-op that only updates preference state.
+        if (current == null) {
+            if (shouldReconnect && reconnectGate()) {
+                Log.i(TAG, "probeAndReconnect: no current socket — connecting to $normalizedTarget")
+                connectToUrlOnMainPath(targetUrl)
+            }
+        } else if (normalizedTarget != current) {
+            Log.i(TAG, "probeAndReconnect: swapping $current → $normalizedTarget")
+            connectToUrlOnMainPath(targetUrl, "Endpoint re-probe")
+        } else if (_connectionState.value == ConnectionState.Disconnected &&
+            shouldReconnect &&
+            reconnectGate()
+        ) {
+            Log.i(TAG, "probeAndReconnect: current route is stale — reconnecting $current")
+            doConnect(current)
+        }
+        return resolved
     }
 
     /**

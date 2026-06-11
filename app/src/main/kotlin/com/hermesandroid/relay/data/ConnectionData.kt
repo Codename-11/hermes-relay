@@ -232,6 +232,36 @@ data class Connection(
                 .sortedWith(compareBy<EndpointCandidate> { it.priority }.thenBy { it.role })
         }
 
+        /**
+         * Normalize hand-typed API-URL input: trim, strip trailing slashes,
+         * default a missing scheme to `http://`, and default a missing port
+         * to [defaultPort] — most Hermes API servers speak plain HTTP on
+         * 8642, and a bare `192.168.1.10` / Tailscale `100.x.y.z` is by far
+         * the most common thing users type.
+         *
+         * URLs that already carry a scheme are preserved **verbatim**
+         * (including a wrong one like `ws://`, so downstream validators can
+         * complain precisely): an explicit `https://hermes.example.com` may
+         * be a reverse proxy on 443, and force-appending :8642 would break
+         * it. Port-defaulting applies only to scheme-less input, where the
+         * user is visibly relying on our defaults.
+         */
+        fun normalizeApiUrlInput(raw: String, defaultPort: Int = 8642): String {
+            val trimmed = raw.trim().trimEnd('/')
+            if (trimmed.isEmpty()) return trimmed
+            if (SCHEME_REGEX.containsMatchIn(trimmed)) return trimmed
+            val withScheme = "http://$trimmed"
+            val uri = runCatching { URI(withScheme) }.getOrNull()
+            val canAppendPort = uri != null &&
+                !uri.host.isNullOrBlank() &&
+                uri.port <= 0 &&
+                uri.rawPath.isNullOrEmpty() &&
+                uri.rawQuery == null
+            return if (canAppendPort) "$withScheme:$defaultPort" else withScheme
+        }
+
+        private val SCHEME_REGEX = Regex("^[A-Za-z][A-Za-z0-9+.-]*://")
+
         fun endpointCandidateFromApiUrl(
             role: String,
             priority: Int,

@@ -46,9 +46,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.data.isKnownRole
+import com.hermesandroid.relay.network.RouteProbeOutcome
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.launch
 
@@ -76,6 +78,14 @@ fun EndpointsCard(
     onClearOverride: () -> Unit,
     onProbeNow: () -> Unit,
     onViewPin: suspend (EndpointCandidate) -> String?,
+    /** True while a user-triggered route probe is in flight. */
+    isProbing: Boolean = false,
+    /**
+     * Last probe verdict for a route, or null when it has never been
+     * probed. Lambda (not a map) so the card stays decoupled from the
+     * resolver's cache-key scheme.
+     */
+    outcomeFor: (EndpointCandidate) -> RouteProbeOutcome? = { null },
     /**
      * Route management — the standard path's manual equivalent of a v3 QR's
      * `endpoints` array. Null callbacks hide the corresponding affordance.
@@ -120,6 +130,8 @@ fun EndpointsCard(
                     activeEndpoint.api.host.equals(candidate.api.host, ignoreCase = true) &&
                     activeEndpoint.api.port == candidate.api.port,
                 isPreferred = preferredRole?.equals(candidate.role, ignoreCase = true) == true,
+                isProbing = isProbing,
+                outcome = outcomeFor(candidate),
                 onPrefer = { onPreferEndpoint(candidate) },
                 onProbeNow = onProbeNow,
                 onViewPin = onViewPin,
@@ -154,6 +166,8 @@ private fun EndpointRow(
     candidate: EndpointCandidate,
     isActive: Boolean,
     isPreferred: Boolean,
+    isProbing: Boolean = false,
+    outcome: RouteProbeOutcome? = null,
     onPrefer: () -> Unit,
     onProbeNow: () -> Unit,
     onViewPin: suspend (EndpointCandidate) -> String?,
@@ -209,13 +223,35 @@ private fun EndpointRow(
                         )
                     }
                 }
+                // Full URL, scheme included: http vs https decides whether
+                // the health probe TLS-handshakes, so two rows that both
+                // read "host:8642" can behave completely differently. The
+                // scheme must be visible to be debuggable.
                 Text(
-                    text = "${candidate.api.host}:${candidate.api.port}" +
+                    text = candidate.api.url +
                         (candidate.relay.transportHint?.let { " · $it" } ?: ""),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontFamily = FontFamily.Monospace,
                 )
+                when {
+                    isProbing -> Text(
+                        text = "Checking…",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    outcome == null -> Unit // never probed — say nothing
+                    outcome.reachable -> Text(
+                        text = "Reachable",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    else -> Text(
+                        text = "Unreachable — ${outcome.detail ?: "no detail"}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
 
             // 3-dot overflow menu — actions per-row so the card stays flat
@@ -490,20 +526,43 @@ fun RouteEditorDialog(
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
+                // Live preview of what will actually be saved — scheme and
+                // port defaults applied — so "what, which port, http or
+                // https?" is answered before Save, not after a failed probe.
+                val previewCandidate = remember(url, effectiveRole) {
+                    url.takeIf { it.isNotBlank() }?.let {
+                        Connection.endpointCandidateFromApiUrl(
+                            role = effectiveRole.ifBlank { "custom" },
+                            priority = original?.priority ?: 1,
+                            apiServerUrl = Connection.normalizeApiUrlInput(it),
+                            relayUrl = "",
+                        )
+                    }
+                }
                 OutlinedTextField(
                     value = url,
                     onValueChange = {
                         url = it
                         errorText = null
                     },
-                    label = { Text("API server URL") },
-                    placeholder = { Text("https://host.tail1234.ts.net:8642") },
+                    label = { Text("API server URL or host") },
+                    placeholder = { Text("100.71.8.56 or http://host:8642") },
                     singleLine = true,
                     isError = errorText != null,
                     supportingText = {
                         Text(
-                            text = errorText
-                                ?: "Relay and dashboard URLs are derived from the host",
+                            text = errorText ?: when {
+                                url.isBlank() ->
+                                    "Use the API server port (8642 by default) — " +
+                                        "not the dashboard's 9119. http:// is " +
+                                        "assumed unless you type https://."
+                                previewCandidate != null ->
+                                    "Will save: ${previewCandidate.api.url} — relay " +
+                                        "and dashboard URLs are derived from the host"
+                                else ->
+                                    "Enter a host/IP or an http(s):// URL " +
+                                        "(API port 8642, not dashboard 9119)"
+                            },
                         )
                     },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),

@@ -1153,13 +1153,16 @@ private fun apiUrlSchemeError(url: String): String? {
 private fun optionalHttpUrlError(url: String, fieldLabel: String): String? {
     val trimmed = url.trim()
     if (trimmed.isEmpty()) return null
-    return when {
-        trimmed.startsWith("ws://", ignoreCase = true) ||
-            trimmed.startsWith("wss://", ignoreCase = true) ->
-            "$fieldLabel expects http:// or https://"
-        trimmed.startsWith("http://", ignoreCase = true) ||
-            trimmed.startsWith("https://", ignoreCase = true) -> null
-        else -> "$fieldLabel expects http:// or https://"
+    // Bare hosts/IPs are fine — save paths run them through
+    // [Connection.normalizeApiUrlInput], which assumes http://. Only an
+    // explicit non-http scheme is an error, because it would otherwise be
+    // preserved verbatim and silently dropped at candidate-build time.
+    val scheme = Regex("^([A-Za-z][A-Za-z0-9+.-]*)://").find(trimmed)
+        ?.groupValues?.get(1)?.lowercase()
+        ?: return null
+    return when (scheme) {
+        "http", "https" -> null
+        else -> "$fieldLabel expects http:// or https:// (bare hosts get http://)"
     }
 }
 
@@ -1242,12 +1245,16 @@ private fun StandardEntryStep(
         OutlinedTextField(
             value = apiUrl,
             onValueChange = onApiUrlChange,
-            label = { Text("API server URL") },
-            placeholder = { Text("http://your-server:8642") },
+            label = { Text("API server URL or host") },
+            placeholder = { Text("192.168.1.10 or http://your-server:8642") },
             singleLine = true,
             isError = apiError != null,
             supportingText = {
-                Text(apiError ?: "Hermes API used by Chat and sessions")
+                Text(
+                    apiError ?: "Hermes API used by Chat and sessions — " +
+                        "API port 8642 and http:// assumed for bare hosts " +
+                        "(the dashboard's 9119 is derived separately)",
+                )
             },
             keyboardOptions = KeyboardOptions(
                 imeAction = ImeAction.Next,
@@ -1382,18 +1389,21 @@ private fun StandardEntryStep(
             value = tailscaleApiUrl,
             onValueChange = onTailscaleApiUrlChange,
             label = { Text("Remote access — Tailscale URL (optional)") },
-            placeholder = { Text("https://your-host.ts.net:8642") },
+            placeholder = { Text("100.x.y.z or http://your-host.ts.net:8642") },
             singleLine = true,
             isError = tailscaleError != null,
             supportingText = {
                 Text(
                     tailscaleError ?: if (isTailscaleDetected) {
                         "Tailscale detected on this phone — add your server's " +
-                            "Tailscale URL so Hermes keeps working away from home."
+                            "Tailscale IP or hostname so Hermes keeps working " +
+                            "away from home. API port 8642 and http:// are " +
+                            "assumed; use https:// only if your server has TLS."
                     } else {
                         "Lets the phone switch to this URL automatically when it " +
-                            "leaves your server's network. Editable later in " +
-                            "Settings → Connections → Routes."
+                            "leaves your server's network (API port 8642 and " +
+                            "http:// assumed). Editable later in Settings → " +
+                            "Connections → Routes."
                     },
                 )
             },

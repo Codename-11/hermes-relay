@@ -160,4 +160,38 @@ class ConnectionManagerRouteTest {
         assertNull("fresh probe against the dead route must yield no winner", fresh)
         assertNull(manager.activeEndpoint.value)
     }
+
+    @Test
+    fun `probeAndReconnectNow publishes the winner on the standard (no socket) path`() {
+        val manager = buildManager { listOf(candidate()) }
+
+        val winner = runBlocking { manager.probeAndReconnectNow() }
+
+        assertEquals("tailscale", winner?.role)
+        assertEquals(
+            "probeAndReconnectNow must publish activeEndpoint even with no relay socket",
+            "tailscale",
+            manager.activeEndpoint.value?.role,
+        )
+    }
+
+    @Test
+    fun `probeAndReconnectNow publishes null when every route fails its probe`() {
+        val manager = buildManager { listOf(candidate()) }
+
+        // Prime a winner, then kill the route. The old implementation
+        // early-returned here without publishing, leaving the Routes card
+        // stuck on the stale winner / "Resolving" with no feedback.
+        runBlocking { manager.refreshActiveEndpoint() }
+        assertNotNull(manager.activeEndpoint.value)
+        server.shutdown()
+
+        val winner = runBlocking { manager.probeAndReconnectNow() }
+
+        assertNull("no reachable route → null winner", winner)
+        assertNull(
+            "the failed outcome must be published, not silently swallowed",
+            manager.activeEndpoint.value,
+        )
+    }
 }
