@@ -225,6 +225,14 @@ class DashboardApiClient(
         getJsonObject("/api/skills/hub/preview?identifier=${queryValue(identifier)}")
 
     /**
+     * Configured hub sources + featured skills (`{sources, index_available,
+     * featured, installed}`) — content for the browse dialog before the first
+     * search. Featured entries share the search-result payload shape.
+     */
+    suspend fun getSkillsHubSources(): Result<JsonObject> =
+        getJsonObject("/api/skills/hub/sources")
+
+    /**
      * Spawns `hermes skills install <identifier>` server-side and returns
      * `{ok, pid}` immediately — the install completes in the background, so
      * callers should message "started" and refresh the skills list later.

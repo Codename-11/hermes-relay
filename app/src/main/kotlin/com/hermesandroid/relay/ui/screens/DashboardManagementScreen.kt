@@ -2165,9 +2165,12 @@ private data class SkillHubResult(
     val installedName: String?,
 )
 
-private fun parseSkillHubSearch(root: JsonObject): List<SkillHubResult> {
+private fun parseSkillHubSearch(
+    root: JsonObject,
+    resultsKey: String = "results",
+): List<SkillHubResult> {
     val installed = root["installed"] as? JsonObject ?: JsonObject(emptyMap())
-    val results = root["results"] as? JsonArray ?: return emptyList()
+    val results = root[resultsKey] as? JsonArray ?: return emptyList()
     return results.mapNotNull { element ->
         val obj = element as? JsonObject ?: return@mapNotNull null
         val identifier = obj.stringField("identifier") ?: return@mapNotNull null
@@ -2207,6 +2210,32 @@ private fun SkillsHubDialog(
     var error by remember { mutableStateOf<String?>(null) }
     var results by remember { mutableStateOf<List<SkillHubResult>>(emptyList()) }
     var busyIdentifiers by remember { mutableStateOf(setOf<String>()) }
+    var sourcesLine by remember { mutableStateOf<String?>(null) }
+    var showingFeatured by remember { mutableStateOf(false) }
+
+    // Pre-search content: configured sources + featured skills from the
+    // centralized index, so the dialog isn't a blank search box on open.
+    // Best-effort — failures stay silent (search still works without it).
+    LaunchedEffect(Unit) {
+        val sources = try {
+            withDashboardClient(clientFactory) { client -> client.getSkillsHubSources() }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+        sources.getOrNull()?.let { root ->
+            sourcesLine = (root["sources"] as? JsonArray)
+                ?.mapNotNull { (it as? JsonObject)?.stringField("label") }
+                ?.takeIf { it.isNotEmpty() }
+                ?.joinToString(", ")
+            if (!searched && results.isEmpty()) {
+                val featured = parseSkillHubSearch(root, resultsKey = "featured")
+                if (featured.isNotEmpty()) {
+                    results = featured
+                    showingFeatured = true
+                }
+            }
+        }
+    }
 
     fun runSearch() {
         val term = query.trim()
@@ -2223,6 +2252,7 @@ private fun SkillsHubDialog(
                 onSuccess = { root ->
                     results = parseSkillHubSearch(root)
                     searched = true
+                    showingFeatured = false
                 },
                 onFailure = { err -> error = err.message ?: "Hub search failed" },
             )
@@ -2248,6 +2278,14 @@ private fun SkillsHubDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                sourcesLine?.let { line ->
+                    Text(
+                        text = "Sources: $line",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontFamily = FontFamily.Monospace,
+                    )
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -2284,6 +2322,13 @@ private fun SkillsHubDialog(
                         text = "No skills matched \"${query.trim()}\".",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (showingFeatured && results.isNotEmpty() && !searching) {
+                    Text(
+                        text = "Featured skills",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
                     )
                 }
                 LazyColumn(
