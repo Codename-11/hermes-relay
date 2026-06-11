@@ -786,13 +786,28 @@ fun RelayApp() {
                 !startupGateTimedOut &&
                 !voiceUiState.voiceMode
 
+        // Hydrate the Manage payload cache from its plain-JSON disk mirror
+        // as early as possible — independent of connectivity or auth, so a
+        // cold process renders last-seen dashboard data instantly. Entries
+        // keep their original fetch timestamps, making them stale by
+        // definition: the pre-warm below and the screen's
+        // stale-while-revalidate path refresh them quietly.
+        val hydrateContext =
+            androidx.compose.ui.platform.LocalContext.current.applicationContext
+        LaunchedEffect(Unit) {
+            com.hermesandroid.relay.ui.screens.hydrateDashboardManageCache(
+                hydrateContext.cacheDir,
+            )
+        }
+
         // Pre-warm the Manage tab's payload cache when the persisted
         // dashboard snapshot says this connection was reachable and signed
         // in (or auth-free) — a cold app start then lands on populated
         // Manage data instead of skeletons. Keyed on the effective URL so a
         // LAN↔Tailscale handoff re-warms the new host's cache; the delay
         // debounces resolver flaps during startup (each key change cancels
-        // the previous run). The pre-warm itself only fills cold keys.
+        // the previous run). The pre-warm fills cold keys and refreshes
+        // stale (disk-hydrated) ones, then mirrors results back to disk.
         val effectiveDashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
         LaunchedEffect(activeConnection?.id, effectiveDashboardUrl) {
             val connection = activeConnection ?: return@LaunchedEffect
@@ -811,6 +826,7 @@ fun RelayApp() {
                 cookieStore = cookieStore,
                 connectionId = connection.id,
                 dashboardUrl = effectiveDashboardUrl,
+                cacheDir = hydrateContext.cacheDir,
             )
         }
 

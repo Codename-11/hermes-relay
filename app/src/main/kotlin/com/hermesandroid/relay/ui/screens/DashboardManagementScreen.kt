@@ -174,6 +174,69 @@ private object DashboardPayloadCache {
 
     /** Loaded entries younger than this are served without a re-fetch. */
     const val FRESH_WINDOW_MS = 30_000L
+
+    /**
+     * One disk hydration per process — set (main thread only) by
+     * [hydrateDashboardManageCache] before it reads the file.
+     */
+    var hydrationAttempted = false
+}
+
+private fun DashboardPayloadState.Loaded.toPersisted() = PersistedDashboardPayload(
+    status = status,
+    session = session,
+    items = items,
+    rawSummary = rawSummary,
+    fetchedAtMillis = fetchedAtMillis,
+)
+
+private fun PersistedDashboardPayload.toLoaded() = DashboardPayloadState.Loaded(
+    status = status,
+    session = session,
+    items = items,
+    rawSummary = rawSummary,
+    fetchedAtMillis = fetchedAtMillis,
+)
+
+/**
+ * Fill the in-memory payload cache from disk at app start — keys that are
+ * already populated (a fetch beat us to it) are left alone. Hydrated
+ * entries carry their original [DashboardPayloadState.Loaded.fetchedAtMillis],
+ * so they render instantly AND count as stale: the screen's
+ * stale-while-revalidate path and [prewarmDashboardManage] refresh them
+ * quietly. Call from the main dispatcher.
+ */
+internal suspend fun hydrateDashboardManageCache(cacheDir: java.io.File) {
+    if (DashboardPayloadCache.hydrationAttempted) return
+    DashboardPayloadCache.hydrationAttempted = true
+    val entries = DashboardManageDiskCache.read(cacheDir)
+    entries.forEach { (key, persisted) ->
+        if (key !in DashboardPayloadCache.states && persisted.fetchedAtMillis > 0L) {
+            DashboardPayloadCache.states[key] = persisted.toLoaded()
+        }
+    }
+}
+
+/**
+ * Snapshot every Loaded entry to disk (whole-file rewrite — the payload is
+ * a few KB across all sections/routes). Call after any fetch that lands a
+ * new Loaded entry; concurrent callers serialize on the store's write lock
+ * and the last snapshot wins.
+ */
+internal suspend fun persistDashboardManageCache(cacheDir: java.io.File) {
+    val entries = buildMap {
+        DashboardPayloadCache.states.forEach { (key, state) ->
+            if (state is DashboardPayloadState.Loaded && state.fetchedAtMillis > 0L) {
+                put(key, state.toPersisted())
+            }
+        }
+    }
+    DashboardManageDiskCache.write(cacheDir, entries)
+}
+
+/** Sign-in/out invalidation — wipes the disk mirror alongside the map. */
+internal suspend fun clearDashboardManageDiskCache(cacheDir: java.io.File) {
+    DashboardManageDiskCache.clear(cacheDir)
 }
 
 private fun dashboardPayloadKey(
@@ -182,49 +245,9 @@ private fun dashboardPayloadKey(
     sectionPath: String,
 ): String = "$connectionId|$dashboardUrl|$sectionPath"
 
-private data class DashboardSummaryItem(
-    val id: String = "",
-    val title: String,
-    val subtitle: String? = null,
-    val meta: String? = null,
-    val profile: String? = null,
-    val actions: List<DashboardItemAction> = emptyList(),
-)
-
-private data class DashboardItemAction(
-    val label: String,
-    val kind: DashboardActionKind,
-    val destructive: Boolean = false,
-)
-
-private enum class DashboardActionKind {
-    EnableSkill,
-    DisableSkill,
-    ViewCronRuns,
-    PauseCron,
-    ResumeCron,
-    TriggerCron,
-    DeleteCron,
-    EnableMcp,
-    DisableMcp,
-    TestMcp,
-    RemoveMcp,
-    InstallMcpCatalog,
-    ViewProfileSoul,
-    ActivateProfile,
-    DeleteProfile,
-
-    // Input-backed kinds — intercepted before runAction and routed to a
-    // text-input or model-picker dialog instead of firing immediately.
-    SetEnvKey,
-    EditProfileDescription,
-    SetProfileModel,
-    EditProfileSoul,
-
-    // Direct env actions.
-    RevealEnvKey,
-    ClearEnvKey,
-}
+// DashboardSummaryItem / DashboardItemAction / DashboardActionKind moved to
+// DashboardManageDiskCache.kt (internal + @Serializable) so the payload
+// cache can persist across process death. Same package — usages unchanged.
 
 /** Section-level (not per-item) affordances rendered at the top of a tab. */
 private enum class DashboardSectionAction {
@@ -346,6 +369,10 @@ fun DashboardManagementScreen(
         targetKey: String,
         foreground: Boolean,
         force: Boolean = false,
+        // Shared auth context for background sweeps — skips the 4-call
+        // preamble per section AND the redundant re-record of the same
+        // status snapshot into the connection.
+        preamble: DashboardPreamble? = null,
     ) {
         if (dashboardUrl.isBlank()) {
             if (foreground) {
@@ -377,13 +404,16 @@ fun DashboardManagementScreen(
             val nextState = fetchDashboardSectionState(
                 clientFactory = clientFactory,
                 targetSection = targetSection,
+                preamble = preamble,
             ) { status, session, gatewayTicketAvailable ->
-                connectionViewModel.recordDashboardStatus(
-                    status = status,
-                    session = session,
-                    reachable = status != null,
-                    gatewayTicketAvailable = gatewayTicketAvailable,
-                )
+                if (preamble == null) {
+                    connectionViewModel.recordDashboardStatus(
+                        status = status,
+                        session = session,
+                        reachable = status != null,
+                        gatewayTicketAvailable = gatewayTicketAvailable,
+                    )
+                }
             }
             val latestState = payloadStates[targetKey]
             if (
@@ -395,6 +425,9 @@ fun DashboardManagementScreen(
                 actionMessage = nextState.message
             } else {
                 payloadStates[targetKey] = nextState
+            }
+            if (nextState is DashboardPayloadState.Loaded) {
+                persistDashboardManageCache(context.cacheDir)
             }
         } catch (e: Exception) {
             if (foreground || previousState !is DashboardPayloadState.Loaded) {
@@ -649,6 +682,16 @@ fun DashboardManagementScreen(
         if (loadedState.status?.authRequired == true && loadedState.session?.authenticated != true) {
             return@LaunchedEffect
         }
+        // The visible section just loaded with a verified auth context —
+        // reuse it for the sibling sweep (ticket availability unknown here,
+        // but nothing in a section fetch consumes it) and fan the remaining
+        // sections out concurrently instead of one preamble-laden fetch at
+        // a time.
+        val sharedPreamble = DashboardPreamble(
+            status = loadedState.status,
+            session = loadedState.session,
+            gatewayTicketAvailable = null,
+        )
         managementSections.forEach { prewarmSection ->
             val prewarmKey = payloadKeyFor(prewarmSection)
             if (prewarmKey == payloadKey) return@forEach
@@ -656,11 +699,14 @@ fun DashboardManagementScreen(
             if (existingState !is DashboardPayloadState.Loaded &&
                 existingState !is DashboardPayloadState.Loading
             ) {
-                loadDashboardSection(
-                    targetSection = prewarmSection,
-                    targetKey = prewarmKey,
-                    foreground = false,
-                )
+                launch {
+                    loadDashboardSection(
+                        targetSection = prewarmSection,
+                        targetKey = prewarmKey,
+                        foreground = false,
+                        preamble = sharedPreamble,
+                    )
+                }
             }
         }
     }
@@ -705,6 +751,7 @@ fun DashboardManagementScreen(
                 onSuccess = {
                     payloadStates.clear()
                     refreshingPayloads.clear()
+                    clearDashboardManageDiskCache(context.cacheDir)
                     forceReloadKey = null
                     reloadNonce += 1
                     // Standard voice rides this same cookie session — unlock the
@@ -926,6 +973,9 @@ fun DashboardManagementScreen(
                         connectionViewModel.clearDashboardSession {
                             payloadStates.clear()
                             refreshingPayloads.clear()
+                            scope.launch {
+                                clearDashboardManageDiskCache(context.cacheDir)
+                            }
                             forceReloadKey = null
                             actionMessage = "Dashboard session cleared"
                             reloadNonce += 1
@@ -953,6 +1003,9 @@ fun DashboardManagementScreen(
                 oauthProvider = null
                 payloadStates.clear()
                 refreshingPayloads.clear()
+                scope.launch {
+                    clearDashboardManageDiskCache(context.cacheDir)
+                }
                 forceReloadKey = null
                 actionMessage = "Signed in${session.provider?.let { " with $it" }.orEmpty()}"
                 reloadNonce += 1
@@ -1491,26 +1544,24 @@ private suspend fun <T> withDashboardClient(
 }
 
 /**
- * One full section fetch: status → providers → session → ws-ticket →
- * section payload, summarized into a [DashboardPayloadState]. Shared by the
- * screen's loader and [prewarmDashboardManage]; [recordStatus] receives
- * (status, session, gatewayTicketAvailable) so the screen can mirror the
- * snapshot into the connection record while the pre-warm passes a no-op.
+ * The auth context every section fetch needs: dashboard status (with
+ * provider details merged in when auth is on), the cookie session, and
+ * whether a gateway ws-ticket could be minted. Identical for all 8 sections
+ * of a sweep — fetch it ONCE via [fetchDashboardPreamble] and pass it down.
+ * Re-running it per section used to turn a full Manage load into ~40
+ * sequential round trips (8 sections × 4 preamble calls + payload), which
+ * read as 5–10 seconds of "still loading" over Tailscale.
  */
-private suspend fun fetchDashboardSectionState(
-    clientFactory: () -> DashboardApiClient,
-    targetSection: DashboardManagementSection,
-    recordStatus: (DashboardStatus?, DashboardAuthSession?, Boolean?) -> Unit = { _, _, _ -> },
-): DashboardPayloadState = withDashboardClient(clientFactory) { client ->
-    fetchDashboardSectionStateWith(client, targetSection, recordStatus)
+private class DashboardPreamble(
+    val status: DashboardStatus?,
+    val session: DashboardAuthSession?,
+    val gatewayTicketAvailable: Boolean?,
+) {
+    val signInRequired: Boolean
+        get() = status?.authRequired == true && session?.authenticated != true
 }
 
-/** Core of [fetchDashboardSectionState] against an already-built client. */
-private suspend fun fetchDashboardSectionStateWith(
-    client: DashboardApiClient,
-    targetSection: DashboardManagementSection,
-    recordStatus: (DashboardStatus?, DashboardAuthSession?, Boolean?) -> Unit = { _, _, _ -> },
-): DashboardPayloadState {
+private suspend fun fetchDashboardPreamble(client: DashboardApiClient): DashboardPreamble {
     val probedStatus = client.getStatus().getOrNull()
     val providerDetails = if (probedStatus?.authRequired == true) {
         client.getAuthProviders().getOrNull().orEmpty()
@@ -1535,16 +1586,49 @@ private suspend fun fetchDashboardSectionStateWith(
     } else {
         null
     }
-    recordStatus(status, session, gatewayTicketAvailable)
-    return if (status?.authRequired == true && session?.authenticated != true) {
-        DashboardPayloadState.Error("Dashboard sign-in required", status = status)
+    return DashboardPreamble(status, session, gatewayTicketAvailable)
+}
+
+/**
+ * One full section fetch, summarized into a [DashboardPayloadState]. Shared
+ * by the screen's loader and [prewarmDashboardManage]; [recordStatus]
+ * receives (status, session, gatewayTicketAvailable) so the screen can
+ * mirror the snapshot into the connection record while the pre-warm passes
+ * a no-op. When [preamble] is null the auth context is fetched fresh —
+ * background sweeps should fetch it once and share it.
+ */
+private suspend fun fetchDashboardSectionState(
+    clientFactory: () -> DashboardApiClient,
+    targetSection: DashboardManagementSection,
+    preamble: DashboardPreamble? = null,
+    recordStatus: (DashboardStatus?, DashboardAuthSession?, Boolean?) -> Unit = { _, _, _ -> },
+): DashboardPayloadState = withDashboardClient(clientFactory) { client ->
+    fetchDashboardSectionStateWith(
+        client = client,
+        targetSection = targetSection,
+        preamble = preamble,
+        recordStatus = recordStatus,
+    )
+}
+
+/** Core of [fetchDashboardSectionState] against an already-built client. */
+private suspend fun fetchDashboardSectionStateWith(
+    client: DashboardApiClient,
+    targetSection: DashboardManagementSection,
+    preamble: DashboardPreamble? = null,
+    recordStatus: (DashboardStatus?, DashboardAuthSession?, Boolean?) -> Unit = { _, _, _ -> },
+): DashboardPayloadState {
+    val resolved = preamble ?: fetchDashboardPreamble(client)
+    recordStatus(resolved.status, resolved.session, resolved.gatewayTicketAvailable)
+    return if (resolved.signInRequired) {
+        DashboardPayloadState.Error("Dashboard sign-in required", status = resolved.status)
     } else {
         val result = client.getJsonElement(targetSection.path)
         result.fold(
             onSuccess = { root ->
                 DashboardPayloadState.Loaded(
-                    status = status,
-                    session = session,
+                    status = resolved.status,
+                    session = resolved.session,
                     items = summarize(targetSection, root),
                     rawSummary = summarizeRoot(root),
                     fetchedAtMillis = System.currentTimeMillis(),
@@ -1553,7 +1637,7 @@ private suspend fun fetchDashboardSectionStateWith(
             onFailure = { err ->
                 DashboardPayloadState.Error(
                     message = err.message ?: "Dashboard request failed",
-                    status = status,
+                    status = resolved.status,
                 )
             },
         )
@@ -1561,12 +1645,18 @@ private suspend fun fetchDashboardSectionStateWith(
 }
 
 /**
- * App-start (and route-handoff) pre-warm for the Manage tab. Fills COLD
- * cache keys only — it never overwrites a Loaded entry, never marks
- * anything Loading (so it can't fight the open screen), and never surfaces
- * errors. The first unreachable/unauthenticated fetch aborts the sweep:
- * if the dashboard isn't answering or wants a sign-in, seven more requests
- * won't change that, and the screen's own loader owns error presentation.
+ * App-start (and route-handoff) pre-warm for the Manage tab. Fills cold
+ * cache keys and quietly re-fetches stale ones (disk-hydrated entries from
+ * a previous process land here) — it never replaces a Loaded entry with
+ * anything but a NEWER Loaded, never marks anything Loading (so it can't
+ * fight the open screen), and never surfaces errors. An unreachable or
+ * unauthenticated preamble aborts the whole sweep: if the dashboard isn't
+ * answering or wants a sign-in, eight more requests won't change that, and
+ * the screen's own loader owns error presentation.
+ *
+ * The auth preamble is fetched ONCE and the per-section payload GETs run
+ * concurrently over one client — the first iteration re-ran the preamble
+ * per section, sequentially: ~40 round trips ≈ 5–10s over Tailscale.
  *
  * Called from RelayApp when the active connection's persisted snapshot says
  * the dashboard was reachable and signed-in (or auth-free), so a cold app
@@ -1576,15 +1666,21 @@ internal suspend fun prewarmDashboardManage(
     cookieStore: DashboardCookieStore,
     connectionId: String,
     dashboardUrl: String,
+    /** When non-null, the sweep's results are mirrored to the disk cache. */
+    cacheDir: java.io.File? = null,
 ) {
     if (dashboardUrl.isBlank()) return
-    val coldSections = managementSections.filter { targetSection ->
+    fun needsWarm(targetSection: DashboardManagementSection): Boolean {
         val key = dashboardPayloadKey(connectionId, dashboardUrl, targetSection.path)
-        val existing = DashboardPayloadCache.states[key]
-        existing !is DashboardPayloadState.Loaded &&
-            existing !is DashboardPayloadState.Loading
+        return when (val existing = DashboardPayloadCache.states[key]) {
+            is DashboardPayloadState.Loading -> false
+            is DashboardPayloadState.Loaded ->
+                System.currentTimeMillis() - existing.fetchedAtMillis >=
+                    DashboardPayloadCache.FRESH_WINDOW_MS
+            else -> true
+        }
     }
-    if (coldSections.isEmpty()) return
+    if (managementSections.none(::needsWarm)) return
     // ONE client (and the caller's ONE shared cookie store) for the whole
     // sweep. The first iteration of this function built a fresh client +
     // encrypted cookie store per section: 8 Keystore keyset builds, each
@@ -1597,26 +1693,42 @@ internal suspend fun prewarmDashboardManage(
         )
     }
     try {
-        for (targetSection in coldSections) {
-            val key = dashboardPayloadKey(connectionId, dashboardUrl, targetSection.path)
-            val existing = DashboardPayloadCache.states[key]
-            if (existing is DashboardPayloadState.Loaded ||
-                existing is DashboardPayloadState.Loading
-            ) {
-                continue
+        val preamble = try {
+            fetchDashboardPreamble(client)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return
+        }
+        if (preamble.status == null || preamble.signInRequired) return
+        kotlinx.coroutines.coroutineScope {
+            managementSections.filter(::needsWarm).forEach { targetSection ->
+                launch {
+                    val key = dashboardPayloadKey(
+                        connectionId,
+                        dashboardUrl,
+                        targetSection.path,
+                    )
+                    if (!needsWarm(targetSection)) return@launch
+                    val state = try {
+                        fetchDashboardSectionStateWith(
+                            client = client,
+                            targetSection = targetSection,
+                            preamble = preamble,
+                        )
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        null
+                    }
+                    if (state is DashboardPayloadState.Loaded) {
+                        DashboardPayloadCache.states[key] = state
+                    }
+                }
             }
-            val state = try {
-                fetchDashboardSectionStateWith(client, targetSection)
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                null
-            }
-            if (state is DashboardPayloadState.Loaded) {
-                DashboardPayloadCache.states[key] = state
-            } else {
-                break
-            }
+        }
+        if (cacheDir != null) {
+            persistDashboardManageCache(cacheDir)
         }
     } finally {
         withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
