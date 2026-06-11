@@ -49,7 +49,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -795,7 +794,6 @@ fun RelayApp() {
         // debounces resolver flaps during startup (each key change cancels
         // the previous run). The pre-warm itself only fills cold keys.
         val effectiveDashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
-        val prewarmContext = LocalContext.current.applicationContext
         LaunchedEffect(activeConnection?.id, effectiveDashboardUrl) {
             val connection = activeConnection ?: return@LaunchedEffect
             if (effectiveDashboardUrl.isBlank()) return@LaunchedEffect
@@ -804,8 +802,13 @@ fun RelayApp() {
                 (snapshot.authRequired == false || snapshot.authenticated == true)
             if (!dashboardUsable) return@LaunchedEffect
             delay(1_500L)
+            // The VM's cached per-connection store — the prewarm must NOT
+            // construct its own (each instance lazily pays a multi-second
+            // Keystore keyset build under a process-global Tink lock).
+            val cookieStore = connectionViewModel.activeDashboardCookieStore()
+                ?: return@LaunchedEffect
             prewarmDashboardManage(
-                context = prewarmContext,
+                cookieStore = cookieStore,
                 connectionId = connection.id,
                 dashboardUrl = effectiveDashboardUrl,
             )

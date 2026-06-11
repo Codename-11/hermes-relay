@@ -92,6 +92,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.hermesandroid.relay.network.EncryptedDashboardCookieStore
 import com.hermesandroid.relay.network.DashboardApiClient
+import com.hermesandroid.relay.network.DashboardCookieStore
 import com.hermesandroid.relay.network.DashboardAuthProvider
 import com.hermesandroid.relay.network.DashboardAuthSession
 import com.hermesandroid.relay.network.DashboardStatus
@@ -318,10 +319,15 @@ fun DashboardManagementScreen(
     }
     val cookieStoreFactory = remember(context, connectionId) {
         {
-            EncryptedDashboardCookieStore(
-                context = context,
-                connectionId = connectionId,
-            )
+            // Prefer the VM's per-connection cached store — one Keystore
+            // keyset build per connection per process instead of one per
+            // client construction (each build holds a global Tink lock for
+            // seconds on StrongBox devices).
+            connectionViewModel.activeDashboardCookieStore()
+                ?: EncryptedDashboardCookieStore(
+                    context = context,
+                    connectionId = connectionId,
+                )
         }
     }
     val clientFactory = remember(dashboardUrl, cookieStoreFactory) {
@@ -1496,6 +1502,15 @@ private suspend fun fetchDashboardSectionState(
     targetSection: DashboardManagementSection,
     recordStatus: (DashboardStatus?, DashboardAuthSession?, Boolean?) -> Unit = { _, _, _ -> },
 ): DashboardPayloadState = withDashboardClient(clientFactory) { client ->
+    fetchDashboardSectionStateWith(client, targetSection, recordStatus)
+}
+
+/** Core of [fetchDashboardSectionState] against an already-built client. */
+private suspend fun fetchDashboardSectionStateWith(
+    client: DashboardApiClient,
+    targetSection: DashboardManagementSection,
+    recordStatus: (DashboardStatus?, DashboardAuthSession?, Boolean?) -> Unit = { _, _, _ -> },
+): DashboardPayloadState {
     val probedStatus = client.getStatus().getOrNull()
     val providerDetails = if (probedStatus?.authRequired == true) {
         client.getAuthProviders().getOrNull().orEmpty()
@@ -1521,7 +1536,7 @@ private suspend fun fetchDashboardSectionState(
         null
     }
     recordStatus(status, session, gatewayTicketAvailable)
-    if (status?.authRequired == true && session?.authenticated != true) {
+    return if (status?.authRequired == true && session?.authenticated != true) {
         DashboardPayloadState.Error("Dashboard sign-in required", status = status)
     } else {
         val result = client.getJsonElement(targetSection.path)
@@ -1558,41 +1573,54 @@ private suspend fun fetchDashboardSectionState(
  * start lands on an already-populated Manage tab.
  */
 internal suspend fun prewarmDashboardManage(
-    context: android.content.Context,
+    cookieStore: DashboardCookieStore,
     connectionId: String,
     dashboardUrl: String,
 ) {
     if (dashboardUrl.isBlank()) return
-    val clientFactory = {
-        DashboardApiClient(
-            baseUrl = dashboardUrl,
-            okHttpClient = DashboardApiClient.defaultClient(
-                cookieStore = EncryptedDashboardCookieStore(
-                    context = context,
-                    connectionId = connectionId,
-                ),
-            ),
-        )
-    }
-    for (targetSection in managementSections) {
+    val coldSections = managementSections.filter { targetSection ->
         val key = dashboardPayloadKey(connectionId, dashboardUrl, targetSection.path)
         val existing = DashboardPayloadCache.states[key]
-        if (existing is DashboardPayloadState.Loaded ||
-            existing is DashboardPayloadState.Loading
-        ) {
-            continue
+        existing !is DashboardPayloadState.Loaded &&
+            existing !is DashboardPayloadState.Loading
+    }
+    if (coldSections.isEmpty()) return
+    // ONE client (and the caller's ONE shared cookie store) for the whole
+    // sweep. The first iteration of this function built a fresh client +
+    // encrypted cookie store per section: 8 Keystore keyset builds, each
+    // holding Tink's process-global lock for seconds on StrongBox devices,
+    // which starved main-thread keystore users and froze the UI at startup.
+    val client = withContext(Dispatchers.IO) {
+        DashboardApiClient(
+            baseUrl = dashboardUrl,
+            okHttpClient = DashboardApiClient.defaultClient(cookieStore = cookieStore),
+        )
+    }
+    try {
+        for (targetSection in coldSections) {
+            val key = dashboardPayloadKey(connectionId, dashboardUrl, targetSection.path)
+            val existing = DashboardPayloadCache.states[key]
+            if (existing is DashboardPayloadState.Loaded ||
+                existing is DashboardPayloadState.Loading
+            ) {
+                continue
+            }
+            val state = try {
+                fetchDashboardSectionStateWith(client, targetSection)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+            if (state is DashboardPayloadState.Loaded) {
+                DashboardPayloadCache.states[key] = state
+            } else {
+                break
+            }
         }
-        val state = try {
-            fetchDashboardSectionState(clientFactory, targetSection)
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            null
-        }
-        if (state is DashboardPayloadState.Loaded) {
-            DashboardPayloadCache.states[key] = state
-        } else {
-            break
+    } finally {
+        withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
+            client.shutdown()
         }
     }
 }
@@ -2063,7 +2091,7 @@ private fun DashboardSignInCard(
 private fun DashboardOAuthSignInDialog(
     dashboardUrl: String,
     provider: DashboardAuthProvider,
-    cookieStoreFactory: () -> EncryptedDashboardCookieStore,
+    cookieStoreFactory: () -> DashboardCookieStore,
     onDismiss: () -> Unit,
     onAuthenticated: (DashboardAuthSession) -> Unit,
     onError: (String) -> Unit,
