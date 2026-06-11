@@ -538,6 +538,10 @@ private fun ConnectionCard(
                     var preferredRole by remember(connection.id) {
                         mutableStateOf(activeConnectionViewModel.getPreferredEndpointRole())
                     }
+                    var routeEditorOpen by remember(connection.id) { mutableStateOf(false) }
+                    var routeEditorOriginal by remember(connection.id) {
+                        mutableStateOf<EndpointCandidate?>(null)
+                    }
                     val hasTailscaleRoute = endpoints.any {
                         it.role.equals("tailscale", ignoreCase = true)
                     }
@@ -622,6 +626,48 @@ private fun ConnectionCard(
                             }
                         }
                     }
+                    if (isTailscaleDetected && !hasTailscaleRoute) {
+                        // Inverse of the hint above: the phone is on Tailscale
+                        // but this connection has nothing to roam to. This is
+                        // the strongest signal a user wants remote access and
+                        // simply never configured it — offer the route editor
+                        // directly instead of hoping they find Show routes.
+                        Surface(
+                            color = MaterialTheme.colorScheme.tertiaryContainer,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Text(
+                                    text = "Phone is on Tailscale — no Tailscale route yet",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                )
+                                Text(
+                                    text = "Add your server's Tailscale URL so Hermes " +
+                                        "keeps working when this phone leaves the " +
+                                        "server's network.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                )
+                                TextButton(
+                                    onClick = {
+                                        routeEditorOriginal = null
+                                        routeEditorOpen = true
+                                    },
+                                    contentPadding =
+                                        androidx.compose.foundation.layout.PaddingValues(
+                                            horizontal = 0.dp,
+                                        ),
+                                ) {
+                                    Text("Add Tailscale route")
+                                }
+                            }
+                        }
+                    }
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -663,10 +709,6 @@ private fun ConnectionCard(
                         }
                     }
                     if (endpointsExpanded) {
-                        var routeEditorOpen by remember { mutableStateOf(false) }
-                        var routeEditorOriginal by remember {
-                            mutableStateOf<EndpointCandidate?>(null)
-                        }
                         EndpointsCard(
                             endpoints = endpoints,
                             activeEndpoint = activeEndpoint,
@@ -695,20 +737,23 @@ private fun ConnectionCard(
                                 activeConnectionViewModel.removeExtraRoute(candidate)
                             },
                         )
-                        if (routeEditorOpen) {
-                            RouteEditorDialog(
-                                original = routeEditorOriginal,
-                                onSave = { role, apiUrl, onResult ->
-                                    activeConnectionViewModel.saveExtraRoute(
-                                        role = role,
-                                        apiUrl = apiUrl,
-                                        original = routeEditorOriginal,
-                                        onResult = onResult,
-                                    )
-                                },
-                                onDismiss = { routeEditorOpen = false },
-                            )
-                        }
+                    }
+                    // Rendered outside the routes expander so the "Add
+                    // Tailscale route" nudge above can open it while the
+                    // routes list is collapsed.
+                    if (routeEditorOpen) {
+                        RouteEditorDialog(
+                            original = routeEditorOriginal,
+                            onSave = { role, apiUrl, onResult ->
+                                activeConnectionViewModel.saveExtraRoute(
+                                    role = role,
+                                    apiUrl = apiUrl,
+                                    original = routeEditorOriginal,
+                                    onResult = onResult,
+                                )
+                            },
+                            onDismiss = { routeEditorOpen = false },
+                        )
                     }
                 }
 

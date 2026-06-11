@@ -480,6 +480,7 @@ fun ConnectionWizard(
                     onBack = { step = WizardStep.Method },
                     onComplete = onComplete,
                     onManageSignIn = onManageSignIn,
+                    isTailscaleDetected = isTailscaleDetected,
                     onSubmit = {
                         launchStandardConnect(
                             standardApiUrl,
@@ -1192,6 +1193,7 @@ private fun StandardEntryStep(
     onBack: () -> Unit,
     onComplete: () -> Unit,
     onManageSignIn: (() -> Unit)?,
+    isTailscaleDetected: Boolean = false,
     onSubmit: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -1373,6 +1375,35 @@ private fun StandardEntryStep(
             modifier = Modifier.fillMaxWidth(),
         )
 
+        // Remote access is part of the main form, not Advanced: the one URL
+        // that decides whether the app works outside the house shouldn't be
+        // an easter egg. Optional — blank simply means LAN-only for now.
+        OutlinedTextField(
+            value = tailscaleApiUrl,
+            onValueChange = onTailscaleApiUrlChange,
+            label = { Text("Remote access — Tailscale URL (optional)") },
+            placeholder = { Text("https://your-host.ts.net:8642") },
+            singleLine = true,
+            isError = tailscaleError != null,
+            supportingText = {
+                Text(
+                    tailscaleError ?: if (isTailscaleDetected) {
+                        "Tailscale detected on this phone — add your server's " +
+                            "Tailscale URL so Hermes keeps working away from home."
+                    } else {
+                        "Lets the phone switch to this URL automatically when it " +
+                            "leaves your server's network. Editable later in " +
+                            "Settings → Connections → Routes."
+                    },
+                )
+            },
+            keyboardOptions = KeyboardOptions(
+                imeAction = ImeAction.Next,
+                autoCorrectEnabled = false,
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        )
+
         Card(
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surfaceVariant,
@@ -1444,27 +1475,6 @@ private fun StandardEntryStep(
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            OutlinedTextField(
-                value = tailscaleApiUrl,
-                onValueChange = onTailscaleApiUrlChange,
-                label = { Text("Tailscale API URL (optional)") },
-                placeholder = { Text("https://your-host.ts.net:8642") },
-                singleLine = true,
-                isError = tailscaleError != null,
-                supportingText = {
-                    Text(
-                        tailscaleError
-                            ?: "Adds automatic LAN to Tailscale handoff when the phone " +
-                                "leaves home Wi-Fi. Routes can also be added or edited " +
-                                "later in Settings → Connections → Routes."
-                    )
-                },
-                keyboardOptions = KeyboardOptions(
-                    imeAction = ImeAction.Next,
-                    autoCorrectEnabled = false,
-                ),
-                modifier = Modifier.fillMaxWidth(),
-            )
 
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1612,6 +1622,17 @@ private fun StandardSetupResultCard(
                     StandardVoiceAvailability.Unknown -> "Checked after connecting"
                 },
                 ok = result.voiceAvailability == StandardVoiceAvailability.Ready,
+                neutralWhenFalse = true,
+            )
+            ReadinessLine(
+                label = "Remote",
+                detail = if (result.remoteRouteConfigured) {
+                    "Fallback route ready for use away from home"
+                } else {
+                    "LAN only — add a Tailscale or public route in " +
+                        "Settings → Connections → Routes"
+                },
+                ok = result.remoteRouteConfigured,
                 neutralWhenFalse = true,
             )
             ReadinessLine(

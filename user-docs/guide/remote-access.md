@@ -4,10 +4,11 @@ Hermes-Relay can keep one paired phone connected as it moves between LAN, Tailsc
 
 ## What Uses Which Connection
 
-Standard setup saves the API server URL and API key directly. If you also enter
-the host's Tailscale API URL in Standard setup, Android stores both routes and
-uses the highest-priority reachable one. A Relay pairing QR can also carry both
-parts of the app when you enable the optional relay:
+Standard setup saves the API server URL and API key directly. The setup form
+also has a **Remote access — Tailscale URL** field; fill it in and Android
+stores both routes and uses the highest-priority reachable one. A Relay
+pairing QR can also carry both parts of the app when you enable the optional
+relay:
 
 - **Chat and API-backed voice** use the Hermes API server URL and the Hermes API bearer key when one is configured.
 - **Terminal, bridge, TUI, media/session management, clipboard, profile writes, Android control, and relay-token voice fallback** use the relay URL and require a paired relay session token.
@@ -59,6 +60,29 @@ hermes pair --mode auto --prefer tailscale
 ```
 
 You can also override from the phone: **Settings -> Connections -> active connection -> Routes -> Prefer this route**.
+
+## Add or Edit Routes on the Phone
+
+You don't need to re-run setup (or use a QR) to add remote access later.
+Open **Settings -> Connections -> active connection -> Show routes**:
+
+- **Add route** opens an editor with Tailscale / Public / Custom presets and
+  an API URL field. The relay and dashboard URLs are derived from the host
+  automatically.
+- Each fallback route's menu has **Edit route** and **Remove route**. The
+  primary route mirrors the connection's API URL and is edited there instead.
+- When the phone is on Tailscale but the connection has no Tailscale route,
+  the Connections card shows an **Add Tailscale route** shortcut.
+
+Saved routes take effect immediately — the app re-probes and switches without
+a reconnect. The setup result card and the status pill both call out when a
+connection is LAN-only so you know remote access isn't configured yet.
+
+::: tip One sign-in per route
+Dashboard sessions are per-host. The first time Manage or voice runs over a
+new route (for example the Tailscale URL), sign in to Manage once on that
+route; the app keeps both sessions afterwards.
+:::
 
 ## Other Remote Paths
 

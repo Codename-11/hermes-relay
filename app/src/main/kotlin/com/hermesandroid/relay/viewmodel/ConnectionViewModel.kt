@@ -1476,18 +1476,45 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         )
 
         return when {
-            apiHealth == HealthStatus.Unreachable -> ConnectionStatusSnapshot(
-                title = "Hermes API unreachable",
-                route = route,
-                actionLabel = "Connections",
-                tone = ConnectionStatusTone.Warning,
-                entries = listOf(
+            apiHealth == HealthStatus.Unreachable -> {
+                // Diagnose, don't just report: for a single-route connection
+                // the most likely cause is "phone left the server's network
+                // and there's no remote route to roam to" — say so and point
+                // at the fix. Multi-route connections already roam; tell the
+                // user every route was tried instead.
+                val routeCount = activeConnection.routeCandidates.size
+                val routesEntry = if (routeCount <= 1) {
                     ConnectionHandoffTraceEntry(
-                        label = "API",
-                        detail = "Chat and profile calls may not be available",
+                        label = "Routes",
+                        detail = if (tailscaleDetector.isTailscaleDetected.value) {
+                            "Phone is on Tailscale — add your server's Tailscale " +
+                                "URL under Connections → Routes"
+                        } else {
+                            "Away from the server's network? Add a Tailscale or " +
+                                "public route under Connections → Routes"
+                        },
+                    )
+                } else {
+                    ConnectionHandoffTraceEntry(
+                        label = "Routes",
+                        detail = "None of the $routeCount configured routes " +
+                            "responded — fallbacks are retried automatically",
+                    )
+                }
+                ConnectionStatusSnapshot(
+                    title = "Hermes API unreachable",
+                    route = route,
+                    actionLabel = "Connections",
+                    tone = ConnectionStatusTone.Warning,
+                    entries = listOf(
+                        ConnectionHandoffTraceEntry(
+                            label = "API",
+                            detail = "Chat and profile calls may not be available",
+                        ),
+                        routesEntry,
                     ),
-                ),
-            )
+                )
+            }
 
             relayRow.phase == RelayUiState.Connecting &&
                 apiHealth != HealthStatus.Reachable -> ConnectionStatusSnapshot(
@@ -3247,6 +3274,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         /** Standard (dashboard-surface) voice readiness, probed in the same pass. */
         val voiceAvailability: StandardVoiceAvailability = StandardVoiceAvailability.Unknown,
         val relayPaired: Boolean = false,
+        /**
+         * True when the saved connection has at least one fallback route
+         * (priority > 0 — Tailscale, public, custom VPN). Drives the setup
+         * result card's "Remote" readiness line so a LAN-only connection is
+         * called out at the moment of maximum user attention, not discovered
+         * the first time the phone leaves home.
+         */
+        val remoteRouteConfigured: Boolean = false,
     )
 
     fun recordDashboardStatus(
@@ -3556,6 +3591,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     dashboardAuthenticated = dashboardAuthenticated,
                     voiceAvailability = voiceAvailability,
                     relayPaired = authState.value is AuthState.Paired,
+                    remoteRouteConfigured = routeCandidates.any { it.priority > 0 },
                 ),
             )
         }
