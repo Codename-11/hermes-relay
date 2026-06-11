@@ -181,6 +181,7 @@ private enum class DashboardActionKind {
     SetEnvKey,
     EditProfileDescription,
     SetProfileModel,
+    EditProfileSoul,
 
     // Direct env actions.
     RevealEnvKey,
@@ -191,7 +192,16 @@ private enum class DashboardActionKind {
 private enum class DashboardSectionAction {
     ChangeMainModel,
     CreateProfile,
+    BrowseSkillsHub,
+    UpdateSkillsHub,
 }
+
+/** Editor session for a profile's SOUL.md — content is the FULL file from GET. */
+private data class SoulEditorState(
+    val profileName: String,
+    val initialContent: String,
+    val exists: Boolean,
+)
 
 /** Which config slot a model-picker selection writes to. */
 private sealed interface ModelPickerTarget {
@@ -239,6 +249,8 @@ fun DashboardManagementScreen(
     var modelPickerTarget by remember { mutableStateOf<ModelPickerTarget?>(null) }
     var showCreateProfile by remember { mutableStateOf(false) }
     var expensiveModelConfirm by remember { mutableStateOf<ExpensiveModelConfirm?>(null) }
+    var showSkillsHub by remember { mutableStateOf(false) }
+    var soulEditor by remember { mutableStateOf<SoulEditorState?>(null) }
 
     val section = managementSections[selectedTab]
     val connectionId = activeConnection?.id ?: "default"
@@ -501,6 +513,76 @@ fun DashboardManagementScreen(
                     }
                 },
                 onFailure = { err -> actionMessage = err.message ?: "Model change failed" },
+            )
+            actionInFlight = false
+        }
+    }
+
+    fun openSoulEditor(item: DashboardSummaryItem) {
+        if (dashboardUrl.isBlank() || actionInFlight) return
+        actionInFlight = true
+        actionMessage = null
+        scope.launch {
+            val profileName = item.id.ifBlank { item.title }
+            val result = try {
+                withDashboardClient(clientFactory) { client -> client.getProfileSoul(profileName) }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+            result.fold(
+                onSuccess = { root ->
+                    soulEditor = SoulEditorState(
+                        profileName = profileName,
+                        initialContent = root.stringField("content").orEmpty(),
+                        exists = root.booleanField("exists") != false,
+                    )
+                },
+                onFailure = { err ->
+                    actionMessage = err.message ?: "Could not load SOUL.md"
+                },
+            )
+            actionInFlight = false
+        }
+    }
+
+    fun saveSoul(profileName: String, content: String) {
+        if (dashboardUrl.isBlank() || actionInFlight) return
+        actionInFlight = true
+        actionMessage = null
+        scope.launch {
+            val result = try {
+                withDashboardClient(clientFactory) { client ->
+                    client.putProfileSoul(profileName, content)
+                }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+            actionMessage = result.fold(
+                onSuccess = {
+                    soulEditor = null
+                    "SOUL.md saved for $profileName"
+                },
+                onFailure = { err -> err.message ?: "SOUL.md save failed" },
+            )
+            actionInFlight = false
+        }
+    }
+
+    fun runUpdateSkillsHub() {
+        if (dashboardUrl.isBlank() || actionInFlight) return
+        actionInFlight = true
+        actionMessage = null
+        scope.launch {
+            val result = try {
+                withDashboardClient(clientFactory) { client -> client.updateSkillsHub() }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+            actionMessage = result.fold(
+                // The server spawns `hermes skills update` and returns
+                // immediately — completion lands in the skills list later.
+                onSuccess = { "Skill update started on the server — refresh Skills in a minute" },
+                onFailure = { err -> err.message ?: "Skill update failed to start" },
             )
             actionInFlight = false
         }
@@ -798,6 +880,24 @@ fun DashboardManagementScreen(
         )
     }
 
+    soulEditor?.let { editor ->
+        SoulEditorDialog(
+            editor = editor,
+            saving = actionInFlight,
+            onSave = { content -> saveSoul(editor.profileName, content) },
+            onDismiss = { soulEditor = null },
+        )
+    }
+
+    if (showSkillsHub) {
+        SkillsHubDialog(
+            clientFactory = clientFactory,
+            onPreview = { detail -> detailResult = detail },
+            onMessage = { message -> actionMessage = message },
+            onDismiss = { showSkillsHub = false },
+        )
+    }
+
     if (confirmClearDashboardSession) {
         AlertDialog(
             onDismissRequest = { confirmClearDashboardSession = false },
@@ -981,6 +1081,8 @@ fun DashboardManagementScreen(
                                                 modelPickerTarget = ModelPickerTarget.Profile(
                                                     item.id.ifBlank { item.title },
                                                 )
+                                            DashboardActionKind.EditProfileSoul ->
+                                                openSoulEditor(item)
                                             else -> if (action.destructive) {
                                                 pendingAction = PendingDashboardAction(item, action)
                                             } else {
@@ -994,6 +1096,10 @@ fun DashboardManagementScreen(
                                                 modelPickerTarget = ModelPickerTarget.Main
                                             DashboardSectionAction.CreateProfile ->
                                                 showCreateProfile = true
+                                            DashboardSectionAction.BrowseSkillsHub ->
+                                                showSkillsHub = true
+                                            DashboardSectionAction.UpdateSkillsHub ->
+                                                runUpdateSkillsHub()
                                         }
                                     },
                                 )
@@ -1488,6 +1594,10 @@ private fun LoadedBody(
         val sectionActions = when (section.label) {
             "Models" -> listOf(DashboardSectionAction.ChangeMainModel to "Change main model")
             "Profiles" -> listOf(DashboardSectionAction.CreateProfile to "New profile")
+            "Skills" -> listOf(
+                DashboardSectionAction.BrowseSkillsHub to "Browse hub",
+                DashboardSectionAction.UpdateSkillsHub to "Update installed",
+            )
             else -> emptyList()
         }
         if (sectionActions.isNotEmpty()) {
@@ -2044,6 +2154,345 @@ private fun ModelPickerDialog(
     )
 }
 
+private data class SkillHubResult(
+    val identifier: String,
+    val name: String,
+    val description: String?,
+    val source: String?,
+    val trustLevel: String?,
+    val tags: List<String>,
+    /** Installed-skill name from the server's lock file; null when not installed. */
+    val installedName: String?,
+)
+
+private fun parseSkillHubSearch(root: JsonObject): List<SkillHubResult> {
+    val installed = root["installed"] as? JsonObject ?: JsonObject(emptyMap())
+    val results = root["results"] as? JsonArray ?: return emptyList()
+    return results.mapNotNull { element ->
+        val obj = element as? JsonObject ?: return@mapNotNull null
+        val identifier = obj.stringField("identifier") ?: return@mapNotNull null
+        val lockEntry = installed[identifier] as? JsonObject
+        SkillHubResult(
+            identifier = identifier,
+            name = obj.stringField("name") ?: identifier,
+            description = obj.stringField("description"),
+            source = obj.stringField("source"),
+            trustLevel = obj.stringField("trust_level"),
+            tags = (obj["tags"] as? JsonArray)
+                ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+                .orEmpty(),
+            installedName = lockEntry?.stringField("name")
+                ?: if (installed.containsKey(identifier)) obj.stringField("name") else null,
+        )
+    }
+}
+
+/**
+ * Browse-hub parity with hermes-desktop's Skills tab: multi-source search,
+ * SKILL.md preview before install, async install/uninstall. Installs spawn
+ * `hermes skills install` on the server and return immediately — rows flip
+ * to a "started" state and the Skills list reflects reality after a refresh.
+ */
+@Composable
+private fun SkillsHubDialog(
+    clientFactory: () -> DashboardApiClient,
+    onPreview: (DashboardDetailResult) -> Unit,
+    onMessage: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var query by remember { mutableStateOf("") }
+    var searching by remember { mutableStateOf(false) }
+    var searched by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var results by remember { mutableStateOf<List<SkillHubResult>>(emptyList()) }
+    var busyIdentifiers by remember { mutableStateOf(setOf<String>()) }
+
+    fun runSearch() {
+        val term = query.trim()
+        if (term.isBlank() || searching) return
+        searching = true
+        error = null
+        scope.launch {
+            val result = try {
+                withDashboardClient(clientFactory) { client -> client.searchSkillsHub(term) }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+            result.fold(
+                onSuccess = { root ->
+                    results = parseSkillHubSearch(root)
+                    searched = true
+                },
+                onFailure = { err -> error = err.message ?: "Hub search failed" },
+            )
+            searching = false
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 620.dp),
+            shape = RoundedCornerShape(16.dp),
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text("Skills hub", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    text = "Search the configured hub sources. Preview reads the " +
+                        "SKILL.md before anything is installed.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        label = { Text("Search skills") },
+                    )
+                    Button(onClick = { runSearch() }, enabled = !searching && query.isNotBlank()) {
+                        Text("Search")
+                    }
+                }
+                if (searching) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    Text(
+                        text = "Searching hub sources (can take up to ~30s)...",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                error?.let { message ->
+                    Text(
+                        text = message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                if (searched && !searching && results.isEmpty() && error == null) {
+                    Text(
+                        text = "No skills matched \"${query.trim()}\".",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                LazyColumn(
+                    modifier = Modifier.weight(1f, fill = false),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    items(results, key = { it.identifier }) { result ->
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                text = result.name,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            result.description?.let { description ->
+                                Text(
+                                    text = description,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            Text(
+                                text = listOfNotNull(
+                                    result.source,
+                                    result.trustLevel,
+                                    result.tags.take(3).joinToString(", ").takeIf { it.isNotBlank() },
+                                    "installed".takeIf { result.installedName != null },
+                                ).joinToString(" · "),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontFamily = FontFamily.Monospace,
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                val busy = result.identifier in busyIdentifiers
+                                OutlinedButton(
+                                    onClick = {
+                                        busyIdentifiers = busyIdentifiers + result.identifier
+                                        scope.launch {
+                                            val previewResult = try {
+                                                withDashboardClient(clientFactory) { client ->
+                                                    client.previewSkillsHub(result.identifier)
+                                                }
+                                            } catch (e: Exception) {
+                                                Result.failure(e)
+                                            }
+                                            busyIdentifiers = busyIdentifiers - result.identifier
+                                            previewResult.fold(
+                                                onSuccess = { root ->
+                                                    val body = root.stringField("skill_md")
+                                                        ?: root.stringField("content")
+                                                        ?: compactJsonLines(root)
+                                                    onPreview(
+                                                        DashboardDetailResult(
+                                                            title = "${result.name} · SKILL.md",
+                                                            body = body.take(6_000),
+                                                        ),
+                                                    )
+                                                },
+                                                onFailure = { err ->
+                                                    onMessage(err.message ?: "Preview failed")
+                                                },
+                                            )
+                                        }
+                                    },
+                                    enabled = !busy,
+                                ) { Text("Preview") }
+                                if (result.installedName != null) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            busyIdentifiers = busyIdentifiers + result.identifier
+                                            scope.launch {
+                                                val uninstall = try {
+                                                    withDashboardClient(clientFactory) { client ->
+                                                        client.uninstallSkillsHub(result.installedName)
+                                                    }
+                                                } catch (e: Exception) {
+                                                    Result.failure(e)
+                                                }
+                                                busyIdentifiers = busyIdentifiers - result.identifier
+                                                onMessage(
+                                                    uninstall.fold(
+                                                        onSuccess = {
+                                                            "Uninstall of ${result.installedName} started — refresh Skills shortly"
+                                                        },
+                                                        onFailure = { err ->
+                                                            err.message ?: "Uninstall failed to start"
+                                                        },
+                                                    ),
+                                                )
+                                            }
+                                        },
+                                        enabled = !busy,
+                                    ) { Text("Uninstall") }
+                                } else {
+                                    Button(
+                                        onClick = {
+                                            busyIdentifiers = busyIdentifiers + result.identifier
+                                            scope.launch {
+                                                val install = try {
+                                                    withDashboardClient(clientFactory) { client ->
+                                                        client.installSkillsHub(result.identifier)
+                                                    }
+                                                } catch (e: Exception) {
+                                                    Result.failure(e)
+                                                }
+                                                // Keep the row busy on success — install runs
+                                                // server-side; re-enabling would invite doubles.
+                                                if (install.isFailure) {
+                                                    busyIdentifiers = busyIdentifiers - result.identifier
+                                                }
+                                                onMessage(
+                                                    install.fold(
+                                                        onSuccess = {
+                                                            "Install of ${result.name} started — refresh Skills shortly"
+                                                        },
+                                                        onFailure = { err ->
+                                                            err.message ?: "Install failed to start"
+                                                        },
+                                                    ),
+                                                )
+                                            }
+                                        },
+                                        enabled = !busy,
+                                    ) { Text("Install") }
+                                }
+                            }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onDismiss) { Text("Close") }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Full-file SOUL.md editor. The dashboard GET returns the complete file (no
+ * truncation), so saving the edited buffer back is a lossless round-trip.
+ */
+@Composable
+private fun SoulEditorDialog(
+    editor: SoulEditorState,
+    saving: Boolean,
+    onSave: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var content by remember(editor) { mutableStateOf(editor.initialContent) }
+    Dialog(onDismissRequest = { if (!saving) onDismiss() }) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 360.dp, max = 640.dp),
+            shape = RoundedCornerShape(16.dp),
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = "SOUL.md · ${editor.profileName}",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                if (!editor.exists) {
+                    Text(
+                        text = "No SOUL.md exists for this profile yet — saving creates it.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                OutlinedTextField(
+                    value = content,
+                    onValueChange = { content = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    textStyle = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = FontFamily.Monospace,
+                    ),
+                    enabled = !saving,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "${content.length} chars",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = onDismiss, enabled = !saving) { Text("Cancel") }
+                        Button(onClick = { onSave(content) }, enabled = !saving) {
+                            Text(if (saving) "Saving..." else "Save")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 private fun summarize(
     section: DashboardManagementSection,
     root: JsonElement,
@@ -2208,6 +2657,7 @@ private fun dashboardActionsFor(obj: JsonObject): List<DashboardItemAction> {
             add(DashboardItemAction("SOUL", DashboardActionKind.ViewProfileSoul))
             val name = obj.stringField("name").orEmpty()
             if (name.isNotBlank()) {
+                add(DashboardItemAction("Edit SOUL", DashboardActionKind.EditProfileSoul))
                 add(DashboardItemAction("Use", DashboardActionKind.ActivateProfile))
                 add(DashboardItemAction("Describe", DashboardActionKind.EditProfileDescription))
                 add(DashboardItemAction("Model", DashboardActionKind.SetProfileModel))
@@ -2309,7 +2759,8 @@ private fun DashboardSummaryItem.optimisticAfter(action: DashboardItemAction): D
         DashboardActionKind.SetEnvKey,
         DashboardActionKind.RevealEnvKey,
         DashboardActionKind.EditProfileDescription,
-        DashboardActionKind.SetProfileModel -> this
+        DashboardActionKind.SetProfileModel,
+        DashboardActionKind.EditProfileSoul -> this
     }
 }
 
@@ -2436,7 +2887,8 @@ private suspend fun DashboardApiClient.runDashboardAction(
         // to dialogs; reaching here means a wiring bug, not a server problem.
         DashboardActionKind.SetEnvKey,
         DashboardActionKind.EditProfileDescription,
-        DashboardActionKind.SetProfileModel ->
+        DashboardActionKind.SetProfileModel,
+        DashboardActionKind.EditProfileSoul ->
             Result.failure(IllegalStateException("${action.label} requires input"))
     }
 }

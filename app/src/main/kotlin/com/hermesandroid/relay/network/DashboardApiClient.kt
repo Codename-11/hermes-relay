@@ -208,7 +208,52 @@ class DashboardApiClient(
             payload = buildJsonObject { put("key", key) },
         )
 
+    // --- Skills hub (dashboard parity with hermes-desktop Browse-hub tab) ---
+
+    /**
+     * Parallel multi-source hub search. Response carries `results` (name /
+     * description / source / identifier / trust_level / repo / tags),
+     * `source_counts`, `timed_out`, and `installed` (identifier → lock entry)
+     * so already-installed results can be marked. Server caps limit at 50 and
+     * fans out with a 30s overall timeout — keep client read timeouts above that.
+     */
+    suspend fun searchSkillsHub(query: String, limit: Int = 20): Result<JsonObject> =
+        getJsonObject("/api/skills/hub/search?q=${queryValue(query)}&limit=${limit.coerceIn(1, 50)}")
+
+    /** SKILL.md + manifest for an identifier WITHOUT installing — read before you trust. */
+    suspend fun previewSkillsHub(identifier: String): Result<JsonObject> =
+        getJsonObject("/api/skills/hub/preview?identifier=${queryValue(identifier)}")
+
+    /**
+     * Spawns `hermes skills install <identifier>` server-side and returns
+     * `{ok, pid}` immediately — the install completes in the background, so
+     * callers should message "started" and refresh the skills list later.
+     */
+    suspend fun installSkillsHub(identifier: String): Result<JsonObject> =
+        postJsonObject(
+            path = "/api/skills/hub/install",
+            payload = buildJsonObject { put("identifier", identifier) },
+        )
+
+    /** Async spawn like install; takes the installed skill *name*, not the hub identifier. */
+    suspend fun uninstallSkillsHub(name: String): Result<JsonObject> =
+        postJsonObject(
+            path = "/api/skills/hub/uninstall",
+            payload = buildJsonObject { put("name", name) },
+        )
+
+    /** Async spawn of `hermes skills update` for all hub-installed skills. */
+    suspend fun updateSkillsHub(): Result<JsonObject> =
+        postJsonObject("/api/skills/hub/update")
+
     // --- Profiles (write surface) ---
+
+    /** Full SOUL.md text — upstream returns the complete file, safe for round-trip editing. */
+    suspend fun putProfileSoul(name: String, content: String): Result<JsonObject> =
+        putJsonObject(
+            path = "/api/profiles/${pathSegment(name)}/soul",
+            payload = buildJsonObject { put("content", content) },
+        )
 
     suspend fun createProfile(
         name: String,
@@ -501,7 +546,10 @@ class DashboardApiClient(
         ): OkHttpClient = OkHttpClient.Builder()
             .cookieJar(DashboardCookieJar(cookieStore))
             .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
+            // Skills-hub search fans out server-side with a 30s overall
+            // timeout; keep the read window above it so a slow-but-successful
+            // search doesn't die client-side at the edge.
+            .readTimeout(45, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
             .build()
 
