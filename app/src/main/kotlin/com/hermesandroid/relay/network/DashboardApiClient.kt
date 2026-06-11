@@ -142,6 +142,107 @@ class DashboardApiClient(
         executeJson(request, normalized)
     }
 
+    /** DELETE with a JSON body — upstream's `DELETE /api/env` reads the key from the body. */
+    suspend fun deleteJsonObjectWithBody(
+        path: String,
+        payload: JsonObject,
+    ): Result<JsonObject> = withContext(Dispatchers.IO) {
+        val normalized = if (path.startsWith("/")) path else "/$path"
+        val request = Request.Builder()
+            .url("$baseUrl$normalized")
+            .delete(json.encodeToString(JsonObject.serializer(), payload).toRequestBody(JSON_MEDIA))
+            .build()
+        executeJson(request, normalized)
+    }
+
+    // --- Models (dashboard parity with hermes-desktop Settings → Model) ---
+
+    /** Full provider/model universe — REST twin of the TUI's `model.options` RPC. */
+    suspend fun getModelOptions(): Result<JsonObject> = getJsonObject("/api/model/options")
+
+    /**
+     * Assign the main model in `~/.hermes/config.yaml` (new sessions only).
+     * Upstream may answer `{ok: false, confirm_required: true, warning: ...}`
+     * for expensive models — re-call with [confirmExpensive] after the user
+     * accepts the warning.
+     */
+    suspend fun setMainModel(
+        provider: String,
+        model: String,
+        confirmExpensive: Boolean = false,
+    ): Result<JsonObject> =
+        postJsonObject(
+            path = "/api/model/set",
+            payload = buildJsonObject {
+                put("scope", "main")
+                put("provider", provider)
+                put("model", model)
+                if (confirmExpensive) put("confirm_expensive_model", true)
+            },
+        )
+
+    // --- Env / keys (dashboard parity with hermes-desktop Settings → Keys) ---
+
+    /** Curated env-var inventory: name → {is_set, redacted_value, description, category, ...}. */
+    suspend fun getEnvVars(): Result<JsonObject> = getJsonObject("/api/env")
+
+    suspend fun setEnvVar(key: String, value: String): Result<JsonObject> =
+        putJsonObject(
+            path = "/api/env",
+            payload = buildJsonObject {
+                put("key", key)
+                put("value", value)
+            },
+        )
+
+    suspend fun deleteEnvVar(key: String): Result<JsonObject> =
+        deleteJsonObjectWithBody(
+            path = "/api/env",
+            payload = buildJsonObject { put("key", key) },
+        )
+
+    /** Server rate-limits reveals (5 per 30s) and audit-logs each one. */
+    suspend fun revealEnvVar(key: String): Result<JsonObject> =
+        postJsonObject(
+            path = "/api/env/reveal",
+            payload = buildJsonObject { put("key", key) },
+        )
+
+    // --- Profiles (write surface) ---
+
+    suspend fun createProfile(
+        name: String,
+        cloneFromDefault: Boolean = true,
+        description: String? = null,
+    ): Result<JsonObject> =
+        postJsonObject(
+            path = "/api/profiles",
+            payload = buildJsonObject {
+                put("name", name)
+                put("clone_from_default", cloneFromDefault)
+                if (!description.isNullOrBlank()) put("description", description)
+            },
+        )
+
+    suspend fun setProfileDescription(name: String, description: String): Result<JsonObject> =
+        putJsonObject(
+            path = "/api/profiles/${pathSegment(name)}/description",
+            payload = buildJsonObject { put("description", description) },
+        )
+
+    suspend fun setProfileModel(
+        name: String,
+        provider: String,
+        model: String,
+    ): Result<JsonObject> =
+        putJsonObject(
+            path = "/api/profiles/${pathSegment(name)}/model",
+            payload = buildJsonObject {
+                put("provider", provider)
+                put("model", model)
+            },
+        )
+
     suspend fun toggleSkill(name: String, enabled: Boolean): Result<JsonObject> =
         putJsonObject(
             path = "/api/skills/toggle",
@@ -254,6 +355,24 @@ class DashboardApiClient(
             }
             val root = response.readJsonObject(json)
             Result.success(parseAuthSession(root))
+        }
+    }
+
+    /**
+     * True when this dashboard build exposes the hermes-desktop voice routes
+     * (`/api/audio/transcribe` + `/api/audio/speak`). HEAD on a POST-only
+     * FastAPI route returns 405 when the path exists and 404 when it doesn't;
+     * an auth-gated 401/403 also proves the route is registered.
+     */
+    suspend fun audioRoutesPresent(): Boolean = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url("$baseUrl/api/audio/transcribe")
+            .head()
+            .build()
+        try {
+            okHttpClient.newCall(request).execute().use { it.code != 404 }
+        } catch (_: Exception) {
+            false
         }
     }
 
@@ -560,6 +679,29 @@ class DashboardCookieJar(
         }
         return stored.mapNotNull { it.toCookie() }
             .filter { it.matches(url) }
+    }
+}
+
+/**
+ * Cookie jar that resolves the backing per-connection store at request time.
+ *
+ * Long-lived OkHttpClients (e.g. the standard voice client, remembered once
+ * per process in RelayApp) can't bind a fixed [DashboardCookieStore] because
+ * the active Connection — and therefore the encrypted cookie file — changes
+ * when the user switches connections. A null store (no active connection)
+ * degrades to an empty jar rather than failing the request.
+ */
+class DynamicDashboardCookieJar(
+    private val storeProvider: () -> DashboardCookieStore?,
+) : CookieJar {
+    override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+        val store = storeProvider() ?: return
+        DashboardCookieJar(store).saveFromResponse(url, cookies)
+    }
+
+    override fun loadForRequest(url: HttpUrl): List<Cookie> {
+        val store = storeProvider() ?: return emptyList()
+        return DashboardCookieJar(store).loadForRequest(url)
     }
 }
 

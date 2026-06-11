@@ -39,6 +39,16 @@ class RelayVoiceAudioClientAdapter(
         relayVoiceClient.synthesize(text)
 }
 
+/**
+ * Routes each STT/TTS call to the Standard (dashboard) or Relay voice client.
+ *
+ * Auto preference order is **Relay first, then Standard**: a paired Relay is
+ * the purpose-built mobile facade — profile-aware voice config, no dashboard
+ * sign-in dependency — so users who installed the plugin keep the richer
+ * path. Standard is the zero-plugin route for vanilla Hermes installs and is
+ * used whenever Relay isn't configured/paired (or fails mid-call). Power
+ * users can force either route in Voice Settings.
+ */
 class AutoVoiceAudioClient(
     private val standardClient: VoiceAudioClient,
     private val relayClient: VoiceAudioClient,
@@ -61,7 +71,11 @@ class AutoVoiceAudioClient(
         return when (routeProvider()) {
             VoiceAudioRoute.Standard -> {
                 if (!standardReadyProvider()) {
-                    Result.failure(IllegalStateException("Hermes API voice is not available"))
+                    Result.failure(
+                        IllegalStateException(
+                            "Standard Hermes voice is not available — check dashboard sign-in in Manage",
+                        ),
+                    )
                 } else {
                     block(standardClient)
                 }
@@ -80,26 +94,42 @@ class AutoVoiceAudioClient(
     private suspend fun <T> runAuto(
         block: suspend (VoiceAudioClient) -> Result<T>,
     ): Result<T> {
-        var standardFailure: Result<T>? = null
+        var relayFailure: Result<T>? = null
+        if (relayReadyProvider()) {
+            val result = block(relayClient)
+            if (result.isSuccess || !standardReadyProvider()) return result
+            relayFailure = result
+        }
         if (standardReadyProvider()) {
             val result = block(standardClient)
-            if (result.isSuccess || !relayReadyProvider()) return result
-            standardFailure = result
+            if (result.isSuccess) return result
+            return relayFailure ?: result
         }
-        if (relayReadyProvider()) {
-            return block(relayClient)
-        }
-        return standardFailure ?: Result.failure(
-            IllegalStateException("Voice needs a reachable Hermes API or Relay voice route"),
+        return relayFailure ?: Result.failure(
+            IllegalStateException("Voice needs a reachable Hermes dashboard or Relay voice route"),
         )
     }
 }
 
+/**
+ * Standard (no-plugin) voice client — speaks the upstream **dashboard web
+ * server** contract that hermes-desktop's voice mode uses:
+ *
+ *   POST {dashboard}/api/audio/transcribe  {data_url, mime_type} → {ok, transcript}
+ *   POST {dashboard}/api/audio/speak       {text}                → {ok, data_url, mime_type}
+ *
+ * These routes live on `hermes_cli/web_server.py` (:9119 by convention), NOT
+ * on the API server (:8642) — current upstream api_server advertises
+ * `audio_api: false` and registers no audio routes. Auth is the dashboard
+ * cookie session (gated_auth_middleware), so [okHttpClient] must carry the
+ * same per-connection cookie jar the Manage tab signs in with; an API bearer
+ * header is meaningless on this surface. Revisit when upstream PR #8199
+ * lands `/v1/audio/*` on the API server (see docs/upstream-contributions.md §6).
+ */
 class StandardHermesVoiceClient(
     private val context: Context,
     private val okHttpClient: OkHttpClient,
-    private val apiUrlProvider: () -> String?,
-    private val apiBearerTokenProvider: suspend () -> String? = { null },
+    private val dashboardUrlProvider: () -> String?,
     private val json: Json = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -114,8 +144,8 @@ class StandardHermesVoiceClient(
             .build()
 
     override suspend fun transcribe(audioFile: File): Result<String> = withContext(Dispatchers.IO) {
-        val baseUrl = apiBaseUrl()
-            ?: return@withContext Result.failure(IllegalStateException("Hermes API URL not configured"))
+        val baseUrl = dashboardBaseUrl()
+            ?: return@withContext Result.failure(IllegalStateException("Hermes dashboard URL not configured"))
         if (!audioFile.exists() || audioFile.length() == 0L) {
             return@withContext Result.failure(IOException("Audio file missing or empty: ${audioFile.name}"))
         }
@@ -125,7 +155,8 @@ class StandardHermesVoiceClient(
             put("data_url", dataUrl)
             put("mime_type", mediaTypeForAudioFile(audioFile))
         }
-        val request = authRequest("$baseUrl/api/audio/transcribe")
+        val request = Request.Builder()
+            .url("$baseUrl/api/audio/transcribe")
             .post(json.encodeToString(JsonObject.serializer(), payload).toRequestBody(JSON_MEDIA))
             .header("Accept", "application/json")
             .build()
@@ -142,15 +173,16 @@ class StandardHermesVoiceClient(
     }
 
     override suspend fun synthesize(text: String): Result<File> = withContext(Dispatchers.IO) {
-        val baseUrl = apiBaseUrl()
-            ?: return@withContext Result.failure(IllegalStateException("Hermes API URL not configured"))
+        val baseUrl = dashboardBaseUrl()
+            ?: return@withContext Result.failure(IllegalStateException("Hermes dashboard URL not configured"))
         val cleanText = text.trim()
         if (cleanText.isBlank()) {
             return@withContext Result.failure(IllegalArgumentException("Cannot synthesize blank text"))
         }
 
         val payload = buildJsonObject { put("text", cleanText) }
-        val request = authRequest("$baseUrl/api/audio/speak")
+        val request = Request.Builder()
+            .url("$baseUrl/api/audio/speak")
             .post(json.encodeToString(JsonObject.serializer(), payload).toRequestBody(JSON_MEDIA))
             .header("Accept", "application/json")
             .build()
@@ -173,15 +205,8 @@ class StandardHermesVoiceClient(
         }
     }
 
-    private fun apiBaseUrl(): String? =
-        apiUrlProvider()?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }
-
-    private suspend fun authRequest(url: String): Request.Builder {
-        val builder = Request.Builder().url(url)
-        val token = apiBearerTokenProvider()?.trim().orEmpty()
-        if (token.isNotBlank()) builder.header("Authorization", "Bearer $token")
-        return builder
-    }
+    private fun dashboardBaseUrl(): String? =
+        dashboardUrlProvider()?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }
 
     private fun executeJson(request: Request, operation: String): Result<JsonObject> {
         return try {
@@ -215,8 +240,8 @@ class StandardHermesVoiceClient(
         val body = runCatching { response.body.string() }.getOrDefault("")
         val detail = body.takeIf { it.isNotBlank() } ?: response.message
         val message = when (response.code) {
-            401, 403 -> "$operation unauthorized - check your API key"
-            404 -> "$operation unavailable on this Hermes server"
+            401, 403 -> "$operation needs dashboard sign-in - open Manage to sign in"
+            404 -> "$operation unavailable on this Hermes build - update hermes-agent or use Relay"
             in 500..599 -> "$operation failed - server error HTTP ${response.code}"
             else -> "$operation failed - HTTP ${response.code}: $detail"
         }

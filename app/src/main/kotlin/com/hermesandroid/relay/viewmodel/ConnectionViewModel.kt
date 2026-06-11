@@ -38,6 +38,7 @@ import com.hermesandroid.relay.network.ConnectionManager
 import com.hermesandroid.relay.network.ConnectionState
 import com.hermesandroid.relay.network.DashboardApiClient
 import com.hermesandroid.relay.network.DashboardAuthSession
+import com.hermesandroid.relay.network.DashboardCookieStore
 import com.hermesandroid.relay.network.DashboardStatus
 import com.hermesandroid.relay.network.EncryptedDashboardCookieStore
 import com.hermesandroid.relay.network.EndpointResolver
@@ -88,6 +89,28 @@ private data class RelayUiInputs(
     val url: String,
     val configured: Boolean,
 )
+
+/**
+ * Why the standard (no-plugin) voice route is or isn't usable right now.
+ * Drives the mic gate, the Auto route ordering, and the Voice Settings
+ * status line + CTA ("Sign in via Manage" / "Update hermes-agent").
+ */
+enum class StandardVoiceAvailability {
+    /** No probe has completed yet (startup, connection switch). */
+    Unknown,
+
+    /** Dashboard reachable, authenticated (or auth not required), audio routes present. */
+    Ready,
+
+    /** Dashboard reachable and gated, but no signed-in session — Manage sign-in unlocks it. */
+    SignInRequired,
+
+    /** Dashboard URL configured but `/api/status` did not answer. */
+    Unreachable,
+
+    /** Dashboard answered but has no `/api/audio/*` routes — hermes-agent build too old. */
+    Unsupported,
+}
 
 class ConnectionViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -470,8 +493,50 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     private val _serverCapabilities = MutableStateFlow(ServerCapabilities.DISCONNECTED)
     val serverCapabilities: StateFlow<ServerCapabilities> = _serverCapabilities.asStateFlow()
 
+    /**
+     * Standard (no-plugin) voice rides the upstream **dashboard web server**
+     * (`/api/audio/transcribe` + `/api/audio/speak`, the hermes-desktop voice
+     * contract) — not the API server, whose current upstream advertises
+     * `audio_api: false`. Availability therefore tracks dashboard state:
+     * reachability via the public `/api/status`, auth via `/api/auth/me`
+     * against the same per-connection cookie store Manage signs in with, and
+     * route presence via a HEAD probe (405 = exists, 404 = build too old).
+     */
+    private val _standardVoiceAvailability =
+        MutableStateFlow(StandardVoiceAvailability.Unknown)
+    val standardVoiceAvailability: StateFlow<StandardVoiceAvailability> =
+        _standardVoiceAvailability.asStateFlow()
+
     private val _standardAudioApiReachable = MutableStateFlow(false)
     val standardAudioApiReachable: StateFlow<Boolean> = _standardAudioApiReachable.asStateFlow()
+
+    /** Per-connection encrypted cookie stores, cached to avoid Keystore churn. */
+    private val dashboardCookieStores =
+        java.util.concurrent.ConcurrentHashMap<String, EncryptedDashboardCookieStore>()
+
+    /** Resolved dashboard URL of the active connection (explicit or derived :9119). */
+    fun activeDashboardUrl(): String? {
+        val connectionId = connectionStore.activeConnectionId.value ?: return null
+        return connectionStore.connections.value
+            .firstOrNull { it.id == connectionId }
+            ?.resolvedDashboardUrl
+            ?.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * Cookie store for the active connection — the same encrypted store the
+     * Manage tab's sign-in flow writes, so a dashboard session established
+     * there authenticates voice (and any other dashboard-surface client).
+     */
+    fun activeDashboardCookieStore(): DashboardCookieStore? {
+        val connectionId = connectionStore.activeConnectionId.value ?: return null
+        return dashboardCookieStores.getOrPut(connectionId) {
+            EncryptedDashboardCookieStore(
+                context = getApplication(),
+                connectionId = connectionId,
+            )
+        }
+    }
 
     // Chat is ready when a chat-routed API client exists and the base server is reachable.
     val chatReady: StateFlow<Boolean> = combine(_chatApiClient, _apiServerReachable) { client, reachable ->
@@ -585,18 +650,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     /**
-     * Standard voice follows official Hermes Desktop: mic audio and speech
-     * output go through the normal Hermes API server when it is reachable.
-     * Audio-route probes are kept as diagnostics only; they must not hide the
-     * voice entry point because some upstream routes do not advertise cleanly
-     * to preflight requests and can still fail gracefully on the real call.
+     * Standard voice follows official Hermes Desktop: STT/TTS go through the
+     * dashboard web server's `/api/audio/*` routes. Ready means the dashboard
+     * answered `/api/status`, the cookie session satisfies its auth gate (or
+     * none is required), and the audio routes exist on this build — the
+     * `/api/status` discovery endpoint is designed for preflight, unlike the
+     * old API-server HEAD probe this replaces.
      */
-    val standardVoiceReady: StateFlow<Boolean> = combine(
-        _apiClient,
-        _apiServerReachable,
-    ) { client, reachable ->
-        client != null && reachable
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    val standardVoiceReady: StateFlow<Boolean> = standardVoiceAvailability
+        .map { it == StandardVoiceAvailability.Ready }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     /**
      * Relay voice remains available for users who paired or explicitly
@@ -2702,13 +2765,85 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         if (client == null) {
             _apiServerHealth.value = HealthStatus.Unknown
             _apiServerReachable.value = false
-            _standardAudioApiReachable.value = false
+            probeStandardVoice()
             return
         }
         val ok = client.checkHealth()
         _apiServerReachable.value = ok
         _apiServerHealth.value = if (ok) HealthStatus.Reachable else HealthStatus.Unreachable
-        _standardAudioApiReachable.value = ok && client.probeAudioApi()
+        // Standard voice lives on the dashboard surface, not the API server,
+        // so its probe runs regardless of API health.
+        probeStandardVoice()
+    }
+
+    /**
+     * Probe the standard (dashboard-surface) voice route and update
+     * [standardVoiceAvailability]. Cheap: GET `/api/status` (public by
+     * design), GET `/api/auth/me` only when the dashboard is gated, then a
+     * HEAD existence check on the audio route (405 = present, 404 = absent).
+     * Also refreshes the persisted dashboard status snapshot when it
+     * materially changed, so the Manage header stays honest without the user
+     * visiting the tab.
+     */
+    private suspend fun probeStandardVoice() {
+        val connectionId = connectionStore.activeConnectionId.value
+        val dashboardUrl = activeDashboardUrl()
+        if (connectionId == null || dashboardUrl.isNullOrBlank()) {
+            _standardVoiceAvailability.value = StandardVoiceAvailability.Unknown
+            _standardAudioApiReachable.value = false
+            return
+        }
+        val client = DashboardApiClient(
+            baseUrl = dashboardUrl,
+            okHttpClient = DashboardApiClient.defaultClient(
+                cookieStore = activeDashboardCookieStore()
+                    ?: com.hermesandroid.relay.network.InMemoryDashboardCookieStore(),
+            ),
+        )
+        try {
+            val status = client.getStatus().getOrNull()
+            if (status == null) {
+                _standardVoiceAvailability.value = StandardVoiceAvailability.Unreachable
+                _standardAudioApiReachable.value = false
+                recordDashboardStatusIfChanged(connectionId, status = null, session = null)
+                return
+            }
+            val session = if (status.authRequired) client.currentSession().getOrNull() else null
+            val authed = !status.authRequired || session?.authenticated == true
+            recordDashboardStatusIfChanged(connectionId, status, session)
+            val availability = when {
+                !authed -> StandardVoiceAvailability.SignInRequired
+                client.audioRoutesPresent() -> StandardVoiceAvailability.Ready
+                else -> StandardVoiceAvailability.Unsupported
+            }
+            _standardVoiceAvailability.value = availability
+            _standardAudioApiReachable.value = availability == StandardVoiceAvailability.Ready
+        } finally {
+            client.shutdown()
+        }
+    }
+
+    /**
+     * [recordDashboardStatus] persists to the ConnectionStore; the voice probe
+     * runs on every health cycle, so gate the write on a material change to
+     * avoid chatty DataStore commits that would only refresh a timestamp.
+     */
+    private fun recordDashboardStatusIfChanged(
+        connectionId: String,
+        status: DashboardStatus?,
+        session: DashboardAuthSession?,
+    ) {
+        val previous = connectionStore.connections.value
+            .firstOrNull { it.id == connectionId }
+            ?.dashboardLastStatus
+        val reachable = status != null
+        val materiallySame = previous != null &&
+            previous.reachable == reachable &&
+            previous.authRequired == status?.authRequired &&
+            previous.authenticated == session?.authenticated
+        if (!materiallySame) {
+            recordDashboardStatus(status = status, session = session, reachable = reachable)
+        }
     }
 
     /**
@@ -3059,6 +3194,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    /**
+     * Re-run the standard-voice probe outside the periodic health cycle.
+     * Call after dashboard sign-in/sign-out so the mic gate and Voice
+     * Settings status react immediately instead of on the next probe tick.
+     */
+    fun refreshStandardVoice() {
+        viewModelScope.launch { probeStandardVoice() }
+    }
+
     fun clearDashboardSession(onComplete: (() -> Unit)? = null) {
         val connectionId = connectionStore.activeConnectionId.value ?: return
         val active = connectionStore.connections.value.firstOrNull { it.id == connectionId }
@@ -3082,6 +3226,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     message = "Dashboard session cleared",
                 ),
             )
+            probeStandardVoice()
             onComplete?.invoke()
         }
     }
@@ -3383,7 +3528,17 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             val standardVoiceResult = if (_standardAudioApiReachable.value) {
                 Result.success(Unit)
             } else {
-                Result.failure(IllegalStateException("Standard Hermes audio API is not available"))
+                Result.failure(
+                    IllegalStateException(
+                        when (_standardVoiceAvailability.value) {
+                            StandardVoiceAvailability.SignInRequired ->
+                                "Standard voice needs dashboard sign-in (Manage tab)"
+                            StandardVoiceAvailability.Unsupported ->
+                                "This Hermes build has no dashboard audio routes"
+                            else -> "Standard Hermes voice is not available"
+                        },
+                    ),
+                )
             }
             val voiceResult = if (standardVoiceResult.isSuccess) {
                 standardVoiceResult
@@ -3525,7 +3680,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             val caps = client.probeCapabilities()
             _serverCapabilities.value = caps
             _chatMode.value = caps.toChatMode()
-            _standardAudioApiReachable.value = ok && client.probeAudioApi()
+            probeStandardVoice()
         } else {
             _apiClient.value = null
             shutdownClientOffMain(oldClient)
@@ -3533,7 +3688,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             _apiServerHealth.value = HealthStatus.Unknown
             _chatMode.value = ChatMode.DISCONNECTED
             _serverCapabilities.value = ServerCapabilities.DISCONNECTED
-            _standardAudioApiReachable.value = false
+            probeStandardVoice()
         }
         rebuildChatApiClient()
     }

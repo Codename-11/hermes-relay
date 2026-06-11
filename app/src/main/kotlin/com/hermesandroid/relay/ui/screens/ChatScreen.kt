@@ -263,9 +263,11 @@ fun ChatScreen(
     var voiceOutputConfig by remember { mutableStateOf<VoiceOutputConfig?>(null) }
     var realtimeAgentConfig by remember { mutableStateOf<RealtimeVoiceConfig?>(null) }
     val chatReady by connectionViewModel.chatReady.collectAsState()
-    // Stable voice can use the official Hermes API audio routes or the
-    // optional Relay voice routes. Gate the mic on either route being usable.
+    // Stable voice can use the standard Hermes dashboard audio routes or the
+    // optional Relay voice routes. Gate the mic on either route being usable;
+    // availability picks the actionable toast when neither is.
     val voiceReady by connectionViewModel.voiceReady.collectAsState()
+    val standardVoiceAvailability by connectionViewModel.standardVoiceAvailability.collectAsState()
     val apiReachable by connectionViewModel.apiServerReachable.collectAsState()
     val chatMode by connectionViewModel.chatMode.collectAsState()
     val error by chatViewModel.error.collectAsState()
@@ -1617,7 +1619,14 @@ fun ChatScreen(
                                 } else {
                                     android.widget.Toast.makeText(
                                         context,
-                                        "Voice needs a reachable Hermes API or Relay voice route",
+                                        when (standardVoiceAvailability) {
+                                            com.hermesandroid.relay.viewmodel.StandardVoiceAvailability.SignInRequired ->
+                                                "Voice needs dashboard sign-in — open Manage to sign in"
+                                            com.hermesandroid.relay.viewmodel.StandardVoiceAvailability.Unsupported ->
+                                                "This Hermes build has no voice routes — update hermes-agent or pair Relay"
+                                            else ->
+                                                "Voice needs a reachable Hermes dashboard or Relay voice route"
+                                        },
                                         android.widget.Toast.LENGTH_SHORT,
                                     ).show()
                                 }
