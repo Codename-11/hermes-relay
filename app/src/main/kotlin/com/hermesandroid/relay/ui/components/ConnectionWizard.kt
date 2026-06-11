@@ -1453,7 +1453,10 @@ private fun StandardEntryStep(
                 isError = tailscaleError != null,
                 supportingText = {
                     Text(
-                        tailscaleError ?: "Adds automatic LAN to Tailscale handoff when the phone leaves home Wi-Fi"
+                        tailscaleError
+                            ?: "Adds automatic LAN to Tailscale handoff when the phone " +
+                                "leaves home Wi-Fi. Routes can also be added or edited " +
+                                "later in Settings → Connections → Routes."
                     )
                 },
                 keyboardOptions = KeyboardOptions(

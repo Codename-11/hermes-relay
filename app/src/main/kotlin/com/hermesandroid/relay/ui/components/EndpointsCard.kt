@@ -19,15 +19,19 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.VpnKey
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -72,15 +76,32 @@ fun EndpointsCard(
     onClearOverride: () -> Unit,
     onProbeNow: () -> Unit,
     onViewPin: suspend (EndpointCandidate) -> String?,
+    /**
+     * Route management — the standard path's manual equivalent of a v3 QR's
+     * `endpoints` array. Null callbacks hide the corresponding affordance.
+     * Edit/Remove only appear on fallback rows (priority > 0); the primary
+     * row mirrors the connection's API URL and is edited there.
+     */
+    onAddRoute: (() -> Unit)? = null,
+    onEditRoute: ((EndpointCandidate) -> Unit)? = null,
+    onRemoveRoute: ((EndpointCandidate) -> Unit)? = null,
 ) {
     if (endpoints.isEmpty()) {
-        Text(
-            text = "No route candidates stored for this device yet. " +
-                "Scan a v3 pairing QR (Hermes 0.4.2+) to enable multi-route " +
-                "switching — LAN + Tailscale + public URLs.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = "No route candidates stored for this connection yet. " +
+                    "Add a remote route (Tailscale, public URL) for automatic " +
+                    "switching when the phone leaves this network — or scan a " +
+                    "v3 pairing QR (Hermes 0.4.2+) if you use Relay.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (onAddRoute != null) {
+                TextButton(onClick = onAddRoute) {
+                    Text("Add route")
+                }
+            }
+        }
         return
     }
 
@@ -102,7 +123,18 @@ fun EndpointsCard(
                 onPrefer = { onPreferEndpoint(candidate) },
                 onProbeNow = onProbeNow,
                 onViewPin = onViewPin,
+                onEdit = onEditRoute?.takeIf { candidate.priority > 0 }
+                    ?.let { edit -> { edit(candidate) } },
+                onRemove = onRemoveRoute?.takeIf { candidate.priority > 0 }
+                    ?.let { remove -> { remove(candidate) } },
             )
+        }
+
+        if (onAddRoute != null) {
+            HorizontalDivider()
+            TextButton(onClick = onAddRoute, modifier = Modifier.fillMaxWidth()) {
+                Text("Add route")
+            }
         }
 
         if (preferredRole != null) {
@@ -125,9 +157,12 @@ private fun EndpointRow(
     onPrefer: () -> Unit,
     onProbeNow: () -> Unit,
     onViewPin: suspend (EndpointCandidate) -> String?,
+    onEdit: (() -> Unit)? = null,
+    onRemove: (() -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var pinDialogText by remember { mutableStateOf<String?>(null) }
+    var confirmRemove by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -228,9 +263,52 @@ private fun EndpointRow(
                             }
                         },
                     )
+                    if (onEdit != null) {
+                        DropdownMenuItem(
+                            text = { Text("Edit route") },
+                            onClick = {
+                                menuOpen = false
+                                onEdit()
+                            },
+                        )
+                    }
+                    if (onRemove != null) {
+                        DropdownMenuItem(
+                            text = { Text("Remove route") },
+                            onClick = {
+                                menuOpen = false
+                                confirmRemove = true
+                            },
+                        )
+                    }
                 }
             }
         }
+    }
+
+    if (confirmRemove && onRemove != null) {
+        AlertDialog(
+            onDismissRequest = { confirmRemove = false },
+            title = { Text("Remove ${candidate.displayLabel()} route?") },
+            text = {
+                Text(
+                    text = "${candidate.api.host}:${candidate.api.port} will no longer be " +
+                        "probed as a fallback. You can add it back any time.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmRemove = false
+                        onRemove()
+                    },
+                ) { Text("Remove") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmRemove = false }) { Text("Cancel") }
+            },
+        )
     }
 
     pinDialogText?.let { body ->
@@ -328,3 +406,131 @@ private fun roleIcon(role: String): ImageVector = when (role.lowercase()) {
     "public" -> Icons.Filled.Public
     else -> Icons.Filled.Shield
 }
+
+/**
+ * Add/edit dialog for an extra fallback route — the manual counterpart of a
+ * v3 pairing QR's `endpoints` array, so standard (no-Relay) connections can
+ * set up LAN ↔ Tailscale roaming without the plugin.
+ *
+ * The relay URL is derived from the API URL (same `:8767` convention the
+ * wizard uses); routes that need a custom relay URL still come from a QR.
+ *
+ * @param original null = add a new route; non-null = edit (pre-fills role +
+ *   URL, keeps the stored priority).
+ * @param onSave invoked with (role, apiUrl, resultCallback); the callback
+ *   receives a user-facing error string to render inline, or null on
+ *   success (the dialog then closes itself).
+ */
+@Composable
+fun RouteEditorDialog(
+    original: EndpointCandidate?,
+    onSave: (role: String, apiUrl: String, onResult: (String?) -> Unit) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val knownRoles = listOf("tailscale", "public")
+    var selectedRole by remember {
+        mutableStateOf(
+            when (original?.role?.lowercase()) {
+                null -> "tailscale"
+                in knownRoles -> original.role.lowercase()
+                else -> CUSTOM_ROLE
+            },
+        )
+    }
+    var customRole by remember {
+        mutableStateOf(
+            original?.role?.takeIf { it.lowercase() !in knownRoles }.orEmpty(),
+        )
+    }
+    var url by remember { mutableStateOf(original?.api?.url.orEmpty()) }
+    var errorText by remember { mutableStateOf<String?>(null) }
+    var saving by remember { mutableStateOf(false) }
+
+    val effectiveRole = if (selectedRole == CUSTOM_ROLE) customRole else selectedRole
+    val saveEnabled = !saving &&
+        url.isNotBlank() &&
+        (selectedRole != CUSTOM_ROLE || customRole.isNotBlank())
+
+    AlertDialog(
+        onDismissRequest = { if (!saving) onDismiss() },
+        title = { Text(if (original == null) "Add route" else "Edit route") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "A fallback route the phone switches to when the " +
+                        "primary stops answering — e.g. your server's " +
+                        "Tailscale or public URL.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = selectedRole == "tailscale",
+                        onClick = { selectedRole = "tailscale" },
+                        label = { Text("Tailscale") },
+                    )
+                    FilterChip(
+                        selected = selectedRole == "public",
+                        onClick = { selectedRole = "public" },
+                        label = { Text("Public") },
+                    )
+                    FilterChip(
+                        selected = selectedRole == CUSTOM_ROLE,
+                        onClick = { selectedRole = CUSTOM_ROLE },
+                        label = { Text("Custom") },
+                    )
+                }
+                if (selectedRole == CUSTOM_ROLE) {
+                    OutlinedTextField(
+                        value = customRole,
+                        onValueChange = { customRole = it },
+                        label = { Text("Route name") },
+                        placeholder = { Text("wireguard-home") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = {
+                        url = it
+                        errorText = null
+                    },
+                    label = { Text("API server URL") },
+                    placeholder = { Text("https://host.tail1234.ts.net:8642") },
+                    singleLine = true,
+                    isError = errorText != null,
+                    supportingText = {
+                        Text(
+                            text = errorText
+                                ?: "Relay and dashboard URLs are derived from the host",
+                        )
+                    },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = saveEnabled,
+                onClick = {
+                    saving = true
+                    onSave(effectiveRole, url) { error ->
+                        saving = false
+                        if (error == null) {
+                            onDismiss()
+                        } else {
+                            errorText = error
+                        }
+                    }
+                },
+            ) { Text(if (saving) "Saving…" else "Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !saving) { Text("Cancel") }
+        },
+    )
+}
+
+private const val CUSTOM_ROLE = "__custom__"

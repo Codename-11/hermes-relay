@@ -3955,6 +3955,150 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     /**
+     * Add or replace an extra fallback route on the active connection — the
+     * standard path's manual equivalent of a v3 pairing QR's `endpoints`
+     * array. The primary route (priority 0) mirrors the connection's main
+     * API URL and is edited through the URL fields / wizard, never here.
+     *
+     * Legacy candidate sources (per-device PairingPreferences from old QR
+     * pairings, or a bare single-URL config) are seeded onto the connection
+     * first, so an edit never hides routes the card was already showing.
+     *
+     * @param original non-null = edit-in-place: the matching stored entry is
+     *   replaced and keeps its priority; null = append after the last route.
+     * @param onResult called with a user-facing error string, or null on
+     *   success — drives the dialog's inline error text.
+     */
+    fun saveExtraRoute(
+        role: String,
+        apiUrl: String,
+        original: EndpointCandidate? = null,
+        onResult: (String?) -> Unit,
+    ) {
+        if (original?.priority == 0) {
+            onResult("The primary route mirrors the connection's API URL — edit that instead")
+            return
+        }
+        viewModelScope.launch {
+            val current = activeConnectionSnapshot()
+            if (current == null) {
+                onResult("No active connection")
+                return@launch
+            }
+            val trimmedUrl = apiUrl.trim().trimEnd('/')
+            val existing = seedRouteCandidates(current)
+            if (existing.isEmpty()) {
+                onResult("Set the connection's API server URL first")
+                return@launch
+            }
+            val withoutOriginal = if (original != null) {
+                existing.filterNot { it.sameRouteAs(original) }
+            } else {
+                existing
+            }
+            val candidate = Connection.endpointCandidateFromApiUrl(
+                role = role.trim().ifBlank { Connection.inferRouteRole(trimmedUrl) },
+                priority = original?.priority
+                    ?: ((withoutOriginal.maxOfOrNull { it.priority } ?: 0) + 1),
+                apiServerUrl = trimmedUrl,
+                relayUrl = Connection.deriveDefaultRelayUrl(trimmedUrl).orEmpty(),
+            )
+            if (candidate == null) {
+                onResult("Enter a full URL like https://host:8642")
+                return@launch
+            }
+            val collision = withoutOriginal.firstOrNull {
+                it.api.host.equals(candidate.api.host, ignoreCase = true) &&
+                    it.api.port == candidate.api.port
+            }
+            if (collision != null) {
+                onResult(
+                    if (collision.priority == 0) {
+                        "That host is already the primary route"
+                    } else {
+                        "The ${collision.displayLabel()} route already uses that host"
+                    },
+                )
+                return@launch
+            }
+            val next = (withoutOriginal + candidate)
+                .sortedWith(compareBy<EndpointCandidate> { it.priority }.thenBy { it.role })
+            connectionStore.updateConnection(current.copy(routeCandidates = next))
+            connectionManager.refreshActiveEndpoint(clearProbeCache = true)
+            onResult(null)
+        }
+    }
+
+    /**
+     * Remove an extra fallback route. The primary route (priority 0) is
+     * protected — it mirrors the connection's API URL. Clears a preferred-
+     * route override that pointed at the removed route, mirroring
+     * [persistActiveConnectionUrls]' stale-preference handling.
+     */
+    fun removeExtraRoute(candidate: EndpointCandidate, onResult: (String?) -> Unit = {}) {
+        if (candidate.priority == 0) {
+            onResult("The primary route can't be removed — edit the connection's API URL instead")
+            return
+        }
+        viewModelScope.launch {
+            val current = activeConnectionSnapshot()
+            if (current == null) {
+                onResult("No active connection")
+                return@launch
+            }
+            val existing = seedRouteCandidates(current)
+            val next = existing.filterNot { it.sameRouteAs(candidate) }
+            if (next.size == existing.size) {
+                onResult(null)
+                return@launch
+            }
+            val preferredNowStale = current.preferredRouteRole != null &&
+                next.none { it.role.equals(current.preferredRouteRole, ignoreCase = true) }
+            connectionStore.updateConnection(
+                current.copy(
+                    routeCandidates = next,
+                    preferredRouteRole = if (preferredNowStale) null else current.preferredRouteRole,
+                ),
+            )
+            if (preferredNowStale) {
+                connectionManager.setManualRoleOverride(null)
+            }
+            connectionManager.refreshActiveEndpoint(clearProbeCache = true)
+            onResult(null)
+        }
+    }
+
+    private fun activeConnectionSnapshot(): Connection? {
+        val activeId = connectionStore.activeConnectionId.value ?: return null
+        return connectionStore.connections.value.firstOrNull { it.id == activeId }
+    }
+
+    /**
+     * The connection's stored candidates, or — mirroring
+     * [observeDeviceEndpoints]' fallback chain — the per-device pairing
+     * endpoints, or a primary synthesized from the saved URLs. Whatever the
+     * Routes card is currently displaying is what an edit starts from.
+     */
+    private suspend fun seedRouteCandidates(current: Connection): List<EndpointCandidate> {
+        current.routeCandidates.takeIf { it.isNotEmpty() }?.let { return it }
+        val fromPairing = runCatching {
+            val deviceId = authManager.getOrCreateDeviceId()
+            PairingPreferences.getDeviceEndpoints(getApplication(), deviceId).first()
+        }.getOrDefault(emptyList())
+        if (fromPairing.isNotEmpty()) return fromPairing
+        val apiUrl = current.apiServerUrl.takeIf { it.isNotBlank() } ?: return emptyList()
+        return Connection.buildRouteCandidates(
+            apiServerUrl = apiUrl,
+            relayUrl = current.relayUrl,
+        )
+    }
+
+    private fun EndpointCandidate.sameRouteAs(other: EndpointCandidate): Boolean =
+        role.equals(other.role, ignoreCase = true) &&
+            api.host.equals(other.api.host, ignoreCase = true) &&
+            api.port == other.api.port
+
+    /**
      * Pin [role] as the preferred endpoint until the next disconnect. Calls
      * [ConnectionManager.setManualRoleOverride] and kicks [probeNow] so the
      * swap takes effect immediately if the override is reachable. Passing

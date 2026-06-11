@@ -57,6 +57,7 @@ import com.hermesandroid.relay.ui.components.ActiveCardRelayStatusSection
 import com.hermesandroid.relay.ui.components.ActiveCardStandardStatusSection
 import com.hermesandroid.relay.ui.components.ApiServerInfoSheet
 import com.hermesandroid.relay.ui.components.EndpointsCard
+import com.hermesandroid.relay.ui.components.RouteEditorDialog
 import com.hermesandroid.relay.ui.components.InsecureConnectionAckDialog
 import com.hermesandroid.relay.ui.components.RelayInfoSheet
 import com.hermesandroid.relay.ui.components.SessionInfoSheet
@@ -662,6 +663,10 @@ private fun ConnectionCard(
                         }
                     }
                     if (endpointsExpanded) {
+                        var routeEditorOpen by remember { mutableStateOf(false) }
+                        var routeEditorOriginal by remember {
+                            mutableStateOf<EndpointCandidate?>(null)
+                        }
                         EndpointsCard(
                             endpoints = endpoints,
                             activeEndpoint = activeEndpoint,
@@ -678,7 +683,32 @@ private fun ConnectionCard(
                             onViewPin = { candidate ->
                                 activeConnectionViewModel.lookupEndpointPin(candidate)
                             },
+                            onAddRoute = {
+                                routeEditorOriginal = null
+                                routeEditorOpen = true
+                            },
+                            onEditRoute = { candidate ->
+                                routeEditorOriginal = candidate
+                                routeEditorOpen = true
+                            },
+                            onRemoveRoute = { candidate ->
+                                activeConnectionViewModel.removeExtraRoute(candidate)
+                            },
                         )
+                        if (routeEditorOpen) {
+                            RouteEditorDialog(
+                                original = routeEditorOriginal,
+                                onSave = { role, apiUrl, onResult ->
+                                    activeConnectionViewModel.saveExtraRoute(
+                                        role = role,
+                                        apiUrl = apiUrl,
+                                        original = routeEditorOriginal,
+                                        onResult = onResult,
+                                    )
+                                },
+                                onDismiss = { routeEditorOpen = false },
+                            )
+                        }
                     }
                 }
 
