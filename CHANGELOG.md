@@ -52,6 +52,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **User docs: Quick Start.** New two-minute Quick Start page leads the guide; the dashboard page documents the full phone Manage surface (skills hub, models, keys, profile + SOUL editing); voice docs lead with the standard no-Relay route.
 
+### Fixed
+
+- **Standard (no-Relay) connections now follow LAN ↔ Tailscale network changes.** The ADR 24 network-aware route switching only activated when a Relay socket was open: the connectivity callback registered inside `connect()` and bailed without a socket URL, so a standard connection that left home Wi-Fi kept probing the dead LAN route until the app was backgrounded and reopened. The callback now registers at construction and re-resolves routes (debounced) even with no socket — chat, Manage, and standard voice follow the resolved endpoint automatically.
+
+- **Standard voice follows the resolved route.** The standard voice client and its availability probe targeted the connection's persisted dashboard URL instead of the resolver's active route, so voice stayed pinned to the LAN host (and gated off) while away from home even after chat had switched to Tailscale. Both now ride `effectiveDashboardUrl`.
+
+- **Stale probe cache can't pin a dead route.** App-resume and network-change revalidation now clear the endpoint resolver's probe cache, so a route that died moments ago can't win re-resolution for the remainder of its 60-second positive cache window. The periodic health check also escalates two consecutive unreachable probes into a full cache-cleared re-resolve — the safety net for handoffs Android never surfaces as connectivity changes (always-on VPN keeps "internet available" true throughout).
+
+- **Editing URLs no longer wipes fallback routes.** Saving an API or Relay URL rebuilt the connection's route-candidate list from just the edited URL, silently dropping the setup wizard's Tailscale route (or extra endpoints from a pairing payload). Edits now merge: the touched route is rebuilt, stored extras are preserved verbatim.
+
+- **Per-route sign-in is explained.** Dashboard sessions are cookie-based and per-host, so a Manage sign-in at home doesn't carry to the Tailscale host. When voice is gated on sign-in because the route moved, Voice Settings now says so ("sign in once in Manage while on this route") instead of showing a bare sign-in nag that looks broken.
+
 ## [0.8.1] - 2026-05-26
 
 ### Fixed
