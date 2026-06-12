@@ -750,6 +750,12 @@ fun RelayApp() {
         val serverModelName by chatViewModel.serverModelName.collectAsState()
         val appReady by connectionViewModel.isReady.collectAsState()
         val initialChatSettled by chatViewModel.initialChatSettled.collectAsState()
+        // The SAME readiness signal ChatScreen renders its "Connect Standard
+        // Hermes" CTA from (chat client exists + reachable verdict). The gate
+        // must release on this — releasing on the resolver's earlier
+        // evidence alone left a window where the reveal showed the CTA for
+        // the few hundred ms until the client-based health verdict landed.
+        val chatReady by connectionViewModel.chatReady.collectAsState()
         var startupGateMinElapsed by remember { mutableStateOf(false) }
         var startupGateTimedOut by remember { mutableStateOf(false) }
         var startupGateReleased by remember { mutableStateOf(false) }
@@ -831,8 +837,11 @@ fun RelayApp() {
                         StartupCheck(StartupCheckState.Active, "contacting hermes")
                     else -> StartupCheck(StartupCheckState.Pending, "hermes")
                 },
+                // Done is keyed on chatReady — the signal ChatScreen itself
+                // renders from — so this row can never tick while the chat
+                // surface would still show its connect CTA.
                 when {
-                    startupApiUp && initialChatSettled ->
+                    chatReady && initialChatSettled ->
                         StartupCheck(StartupCheckState.Done, "conversation ready")
                     startupApiUp ->
                         StartupCheck(StartupCheckState.Active, "loading conversation")
@@ -864,11 +873,15 @@ fun RelayApp() {
 
         val startupConnectionResolved = appReady && (
             !hasStartupConnection ||
-                // Happy path: server answering AND the last conversation has
-                // been restored (or there was none) AND the checklist has
-                // visibly finished ticking — the chat surface is real before
-                // it's revealed, and the sphere never vanishes mid-tick.
-                (startupApiUp && initialChatSettled && startupNarrationComplete) ||
+                // Happy path: the chat surface's OWN readiness signal is
+                // true (client built + reachable verdict — what its connect
+                // CTA renders from), the last conversation has been restored
+                // (or there was none), and the checklist has visibly
+                // finished ticking. Anything weaker (e.g. the resolver's
+                // earlier health evidence) reveals a chat screen that still
+                // shows "Connect Standard Hermes" for the few hundred ms
+                // until the client-based verdict catches up.
+                (chatReady && initialChatSettled && startupNarrationComplete) ||
                 // Error path: a settled unreachable reveals the normal UI,
                 // which owns offline presentation (status pill, retry).
                 startupUnreachableSettled ||
