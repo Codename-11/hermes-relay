@@ -12,7 +12,7 @@ The plugin is a thin observer — it never modifies state, never writes to your 
 
 **On your server:**
 
-- hermes-agent with the Dashboard Plugin System (upstream commit `01214a7f` on `axiom`, or any later `main` once [PR #8556](https://github.com/NousResearch/hermes-agent/pull/8556) and its dashboard followups merge). `hermes dashboard start` must already work for you.
+- hermes-agent with the Dashboard Plugin System. `hermes dashboard start` must already work for you; the Relay tab uses the dashboard plugin mount and does not depend on the legacy session API branch.
 - The canonical Hermes-Relay install — if you ran the one-liner on the [Quick Start](/guide/getting-started), you're done. The installer symlinks `~/.hermes/plugins/hermes-relay` → the plugin subtree and the dashboard scanner picks up `plugin/dashboard/manifest.json` automatically.
 - A gateway restart after install: `systemctl --user restart hermes-gateway`.
 
@@ -26,6 +26,28 @@ Open the hermes-agent dashboard in your browser (default: `http://localhost:<das
 
 The plugin's header shows the relay version, overall health (green / red dot), and an **Auto-refresh** toggle that persists to `localStorage`. Turn auto-refresh off if you're reading a specific activity row and don't want it to scroll out from under you.
 
+## Android Manage Surface
+
+The Android app also uses the Hermes dashboard/admin API as its standard management data plane. The **Manage** tab derives the dashboard URL from the active API server URL by default (`:8642` → `:9119`) and reads Skills, Cron, MCP, MCP catalog, Profiles, Models, Keys, and Config from dashboard endpoints when the server supports them.
+
+What you can do from the phone, per section:
+
+- **Skills** — toggle installed skills, plus full **skills-hub** access: browse the configured hub sources (featured skills shown before you search), search across them, read a skill's `SKILL.md` *before* installing, install/uninstall (these run asynchronously on the server), and update everything hub-installed.
+- **Cron** — pause/resume/run/delete jobs and view recent runs.
+- **MCP** — enable/disable, test, and remove servers; install catalog entries that don't require inline credentials.
+- **Profiles** — create profiles (clone-from-default), activate, edit the role description, set a per-profile model, **edit SOUL.md** in a full-file editor, and delete.
+- **Models** — change the main model from the full provider/model catalog, including the server's expensive-model confirmation step. Providers without keys appear greyed with a pointer to Keys.
+- **Keys** — view the curated env/key inventory (values redacted), set keys (write-only, masked), reveal one (server rate-limited and audit-logged), or clear them.
+- **Config** — read the config schema.
+
+A successful dashboard sign-in here also unlocks **standard voice** for the connection — speech uses the same dashboard session (see [Voice Mode](./voice)).
+
+Dashboard sign-in is the upstream-preferred remote auth path. Android supports the bundled `basic` username/password provider and redirect providers such as `nous` or self-hosted OIDC through the dashboard's `/auth/login?provider=...` flow. Successful sign-in stores dashboard cookies, verifies the flat upstream `/api/auth/me` session response, and probes `/api/auth/ws-ticket`. This matches the Hermes Desktop remote-gateway model: sign in once to the dashboard, then reuse that dashboard session for `/api/ws` with a short-lived ticket.
+
+This is separate from relay pairing and from `API_SERVER_KEY`. A dashboard session does not become an API bearer token; Android Chat still uses the API key fallback until its dashboard JSON-RPC chat adapter is enabled. Relay-only capabilities — Terminal, Bridge, Relay sessions, Media inspector, and profile memory file editing — stay under **Settings → Power tools** and show **Requires pairing** until the phone has a paired relay session. Profile **SOUL.md editing is available without Relay** (Manage → Profiles → Edit SOUL, via the dashboard); memory file editing remains in the paired profile inspector.
+
+Server-side dashboard auth is owned by upstream Hermes. For current provider registration, Nous OAuth, username/password, and remote dashboard guidance, use the Hermes [Web Dashboard docs](https://hermes-agent.nousresearch.com/docs/user-guide/features/web-dashboard).
+
 ## The Four Tabs
 
 ### Relay Management
@@ -34,14 +56,14 @@ The landing tab. Shows:
 
 - **Relay version + uptime + health** — served by the relay's `/relay/info` endpoint. Green dot = reachable, red = `relay unreachable at 127.0.0.1:8767` (the gateway can't see your relay process; check `systemctl --user status hermes-relay`).
 - **Paired devices list** — one row per active session. Columns: device name (from the phone's `PairedDeviceInfo`), token prefix (first 8 chars — full tokens are never sent), created-at, last-seen, expires-at, labeled per-channel grants (chat / bridge / terminal / TUI / voice), transport hint (`wss` / `ws`).
-- **Revoke button** per row — live. Click to pop a native browser confirm; on OK the button calls `DELETE /api/plugins/hermes-relay/sessions/{prefix}` which the plugin proxy forwards to the relay, and the list auto-reloads on success. Same effect as revoking from the Android app's Settings → Relay sessions or running `hermes-pair --revoke <prefix>` on the server.
+- **Revoke button** per row — live. Click to pop a native browser confirm; on OK the button calls `DELETE /api/plugins/hermes-relay/sessions/{prefix}` which the plugin proxy forwards to the relay, and the list auto-reloads on success. Same effect as revoking from the Android app's Settings → Relay sessions or running `hermes pair --revoke <prefix>` on the server.
 - **Pair new device** — button in the card header opens the [PairDialog](#pairing-a-new-device) described below.
 
 <!-- TODO: replace with real screenshot — dashboard Relay Management tab with a paired device row -->
 
 #### Pairing a new device
 
-The **Pair new device** button on the Relay Management tab is an alternative to `/hermes-relay-pair` and the `hermes-pair` CLI — same underlying pairing flow, just driven from a browser on your laptop instead of a chat or shell. Useful when you're already in the dashboard reviewing session state and want to onboard a phone without bouncing out to a terminal.
+The **Pair new device** button on the Relay Management tab is an alternative to `/hermes-relay-pair` and the `hermes pair` CLI — same underlying pairing flow, just driven from a browser on your laptop instead of a chat or shell. Useful when you're already in the dashboard reviewing session state and want to onboard a phone without bouncing out to a terminal.
 
 **Click the button to open a PairDialog with:**
 

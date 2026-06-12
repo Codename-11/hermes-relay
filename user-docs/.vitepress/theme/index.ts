@@ -8,6 +8,8 @@ import HeroDemo from './components/HeroDemo.vue';
 import FeatureMatrix from './components/FeatureMatrix.vue';
 import SphereMark from './components/SphereMark.vue';
 import ExperimentalBadge from './components/ExperimentalBadge.vue';
+import HowItWorks from './components/HowItWorks.vue';
+import SurfaceCards from './components/SurfaceCards.vue';
 
 export default {
   extends: DefaultTheme,
@@ -19,7 +21,9 @@ export default {
   Layout() {
     return h(DefaultTheme.Layout, null, {
       'home-hero-image': () => h(HeroDemo),
-      'home-hero-after': () => [h(SphereMark), h(InstallSection)],
+      'home-hero-actions-after': () =>
+        h('p', { class: 'hero-platform-note' }, 'CLI: Windows today · macOS / Linux coming soon'),
+      'home-hero-after': () => [h(SphereMark), h(HowItWorks), h(SurfaceCards), h(InstallSection)],
       'doc-after': () =>
         h('div', { class: 'doc-footer-cta' }, [
           h('hr'),

@@ -1,62 +1,84 @@
 /* ==========================================================================
-   Hermes-Relay — Nothing-Inspired Documentation Theme
+   Hermes-Relay — Relay Cockpit Documentation Theme
 
-   Shared DNA with ARC docs (arc-cli.dev):
+   Mirrors the Android app's relay cockpit refresh (ui/theme/RelayRefresh.kt):
    Fonts: Space Grotesk (body/UI) + Space Mono (code/labels)
-   Brand: #7C3AED (purple) — single accent
-   Dark: OLED black (#000), neutral gray surfaces (#111, #1A1A1A)
-   Light: Off-white (#F5F5F5), white surfaces
-   No gradients. No shadows. No blur. Flat + border separation.
+   Dark: navy-black #08090D base, navy panels (#121426 / #191B31 / #22243C),
+         warm-white ink #F7F6F0, hairline warm-white borders
+   Light: warm paper #F7F3EA, white surfaces
+   Accents: Electric indigo — #6E7CFF for links/active text (a brightened
+            #111DFF that stays readable on navy), #4F5BD5 for fills
+            (full-strength #111DFF reads as glare on large surfaces — same
+            lesson as the app's ElectricMuted). Relay periwinkle #AEBFFF
+            survives only in the dot texture, mirroring the app. Green/amber/
+            red reserved for status meaning.
+   Texture: faint 42px grid + 10px Relay dot lattice on the home surface,
+            mirroring relayGridTexture().
+   No shadows. No blur. Flat + border separation.
    ========================================================================== */
 
 /* ── Shared Tokens ─────────────────────────────────────────────────────── */
 
 :root {
-  /* Brand — purple */
-  --vp-c-brand-1: #9B6BF0;
-  --vp-c-brand-2: #7C3AED;
-  --vp-c-brand-3: #6B35E8;
-  --vp-c-brand-soft: rgba(124, 58, 237, 0.14);
+  /* Brand — Electric indigo, muted for contrast on warm paper */
+  --vp-c-brand-1: #4F5BD5;
+  --vp-c-brand-2: #4F5BD5;
+  --vp-c-brand-3: #3A44B8;
+  --vp-c-brand-soft: rgba(79, 91, 213, 0.12);
 
   /* Fonts — same as ARC */
   --vp-font-family-base: 'Space Grotesk', 'DM Sans', system-ui, sans-serif;
   --vp-font-family-mono: 'Space Mono', 'JetBrains Mono', 'SF Mono', monospace;
 
-  /* Nothing border tokens */
-  --nd-border: #222222;
-  --nd-border-visible: #333333;
+  /* Cockpit hairlines — RelayRefresh.Line / LineStrong (mode-aware) */
+  --hr-line: #E8E2D5;
+  --hr-line-strong: #D6CFC0;
+
+  /* Status — RelayRefresh.{Green, Amber, Danger} */
+  --hr-green: #58D36F;
+  --hr-amber: #F2B14B;
+  --hr-danger: #FF6B78;
 }
 
-/* ── Dark Mode — neutral grays ───────────────────────────────────────── */
+/* ── Dark Mode — navy cockpit ────────────────────────────────────────── */
 
 .dark {
-  --vp-c-bg: #000000;
-  --vp-c-bg-alt: #111111;
-  --vp-c-bg-elv: #1A1A1A;
-  --vp-c-bg-soft: #111111;
+  /* Electric indigo accents text; Electric muted fills surfaces */
+  --vp-c-brand-1: #6E7CFF;
+  --vp-c-brand-2: #4F5BD5;
+  --vp-c-brand-3: #3A44B8;
+  --vp-c-brand-soft: rgba(110, 124, 255, 0.16);
 
-  --vp-c-divider: #222222;
-  --vp-c-gutter: #111111;
+  --hr-line: rgba(247, 246, 240, 0.14);
+  --hr-line-strong: rgba(247, 246, 240, 0.28);
 
-  --vp-c-text-1: #E8E8E8;
-  --vp-c-text-2: #999999;
-  --vp-c-text-3: #666666;
+  --vp-c-bg: #08090D;
+  --vp-c-bg-alt: #121426;
+  --vp-c-bg-elv: #191B31;
+  --vp-c-bg-soft: #121426;
+
+  --vp-c-divider: rgba(247, 246, 240, 0.14);
+  --vp-c-gutter: #121426;
+
+  --vp-c-text-1: #F7F6F0;
+  --vp-c-text-2: #A7A4B7;
+  --vp-c-text-3: #68647D;
 }
 
-/* ── Light Mode — warm off-white ─────────────────────────────────────── */
+/* ── Light Mode — warm paper ─────────────────────────────────────────── */
 
 html:not(.dark) {
-  --vp-c-bg: #F5F5F5;
+  --vp-c-bg: #F7F3EA;
   --vp-c-bg-alt: #FFFFFF;
   --vp-c-bg-elv: #FFFFFF;
-  --vp-c-bg-soft: #F0F0F0;
+  --vp-c-bg-soft: #F1ECDF;
 
-  --vp-c-divider: #E8E8E8;
-  --vp-c-gutter: #F0F0F0;
+  --vp-c-divider: #E8E2D5;
+  --vp-c-gutter: #F1ECDF;
 
-  --vp-c-text-1: #1A1A1A;
-  --vp-c-text-2: #666666;
-  --vp-c-text-3: #999999;
+  --vp-c-text-1: #14151F;
+  --vp-c-text-2: #565264;
+  --vp-c-text-3: #8B879B;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -64,17 +86,16 @@ html:not(.dark) {
    ══════════════════════════════════════════════════════════════════════════ */
 
 .VPNavBar {
-  border-bottom: 1px solid var(--nd-border) !important;
+  border-bottom: 1px solid var(--hr-line) !important;
 }
 
 .dark .VPNavBar {
-  background: #000000 !important;
+  background: #08090D !important;
   backdrop-filter: none !important;
 }
 
 html:not(.dark) .VPNavBar {
-  background: #F5F5F5 !important;
-  border-bottom-color: #E8E8E8 !important;
+  background: #F7F3EA !important;
   backdrop-filter: none !important;
 }
 
@@ -96,15 +117,23 @@ html:not(.dark) .VPNavBar {
   text-transform: uppercase !important;
 }
 
-/* Search box: align with Nothing aesthetic */
+/* Search box: align with cockpit aesthetic */
 .VPNavBarSearch .DocSearch-Button {
-  border: 1px solid var(--nd-border-visible) !important;
+  border: 1px solid var(--hr-line-strong) !important;
   background: transparent !important;
   border-radius: 4px !important;
 }
 
-.dark .VPNavBarSearch .DocSearch-Button {
-  border-color: var(--nd-border-visible) !important;
+/* ══════════════════════════════════════════════════════════════════════════
+   HOME SURFACE — cockpit grid texture (mirrors relayGridTexture())
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.dark .VPHome {
+  background-image:
+    linear-gradient(rgba(247, 246, 240, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(247, 246, 240, 0.016) 1px, transparent 1px),
+    radial-gradient(circle, rgba(174, 191, 255, 0.11) 1.1px, transparent 1.4px);
+  background-size: 42px 42px, 42px 42px, 10px 10px;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -129,6 +158,21 @@ html:not(.dark) .VPNavBar {
   color: var(--vp-c-text-2);
   max-width: 520px;
   line-height: 1.6;
+}
+
+/* Platform-availability note under the hero action buttons */
+.hero-platform-note {
+  margin: 14px 0 0;
+  font-family: var(--vp-font-family-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--vp-c-text-3);
+}
+@media (max-width: 959px) {
+  .hero-platform-note {
+    text-align: center;
+  }
 }
 
 /* Hero image — flat, border separation */
@@ -158,23 +202,18 @@ html:not(.dark) .VPNavBar {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   FEATURE CARDS — subtle border, hover border only
+   FEATURE CARDS — navy panel, hairline border, hover border only
    ══════════════════════════════════════════════════════════════════════════ */
 
 .VPFeature {
-  border: 1px solid var(--nd-border) !important;
-  background: var(--vp-c-bg) !important;
+  border: 1px solid var(--hr-line) !important;
+  background: var(--vp-c-bg-alt) !important;
   border-radius: 8px !important;
   transition: border-color 0.2s cubic-bezier(0.25, 0.1, 0.25, 1) !important;
 }
 
-html:not(.dark) .VPFeature {
-  border-color: #E8E8E8 !important;
-  background: #FFFFFF !important;
-}
-
 .VPFeature:hover {
-  border-color: var(--nd-border-visible) !important;
+  border-color: var(--hr-line-strong) !important;
 }
 
 .VPFeature .title {
@@ -221,13 +260,9 @@ html:not(.dark) .VPFeature {
 }
 
 .VPButton.alt {
-  border-color: var(--nd-border-visible) !important;
+  border-color: var(--hr-line-strong) !important;
   background: transparent !important;
   transition: border-color 0.2s cubic-bezier(0.25, 0.1, 0.25, 1) !important;
-}
-
-html:not(.dark) .VPButton.alt {
-  border-color: #CCCCCC !important;
 }
 
 .VPButton.alt:hover {
@@ -240,14 +275,7 @@ html:not(.dark) .VPButton.alt {
 
 .VPSidebar {
   background: var(--vp-c-bg) !important;
-}
-
-.dark .VPSidebar {
-  border-right: 1px solid var(--nd-border) !important;
-}
-
-html:not(.dark) .VPSidebar {
-  border-right: 1px solid #E8E8E8 !important;
+  border-right: 1px solid var(--hr-line) !important;
 }
 
 .VPSidebarItem.is-active > .item > .link > .text {
@@ -264,7 +292,7 @@ html:not(.dark) .VPSidebar {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   CODE BLOCKS — near-black, border separation
+   CODE BLOCKS — sunken navy panel, border separation
    ══════════════════════════════════════════════════════════════════════════ */
 
 .vp-code-group .tabs label.active {
@@ -272,15 +300,15 @@ html:not(.dark) .VPSidebar {
 }
 
 .dark .vp-doc div[class*='language-'] {
-  background: #0A0A0A !important;
-  border: 1px solid var(--nd-border);
-  border-radius: 4px;
+  background: #0B0C12 !important;
+  border: 1px solid var(--hr-line);
+  border-radius: 8px;
 }
 
 html:not(.dark) .vp-doc div[class*='language-'] {
   background: #FFFFFF !important;
-  border: 1px solid #E8E8E8;
-  border-radius: 4px;
+  border: 1px solid var(--hr-line);
+  border-radius: 8px;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -310,44 +338,54 @@ html:not(.dark) .vp-doc div[class*='language-'] {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   INLINE CODE
+   INLINE CODE — periwinkle on navy
    ══════════════════════════════════════════════════════════════════════════ */
 
 .dark .vp-doc :not(pre) > code {
-  background: #1A1A1A;
-  color: #C4B5FD;
+  background: #191B31;
+  color: #9FACFF;
 }
 
 html:not(.dark) .vp-doc :not(pre) > code {
-  background: #F0F0F0;
-  color: #5B21B6;
+  background: #EDE8DC;
+  color: #3A44B8;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   BADGES / TIPS / WARNINGS — restrained
+   BADGES / TIPS / WARNINGS — restrained, status colors mean status
    ══════════════════════════════════════════════════════════════════════════ */
 
 .VPBadge.tip {
   background-color: var(--vp-c-brand-soft) !important;
-  color: #C4B5FD !important;
+  color: #9FACFF !important;
   font-family: var(--vp-font-family-mono) !important;
   font-size: 11px !important;
   letter-spacing: 0.04em !important;
   text-transform: uppercase !important;
 }
 
+html:not(.dark) .VPBadge.tip {
+  color: #3A44B8 !important;
+}
+
 .dark .vp-doc .custom-block.tip {
-  border-color: rgba(124, 58, 237, 0.3);
-  background: rgba(124, 58, 237, 0.04);
+  border-color: rgba(110, 124, 255, 0.35);
+  background: rgba(110, 124, 255, 0.05);
 }
 
 .dark .vp-doc .custom-block.warning {
-  background: rgba(234, 179, 8, 0.04);
+  border-color: rgba(242, 177, 75, 0.3);
+  background: rgba(242, 177, 75, 0.04);
+}
+
+.dark .vp-doc .custom-block.danger {
+  border-color: rgba(255, 107, 120, 0.3);
+  background: rgba(255, 107, 120, 0.04);
 }
 
 html:not(.dark) .vp-doc .custom-block.tip {
-  border-color: rgba(124, 58, 237, 0.3);
-  background: rgba(124, 58, 237, 0.04);
+  border-color: rgba(79, 91, 213, 0.3);
+  background: rgba(79, 91, 213, 0.04);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -355,11 +393,7 @@ html:not(.dark) .vp-doc .custom-block.tip {
    ══════════════════════════════════════════════════════════════════════════ */
 
 .VPFooter {
-  border-top: 1px solid var(--nd-border) !important;
-}
-
-html:not(.dark) .VPFooter {
-  border-top-color: #E8E8E8 !important;
+  border-top: 1px solid var(--hr-line) !important;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -367,11 +401,11 @@ html:not(.dark) .VPFooter {
    ══════════════════════════════════════════════════════════════════════════ */
 
 ::-webkit-scrollbar { width: 4px; }
-.dark ::-webkit-scrollbar-track { background: #000000; }
-.dark ::-webkit-scrollbar-thumb { background: var(--nd-border-visible); border-radius: 2px; }
-.dark ::-webkit-scrollbar-thumb:hover { background: #666666; }
-html:not(.dark) ::-webkit-scrollbar-track { background: #F5F5F5; }
-html:not(.dark) ::-webkit-scrollbar-thumb { background: #CCCCCC; border-radius: 2px; }
+.dark ::-webkit-scrollbar-track { background: #08090D; }
+.dark ::-webkit-scrollbar-thumb { background: var(--hr-line-strong); border-radius: 2px; }
+.dark ::-webkit-scrollbar-thumb:hover { background: #68647D; }
+html:not(.dark) ::-webkit-scrollbar-track { background: #F7F3EA; }
+html:not(.dark) ::-webkit-scrollbar-thumb { background: #D6CFC0; border-radius: 2px; }
 
 /* ══════════════════════════════════════════════════════════════════════════
    DOC FOOTER CTA — per-page links
@@ -388,12 +422,8 @@ html:not(.dark) ::-webkit-scrollbar-thumb { background: #CCCCCC; border-radius: 
 
 .doc-footer-cta hr {
   border: none;
-  border-top: 1px solid var(--nd-border);
+  border-top: 1px solid var(--hr-line);
   margin-bottom: 16px;
-}
-
-html:not(.dark) .doc-footer-cta hr {
-  border-top-color: #E8E8E8;
 }
 
 .doc-footer-cta a {
