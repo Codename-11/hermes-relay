@@ -364,15 +364,49 @@ class GatewayChatClientTest {
     }
 
     @Test
-    fun `socket failure mid-turn surfaces stream error`() {
+    fun `socket loss mid-turn rejoins and completes on the new socket`() {
+        val r = Recorder()
+        client.sendTurn(null, "hello", null, r.callbacks) { r.preflightFailures += it }
+        val ws1 = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        // Server connection dies mid-turn (Wi-Fi roam analogue). The client
+        // must reconnect with a FRESH ticket and session.resume, then keep
+        // consuming the still-running turn's events on the new socket.
+        harness.rpcLog.clear()
+        ws1.close(1011, "server crashed")
+
+        val ws2 = harness.awaitServerSocket()
+        val resume = harness.awaitRpc("session.resume")
+        assertEquals(
+            "20260612_120000_abc123",
+            (resume["session_id"] as? JsonPrimitive)?.contentOrNull,
+        )
+        assertTrue(harness.ticketMints.get() >= 2)
+
+        ws2.send(
+            harness.eventFrame("message.delta", buildJsonObject { put("text", "after rejoin") }, "live-resumed"),
+        )
+        ws2.send(
+            harness.eventFrame("message.complete", buildJsonObject { put("text", "after rejoin") }, "live-resumed"),
+        )
+
+        assertTrue("turn never completed after rejoin", r.completeLatch.await(10, TimeUnit.SECONDS))
+        assertEquals(listOf("after rejoin"), r.textDeltas.toList())
+        assertTrue("rejoined turn must not error, got ${r.errors}", r.errors.isEmpty())
+        assertTrue(r.preflightFailures.isEmpty())
+    }
+
+    @Test
+    fun `failed rejoin surfaces stream error`() {
         val r = Recorder()
         client.sendTurn(null, "hello", null, r.callbacks) { r.preflightFailures += it }
         val serverWs = harness.awaitServerSocket()
         harness.awaitRpc("prompt.submit")
 
-        // Server goes away mid-turn (cancel() NPEs on mockwebserver's
-        // server-side sockets, so a server-initiated close stands in for the
-        // drop — the client sees the socket vanish mid-turn either way).
+        // Reconnect is impossible (ticket mint rejected) — the turn must
+        // surface a stream error rather than hang.
+        harness.failTicketMint = true
         serverWs.close(1011, "server crashed")
 
         assertTrue(r.completeLatch.await(10, TimeUnit.SECONDS))

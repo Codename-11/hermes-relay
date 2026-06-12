@@ -78,6 +78,9 @@ class GatewayChatClient(
         private const val RATE_LIMIT_COOLDOWN_MS = 300_000L
         private const val CONNECT_ATTEMPTS = 2
 
+        /** Socket losses answered with reconnect+resume per turn before giving up. */
+        private const val MAX_TURN_REJOINS = 2
+
         private const val DEFAULT_COLS = 80
 
         private object MainThreadDispatcher : (() -> Unit) -> Unit {
@@ -442,9 +445,79 @@ class GatewayChatClient(
             it.completeExceptionally(GatewayRpcException("gateway connection lost"))
         }
         pendingRpcs.clear()
-        activeTurn?.let { turn ->
+        val turn = activeTurn ?: return
+        if (turn.ended) {
+            activeTurn = null
+            return
+        }
+        // A rejoin already owns recovery — a connect attempt failing inside
+        // it must not spawn a second concurrent rejoin.
+        if (rejoinInProgress) return
+        // A turn is in flight and the server is still generating into the
+        // session (its orphan reaper holds it through a disconnect). Mobile
+        // radios drop sockets mid-turn routinely (Wi-Fi power-save/roam —
+        // ECONNABORTED), so try to rejoin: reconnect with a fresh ticket and
+        // session.resume rebinds the live session to the new socket, and the
+        // event stream continues — same recovery the desktop TUI relies on.
+        if (turn.beginRejoin()) {
+            rejoinInProgress = true
+            scope.launch {
+                try {
+                    attemptMidTurnRejoin(turn)
+                } finally {
+                    rejoinInProgress = false
+                }
+            }
+        } else {
             activeTurn = null
             turn.failFromTransport("Connection to the gateway was lost")
+        }
+    }
+
+    @Volatile
+    private var rejoinInProgress = false
+
+    private suspend fun attemptMidTurnRejoin(turn: GatewayTurn) {
+        val stored = storedSessionId
+        val rejoined = if (stored == null) {
+            false
+        } else {
+            try {
+                connectMutex.withLock {
+                    // An active turn overrides the failure cooldown — the
+                    // user is mid-conversation, not hammering a dead server.
+                    connectCooldownUntil = 0L
+                    ensureConnected()
+                    val resumed = rpc(
+                        "session.resume",
+                        buildJsonObject {
+                            put("session_id", stored)
+                            put("cols", DEFAULT_COLS)
+                        },
+                    )
+                    val live = resumed.getOrNull()?.stringField("session_id")
+                    if (live != null) {
+                        liveSessionId = live
+                        true
+                    } else {
+                        false
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Mid-turn rejoin failed: ${e.message}")
+                false
+            }
+        }
+        when {
+            turn.ended -> if (activeTurn === turn) activeTurn = null
+            rejoined -> {
+                Log.i(TAG, "Gateway rejoined mid-turn (session=$stored)")
+                turn.armWatchdog()
+            }
+            else -> {
+                if (activeTurn === turn) activeTurn = null
+                turn.failFromTransport("Connection to the gateway was lost")
+            }
         }
     }
 
@@ -505,6 +578,12 @@ class GatewayChatClient(
         @Volatile
         var cancelled = false
             private set
+
+        private val rejoinAttempts = java.util.concurrent.atomic.AtomicInteger(0)
+
+        /** True if this socket loss should be answered with a rejoin attempt. */
+        fun beginRejoin(): Boolean =
+            !ended && rejoinAttempts.incrementAndGet() <= MAX_TURN_REJOINS
 
         private var watchdog: Job? = null
 
