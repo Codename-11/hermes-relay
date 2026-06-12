@@ -1134,6 +1134,7 @@ private fun CompactTranscriptRow(
             ThinkingBlock(
                 thinkingContent = message.thinkingContent,
                 isStreaming = message.isThinkingStreaming,
+                timestamp = message.timestamp,
                 modifier = Modifier.padding(bottom = 6.dp),
             )
         }

@@ -174,6 +174,7 @@ fun MessageBubble(
             ThinkingBlock(
                 thinkingContent = message.thinkingContent,
                 isStreaming = message.isThinkingStreaming,
+                timestamp = message.timestamp,
                 modifier = Modifier
                     .widthIn(max = maxBubbleWidth)
                     .padding(bottom = 4.dp)

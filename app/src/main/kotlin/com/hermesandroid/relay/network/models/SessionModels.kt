@@ -147,8 +147,19 @@ data class MessageItem(
     @Serializable(with = FlexibleIdSerializer::class)
     val toolCallId: String? = null,
     val timestamp: Double? = null,
-    @SerialName("finish_reason") val finishReason: String? = null
+    @SerialName("finish_reason") val finishReason: String? = null,
+    // Reasoning persisted with the assistant message (upstream serializes
+    // both names; reasoning is the canonical one). Restored into
+    // ChatMessage.thinkingContent so the Thought-process block survives a
+    // return to the chat instead of existing only for the live turn.
+    val reasoning: String? = null,
+    @SerialName("reasoning_content") val reasoningContent: String? = null,
 ) {
+    /** Reasoning text under whichever field name the server used. */
+    val resolvedReasoning: String?
+        get() = reasoning?.takeIf { it.isNotBlank() }
+            ?: reasoningContent?.takeIf { it.isNotBlank() }
+
     /** Extract content as plain text string. Handles both string and array-of-parts formats. */
     val contentText: String?
         get() = when (content) {

@@ -49,9 +49,22 @@ import com.hermesandroid.relay.data.ToolCall
 @Composable
 fun ToolProgressCard(
     toolCall: ToolCall,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /**
+     * Fallback wall-clock for the right-aligned header time when the call
+     * has no completion stamp (history-restored calls) — usually the parent
+     * message timestamp. Null hides the time.
+     */
+    messageTimestamp: Long? = null,
 ) {
     var expanded by remember { mutableStateOf(!toolCall.isComplete) }
+    val timeMillis = toolCall.completedAt ?: messageTimestamp
+    val timeLabel = timeMillis?.takeIf { toolCall.isComplete }?.let {
+        remember(it) {
+            java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault())
+                .format(java.util.Date(it))
+        }
+    }
 
     // Auto-collapse when tool completes
     LaunchedEffect(toolCall.isComplete) {
@@ -121,10 +134,11 @@ fun ToolProgressCard(
                     modifier = Modifier.weight(1f)
                 )
 
-                // Duration
-                if (duration != null) {
+                // Duration + completion time ("3.1s · 5:32 PM")
+                val metaLabel = listOfNotNull(duration, timeLabel).joinToString(" · ")
+                if (metaLabel.isNotEmpty()) {
                     Text(
-                        text = duration,
+                        text = metaLabel,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

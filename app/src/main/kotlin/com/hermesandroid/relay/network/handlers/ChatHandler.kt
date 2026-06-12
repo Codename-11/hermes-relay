@@ -752,6 +752,14 @@ class ChatHandler {
                 toolCalls = toolCalls,
                 cards = extractedCards,
                 agentName = if (role == MessageRole.ASSISTANT) activeAgentName else null,
+                // Server persists per-message reasoning — restore it so the
+                // Thought-process block survives returning to the chat
+                // instead of existing only for the live turn.
+                thinkingContent = if (role == MessageRole.ASSISTANT) {
+                    item.resolvedReasoning?.trim() ?: ""
+                } else {
+                    ""
+                },
             )
         }
 

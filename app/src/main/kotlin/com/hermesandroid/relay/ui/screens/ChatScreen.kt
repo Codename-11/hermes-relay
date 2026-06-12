@@ -1400,7 +1400,10 @@ fun ChatScreen(
                                     Spacer(modifier = Modifier.height(4.dp))
                                     when (toolDisplay) {
                                         "compact" -> CompactToolCall(toolCall = toolCall)
-                                        else -> ToolProgressCard(toolCall = toolCall)
+                                        else -> ToolProgressCard(
+                                            toolCall = toolCall,
+                                            messageTimestamp = message.timestamp,
+                                        )
                                     }
                                 }
                             }
