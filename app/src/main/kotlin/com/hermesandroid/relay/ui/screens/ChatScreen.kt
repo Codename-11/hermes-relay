@@ -140,7 +140,6 @@ import com.hermesandroid.relay.ui.components.RelayPrimaryMode
 import com.hermesandroid.relay.ui.components.SphereState
 import com.hermesandroid.relay.ui.components.SessionDrawerContent
 import com.hermesandroid.relay.ui.components.SlashCommand
-import com.hermesandroid.relay.ui.components.StreamingDots
 import com.hermesandroid.relay.ui.components.ToolProgressCard
 import com.hermesandroid.relay.ui.components.VoiceModeOverlay
 import com.hermesandroid.relay.ui.LocalSnackbarHost
@@ -739,8 +738,21 @@ fun ChatScreen(
                 val isListRebuild = prev != null
                     && snapshot.messageCount - prev.messageCount > 1
 
-                if (isListRebuild) {
-                    // Instant — no animation, no conflict with animateItem.
+                // Growth of the bubble we're already following (thinking /
+                // content / tool cards on the same message) arrives at token
+                // frequency on the gateway transport. animateScrollToItem
+                // per delta is a cancel/restart storm — each collectLatest
+                // cancellation strands the viewport mid-animation (showing
+                // earlier content) before the next one yanks it back:
+                // visible stutter when parked at the bottom during long
+                // reasoning. Pin instantly instead; reserve the animation
+                // for the discrete new-bubble event.
+                val isSameTurnGrowth = prev != null
+                    && snapshot.messageCount == prev.messageCount
+
+                if (isListRebuild || isSameTurnGrowth) {
+                    // Instant — no animation, no conflict with animateItem,
+                    // no pile-up at delta frequency.
                     listState.scrollToItem(lastIndex, Int.MAX_VALUE)
                 } else {
                     // scrollOffset = Int.MAX_VALUE → Compose clamps to
@@ -1394,17 +1406,18 @@ fun ChatScreen(
                             }
                         }
 
-                        if (isStreaming) {
-                            item {
-                                StreamingDots(
-                                    modifier = Modifier
-                                        .padding(start = 12.dp, top = 4.dp)
-                                        .animateItem()
-                                )
-                            }
-                        }
-
-                        item { Spacer(modifier = Modifier.height(8.dp).animateItem()) }
+                        // NOTE: no standalone StreamingDots item here — the
+                        // streaming bubble already renders its own in-bubble
+                        // dots (MessageBubble), and a second indicator below
+                        // the bubble both read as a duplicate "typing" hint
+                        // and churned animateItem placement at the viewport
+                        // bottom on every delta (visible jitter at
+                        // gateway/token delta frequency). Same reason the
+                        // trailing spacer doesn't animateItem(): its position
+                        // shifts on every delta of the growing bubble above
+                        // it, and a constant 8dp gap gains nothing from
+                        // placement animation.
+                        item { Spacer(modifier = Modifier.height(8.dp)) }
                     }
 
                     // Scroll-to-bottom FAB
