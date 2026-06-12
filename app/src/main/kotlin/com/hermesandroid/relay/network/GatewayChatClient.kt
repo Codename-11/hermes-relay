@@ -192,6 +192,11 @@ class GatewayChatClient(
                         submitted.exceptionOrNull()?.message ?: "prompt.submit failed",
                     )
                 }
+                // One INFO line per turn so logcat shows which transport
+                // served a send — the SSE paths log their SSE events, and
+                // a silent happy path here made on-device verification a
+                // read-the-absence exercise.
+                Log.i(TAG, "Gateway turn submitted (session=$storedSessionId)")
             } catch (e: Exception) {
                 activeTurn = null
                 if (!turn.cancelled) {
@@ -276,6 +281,7 @@ class GatewayChatClient(
             webSocket = null
             throw GatewayConnectAttemptException("gateway.ready never arrived")
         }
+        Log.i(TAG, "Gateway connected (/api/ws ready)")
         _connectionState.value = GatewayConnectionState.Ready
     }
 
