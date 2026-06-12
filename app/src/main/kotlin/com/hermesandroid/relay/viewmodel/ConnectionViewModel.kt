@@ -2643,10 +2643,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 }
 
                 // Rebuild API client in a separate coroutine so it doesn't block
-                // the DataStore flow (getApiKey() awaits Tink crypto init on first call)
+                // the DataStore flow. apiKeyForClientBuild() skips the Tink
+                // crypto-init wait entirely on known-key-less connections —
+                // this launch is the FIRST client build at cold start, so
+                // awaiting the full decrypt here used to hold chat, health,
+                // and capabilities hostage to the StrongBox keyset marathon.
                 val currentUrl = effectiveApiServerUrlSnapshot()
                 launch {
-                    val currentKey = authManager.getApiKey() ?: ""
+                    val currentKey = apiKeyForClientBuild()
                     if (currentUrl != prevApiUrl || currentKey != prevApiKey) {
                         prevApiUrl = currentUrl
                         prevApiKey = currentKey
@@ -3749,6 +3753,19 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     suspend fun getApiKey(): String? = authManager.getApiKey()
 
+    /**
+     * The bearer key for client construction, WITHOUT paying the Keystore
+     * decrypt when this connection is known key-less (the common local
+     * setup). [AuthManager.apiKeyKnownAbsent] is a plain-prefs hint that
+     * defaults to "unknown ⇒ wait", so keyed connections always take the
+     * real [AuthManager.getApiKey] path. This is what keeps the API client
+     * — and everything behind it: health, capabilities, chat history —
+     * from queueing behind a multi-second StrongBox keyset marathon at
+     * cold start (measured 15s on an S25 Ultra before this fast path).
+     */
+    private suspend fun apiKeyForClientBuild(): String =
+        if (authManager.apiKeyKnownAbsent()) "" else authManager.getApiKey() ?: ""
+
     fun checkApiHealth() {
         viewModelScope.launch {
             val client = _apiClient.value
@@ -3818,7 +3835,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     private suspend fun rebuildApiClient() {
         val url = effectiveApiServerUrlSnapshot()
-        val key = authManager.getApiKey() ?: ""
+        val key = apiKeyForClientBuild()
 
         val oldClient = _apiClient.value
 
@@ -3859,7 +3876,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             baseApiUrl = baseApiUrl,
         )
         val baseClient = _apiClient.value
-        val key = authManager.getApiKey() ?: ""
+        val key = apiKeyForClientBuild()
 
         if (profileApiUrl == null || profileApiUrl == baseApiUrl) {
             val oldProfileClient = profileChatApiClient

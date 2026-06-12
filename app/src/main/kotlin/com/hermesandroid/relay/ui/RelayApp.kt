@@ -772,8 +772,16 @@ fun RelayApp() {
         }
 
         val hasStartupConnection = activeConnection?.apiServerUrl?.isNotBlank() == true
+        // A published activeEndpoint counts as "hermes online": the route
+        // resolver only publishes a winner after a successful HEAD /health
+        // probe against that route's API URL. At cold start this evidence
+        // lands within ~1s — long before the client-based health probe,
+        // which can't run until the API client exists (the client build
+        // used to queue behind the Keystore decrypt; see
+        // apiKeyForClientBuild in ConnectionViewModel).
         val startupApiUp = apiReachable ||
-            apiHealth == ConnectionViewModel.HealthStatus.Reachable
+            apiHealth == ConnectionViewModel.HealthStatus.Reachable ||
+            activeEndpoint != null
 
         // An Unreachable verdict only counts after it SURVIVES a settle
         // window: the first health probe often runs against the persisted
