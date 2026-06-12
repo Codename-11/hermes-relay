@@ -255,6 +255,16 @@ class ChatViewModel : ViewModel() {
     private val _isLoadingHistory = MutableStateFlow(false)
     val isLoadingHistory: StateFlow<Boolean> = _isLoadingHistory.asStateFlow()
 
+    /**
+     * One-way startup latch: the first profile/session context application
+     * has concluded — last session's history loaded, or there was nothing to
+     * restore, or the load failed. RelayApp's startup gate holds the sphere
+     * splash on this so the chat surface never flashes its empty "start
+     * chatting" state while the previous conversation is still inbound.
+     */
+    private val _initialChatSettled = MutableStateFlow(false)
+    val initialChatSettled: StateFlow<Boolean> = _initialChatSettled.asStateFlow()
+
     private val _availableSkills = MutableStateFlow<List<SkillInfo>>(emptyList())
     val availableSkills: StateFlow<List<SkillInfo>> = _availableSkills.asStateFlow()
 
@@ -449,6 +459,7 @@ class ChatViewModel : ViewModel() {
             activeProfileContextKey == contextKey &&
             handler.currentSessionId.value == sessionId
         ) {
+            _initialChatSettled.value = true
             return
         }
         if (
@@ -457,6 +468,7 @@ class ChatViewModel : ViewModel() {
             handler.currentSessionId.value == sessionId
         ) {
             activeProfileContextKey = contextKey
+            _initialChatSettled.value = true
             return
         }
 
@@ -476,21 +488,28 @@ class ChatViewModel : ViewModel() {
 
         if (sessionId == null || client == null) {
             _isLoadingHistory.value = false
+            _initialChatSettled.value = true
             return
         }
 
         _isLoadingHistory.value = true
         viewModelScope.launch {
-            val messages = client.getMessages(sessionId)
-            if (
-                historyLoadGeneration.get() == loadGeneration &&
-                activeProfileContextKey == contextKey &&
-                handler.currentSessionId.value == sessionId
-            ) {
-                handler.loadMessageHistory(messages)
-            }
-            if (historyLoadGeneration.get() == loadGeneration) {
-                _isLoadingHistory.value = false
+            try {
+                val messages = client.getMessages(sessionId)
+                if (
+                    historyLoadGeneration.get() == loadGeneration &&
+                    activeProfileContextKey == contextKey &&
+                    handler.currentSessionId.value == sessionId
+                ) {
+                    handler.loadMessageHistory(messages)
+                }
+            } finally {
+                // finally (not tail code) so a throwing fetch can't strand
+                // the loading flag true or hold the startup gate hostage.
+                if (historyLoadGeneration.get() == loadGeneration) {
+                    _isLoadingHistory.value = false
+                }
+                _initialChatSettled.value = true
             }
         }
     }

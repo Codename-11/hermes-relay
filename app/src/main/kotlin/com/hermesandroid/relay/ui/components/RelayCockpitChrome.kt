@@ -110,7 +110,7 @@ fun RelayStatusStrip(
                     WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
                 ),
             )
-            .padding(start = 14.dp, end = 14.dp, top = 2.dp, bottom = 8.dp)
+            .padding(start = 14.dp, end = 14.dp, top = 3.dp, bottom = 4.dp)
             .clip(RoundedCornerShape(999.dp))
             .relayPanel(
                 shape = RoundedCornerShape(999.dp),

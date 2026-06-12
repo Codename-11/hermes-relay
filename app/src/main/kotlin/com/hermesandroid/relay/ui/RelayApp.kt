@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -8,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
@@ -47,8 +49,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -745,25 +749,58 @@ fun RelayApp() {
         val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
         val serverModelName by chatViewModel.serverModelName.collectAsState()
         val appReady by connectionViewModel.isReady.collectAsState()
+        val initialChatSettled by chatViewModel.initialChatSettled.collectAsState()
         var startupGateMinElapsed by remember { mutableStateOf(false) }
         var startupGateTimedOut by remember { mutableStateOf(false) }
         var startupGateReleased by remember { mutableStateOf(false) }
+        var startupUnreachableSettled by remember { mutableStateOf(false) }
 
         LaunchedEffect(Unit) {
             delay(650L)
             startupGateMinElapsed = true
         }
+        // Backstop only. The old 5.5s value force-hid the sphere
+        // (showStartupSphere checked !timedOut) while startup was genuinely
+        // still working, dumping users into half-hydrated UI — a "connect"
+        // CTA they were never meant to see, then the connected state, then
+        // the conversation, one reveal at a time. Now the timeout RELEASES
+        // the gate like any other condition and the sphere narrates
+        // progress, so a longer ceiling is watchable instead of broken.
         LaunchedEffect(Unit) {
-            delay(5_500L)
+            delay(12_000L)
             startupGateTimedOut = true
         }
 
         val hasStartupConnection = activeConnection?.apiServerUrl?.isNotBlank() == true
+        val startupApiUp = apiReachable ||
+            apiHealth == ConnectionViewModel.HealthStatus.Reachable
+
+        // An Unreachable verdict only counts after it SURVIVES a settle
+        // window: the first health probe often runs against the persisted
+        // (e.g. LAN) URL moments before the route resolver lands on
+        // Tailscale and the client is rebuilt. Releasing the gate on that
+        // first verdict was what flashed the disconnected chat UI at users
+        // who were connected-just-waiting. The keyed effect restarts on
+        // every health flip, cancelling a pending settle.
+        LaunchedEffect(apiHealth, startupGateReleased) {
+            if (startupGateReleased) return@LaunchedEffect
+            if (apiHealth == ConnectionViewModel.HealthStatus.Unreachable) {
+                delay(3_000L)
+                startupUnreachableSettled = true
+            } else {
+                startupUnreachableSettled = false
+            }
+        }
+
         val startupConnectionResolved = appReady && (
             !hasStartupConnection ||
-                apiReachable ||
-                apiHealth == ConnectionViewModel.HealthStatus.Reachable ||
-                apiHealth == ConnectionViewModel.HealthStatus.Unreachable ||
+                // Happy path: server answering AND the last conversation has
+                // been restored (or there was none) — the chat surface is
+                // real before it's revealed.
+                (startupApiUp && initialChatSettled) ||
+                // Error path: a settled unreachable reveals the normal UI,
+                // which owns offline presentation (status pill, retry).
+                startupUnreachableSettled ||
                 startupGateTimedOut
             )
         LaunchedEffect(
@@ -783,7 +820,6 @@ fun RelayApp() {
         val showStartupSphere =
             onboardingCompleted &&
                 !startupGateReleased &&
-                !startupGateTimedOut &&
                 !voiceUiState.voiceMode
 
         // Hydrate the Manage payload cache from its plain-JSON disk mirror
@@ -1223,7 +1259,8 @@ fun RelayApp() {
                     if (coldStartAuthState is AuthState.Paired) {
                         TerminalScreen(
                             terminalViewModel = terminalViewModel,
-                            connectionViewModel = connectionViewModel
+                            connectionViewModel = connectionViewModel,
+                            onBack = { navController.popBackStack() },
                         )
                     } else {
                         PowerFeatureGateScreen(
@@ -1233,6 +1270,7 @@ fun RelayApp() {
                             onPrimaryAction = {
                                 navController.navigate(Screen.Pair.route())
                             },
+                            onBack = { navController.popBackStack() },
                         )
                     }
                 }
@@ -1348,6 +1386,7 @@ fun RelayApp() {
                     SettingsScreen(
                         connectionViewModel = connectionViewModel,
                         chatViewModel = chatViewModel,
+                        onBack = { navController.popBackStack() },
                         // (The `onNavigateToChatWithAgentSheet` callback that
                         // used to live here was removed 2026-04-21. Tapping
                         // the Active Agent card on Settings now opens the
@@ -1815,8 +1854,11 @@ fun RelayApp() {
         // ConnectionSwitcherSheet.kt itself is kept so any future programmatic
         // callers (deep links, automation) can still invoke it if needed.)
 
-        // Startup connection gate. Keeps transient "connect" prompts hidden
-        // until the first saved-connection health decision resolves.
+        // Startup connection gate. The sphere is the loading screen: it
+        // holds until the app is actually presentable (connected + last
+        // conversation restored, or a settled error, or the backstop
+        // timeout) and narrates progress as terminal-style check lines so
+        // a longer wait reads as work, not a hang.
         AnimatedVisibility(
             visible = showStartupSphere,
             enter = fadeIn(tween(300)),
@@ -1852,8 +1894,121 @@ fun RelayApp() {
                         letterSpacing = 2.sp
                     )
                 }
+
+                // Startup checks — all rows are always laid out (pending
+                // ones dimmed, lighting up as they activate) so the column
+                // never reflows and the branding above never shifts.
+                if (hasStartupConnection) {
+                    val endpoint = activeEndpoint
+                    val checks = listOf(
+                        if (appReady) {
+                            StartupCheck(StartupCheckState.Done, "state restored")
+                        } else {
+                            StartupCheck(StartupCheckState.Active, "restoring state…")
+                        },
+                        when {
+                            endpoint != null -> StartupCheck(
+                                StartupCheckState.Done,
+                                "route · ${endpoint.displayLabel()}",
+                            )
+                            startupApiUp ->
+                                StartupCheck(StartupCheckState.Done, "route · direct")
+                            appReady ->
+                                StartupCheck(StartupCheckState.Active, "resolving route…")
+                            else -> StartupCheck(StartupCheckState.Pending, "route")
+                        },
+                        when {
+                            startupApiUp ->
+                                StartupCheck(StartupCheckState.Done, "hermes online")
+                            apiHealth == ConnectionViewModel.HealthStatus.Unreachable ->
+                                StartupCheck(StartupCheckState.Failed, "hermes unreachable")
+                            appReady ->
+                                StartupCheck(StartupCheckState.Active, "contacting hermes…")
+                            else -> StartupCheck(StartupCheckState.Pending, "hermes")
+                        },
+                        when {
+                            startupApiUp && initialChatSettled ->
+                                StartupCheck(StartupCheckState.Done, "conversation ready")
+                            startupApiUp -> StartupCheck(
+                                StartupCheckState.Active,
+                                "loading conversation…",
+                            )
+                            else -> StartupCheck(StartupCheckState.Pending, "conversation")
+                        },
+                    )
+                    Column(
+                        horizontalAlignment = Alignment.Start,
+                        verticalArrangement = Arrangement.spacedBy(3.dp),
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 32.dp)
+                    ) {
+                        checks.forEach { check -> StartupCheckRow(check) }
+                    }
+                }
             }
         }
         } // end Box
+    }
+}
+
+/** One line of the startup sphere's progress narration. */
+private data class StartupCheck(
+    val state: StartupCheckState,
+    val label: String,
+)
+
+private enum class StartupCheckState { Pending, Active, Done, Failed }
+
+/**
+ * Terminal-style check line for the startup sphere: monospace glyph + label,
+ * dimmed while pending and fading up as the underlying state lands. Failed
+ * is visible only briefly — a settled failure releases the gate and the
+ * normal UI takes over error presentation.
+ */
+@Composable
+private fun StartupCheckRow(check: StartupCheck) {
+    val targetAlpha = when (check.state) {
+        StartupCheckState.Pending -> 0.28f
+        StartupCheckState.Active -> 0.85f
+        else -> 0.95f
+    }
+    val alpha by animateFloatAsState(
+        targetValue = targetAlpha,
+        animationSpec = tween(400),
+        label = "startup-check-alpha",
+    )
+    val glyph = when (check.state) {
+        StartupCheckState.Pending -> "·"
+        StartupCheckState.Active -> "›"
+        StartupCheckState.Done -> "✓"
+        StartupCheckState.Failed -> "✕"
+    }
+    val glyphColor = when (check.state) {
+        StartupCheckState.Done -> RelayRefresh.Green
+        StartupCheckState.Failed -> RelayRefresh.Danger
+        else -> RelayRefresh.Muted
+    }
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.alpha(alpha),
+    ) {
+        Text(
+            text = glyph,
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = FontFamily.Monospace,
+            color = glyphColor,
+        )
+        Text(
+            text = check.label,
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = FontFamily.Monospace,
+            color = if (check.state == StartupCheckState.Active) {
+                RelayRefresh.Paper.copy(alpha = 0.9f)
+            } else {
+                RelayRefresh.Muted
+            },
+        )
     }
 }
