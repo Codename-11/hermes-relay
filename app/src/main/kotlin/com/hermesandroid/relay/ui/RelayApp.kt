@@ -800,12 +800,75 @@ fun RelayApp() {
             }
         }
 
+        // ---- Startup narration: real states the checklist verifies ----
+        val startupEndpoint = activeEndpoint
+        val startupCheckTargets = if (!hasStartupConnection) {
+            emptyList()
+        } else {
+            listOf(
+                if (appReady) {
+                    StartupCheck(StartupCheckState.Done, "state restored")
+                } else {
+                    StartupCheck(StartupCheckState.Active, "restoring state")
+                },
+                when {
+                    startupEndpoint != null -> StartupCheck(
+                        StartupCheckState.Done,
+                        "route · ${startupEndpoint.displayLabel()}",
+                    )
+                    startupApiUp ->
+                        StartupCheck(StartupCheckState.Done, "route · direct")
+                    appReady ->
+                        StartupCheck(StartupCheckState.Active, "resolving route")
+                    else -> StartupCheck(StartupCheckState.Pending, "route")
+                },
+                when {
+                    startupApiUp ->
+                        StartupCheck(StartupCheckState.Done, "hermes online")
+                    apiHealth == ConnectionViewModel.HealthStatus.Unreachable ->
+                        StartupCheck(StartupCheckState.Failed, "hermes unreachable")
+                    appReady ->
+                        StartupCheck(StartupCheckState.Active, "contacting hermes")
+                    else -> StartupCheck(StartupCheckState.Pending, "hermes")
+                },
+                when {
+                    startupApiUp && initialChatSettled ->
+                        StartupCheck(StartupCheckState.Done, "conversation ready")
+                    startupApiUp ->
+                        StartupCheck(StartupCheckState.Active, "loading conversation")
+                    else -> StartupCheck(StartupCheckState.Pending, "conversation")
+                },
+            )
+        }
+
+        // ---- Narration choreography ----
+        // With the key-less fast path every readiness signal can be
+        // satisfied before the sphere finishes fading in — an all-✓-at-once
+        // reveal reads as "nothing was actually checked". So rows resolve
+        // strictly top-to-bottom and each one holds a spinner beat before
+        // its verdict lands, even when the underlying state was already
+        // true. The gate's happy path waits for the narration to finish;
+        // error and timeout releases don't.
+        var startupNarrationStage by remember { mutableStateOf(0) }
+        LaunchedEffect(startupCheckTargets, startupNarrationStage, startupGateReleased) {
+            if (startupGateReleased) return@LaunchedEffect
+            if (startupNarrationStage >= startupCheckTargets.size) return@LaunchedEffect
+            val target = startupCheckTargets[startupNarrationStage].state
+            if (target == StartupCheckState.Done || target == StartupCheckState.Failed) {
+                delay(350L)
+                startupNarrationStage += 1
+            }
+        }
+        val startupNarrationComplete =
+            startupNarrationStage >= startupCheckTargets.size
+
         val startupConnectionResolved = appReady && (
             !hasStartupConnection ||
                 // Happy path: server answering AND the last conversation has
-                // been restored (or there was none) — the chat surface is
-                // real before it's revealed.
-                (startupApiUp && initialChatSettled) ||
+                // been restored (or there was none) AND the checklist has
+                // visibly finished ticking — the chat surface is real before
+                // it's revealed, and the sphere never vanishes mid-tick.
+                (startupApiUp && initialChatSettled && startupNarrationComplete) ||
                 // Error path: a settled unreachable reveals the normal UI,
                 // which owns offline presentation (status pill, retry).
                 startupUnreachableSettled ||
@@ -1904,46 +1967,28 @@ fun RelayApp() {
                 }
 
                 // Startup checks — all rows are always laid out (pending
-                // ones dimmed, lighting up as they activate) so the column
-                // never reflows and the branding above never shifts.
-                if (hasStartupConnection) {
-                    val endpoint = activeEndpoint
-                    val checks = listOf(
-                        if (appReady) {
-                            StartupCheck(StartupCheckState.Done, "state restored")
-                        } else {
-                            StartupCheck(StartupCheckState.Active, "restoring state…")
-                        },
+                // ones dimmed) so the column never reflows and the branding
+                // above never shifts. What renders is the CHOREOGRAPHED view
+                // of startupCheckTargets: rows above the narration stage show
+                // their real verdict, the stage row spins (unless it already
+                // failed), rows below sit dimmed with their short labels.
+                if (startupCheckTargets.isNotEmpty()) {
+                    val pendingLabels = listOf("state", "route", "hermes", "conversation")
+                    val displayedChecks = startupCheckTargets.mapIndexed { index, check ->
                         when {
-                            endpoint != null -> StartupCheck(
-                                StartupCheckState.Done,
-                                "route · ${endpoint.displayLabel()}",
+                            index < startupNarrationStage -> check
+                            index == startupNarrationStage ->
+                                if (check.state == StartupCheckState.Failed) {
+                                    check
+                                } else {
+                                    check.copy(state = StartupCheckState.Active)
+                                }
+                            else -> StartupCheck(
+                                StartupCheckState.Pending,
+                                pendingLabels.getOrElse(index) { check.label },
                             )
-                            startupApiUp ->
-                                StartupCheck(StartupCheckState.Done, "route · direct")
-                            appReady ->
-                                StartupCheck(StartupCheckState.Active, "resolving route…")
-                            else -> StartupCheck(StartupCheckState.Pending, "route")
-                        },
-                        when {
-                            startupApiUp ->
-                                StartupCheck(StartupCheckState.Done, "hermes online")
-                            apiHealth == ConnectionViewModel.HealthStatus.Unreachable ->
-                                StartupCheck(StartupCheckState.Failed, "hermes unreachable")
-                            appReady ->
-                                StartupCheck(StartupCheckState.Active, "contacting hermes…")
-                            else -> StartupCheck(StartupCheckState.Pending, "hermes")
-                        },
-                        when {
-                            startupApiUp && initialChatSettled ->
-                                StartupCheck(StartupCheckState.Done, "conversation ready")
-                            startupApiUp -> StartupCheck(
-                                StartupCheckState.Active,
-                                "loading conversation…",
-                            )
-                            else -> StartupCheck(StartupCheckState.Pending, "conversation")
-                        },
-                    )
+                        }
+                    }
                     Column(
                         horizontalAlignment = Alignment.Start,
                         verticalArrangement = Arrangement.spacedBy(3.dp),
@@ -1951,7 +1996,7 @@ fun RelayApp() {
                             .align(Alignment.BottomCenter)
                             .padding(bottom = 32.dp)
                     ) {
-                        checks.forEach { check -> StartupCheckRow(check) }
+                        displayedChecks.forEach { check -> StartupCheckRow(check) }
                     }
                 }
             }
@@ -1965,6 +2010,8 @@ private data class StartupCheck(
     val state: StartupCheckState,
     val label: String,
 )
+
+private val STARTUP_SPINNER_FRAMES = listOf("|", "/", "-", "\\")
 
 private enum class StartupCheckState { Pending, Active, Done, Failed }
 
@@ -1986,9 +2033,21 @@ private fun StartupCheckRow(check: StartupCheck) {
         animationSpec = tween(400),
         label = "startup-check-alpha",
     )
+    // Classic ASCII spinner for the active row — guaranteed glyphs in the
+    // platform monospace font (fancier braille spinners render as tofu on
+    // some devices) and on-theme for terminal-style narration.
+    var spinnerFrame by remember { mutableStateOf(0) }
+    if (check.state == StartupCheckState.Active) {
+        LaunchedEffect(Unit) {
+            while (true) {
+                delay(120L)
+                spinnerFrame = (spinnerFrame + 1) % STARTUP_SPINNER_FRAMES.size
+            }
+        }
+    }
     val glyph = when (check.state) {
         StartupCheckState.Pending -> "·"
-        StartupCheckState.Active -> "›"
+        StartupCheckState.Active -> STARTUP_SPINNER_FRAMES[spinnerFrame]
         StartupCheckState.Done -> "✓"
         StartupCheckState.Failed -> "✕"
     }
