@@ -1398,8 +1398,14 @@ class ChatViewModel : ViewModel() {
             // Sessions endpoint doesn't emit structured tool events during streaming —
             // tool calls are only available as JSON on the stored messages. Reload the
             // server-authoritative history to get proper message boundaries + tool_calls.
+            // Gateway turns reconcile the same way: live tool events are gated by the
+            // server's display.tool_progress config, so a turn that ran tools silently
+            // (config off, or events lost in a mid-turn rejoin gap) still gets its tool
+            // cards + persisted reasoning right after the turn — not on the next app
+            // restart. By message.complete the server has persisted the turn, so the
+            // REST read is authoritative.
             val sid = handler.currentSessionId.value
-            if (sid != null && streamingEndpoint == "sessions") {
+            if (sid != null && (streamingEndpoint == "sessions" || streamingEndpoint == "gateway")) {
                 viewModelScope.launch {
                     val serverMessages = client.getMessages(sid)
                     handler.loadMessageHistory(serverMessages)
