@@ -405,6 +405,16 @@ class GatewayChatClient(
         val payload = params["payload"] as? JsonObject
         val eventSessionId = params.stringField("session_id")
 
+        // Mirror HermesApiClient's per-event SSE logging — high-frequency
+        // delta types log length only, everything else logs a payload
+        // excerpt so on-device diagnosis doesn't read absences.
+        when (type) {
+            "message.delta", "reasoning.delta", "thinking.delta" ->
+                Log.d(TAG, "GW ← $type (${payload?.toString()?.length ?: 0} chars)")
+            else ->
+                Log.d(TAG, "GW ← $type | ${payload?.toString()?.take(300) ?: "{}"}")
+        }
+
         if (type == "gateway.ready") {
             ready.complete(Unit)
             return
