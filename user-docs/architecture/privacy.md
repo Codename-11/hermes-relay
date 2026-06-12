@@ -1,6 +1,6 @@
 # Privacy & Data Handling
 
-Hermes-Relay is a self-hosted app. It connects only to your own servers — no cloud accounts, no hosted Hermes-Relay backend, no ads, and no third-party analytics.
+Hermes-Relay connects only to your own machines — no cloud accounts, no hosted Hermes-Relay backend, no ads, and no third-party analytics.
 
 ## Track split
 

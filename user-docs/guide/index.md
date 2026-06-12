@@ -2,8 +2,8 @@
 
 This section covers the **Android client** for [Hermes Agent](https://hermes-agent.nousresearch.com): standard API/dashboard setup, chat, Manage, voice, optional Relay pairing, terminal/TUI relay, notifications, and optional sideload Device Control.
 
-::: tip Looking for the desktop CLI?
-The desktop terminal client (Windows / macOS / Linux) lives in its own section: **[Desktop CLI →](/desktop/)**. Desktop Relay pairing and Android Relay pairing use the same Hermes-Relay server and `~/.hermes/remote-sessions.json`.
+::: tip Want the agent to have hands on your other machines too?
+The Hermes-Relay CLI (Windows today; macOS / Linux coming soon) gives your Hermes agent consent-gated filesystem, terminal, and screenshot access on any machine you pair — plus a terminal escape hatch for you: **[CLI →](/desktop/)**. Both surfaces share the same relay pairing and `~/.hermes/remote-sessions.json`.
 :::
 
 Hermes-Relay is a native Android app for [Hermes Agent](https://hermes-agent.nousresearch.com). Chat with your agent through the Hermes API server, manage Skills/Cron/MCP/Profile surfaces through the dashboard, use voice, and optionally pair Relay for terminal/TUI and bridge power tools. The Google Play build ships Bridge Core only; sideload builds add AccessibilityService-backed Device Control.
@@ -40,7 +40,7 @@ Phone (WSS/HTTP) → Relay Server (:8767)        [Bridge Core, terminal, TUI, me
 
 Chat connects directly to the Hermes API Server using the Sessions API with SSE streaming. The relay server handles Bridge Core, terminal, TUI, media, notification companion, sessions, and `/voice/*` routes. Sideload builds additionally expose Android Device Control routes.
 
-## Current Status — v0.8.0
+## Current Status — v0.8.1
 
 | Feature | Status |
 |---------|--------|

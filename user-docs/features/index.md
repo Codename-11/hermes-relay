@@ -9,7 +9,7 @@ A **<span class="track-badge track-badge--sideload">Sideload only</span>** badge
 | Feature | Description |
 |---------|-------------|
 | [Direct API Connection](/features/direct-api) | HTTP/SSE streaming to Hermes API Server |
-| [Voice Mode](/features/voice) | Real-time voice conversation — sphere listens, agent speaks back via your server's configured TTS/STT providers |
+| [Voice Mode](/features/voice) | Real-time voice conversation — you talk, the agent answers aloud via your server's configured TTS/STT providers |
 | [Markdown Rendering](/features/markdown) | Full markdown with syntax-highlighted code blocks |
 | [Reasoning Display](/features/reasoning) | Collapsible extended-thinking blocks |
 | [Connections](/features/connections) | Save multiple Hermes servers — one-tap switch from the top-bar chip |
@@ -135,7 +135,7 @@ For the full decision guide and install instructions for each, see [Release trac
 |---------|--------|
 | Push Notifications | Future — Agent-initiated alerts |
 | Memory Viewer | Future — View/edit agent memories |
-| Cross-device handoff | Future — Hand a task from phone to desktop terminal session |
+| Cross-device handoff | Future — Hand a task from your phone to a desktop hand |
 
 <style scoped>
 .track-badge {

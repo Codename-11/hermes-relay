@@ -65,7 +65,7 @@ onBeforeUnmount(() => {
   display: block;
   padding: 10px;
   border-radius: 36px;
-  background: linear-gradient(160deg, #1a1a1a 0%, #0a0a0a 100%);
+  background: linear-gradient(160deg, #191B31 0%, #0B0C12 100%);
   box-shadow:
     0 0 0 1px var(--vp-c-divider),
     0 30px 60px -20px rgba(0, 0, 0, 0.5),
@@ -93,7 +93,7 @@ onBeforeUnmount(() => {
   display: block;
   width: 100%;
   border-radius: 28px;
-  background: #000;
+  background: #08090D;
 }
 .hero-demo-video {
   height: auto;
@@ -105,14 +105,14 @@ onBeforeUnmount(() => {
   justify-content: center;
   background: radial-gradient(
     ellipse at center,
-    rgba(155, 107, 240, 0.18) 0%,
-    rgba(0, 0, 0, 1) 70%
+    rgba(110, 124, 255, 0.16) 0%,
+    rgba(8, 9, 13, 1) 70%
   );
 }
 .hero-demo-logo img {
   width: 55%;
   height: auto;
-  filter: drop-shadow(0 0 24px rgba(155, 107, 240, 0.55));
+  filter: drop-shadow(0 0 24px rgba(110, 124, 255, 0.5));
 }
 
 /* Crossfade between video and logo */
