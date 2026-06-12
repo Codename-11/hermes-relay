@@ -2692,6 +2692,39 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             }
         }
 
+        // Fast-retry burst on an Unreachable verdict. The periodic loop
+        // above ticks every 30s — a single transient miss (cold-start race
+        // with the route resolver, Wi-Fi still settling, mid-route-swap)
+        // used to park "offline" for a full tick, which the startup gate
+        // (and the demo-video camera) measured as a 6–28s wildly variable
+        // launch against the same healthy LAN server. One bounded burst per
+        // failure episode: three quick re-probes, re-armed only by a
+        // Reachable verdict — a genuinely down server fails one burst and
+        // settles back to the 30s cadence (where the 2-consecutive-failures
+        // escalation still owns route re-resolution). StateFlow dedup means
+        // repeat Unreachable verdicts can't re-trigger the burst.
+        viewModelScope.launch {
+            var burstArmed = true
+            _apiServerHealth.collect { verdict ->
+                when (verdict) {
+                    HealthStatus.Reachable -> burstArmed = true
+                    HealthStatus.Unreachable -> {
+                        if (!burstArmed) return@collect
+                        burstArmed = false
+                        for (retryDelayMs in listOf(2_500L, 5_000L, 7_500L)) {
+                            delay(retryDelayMs)
+                            if (_apiServerHealth.value != HealthStatus.Unreachable) {
+                                return@collect
+                            }
+                            if (_apiClient.value == null) return@collect
+                            probeApiHealth()
+                        }
+                    }
+                    else -> Unit
+                }
+            }
+        }
+
         // Periodic relay health check — same cadence. Only fires when a relay
         // URL is configured. Does NOT touch the WSS channel; this is a pure
         // /health probe via RelayHttpClient (3s timeout, no auth needed).

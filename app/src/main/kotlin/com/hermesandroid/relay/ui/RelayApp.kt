@@ -113,6 +113,9 @@ import com.hermesandroid.relay.ui.screens.prewarmDashboardManage
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.relayGridTexture
+import com.hermesandroid.relay.diagnostics.DiagnosticCategory
+import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
+import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.network.RelayProfileInspectorClient
 import com.hermesandroid.relay.network.AutoVoiceAudioClient
 import com.hermesandroid.relay.network.DynamicDashboardCookieJar
@@ -898,6 +901,30 @@ fun RelayApp() {
                 startupGateMinElapsed &&
                 startupConnectionResolved
             ) {
+                // When the 12s backstop (not readiness, not a settled error)
+                // is what opened the gate, leave a diagnostic naming the
+                // conditions still unmet — the demo-video session measured
+                // 6–28s launch variance against the same LAN server and had
+                // no way to see why from the device.
+                val happyPathReady =
+                    chatReady && initialChatSettled && startupNarrationComplete
+                if (
+                    hasStartupConnection &&
+                    !happyPathReady &&
+                    !startupUnreachableSettled &&
+                    startupGateTimedOut
+                ) {
+                    DiagnosticsLog.record(
+                        category = DiagnosticCategory.Api,
+                        severity = DiagnosticSeverity.Warning,
+                        title = "Startup gate released by timeout",
+                        detail = "chatReady=$chatReady " +
+                            "historySettled=$initialChatSettled " +
+                            "narration=$startupNarrationStage/${startupCheckTargets.size} " +
+                            "health=$apiHealth " +
+                            "route=${activeEndpoint?.role ?: "unresolved"}",
+                    )
+                }
                 startupGateReleased = true
             }
         }
