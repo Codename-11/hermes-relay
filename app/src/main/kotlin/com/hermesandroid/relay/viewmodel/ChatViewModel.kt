@@ -19,6 +19,9 @@ import com.hermesandroid.relay.data.RealtimeConversationContextMessage
 import com.hermesandroid.relay.data.RealtimeTurnTrace
 import com.hermesandroid.relay.data.ToolCallEvent
 import com.hermesandroid.relay.data.VoiceIntentTrace
+import com.hermesandroid.relay.network.ActiveTurnHandle
+import com.hermesandroid.relay.network.GatewayChatClient
+import com.hermesandroid.relay.network.GatewayTurnCallbacks
 import com.hermesandroid.relay.network.HermesApiClient
 import com.hermesandroid.relay.network.RelayHttpClient
 import com.hermesandroid.relay.network.RealtimeVoiceEvent
@@ -59,7 +62,13 @@ class ChatViewModel : ViewModel() {
 
     private var apiClient: HermesApiClient? = null
     private var chatHandler: ChatHandler? = null
-    private var activeStream: EventSource? = null
+
+    /**
+     * The in-flight chat turn, transport-agnostic: SSE turns wrap their
+     * [EventSource], gateway turns wrap a `session.interrupt` dispatch.
+     * All cancel/teardown sites operate on this handle.
+     */
+    private var activeStream: ActiveTurnHandle? = null
     private var intentionallyCancelled = false
     private var firstTokenNotified = false
     private var toolHistoryJob: Job? = null
@@ -205,6 +214,24 @@ class ChatViewModel : ViewModel() {
      * OpenAI chat path instead of assuming `/v1/runs` is an SSE stream.
      */
     var streamingEndpoint: String = "completions"
+
+    /**
+     * SSE endpoint used when a "gateway" turn can't run (gateway unreachable,
+     * sign-in expired, attachments present). Wired from RelayApp alongside
+     * [streamingEndpoint] as the capability-resolved SSE preference; never
+     * "auto" or "gateway".
+     */
+    var sseFallbackEndpoint: String = "completions"
+
+    /**
+     * Gateway chat transport (dashboard `/api/ws` — live thinking). Owned and
+     * rebuilt by ConnectionViewModel; this VM only dispatches turns on it.
+     */
+    private var gatewayClient: GatewayChatClient? = null
+
+    fun updateGatewayClient(client: GatewayChatClient?) {
+        gatewayClient = client
+    }
 
     /**
      * Provider for the active agent-profile pick — wired from [RelayApp] at
@@ -809,7 +836,10 @@ class ChatViewModel : ViewModel() {
         val assistantMessageId = UUID.randomUUID().toString()
         val sessionId = handler.currentSessionId.value
 
-        if (streamingEndpoint == "runs" || streamingEndpoint == "completions") {
+        // runs/completions are sessionless on our side; gateway creates and
+        // persists its own session via session.create (no /api/sessions
+        // pre-create — the server's DB row appears on the first prompt).
+        if (streamingEndpoint == "runs" || streamingEndpoint == "completions" || streamingEndpoint == "gateway") {
             startStream(
                 client,
                 handler,
@@ -1474,7 +1504,9 @@ class ChatViewModel : ViewModel() {
             AgentDisplay.profileRequestName(selectedProfile?.name)
         }
 
-        activeStream = when (streamingEndpoint) {
+        // SSE dispatch shared by the three HTTP endpoints AND the gateway
+        // branch's per-turn fallback (gateway unreachable / attachments).
+        fun dispatchSse(endpoint: String): ActiveTurnHandle = when (endpoint) {
             "runs" -> client.sendRunStream(
                     message = message,
                     systemMessage = systemMsg,
@@ -1496,7 +1528,7 @@ class ChatViewModel : ViewModel() {
                     onError = onErrorCb,
                     modelOverride = modelOverride,
                     profileName = profileName,
-                )
+                ).asTurnHandle()
             "completions" -> client.sendChatCompletionsStream(
                     message = message,
                     systemMessage = systemMsg,
@@ -1515,7 +1547,7 @@ class ChatViewModel : ViewModel() {
                     onError = onErrorCb,
                     modelOverride = modelOverride,
                     profileName = profileName,
-                )
+                ).asTurnHandle()
             else -> client.sendChatStream(
                     sessionId = sessionId,
                     message = message,
@@ -1535,7 +1567,57 @@ class ChatViewModel : ViewModel() {
                     onError = onErrorCb,
                     modelOverride = modelOverride,
                     profileName = profileName,
+                ).asTurnHandle()
+        }
+
+        val gateway = gatewayClient
+        activeStream = when {
+            streamingEndpoint != "gateway" -> dispatchSse(streamingEndpoint)
+
+            // Gateway turns can't carry attachments (prompt.submit is bare
+            // text) and need a wired client — route those turns to SSE.
+            gateway == null || attachments != null -> dispatchSse(resolveSseFallback(handler))
+
+            else -> {
+                val isNewSession = handler.currentSessionId.value == null
+                val autoTitle = message.take(50).let { if (message.length > 50) "$it..." else it }
+                gateway.sendTurn(
+                    sessionId = handler.currentSessionId.value,
+                    text = message,
+                    newSessionTitle = if (isNewSession) autoTitle else null,
+                    callbacks = GatewayTurnCallbacks(
+                        onSessionId = { sid ->
+                            handler.addSession(
+                                ChatSession(sessionId = sid, title = autoTitle, model = null),
+                            )
+                            handler.setSessionId(sid)
+                            onSessionChanged?.invoke(sid)
+                        },
+                        onTextDelta = onTextDeltaCb,
+                        onThinkingDelta = onThinkingDeltaCb,
+                        onToolCallStart = onToolCallStartCb,
+                        onToolCallDone = onToolCallDoneCb,
+                        onToolCallFailed = onToolCallFailedCb,
+                        onTurnComplete = onTurnCompleteCb,
+                        onComplete = onCompleteCb,
+                        onUsage = onUsageCb,
+                        onError = onErrorCb,
+                        onInteractionRequest = { kind, detail ->
+                            handler.addSystemNotice(
+                                "Hermes is waiting for $kind: $detail\n" +
+                                    "Interactive approvals aren't supported on mobile yet — " +
+                                    "respond from the desktop or CLI, or stop this turn.",
+                            )
+                        },
+                    ),
+                    onPreflightFailure = {
+                        // Nothing started server-side — rerun this turn on the
+                        // SSE fallback. Callbacks land on the main thread, so
+                        // swapping activeStream here is safe.
+                        activeStream = dispatchSse(resolveSseFallback(handler))
+                    },
                 )
+            }
         }
 
         // Flip syncedToServer=true on every voice-intent trace AND every
@@ -1548,12 +1630,30 @@ class ChatViewModel : ViewModel() {
         // the SSE callbacks fire asynchronously and never block this
         // point. Guarded per-stream so we only do the work when the
         // corresponding synthetic messages were actually sent.
-        if (voiceIntentMessages != null) {
+        // Gateway turns can't carry synthetic messages (prompt.submit is
+        // bare text) — leave traces unsynced so the next SSE turn sends them.
+        if (voiceIntentMessages != null && streamingEndpoint != "gateway") {
             if (hasVoiceIntents) handler.markVoiceIntentsSynced()
             if (hasCardDispatches) handler.markCardDispatchesSynced()
             if (hasRealtimeTurns) handler.markRealtimeTurnsSynced()
         }
     }
+
+    /** Adapt an SSE [EventSource] to the transport-agnostic turn handle. */
+    private fun EventSource.asTurnHandle(): ActiveTurnHandle =
+        ActiveTurnHandle { this.cancel() }
+
+    /**
+     * SSE endpoint for a turn that was meant for the gateway. The sessions
+     * endpoint needs an existing server session — without one, use the
+     * stateless completions path instead of failing the turn.
+     */
+    private fun resolveSseFallback(handler: ChatHandler): String =
+        if (sseFallbackEndpoint == "sessions" && handler.currentSessionId.value == null) {
+            "completions"
+        } else {
+            sseFallbackEndpoint
+        }
 
     private fun currentAgentDisplayName(
         effectiveProfileOverride: Profile? = null,

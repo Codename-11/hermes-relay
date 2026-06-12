@@ -43,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.network.GatewayAvailability
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 
@@ -373,11 +374,9 @@ fun ChatSettingsScreen(
                     HorizontalDivider()
 
                     val serverCaps by connectionViewModel.serverCapabilities.collectAsState()
-                    val resolvedStreamingEndpoint = if (streamingEndpoint == "auto") {
-                        serverCaps.preferredChatEndpoint()
-                    } else {
-                        streamingEndpoint
-                    }
+                    val gatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
+                    val resolvedStreamingEndpoint =
+                        connectionViewModel.resolveStreamingEndpoint(streamingEndpoint)
 
                     // Parse tool annotations toggle (text-stream endpoints only)
                     val isTextAnnotationMode = resolvedStreamingEndpoint == "sessions" ||
@@ -440,6 +439,8 @@ fun ChatSettingsScreen(
                                 "Auto: picks the best path based on what your server exposes. " +
                                         "Currently using: $resolvedStreamingEndpoint" +
                                         when {
+                                            resolvedStreamingEndpoint == "gateway" ->
+                                                " (live thinking via the dashboard WebSocket)"
                                             !serverCaps.sessionsChatStream && serverCaps.portable ->
                                                 " (chat via /v1/chat/completions)"
                                             !serverCaps.sessionsChatStream && serverCaps.runs ->
@@ -447,6 +448,9 @@ fun ChatSettingsScreen(
                                             else -> ""
                                         }
                             }
+                            "gateway" -> "Gateway: live thinking + rich tool events over the " +
+                                "dashboard WebSocket (/api/ws) — what the desktop app uses. " +
+                                "Requires Manage sign-in; falls back to SSE per turn when unavailable."
                             "sessions" -> "Sessions: Hermes-native /api/sessions/{id}/chat/stream."
                             "completions" -> "Chat: OpenAI-compatible SSE via /v1/chat/completions."
                             "runs" -> "Runs: use only when your server streams /v1/runs directly."
@@ -457,9 +461,19 @@ fun ChatSettingsScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        if (gatewayAvailability == GatewayAvailability.SignInRequired &&
+                            (streamingEndpoint == "gateway" || streamingEndpoint == "auto")
+                        ) {
+                            Text(
+                                text = "Sign in via the Manage tab to enable Gateway streaming " +
+                                    "(live thinking).",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.tertiary
+                            )
+                        }
 
-                        val endpointOptions = listOf("auto", "sessions", "completions", "runs")
-                        val endpointLabels = listOf("Auto", "Sessions", "Chat", "Runs")
+                        val endpointOptions = listOf("auto", "gateway", "sessions", "completions", "runs")
+                        val endpointLabels = listOf("Auto", "Gateway", "Sessions", "Chat", "Runs")
                         val selectedEndpointIndex = endpointOptions.indexOf(streamingEndpoint).coerceAtLeast(0)
 
                         SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {

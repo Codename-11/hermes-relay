@@ -200,6 +200,23 @@ class ChatHandler {
         }
     }
 
+    /**
+     * Append a SYSTEM-role notice bubble (e.g. a gateway interactive ask the
+     * phone can't answer). SYSTEM role keeps it out of the voice TTS observer
+     * and renders with the muted system styling in MessageBubble.
+     */
+    fun addSystemNotice(text: String) {
+        _messages.update { list ->
+            val notice = ChatMessage(
+                id = "system-notice-${java.util.UUID.randomUUID()}",
+                role = MessageRole.SYSTEM,
+                content = text,
+                timestamp = System.currentTimeMillis(),
+            )
+            (list + notice).let { if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it }
+        }
+    }
+
     fun replaceMessageContent(messageId: String, content: String) {
         _messages.update { messages ->
             messages.map { message ->

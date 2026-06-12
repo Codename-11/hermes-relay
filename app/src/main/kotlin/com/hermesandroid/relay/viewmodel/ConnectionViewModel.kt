@@ -43,7 +43,10 @@ import com.hermesandroid.relay.network.DashboardCookieStore
 import com.hermesandroid.relay.network.DashboardStatus
 import com.hermesandroid.relay.network.EncryptedDashboardCookieStore
 import com.hermesandroid.relay.network.EndpointResolver
+import com.hermesandroid.relay.network.GatewayAvailability
+import com.hermesandroid.relay.network.GatewayChatClient
 import com.hermesandroid.relay.network.HermesApiClient
+import com.hermesandroid.relay.network.resolveStreamingEndpointPreference
 import com.hermesandroid.relay.network.RouteProbeOutcome
 import com.hermesandroid.relay.network.ProfileApiUrlResolver
 import com.hermesandroid.relay.network.ServerCapabilities
@@ -532,6 +535,64 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     private val _standardAudioApiReachable = MutableStateFlow(false)
     val standardAudioApiReachable: StateFlow<Boolean> = _standardAudioApiReachable.asStateFlow()
+
+    /**
+     * Gateway chat transport (tui_gateway over the dashboard's `/api/ws`)
+     * availability. Piggybacks on [probeStandardVoice] — same surface, same
+     * `/api/status` + `/api/auth/me` checks — minus the audio-route HEAD:
+     * `/api/ws` ships with every embedded-chat dashboard build, so route
+     * absence is only discovered (and made sticky) at WS-upgrade time via
+     * [markGatewayUnsupported].
+     */
+    private val _gatewayAvailability = MutableStateFlow(GatewayAvailability.Unknown)
+    val gatewayAvailability: StateFlow<GatewayAvailability> = _gatewayAvailability.asStateFlow()
+
+    /**
+     * Sticky downgrade fired by [GatewayChatClient] when the WS upgrade is
+     * rejected outright (404/403 — dashboard build without `/api/ws`). Stops
+     * auto-resolution from re-picking gateway until a connection switch
+     * resets it.
+     */
+    fun markGatewayUnsupported() {
+        _gatewayAvailability.value = GatewayAvailability.Unsupported
+    }
+
+    /** Probe-driven update that respects the sticky [markGatewayUnsupported] verdict. */
+    private fun updateGatewayAvailability(probed: GatewayAvailability) {
+        val current = _gatewayAvailability.value
+        if (current == GatewayAvailability.Unsupported && probed == GatewayAvailability.Ready) return
+        _gatewayAvailability.value = probed
+    }
+
+    /** Cached gateway client, keyed by connection + resolved dashboard URL. */
+    private var gatewayClientCache: Triple<String, String, GatewayChatClient>? = null
+
+    /**
+     * Gateway chat client for the active connection — built lazily, rebuilt
+     * when the connection or its resolved dashboard URL changes (LAN ↔
+     * Tailscale handoff), sharing the Manage tab's encrypted cookie store so
+     * a dashboard sign-in there authenticates chat here.
+     */
+    @Synchronized
+    fun activeGatewayChatClient(): GatewayChatClient? {
+        val connectionId = connectionStore.activeConnectionId.value ?: return null
+        val dashboardUrl = activeDashboardUrl() ?: return null
+        gatewayClientCache?.let { (cachedConnection, cachedUrl, client) ->
+            if (cachedConnection == connectionId && cachedUrl == dashboardUrl) return client
+        }
+        gatewayClientCache?.third?.shutdown()
+        val client = GatewayChatClient(
+            dashboardClient = DashboardApiClient(
+                baseUrl = dashboardUrl,
+                okHttpClient = DashboardApiClient.defaultClient(
+                    cookieStore = dashboardCookieStoreFor(connectionId),
+                ),
+            ),
+            onGatewayUnsupported = { markGatewayUnsupported() },
+        )
+        gatewayClientCache = Triple(connectionId, dashboardUrl, client)
+        return client
+    }
 
     /** Per-connection encrypted cookie stores, cached to avoid Keystore churn. */
     private val dashboardCookieStores =
@@ -1116,10 +1177,19 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * - "sessions" / "completions" / "runs" pass through unchanged (manual override wins).
      * - "auto" → reads `serverCapabilities.value.preferredChatEndpoint()`.
      */
-    fun resolveStreamingEndpoint(preference: String): String = when (preference) {
-        "sessions", "completions", "runs" -> preference
-        else -> _serverCapabilities.value.preferredChatEndpoint()
-    }
+    fun resolveStreamingEndpoint(preference: String): String =
+        resolveStreamingEndpointPreference(
+            preference = preference,
+            gateway = _gatewayAvailability.value,
+            capabilities = _serverCapabilities.value,
+        )
+
+    /**
+     * Capability-resolved SSE endpoint, ignoring the gateway tier — wired to
+     * [ChatViewModel.sseFallbackEndpoint] for per-turn gateway fallbacks.
+     */
+    fun resolveSseStreamingEndpoint(): String =
+        _serverCapabilities.value.preferredChatEndpoint()
 
     // Parse tool annotations from text markers toggle
     val parseToolAnnotations: StateFlow<Boolean> = application.relayDataStore.data
@@ -2802,6 +2872,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 _selectedProfile.value = null
                 _pendingSelectedProfileConnectionId.value = null
                 _pendingSelectedProfileName.value = null
+                // Gateway state is per-connection: drop the sticky
+                // Unsupported verdict and tear down the old socket so the
+                // next probe/send evaluates the new connection fresh.
+                _gatewayAvailability.value = GatewayAvailability.Unknown
+                synchronized(this@ConnectionViewModel) {
+                    gatewayClientCache?.third?.shutdown()
+                    gatewayClientCache = null
+                }
             }
         }
 
@@ -2946,6 +3024,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         if (connectionId == null || dashboardUrl.isNullOrBlank()) {
             _standardVoiceAvailability.value = StandardVoiceAvailability.Unknown
             _standardAudioApiReachable.value = false
+            updateGatewayAvailability(GatewayAvailability.Unknown)
             return
         }
         val client = DashboardApiClient(
@@ -2960,12 +3039,18 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             if (status == null) {
                 _standardVoiceAvailability.value = StandardVoiceAvailability.Unreachable
                 _standardAudioApiReachable.value = false
+                updateGatewayAvailability(GatewayAvailability.Unreachable)
                 recordDashboardStatusIfChanged(connectionId, status = null, session = null)
                 return
             }
             val session = if (status.authRequired) client.currentSession().getOrNull() else null
             val authed = !status.authRequired || session?.authenticated == true
             recordDashboardStatusIfChanged(connectionId, status, session)
+            // Gateway chat shares the voice probe's dashboard checks; it has
+            // no audio-route requirement.
+            updateGatewayAvailability(
+                if (authed) GatewayAvailability.Ready else GatewayAvailability.SignInRequired,
+            )
             val availability = when {
                 !authed -> StandardVoiceAvailability.SignInRequired
                 client.audioRoutesPresent() -> StandardVoiceAvailability.Ready

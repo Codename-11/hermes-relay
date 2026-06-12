@@ -629,11 +629,19 @@ fun RelayApp() {
     // Sync streaming endpoint preference to chat. Resolves "auto" against the
     // current server capabilities so vanilla upstream + bootstrap-injected
     // sessions API picks /v1/chat/completions for portable SSE chat while
-    // still using /api/sessions/* for browse/rename/delete.
+    // still using /api/sessions/* for browse/rename/delete. Gateway
+    // availability is a key so a Manage sign-in mid-session re-resolves
+    // "auto" to the gateway transport (live thinking) without an app restart.
     val streamingEndpoint by connectionViewModel.streamingEndpoint.collectAsState()
     val serverCapabilities by connectionViewModel.serverCapabilities.collectAsState()
-    LaunchedEffect(streamingEndpoint, serverCapabilities) {
-        chatViewModel.streamingEndpoint = connectionViewModel.resolveStreamingEndpoint(streamingEndpoint)
+    val gatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
+    LaunchedEffect(streamingEndpoint, serverCapabilities, gatewayAvailability) {
+        val resolved = connectionViewModel.resolveStreamingEndpoint(streamingEndpoint)
+        chatViewModel.streamingEndpoint = resolved
+        chatViewModel.sseFallbackEndpoint = connectionViewModel.resolveSseStreamingEndpoint()
+        chatViewModel.updateGatewayClient(
+            if (resolved == "gateway") connectionViewModel.activeGatewayChatClient() else null,
+        )
     }
 
     // What's New auto-show
