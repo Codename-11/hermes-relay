@@ -100,6 +100,7 @@ class AuthManager(
         private const val KEY_REFRESH_TOKEN = "refresh_token"
         private const val KEY_DEVICE_ID = "device_id"
         private const val KEY_API_KEY = "api_server_key"
+        private const val HINT_API_KEY_PRESENT = "api_key_present"
         private const val KEY_PAIRED_META = "paired_session_meta_json"
         private const val PAIRING_CODE_LENGTH = 6
         private val PAIRING_CODE_CHARS = ('A'..'Z') + ('0'..'9')
@@ -273,6 +274,48 @@ class AuthManager(
     private val storeMutex = Mutex()
 
     /**
+     * The encrypted-store filename for this connection — shared by [store]
+     * and the plain hint file below so they always describe the same store.
+     */
+    private val tokenPrefsName: String =
+        tokenStoreKey ?: if (connectionId == CONNECTION_ID_LEGACY) {
+            Connection.LEGACY_TOKEN_STORE_KEY
+        } else {
+            Connection.buildTokenStoreKey(connectionId)
+        }
+
+    /**
+     * Plain (non-encrypted) mirror of one boolean fact: "does this
+     * connection have an API key stored?". Read at startup WITHOUT touching
+     * the Keystore, so [ConnectionViewModel] can build the API client
+     * immediately for key-less connections — the common local setup —
+     * instead of queueing behind the encrypted store's first decrypt.
+     *
+     * Why this exists: on StrongBox devices every keystore operation runs
+     * ~550ms and Tink serializes them process-globally; a measured S25
+     * Ultra cold start spent 15 seconds in that marathon before
+     * `getApiKey()` could return — only to answer "there is no key".
+     *
+     * The hint stores ONLY presence, never key material. It defaults to
+     * `true` (unknown ⇒ assume a key exists ⇒ wait for the real decrypt),
+     * so a missing or stale hint can never strip auth off a keyed
+     * connection — the failure mode is "slow like before", never "401s".
+     * It converges in [setApiKey]/[clearApiKey], in init's store
+     * hydration, and after legacy migration.
+     */
+    private val hintPrefs by lazy {
+        context.getSharedPreferences("${tokenPrefsName}_plain_hints", Context.MODE_PRIVATE)
+    }
+
+    /** True only when a previously-recorded hint says "no API key stored". */
+    fun apiKeyKnownAbsent(): Boolean = !hintPrefs.getBoolean(HINT_API_KEY_PRESENT, true)
+
+    private fun recordApiKeyHint(present: Boolean) {
+        _apiKeyPresent.value = present
+        hintPrefs.edit().putBoolean(HINT_API_KEY_PRESENT, present).apply()
+    }
+
+    /**
      * Lazily construct the best available token store. First tries
      * [KeystoreTokenStore] — if that fails on broken OEM keystores we fall
      * back to [LegacyEncryptedPrefsTokenStore]. The chosen store is cached
@@ -287,19 +330,14 @@ class AuthManager(
         return storeMutex.withLock {
             _store?.let { return it }
             withContext(Dispatchers.IO) {
-                // Multi-connection: pick the EncryptedSharedPreferences
-                // filename based on the bound connection. The legacy sentinel
-                // keeps the pre-multi-connection install on its original file
-                // so the existing paired device keeps working with no
-                // migration.
-                val prefsName = tokenStoreKey ?: if (connectionId == CONNECTION_ID_LEGACY) {
-                    Connection.LEGACY_TOKEN_STORE_KEY
-                } else {
-                    Connection.buildTokenStoreKey(connectionId)
-                }
+                // Multi-connection: [tokenPrefsName] picks the
+                // EncryptedSharedPreferences filename for the bound
+                // connection. The legacy sentinel keeps the pre-multi-
+                // connection install on its original file so the existing
+                // paired device keeps working with no migration.
                 val picked: SessionTokenStore =
-                    KeystoreTokenStore.tryCreate(context, prefsName)
-                        ?: LegacyEncryptedPrefsTokenStore(context, prefsName)
+                    KeystoreTokenStore.tryCreate(context, tokenPrefsName)
+                        ?: LegacyEncryptedPrefsTokenStore(context, tokenPrefsName)
                 migrateFromLegacyIfNeeded(picked)
                 _store = picked
                 picked
@@ -489,7 +527,9 @@ class AuthManager(
             } else {
                 Log.i(TAG, "init: no stored session_token → authState stays Unpaired")
             }
-            _apiKeyPresent.value = !s.getString(KEY_API_KEY).isNullOrBlank()
+            // Converge the plain api-key-present hint with the decrypted
+            // truth (also repairs a hint that predates legacy migration).
+            recordApiKeyHint(!s.getString(KEY_API_KEY).isNullOrBlank())
         }
     }
 
@@ -817,16 +857,16 @@ class AuthManager(
         val s = store()
         if (trimmed.isBlank()) {
             s.remove(KEY_API_KEY)
-            _apiKeyPresent.value = false
+            recordApiKeyHint(false)
         } else {
             s.putString(KEY_API_KEY, trimmed)
-            _apiKeyPresent.value = true
+            recordApiKeyHint(true)
         }
     }
 
     suspend fun clearApiKey() {
         store().remove(KEY_API_KEY)
-        _apiKeyPresent.value = false
+        recordApiKeyHint(false)
     }
 
     val isPaired: Boolean
