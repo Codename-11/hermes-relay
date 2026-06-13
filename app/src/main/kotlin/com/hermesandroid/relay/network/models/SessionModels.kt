@@ -287,7 +287,13 @@ data class UsageInfo(
     @SerialName("completion_tokens") val completionTokens: Int? = null,
     // Cache tokens
     @SerialName("cache_creation_input_tokens") val cacheCreationInputTokens: Int? = null,
-    @SerialName("cache_read_input_tokens") val cacheReadInputTokens: Int? = null
+    @SerialName("cache_read_input_tokens") val cacheReadInputTokens: Int? = null,
+    // Gateway context-window block (session-cumulative; present only when the
+    // server's context compressor is active — upstream _get_usage()). Render
+    // context UI only when contextMax is non-null.
+    @SerialName("context_used") val contextUsed: Int? = null,
+    @SerialName("context_max") val contextMax: Int? = null,
+    @SerialName("context_percent") val contextPercent: Int? = null
 ) {
     /** Resolved input tokens — prefers Hermes naming, falls back to OpenAI. */
     val resolvedInputTokens: Int? get() = inputTokens ?: promptTokens

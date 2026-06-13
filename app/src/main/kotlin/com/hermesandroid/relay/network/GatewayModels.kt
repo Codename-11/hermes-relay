@@ -84,9 +84,65 @@ fun interface ActiveTurnHandle {
 }
 
 /**
+ * One server-side interactive ask. The agent thread upstream is BLOCKED
+ * until the matching respond RPC arrives, the ask times out (resolves to ""
+ * server-side), or the turn is cancelled (`session.interrupt` force-releases
+ * pending asks and force-denies approvals). Built by [GatewayEventMapper]
+ * from the four `*.request` events; answered via the
+ * [GatewayChatClient] `respond*` helpers.
+ */
+data class GatewayAsk(
+    val kind: Kind,
+    /**
+     * Correlates the answer with the blocked server thread. Null ONLY for
+     * [Kind.APPROVAL] — upstream approvals correlate per-session, not
+     * per-request (`approval.respond` carries `session_id` instead).
+     */
+    val requestId: String?,
+    /** Question / command / prompt — whatever the ask wants the user to read. */
+    val text: String,
+    /** Clarify-only: server-suggested answers. */
+    val choices: List<String>? = null,
+    /** Secret-only: the env var the value will be stored under. */
+    val envVar: String? = null,
+    /**
+     * Upstream blocking timeout (clarify/secret 300s, sudo 120s). 0 means no
+     * countdown — approvals are session-scoped and never expire on their own.
+     */
+    val timeoutSeconds: Int,
+) {
+    enum class Kind { CLARIFY, APPROVAL, SUDO, SECRET }
+}
+
+/**
+ * One `subagent.*` lifecycle event, emitted on the PARENT session. Lifecycle
+ * per task: START → (THINKING | TOOL | PROGRESS)* → COMPLETE. Field
+ * availability varies by phase — [toolName]/[preview] ride TOOL,
+ * [status]/[summary]/[durationSeconds] ride COMPLETE — and older emitters
+ * omit everything beyond the three defaults-bearing fields.
+ */
+data class GatewaySubagentEvent(
+    val phase: Phase,
+    val taskIndex: Int,
+    val taskCount: Int,
+    val goal: String,
+    val status: String? = null,
+    val summary: String? = null,
+    val toolName: String? = null,
+    val preview: String? = null,
+    val durationSeconds: Double? = null,
+) {
+    enum class Phase { START, THINKING, TOOL, PROGRESS, COMPLETE }
+}
+
+/**
  * Callback set for one gateway turn. Shapes intentionally mirror the SSE
  * callback lambdas in ChatViewModel.startStream() so the gateway branch can
  * forward to the exact same ChatHandler mutations.
+ *
+ * Every member is a REQUIRED constructor param on purpose: GatewayChatClient
+ * `dispatchOn` must wrap each one onto the main thread, and a defaulted
+ * member would compile unwrapped — running on the OkHttp reader thread.
  */
 class GatewayTurnCallbacks(
     /** Stored (DB) session id — fired on session create/rotate so the drawer + persistence stay correct. */
@@ -101,10 +157,17 @@ class GatewayTurnCallbacks(
     val onUsage: (UsageInfo?) -> Unit,
     val onError: (String) -> Unit,
     /**
-     * Server-side interactive ask (clarify/approval/sudo/secret) that blocks
-     * the turn until answered on another surface or the turn is cancelled.
-     * MVP surfaces these as a display-only system notice (desktop CLI v0.1
-     * precedent — no RPC response is sent).
+     * `tool.generating` — the model is still writing this tool's arguments.
+     * Carries the tool name when upstream sent one. The next `tool.start`
+     * for the same name adopts the "preparing" placeholder (per name, FIFO).
      */
-    val onInteractionRequest: (kind: String, detail: String) -> Unit,
+    val onToolGenerating: (toolName: String?) -> Unit,
+    /** `subagent.*` lifecycle on the parent session — feeds the subagent lanes. */
+    val onSubagentEvent: (GatewaySubagentEvent) -> Unit,
+    /**
+     * Server-side interactive ask (clarify/approval/sudo/secret) that blocks
+     * the turn until answered via the matching respond RPC or the turn is
+     * cancelled.
+     */
+    val onInteractionRequest: (GatewayAsk) -> Unit,
 )

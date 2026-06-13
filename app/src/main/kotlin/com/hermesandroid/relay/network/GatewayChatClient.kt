@@ -21,6 +21,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -67,8 +68,34 @@ class GatewayChatClient(
         /** Mirrors the desktop CLI's turn timeout — reset on every received event. */
         private const val TURN_TIMEOUT_MS = 180_000L
 
+        /**
+         * Ask requests block the agent server-side with NO events flowing
+         * until answered — arm with headroom over each kind's upstream block
+         * timeout (clarify/secret 300s, sudo 120s; approval/terminal-read
+         * unbounded). The next regular event rearms [TURN_TIMEOUT_MS].
+         */
+        private const val ASK_CLARIFY_SECRET_TIMEOUT_MS = 330_000L
+        private const val ASK_SUDO_TIMEOUT_MS = 150_000L
+        private const val ASK_UNBOUNDED_TIMEOUT_MS = 600_000L
+
+        private fun watchdogTimeoutFor(eventType: String): Long = when (eventType) {
+            "clarify.request", "secret.request" -> ASK_CLARIFY_SECRET_TIMEOUT_MS
+            "sudo.request" -> ASK_SUDO_TIMEOUT_MS
+            "approval.request", "terminal.read.request" -> ASK_UNBOUNDED_TIMEOUT_MS
+            else -> TURN_TIMEOUT_MS
+        }
+
         private const val RPC_TIMEOUT_MS = 15_000L
         private const val CONNECT_TIMEOUT_MS = 20_000L
+
+        /** Image uploads ship whole base64 frames (≤25MB server cap) — 15s is not enough. */
+        private const val ATTACH_RPC_TIMEOUT_MS = 60_000L
+
+        /** Upstream upload RPC name (underscore — `image.attach_bytes`, content_base64). */
+        private const val ATTACH_METHOD_UPSTREAM = "image.attach_bytes"
+
+        /** Legacy desktop-CLI name (dots — `image.attach.bytes`, bytes_base64/format). */
+        private const val ATTACH_METHOD_LEGACY = "image.attach.bytes"
 
         /** Grace before closing an idle socket after the app backgrounds. */
         private const val BACKGROUND_CLOSE_GRACE_MS = 30_000L
@@ -129,6 +156,18 @@ class GatewayChatClient(
     @Volatile
     private var activeTurn: GatewayTurn? = null
 
+    /**
+     * Which upload RPC name this socket understands — set after the first
+     * successful upload so the legacy fallback is probed at most once per
+     * socket lifetime. Reset on socket loss.
+     */
+    @Volatile
+    private var attachMethodForSocket: String? = null
+
+    /** `commands.catalog` result for the current socket — invalidated on socket loss. */
+    @Volatile
+    private var commandsCatalogCache: JsonObject? = null
+
     @Volatile
     private var connectCooldownUntil: Long = 0L
 
@@ -158,6 +197,14 @@ class GatewayChatClient(
      *   session. On create/rotate the new stored id is reported via
      *   [GatewayTurnCallbacks.onSessionId].
      * @param newSessionTitle title applied when a fresh session is created.
+     * @param attachments image attachments uploaded onto the session between
+     *   session establish and `prompt.submit` — upstream snapshots+clears the
+     *   session's queued images at turn start, so they bind to THIS turn.
+     *   Images only; non-image attachments stay on the SSE fallback path.
+     * @param truncateBeforeUserOrdinal edit-and-regenerate: 0-based index
+     *   into the session's USER messages (counted from the first user
+     *   message). The server drops that message and everything after it
+     *   before running [text] as a fresh turn.
      * @param onPreflightFailure invoked INSTEAD of starting the turn when the
      *   gateway could not be reached / authenticated / the prompt could not
      *   be submitted — i.e. nothing started server-side, so the caller can
@@ -169,6 +216,8 @@ class GatewayChatClient(
         text: String,
         newSessionTitle: String?,
         callbacks: GatewayTurnCallbacks,
+        attachments: List<GatewayImageAttachment> = emptyList(),
+        truncateBeforeUserOrdinal: Int? = null,
         onPreflightFailure: (reason: String) -> Unit,
     ): ActiveTurnHandle {
         val turn = GatewayTurn(dispatchOn(callbacks))
@@ -179,6 +228,12 @@ class GatewayChatClient(
                     ensureSession(sessionId, newSessionTitle, turn)
                 }
                 if (turn.cancelled) return@launch
+                attachments.forEach { attachment ->
+                    uploadImage(attachment).getOrElse { e ->
+                        throw GatewayPreflightException("image upload failed: ${e.message}")
+                    }
+                }
+                if (turn.cancelled) return@launch
                 activeTurn = turn
                 turn.armWatchdog()
                 val submitted = rpc(
@@ -186,6 +241,7 @@ class GatewayChatClient(
                     buildJsonObject {
                         put("session_id", liveSessionId ?: error("no live session"))
                         put("text", text)
+                        truncateBeforeUserOrdinal?.let { put("truncate_before_user_ordinal", it) }
                     },
                 )
                 if (submitted.isFailure) {
@@ -216,6 +272,141 @@ class GatewayChatClient(
         liveSessionId = null
         storedSessionId = null
     }
+
+    /**
+     * Inject [text] into the in-flight turn (`session.steer`). The server
+     * only accepts a steer while a tool batch is running — [SteerResult.Rejected]
+     * means "no batch in flight, queue it instead". [SteerResult.Failed]
+     * covers transport/RPC failure (no live session, socket down, 4010 …) —
+     * callers should fall back to the local queue for both non-queued cases.
+     */
+    suspend fun steer(text: String): SteerResult {
+        val sid = liveSessionId ?: return SteerResult.Failed
+        val result = rpc(
+            "session.steer",
+            buildJsonObject {
+                put("session_id", sid)
+                put("text", text)
+            },
+        )
+        val outcome = when (result.getOrNull()?.stringField("status")) {
+            "queued" -> SteerResult.Queued
+            "rejected" -> SteerResult.Rejected
+            else -> SteerResult.Failed
+        }
+        Log.i(TAG, "Steer → $outcome (session=$storedSessionId)")
+        return outcome
+    }
+
+    /** Answer a [GatewayAsk.Kind.CLARIFY] ask. */
+    suspend fun respondClarify(requestId: String, answer: String): Result<Unit> =
+        rpc(
+            "clarify.respond",
+            buildJsonObject {
+                put("request_id", requestId)
+                put("answer", answer)
+            },
+        ).map { }
+
+    /**
+     * Answer a [GatewayAsk.Kind.SUDO] ask. The password must NEVER be logged
+     * or persisted — it exists only inside this outbound frame.
+     */
+    suspend fun respondSudo(requestId: String, password: String): Result<Unit> =
+        rpc(
+            "sudo.respond",
+            buildJsonObject {
+                put("request_id", requestId)
+                put("password", password)
+            },
+        ).map { }
+
+    /**
+     * Answer a [GatewayAsk.Kind.SECRET] ask. Empty [value] = skip (upstream
+     * returns `skipped: true` to the tool). The value must NEVER be logged
+     * or persisted — it exists only inside this outbound frame.
+     */
+    suspend fun respondSecret(requestId: String, value: String): Result<Unit> =
+        rpc(
+            "secret.respond",
+            buildJsonObject {
+                put("request_id", requestId)
+                put("value", value)
+            },
+        ).map { }
+
+    /**
+     * Answer a [GatewayAsk.Kind.APPROVAL] ask — correlated by the live
+     * session, not a request id. [choice] is "approve" or "deny"; [all]
+     * resolves every pending approval on the session at once.
+     */
+    suspend fun respondApproval(choice: String, all: Boolean = false): Result<Unit> {
+        val sid = liveSessionId
+            ?: return Result.failure(GatewayRpcException("no live session"))
+        return rpc(
+            "approval.respond",
+            buildJsonObject {
+                put("session_id", sid)
+                put("choice", choice)
+                put("all", all)
+            },
+        ).map { }
+    }
+
+    /**
+     * Server slash-command catalog (`commands.catalog`), cached per socket —
+     * the command set only changes with server config, so one fetch per
+     * connection is enough. Default [connectIfNeeded] = false fails fast
+     * (no ticket mint) when no socket is ready — a catalog fetch must never
+     * be the reason /api/ws cold-opens.
+     */
+    suspend fun commandsCatalog(connectIfNeeded: Boolean = false): Result<JsonObject> {
+        commandsCatalogCache?.let { return Result.success(it) }
+        if (!connectIfNeeded && (webSocket == null || readySignal?.isCompleted != true)) {
+            return Result.failure(GatewayRpcException("not connected"))
+        }
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        return rpc("commands.catalog", JsonObject(emptyMap()))
+            .onSuccess { commandsCatalogCache = it }
+    }
+
+    /**
+     * Run a full slash command line (`slash.exec {session_id, command}`) on
+     * the live session. Returns the raw result object; failures carry the
+     * JSON-RPC error code via [GatewayRpcException.code] — upstream rejects
+     * pending-input/skill commands with 4018, and falling through to
+     * [commandDispatch] on that code is the CALLER's job.
+     */
+    suspend fun slashExec(command: String): Result<JsonObject> {
+        val sid = liveSessionId
+            ?: return Result.failure(GatewayRpcException("no live session"))
+        return rpc(
+            "slash.exec",
+            buildJsonObject {
+                put("session_id", sid)
+                put("command", command)
+            },
+        )
+    }
+
+    /**
+     * Dispatch one resolved command (`command.dispatch {session_id?, name, arg?}`).
+     * Returns the raw result union (`type`: exec/alias/plugin/skill/send/prefill);
+     * failures carry the JSON-RPC error code via [GatewayRpcException.code].
+     */
+    suspend fun commandDispatch(name: String, arg: String? = null): Result<JsonObject> =
+        rpc(
+            "command.dispatch",
+            buildJsonObject {
+                liveSessionId?.let { put("session_id", it) }
+                put("name", name)
+                if (arg != null) put("arg", arg)
+            },
+        )
 
     fun shutdown() {
         activeTurn?.cancel()
@@ -393,7 +584,8 @@ class GatewayChatClient(
             val error = frame["error"] as? JsonObject
             if (error != null) {
                 val message = error.stringField("message") ?: "gateway rpc error"
-                pending.completeExceptionally(GatewayRpcException(message))
+                val code = (error["code"] as? JsonPrimitive)?.intOrNull
+                pending.completeExceptionally(GatewayRpcException(message, code))
             } else {
                 pending.complete(frame["result"] as? JsonObject ?: JsonObject(emptyMap()))
             }
@@ -440,6 +632,8 @@ class GatewayChatClient(
         webSocket = null
         readySignal = null
         liveSessionId = null
+        attachMethodForSocket = null
+        commandsCatalogCache = null
         _connectionState.value = GatewayConnectionState.Idle
         pendingRpcs.values.forEach {
             it.completeExceptionally(GatewayRpcException("gateway connection lost"))
@@ -526,6 +720,8 @@ class GatewayChatClient(
         webSocket = null
         readySignal = null
         liveSessionId = null
+        attachMethodForSocket = null
+        commandsCatalogCache = null
         _connectionState.value = GatewayConnectionState.Idle
     }
 
@@ -543,7 +739,11 @@ class GatewayChatClient(
     // JSON-RPC
     // ------------------------------------------------------------------
 
-    private suspend fun rpc(method: String, params: JsonObject): Result<JsonObject> {
+    private suspend fun rpc(
+        method: String,
+        params: JsonObject,
+        timeoutMs: Long = RPC_TIMEOUT_MS,
+    ): Result<JsonObject> {
         val socket = webSocket ?: return Result.failure(GatewayRpcException("not connected"))
         val id = rpcId.getAndIncrement()
         val deferred = CompletableDeferred<JsonObject>()
@@ -559,12 +759,59 @@ class GatewayChatClient(
             return Result.failure(GatewayRpcException("send failed — socket closed"))
         }
         return try {
-            Result.success(withTimeout(RPC_TIMEOUT_MS) { deferred.await() })
+            Result.success(withTimeout(timeoutMs) { deferred.await() })
         } catch (e: Exception) {
             pendingRpcs.remove(id)
             Result.failure(if (e is GatewayRpcException) e else GatewayRpcException("$method timed out"))
         }
     }
+
+    /**
+     * Queue one image onto the live session. Tries the upstream RPC name
+     * first; on method-not-found falls back ONCE per socket to the legacy
+     * dotted name (older builds matching the vendored desktop CLI contract),
+     * then remembers whichever name worked for the socket's lifetime.
+     */
+    private suspend fun uploadImage(attachment: GatewayImageAttachment): Result<JsonObject> {
+        val sid = liveSessionId
+            ?: return Result.failure(GatewayRpcException("no live session"))
+        val preferred = attachMethodForSocket ?: ATTACH_METHOD_UPSTREAM
+        val first = attachRpc(preferred, sid, attachment)
+        if (first.isSuccess) {
+            attachMethodForSocket = preferred
+            return first
+        }
+        if (preferred == ATTACH_METHOD_UPSTREAM &&
+            attachMethodForSocket == null &&
+            first.exceptionOrNull().isMethodNotFound()
+        ) {
+            val legacy = attachRpc(ATTACH_METHOD_LEGACY, sid, attachment)
+            if (legacy.isSuccess) attachMethodForSocket = ATTACH_METHOD_LEGACY
+            return legacy
+        }
+        return first
+    }
+
+    private suspend fun attachRpc(
+        method: String,
+        sessionId: String,
+        attachment: GatewayImageAttachment,
+    ): Result<JsonObject> = rpc(
+        method,
+        buildJsonObject {
+            put("session_id", sessionId)
+            if (method == ATTACH_METHOD_UPSTREAM) {
+                put("content_base64", attachment.base64)
+                attachment.name?.let { put("filename", it) }
+                attachment.ext?.let { put("ext", it) }
+            } else {
+                put("bytes_base64", attachment.base64)
+                put("format", attachment.ext ?: "png")
+                attachment.name?.let { put("filename_hint", it) }
+            }
+        },
+        timeoutMs = ATTACH_RPC_TIMEOUT_MS,
+    )
 
     // ------------------------------------------------------------------
     // Turn handle
@@ -590,17 +837,20 @@ class GatewayChatClient(
         val ended: Boolean get() = mapper.turnEnded || cancelled
 
         fun onEvent(type: String, payload: JsonObject?) {
-            armWatchdog() // reset on every event — long tool runs keep the turn alive
+            // Reset on every event — long tool runs keep the turn alive.
+            // Ask requests block with no further events, so they arm with
+            // their own (longer) duration via watchdogTimeoutFor.
+            armWatchdog(watchdogTimeoutFor(type))
             mapper.onEvent(type, payload)
             if (mapper.turnEnded) disarmWatchdog()
         }
 
-        fun armWatchdog() {
+        fun armWatchdog(timeoutMs: Long = TURN_TIMEOUT_MS) {
             watchdog?.cancel()
             watchdog = scope.launch {
-                delay(TURN_TIMEOUT_MS)
+                delay(timeoutMs)
                 if (!ended) {
-                    Log.w(TAG, "Gateway turn timed out after ${TURN_TIMEOUT_MS}ms")
+                    Log.w(TAG, "Gateway turn timed out after ${timeoutMs}ms")
                     interruptServerSide()
                     failFromTransport("Gateway turn timed out")
                 }
@@ -650,9 +900,34 @@ class GatewayChatClient(
         onComplete = { callbackDispatcher { callbacks.onComplete() } },
         onUsage = { v -> callbackDispatcher { callbacks.onUsage(v) } },
         onError = { v -> callbackDispatcher { callbacks.onError(v) } },
-        onInteractionRequest = { a, b -> callbackDispatcher { callbacks.onInteractionRequest(a, b) } },
+        onToolGenerating = { v -> callbackDispatcher { callbacks.onToolGenerating(v) } },
+        onSubagentEvent = { v -> callbackDispatcher { callbacks.onSubagentEvent(v) } },
+        onInteractionRequest = { v -> callbackDispatcher { callbacks.onInteractionRequest(v) } },
     )
 }
+
+/** Outcome of [GatewayChatClient.steer] — Rejected and Failed both mean "queue locally instead". */
+enum class SteerResult {
+    /** Server accepted — text lands in the next tool batch's last result. */
+    Queued,
+
+    /** Server reachable but no tool batch in flight to steer. */
+    Rejected,
+
+    /** Transport/RPC failure (no live session, socket down, unsupported …). */
+    Failed,
+}
+
+/**
+ * One image bound for `image.attach_bytes`. [ext] is the bare extension
+ * without the dot ("png", "jpg" …) — it doubles as the legacy contract's
+ * `format` field on fallback.
+ */
+data class GatewayImageAttachment(
+    val name: String?,
+    val base64: String,
+    val ext: String?,
+)
 
 /** Connect/auth/submit failed before the turn started — safe to fall back to SSE. */
 internal class GatewayPreflightException(message: String) : Exception(message)
@@ -660,7 +935,18 @@ internal class GatewayPreflightException(message: String) : Exception(message)
 /** One connect attempt failed; [GatewayChatClient] may retry with a fresh ticket. */
 internal class GatewayConnectAttemptException(message: String) : Exception(message)
 
-internal class GatewayRpcException(message: String) : Exception(message)
+/** [code] is the JSON-RPC error code when the failure came from the server (e.g. 4018, -32601). */
+internal class GatewayRpcException(message: String, val code: Int? = null) : Exception(message)
+
+private const val JSONRPC_METHOD_NOT_FOUND = -32601
+
+private fun Throwable?.isMethodNotFound(): Boolean {
+    val rpcError = this as? GatewayRpcException ?: return false
+    if (rpcError.code == JSONRPC_METHOD_NOT_FOUND) return true
+    val msg = rpcError.message ?: return false
+    return msg.contains("method not found", ignoreCase = true) ||
+        msg.contains("unknown method", ignoreCase = true)
+}
 
 private fun JsonObject.stringField(key: String): String? =
     (get(key) as? JsonPrimitive)?.contentOrNull

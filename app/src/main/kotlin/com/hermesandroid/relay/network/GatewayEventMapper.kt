@@ -5,6 +5,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 
 /**
@@ -37,6 +38,14 @@ class GatewayEventMapper(private val callbacks: GatewayTurnCallbacks) {
      * tool name, FIFO.
      */
     private val openSyntheticIdsByName = mutableMapOf<String, ArrayDeque<String>>()
+
+    /**
+     * `tool.generating` pre-registrations awaiting their `tool.start`, per
+     * name FIFO — the start adopts the pre-minted id (unless the server
+     * supplied a real `tool_id`) so the "preparing" placeholder and the
+     * running card stay one ToolCall.
+     */
+    private val generatingIdsByName = mutableMapOf<String, ArrayDeque<String>>()
 
     fun onEvent(type: String, payload: JsonObject?) {
         if (turnEnded) return
@@ -75,9 +84,30 @@ class GatewayEventMapper(private val callbacks: GatewayTurnCallbacks) {
                 sawMessageStart = true
             }
 
+            "tool.generating" -> {
+                // `{name?}` with NO tool_id — the model is still streaming
+                // this tool's arguments.
+                val name = payload.string("name")
+                if (name != null) {
+                    generatingIdsByName.getOrPut(name) { ArrayDeque() }
+                        .addLast("gateway-tool-$name-${syntheticToolCounter++}")
+                }
+                callbacks.onToolGenerating(name)
+            }
+
             "tool.start" -> {
                 val name = payload.string("name") ?: "unknown"
-                val toolId = payload.string("tool_id") ?: syntheticToolId(name)
+                // A pending generating placeholder for this name is adopted
+                // (consumed FIFO) whether or not the server sent a real id.
+                val adopted = generatingIdsByName[name]?.removeFirstOrNull()
+                val serverId = payload.string("tool_id")
+                val toolId = when {
+                    serverId != null -> serverId
+                    adopted != null -> adopted.also {
+                        openSyntheticIdsByName.getOrPut(name) { ArrayDeque() }.addLast(it)
+                    }
+                    else -> syntheticToolId(name)
+                }
                 callbacks.onToolCallStart(toolId, name)
             }
 
@@ -115,38 +145,80 @@ class GatewayEventMapper(private val callbacks: GatewayTurnCallbacks) {
                 callbacks.onError(payload.string("message") ?: "Gateway error")
             }
 
-            "clarify.request" -> {
-                val question = payload.string("question") ?: "The agent needs clarification"
-                val choices = (payload?.get("choices") as? JsonArray)
-                    ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
-                    ?.takeIf { it.isNotEmpty() }
-                    ?.joinToString(" / ")
-                callbacks.onInteractionRequest(
-                    "clarification",
-                    if (choices != null) "$question ($choices)" else question,
+            "subagent.start", "subagent.thinking", "subagent.tool",
+            "subagent.progress", "subagent.complete",
+            -> {
+                val phase = when (type) {
+                    "subagent.start" -> GatewaySubagentEvent.Phase.START
+                    "subagent.thinking" -> GatewaySubagentEvent.Phase.THINKING
+                    "subagent.tool" -> GatewaySubagentEvent.Phase.TOOL
+                    "subagent.progress" -> GatewaySubagentEvent.Phase.PROGRESS
+                    else -> GatewaySubagentEvent.Phase.COMPLETE
+                }
+                callbacks.onSubagentEvent(
+                    GatewaySubagentEvent(
+                        phase = phase,
+                        taskIndex = payload.int("task_index") ?: 0,
+                        taskCount = payload.int("task_count") ?: 1,
+                        goal = payload.string("goal") ?: "",
+                        status = payload.string("status"),
+                        summary = payload.string("summary"),
+                        toolName = payload.string("tool_name"),
+                        // subagent.tool sets tool_preview AND mirrors it into
+                        // text; thinking/progress carry text only.
+                        preview = payload.string("tool_preview") ?: payload.string("text"),
+                        durationSeconds = payload.double("duration_seconds"),
+                    ),
                 )
             }
 
-            "approval.request" -> {
-                val command = payload.string("command")
-                val description = payload.string("description")
-                callbacks.onInteractionRequest(
-                    "approval",
-                    listOfNotNull(command, description).joinToString(" — ")
+            "clarify.request" -> callbacks.onInteractionRequest(
+                GatewayAsk(
+                    kind = GatewayAsk.Kind.CLARIFY,
+                    requestId = payload.string("request_id"),
+                    text = payload.string("question") ?: "The agent needs clarification",
+                    choices = (payload?.get("choices") as? JsonArray)
+                        ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+                        ?.takeIf { it.isNotEmpty() },
+                    timeoutSeconds = CLARIFY_TIMEOUT_SECONDS,
+                ),
+            )
+
+            "approval.request" -> callbacks.onInteractionRequest(
+                GatewayAsk(
+                    kind = GatewayAsk.Kind.APPROVAL,
+                    // Upstream approvals correlate per-SESSION, never
+                    // per-request — a stray request_id must not be adopted.
+                    requestId = null,
+                    text = listOfNotNull(payload.string("command"), payload.string("description"))
+                        .joinToString(" — ")
                         .ifBlank { "a command approval" },
-                )
-            }
+                    timeoutSeconds = 0,
+                ),
+            )
 
-            "sudo.request" -> callbacks.onInteractionRequest("sudo access", "elevated permissions")
+            "sudo.request" -> callbacks.onInteractionRequest(
+                GatewayAsk(
+                    kind = GatewayAsk.Kind.SUDO,
+                    requestId = payload.string("request_id"),
+                    // Payload carries request_id ONLY — no command to show.
+                    text = "Elevated permissions requested",
+                    timeoutSeconds = SUDO_TIMEOUT_SECONDS,
+                ),
+            )
 
-            "secret.request" -> {
-                val detail = payload.string("prompt")
-                    ?: payload.string("env_var")
-                    ?: "a secret value"
-                callbacks.onInteractionRequest("a secret", detail)
-            }
+            "secret.request" -> callbacks.onInteractionRequest(
+                GatewayAsk(
+                    kind = GatewayAsk.Kind.SECRET,
+                    requestId = payload.string("request_id"),
+                    text = payload.string("prompt") ?: "The agent needs a secret value",
+                    envVar = payload.string("env_var"),
+                    timeoutSeconds = SECRET_TIMEOUT_SECONDS,
+                ),
+            )
 
-            // Known-but-unrendered (MVP) and unknown types alike: ignore.
+            // Known-but-unrendered (notification.show, status.update, …) and
+            // unknown types alike: ignore.
             else -> Unit
         }
     }
@@ -164,20 +236,47 @@ class GatewayEventMapper(private val callbacks: GatewayTurnCallbacks) {
          * counterparts — see upstream `_get_usage()`), NOT the
          * `input_tokens`/`prompt_tokens` schemes [UsageInfo] decodes from the
          * SSE paths. Translate explicitly. Values are session-cumulative.
+         *
+         * The context-window block (`context_used`/`context_max`/
+         * `context_percent`) exists only when the server's context compressor
+         * is active — absent fields stay null and the meter stays hidden.
          */
         fun parseGatewayUsage(usage: JsonObject?): UsageInfo? {
             if (usage == null) return null
             val input = usage.int("input") ?: usage.int("prompt")
             val output = usage.int("output") ?: usage.int("completion")
             val total = usage.int("total")
-            if (input == null && output == null && total == null) return null
-            return UsageInfo(inputTokens = input, outputTokens = output, totalTokens = total)
+            val contextUsed = usage.int("context_used")
+            val contextMax = usage.int("context_max")
+            val contextPercent = usage.int("context_percent")
+            if (input == null && output == null && total == null &&
+                contextUsed == null && contextMax == null && contextPercent == null
+            ) {
+                return null
+            }
+            return UsageInfo(
+                inputTokens = input,
+                outputTokens = output,
+                totalTokens = total,
+                contextUsed = contextUsed,
+                contextMax = contextMax,
+                contextPercent = contextPercent,
+            )
         }
     }
 }
 
+// Upstream `_block()` timeouts per ask kind (server.py) — the blocked thread
+// resolves to "" when these elapse. Approval has none (session-scoped).
+private const val CLARIFY_TIMEOUT_SECONDS = 300
+private const val SUDO_TIMEOUT_SECONDS = 120
+private const val SECRET_TIMEOUT_SECONDS = 300
+
 private fun JsonObject?.string(key: String): String? =
     (this?.get(key) as? JsonPrimitive)?.contentOrNull
 
-private fun JsonObject.int(key: String): Int? =
-    (get(key) as? JsonPrimitive)?.intOrNull
+private fun JsonObject?.int(key: String): Int? =
+    (this?.get(key) as? JsonPrimitive)?.intOrNull
+
+private fun JsonObject?.double(key: String): Double? =
+    (this?.get(key) as? JsonPrimitive)?.doubleOrNull
