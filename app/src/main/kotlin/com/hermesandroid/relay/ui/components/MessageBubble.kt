@@ -201,6 +201,20 @@ fun MessageBubble(
         // is rendered as a separate Box so it hugs the bubble's left edge
         // regardless of content height (tall bubbles with multi-line
         // markdown stretch the bar via fillMaxHeight + IntrinsicSize).
+        //
+        // Suppress an otherwise-empty assistant bubble: a message that
+        // carries only thinking and/or tool calls (both rendered OUTSIDE
+        // this Surface — the ThinkingBlock above, the tool pills as separate
+        // rows) would otherwise paint a bare timestamp-only chip between the
+        // Thought-process block and the tool pill. Keep the bubble while
+        // streaming (StreamingDots is the live "working" indicator) and
+        // whenever there are cards/attachments to render inside it.
+        val showBubble = isUser || isSystem ||
+            message.content.isNotBlank() ||
+            message.isStreaming ||
+            message.cards.isNotEmpty() ||
+            message.attachments.isNotEmpty()
+        if (showBubble) {
         Row(
             modifier = Modifier.widthIn(max = maxBubbleWidth),
             verticalAlignment = Alignment.Top,
@@ -369,6 +383,7 @@ fun MessageBubble(
             }
         }
         } // end Row (bubble + optional leading accent bar)
+        } // end if (showBubble)
     }
 }
 

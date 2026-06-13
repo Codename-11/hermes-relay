@@ -102,6 +102,14 @@ class GatewayClientHarness(
                     put("attached", true)
                     put("count", 1)
                 }
+                "pdf.attach" -> buildJsonObject {
+                    put("attached", true)
+                    put("pages", 1)
+                }
+                "file.attach" -> buildJsonObject {
+                    put("attached", true)
+                    put("ref_text", "@file:notes.txt")
+                }
                 "clarify.respond", "sudo.respond", "secret.respond" ->
                     buildJsonObject { put("status", "ok") }
                 "approval.respond" -> buildJsonObject { put("resolved", true) }
@@ -260,6 +268,9 @@ class GatewayChatClientTest {
             callbackDispatcher = { it() },
             onGatewayUnsupported = { unsupportedMarked = true },
             scope = scope,
+            // Keep the mid-turn reconnect window short so `failed rejoin`
+            // surfaces its error well within the test's await budget.
+            midTurnRejoinWindowMs = 3_000L,
         )
     }
 
@@ -422,36 +433,39 @@ class GatewayChatClientTest {
     }
 
     @Test
-    fun `socket loss mid-turn rejoins and completes on the new socket`() {
+    fun `socket loss mid-turn reconnects without resume and completes on the original session`() {
         val r = Recorder()
         client.sendTurn(null, "hello", null, r.callbacks) { r.preflightFailures += it }
         val ws1 = harness.awaitServerSocket()
         harness.awaitRpc("prompt.submit")
 
         // Server connection dies mid-turn (Wi-Fi roam analogue). The client
-        // must reconnect with a FRESH ticket and session.resume, then keep
-        // consuming the still-running turn's events on the new socket.
+        // must reconnect with a FRESH ticket but WITHOUT session.resume —
+        // upstream resume would mint a new id + fresh agent and orphan the
+        // running turn — then keep consuming the still-running turn's events,
+        // which arrive tagged with the ORIGINAL live session id ("live-1")
+        // on the shared gateway stream.
         harness.rpcLog.clear()
         ws1.close(1011, "server crashed")
 
         val ws2 = harness.awaitServerSocket()
-        val resume = harness.awaitRpc("session.resume")
-        assertEquals(
-            "20260612_120000_abc123",
-            (resume["session_id"] as? JsonPrimitive)?.contentOrNull,
-        )
-        assertTrue(harness.ticketMints.get() >= 2)
+        assertTrue("reconnect must mint a fresh ticket", harness.ticketMints.get() >= 2)
 
         ws2.send(
-            harness.eventFrame("message.delta", buildJsonObject { put("text", "after rejoin") }, "live-resumed"),
+            harness.eventFrame("message.delta", buildJsonObject { put("text", "after rejoin") }, "live-1"),
         )
         ws2.send(
-            harness.eventFrame("message.complete", buildJsonObject { put("text", "after rejoin") }, "live-resumed"),
+            harness.eventFrame("message.complete", buildJsonObject { put("text", "after rejoin") }, "live-1"),
         )
 
         assertTrue("turn never completed after rejoin", r.completeLatch.await(10, TimeUnit.SECONDS))
         assertEquals(listOf("after rejoin"), r.textDeltas.toList())
         assertTrue("rejoined turn must not error, got ${r.errors}", r.errors.isEmpty())
+        // The fix's core invariant: a mid-turn rejoin must NEVER session.resume.
+        assertTrue(
+            "mid-turn rejoin must not call session.resume",
+            harness.rpcLog.none { it.first == "session.resume" },
+        )
         assertTrue(r.preflightFailures.isEmpty())
     }
 
@@ -530,7 +544,7 @@ class GatewayChatClientTest {
         assertTrue(harness.rpcLog.none { it.first == "session.steer" })
     }
 
-    // --- Image attachments ---
+    // --- Attachments (image / pdf / file routing) ---
 
     @Test
     fun `image attachments upload between session establish and prompt submit`() {
@@ -540,7 +554,7 @@ class GatewayChatClientTest {
             text = "describe this",
             newSessionTitle = null,
             callbacks = r.callbacks,
-            attachments = listOf(GatewayImageAttachment(name = "shot.png", base64 = "aGVsbG8=", ext = "png")),
+            attachments = listOf(GatewayAttachment(name = "shot.png", base64 = "aGVsbG8=", ext = "png", contentType = "image/png")),
             onPreflightFailure = { r.preflightFailures += it },
         )
         harness.awaitRpc("prompt.submit")
@@ -569,7 +583,7 @@ class GatewayChatClientTest {
             text = "one",
             newSessionTitle = null,
             callbacks = r1.callbacks,
-            attachments = listOf(GatewayImageAttachment("a.png", "QQ==", "png")),
+            attachments = listOf(GatewayAttachment("a.png", "QQ==", "png", "image/png")),
             onPreflightFailure = { r1.preflightFailures += it },
         )
         val serverWs = harness.awaitServerSocket()
@@ -593,7 +607,7 @@ class GatewayChatClientTest {
             text = "two",
             newSessionTitle = null,
             callbacks = r2.callbacks,
-            attachments = listOf(GatewayImageAttachment("b.png", "Qg==", "png")),
+            attachments = listOf(GatewayAttachment("b.png", "Qg==", "png", "image/png")),
             onPreflightFailure = { r2.preflightFailures += it },
         )
         harness.awaitRpcCount("image.attach.bytes", 2)
@@ -611,7 +625,7 @@ class GatewayChatClientTest {
             text = "img",
             newSessionTitle = null,
             callbacks = r.callbacks,
-            attachments = listOf(GatewayImageAttachment("a.png", "QQ==", "png")),
+            attachments = listOf(GatewayAttachment("a.png", "QQ==", "png", "image/png")),
             onPreflightFailure = {
                 r.preflightFailures += it
                 r.completeLatch.countDown()
@@ -622,6 +636,56 @@ class GatewayChatClientTest {
         // Nothing started server-side — the prompt was never submitted.
         assertTrue(harness.rpcLog.none { it.first == "prompt.submit" })
         assertTrue(r.errors.isEmpty())
+    }
+
+    @Test
+    fun `pdf attachments route to pdf attach with content_base64`() {
+        val r = Recorder()
+        client.sendTurn(
+            sessionId = null,
+            text = "summarize this",
+            newSessionTitle = null,
+            callbacks = r.callbacks,
+            attachments = listOf(
+                GatewayAttachment(name = "report.pdf", base64 = "JVBERi0=", ext = "pdf", contentType = "application/pdf"),
+            ),
+            onPreflightFailure = { r.preflightFailures += it },
+        )
+        harness.awaitRpc("prompt.submit")
+
+        val attach = harness.awaitRpc("pdf.attach")
+        assertEquals("live-1", (attach["session_id"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("JVBERi0=", (attach["content_base64"] as? JsonPrimitive)?.contentOrNull)
+        // No image RPC should have fired for a PDF.
+        assertTrue(harness.rpcLog.none { it.first == "image.attach_bytes" })
+        assertTrue(r.preflightFailures.isEmpty())
+    }
+
+    @Test
+    fun `non-image non-pdf attachments route to file attach with a data url`() {
+        val r = Recorder()
+        client.sendTurn(
+            sessionId = null,
+            text = "read this",
+            newSessionTitle = null,
+            callbacks = r.callbacks,
+            attachments = listOf(
+                GatewayAttachment(name = "notes.txt", base64 = "aGk=", ext = "txt", contentType = "text/plain"),
+            ),
+            onPreflightFailure = { r.preflightFailures += it },
+        )
+        harness.awaitRpc("prompt.submit")
+
+        val attach = harness.awaitRpc("file.attach")
+        assertEquals("live-1", (attach["session_id"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals(
+            "data:text/plain;base64,aGk=",
+            (attach["data_url"] as? JsonPrimitive)?.contentOrNull,
+        )
+        assertEquals("notes.txt", (attach["name"] as? JsonPrimitive)?.contentOrNull)
+        assertTrue(harness.rpcLog.none { it.first == "image.attach_bytes" })
+        assertTrue(harness.rpcLog.none { it.first == "pdf.attach" })
+        assertTrue(r.preflightFailures.isEmpty())
     }
 
     // --- Ask responders ---

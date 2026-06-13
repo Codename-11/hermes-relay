@@ -2,6 +2,7 @@ package com.hermesandroid.relay.network
 
 import android.util.Log
 import com.hermesandroid.relay.util.AppForegroundTracker
+import com.hermesandroid.relay.util.TurnLatencyTracer
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -40,10 +41,15 @@ import java.util.concurrent.atomic.AtomicLong
  * `desktop/src/gatewayTypes.ts` for the vendored wire shapes.
  *
  * Lifecycle: lazy connect on first [sendTurn]; stays connected while the app
- * is foregrounded; 30s after backgrounding the socket closes unless a turn
- * is in flight (the server detaches sessions to a grace-windowed orphan
- * reaper — a later `session.resume` picks the conversation back up). No
- * background reconnect loops; reconnection happens on the next send.
+ * is foregrounded; ~2min after backgrounding the socket closes unless a turn
+ * is in flight. The tui_gateway is a single SHARED process that multiplexes
+ * every session's events over one stream tagged by `session_id`; a turn runs
+ * in a background thread that keeps emitting on the id it was STARTED with,
+ * regardless of WS state. So a mid-turn socket drop is recovered by
+ * reconnecting the socket and KEEPING the in-flight session id (see
+ * [attemptMidTurnRejoin]) — NOT by `session.resume`, which mints a brand-new
+ * id + a fresh agent rebuilt from DB and would orphan the still-running turn.
+ * No background reconnect loops; a fresh send reconnects on demand.
  *
  * Auth: every connect attempt mints a FRESH single-use ws-ticket (30s TTL)
  * via [DashboardApiClient.requestWsTicket] — tickets must never be reused
@@ -61,6 +67,8 @@ class GatewayChatClient(
     /** Surface for "this server has no usable /api/ws" — flips availability to Unsupported. */
     private val onGatewayUnsupported: () -> Unit = {},
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    /** Max wall-clock a single mid-turn reconnect keeps retrying before failing the turn. */
+    private val midTurnRejoinWindowMs: Long = MAX_MIDTURN_REJOIN_MS,
 ) {
     companion object {
         private const val TAG = "GatewayChatClient"
@@ -88,25 +96,51 @@ class GatewayChatClient(
         private const val RPC_TIMEOUT_MS = 15_000L
         private const val CONNECT_TIMEOUT_MS = 20_000L
 
-        /** Image uploads ship whole base64 frames (≤25MB server cap) — 15s is not enough. */
+        /**
+         * Uploads ship whole base64 frames (image ≤25MB, PDF ≤50MB server cap)
+         * and `pdf.attach` renders pages server-side before replying — 15s is
+         * not enough.
+         */
         private const val ATTACH_RPC_TIMEOUT_MS = 60_000L
 
-        /** Upstream upload RPC name (underscore — `image.attach_bytes`, content_base64). */
+        /** Upstream image byte-upload RPC (underscore — `image.attach_bytes`, content_base64). */
         private const val ATTACH_METHOD_UPSTREAM = "image.attach_bytes"
 
-        /** Legacy desktop-CLI name (dots — `image.attach.bytes`, bytes_base64/format). */
+        /** Legacy desktop-CLI image name (dots — `image.attach.bytes`, bytes_base64/format). */
         private const val ATTACH_METHOD_LEGACY = "image.attach.bytes"
 
-        /** Grace before closing an idle socket after the app backgrounds. */
-        private const val BACKGROUND_CLOSE_GRACE_MS = 30_000L
+        /** Upstream PDF byte-upload RPC — server renders each page to a vision tile. */
+        private const val ATTACH_METHOD_PDF = "pdf.attach"
+
+        /** Upstream generic-file byte-upload RPC — materialized as an `@file:` workspace ref. */
+        private const val ATTACH_METHOD_FILE = "file.attach"
+
+        /**
+         * Grace before closing an idle socket after the app backgrounds. Kept
+         * generous so a quick context-switch (glance at a notification, copy a
+         * snippet) returns to a still-warm socket+session — a cold rejoin
+         * re-pays `session.resume` (~seconds) on the next send. The OS will
+         * freeze the process well before this anyway; on return the chat
+         * surface also pre-warms (see [prewarm]).
+         */
+        private const val BACKGROUND_CLOSE_GRACE_MS = 120_000L
 
         /** Cooldown after a failed connect so rapid sends don't hammer a down server. */
         private const val CONNECT_FAILURE_COOLDOWN_MS = 5_000L
         private const val RATE_LIMIT_COOLDOWN_MS = 300_000L
         private const val CONNECT_ATTEMPTS = 2
 
-        /** Socket losses answered with reconnect+resume per turn before giving up. */
-        private const val MAX_TURN_REJOINS = 2
+        /** Distinct socket-loss (flap) events per turn we'll try to recover from. */
+        private const val MAX_TURN_REJOINS = 4
+
+        /**
+         * How long a single mid-turn reconnect keeps retrying (with backoff)
+         * before the turn is failed. Sized to outlast a typical mobile radio
+         * blip / Wi-Fi⇄cellular handover (seconds) — the old behavior fired
+         * two connect attempts in ~24ms and gave up, abandoning a turn the
+         * server then finished and whose answer was silently dropped.
+         */
+        private const val MAX_MIDTURN_REJOIN_MS = 20_000L
 
         private const val DEFAULT_COLS = 80
 
@@ -171,6 +205,15 @@ class GatewayChatClient(
     @Volatile
     private var connectCooldownUntil: Long = 0L
 
+    /**
+     * When true, the socket is never auto-closed on background — the opt-in
+     * keep-alive foreground service (sideload) holds the process up so the
+     * conversation stays connected until the app is killed. Driven by
+     * ConnectionViewModel from the user's "Keep connected in background" toggle.
+     */
+    @Volatile
+    private var keepAliveInBackground = false
+
     private var backgroundCloseJob: Job? = null
 
     init {
@@ -197,10 +240,12 @@ class GatewayChatClient(
      *   session. On create/rotate the new stored id is reported via
      *   [GatewayTurnCallbacks.onSessionId].
      * @param newSessionTitle title applied when a fresh session is created.
-     * @param attachments image attachments uploaded onto the session between
-     *   session establish and `prompt.submit` — upstream snapshots+clears the
-     *   session's queued images at turn start, so they bind to THIS turn.
-     *   Images only; non-image attachments stay on the SSE fallback path.
+     * @param attachments attachments uploaded onto the session between session
+     *   establish and `prompt.submit` — upstream snapshots+clears the session's
+     *   queued attachments at turn start, so they bind to THIS turn. Routed by
+     *   MIME: images → `image.attach_bytes` (vision tiles), PDFs → `pdf.attach`
+     *   (rendered to vision tiles), everything else → `file.attach` (staged as
+     *   an `@file:` workspace artifact the agent's file tools can read).
      * @param truncateBeforeUserOrdinal edit-and-regenerate: 0-based index
      *   into the session's USER messages (counted from the first user
      *   message). The server drops that message and everything after it
@@ -216,21 +261,29 @@ class GatewayChatClient(
         text: String,
         newSessionTitle: String?,
         callbacks: GatewayTurnCallbacks,
-        attachments: List<GatewayImageAttachment> = emptyList(),
+        attachments: List<GatewayAttachment> = emptyList(),
         truncateBeforeUserOrdinal: Int? = null,
         onPreflightFailure: (reason: String) -> Unit,
     ): ActiveTurnHandle {
         val turn = GatewayTurn(dispatchOn(callbacks))
+        // Warm = the connection-establish phases are skipped this turn (socket
+        // alive AND the requested session already live). A "cold" turn re-pays
+        // ticket/ws/session — exactly the asymmetry vs always-connected desktop.
+        val socketWarm = webSocket != null && readySignal?.isCompleted == true
+        val sessionWarm = liveSessionId != null && storedSessionId == sessionId && sessionId != null
+        turn.tracer.warm(socketWarm && sessionWarm)
         scope.launch {
             try {
                 connectMutex.withLock {
                     ensureConnected()
+                    turn.tracer.mark("connect")
                     ensureSession(sessionId, newSessionTitle, turn)
+                    turn.tracer.mark("session")
                 }
                 if (turn.cancelled) return@launch
                 attachments.forEach { attachment ->
-                    uploadImage(attachment).getOrElse { e ->
-                        throw GatewayPreflightException("image upload failed: ${e.message}")
+                    uploadAttachment(attachment).getOrElse { e ->
+                        throw GatewayPreflightException("attachment upload failed: ${e.message}")
                     }
                 }
                 if (turn.cancelled) return@launch
@@ -251,6 +304,7 @@ class GatewayChatClient(
                         submitted.exceptionOrNull()?.message ?: "prompt.submit failed",
                     )
                 }
+                turn.tracer.mark("submit")
                 // One INFO line per turn so logcat shows which transport
                 // served a send — the SSE paths log their SSE events, and
                 // a silent happy path here made on-device verification a
@@ -260,6 +314,7 @@ class GatewayChatClient(
                 activeTurn = null
                 if (!turn.cancelled) {
                     Log.w(TAG, "Gateway preflight failed: ${e.message}")
+                    turn.tracer.done("preflight-fail")
                     callbackDispatcher { onPreflightFailure(e.message ?: "gateway unavailable") }
                 }
             }
@@ -271,6 +326,51 @@ class GatewayChatClient(
     fun clearSession() {
         liveSessionId = null
         storedSessionId = null
+    }
+
+    /**
+     * True while a turn is in flight (including mid-rejoin). Callers that would
+     * otherwise tear down / replace this client on a route change defer that
+     * teardown so a transient blip can't cancel the running turn — the client
+     * recovers its own socket and keeps the live session. See
+     * [com.hermesandroid.relay.viewmodel.ConnectionViewModel.activeGatewayChatClient].
+     */
+    fun hasActiveTurn(): Boolean = activeTurn?.ended == false
+
+    /**
+     * Toggle the opt-in background keep-alive (sideload). While on, the socket
+     * is not auto-closed when the app backgrounds. Turning it off while already
+     * backgrounded arms the normal idle-close so the socket still eventually
+     * releases.
+     */
+    fun setKeepAliveInBackground(enabled: Boolean) {
+        keepAliveInBackground = enabled
+        if (!enabled && !AppForegroundTracker.isForeground.value) scheduleBackgroundClose()
+    }
+
+    /**
+     * Establish the socket (and resume an existing session) ahead of the
+     * user's first send, so a warm turn reaches first token in tens of ms
+     * instead of paying the cold connect + `session.resume` on the critical
+     * "I pressed send" path. Best-effort and idempotent: a no-op when already
+     * warm, silently skipped on cooldown / unsupported / unreachable.
+     *
+     * Deliberately does NOT create a session when [storedSessionId] is null —
+     * pre-creating on screen-open would litter the session list with empty
+     * conversations. A brand-new chat's `session.create` stays on its first
+     * send.
+     */
+    fun prewarm(storedSessionId: String?) {
+        scope.launch {
+            try {
+                connectMutex.withLock {
+                    ensureConnected()
+                    if (storedSessionId != null) resumeForPrewarm(storedSessionId)
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "Gateway prewarm skipped: ${e.message}")
+            }
+        }
     }
 
     /**
@@ -450,10 +550,12 @@ class GatewayChatClient(
     }
 
     private suspend fun connectOnce() {
+        val connectStart = System.nanoTime()
         _connectionState.value = GatewayConnectionState.MintingTicket
         val ticket = dashboardClient.requestWsTicket().getOrElse { e ->
             throw GatewayConnectAttemptException("ws-ticket mint failed: ${e.message}")
         }
+        val ticketMs = (System.nanoTime() - connectStart) / 1_000_000
         val url = dashboardClient.gatewayWebSocketUrl(ticket.ticket)
             ?: throw GatewayConnectAttemptException("could not build /api/ws URL")
 
@@ -475,8 +577,39 @@ class GatewayChatClient(
             webSocket = null
             throw GatewayConnectAttemptException("gateway.ready never arrived")
         }
-        Log.i(TAG, "Gateway connected (/api/ws ready)")
+        // Split the cold-connect cost so a slow ticket mint (HTTP) is told
+        // apart from a slow WS upgrade + gateway.ready (socket/TLS) on device.
+        val wsMs = (System.nanoTime() - connectStart) / 1_000_000 - ticketMs
+        Log.i(TAG, "Gateway connected (/api/ws ready) — ticket=${ticketMs}ms ws=${wsMs}ms")
         _connectionState.value = GatewayConnectionState.Ready
+    }
+
+    /**
+     * Must hold [connectMutex]. Resume an existing session ahead of a send
+     * (no [GatewayTurn] context). Failure is silent — the real send's
+     * [ensureSession] will resume-or-create properly.
+     */
+    private suspend fun resumeForPrewarm(storedId: String) {
+        // Never resume while a turn is in flight: a resume mints a NEW live
+        // session id, and the running turn's events (still tagged with the
+        // OLD id) would then be filtered out as "foreign" — orphaning the
+        // turn and letting a stale reconcile repaint an earlier reply. This
+        // is the screen-return (prewarm) variant of the same hazard the
+        // mid-turn rejoin avoids by NOT resuming.
+        if (activeTurn != null) return
+        if (liveSessionId != null && storedSessionId == storedId) return
+        val resumed = rpc(
+            "session.resume",
+            buildJsonObject {
+                put("session_id", storedId)
+                put("cols", DEFAULT_COLS)
+            },
+        )
+        val live = resumed.getOrNull()?.stringField("session_id")
+        if (live != null) {
+            liveSessionId = live
+            storedSessionId = storedId
+        }
     }
 
     /** Must hold [connectMutex]. Resolves [liveSessionId] for the requested stored id. */
@@ -629,6 +762,10 @@ class GatewayChatClient(
 
     private fun onSocketDown(reason: String) {
         Log.i(TAG, "Gateway socket down ($reason)")
+        // Capture the in-flight session id BEFORE clearing it — the mid-turn
+        // rejoin restores it so the running turn's tail (still tagged with this
+        // id on the shared gateway stream) keeps matching after reconnect.
+        val preservedLiveId = liveSessionId
         webSocket = null
         readySignal = null
         liveSessionId = null
@@ -647,17 +784,15 @@ class GatewayChatClient(
         // A rejoin already owns recovery — a connect attempt failing inside
         // it must not spawn a second concurrent rejoin.
         if (rejoinInProgress) return
-        // A turn is in flight and the server is still generating into the
-        // session (its orphan reaper holds it through a disconnect). Mobile
-        // radios drop sockets mid-turn routinely (Wi-Fi power-save/roam —
-        // ECONNABORTED), so try to rejoin: reconnect with a fresh ticket and
-        // session.resume rebinds the live session to the new socket, and the
-        // event stream continues — same recovery the desktop TUI relies on.
+        // A turn is in flight. Mobile radios drop sockets mid-turn routinely
+        // (Wi-Fi power-save/roam, Wi-Fi⇄cellular handover — ECONNABORTED). The
+        // server keeps generating into the session and emitting on the SAME id,
+        // so reconnect the socket and keep listening on [preservedLiveId].
         if (turn.beginRejoin()) {
             rejoinInProgress = true
             scope.launch {
                 try {
-                    attemptMidTurnRejoin(turn)
+                    attemptMidTurnRejoin(turn, preservedLiveId)
                 } finally {
                     rejoinInProgress = false
                 }
@@ -671,48 +806,56 @@ class GatewayChatClient(
     @Volatile
     private var rejoinInProgress = false
 
-    private suspend fun attemptMidTurnRejoin(turn: GatewayTurn) {
-        val stored = storedSessionId
-        val rejoined = if (stored == null) {
-            false
-        } else {
-            try {
+    /**
+     * Recover an in-flight turn after a mid-turn socket loss by reconnecting
+     * the SOCKET ONLY and keeping [preservedLiveId] as the live session id.
+     *
+     * Why not `session.resume`: upstream resume mints a brand-new session id
+     * and rebuilds a fresh agent from persisted DB history — it does NOT
+     * reattach to the running turn's thread, which keeps emitting on the OLD
+     * id over the shared gateway stream. Resuming would point our event filter
+     * at the wrong id and orphan the turn (the server finishes it and the
+     * answer is dropped — confirmed on-device). A bare reconnect lets the tail
+     * — including the final `message.complete` — keep matching this turn.
+     *
+     * Retries with backoff for up to [midTurnRejoinWindowMs] so a multi-second
+     * radio blip doesn't abandon the turn. Events emitted while the socket was
+     * down are lost, but the post-turn REST reconcile (getMessages) fills in
+     * the authoritative final transcript.
+     */
+    private suspend fun attemptMidTurnRejoin(turn: GatewayTurn, preservedLiveId: String?) {
+        val deadline = System.currentTimeMillis() + midTurnRejoinWindowMs
+        var backoffMs = 500L
+        while (!turn.ended && System.currentTimeMillis() < deadline) {
+            val reconnected = try {
                 connectMutex.withLock {
-                    // An active turn overrides the failure cooldown — the
-                    // user is mid-conversation, not hammering a dead server.
+                    // The user is mid-conversation, not hammering a dead
+                    // server — override the post-failure cooldown.
                     connectCooldownUntil = 0L
                     ensureConnected()
-                    val resumed = rpc(
-                        "session.resume",
-                        buildJsonObject {
-                            put("session_id", stored)
-                            put("cols", DEFAULT_COLS)
-                        },
-                    )
-                    val live = resumed.getOrNull()?.stringField("session_id")
-                    if (live != null) {
-                        liveSessionId = live
-                        true
-                    } else {
-                        false
-                    }
                 }
+                true
             } catch (e: Exception) {
-                Log.w(TAG, "Mid-turn rejoin failed: ${e.message}")
+                Log.d(TAG, "Mid-turn reconnect retry failed: ${e.message}")
                 false
             }
-        }
-        when {
-            turn.ended -> if (activeTurn === turn) activeTurn = null
-            rejoined -> {
-                Log.i(TAG, "Gateway rejoined mid-turn (session=$stored)")
+            if (turn.ended) break
+            if (reconnected) {
+                // Keep the in-flight session id so the running turn's events
+                // (tagged with the OLD id) keep matching. No session.resume.
+                if (preservedLiveId != null) liveSessionId = preservedLiveId
+                Log.i(
+                    TAG,
+                    "Gateway socket rejoined mid-turn (session=$storedSessionId) — kept live session, awaiting tail",
+                )
                 turn.armWatchdog()
+                return
             }
-            else -> {
-                if (activeTurn === turn) activeTurn = null
-                turn.failFromTransport("Connection to the gateway was lost")
-            }
+            delay(backoffMs)
+            backoffMs = (backoffMs * 2).coerceAtMost(5_000L)
         }
+        if (activeTurn === turn) activeTurn = null
+        if (!turn.ended) turn.failFromTransport("Connection to the gateway was lost")
     }
 
     private fun closeSocket(reason: String) {
@@ -726,6 +869,9 @@ class GatewayChatClient(
     }
 
     private fun scheduleBackgroundClose() {
+        // Opt-in keep-alive: the foreground service holds the process up, so
+        // never tear the socket down on background while it's on.
+        if (keepAliveInBackground) return
         backgroundCloseJob?.cancel()
         backgroundCloseJob = scope.launch {
             delay(BACKGROUND_CLOSE_GRACE_MS)
@@ -767,16 +913,53 @@ class GatewayChatClient(
     }
 
     /**
-     * Queue one image onto the live session. Tries the upstream RPC name
-     * first; on method-not-found falls back ONCE per socket to the legacy
-     * dotted name (older builds matching the vendored desktop CLI contract),
-     * then remembers whichever name worked for the socket's lifetime.
+     * Queue one attachment onto the live session, routed by MIME so it lands on
+     * the same upstream handler the desktop client uses:
+     *   - `image/…`         → [ATTACH_METHOD_UPSTREAM] (vision tiles)
+     *   - `application/pdf` → [ATTACH_METHOD_PDF] (pages rendered to vision tiles)
+     *   - everything else   → [ATTACH_METHOD_FILE] (staged as an `@file:` ref)
      */
-    private suspend fun uploadImage(attachment: GatewayImageAttachment): Result<JsonObject> {
+    private suspend fun uploadAttachment(attachment: GatewayAttachment): Result<JsonObject> {
         val sid = liveSessionId
             ?: return Result.failure(GatewayRpcException("no live session"))
+        val mime = attachment.contentType.substringBefore(';').trim().lowercase()
+        return when {
+            mime.startsWith("image/") -> uploadImage(sid, attachment)
+            mime == "application/pdf" -> rpc(
+                ATTACH_METHOD_PDF,
+                buildJsonObject {
+                    put("session_id", sid)
+                    put("content_base64", attachment.base64)
+                },
+                timeoutMs = ATTACH_RPC_TIMEOUT_MS,
+            )
+            else -> rpc(
+                ATTACH_METHOD_FILE,
+                buildJsonObject {
+                    put("session_id", sid)
+                    // file.attach wants a `data:<mime>;base64,…` data URL so the
+                    // gateway can materialize the bytes; it tolerates bare base64
+                    // too, but the prefix preserves the MIME for the agent.
+                    put("data_url", "data:${attachment.contentType};base64,${attachment.base64}")
+                    attachment.name?.let { put("name", it) }
+                },
+                timeoutMs = ATTACH_RPC_TIMEOUT_MS,
+            )
+        }
+    }
+
+    /**
+     * Upload one image. Tries the upstream RPC name first; on method-not-found
+     * falls back ONCE per socket to the legacy dotted name (older builds
+     * matching the vendored desktop CLI contract), then remembers whichever
+     * name worked for the socket's lifetime.
+     */
+    private suspend fun uploadImage(
+        sessionId: String,
+        attachment: GatewayAttachment,
+    ): Result<JsonObject> {
         val preferred = attachMethodForSocket ?: ATTACH_METHOD_UPSTREAM
-        val first = attachRpc(preferred, sid, attachment)
+        val first = attachRpc(preferred, sessionId, attachment)
         if (first.isSuccess) {
             attachMethodForSocket = preferred
             return first
@@ -785,7 +968,7 @@ class GatewayChatClient(
             attachMethodForSocket == null &&
             first.exceptionOrNull().isMethodNotFound()
         ) {
-            val legacy = attachRpc(ATTACH_METHOD_LEGACY, sid, attachment)
+            val legacy = attachRpc(ATTACH_METHOD_LEGACY, sessionId, attachment)
             if (legacy.isSuccess) attachMethodForSocket = ATTACH_METHOD_LEGACY
             return legacy
         }
@@ -795,7 +978,7 @@ class GatewayChatClient(
     private suspend fun attachRpc(
         method: String,
         sessionId: String,
-        attachment: GatewayImageAttachment,
+        attachment: GatewayAttachment,
     ): Result<JsonObject> = rpc(
         method,
         buildJsonObject {
@@ -822,6 +1005,9 @@ class GatewayChatClient(
     ) : ActiveTurnHandle {
         private val mapper = GatewayEventMapper(callbacks)
 
+        /** t0 = construction ≈ sendTurn entry (the moment the user sent). */
+        val tracer = TurnLatencyTracer("gateway")
+
         @Volatile
         var cancelled = false
             private set
@@ -837,12 +1023,19 @@ class GatewayChatClient(
         val ended: Boolean get() = mapper.turnEnded || cancelled
 
         fun onEvent(type: String, payload: JsonObject?) {
+            tracer.mark("ttfe")
+            if (type == "message.delta" || type == "reasoning.delta" || type == "thinking.delta") {
+                tracer.mark("ttft")
+            }
             // Reset on every event — long tool runs keep the turn alive.
             // Ask requests block with no further events, so they arm with
             // their own (longer) duration via watchdogTimeoutFor.
             armWatchdog(watchdogTimeoutFor(type))
             mapper.onEvent(type, payload)
-            if (mapper.turnEnded) disarmWatchdog()
+            if (mapper.turnEnded) {
+                disarmWatchdog()
+                tracer.done()
+            }
         }
 
         fun armWatchdog(timeoutMs: Long = TURN_TIMEOUT_MS) {
@@ -867,6 +1060,7 @@ class GatewayChatClient(
             disarmWatchdog()
             if (ended) return
             cancelled = true
+            tracer.done("transport-fail")
             callbacks.onError(message)
         }
 
@@ -874,6 +1068,7 @@ class GatewayChatClient(
             if (ended) return
             cancelled = true
             disarmWatchdog()
+            tracer.done("cancelled")
             if (activeTurn === this) activeTurn = null
             interruptServerSide()
         }
@@ -919,14 +1114,17 @@ enum class SteerResult {
 }
 
 /**
- * One image bound for `image.attach_bytes`. [ext] is the bare extension
- * without the dot ("png", "jpg" …) — it doubles as the legacy contract's
- * `format` field on fallback.
+ * One outbound attachment bound for the gateway. [contentType] decides which
+ * upstream RPC carries it (`image.attach_bytes` / `pdf.attach` / `file.attach`).
+ * [ext] is the bare extension without the dot ("png", "jpg" …) — for images it
+ * doubles as the legacy contract's `format` field on fallback; unused for the
+ * PDF/file paths. [name] is the original filename (drives `@file:` naming).
  */
-data class GatewayImageAttachment(
+data class GatewayAttachment(
     val name: String?,
     val base64: String,
     val ext: String?,
+    val contentType: String,
 )
 
 /** Connect/auth/submit failed before the turn started — safe to fall back to SSE. */

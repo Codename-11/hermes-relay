@@ -27,7 +27,7 @@ import com.hermesandroid.relay.network.ActiveTurnHandle
 import com.hermesandroid.relay.network.GatewayAsk
 import com.hermesandroid.relay.network.GatewayChatClient
 import com.hermesandroid.relay.network.GatewayConnectionState
-import com.hermesandroid.relay.network.GatewayImageAttachment
+import com.hermesandroid.relay.network.GatewayAttachment
 import com.hermesandroid.relay.network.GatewayRpcException
 import com.hermesandroid.relay.network.GatewayTurnCallbacks
 import com.hermesandroid.relay.network.HermesApiClient
@@ -48,7 +48,6 @@ import com.hermesandroid.relay.util.AppForegroundTracker
 import com.hermesandroid.relay.util.HumanError
 import com.hermesandroid.relay.util.MediaCacheWriter
 import com.hermesandroid.relay.util.PhoneSnapshot
-import com.hermesandroid.relay.util.buildGatewayPreamble
 import com.hermesandroid.relay.util.buildPromptBlock
 import com.hermesandroid.relay.util.classifyError
 import kotlinx.coroutines.Job
@@ -82,6 +81,15 @@ class ChatViewModel : ViewModel() {
      * All cancel/teardown sites operate on this handle.
      */
     private var activeStream: ActiveTurnHandle? = null
+
+    /**
+     * True when [activeStream] is a GATEWAY turn (vs an SSE EventSource). A
+     * gateway turn runs on the gateway client, which survives a same-connection
+     * route blip via its own reconnect — so [updateApiClient] (a route handoff
+     * that rebuilds the HTTP API client) must NOT cancel it. An SSE turn is
+     * bound to the old HTTP client and still must be cancelled there.
+     */
+    private var activeStreamIsGateway = false
     private var intentionallyCancelled = false
     private var firstTokenNotified = false
     private var toolHistoryJob: Job? = null
@@ -254,6 +262,17 @@ class ChatViewModel : ViewModel() {
                 (changed || _serverCommands.value.isEmpty()) -> fetchServerCommands(client)
             changed -> _serverCommands.value = emptyList()
         }
+    }
+
+    /**
+     * Warm the gateway socket (and resume the current session) when the chat
+     * surface is visible and the gateway is the resolved transport, so the
+     * first send is warm instead of paying the cold connect + `session.resume`
+     * on the send path. No-op without a gateway client; idempotent when warm.
+     * Driven by a foreground/visibility effect in ChatScreen.
+     */
+    fun prewarmGateway() {
+        gatewayClient?.prewarm(chatHandler?.currentSessionId?.value)
     }
 
     // === Gateway desktop-parity state ===
@@ -450,6 +469,14 @@ class ChatViewModel : ViewModel() {
             .takeLast(maxMessages)
     }
 
+    /**
+     * The handler currently bound by [initialize]. Lets the caller tell a
+     * client-instance swap (route handoff / reconnect — same chat) apart from
+     * a genuine re-bind (new handler), so a handoff can take the cheap
+     * [updateApiClient] path and avoid re-initializing / repainting.
+     */
+    val boundHandler: ChatHandler? get() = chatHandler
+
     fun initialize(apiClient: HermesApiClient, chatHandler: ChatHandler) {
         this.apiClient = apiClient
         this.chatHandler = chatHandler
@@ -528,8 +555,16 @@ class ChatViewModel : ViewModel() {
     }
 
     fun updateApiClient(client: HermesApiClient) {
-        activeStream?.cancel()
-        activeStream = null
+        // A route handoff / reconnect rebuilds the HTTP API client. An SSE turn
+        // is bound to the OLD client, so it must be cancelled. A GATEWAY turn
+        // is NOT — it runs on the gateway client (which survives a
+        // same-connection route blip and reconnects its own socket, keeping the
+        // live session), so cancelling here would needlessly kill a recoverable
+        // turn. Leave it running; it completes on the gateway client.
+        if (!activeStreamIsGateway) {
+            activeStream?.cancel()
+            activeStream = null
+        }
         this.apiClient = client
         fetchSkills()
         fetchPersonalities()
@@ -1851,6 +1886,12 @@ class ChatViewModel : ViewModel() {
         // fallback when no profile metadata is available.
         handler.activeAgentName = currentAgentDisplayName(effectiveProfile)
 
+        // A new turn is starting: clear any leftover cancellation flag so a
+        // stale `true` from a PRIOR cancelled turn (the flag is sticky — a
+        // clean gateway cancel never fires onError to consume it) can't make
+        // THIS turn's genuine transport error get silently swallowed, which
+        // would leave the composer wedged in "streaming" behind a dead Stop.
+        intentionallyCancelled = false
         firstTokenNotified = false
         var lastInputTokens: Int? = null
         var lastOutputTokens: Int? = null
@@ -1987,7 +2028,12 @@ class ChatViewModel : ViewModel() {
         val onErrorCb = { errorMsg: String ->
             if (intentionallyCancelled) {
                 intentionallyCancelled = false
-                // Don't surface cancellation errors
+                // Cancellation (user Stop / session switch): suppress the
+                // error banner — but STILL finalize the streaming UI so the
+                // turn can never wedge "streaming forever" behind a dead Stop
+                // button if a cancel and a transport error race.
+                handler.messages.value.findLast { it.isStreaming }
+                    ?.let { handler.onStreamComplete(it.id) }
             } else {
                 AppAnalytics.onStreamError()
                 handler.onStreamError(errorMsg)
@@ -1995,6 +2041,20 @@ class ChatViewModel : ViewModel() {
                 // snackbar — classifier wraps the string into a throwable
                 // so context-specific copy kicks in for send_message.
                 emitError(Exception(errorMsg), context = "send_message")
+                // Recover the server-authoritative transcript on a gateway/
+                // sessions error: a turn can fail on the CLIENT (mid-turn route
+                // switch, watchdog timeout) AFTER the server already finished it
+                // — reload history so the completed answer still surfaces
+                // instead of stranding the turn on its partial/errored state.
+                val sid = handler.currentSessionId.value
+                if (sid != null && (streamingEndpoint == "sessions" || streamingEndpoint == "gateway")) {
+                    viewModelScope.launch {
+                        runCatching {
+                            val serverMessages = (apiClient ?: client).getMessages(sid)
+                            handler.loadMessageHistory(serverMessages)
+                        }
+                    }
+                }
             }
             activeStream = null
             _queuedMessages.value = emptyList()
@@ -2064,9 +2124,34 @@ class ChatViewModel : ViewModel() {
             AgentDisplay.profileRequestName(selectedProfile?.name)
         }
 
+        // Surface — instead of silently dropping — attachments that the chosen
+        // SSE endpoint can't deliver to a vanilla-upstream server. Only the
+        // gateway uploads files (image.attach_bytes / pdf.attach / file.attach).
+        // The completions endpoint still carries images inline (OpenAI
+        // image_url), but no SSE path carries non-image files, and sessions/runs
+        // carry no attachments at all. Text always sends regardless.
+        fun warnIfAttachmentsDropped(endpoint: String) {
+            val dropped = attachments.orEmpty().filter { att ->
+                if (endpoint == "completions") !att.isImage else true
+            }
+            if (dropped.isEmpty()) return
+            val names = dropped.joinToString(", ") {
+                it.fileName ?: if (it.isImage) "image" else "file"
+            }
+            val noun = if (dropped.size == 1) "attachment" else "attachments"
+            handler.addSystemNotice(
+                "⚠ Couldn't send your $noun ($names) over this connection — " +
+                    "attachments are delivered over the gateway transport. " +
+                    "Your message was sent as text.",
+            )
+        }
+
         // SSE dispatch shared by the three HTTP endpoints AND the gateway
-        // branch's per-turn fallback (gateway unreachable / attachments).
-        fun dispatchSse(endpoint: String): ActiveTurnHandle = when (endpoint) {
+        // branch's per-turn fallback (gateway unreachable / not the resolved
+        // transport). Warns once per dispatch about any attachment it can't carry.
+        fun dispatchSse(endpoint: String): ActiveTurnHandle {
+            warnIfAttachmentsDropped(endpoint)
+            return when (endpoint) {
             "runs" -> client.sendRunStream(
                     message = message,
                     systemMessage = systemMsg,
@@ -2128,6 +2213,7 @@ class ChatViewModel : ViewModel() {
                     modelOverride = modelOverride,
                     profileName = profileName,
                 ).asTurnHandle()
+            }
         }
 
         // Edit-and-regenerate ordinal — armed by regenerateFromMessage for
@@ -2138,34 +2224,35 @@ class ChatViewModel : ViewModel() {
 
         val gateway = gatewayClient
         _steerableTurn.value = false
+        // Remember whether this turn runs on the gateway client (vs an SSE
+        // EventSource) so a mid-turn route handoff doesn't cancel it — only the
+        // `else` branch below dispatches on the gateway.
+        activeStreamIsGateway = streamingEndpoint == "gateway" && gateway != null
         activeStream = when {
             streamingEndpoint != "gateway" -> dispatchSse(streamingEndpoint)
 
-            // Gateway turns upload images via image.attach_bytes; only
-            // NON-image attachments (and a missing client) still force the
-            // per-turn SSE fallback.
-            gateway == null || attachments?.any { !it.isImage } == true ->
+            // Gateway turns upload ALL attachments via their typed upstream
+            // RPC (image.attach_bytes / pdf.attach / file.attach), matching the
+            // desktop client. Only a missing gateway client forces the per-turn
+            // SSE fallback (where non-image attachments are not upstream-
+            // recognized and would be dropped — graceful degradation).
+            gateway == null ->
                 dispatchSse(resolveSseFallback(handler))
 
             else -> {
                 val isNewSession = handler.currentSessionId.value == null
                 val autoTitle = message.take(50).let { if (message.length > 50) "$it..." else it }
-                // Gateway prompt.submit is bare text — no system_message slot —
-                // so the SSE path's phone-context block can't ride along. Prepend
-                // just the mobile preamble (scoped: not the bridge/safety detail)
-                // so the agent still knows it's talking to a phone. Skipped for
-                // slash commands (a "[preamble]\n\n/cmd" no longer starts with
-                // "/" and would break server-side slash routing). Local user
-                // bubble + autoTitle use the clean `message`; only the wire text
-                // carries the marker.
-                val gatewayText = buildGatewayPreamble(appContextSettings)
-                    ?.takeIf { !message.trimStart().startsWith("/") }
-                    ?.let { "[$it]\n\n$message" }
-                    ?: message
+                // The gateway carries NO phone-context preamble: prompt.submit
+                // is bare text with no system-message slot, so anything prepended
+                // here persists into the user turn (ugly on history reload +
+                // visible from desktop), and its only system overlay
+                // (ephemeral_system_prompt) is the personality slot. Phone
+                // context rides the SSE systemMessage (invisible) + the on-demand
+                // android_phone_status tool instead. See PhoneStatusPromptBuilder.
                 _steerableTurn.value = true
                 gateway.sendTurn(
                     sessionId = handler.currentSessionId.value,
-                    text = gatewayText,
+                    text = message,
                     newSessionTitle = if (isNewSession) autoTitle else null,
                     callbacks = GatewayTurnCallbacks(
                         onSessionId = { sid ->
@@ -2195,8 +2282,7 @@ class ChatViewModel : ViewModel() {
                         },
                     ),
                     attachments = attachments.orEmpty()
-                        .filter { it.isImage }
-                        .map { it.toGatewayImageAttachment() },
+                        .map { it.toGatewayAttachment() },
                     truncateBeforeUserOrdinal = truncateOrdinal,
                     onPreflightFailure = {
                         _steerableTurn.value = false
@@ -2835,11 +2921,13 @@ data class PendingAsk(
 )
 
 /**
- * Outbound chat [Attachment] → gateway `image.attach_bytes` payload.
- * `ext` is the bare extension without the dot, derived from the filename
- * first and the MIME subtype second; null lets the server sniff magic bytes.
+ * Outbound chat [Attachment] → [GatewayAttachment]. [contentType] carries the
+ * routing decision (image → `image.attach_bytes`, pdf → `pdf.attach`, else →
+ * `file.attach`). `ext` is the bare extension without the dot, derived from the
+ * filename first and the MIME subtype second; null lets the server sniff magic
+ * bytes (image path only — pdf/file uploads ignore it).
  */
-private fun Attachment.toGatewayImageAttachment(): GatewayImageAttachment {
+private fun Attachment.toGatewayAttachment(): GatewayAttachment {
     val extFromName = fileName
         ?.substringAfterLast('.', "")
         ?.lowercase()
@@ -2850,12 +2938,14 @@ private fun Attachment.toGatewayImageAttachment(): GatewayImageAttachment {
         "image/gif" -> "gif"
         "image/webp" -> "webp"
         "image/bmp", "image/x-ms-bmp" -> "bmp"
+        "application/pdf" -> "pdf"
         else -> null
     }
-    return GatewayImageAttachment(
+    return GatewayAttachment(
         name = fileName,
         base64 = content,
         ext = extFromName ?: extFromMime,
+        contentType = contentType,
     )
 }
 

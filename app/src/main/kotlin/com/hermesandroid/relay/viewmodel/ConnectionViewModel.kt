@@ -44,7 +44,9 @@ import com.hermesandroid.relay.network.DashboardStatus
 import com.hermesandroid.relay.network.EncryptedDashboardCookieStore
 import com.hermesandroid.relay.network.EndpointResolver
 import com.hermesandroid.relay.network.GatewayAvailability
+import com.hermesandroid.relay.data.KEY_GATEWAY_KEEP_ALIVE
 import com.hermesandroid.relay.network.GatewayChatClient
+import com.hermesandroid.relay.network.GatewayKeepAliveService
 import com.hermesandroid.relay.network.HermesApiClient
 import com.hermesandroid.relay.network.resolveStreamingEndpointPreference
 import com.hermesandroid.relay.network.RouteProbeOutcome
@@ -585,6 +587,19 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         val dashboardUrl = activeDashboardUrl() ?: return null
         gatewayClientCache?.let { (cachedConnection, cachedUrl, client) ->
             if (cachedConnection == connectionId && cachedUrl == dashboardUrl) return client
+            // Same connection, only the resolved dashboard URL moved (a
+            // LAN⇄Tailscale route blip): if a turn is in flight, KEEP the
+            // cached client — shutting it down calls activeTurn.cancel() and
+            // kills the turn. The client runs its own socket reconnect (keeping
+            // the live session); the URL switch applies on the next rebuild
+            // once the turn has ended (the deferred-rebuild path).
+            if (cachedConnection == connectionId && client.hasActiveTurn()) {
+                android.util.Log.i(
+                    "ConnectionViewModel",
+                    "gateway route changed mid-turn — keeping active client, deferring URL switch",
+                )
+                return client
+            }
         }
         gatewayClientCache?.third?.shutdown()
         val client = GatewayChatClient(
@@ -596,6 +611,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             ),
             onGatewayUnsupported = { markGatewayUnsupported() },
         )
+        // Carry the current keep-alive preference onto the fresh client so a
+        // connection/route switch doesn't lose the no-background-close flag.
+        client.setKeepAliveInBackground(gatewayKeepAlive.value)
         gatewayClientCache = Triple(connectionId, dashboardUrl, client)
         return client
     }
@@ -670,6 +688,25 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     ) { savedUrl, endpoint ->
         endpoint?.api?.url ?: savedUrl
     }.stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_API_URL)
+
+    /**
+     * Whether a chat turn is currently streaming — mirrored from
+     * [com.hermesandroid.relay.viewmodel.ChatViewModel.isStreaming] by RelayApp.
+     * While true, an [effectiveApiServerUrl] route change DEFERS its chat-client
+     * rebuild: rebuilding mid-turn replaces the client and cancels the in-flight
+     * turn, whereas the gateway socket rides a transient route blip via its own
+     * reconnect (keeping the live session). The deferred rebuild applies once
+     * the turn ends.
+     */
+    private val _chatStreaming = MutableStateFlow(false)
+
+    fun setChatStreaming(streaming: Boolean) {
+        _chatStreaming.value = streaming
+    }
+
+    /** A route change arrived mid-turn and its chat-client rebuild was deferred. */
+    @Volatile
+    private var pendingApiClientRebuild = false
 
     /**
      * Runtime route for relay HTTP calls and WSS-adjacent helpers. Relay
@@ -1171,6 +1208,41 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { prefs ->
                 prefs[KEY_STREAMING_ENDPOINT] = endpoint
+            }
+        }
+    }
+
+    // --- Opt-in "keep gateway connected in background" (sideload) ---
+
+    /**
+     * Off by default. When on, the gateway socket stays open in the background
+     * (the process is held up by [GatewayKeepAliveService]) until the app is
+     * killed, so replies stay instant instead of paying a cold rejoin.
+     */
+    val gatewayKeepAlive: StateFlow<Boolean> = application.relayDataStore.data
+        .map { it[KEY_GATEWAY_KEEP_ALIVE] ?: false }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    fun setGatewayKeepAlive(enabled: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_GATEWAY_KEEP_ALIVE] = enabled
+            }
+        }
+    }
+
+    init {
+        // Drive the keep-alive: flip the active client's no-background-close
+        // flag and start/stop the foreground service. Both flavors — the
+        // GatewayKeepAliveService is declared in the main manifest (Play permits
+        // this Home-Assistant-class persistent-connection use case). Mirrors
+        // BridgeViewModel's masterToggle → BridgeForegroundService driver.
+        viewModelScope.launch {
+            gatewayKeepAlive.collect { enabled ->
+                gatewayClientCache?.third?.setKeepAliveInBackground(enabled)
+                val ctx = getApplication<Application>()
+                if (enabled) runCatching { GatewayKeepAliveService.start(ctx) }
+                else runCatching { GatewayKeepAliveService.stop(ctx) }
             }
         }
     }
@@ -2856,7 +2928,35 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 .drop(1)
                 .distinctUntilChanged()
                 .collect {
-                    rebuildApiClient()
+                    if (_chatStreaming.value) {
+                        // Rebuilding the chat client mid-turn replaces it and
+                        // CANCELS the in-flight turn. The gateway socket rides a
+                        // transient route blip via its own reconnect (keeping the
+                        // live session), so defer the rebuild until the turn ends.
+                        pendingApiClientRebuild = true
+                        android.util.Log.i(
+                            "ConnectionViewModel",
+                            "route changed mid-turn — deferring chat client rebuild",
+                        )
+                    } else {
+                        rebuildApiClient()
+                    }
+                }
+        }
+
+        // Apply a route change that was deferred because a turn was streaming.
+        // (StateFlow already conflates/dedups, so no distinctUntilChanged.)
+        viewModelScope.launch {
+            _chatStreaming
+                .collect { streaming ->
+                    if (!streaming && pendingApiClientRebuild) {
+                        pendingApiClientRebuild = false
+                        android.util.Log.i(
+                            "ConnectionViewModel",
+                            "turn ended — applying deferred chat client rebuild",
+                        )
+                        rebuildApiClient()
+                    }
                 }
         }
 
