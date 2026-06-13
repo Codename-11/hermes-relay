@@ -10,6 +10,7 @@ import SphereMark from './components/SphereMark.vue';
 import ExperimentalBadge from './components/ExperimentalBadge.vue';
 import HowItWorks from './components/HowItWorks.vue';
 import SurfaceCards from './components/SurfaceCards.vue';
+import StoreBadge from './components/StoreBadge.vue';
 
 export default {
   extends: DefaultTheme,
@@ -17,12 +18,17 @@ export default {
     app.component('HermesFlow', HermesFlow);
     app.component('FeatureMatrix', FeatureMatrix);
     app.component('ExperimentalBadge', ExperimentalBadge);
+    // Global so `<StoreBadge />` works inside any markdown page.
+    app.component('StoreBadge', StoreBadge);
   },
   Layout() {
     return h(DefaultTheme.Layout, null, {
       'home-hero-image': () => h(HeroDemo),
       'home-hero-actions-after': () =>
-        h('p', { class: 'hero-platform-note' }, 'CLI: Windows today · macOS / Linux coming soon'),
+        h('div', { class: 'hero-store-row' }, [
+          h(StoreBadge),
+          h('p', { class: 'hero-platform-note' }, 'CLI: Windows today · macOS / Linux coming soon'),
+        ]),
       'home-hero-after': () => [h(SphereMark), h(HowItWorks), h(SurfaceCards), h(InstallSection)],
       'doc-after': () =>
         h('div', { class: 'doc-footer-cta' }, [
