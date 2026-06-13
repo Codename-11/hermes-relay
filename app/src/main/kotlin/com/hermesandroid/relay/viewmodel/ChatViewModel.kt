@@ -208,6 +208,49 @@ class ChatViewModel : ViewModel() {
     /** Personality name → system prompt. Used to send the right prompt when switching. */
     private var personalityPrompts: Map<String, String> = emptyMap()
 
+    /** Available model ids from `GET /v1/models` — backs the in-chat model picker. */
+    private val _availableModels = MutableStateFlow<List<String>>(emptyList())
+    val availableModels: StateFlow<List<String>> = _availableModels.asStateFlow()
+
+    /**
+     * User's explicit model pick from the in-chat picker, or null = "use the
+     * profile's model / server default". Wins over the profile model on SSE
+     * turns; on the gateway it's applied immediately via a `/model` dispatch
+     * (the gateway carries no per-turn model field). Session-scoped, like the
+     * gateway's own `/model`.
+     */
+    private val _selectedModelOverride = MutableStateFlow<String?>(null)
+    val selectedModelOverride: StateFlow<String?> = _selectedModelOverride.asStateFlow()
+
+    fun fetchModels() {
+        val client = apiClient ?: return
+        viewModelScope.launch { _availableModels.value = client.getModels() }
+    }
+
+    /**
+     * Switch the active model from the in-chat picker. On the gateway this
+     * dispatches `/model <model>` (which switches the session's agent and
+     * surfaces the model-info confirmation card); on SSE the override rides
+     * the next turn's request body. Pass null to clear back to the profile /
+     * server default.
+     */
+    fun selectModel(model: String?) {
+        _selectedModelOverride.value = model?.takeIf { it.isNotBlank() }
+        val gateway = gatewayClient
+        val handler = chatHandler
+        if (model.isNullOrBlank()) return
+        if (streamingEndpoint == "gateway" && gateway != null && handler != null) {
+            viewModelScope.launch {
+                // `/model` runs via slash.exec, which needs a live gateway
+                // session — warm one first so picking a model before the first
+                // turn of a session doesn't fail with "no live session".
+                gateway.prewarm(handler.currentSessionId.value)
+                runServerSlashCommand(gateway, handler, "/model $model", depth = 0)
+            }
+        }
+        refreshActiveAgentName()
+    }
+
     /** Model name from the server's /api/config response (e.g. "claude-opus-4-6") */
     private val _serverModelName = MutableStateFlow("")
     val serverModelName: StateFlow<String> = _serverModelName.asStateFlow()
@@ -482,6 +525,7 @@ class ChatViewModel : ViewModel() {
         this.chatHandler = chatHandler
         fetchSkills()
         fetchPersonalities()
+        fetchModels()
         // Keep the tool-call history in sync with the active chat handler's
         // messages. Subscribed on every initialize() call so a replaced
         // handler (connection switch) picks up fresh events without leaking
@@ -568,6 +612,7 @@ class ChatViewModel : ViewModel() {
         this.apiClient = client
         fetchSkills()
         fetchPersonalities()
+        fetchModels()
     }
 
     /**
@@ -2111,12 +2156,11 @@ class ChatViewModel : ViewModel() {
         // [selectedProfile] resolved at the top of this function so a
         // rapid switch doesn't give us a systemMessage from profile A but
         // a model from profile B.
-        val modelOverride: String? = if (useIsolatedProfileApi) {
-            null
-        } else {
-            selectedProfile
-                ?.model
-                ?.takeIf { it.isNotBlank() }
+        val modelOverride: String? = when {
+            useIsolatedProfileApi -> null
+            // An explicit in-chat model pick wins over the profile's model.
+            !_selectedModelOverride.value.isNullOrBlank() -> _selectedModelOverride.value
+            else -> selectedProfile?.model?.takeIf { it.isNotBlank() }
         }
         val profileName: String? = if (useIsolatedProfileApi) {
             null

@@ -637,6 +637,8 @@ fun AgentInfoSheet(
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
     val personalityNames by chatViewModel.personalityNames.collectAsState()
     val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
+    val availableModels by chatViewModel.availableModels.collectAsState()
+    val selectedModelOverride by chatViewModel.selectedModelOverride.collectAsState()
 
     // Connection summary state.
     val authState by connectionViewModel.authState.collectAsState()
@@ -1035,6 +1037,59 @@ fun AgentInfoSheet(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 4.dp, start = 4.dp),
                     )
+                }
+            }
+
+            // ---- Model section (host-side provider model) ----
+            // Switches the model for THIS session. On the gateway this fires a
+            // `/model` dispatch (the rich model-info card lands in chat); on SSE
+            // the pick rides the next request body. Hidden when the server
+            // advertises no models. Locked mid-turn — the gateway rejects a
+            // switch while a turn runs, and SSE would race the in-flight request.
+            // Model options: the server's /v1/models list, augmented with the
+            // distinct models the configured profiles use (the real switchable
+            // models — e.g. gpt-5.5, kimi — which /v1/models often collapses to
+            // a single generic alias). The current override is always included
+            // so a hand-typed `/model` pick still shows as selected.
+            val modelOptions = remember(availableModels, agentProfiles, selectedModelOverride) {
+                (availableModels +
+                    agentProfiles.mapNotNull { it.model?.takeIf { m -> m.isNotBlank() } } +
+                    listOfNotNull(selectedModelOverride))
+                    .distinct()
+            }
+            if (modelOptions.isNotEmpty()) {
+                HorizontalDivider()
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    SectionLabel(
+                        title = "Model",
+                        hint = "Provider model for this session",
+                    )
+                    ProfileRadioRow(
+                        primary = "Server default",
+                        secondary = serverModelName.takeIf { it.isNotBlank() },
+                        selected = selectedModelOverride == null,
+                        enabled = !isStreaming,
+                        onSelect = {
+                            if (selectedModelOverride != null) {
+                                chatViewModel.selectModel(null)
+                                toast("Using server default model")
+                            }
+                        },
+                    )
+                    modelOptions.forEach { model ->
+                        ProfileRadioRow(
+                            primary = model,
+                            secondary = null,
+                            selected = selectedModelOverride == model,
+                            enabled = !isStreaming,
+                            onSelect = {
+                                if (selectedModelOverride != model) {
+                                    chatViewModel.selectModel(model)
+                                    toast("Model: $model")
+                                }
+                            },
+                        )
+                    }
                 }
             }
 

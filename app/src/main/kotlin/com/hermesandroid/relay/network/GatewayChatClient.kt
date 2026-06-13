@@ -61,7 +61,7 @@ import java.util.concurrent.atomic.AtomicLong
  * mutations stay on the main thread.
  */
 class GatewayChatClient(
-    private val dashboardClient: DashboardApiClient,
+    initialDashboardClient: DashboardApiClient,
     okHttpClient: OkHttpClient? = null,
     private val callbackDispatcher: (block: () -> Unit) -> Unit = MainThreadDispatcher,
     /** Surface for "this server has no usable /api/ws" — flips availability to Unsupported. */
@@ -142,6 +142,16 @@ class GatewayChatClient(
          */
         private const val MAX_MIDTURN_REJOIN_MS = 20_000L
 
+        /**
+         * After a route RETARGET (LAN⇄Tailscale mid-turn), the fresh socket
+         * can't pick up the in-flight turn's events — upstream `session.resume`
+         * doesn't reattach to a running turn. So arm a SHORT settle on the
+         * reconnect: if nothing flows we fail fast and the post-turn reconcile
+         * recovers the server's answer, instead of waiting the full turn
+         * watchdog. Any live event resets it back to the normal timeout.
+         */
+        private const val POST_RETARGET_SETTLE_MS = 30_000L
+
         private const val DEFAULT_COLS = 80
 
         private object MainThreadDispatcher : (() -> Unit) -> Unit {
@@ -163,6 +173,15 @@ class GatewayChatClient(
         .pingInterval(30, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .build()
+
+    /**
+     * The dashboard surface this client targets. Mutable so the client can
+     * FOLLOW a route change (LAN⇄Tailscale) mid-turn via [retarget] instead of
+     * being torn down — the in-flight turn's session is server-side and the
+     * same shared gateway sits behind both routes.
+     */
+    @Volatile
+    private var dashboardClient: DashboardApiClient = initialDashboardClient
 
     private val _connectionState = MutableStateFlow(GatewayConnectionState.Idle)
     val connectionState: StateFlow<GatewayConnectionState> = _connectionState.asStateFlow()
@@ -336,6 +355,27 @@ class GatewayChatClient(
      * [com.hermesandroid.relay.viewmodel.ConnectionViewModel.activeGatewayChatClient].
      */
     fun hasActiveTurn(): Boolean = activeTurn?.ended == false
+
+    /**
+     * Point this client at a new dashboard route (e.g. LAN→Tailscale after a
+     * sustained network change). If a turn is in flight, the current socket is
+     * cancelled to force the mid-turn rejoin to reconnect via the NEW route
+     * while KEEPING the live session id — the in-flight turn FOLLOWS the route
+     * instead of dying on the old one. No-op if the route is unchanged.
+     */
+    fun retarget(newDashboardClient: DashboardApiClient) {
+        if (dashboardClient === newDashboardClient) return
+        Log.i(TAG, "Gateway retargeting to a new route (turn active=${hasActiveTurn()})")
+        dashboardClient = newDashboardClient
+        if (hasActiveTurn()) {
+            retargetedThisTurn = true
+            webSocket?.cancel()
+        }
+    }
+
+    /** Set by [retarget] so the rejoin arms the short post-retarget settle once. */
+    @Volatile
+    private var retargetedThisTurn = false
 
     /**
      * Toggle the opt-in background keep-alive (sideload). While on, the socket
@@ -848,7 +888,18 @@ class GatewayChatClient(
                     TAG,
                     "Gateway socket rejoined mid-turn (session=$storedSessionId) — kept live session, awaiting tail",
                 )
-                turn.armWatchdog()
+                // A reconnect that followed a route RETARGET gets a short settle
+                // (the fresh socket won't replay the in-flight turn); a normal
+                // blip-rejoin keeps the full turn watchdog. A live event resets
+                // either back to the per-event timeout.
+                turn.armWatchdog(
+                    if (retargetedThisTurn) {
+                        retargetedThisTurn = false
+                        POST_RETARGET_SETTLE_MS
+                    } else {
+                        TURN_TIMEOUT_MS
+                    },
+                )
                 return
             }
             delay(backoffMs)

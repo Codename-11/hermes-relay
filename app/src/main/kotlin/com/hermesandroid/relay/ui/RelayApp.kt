@@ -668,7 +668,12 @@ fun RelayApp() {
     val streamingEndpoint by connectionViewModel.streamingEndpoint.collectAsState()
     val serverCapabilities by connectionViewModel.serverCapabilities.collectAsState()
     val gatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
-    LaunchedEffect(streamingEndpoint, serverCapabilities, gatewayAvailability) {
+    // The resolved API route is a key so a mid-turn route switch (LAN→Tailscale)
+    // re-runs activeGatewayChatClient(), which RETARGETS the in-flight gateway
+    // client to follow the new dashboard route instead of stranding the turn on
+    // the dead one.
+    val effectiveApiUrl by connectionViewModel.effectiveApiServerUrl.collectAsState()
+    LaunchedEffect(streamingEndpoint, serverCapabilities, gatewayAvailability, effectiveApiUrl) {
         val resolved = connectionViewModel.resolveStreamingEndpoint(streamingEndpoint)
         chatViewModel.streamingEndpoint = resolved
         chatViewModel.sseFallbackEndpoint = connectionViewModel.resolveSseStreamingEndpoint()

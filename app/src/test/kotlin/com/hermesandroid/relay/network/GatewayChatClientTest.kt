@@ -260,7 +260,7 @@ class GatewayChatClientTest {
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         unsupportedMarked = false
         client = GatewayChatClient(
-            dashboardClient = DashboardApiClient(
+            initialDashboardClient = DashboardApiClient(
                 baseUrl = harness.server.url("/").toString().trimEnd('/'),
                 okHttpClient = OkHttpClient(),
             ),

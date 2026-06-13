@@ -587,23 +587,33 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         val dashboardUrl = activeDashboardUrl() ?: return null
         gatewayClientCache?.let { (cachedConnection, cachedUrl, client) ->
             if (cachedConnection == connectionId && cachedUrl == dashboardUrl) return client
-            // Same connection, only the resolved dashboard URL moved (a
-            // LAN⇄Tailscale route blip): if a turn is in flight, KEEP the
-            // cached client — shutting it down calls activeTurn.cancel() and
-            // kills the turn. The client runs its own socket reconnect (keeping
-            // the live session); the URL switch applies on the next rebuild
-            // once the turn has ended (the deferred-rebuild path).
+            // Same connection, the resolved dashboard URL moved (a LAN⇄Tailscale
+            // route change) WHILE a turn is in flight: RETARGET the live client
+            // to the new route so the turn FOLLOWS it (reconnect + keep the live
+            // session id — the session is server-side and the same shared
+            // gateway sits behind both routes), instead of tearing the client
+            // down (which would call activeTurn.cancel()) or stranding the turn
+            // on the dead route until the watchdog.
             if (cachedConnection == connectionId && client.hasActiveTurn()) {
                 android.util.Log.i(
                     "ConnectionViewModel",
-                    "gateway route changed mid-turn — keeping active client, deferring URL switch",
+                    "gateway route changed mid-turn — retargeting active client to follow the route",
                 )
+                client.retarget(
+                    DashboardApiClient(
+                        baseUrl = dashboardUrl,
+                        okHttpClient = DashboardApiClient.defaultClient(
+                            cookieStore = dashboardCookieStoreFor(connectionId),
+                        ),
+                    ),
+                )
+                gatewayClientCache = Triple(connectionId, dashboardUrl, client)
                 return client
             }
         }
         gatewayClientCache?.third?.shutdown()
         val client = GatewayChatClient(
-            dashboardClient = DashboardApiClient(
+            initialDashboardClient = DashboardApiClient(
                 baseUrl = dashboardUrl,
                 okHttpClient = DashboardApiClient.defaultClient(
                     cookieStore = dashboardCookieStoreFor(connectionId),
