@@ -136,6 +136,26 @@ data class GatewaySubagentEvent(
 }
 
 /**
+ * One provider from the gateway `model.options` RPC — the curated, authenticated
+ * provider/model list the upstream desktop + TUI model picker uses (NOT the
+ * api_server `/v1/models`, which collapses to a single generic agent alias).
+ */
+data class GatewayModelProvider(
+    val name: String,
+    val slug: String,
+    val models: List<String>,
+    val isCurrent: Boolean,
+    val warning: String?,
+)
+
+/** Result of the gateway `model.options` RPC. */
+data class GatewayModelOptions(
+    val providers: List<GatewayModelProvider>,
+    val currentModel: String,
+    val currentProvider: String,
+)
+
+/**
  * Callback set for one gateway turn. Shapes intentionally mirror the SSE
  * callback lambdas in ChatViewModel.startStream() so the gateway branch can
  * forward to the exact same ChatHandler mutations.

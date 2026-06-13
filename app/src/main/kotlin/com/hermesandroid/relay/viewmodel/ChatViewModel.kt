@@ -27,6 +27,7 @@ import com.hermesandroid.relay.network.ActiveTurnHandle
 import com.hermesandroid.relay.network.GatewayAsk
 import com.hermesandroid.relay.network.GatewayChatClient
 import com.hermesandroid.relay.network.GatewayConnectionState
+import com.hermesandroid.relay.network.GatewayModelProvider
 import com.hermesandroid.relay.network.GatewayAttachment
 import com.hermesandroid.relay.network.GatewayRpcException
 import com.hermesandroid.relay.network.GatewayTurnCallbacks
@@ -208,9 +209,45 @@ class ChatViewModel : ViewModel() {
     /** Personality name → system prompt. Used to send the right prompt when switching. */
     private var personalityPrompts: Map<String, String> = emptyMap()
 
-    /** Available model ids from `GET /v1/models` — backs the in-chat model picker. */
+    /** Flat model ids from `GET /v1/models` (SSE fallback source; gateway uses [modelProviders]). */
     private val _availableModels = MutableStateFlow<List<String>>(emptyList())
     val availableModels: StateFlow<List<String>> = _availableModels.asStateFlow()
+
+    /**
+     * Curated provider→model groups from the gateway `model.options` RPC — the
+     * SAME source the upstream desktop/TUI picker uses (grok / kimi / gpt-5.5 …
+     * grouped by authenticated provider). The api_server `/v1/models` only
+     * returns a generic agent alias, so on the gateway transport THIS is the
+     * real switchable-model list.
+     */
+    private val _modelProviders = MutableStateFlow<List<GatewayModelProvider>>(emptyList())
+    val modelProviders: StateFlow<List<GatewayModelProvider>> = _modelProviders.asStateFlow()
+
+    /**
+     * Refresh the gateway's curated provider/model list (`model.options`).
+     * Connects the gateway on demand. No-op without a gateway client.
+     */
+    fun refreshModelOptions() {
+        val gateway = gatewayClient ?: run {
+            android.util.Log.i("ChatViewModel", "refreshModelOptions: no gateway client")
+            return
+        }
+        viewModelScope.launch {
+            gateway.modelOptions().fold(
+                onSuccess = {
+                    _modelProviders.value = it.providers
+                    android.util.Log.i(
+                        "ChatViewModel",
+                        "model.options: ${it.providers.size} providers, " +
+                            "${it.providers.sumOf { p -> p.models.size }} models, current=${it.currentModel}",
+                    )
+                },
+                onFailure = {
+                    android.util.Log.w("ChatViewModel", "model.options failed: ${it.message}")
+                },
+            )
+        }
+    }
 
     /**
      * User's explicit model pick from the in-chat picker, or null = "use the
@@ -229,23 +266,40 @@ class ChatViewModel : ViewModel() {
 
     /**
      * Switch the active model from the in-chat picker. On the gateway this
-     * dispatches `/model <model>` (which switches the session's agent and
-     * surfaces the model-info confirmation card); on SSE the override rides
-     * the next turn's request body. Pass null to clear back to the profile /
-     * server default.
+     * dispatches `/model <model> --provider <slug>` (matching the desktop
+     * picker — `--provider` selects the authenticated provider) and surfaces
+     * the model-info confirmation card; on SSE the override rides the next
+     * turn's request body. Pass null to clear back to the profile / server
+     * default.
      */
-    fun selectModel(model: String?) {
+    fun selectModel(model: String?, provider: String? = null) {
         _selectedModelOverride.value = model?.takeIf { it.isNotBlank() }
         val gateway = gatewayClient
         val handler = chatHandler
         if (model.isNullOrBlank()) return
         if (streamingEndpoint == "gateway" && gateway != null && handler != null) {
+            // Upstream model-switch flag string: `<model> [--provider <slug>]`.
+            val value = if (!provider.isNullOrBlank()) "$model --provider $provider" else model
             viewModelScope.launch {
-                // `/model` runs via slash.exec, which needs a live gateway
-                // session — warm one first so picking a model before the first
-                // turn of a session doesn't fail with "no live session".
+                // Warm a session so the switch is session-scoped (config.set
+                // also works sessionless, falling back to the global default).
                 gateway.prewarm(handler.currentSessionId.value)
-                runServerSlashCommand(gateway, handler, "/model $model", depth = 0)
+                // Dispatch via config.set (the `_apply_model_switch` path) — NOT
+                // the `/model` slash path, whose command.dispatch fallback
+                // reports a spurious "not a quick/plugin/skill command" failure.
+                gateway.setModel(value).fold(
+                    onSuccess = { result ->
+                        val resolved = result.stringValue("value") ?: model
+                        val warning = result.stringValue("warning")?.takeIf { it.isNotBlank() }
+                        handler.addSystemNotice(
+                            listOfNotNull("Model switched to $resolved.", warning).joinToString("\n\n"),
+                        )
+                        gateway.modelOptions().onSuccess { _modelProviders.value = it.providers }
+                    },
+                    onFailure = { e ->
+                        handler.addSystemNotice("Couldn't switch model: ${e.message ?: "unknown error"}")
+                    },
+                )
             }
         }
         refreshActiveAgentName()
@@ -302,7 +356,10 @@ class ChatViewModel : ViewModel() {
             // already-ready socket. Otherwise the first completed gateway
             // turn populates it (see onCompleteCb in startStream).
             client.connectionState.value == GatewayConnectionState.Ready &&
-                (changed || _serverCommands.value.isEmpty()) -> fetchServerCommands(client)
+                (changed || _serverCommands.value.isEmpty()) -> {
+                fetchServerCommands(client)
+                refreshModelOptions()
+            }
             changed -> _serverCommands.value = emptyList()
         }
     }
@@ -2016,6 +2073,11 @@ class ChatViewModel : ViewModel() {
             // gateway turn — never a cold /api/ws open at composition.
             if (streamingEndpoint == "gateway" && _serverCommands.value.isEmpty()) {
                 gatewayClient?.let { fetchServerCommands(it) }
+            }
+            // Curated provider/model list (desktop-parity picker) rides the
+            // now-live socket too — once, on the first gateway turn.
+            if (streamingEndpoint == "gateway" && _modelProviders.value.isEmpty()) {
+                refreshModelOptions()
             }
 
             // Sessions endpoint doesn't emit structured tool events during streaming —

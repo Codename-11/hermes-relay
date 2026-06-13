@@ -39,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -639,6 +640,11 @@ fun AgentInfoSheet(
     val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
     val availableModels by chatViewModel.availableModels.collectAsState()
     val selectedModelOverride by chatViewModel.selectedModelOverride.collectAsState()
+    val modelProviders by chatViewModel.modelProviders.collectAsState()
+
+    // Pull the gateway's curated provider/model list (model.options) when the
+    // sheet opens — the real switchable models, grouped by provider.
+    LaunchedEffect(Unit) { chatViewModel.refreshModelOptions() }
 
     // Connection summary state.
     val authState by connectionViewModel.authState.collectAsState()
@@ -1046,18 +1052,16 @@ fun AgentInfoSheet(
             // the pick rides the next request body. Hidden when the server
             // advertises no models. Locked mid-turn — the gateway rejects a
             // switch while a turn runs, and SSE would race the in-flight request.
-            // Model options: the server's /v1/models list, augmented with the
-            // distinct models the configured profiles use (the real switchable
-            // models — e.g. gpt-5.5, kimi — which /v1/models often collapses to
-            // a single generic alias). The current override is always included
-            // so a hand-typed `/model` pick still shows as selected.
-            val modelOptions = remember(availableModels, agentProfiles, selectedModelOverride) {
+            // SSE fallback model list — /v1/models plus the configured profiles'
+            // models (used only when the gateway model.options groups aren't
+            // available, e.g. on an SSE transport).
+            val sseModelOptions = remember(availableModels, agentProfiles, selectedModelOverride) {
                 (availableModels +
                     agentProfiles.mapNotNull { it.model?.takeIf { m -> m.isNotBlank() } } +
                     listOfNotNull(selectedModelOverride))
                     .distinct()
             }
-            if (modelOptions.isNotEmpty()) {
+            if (modelProviders.isNotEmpty() || sseModelOptions.isNotEmpty()) {
                 HorizontalDivider()
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     SectionLabel(
@@ -1076,19 +1080,50 @@ fun AgentInfoSheet(
                             }
                         },
                     )
-                    modelOptions.forEach { model ->
-                        ProfileRadioRow(
-                            primary = model,
-                            secondary = null,
-                            selected = selectedModelOverride == model,
-                            enabled = !isStreaming,
-                            onSelect = {
-                                if (selectedModelOverride != model) {
-                                    chatViewModel.selectModel(model)
-                                    toast("Model: $model")
+                    if (modelProviders.isNotEmpty()) {
+                        // Gateway: the curated provider→model groups the desktop
+                        // picker uses (grok / kimi / gpt-5.5 …). Each provider's
+                        // models are grouped under its name; the switch carries
+                        // `--provider <slug>`.
+                        modelProviders.forEach { provider ->
+                            if (provider.models.isNotEmpty()) {
+                                Text(
+                                    text = provider.name,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(top = 8.dp, start = 4.dp),
+                                )
+                                provider.models.forEach { model ->
+                                    ProfileRadioRow(
+                                        primary = model,
+                                        secondary = null,
+                                        selected = selectedModelOverride == model,
+                                        enabled = !isStreaming,
+                                        onSelect = {
+                                            if (selectedModelOverride != model) {
+                                                chatViewModel.selectModel(model, provider.slug)
+                                                toast("Model: $model")
+                                            }
+                                        },
+                                    )
                                 }
-                            },
-                        )
+                            }
+                        }
+                    } else {
+                        sseModelOptions.forEach { model ->
+                            ProfileRadioRow(
+                                primary = model,
+                                secondary = null,
+                                selected = selectedModelOverride == model,
+                                enabled = !isStreaming,
+                                onSelect = {
+                                    if (selectedModelOverride != model) {
+                                        chatViewModel.selectModel(model)
+                                        toast("Model: $model")
+                                    }
+                                },
+                            )
+                        }
                     }
                 }
             }

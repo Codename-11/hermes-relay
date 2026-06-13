@@ -18,8 +18,10 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
@@ -545,6 +547,62 @@ class GatewayChatClient(
                 liveSessionId?.let { put("session_id", it) }
                 put("name", name)
                 if (arg != null) put("arg", arg)
+            },
+        )
+
+    /**
+     * Fetch the curated provider/model list (`model.options`) — the same RPC
+     * the upstream desktop + TUI model picker uses (grok / kimi / gpt-5.5 …,
+     * grouped by authenticated provider), NOT the api_server `/v1/models`
+     * generic alias. Connects on demand if needed. Switching a model is then a
+     * `/model <model> --provider <slug>` slash dispatch.
+     */
+    suspend fun modelOptions(): Result<GatewayModelOptions> {
+        if (webSocket == null || readySignal?.isCompleted != true) {
+            try {
+                connectMutex.withLock { ensureConnected() }
+            } catch (e: Exception) {
+                return Result.failure(e)
+            }
+        }
+        val params = buildJsonObject { liveSessionId?.let { put("session_id", it) } }
+        return rpc("model.options", params).map { result ->
+            val providers = (result["providers"] as? JsonArray).orEmpty().mapNotNull { el ->
+                val obj = el as? JsonObject ?: return@mapNotNull null
+                val slug = obj.stringField("slug") ?: return@mapNotNull null
+                GatewayModelProvider(
+                    name = obj.stringField("name") ?: slug,
+                    slug = slug,
+                    models = (obj["models"] as? JsonArray).orEmpty()
+                        .mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
+                    isCurrent = (obj["is_current"] as? JsonPrimitive)?.booleanOrNull ?: false,
+                    warning = obj.stringField("warning"),
+                )
+            }
+            GatewayModelOptions(
+                providers = providers,
+                currentModel = result.stringField("model") ?: "",
+                currentProvider = result.stringField("provider") ?: "",
+            )
+        }
+    }
+
+    /**
+     * Switch the active model via `config.set {key:"model", value}` — the same
+     * `_apply_model_switch` path the desktop/CLI `/model` picker uses. [value]
+     * is the upstream model-switch flag string: `<model> [--provider <slug>]
+     * [--global]`. Session-scoped when a session is live, else the global
+     * default. Returns `{value, warning}`. This avoids the `/model` SLASH path,
+     * which falls through to `command.dispatch` and reports a spurious
+     * "not a quick/plugin/skill command" failure even when the switch applied.
+     */
+    suspend fun setModel(value: String): Result<JsonObject> =
+        rpc(
+            "config.set",
+            buildJsonObject {
+                put("key", "model")
+                put("value", value)
+                liveSessionId?.let { put("session_id", it) }
             },
         )
 
