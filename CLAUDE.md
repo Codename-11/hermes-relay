@@ -181,7 +181,10 @@ hermes-android/
 | `network/HermesApiClient.kt` | Direct HTTP/SSE — `sendRunStream()`, `sendChatStream()`, `probeCapabilities()` |
 | `network/GatewayChatClient.kt` | Gateway chat transport — JSON-RPC over dashboard `/api/ws` (tui_gateway); live `reasoning.delta`; fresh ws-ticket per connect; per-turn SSE fallback via `onPreflightFailure` |
 | `network/GatewayEventMapper.kt` | Pure-JVM gateway event→callback mapping for one turn; unknown event types silently ignored; tui_gateway usage-key translation |
-| `network/GatewayModels.kt` | `GatewayAvailability`, `ActiveTurnHandle`, `GatewayTurnCallbacks`, `resolveStreamingEndpointPreference()` (auto prefers gateway when Ready) |
+| `network/GatewayModels.kt` | `GatewayAvailability`, `ActiveTurnHandle`, `GatewayTurnCallbacks` (all members REQUIRED — forces dispatchOn main-thread wrap), `GatewayAsk`, `GatewaySubagentEvent`, `resolveStreamingEndpointPreference()` |
+| `ui/components/ChatInputBar.kt` | Redesigned input bar — pill field, one trailing slot morphing Send/Voice/Stop/Steer/Queue, no slash button (long-press + opens palette) |
+| `ui/components/SubagentLane.kt` | Per-taskIndex subagent progress lane — guide rail, compact tool rows, auto-collapse |
+| `notifications/TurnCompleteNotifier.kt` | Turn-complete local notification when backgrounded — channel `chat_turn_complete`, cancel on resume, settings-gated |
 | `network/ConnectionManager.kt` | WSS to relay with auto-reconnect; rebuilds OkHttpClient with fresh CertPinner on connect |
 | `network/ChannelMultiplexer.kt` | Envelope routing by channel; `sendNotification()` for notification outbound |
 | `network/handlers/ChatHandler.kt` | Chat message state, streaming events, tool annotation parser |
