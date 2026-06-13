@@ -230,6 +230,10 @@ dependencies {
     implementation(libs.markdown.renderer.m3)
     implementation(libs.markdown.renderer.code)
 
+    // Coil 3 — async image loading for generated images in chat
+    implementation(libs.coil.compose)
+    implementation(libs.coil.network.okhttp)
+
     // QR Code scanning (ML Kit + CameraX)
     implementation(libs.mlkit.barcode)
     implementation(libs.camera.core)

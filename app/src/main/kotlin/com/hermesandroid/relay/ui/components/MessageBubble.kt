@@ -154,6 +154,18 @@ fun MessageBubble(
     val a11yDescription = "${message.role.name.lowercase()} message: ${message.content.take(100)}"
     val isDarkTheme = isSystemInDarkTheme()
 
+    // Pull generated/inline image links (`![alt](src)`) out of assistant
+    // content so they render as real images (remote URLs via Coil) or a
+    // graceful inline notice — not the blank element the markdown renderer
+    // emits for an image link. User/system bubbles keep their raw content.
+    val (markdownBody, inlineImages) = remember(message.content, isUser, isSystem) {
+        if (isUser || isSystem) {
+            message.content to emptyList()
+        } else {
+            extractChatInlineImages(message.content)
+        }
+    }
+
     Column(
         modifier = modifier.fillMaxWidth(),
         horizontalAlignment = alignment
@@ -213,7 +225,8 @@ fun MessageBubble(
             message.content.isNotBlank() ||
             message.isStreaming ||
             message.cards.isNotEmpty() ||
-            message.attachments.isNotEmpty()
+            message.attachments.isNotEmpty() ||
+            inlineImages.isNotEmpty()
         if (showBubble) {
         Row(
             modifier = Modifier.widthIn(max = maxBubbleWidth),
@@ -301,14 +314,28 @@ fun MessageBubble(
                             color = textColor
                         )
                     } else {
-                        // Markdown for assistant messages
-                        if (message.content.isNotEmpty()) {
+                        // Markdown for assistant messages (image links stripped
+                        // out — rendered separately below).
+                        if (markdownBody.isNotEmpty()) {
                             MarkdownContent(
-                                content = message.content,
+                                content = markdownBody,
                                 textColor = textColor
                             )
                         }
                     }
+                }
+
+                // Inline generated images (assistant only) — rendered OUTSIDE
+                // the SelectionContainer (they're not selectable text). Remote
+                // http(s) URLs load via Coil; server-local paths and load
+                // failures degrade to a notice that says why, instead of a
+                // blank space.
+                if (!isUser && !isSystem && inlineImages.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    ChatInlineImages(
+                        images = inlineImages,
+                        maxWidth = maxBubbleWidth - 24.dp,
+                    )
                 }
 
                 // Rich cards — rendered between the markdown body and

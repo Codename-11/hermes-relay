@@ -327,6 +327,16 @@ fun ChatScreen(
         connectionViewModel.resolveStreamingEndpoint(streamingEndpointPref) == "gateway"
     }
 
+    // Pre-warm the gateway (connect + resume the current session) whenever the
+    // chat surface is visible, the app is foregrounded, and the gateway is the
+    // resolved transport — so the first send is warm (tens of ms to first
+    // token) instead of paying the cold connect + session.resume on the send
+    // path. Best-effort / idempotent; re-fires on return-to-foreground.
+    val appForeground by com.hermesandroid.relay.util.AppForegroundTracker.isForeground.collectAsState()
+    LaunchedEffect(isGatewayTransport, appForeground) {
+        if (isGatewayTransport && appForeground) chatViewModel.prewarmGateway()
+    }
+
     // Edit-and-resend mode: long-press a user bubble → "Edit & resend"
     // prefills the input; submit rewinds the conversation from that message.
     var editingMessage by remember { mutableStateOf<ChatMessage?>(null) }
@@ -573,8 +583,22 @@ fun ChatScreen(
     // visibleItemsInfo (which has to account for header/footer spacers and
     // the StreamingDots indicator). This is also the trigger that resumes
     // auto-follow after the user scrolls back down manually.
+    // "At bottom" with a small slop (~1.5 lines of text) rather than the exact
+    // `!canScrollForward`. A burst of streaming content — or a sub-frame layout
+    // gap before the auto-follow re-pins — can momentarily make the list
+    // scrollable-forward; the strict check would read that as "user scrolled
+    // away" and drop the follow. The slop keeps the Telegram-style follow
+    // sticky through streaming jitter while still flipping to "scrolled away"
+    // on a real read-up gesture.
+    val atBottomSlopPx = 140
     val isAtBottom by remember {
-        derivedStateOf { !listState.canScrollForward }
+        derivedStateOf {
+            val layout = listState.layoutInfo
+            val last = layout.visibleItemsInfo.lastOrNull()
+                ?: return@derivedStateOf true
+            last.index == layout.totalItemsCount - 1 &&
+                (last.offset + last.size) - layout.viewportEndOffset <= atBottomSlopPx
+        }
     }
 
     // True when the user has scrolled up (away from the bottom). The
