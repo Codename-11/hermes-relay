@@ -176,6 +176,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
         // Chat scroll behavior
         private val KEY_SMOOTH_AUTO_SCROLL = booleanPreferencesKey("smooth_auto_scroll")
+
+        // Turn-complete notification ("Notify when Hermes finishes")
+        private val KEY_NOTIFY_TURN_COMPLETE = booleanPreferencesKey("notify_turn_complete")
+
+        // One-shot "Live voice conversation" hint on the input bar's voice slot
+        private val KEY_VOICE_HINT_SEEN = booleanPreferencesKey("voice_mode_hint_seen")
     }
 
     // --- Core networking components ---
@@ -1242,6 +1248,37 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { prefs ->
                 prefs[KEY_SMOOTH_AUTO_SCROLL] = enabled
+            }
+        }
+    }
+
+    // Turn-complete notification (default ON). RelayApp mirrors this into
+    // ChatViewModel.notifyOnTurnComplete; ChatSettingsScreen owns the toggle
+    // + the POST_NOTIFICATIONS runtime request on first enable.
+    val notifyTurnComplete: StateFlow<Boolean> = application.relayDataStore.data
+        .map { it[KEY_NOTIFY_TURN_COMPLETE] ?: true }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    fun setNotifyTurnComplete(enabled: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_NOTIFY_TURN_COMPLETE] = enabled
+            }
+        }
+    }
+
+    // One-shot voice hint on the input bar. Initial stateIn value is TRUE
+    // (treated as already-seen) so returning users never get a flash of the
+    // hint while DataStore hydrates; fresh installs flip to false once the
+    // (absent) preference loads and the hint shows exactly once.
+    val voiceHintSeen: StateFlow<Boolean> = application.relayDataStore.data
+        .map { it[KEY_VOICE_HINT_SEEN] ?: false }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    fun setVoiceHintSeen(seen: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_VOICE_HINT_SEEN] = seen
             }
         }
     }

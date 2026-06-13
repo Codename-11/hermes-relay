@@ -35,14 +35,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -57,7 +55,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -91,7 +88,6 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
-import com.hermesandroid.relay.ui.theme.purpleGlow
 import com.hermesandroid.relay.ui.theme.radialNavyBackground
 import com.hermesandroid.relay.network.ChatMode
 import com.hermesandroid.relay.network.RelayVoiceClient
@@ -119,18 +115,22 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.ui.platform.LocalContext
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.Attachment
+import com.hermesandroid.relay.data.ChatMessage
+import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
+import com.hermesandroid.relay.ui.components.ChatInputBar
+import com.hermesandroid.relay.ui.components.ChatInputTrailing
 import com.hermesandroid.relay.ui.components.CommandPalette
 import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
 import com.hermesandroid.relay.ui.components.CommandRow
 import com.hermesandroid.relay.ui.components.CompactToolCall
+import com.hermesandroid.relay.ui.components.ContextMeterBar
 import com.hermesandroid.relay.ui.components.InlineAutocomplete
 import com.hermesandroid.relay.ui.components.MessageBubble
 import com.hermesandroid.relay.ui.components.MorphingSphere
@@ -140,12 +140,18 @@ import com.hermesandroid.relay.ui.components.RelayPrimaryMode
 import com.hermesandroid.relay.ui.components.SphereState
 import com.hermesandroid.relay.ui.components.SessionDrawerContent
 import com.hermesandroid.relay.ui.components.SlashCommand
+import com.hermesandroid.relay.ui.components.SubagentLane
 import com.hermesandroid.relay.ui.components.ToolProgressCard
 import com.hermesandroid.relay.ui.components.VoiceModeOverlay
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.relayGridTexture
+import com.hermesandroid.relay.ui.theme.relayMetadataStyle
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import kotlin.math.roundToInt
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
@@ -302,6 +308,29 @@ fun ChatScreen(
     val maxAttachmentMb by connectionViewModel.maxAttachmentMb.collectAsState()
     val charLimit by connectionViewModel.maxMessageLength.collectAsState()
 
+    // === Gateway desktop-parity state ===
+    val serverCommands by chatViewModel.serverCommands.collectAsState()
+    val contextUsage by chatViewModel.contextUsage.collectAsState()
+    val steerableTurn by chatViewModel.steerableTurn.collectAsState()
+    val steerNotice by chatViewModel.steerNotice.collectAsState()
+    val voiceHintSeen by connectionViewModel.voiceHintSeen.collectAsState()
+    // Whether the NEXT turn would ride the gateway transport — gates the
+    // "Edit & resend" menu entry (conversation rewind needs the gateway).
+    // Per-turn steerability comes from [steerableTurn], which also covers
+    // the preflight-SSE-fallback window.
+    val streamingEndpointPref by connectionViewModel.streamingEndpoint.collectAsState()
+    val chatServerCapabilities by connectionViewModel.serverCapabilities.collectAsState()
+    val chatGatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
+    val isGatewayTransport = remember(
+        streamingEndpointPref, chatServerCapabilities, chatGatewayAvailability,
+    ) {
+        connectionViewModel.resolveStreamingEndpoint(streamingEndpointPref) == "gateway"
+    }
+
+    // Edit-and-resend mode: long-press a user bubble → "Edit & resend"
+    // prefills the input; submit rewinds the conversation from that message.
+    var editingMessage by remember { mutableStateOf<ChatMessage?>(null) }
+
     // Animation settings
     val animationEnabled by connectionViewModel.animationEnabled.collectAsState()
     val animationBehindChat by connectionViewModel.animationBehindChat.collectAsState()
@@ -347,6 +376,14 @@ fun ChatScreen(
     var inputText by remember { mutableStateOf("") }
     var showCommandPalette by remember { mutableStateOf(false) }
     var showAgentInfo by remember { mutableStateOf(false) }
+
+    // Server command dispatch can ask the composer to prefill (e.g. /undo).
+    LaunchedEffect(chatViewModel) {
+        chatViewModel.composerPrefill.collect { text ->
+            editingMessage = null
+            inputText = text.take(charLimit)
+        }
+    }
 
     // Settings → Active Agent deep-link: when the nav arg says "open the
     // sheet", flip `showAgentInfo` on and call [onAgentSheetArgConsumed] so
@@ -567,8 +604,9 @@ fun ChatScreen(
         derivedStateOf { messages.isNotEmpty() && !isAtBottom }
     }
 
-    // Build all commands dynamically: built-in + personalities + server skills
-    val allCommands by remember(availableSkills, personalityNames) {
+    // Build all commands dynamically: built-in + personalities + server
+    // skills + (gateway) the server's commands.catalog
+    val allCommands by remember(availableSkills, personalityNames, serverCommands) {
         derivedStateOf {
             // Built-in hermes gateway commands (from hermes_cli/commands.py)
             // Only includes commands available via gateway (not cli_only)
@@ -625,7 +663,26 @@ fun ChatScreen(
                 )
             }
 
-            builtIn + personalities + skills
+            val base = builtIn + personalities + skills
+            if (serverCommands.isEmpty()) {
+                base
+            } else {
+                // Merge the gateway catalog as a 4th source: dedupe by
+                // command name with the server description winning;
+                // server-only commands append under their catalog category
+                // (or the palette's "server" bucket).
+                val serverByName = serverCommands.associateBy { it.command.lowercase() }
+                val merged = base.map { cmd ->
+                    serverByName[cmd.command.lowercase()]?.let { server ->
+                        cmd.copy(
+                            description = server.description,
+                            source = SlashCommand.SOURCE_SERVER,
+                        )
+                    } ?: cmd
+                }
+                val baseNames = base.map { it.command.lowercase() }.toSet()
+                merged + serverCommands.filter { it.command.lowercase() !in baseNames }
+            }
         }
     }
 
@@ -1002,8 +1059,28 @@ fun ChatScreen(
                                 maxLines = 1,
                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                             )
+                            // Context escalation: ≥85% the subtitle gains a
+                            // " · NN% ctx" suffix in the caution ladder color
+                            // (Amber, Danger past 90%). The ambient strip
+                            // below the app bar covers the 50–85% range.
+                            val ctxFraction = contextUsage
+                            val subtitleAnnotated = buildAnnotatedString {
+                                append(subtitleText)
+                                if (apiReachable && ctxFraction != null && ctxFraction >= 0.85f) {
+                                    val ctxColor = if (ctxFraction >= 0.9f) {
+                                        RelayRefresh.Danger
+                                    } else {
+                                        RelayRefresh.Amber
+                                    }
+                                    withStyle(SpanStyle(color = ctxColor)) {
+                                        append(
+                                            " · ${(ctxFraction * 100).roundToInt()}% ctx"
+                                        )
+                                    }
+                                }
+                            }
                             Text(
-                                text = subtitleText,
+                                text = subtitleAnnotated,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = subtitleColor,
                                 maxLines = 1,
@@ -1069,6 +1146,9 @@ fun ChatScreen(
                     containerColor = RelayRefresh.Background.copy(alpha = 0.96f)
                 )
             )
+            // Ambient context-window meter — 2dp strip at the seam between
+            // the app bar and the mode strip; composes to nothing below 50%.
+            ContextMeterBar(usedFraction = contextUsage)
             RelayModeStrip(
                 selected = RelayPrimaryMode.Chat,
                 onModeSelected = { mode ->
@@ -1315,10 +1395,12 @@ fun ChatScreen(
                             val message = messages[index]
 
                             // Skip empty bubbles (content stripped by annotation parser, no tool calls,
-                            // no attachments). Attachments keep the bubble alive for inbound media.
+                            // no attachments). Attachments keep the bubble alive for inbound media;
+                            // cards keep ask-card-only messages alive the same way.
                             if (message.content.isBlank() &&
                                 message.toolCalls.isEmpty() &&
                                 message.attachments.isEmpty() &&
+                                message.cards.isEmpty() &&
                                 !message.isStreaming
                             ) return@items
 
@@ -1360,6 +1442,23 @@ fun ChatScreen(
                                         chatViewModel.dispatchCardAction(msgId, cardKey, action)
                                     }
                                 },
+                                onCardInput = { msgId, cardKey, value ->
+                                    chatViewModel.answerAsk(msgId, cardKey, value)
+                                },
+                                onEditMessage = if (
+                                    isGatewayTransport &&
+                                    !isStreaming &&
+                                    message.role == MessageRole.USER &&
+                                    !message.id.startsWith("voice-intent-") &&
+                                    !message.id.startsWith("steer-")
+                                ) {
+                                    { msg ->
+                                        editingMessage = msg
+                                        inputText = msg.content.take(charLimit)
+                                    }
+                                } else {
+                                    null
+                                },
                                 onQuoteMessage = { text ->
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     val quoted = text.take(600)
@@ -1395,8 +1494,29 @@ fun ChatScreen(
                                 }
                             )
 
+                            // Steered sends live inside a server-side tool
+                            // result, not a user message — flag the local
+                            // bubble so the scrollback explains itself.
+                            if (message.role == MessageRole.USER && message.id.startsWith("steer-")) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End,
+                                ) {
+                                    Text(
+                                        text = "↳ steered",
+                                        style = relayMetadataStyle(),
+                                        color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.9f),
+                                        modifier = Modifier.padding(top = 1.dp, end = 4.dp),
+                                    )
+                                }
+                            }
+
                             if (toolDisplay != "off") {
-                                message.toolCalls.forEach { toolCall ->
+                                // Subagent children (taskIndex != null) group
+                                // into lanes after the top-level tool cards;
+                                // the null group renders exactly as before.
+                                val laneGroups = message.toolCalls.groupBy { it.taskIndex }
+                                laneGroups[null]?.forEach { toolCall ->
                                     Spacer(modifier = Modifier.height(4.dp))
                                     when (toolDisplay) {
                                         "compact" -> CompactToolCall(toolCall = toolCall)
@@ -1405,6 +1525,13 @@ fun ChatScreen(
                                             messageTimestamp = message.timestamp,
                                         )
                                     }
+                                }
+                                laneGroups.keys.filterNotNull().sorted().forEach { taskIndex ->
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    SubagentLane(
+                                        taskIndex = taskIndex,
+                                        calls = laneGroups.getValue(taskIndex),
+                                    )
                                 }
                             }
                         }
@@ -1583,149 +1710,128 @@ fun ChatScreen(
                 }
             }
 
-            // Input bar with character limit
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.Bottom
-            ) {
-                // Attach file button
-                IconButton(
-                    onClick = { filePickerLauncher.launch(arrayOf("*/*")) },
-                    modifier = Modifier.padding(bottom = 4.dp)
+            // Edit-and-resend mode chip — cancelable; submitting rewinds the
+            // conversation from the edited message (gateway only).
+            AnimatedVisibility(visible = editingMessage != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(
-                        imageVector = Icons.Filled.Add,
-                        contentDescription = "Attach file",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        imageVector = Icons.Filled.Edit,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.tertiary,
                     )
-                }
-
-                // Command palette button
-                IconButton(
-                    onClick = { showCommandPalette = true },
-                    modifier = Modifier.padding(bottom = 4.dp)
-                ) {
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "/",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = "Editing — will rewind the conversation",
+                        style = relayMetadataStyle(),
+                        color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.9f),
+                        modifier = Modifier.weight(1f),
                     )
-                }
-
-                OutlinedTextField(
-                    value = inputText,
-                    onValueChange = { if (it.length <= charLimit) inputText = it },
-                    modifier = Modifier.weight(1f),
-                    placeholder = {
-                        Text(if (isStreaming && inputText.isBlank()) "Queue a message..." else "Message...")
-                    },
-                    maxLines = 4,
-                    enabled = chatReady,
-                    supportingText = if (inputText.length > charLimit - 200) {
-                        {
-                            Text(
-                                "${inputText.length}/$charLimit",
-                                color = if (inputText.length >= charLimit) {
-                                    MaterialTheme.colorScheme.error
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                }
-                            )
-                        }
-                    } else null
-                )
-
-                // Stop button — visible during streaming
-                AnimatedVisibility(visible = isStreaming) {
-                    IconButton(onClick = { chatViewModel.cancelStream() }) {
+                    IconButton(
+                        onClick = {
+                            editingMessage = null
+                            inputText = ""
+                        },
+                        modifier = Modifier.size(24.dp),
+                    ) {
                         Icon(
-                            imageVector = Icons.Filled.Stop,
-                            contentDescription = "Stop streaming",
-                            tint = MaterialTheme.colorScheme.error
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Cancel editing",
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                    }
-                }
-
-                // Trailing button — smart-swap between mic and send.
-                // Empty input → Mic (taps into voice mode overlay).
-                // Any typed text or attachment → Send (morph into send arrow,
-                // queues during streaming). Stop button during streaming is a
-                // separate IconButton above this one; both can coexist since
-                // they have distinct semantics.
-                val hasContent = inputText.isNotBlank() || pendingAttachments.isNotEmpty()
-                val sendEnabled = hasContent && chatReady
-                Box(
-                    modifier = if (sendEnabled && isDarkTheme && !isStreaming) {
-                        Modifier.purpleGlow(
-                            radius = 24.dp,
-                            alpha = 0.35f,
-                            isDarkTheme = true
-                        )
-                    } else Modifier
-                ) {
-                    if (hasContent) {
-                        IconButton(
-                            onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                chatViewModel.sendMessage(inputText.ifBlank { "[attachment]" })
-                                inputText = ""
-                            },
-                            enabled = sendEnabled
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.Send,
-                                contentDescription = if (isStreaming) "Queue message" else "Send message",
-                                tint = if (sendEnabled) {
-                                    if (isStreaming) MaterialTheme.colorScheme.tertiary
-                                    else MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                }
-                            )
-                        }
-                    } else {
-                        IconButton(
-                            onClick = {
-                                if (voiceReady) {
-                                    requestVoiceMode()
-                                } else {
-                                    android.widget.Toast.makeText(
-                                        context,
-                                        when (standardVoiceAvailability) {
-                                            com.hermesandroid.relay.viewmodel.StandardVoiceAvailability.SignInRequired ->
-                                                standardVoiceSignInRouteHint?.let { route ->
-                                                    "Voice needs a one-time sign-in on the $route route — open Manage"
-                                                } ?: "Voice needs dashboard sign-in — open Manage to sign in"
-                                            com.hermesandroid.relay.viewmodel.StandardVoiceAvailability.Unsupported ->
-                                                "This Hermes build has no voice routes — update hermes-agent or pair Relay"
-                                            else ->
-                                                "Voice needs a reachable Hermes dashboard or Relay voice route"
-                                        },
-                                        android.widget.Toast.LENGTH_SHORT,
-                                    ).show()
-                                }
-                            },
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Mic,
-                                contentDescription = if (voiceReady) {
-                                    "Voice mode"
-                                } else {
-                                    "Voice mode unavailable"
-                                },
-                                tint = if (voiceReady) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                        .copy(alpha = 0.5f)
-                                },
-                            )
-                        }
                     }
                 }
             }
+
+            // Input bar — pill field with ONE trailing slot morphing
+            // Send / Voice / Stop / Steer / Queue. "+" taps the file picker,
+            // long-press opens the CommandPalette (the dedicated "/" button
+            // is gone — typing "/" still surfaces InlineAutocomplete).
+            val hasContent = inputText.isNotBlank() || pendingAttachments.isNotEmpty()
+            val trailing = when {
+                !isStreaming && hasContent -> ChatInputTrailing.SEND
+                !isStreaming -> ChatInputTrailing.VOICE
+                isStreaming && !hasContent -> ChatInputTrailing.STOP
+                steerableTurn -> ChatInputTrailing.STEER
+                else -> ChatInputTrailing.QUEUE
+            }
+            val inputCaption = when {
+                isStreaming && hasContent && steerableTurn ->
+                    "↳ sends now — Hermes adjusts mid-turn"
+                isStreaming && hasContent -> "↳ delivered after this turn finishes"
+                isStreaming && steerNotice != null -> steerNotice
+                else -> null
+            }
+            val inputPlaceholder = when {
+                editingMessage != null -> "Edit your message…"
+                isStreaming && steerableTurn -> "Steer the response…"
+                isStreaming -> "Queue a message..."
+                else -> "Message..."
+            }
+            ChatInputBar(
+                value = inputText,
+                onValueChange = { inputText = it },
+                placeholder = inputPlaceholder,
+                trailing = trailing,
+                onSend = {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    val editing = editingMessage
+                    if (editing != null) {
+                        // Only drop the edit state once the rewind actually
+                        // dispatched — a silent gate must not eat the text.
+                        if (chatViewModel.regenerateFromMessage(editing.id, inputText)) {
+                            editingMessage = null
+                            inputText = ""
+                        } else {
+                            scope.launch {
+                                snackbarHostState.showSnackbar(
+                                    message = "Can't edit right now — wait for the current turn to finish",
+                                    duration = SnackbarDuration.Short,
+                                )
+                            }
+                        }
+                    } else {
+                        chatViewModel.sendMessage(inputText.ifBlank { "[attachment]" })
+                        inputText = ""
+                    }
+                },
+                onVoice = {
+                    if (voiceReady) {
+                        requestVoiceMode()
+                    } else {
+                        android.widget.Toast.makeText(
+                            context,
+                            when (standardVoiceAvailability) {
+                                com.hermesandroid.relay.viewmodel.StandardVoiceAvailability.SignInRequired ->
+                                    standardVoiceSignInRouteHint?.let { route ->
+                                        "Voice needs a one-time sign-in on the $route route — open Manage"
+                                    } ?: "Voice needs dashboard sign-in — open Manage to sign in"
+                                com.hermesandroid.relay.viewmodel.StandardVoiceAvailability.Unsupported ->
+                                    "This Hermes build has no voice routes — update hermes-agent or pair Relay"
+                                else ->
+                                    "Voice needs a reachable Hermes dashboard or Relay voice route"
+                            },
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                },
+                onStop = { chatViewModel.cancelStream() },
+                onAttach = { filePickerLauncher.launch(arrayOf("*/*")) },
+                onLongPressAttach = { showCommandPalette = true },
+                charLimit = charLimit,
+                caption = inputCaption,
+                voiceReady = voiceReady,
+                showVoiceHint = !voiceHintSeen,
+                onVoiceHintShown = { connectionViewModel.setVoiceHintSeen(true) },
+                isDarkTheme = isDarkTheme,
+                enabled = chatReady,
+            )
         } // end Column
 
         // Mic permission denied banner — title + body + Open Settings action.

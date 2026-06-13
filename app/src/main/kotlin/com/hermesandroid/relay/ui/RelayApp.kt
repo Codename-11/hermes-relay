@@ -620,6 +620,14 @@ fun RelayApp() {
     }
     // === END PHASE3-status ===
 
+    // Mirror the "Notify when Hermes finishes" setting into ChatViewModel —
+    // same pattern as appContextSettings; the VM reads the plain field at
+    // turn-complete time instead of holding a ConnectionViewModel reference.
+    val notifyTurnComplete by connectionViewModel.notifyTurnComplete.collectAsState()
+    LaunchedEffect(notifyTurnComplete) {
+        chatViewModel.notifyOnTurnComplete = notifyTurnComplete
+    }
+
     // Sync tool annotation parsing toggle to ChatHandler
     val parseAnnotations by connectionViewModel.parseToolAnnotations.collectAsState()
     LaunchedEffect(parseAnnotations) {

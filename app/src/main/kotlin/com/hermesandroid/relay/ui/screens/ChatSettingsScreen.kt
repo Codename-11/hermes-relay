@@ -1,5 +1,8 @@
 package com.hermesandroid.relay.ui.screens
 
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -42,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.network.GatewayAvailability
 import com.hermesandroid.relay.ui.theme.gradientBorder
@@ -161,6 +165,52 @@ fun ChatSettingsScreen(
                         Switch(
                             checked = smoothAutoScroll,
                             onCheckedChange = { connectionViewModel.setSmoothAutoScroll(it) }
+                        )
+                    }
+
+                    HorizontalDivider()
+
+                    // Turn-complete notification toggle. First enable on
+                    // API 33+ runs the POST_NOTIFICATIONS request (the
+                    // BridgeScreen master-toggle precedent); if the user
+                    // denies, the notifier silently no-ops at post time.
+                    val notifyTurnComplete by connectionViewModel.notifyTurnComplete.collectAsState()
+                    val settingsContext = LocalContext.current
+                    val notifyPermissionLauncher = rememberLauncherForActivityResult(
+                        ActivityResultContracts.RequestPermission()
+                    ) { /* Notifier re-checks the grant at post time. */ }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Notify when Hermes finishes",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = "Post a notification when a reply completes while the app is in the background",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = notifyTurnComplete,
+                            onCheckedChange = { enabled ->
+                                connectionViewModel.setNotifyTurnComplete(enabled)
+                                if (enabled &&
+                                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                    androidx.core.content.ContextCompat.checkSelfPermission(
+                                        settingsContext,
+                                        android.Manifest.permission.POST_NOTIFICATIONS,
+                                    ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                                ) {
+                                    notifyPermissionLauncher.launch(
+                                        android.Manifest.permission.POST_NOTIFICATIONS
+                                    )
+                                }
+                            }
                         )
                     }
 

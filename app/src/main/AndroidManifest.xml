@@ -6,6 +6,10 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Turn-complete chat notification (TurnCompleteNotifier) — runtime-requested
+         on API 33+ from the Chat Settings toggle. Lives in main (not just the
+         sideload overlay) so the googlePlay flavor can notify too. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
