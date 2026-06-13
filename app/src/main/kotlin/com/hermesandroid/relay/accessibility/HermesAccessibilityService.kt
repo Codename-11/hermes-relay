@@ -39,7 +39,7 @@ import kotlinx.coroutines.launch
  *
  * # Master enable / disable
  *
- * The Android system toggle in `Settings → Accessibility → Hermes Relay` is
+ * The Android system toggle in `Settings → Accessibility → Hermes-Relay` is
  * the hard switch — if it's off we never receive events. On top of that the
  * user can flip a soft master in Settings (`bridge_master_enabled`); when
  * that's false we still run (Android requires it to stay connected) but we

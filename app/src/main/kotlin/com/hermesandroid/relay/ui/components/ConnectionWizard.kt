@@ -1838,7 +1838,7 @@ private fun ManualEntryStep(
             singleLine = true,
             isError = relayError != null,
             supportingText = {
-                Text(relayError ?: "Hermes Relay — Terminal, Bridge, relay sessions, and grants")
+                Text(relayError ?: "Hermes-Relay — Terminal, Bridge, relay sessions, and grants")
             },
             modifier = Modifier.fillMaxWidth(),
         )
@@ -1938,7 +1938,7 @@ private fun ShowCodeStep(
             singleLine = true,
             isError = relayError != null,
             supportingText = {
-                Text(relayError ?: "Hermes Relay — Terminal, Bridge, relay sessions, and grants")
+                Text(relayError ?: "Hermes-Relay — Terminal, Bridge, relay sessions, and grants")
             },
             modifier = Modifier.fillMaxWidth(),
         )

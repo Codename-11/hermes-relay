@@ -48,6 +48,7 @@ import com.hermesandroid.relay.util.AppForegroundTracker
 import com.hermesandroid.relay.util.HumanError
 import com.hermesandroid.relay.util.MediaCacheWriter
 import com.hermesandroid.relay.util.PhoneSnapshot
+import com.hermesandroid.relay.util.buildGatewayPreamble
 import com.hermesandroid.relay.util.buildPromptBlock
 import com.hermesandroid.relay.util.classifyError
 import kotlinx.coroutines.Job
@@ -2149,10 +2150,22 @@ class ChatViewModel : ViewModel() {
             else -> {
                 val isNewSession = handler.currentSessionId.value == null
                 val autoTitle = message.take(50).let { if (message.length > 50) "$it..." else it }
+                // Gateway prompt.submit is bare text — no system_message slot —
+                // so the SSE path's phone-context block can't ride along. Prepend
+                // just the mobile preamble (scoped: not the bridge/safety detail)
+                // so the agent still knows it's talking to a phone. Skipped for
+                // slash commands (a "[preamble]\n\n/cmd" no longer starts with
+                // "/" and would break server-side slash routing). Local user
+                // bubble + autoTitle use the clean `message`; only the wire text
+                // carries the marker.
+                val gatewayText = buildGatewayPreamble(appContextSettings)
+                    ?.takeIf { !message.trimStart().startsWith("/") }
+                    ?.let { "[$it]\n\n$message" }
+                    ?: message
                 _steerableTurn.value = true
                 gateway.sendTurn(
                     sessionId = handler.currentSessionId.value,
-                    text = message,
+                    text = gatewayText,
                     newSessionTitle = if (isNewSession) autoTitle else null,
                     callbacks = GatewayTurnCallbacks(
                         onSessionId = { sid ->

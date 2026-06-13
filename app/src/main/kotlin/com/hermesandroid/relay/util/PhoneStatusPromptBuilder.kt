@@ -138,6 +138,26 @@ fun buildPromptBlock(settings: AppContextSettings, snapshot: PhoneSnapshot): Str
 }
 
 /**
+ * The bare mobile preamble, for transports that can't carry a system message.
+ *
+ * The gateway's `prompt.submit` is bare text — no system-message slot — so the
+ * full [buildPromptBlock] output can't ride a system message there. Rather than
+ * drop phone context entirely on gateway turns, the caller prepends *just this
+ * line* to the user's message.
+ *
+ * Scoped intentionally to the non-sensitive "you're on mobile, be concise"
+ * preamble: the richer bridge/permission/safety lines from [buildPromptBlock]
+ * stay on the SSE path (and the on-demand `android_phone_status` tool), since
+ * prepending them to every user message would bloat and pollute the persisted
+ * session history.
+ *
+ * Returns `null` when [AppContextSettings.master] is off — same gate as
+ * [buildPromptBlock], so turning the app-context prompt off silences both paths.
+ */
+fun buildGatewayPreamble(settings: AppContextSettings): String? =
+    if (settings.master) PREAMBLE else null
+
+/**
  * Bridge-channel summary. Always emitted when `bridgeState` is on, even if
  * the bridge isn't bound — "Phone bridge: not installed" is itself useful
  * context (tells the agent not to try tool calls into the phone).

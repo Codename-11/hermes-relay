@@ -1924,7 +1924,7 @@ fun ChatScreen(
                     voiceCompactMode = compact
                 },
                 // === v0.4.1 JIT permission-denied chip ===
-                // Tap deep-links to Settings → Apps → Hermes Relay →
+                // Tap deep-links to Settings → Apps → Hermes-Relay →
                 // Permissions for the running package. Use BuildConfig
                 // .APPLICATION_ID rather than a hard-coded string so both
                 // the googlePlay and sideload flavors land on their own
