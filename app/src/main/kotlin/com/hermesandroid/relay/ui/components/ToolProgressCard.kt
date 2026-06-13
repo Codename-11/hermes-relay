@@ -1,6 +1,12 @@
 package com.hermesandroid.relay.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.clickable
@@ -22,6 +28,7 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.TouchApp
@@ -43,6 +50,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.data.ToolCall
 
@@ -57,7 +65,10 @@ fun ToolProgressCard(
      */
     messageTimestamp: Long? = null,
 ) {
-    var expanded by remember { mutableStateOf(!toolCall.isComplete) }
+    // Preparing (tool.generating) starts collapsed — the args preview line
+    // under the header is the whole story until tool.start lands.
+    var expanded by remember { mutableStateOf(!toolCall.isComplete && !toolCall.isGenerating) }
+    val isPreparing = toolCall.isGenerating && !toolCall.isComplete
     val timeMillis = toolCall.completedAt ?: messageTimestamp
     val timeLabel = timeMillis?.takeIf { toolCall.isComplete }?.let {
         remember(it) {
@@ -81,6 +92,13 @@ fun ToolProgressCard(
             statusIcon = Icons.Filled.Close
             MaterialTheme.colorScheme.error
         }
+        // Args still streaming — "preparing" must read as LESS active than
+        // running: Muted instead of tertiary (Cyan stays reserved for
+        // actually-executing tools).
+        isPreparing -> {
+            statusIcon = Icons.Filled.MoreHoriz
+            MaterialTheme.colorScheme.onSurfaceVariant
+        }
         else -> {
             statusIcon = Icons.Filled.HourglassTop
             MaterialTheme.colorScheme.tertiary
@@ -91,8 +109,21 @@ fun ToolProgressCard(
     val statusText = when {
         toolCall.isComplete && toolCall.success == true -> "completed"
         toolCall.isComplete && toolCall.success == false -> "failed"
+        isPreparing -> "preparing"
         else -> "running"
     }
+
+    // Slow alpha breathe on the tool icon while preparing — an indeterminate
+    // bar promises imminent work; a breathe says "being written".
+    val toolIconAlpha = if (isPreparing) {
+        val breathe = rememberInfiniteTransition(label = "toolGenerating")
+        breathe.animateFloat(
+            initialValue = 0.35f,
+            targetValue = 0.9f,
+            animationSpec = infiniteRepeatable(tween(900), repeatMode = RepeatMode.Reverse),
+            label = "toolGeneratingAlpha",
+        ).value
+    } else 1f
 
     val duration = if (toolCall.completedAt != null && toolCall.completedAt >= toolCall.startedAt) {
         val seconds = (toolCall.completedAt - toolCall.startedAt) / 1000.0
@@ -122,15 +153,17 @@ fun ToolProgressCard(
                     imageVector = toolIcon,
                     contentDescription = null,
                     modifier = Modifier.size(16.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = toolIconAlpha)
                 )
 
                 Spacer(modifier = Modifier.width(6.dp))
 
-                // Tool name
+                // Tool name — tool.generating may arrive nameless
                 Text(
-                    text = toolCall.name,
+                    text = if (isPreparing) toolCall.name.ifBlank { "Preparing tool…" } else toolCall.name,
                     style = MaterialTheme.typography.labelMedium,
+                    color = if (isPreparing) MaterialTheme.colorScheme.onSurfaceVariant
+                        else androidx.compose.ui.graphics.Color.Unspecified,
                     modifier = Modifier.weight(1f)
                 )
 
@@ -145,13 +178,16 @@ fun ToolProgressCard(
                     Spacer(modifier = Modifier.width(6.dp))
                 }
 
-                // Status icon
-                Icon(
-                    imageVector = statusIcon,
-                    contentDescription = statusText,
-                    tint = statusColor,
-                    modifier = Modifier.size(16.dp)
-                )
+                // Status icon — crossfade so MoreHoriz→HourglassTop on
+                // tool.start reads as a state change, not a card swap.
+                Crossfade(targetState = statusIcon, label = "toolStatusIcon") { icon ->
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = statusText,
+                        tint = statusColor,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
 
                 Spacer(modifier = Modifier.width(4.dp))
 
@@ -164,8 +200,21 @@ fun ToolProgressCard(
                 )
             }
 
-            // Progress bar while running
-            if (!toolCall.isComplete) {
+            // One-line faded mono args preview while preparing — partial
+            // JSON grows per delta; no expand needed, the card stays folded.
+            if (isPreparing && !toolCall.args.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = compactToolDetail(toolCall.args, 80),
+                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            // Progress bar while running (not while args are still streaming)
+            if (!toolCall.isComplete && !isPreparing) {
                 Spacer(modifier = Modifier.height(4.dp))
                 LinearProgressIndicator(
                     modifier = Modifier.fillMaxWidth(),

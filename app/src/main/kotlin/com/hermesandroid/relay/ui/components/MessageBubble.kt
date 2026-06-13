@@ -85,7 +85,20 @@ fun MessageBubble(
      * card collapses) and forwards the action value per its mode.
      * Defaults to no-op so legacy callers / tests don't have to wire it.
      */
-    onCardAction: (messageId: String, cardKey: String, action: HermesCardAction) -> Unit = { _, _, _ -> }
+    onCardAction: (messageId: String, cardKey: String, action: HermesCardAction) -> Unit = { _, _, _ -> },
+    /**
+     * Invoked when the user submits a card's interactive input slot (the
+     * gateway ask cards — clarify answer, secret value, sudo confirm).
+     * Routed to [com.hermesandroid.relay.viewmodel.ChatViewModel.answerAsk]
+     * by ChatScreen; defaults to no-op for legacy callers.
+     */
+    onCardInput: (messageId: String, cardKey: String, value: String) -> Unit = { _, _, _ -> },
+    /**
+     * "Edit & resend" entry in the USER-bubble long-press menu — gateway
+     * transport only (the only path that supports rewinding the server
+     * conversation). Null hides the entry.
+     */
+    onEditMessage: ((ChatMessage) -> Unit)? = null,
 ) {
     val isUser = message.role == MessageRole.USER
     val isSystem = message.role == MessageRole.SYSTEM
@@ -206,7 +219,8 @@ fun MessageBubble(
         // wired; with copy as the only action it stays a direct copy so the
         // one-action case doesn't pay a menu tap.
         var showMessageActions by remember { mutableStateOf(false) }
-        if (onQuoteMessage != null) {
+        val showEditAction = onEditMessage != null && isUser
+        if (onQuoteMessage != null || showEditAction) {
             DropdownMenu(
                 expanded = showMessageActions,
                 onDismissRequest = { showMessageActions = false },
@@ -218,13 +232,24 @@ fun MessageBubble(
                         onCopyMessage(message.content)
                     },
                 )
-                DropdownMenuItem(
-                    text = { Text("Quote in reply") },
-                    onClick = {
-                        showMessageActions = false
-                        onQuoteMessage(message.content)
-                    },
-                )
+                if (onQuoteMessage != null) {
+                    DropdownMenuItem(
+                        text = { Text("Quote in reply") },
+                        onClick = {
+                            showMessageActions = false
+                            onQuoteMessage(message.content)
+                        },
+                    )
+                }
+                if (showEditAction) {
+                    DropdownMenuItem(
+                        text = { Text("Edit & resend") },
+                        onClick = {
+                            showMessageActions = false
+                            onEditMessage(message)
+                        },
+                    )
+                }
             }
         }
         Surface(
@@ -243,7 +268,7 @@ fun MessageBubble(
                 .combinedClickable(
                     onClick = {},
                     onLongClick = {
-                        if (onQuoteMessage != null) {
+                        if (onQuoteMessage != null || showEditAction) {
                             showMessageActions = true
                         } else {
                             onCopyMessage(message.content)
@@ -288,6 +313,9 @@ fun MessageBubble(
                             dispatches = message.cardDispatches,
                             onActionTap = { key, action ->
                                 onCardAction(message.id, key, action)
+                            },
+                            onInputSubmit = { key, value ->
+                                onCardInput(message.id, key, value)
                             },
                             maxWidth = maxBubbleWidth - 24.dp,
                             modifier = Modifier.padding(vertical = 2.dp),
