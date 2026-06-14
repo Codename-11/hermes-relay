@@ -4,7 +4,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -974,15 +973,6 @@ fun ChatScreen(
                         else -> MaterialTheme.colorScheme.error
                     }
 
-                    // Customization cue — true when the user has overridden
-                    // the server defaults via either picker. Drives the 2dp
-                    // accent ring on the avatar (subtle, at-a-glance signal
-                    // that "you've customized this agent"). Personality
-                    // defaults to the sentinel "default" string — any other
-                    // value means explicit pick.
-                    val customized = selectedProfile != null ||
-                        selectedPersonality != "default"
-
                     // Single-line subtitle: when we have a model name we show
                     // `model · personality` so the user sees both dimensions
                     // at once. Before the server config lands (or while
@@ -1027,34 +1017,15 @@ fun ChatScreen(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         modifier = Modifier.clickable { showAgentInfo = true }
                     ) {
-                        // Avatar — 40dp, optional 2dp primary-color accent ring
-                        // when the user has overridden any of the agent
-                        // defaults. Ring sits OUTSIDE the avatar circle; the
-                        // inner Surface is downsized by ring width so the
-                        // overall footprint stays at 40dp.
-                        val ringWidth = if (customized) 2.dp else 0.dp
-                        val innerSize = 40.dp - (ringWidth * 2)
+                        // Avatar — a plain 40dp circle whose letter swaps to the
+                        // active agent (profile or personality). No overlay ring:
+                        // the letter itself is the indicator.
                         Box(modifier = Modifier.size(40.dp)) {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .then(
-                                        if (customized) {
-                                            Modifier.border(
-                                                width = ringWidth,
-                                                color = MaterialTheme.colorScheme.primary,
-                                                shape = CircleShape,
-                                            )
-                                        } else Modifier
-                                    )
-                                    .padding(ringWidth),
-                                contentAlignment = Alignment.Center,
+                            Surface(
+                                modifier = Modifier.size(40.dp),
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primary
                             ) {
-                                Surface(
-                                    modifier = Modifier.size(innerSize),
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.primary
-                                ) {
                                     // Cross-fade the letter when the
                                     // effective agent (profile or personality)
                                     // changes so the avatar feels alive on a
@@ -1078,7 +1049,6 @@ fun ChatScreen(
                                         }
                                     }
                                 }
-                            }
                             ConnectionStatusBadge(
                                 isConnected = apiReachable,
                                 isConnecting = isConnecting,
