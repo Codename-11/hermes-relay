@@ -119,6 +119,14 @@ class GatewayClientHarness(
                         json.parseToJsonElement("""[["/help","Show help"],["/model","Pick model"]]"""),
                     )
                 }
+                "session.list" -> buildJsonObject {
+                    put(
+                        "sessions",
+                        json.parseToJsonElement(
+                            """[{"id":"s1","title":"Chat 1","message_count":3,"started_at":1234.5,"source":"gateway"}]""",
+                        ),
+                    )
+                }
                 else -> JsonObject(emptyMap())
             }
             val reply = if (result != null) {
@@ -557,6 +565,16 @@ class GatewayChatClientTest {
 
         val create = harness.awaitRpc("session.create")
         assertEquals("mizu", (create["profile"] as? JsonPrimitive)?.contentOrNull)
+    }
+
+    @Test
+    fun `listSessions parses the gateway session list into SessionItems`() {
+        val sessions = runBlocking { client.listSessions().getOrThrow() }
+        assertEquals(1, sessions.size)
+        assertEquals("s1", sessions[0].id)
+        assertEquals("Chat 1", sessions[0].title)
+        assertEquals(3, sessions[0].messageCount)
+        assertEquals("gateway", sessions[0].source)
     }
 
     @Test

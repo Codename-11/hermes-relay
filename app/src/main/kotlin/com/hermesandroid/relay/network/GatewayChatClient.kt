@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.network
 
 import android.util.Log
+import com.hermesandroid.relay.network.models.SessionItem
 import com.hermesandroid.relay.util.AppForegroundTracker
 import com.hermesandroid.relay.util.TurnLatencyTracer
 import kotlinx.coroutines.CompletableDeferred
@@ -24,6 +25,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
@@ -599,6 +601,38 @@ class GatewayChatClient(
                 currentModel = result.stringField("model") ?: "",
                 currentProvider = result.stringField("provider") ?: "",
             )
+        }
+    }
+
+    /**
+     * List the active profile's sessions via the gateway `session.list` RPC —
+     * the same call the desktop session picker uses. Sessions are profile-bound
+     * (each in its profile's state.db), so this returns only the current
+     * profile's sessions and the drawer re-scopes automatically on a profile
+     * switch — unlike the api_server `/api/sessions`, which reads one shared DB
+     * with no profile concept. Mapped into the shared [SessionItem] shape the
+     * drawer already renders (model/token fields aren't in the gateway item).
+     */
+    suspend fun listSessions(limit: Int = 50): Result<List<SessionItem>> {
+        if (webSocket == null || readySignal?.isCompleted != true) {
+            try {
+                connectMutex.withLock { ensureConnected() }
+            } catch (e: Exception) {
+                return Result.failure(e)
+            }
+        }
+        return rpc("session.list", buildJsonObject { put("limit", limit) }).map { result ->
+            (result["sessions"] as? JsonArray).orEmpty().mapNotNull { el ->
+                val obj = el as? JsonObject ?: return@mapNotNull null
+                val id = obj.stringField("id") ?: return@mapNotNull null
+                SessionItem(
+                    id = id,
+                    title = obj.stringField("title"),
+                    source = obj.stringField("source"),
+                    startedAt = (obj["started_at"] as? JsonPrimitive)?.doubleOrNull,
+                    messageCount = (obj["message_count"] as? JsonPrimitive)?.intOrNull,
+                )
+            }
         }
     }
 

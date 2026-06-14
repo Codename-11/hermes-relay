@@ -826,12 +826,24 @@ class ChatViewModel : ViewModel() {
     // --- Session management ---
 
     fun refreshSessions() {
-        val client = apiClient ?: return
         val handler = chatHandler ?: return
+        // On the gateway, list the ACTIVE PROFILE's sessions via `session.list`
+        // (sessions are profile-bound, so the drawer re-scopes per profile like
+        // the desktop). The api_server `/api/sessions` reads one shared DB with
+        // no profile concept, so it's the fallback / SSE path.
+        val gateway = gatewayClient?.takeIf { streamingEndpoint == "gateway" }
         viewModelScope.launch {
-            client.listSessionsResult().fold(
+            val result = gateway?.listSessions() ?: apiClient?.listSessionsResult()
+            result?.fold(
                 onSuccess = { sessions -> handler.updateSessions(sessions) },
-                onFailure = { error -> emitError(error, context = "load_sessions") }
+                onFailure = { error ->
+                    if (gateway != null) {
+                        // Gateway list failed — fall back to the api_server list.
+                        apiClient?.listSessionsResult()?.onSuccess { handler.updateSessions(it) }
+                    } else {
+                        emitError(error, context = "load_sessions")
+                    }
+                },
             )
         }
     }
