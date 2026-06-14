@@ -766,12 +766,24 @@ fun DashboardManagementScreen(
     }
 
     pendingAction?.let { pending ->
+        val isActivateProfile = pending.action.kind == DashboardActionKind.ActivateProfile
         AlertDialog(
             onDismissRequest = { pendingAction = null },
-            title = { Text("${pending.action.label} ${pending.item.title}?") },
+            title = {
+                Text(
+                    if (isActivateProfile) "Make ${pending.item.title} the server default?"
+                    else "${pending.action.label} ${pending.item.title}?",
+                )
+            },
             text = {
                 Text(
-                    text = "This changes server-side dashboard state for ${pending.item.title}.",
+                    text = if (isActivateProfile) {
+                        "Sets ${pending.item.title} as the server's active agent for every " +
+                            "client — the persistent “hermes use” default. Switching agents in " +
+                            "chat is per-conversation and doesn't change this."
+                    } else {
+                        "This changes server-side dashboard state for ${pending.item.title}."
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                 )
             },
@@ -781,7 +793,7 @@ fun DashboardManagementScreen(
                         pendingAction = null
                         runAction(pending.item, pending.action)
                     },
-                ) { Text(pending.action.label) }
+                ) { Text(if (isActivateProfile) "Set default" else pending.action.label) }
             },
             dismissButton = {
                 TextButton(onClick = { pendingAction = null }) {
@@ -1154,6 +1166,12 @@ fun DashboardManagementScreen(
                                                 )
                                             DashboardActionKind.EditProfileSoul ->
                                                 openSoulEditor(item)
+                                            // Always confirm: this flips the
+                                            // server's persistent active agent for
+                                            // every client, unlike the ephemeral
+                                            // per-conversation switch in chat.
+                                            DashboardActionKind.ActivateProfile ->
+                                                pendingAction = PendingDashboardAction(item, action)
                                             else -> if (action.destructive) {
                                                 pendingAction = PendingDashboardAction(item, action)
                                             } else {
