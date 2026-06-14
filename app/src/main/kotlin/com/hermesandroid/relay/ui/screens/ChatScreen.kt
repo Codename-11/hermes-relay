@@ -998,11 +998,23 @@ fun ChatScreen(
                     val modelName = effectiveProfile?.model
                         ?.takeIf { it.isNotBlank() }
                         ?: serverModelName
+                    // Subtext: a NON-default personality shown BEFORE the model
+                    // (e.g. "Catgirl \u00B7 gpt-5.5"); the default personality is
+                    // implied, so it's just the model. Falls back to the
+                    // personality label when there's no model name yet.
+                    val nonDefaultPersonality = selectedPersonality
+                        .takeIf {
+                            it.isNotBlank() &&
+                                it != "default" &&
+                                !it.equals(defaultPersonality, ignoreCase = true)
+                        }
+                        ?.replaceFirstChar { it.uppercase() }
                     val subtitleText = when {
                         !apiReachable -> statusText
-                        modelName.isNotBlank() ->
-                            "$modelName \u00B7 $personalityLabel"
-                        else -> personalityLabel
+                        else -> listOfNotNull(
+                            nonDefaultPersonality,
+                            modelName.takeIf { it.isNotBlank() },
+                        ).joinToString(" \u00B7 ").ifBlank { personalityLabel }
                     }
                     val subtitleColor = if (apiReachable) {
                         MaterialTheme.colorScheme.onSurfaceVariant

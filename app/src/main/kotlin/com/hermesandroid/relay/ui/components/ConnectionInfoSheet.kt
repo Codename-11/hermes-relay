@@ -865,62 +865,50 @@ fun AgentInfoSheet(
                         // to the capitalised profile name when description
                         // is blank.
                         val hasDescription = profile.description.isNotBlank()
-                        val primaryLabel = if (hasDescription) {
-                            profile.description
-                        } else {
-                            profile.name.replaceFirstChar { it.uppercase() }
-                        }
+                        // Headline is the profile NAME (easy to scan); the
+                        // description + model ride one subtitle line.
+                        val primaryLabel = profile.name.replaceFirstChar { it.uppercase() }
                         // Secondary line: `modelname • Running` / `• Idle`.
                         // The dot itself carries the same information via
                         // colour; the text label is the a11y-visible
                         // complement so a screen reader user also gets
                         // the status without relying on colour.
-                        val secondaryLine = profile.model + runningLabel
+                        val secondaryLine = listOfNotNull(
+                            profile.description.takeIf { hasDescription },
+                            profile.model.takeIf { it.isNotBlank() },
+                        ).joinToString(" · ").takeIf { it.isNotBlank() }
                         // Tertiary caption: the profile identifier (when
                         // we promoted the description to primary) plus an
                         // "active on server" hint when this row matches
                         // the apparent default.
-                        val tertiaryLine = buildString {
-                            if (hasDescription) {
-                                append("profile: ")
-                                append(profile.name)
-                            }
-                            if (profile.hasIsolatedApi) {
-                                if (isNotEmpty()) append(" \u2022 ")
-                                append("isolated API")
-                            } else {
-                                if (isNotEmpty()) append(" \u2022 ")
-                                append("compatibility overlay")
-                            }
-                            if (isApparentActive && selectedProfile == null) {
-                                if (isNotEmpty()) append(" \u2022 ")
-                                append("This is the server's active profile")
-                            }
-                        }.takeIf { it.isNotBlank() }
+                        val tertiaryLine: String? = null
                         ProfileRadioRow(
                             primary = primaryLabel,
                             secondary = secondaryLine,
-                            tertiary = tertiaryLine,
+                            // Cleaner card: drop the verbose "profile: … ·
+                            // compatibility overlay · active" caption now that
+                            // the name is the headline.
+                            tertiary = null,
                             selected = selectedProfile?.name == profile.name,
                             enabled = !isStreaming,
                             contentAlpha = 1f,
                             leadingDotColor = dotColor,
                             leadingDotContentDescription = dotA11y,
-                            secondaryTrailing = if (profile.hasSoul || profile.skillCount > 0) {
+                            secondaryTrailing = if (
+                                profile.gatewayRunning || profile.hasSoul || profile.skillCount > 0
+                            ) {
                                 {
-                                    ProfileMetadataBadge(
-                                        text = if (profile.hasIsolatedApi) "API" else "Overlay",
-                                        background = if (profile.hasIsolatedApi) {
-                                            MaterialTheme.colorScheme.tertiaryContainer
-                                        } else {
-                                            MaterialTheme.colorScheme.surfaceVariant
-                                        },
-                                        contentColor = if (profile.hasIsolatedApi) {
-                                            MaterialTheme.colorScheme.onTertiaryContainer
-                                        } else {
-                                            MaterialTheme.colorScheme.onSurfaceVariant
-                                        },
-                                    )
+                                    // Prominent status chip — the running/active
+                                    // profile, so the dropped "· Running" text
+                                    // doesn't cost status visibility (the green
+                                    // leading dot still reinforces it).
+                                    if (profile.gatewayRunning) {
+                                        ProfileMetadataBadge(
+                                            text = "Active",
+                                            background = MaterialTheme.colorScheme.primary,
+                                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                                        )
+                                    }
                                     if (profile.skillCount > 0) {
                                         ProfileMetadataBadge(
                                             text = "${profile.skillCount} skills",
