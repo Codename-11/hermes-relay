@@ -122,9 +122,11 @@ Hermes-Relay talks to two upstream Hermes surfaces:
 - **API server** on `:8642` — Chat and sessions
 - **Dashboard** on `:9119` — Manage sign-in and admin screens
 
-::: tip Already running Hermes with its API server enabled?
-You're done with this step — head to [step 3](#_3-connect-chat). Everything below
-is only for setting Hermes up the first time.
+::: tip Already have a Hermes server — or someone set one up for you?
+If Hermes is already running, or a more technical friend handed you a **server
+URL and key**, you're done with this step — skip straight to
+[step 3 (Connect)](#_3-connect-chat). Everything below is only for setting up the
+Hermes server itself the first time.
 :::
 
 You'll need a reachable [Hermes Agent](https://hermes-agent.nousresearch.com)
@@ -132,14 +134,25 @@ instance (v0.8.0+ recommended). The Relay power-user plugin (step 4) additionall
 needs Python 3.11+ on the server.
 
 ::::details Set up Hermes + an API key (first-time server setup)
-If Hermes is already installed, start at `hermes setup --portal`. If you already
-have a model/provider configured, you can skip that line.
+**What the app actually needs** is three things: the Hermes API server
+**enabled**, **reachable from your phone**, and an **API key** — the bearer token
+the app sends to authenticate Chat. Installing Hermes and choosing a
+provider/model is ordinary Hermes setup, so we defer that to the official docs
+([Installation](https://hermes-agent.nousresearch.com/docs/getting-started/installation),
+[Nous Portal](https://hermes-agent.nousresearch.com/docs/integrations/nous-portal),
+[API Server](https://hermes-agent.nousresearch.com/docs/user-guide/features/api-server)).
+The block below is just the app-facing minimum.
+
+If Hermes is already installed and a provider is configured, skip the install and
+`hermes setup --portal` lines and run only the `.env` + `hermes gateway` part.
 
 ::: code-group
 ```bash [macOS / Linux / WSL2 / Termux]
 curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
-hermes setup --portal
+hermes setup --portal                      # log in / pick a provider — skip if already configured
 
+# Pick any API_SERVER_KEY you like — you'll scan or type it into the app.
+# openssl just generates a strong random one; substitute your own if you prefer.
 mkdir -p ~/.hermes
 API_SERVER_KEY="$(openssl rand -hex 32)"
 cat >> ~/.hermes/.env <<EOF
@@ -156,8 +169,9 @@ hermes gateway
 ```
 ```powershell [Windows]
 iex (irm https://hermes-agent.nousresearch.com/install.ps1)
-hermes setup --portal
+hermes setup --portal                      # log in / pick a provider — skip if already configured
 
+# Pick any API key you like — you'll scan or type it into the app.
 $HermesDir = Join-Path $HOME ".hermes"
 New-Item -ItemType Directory -Force $HermesDir | Out-Null
 $ApiKey = ([guid]::NewGuid().ToString("N") + [guid]::NewGuid().ToString("N"))
@@ -174,23 +188,50 @@ hermes gateway
 ```
 :::
 
-Replace `<this-computer-ip>` with the address your phone can reach — a LAN IP,
-Tailscale name, or HTTPS reverse-proxy host. Don't use `127.0.0.1` from Android
+What each line does: `API_SERVER_ENABLED=true` turns the API server on (it's off by
+default); `API_SERVER_HOST=0.0.0.0` makes it reachable on your network (Hermes
+defaults to `127.0.0.1`, which only the host itself can reach); `API_SERVER_PORT`
+is the port the app assumes; `API_SERVER_KEY` is the token the app sends on every
+request. Replace `<this-computer-ip>` with the address your phone can reach — a LAN
+IP, Tailscale name, or HTTPS reverse-proxy host. Don't use `127.0.0.1` from Android
 unless Hermes is running on the phone itself.
 
-For the upstream details, see the Hermes
-[Installation](https://hermes-agent.nousresearch.com/docs/getting-started/installation),
-[Nous Portal](https://hermes-agent.nousresearch.com/docs/integrations/nous-portal),
-and [API Server](https://hermes-agent.nousresearch.com/docs/user-guide/features/api-server) docs.
+::: warning Binding to 0.0.0.0 exposes the API to your whole network
+`0.0.0.0` lets any device on the same network reach the API server, which is why
+the bearer key matters. On a home LAN behind a router that's normally fine. On
+untrusted or public networks, don't expose it directly — keep the key set and
+front it with Tailscale or an HTTPS reverse proxy (see [Remote access](/guide/remote-access)).
+To limit it to a single interface, set `API_SERVER_HOST` to a specific LAN IP
+instead of `0.0.0.0`.
+:::
+
+::: tip The key is yours to choose — and you don't have to thumb-type it
+Three easy ways to get the key onto your phone (no 64-character typing required):
+- **Scan for Hermes on LAN** in the app finds the server automatically; you enter
+  the key once.
+- Ask your **Hermes agent to generate a QR code** containing the API URL and key —
+  for example a QR encoding `{"api_url":"http://<this-computer-ip>:8642","api_key":"<your-key>"}` —
+  then scan it from **Scan setup QR**.
+- Type it by hand. A memorable passphrase is easier to type; a random key is
+  stronger. Either works — and if your server runs with no key at all, leave the
+  app's key field blank.
+:::
 ::::
 
+**Optional — only for Manage and voice.** Chat works fine without the dashboard.
+Set it up if you want to browse and install skills, switch models, manage keys,
+and edit profiles from your phone, or use voice on a vanilla install.
+
 ::::details Enable Manage (Skills, Cron, Models, Keys) — run the dashboard
-For **Manage**, run the Hermes dashboard on a phone-reachable URL. On a trusted
-LAN or VPN, the quick path is username/password auth:
+For **Manage**, run the Hermes dashboard on a phone-reachable URL. Because your
+phone reaches it on a non-loopback address, the dashboard **requires auth** — it
+won't start on `0.0.0.0` without a provider configured — so set credentials
+*first*, then start it. On a trusted LAN or VPN, username/password is the quick
+path:
 
 ::: code-group
 ```bash [macOS / Linux]
-# Run in a second terminal on the Hermes host.
+# Run on the Hermes host. Replace choose-a-strong-password with your own.
 DASHBOARD_SECRET="$(openssl rand -base64 32)"
 cat >> ~/.hermes/.env <<EOF
 HERMES_DASHBOARD_BASIC_AUTH_USERNAME=admin
@@ -202,14 +243,20 @@ chmod 600 ~/.hermes/.env
 hermes dashboard --no-open --host 0.0.0.0 --port 9119
 ```
 ```powershell [Windows]
-# Set the same HERMES_DASHBOARD_* values in $HOME\.hermes\.env, then:
+# Set the same HERMES_DASHBOARD_* values in $HOME\.hermes\.env (use your own password), then:
 hermes dashboard --no-open --host 0.0.0.0 --port 9119
 ```
 :::
 
-For a public or hosted dashboard, use upstream Hermes dashboard auth with Nous
-OAuth/OIDC instead of a simple password. See the upstream
+You sign in with this username/password from the app's **Manage** tab the first
+time. For stronger setups Hermes also accepts a hashed password
+(`HERMES_DASHBOARD_BASIC_AUTH_PASSWORD_HASH`) instead of plaintext, and for a
+public or hosted dashboard you should use Nous OAuth or self-hosted OIDC rather
+than a password — see the upstream
 [Web Dashboard](https://hermes-agent.nousresearch.com/docs/user-guide/features/web-dashboard) docs.
+On the host's own loopback the dashboard runs without auth; the credentials above
+are needed only because your phone connects over the network. (The dashboard also
+reads and writes `~/.hermes/.env`, which holds your keys and secrets.)
 
 ::: warning Dashboard auth and API bearer auth are different
 The API key from the previous step is for Android Chat on `:8642`. Dashboard
@@ -224,13 +271,17 @@ but dashboard login does **not** create an API key.
 On first launch:
 
 1. Tap through the onboarding pages.
-2. On **Connect**, choose **Standard Hermes**.
-3. Enter the API URL — e.g. `http://192.168.1.100:8642` — or tap **Scan for
-   Hermes on LAN**.
-4. If your QR or URL didn't include the key, enter the value you set in
-   `API_SERVER_KEY`.
-5. Optional: add a Tailscale API URL such as `https://your-host.ts.net:8642`.
-6. Tap **Connect**.
+2. On **Connect**, pick whichever is easiest:
+   - **Standard Hermes** → tap **Scan for Hermes on LAN** to auto-find the
+     server, then enter your key; or type the API URL
+     (`http://192.168.1.100:8642`) and key by hand.
+   - **Scan setup QR** → scan a QR containing your URL and key. There's no
+     upstream mobile-pairing command for the standard path yet, so the handy
+     trick is to ask your **Hermes agent to generate one** — a QR encoding
+     `{"api_url":"http://192.168.1.100:8642","api_key":"<your-key>"}` is accepted.
+3. Optional: add a Tailscale API URL such as `https://your-host.ts.net:8642` in
+   the **Remote access** field.
+4. Tap **Connect**.
 
 That's it — Chat is live, and the Manage surfaces (Skills, Cron, MCP, Profiles,
 Models/Config) light up too. Manage may ask you to sign in to the dashboard the

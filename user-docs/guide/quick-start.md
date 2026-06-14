@@ -21,8 +21,12 @@ host machine.
 ## 3. Connect
 
 Open the app and swipe through to **Connect**. Enter your server's address —
-`http://<host>:8642` — and the wizard probes everything for you, finishing
-with a capability card:
+`http://<host>:8642` — and your API key, and the wizard probes everything for
+you, finishing with a capability card:
+
+> Don't want to type it? Tap **Scan for Hermes on LAN** to auto-find the server,
+> or use **Scan setup QR** — you can even ask your Hermes agent to generate a QR
+> with your URL and key. Full host setup is in [Installation & Setup](./getting-started).
 
 | Line | What it means |
 |---|---|
