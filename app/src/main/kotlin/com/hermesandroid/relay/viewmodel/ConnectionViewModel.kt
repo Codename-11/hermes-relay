@@ -3147,6 +3147,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 _selectedProfile.value = null
                 _pendingSelectedProfileConnectionId.value = null
                 _pendingSelectedProfileName.value = null
+                // Dashboard profile lists are per-connection — drop the old one so
+                // the pending persisted name can't resolve against the previous
+                // connection's profiles before the new connection's list arrives.
+                _dashboardProfiles.value = emptyList()
                 // Gateway state is per-connection: drop the sticky
                 // Unsupported verdict and tear down the old socket so the
                 // next probe/send evaluates the new connection fresh.
@@ -3181,6 +3185,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     rebuildApiClient()
                 }
                 rebuildChatApiClient()
+                // Hydrate the host's agent profiles eagerly (not lazily on
+                // agent-sheet open). On a dashboard/gateway connection the relay
+                // `auth.ok` profile list is empty, so without this the persisted
+                // profile selection can't resolve until the user opens the picker
+                // — the header shows the default agent on cold start, then visibly
+                // snaps to the real profile (and re-scopes the chat) the moment the
+                // sheet fetches the list. Best-effort; the agentProfiles collector
+                // resolves the pending name once the list lands.
+                refreshDashboardProfiles()
             }
         }
 
