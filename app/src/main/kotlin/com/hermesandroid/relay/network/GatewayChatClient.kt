@@ -606,6 +606,27 @@ class GatewayChatClient(
             },
         )
 
+    /**
+     * Hot-swap the active Hermes profile on the LIVE session via
+     * `config.set {key:"profile", value:<name>}` — the session-scoped mirror of
+     * [setModel], matching the official desktop's clean profile hot-swap (the
+     * agent's SOUL/model/skills change in place, no new session, no lost
+     * context). Session-scoped when a session is live, else the global default.
+     * Returns the RPC result (a failed/unknown key surfaces as an error rather
+     * than a silent no-op, so the caller can report it). The api_server SSE
+     * paths don't need this — they carry the profile per-request as
+     * `profileName`; only the gateway's bare `prompt.submit` does.
+     */
+    suspend fun setProfile(name: String): Result<JsonObject> =
+        rpc(
+            "config.set",
+            buildJsonObject {
+                put("key", "profile")
+                put("value", name)
+                liveSessionId?.let { put("session_id", it) }
+            },
+        )
+
     fun shutdown() {
         activeTurn?.cancel()
         activeTurn = null

@@ -305,6 +305,42 @@ class ChatViewModel : ViewModel() {
         refreshActiveAgentName()
     }
 
+    /**
+     * Hot-swap the active Hermes profile from the in-chat picker, matching the
+     * desktop's clean profile swap. On the gateway this dispatches
+     * `config.set {key:"profile"}` (the session-scoped mirror of [selectModel]),
+     * so the live session's agent — its SOUL, model, and skills — changes in
+     * place without a new session or lost context. SSE turns need nothing here:
+     * they already carry the profile per-request as `profileName`. [profile] is
+     * the new pick; a server-default / null pick reverts to `"default"`.
+     */
+    fun activateGatewayProfile(profile: Profile?) {
+        val gateway = gatewayClient ?: return
+        val handler = chatHandler ?: return
+        if (streamingEndpoint != "gateway") return
+        val requestName = AgentDisplay.profileRequestName(profile?.name)
+        val label = AgentDisplay.profileDisplayName(profile)
+            ?: requestName
+            ?: "the default profile"
+        viewModelScope.launch {
+            // Warm a session so the swap is session-scoped (config.set also works
+            // sessionless, falling back to the global default).
+            gateway.prewarm(handler.currentSessionId.value)
+            gateway.setProfile(requestName ?: "default").fold(
+                onSuccess = {
+                    handler.addSystemNotice("Switched to $label.")
+                    // The profile brings its own model — refresh the picker's
+                    // "current" so the Model dropdown reflects the swap.
+                    gateway.modelOptions().onSuccess { _modelProviders.value = it.providers }
+                },
+                onFailure = { e ->
+                    handler.addSystemNotice("Couldn't switch profile: ${e.message ?: "unknown error"}")
+                },
+            )
+        }
+        refreshActiveAgentName()
+    }
+
     /** Model name from the server's /api/config response (e.g. "claude-opus-4-6") */
     private val _serverModelName = MutableStateFlow("")
     val serverModelName: StateFlow<String> = _serverModelName.asStateFlow()

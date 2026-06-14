@@ -544,6 +544,25 @@ class GatewayChatClientTest {
         assertTrue(harness.rpcLog.none { it.first == "session.steer" })
     }
 
+    // --- Profile hot-swap (config.set {key:"profile"}) ---
+
+    @Test
+    fun `setProfile hot-swaps the live session via config set`() {
+        val r = Recorder()
+        client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        runBlocking { client.setProfile("mizu") }
+
+        val configSet = harness.awaitRpc("config.set")
+        // The session-scoped mirror of the model switch: key=profile, the
+        // chosen name, and the live session id so the swap is in-place.
+        assertEquals("profile", (configSet["key"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("mizu", (configSet["value"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("live-1", (configSet["session_id"] as? JsonPrimitive)?.contentOrNull)
+    }
+
     // --- Attachments (image / pdf / file routing) ---
 
     @Test

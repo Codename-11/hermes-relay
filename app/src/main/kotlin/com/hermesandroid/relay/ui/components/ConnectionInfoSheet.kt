@@ -819,6 +819,9 @@ fun AgentInfoSheet(
                         onSelect = {
                             if (selectedProfile != null) {
                                 connectionViewModel.selectProfile(null)
+                                // Gateway turns carry no per-request profile —
+                                // hot-swap the live session server-side too.
+                                chatViewModel.activateGatewayProfile(null)
                                 toast("Using Server default")
                             }
                         },
@@ -932,6 +935,10 @@ fun AgentInfoSheet(
                             onSelect = {
                                 if (selectedProfile?.name != profile.name) {
                                     connectionViewModel.selectProfile(profile)
+                                    // Gateway turns carry no per-request profile;
+                                    // hot-swap the live session server-side so the
+                                    // agent (SOUL+model+skills) changes in place.
+                                    chatViewModel.activateGatewayProfile(profile)
                                     val display = primaryLabel
                                     val suffix = if (profile.hasIsolatedApi) {
                                         " — profile API active"
