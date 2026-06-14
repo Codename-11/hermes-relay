@@ -209,7 +209,24 @@ Each assistant message shows token usage below the timestamp:
 
 When enabled (**Settings → Chat → App context prompt**, on by default),
 Hermes-Relay tells the agent it's talking to a phone so replies stay
-mobile-friendly and concise — this travels with every message on any connection.
-The standard connection can additionally attach optional bridge/permission and
-safety-rail summaries; privacy-sensitive fields (foreground app, battery) default
-off and are only added when you opt in.
+mobile-friendly and concise, and can attach optional bridge/permission and
+safety-rail summaries. On the standard (API-server) connection this rides an
+invisible system message. The Gateway connection carries no app-context preamble
+— its protocol has no hidden per-turn slot, and adding one would leave the text
+in your saved chat history — so there the agent reads phone state on demand via
+the `android_phone_status` tool. Privacy-sensitive fields (foreground app,
+battery) default off and are only added when you opt in.
+
+## Keep connected in background
+
+By default the chat connection is held open while Hermes-Relay is on screen and
+for a couple of minutes after you switch away, so a quick return is instant; on
+a longer absence it reconnects when you reopen the chat. Returning to a chat the
+app pre-warms the connection in the background so your first message is fast.
+
+If you want the connection to stay fully open even when the app is in the
+background, turn on **Settings → Chat → Keep connected in background** (off by
+default). It shows an ongoing notification — tap **Disconnect** on it, or flip
+the toggle, to stop. This uses more battery; swiping the app away from recents
+also ends it. It's the same approach apps like Home Assistant use to stay
+connected.

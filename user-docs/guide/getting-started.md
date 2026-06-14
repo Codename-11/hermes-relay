@@ -54,7 +54,7 @@ device.
 [github.com/Codename-11/hermes-relay/releases](https://github.com/Codename-11/hermes-relay/releases),
 open the newest Android release (`android-v*`; historical Android releases used
 bare `v*`), and grab the file ending in **`-sideload-release.apk`** — for
-example, `hermes-relay-0.8.0-sideload-release.apk`.
+example, `hermes-relay-1.0.0-sideload-release.apk`.
 
 ::: warning Download the .apk, not the .aab
 Each release also ships `-release.aab` files. That's the Android App Bundle

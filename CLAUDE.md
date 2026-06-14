@@ -179,7 +179,9 @@ hermes-android/
 | `viewmodel/ConnectionViewModel.kt` | Dual connection model (API + relay); `resolveStreamingEndpoint()`; derived `relayUiState` flow + `markPaired` hook stamp the active Connection |
 | `viewmodel/RelayUiState.kt` | Shared sealed state for the relay row — 5 cases + `asBadgeState()` / `statusText()` extensions; 5s grace window before Stale |
 | `network/HermesApiClient.kt` | Direct HTTP/SSE — `sendRunStream()`, `sendChatStream()`, `probeCapabilities()` |
-| `network/GatewayChatClient.kt` | Gateway chat transport — JSON-RPC over dashboard `/api/ws` (tui_gateway); live `reasoning.delta`; fresh ws-ticket per connect; per-turn SSE fallback via `onPreflightFailure` |
+| `network/GatewayChatClient.kt` | Gateway chat transport — JSON-RPC over dashboard `/api/ws` (tui_gateway); live `reasoning.delta`; fresh ws-ticket per connect; per-turn SSE fallback via `onPreflightFailure`; `prewarm()` (connect+resume off the send path); `setKeepAliveInBackground()` suppresses the 120s idle-close |
+| `network/GatewayKeepAliveService.kt` | Opt-in `specialUse` foreground service (BOTH flavors; declared in main manifest; Play needs a Console FGS declaration) holding the process up so the gateway socket survives background/Doze; driven by ConnectionViewModel from the `KEY_GATEWAY_KEEP_ALIVE` toggle; stops on task-removal |
+| `data/GatewayKeepAlivePrefs.kt` | Shared `KEY_GATEWAY_KEEP_ALIVE` pref key + `Context.setGatewayKeepAlive()` — used by ConnectionViewModel (StateFlow/setter) and the FGS Stop action |
 | `network/GatewayEventMapper.kt` | Pure-JVM gateway event→callback mapping for one turn; unknown event types silently ignored; tui_gateway usage-key translation |
 | `network/GatewayModels.kt` | `GatewayAvailability`, `ActiveTurnHandle`, `GatewayTurnCallbacks` (all members REQUIRED — forces dispatchOn main-thread wrap), `GatewayAsk`, `GatewaySubagentEvent`, `resolveStreamingEndpointPreference()` |
 | `ui/components/ChatInputBar.kt` | Redesigned input bar — pill field, one trailing slot morphing Send/Voice/Stop/Steer/Queue, no slash button (long-press + opens palette) |
@@ -223,12 +225,16 @@ hermes-android/
 | `user-docs/.vitepress/theme/components/SphereMark.vue` | Docs-site sphere embed — imports `preview/web/sphere.js` directly; autonomous fbm drift + pointer-proximity gaze/state blend; `<ClientOnly>` + `IntersectionObserver` + `prefers-reduced-motion` aware |
 | **App — Media + Notifications** | |
 | `util/MediaCacheWriter.kt` | `cacheDir/hermes-media/` LRU writer; returns FileProvider URIs |
-| `ui/components/InboundAttachmentCard.kt` | Discord-style attachment card for images/video/audio/pdf/text/generic |
+| `util/MediaSaver.kt` | Save/share/open for chat media — MediaStore scoped-storage save (Pictures/Download `Hermes-Relay`, no perms on API 29+; pre-Q → share sheet); FileProvider share staging; remote-byte fetch; magic-byte image-MIME sniff for correct extensions |
+| `ui/components/ChatImageViewer.kt` | Full-screen image viewer — pinch-zoom/pan (`detectTransformGestures`), double-tap 1×/2.5×, Share/Save/Close; `ChatImageViewerSource` decouples Coil-model/bitmap display from a suspend `bytesProvider` so Save keeps original bytes |
+| `ui/components/InboundAttachmentCard.kt` | Discord-style attachment card for images/video/audio/pdf/text/generic; image tap → ChatImageViewer, file card long-press → Open/Share/Save menu |
+| `ui/components/ChatImageContent.kt` | Parses `![alt](src)` out of assistant content; remote http(s) → Coil (tap → ChatImageViewer), server-local/failed → inline "can't render" notice with the path |
 | `data/HermesCard.kt` | `CARD:{json}` envelope (ADR 26) — type/accent/fields/actions; kotlinx.serialization |
 | `ui/components/HermesCardBubble.kt` | Rich-card renderer — accent stripe + FlowRow actions + dispatch stamp collapse |
 | `viewmodel/CardDispatchSyncBuilder.kt` | Twin of VoiceIntentSyncBuilder — synthesizes card dispatches as `hermes_card_action` OpenAI pairs for session memory |
 | `notifications/HermesNotificationCompanion.kt` | NotificationListenerService; cold-start buffer (50); forwards via ChannelMultiplexer |
 | `util/RelayErrorClassifier.kt` | `classifyError(Throwable, context) → HumanError`; used by Voice/Chat/Connection |
+| `util/TurnLatencyTracer.kt` | One `TurnLatency` INFO line per chat turn — `warm/cold` + `connect/session/submit/ttfe/ttft/done@…ms`; gateway + 3 SSE paths use it for desktop-comparable latency diagnosis; durations only |
 | **Relay — Server** | |
 | `plugin/relay/server.py` | Canonical relay — WSS + HTTP routes; bridge, media, voice, session, pairing handlers. `handle_pairing_mint` mirrors `pair.py:762` — top-level = API server, `relay.{url,code}` nested |
 | `plugin/relay/auth.py` | PairingManager, SessionManager, RateLimiter; `math.inf` for never-expire |

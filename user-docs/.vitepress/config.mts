@@ -1,4 +1,22 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
 import { defineConfig } from 'vitepress'
+
+// Single source of truth for the displayed version: read appVersionName from
+// the Android version catalog at docs-build time so the nav badge can never
+// drift from the shipped app. Returns '' (badge hidden) on any failure.
+function resolveAppVersion(): string {
+  try {
+    const tomlPath = fileURLToPath(new URL('../../gradle/libs.versions.toml', import.meta.url))
+    const match = readFileSync(tomlPath, 'utf-8').match(/^appVersionName\s*=\s*"([^"]+)"/m)
+    return match ? match[1] : ''
+  } catch {
+    return ''
+  }
+}
+
+const appVersion = resolveAppVersion()
 
 export default defineConfig({
   base: '/hermes-relay/',
@@ -59,6 +77,11 @@ export default defineConfig({
       { text: 'Reference', link: '/reference/api' },
       { text: 'GitHub', link: 'https://github.com/Codename-11/hermes-relay' },
       { text: 'Privacy', link: '/privacy' },
+      // Release badge — derived from gradle/libs.versions.toml, links to the
+      // GitHub Releases list. Hidden if the version couldn't be resolved.
+      ...(appVersion
+        ? [{ text: `v${appVersion}`, link: 'https://github.com/Codename-11/hermes-relay/releases' }]
+        : []),
     ],
 
     sidebar: {
