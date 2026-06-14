@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
@@ -59,6 +60,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.AgentDisplay
@@ -747,11 +749,11 @@ fun AgentInfoSheet(
                 val apparentActiveProfile = agentProfiles
                     .firstOrNull { it.gatewayRunning }
 
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    SectionLabel(
-                        title = "Profile",
-                        hint = "Host-side Hermes contexts",
-                    )
+                CollapsiblePickerSection(
+                    title = "Profile",
+                    hint = "Host-side Hermes contexts",
+                    currentValue = AgentDisplay.profileDisplayName(selectedProfile) ?: "Server default",
+                ) {
 
                     val defaultDotColor = serverDefaultProfile?.let { profile ->
                         if (profile.gatewayRunning) {
@@ -986,14 +988,12 @@ fun AgentInfoSheet(
             // row is still tappable because the user may want to queue the
             // choice for after they clear the profile. No alpha on the entire
             // Column because the section header would look broken.
-            Column(
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+            CollapsiblePickerSection(
+                title = "Personality",
+                hint = "System-prompt preset on this agent",
+                currentValue = AgentDisplay.personalityLabel(selectedPersonality, defaultPersonality),
                 modifier = Modifier.alpha(if (profileOverridesPersonality) 0.55f else 1f),
             ) {
-                SectionLabel(
-                    title = "Personality",
-                    hint = "System-prompt preset on this agent",
-                )
 
                 // Default row — maps to selectedPersonality == "default" which
                 // the VM resolves to whatever server-side personality is
@@ -1070,11 +1070,11 @@ fun AgentInfoSheet(
             }
             if (modelProviders.isNotEmpty() || sseModelOptions.isNotEmpty()) {
                 HorizontalDivider()
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    SectionLabel(
-                        title = "Model",
-                        hint = "Provider model for this session",
-                    )
+                CollapsiblePickerSection(
+                    title = "Model",
+                    hint = "Provider model for this session",
+                    currentValue = selectedModelOverride ?: "Server default",
+                ) {
                     ProfileRadioRow(
                         primary = "Server default",
                         secondary = serverModelName.takeIf { it.isNotBlank() },
@@ -1352,6 +1352,62 @@ private fun SectionLabel(title: String, hint: String?) {
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+/**
+ * A space-saving picker section: a tappable header (the [SectionLabel] plus the
+ * current value and a chevron) that collapses its option rows by default and
+ * expands them on tap — a dropdown for the agent sheet's Profile / Personality
+ * / Model lists so the sheet doesn't render every option at once. Selecting an
+ * option (inside [content]) updates [currentValue] in the header; callers may
+ * collapse on select by toggling their own state if desired, but leaving it
+ * open lets the user see the new selection land.
+ */
+@Composable
+private fun CollapsiblePickerSection(
+    title: String,
+    hint: String?,
+    currentValue: String,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .clickable { expanded = !expanded }
+                .padding(vertical = 6.dp),
+        ) {
+            Box(modifier = Modifier.weight(1f)) {
+                SectionLabel(title = title, hint = hint)
+            }
+            if (!expanded && currentValue.isNotBlank()) {
+                Text(
+                    text = currentValue,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .widthIn(max = 150.dp)
+                        .padding(end = 8.dp),
+                )
+            }
+            Icon(
+                imageVector = if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                contentDescription = if (expanded) "Collapse $title" else "Expand $title",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (expanded) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                content()
+            }
         }
     }
 }

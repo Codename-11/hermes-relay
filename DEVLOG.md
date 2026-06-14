@@ -1,5 +1,14 @@
 # Hermes-Relay — Dev Log
 
+## 2026-06-13 — profile hot-swap + agent-sheet dropdowns + What's New rendering
+
+**Why.** v1.0.0 polish (on `dev`, into release PR #61). Bailey: switching a gateway **profile** from chat didn't change the agent or the top bar — "like the model switch issue?" Plus: make the agent-sheet pickers dropdowns to save space, and render the in-app What's New cleanly.
+
+- **Profile hot-swap (`d8d9ce7`).** Root cause: `selectProfile` only set client state + rebuilt the SSE client; the gateway's bare `prompt.submit` carries no profile, so the live agent kept the server's active profile. (SSE was fine — it sends `profileName` per-request.) First mis-targeted personality (routed persona turns to SSE) — **reverted** after Bailey clarified it's the **gateway profile**, and that the official desktop **hot-swaps cleanly** (no fresh session). So: mirror the verified model switch — `GatewayChatClient.setProfile(name)` → `config.set {key:"profile", value, session_id}`, session-scoped so the live session's agent (SOUL+model+skills) swaps in place. `ChatViewModel.activateGatewayProfile()` wires it (prewarm → setProfile → "Switched to X" notice → refresh model.options); the profile rows call it next to `selectProfile`. Unit test `setProfile hot-swaps the live session via config set` locks the RPC shape (key=profile/value/session_id). **CAVEAT:** the exact upstream key (`"profile"`) is inferred from `_apply_model_switch` (not in this repo — upstream `tui_gateway`; live testing paused). A wrong key surfaces as a "Couldn't switch profile" error, not a silent no-op — Bailey live-verifies.
+- **Agent-sheet dropdowns.** New `CollapsiblePickerSection` (reuses `SectionLabel` + chevron; collapsed by default, header shows "Title — current value"). Wrapped Profile / Personality / Model — the rich rows (SOUL/skills badges, provider grouping) live behind the header now. Compile + assemble green; layout pending Bailey's on-device eyeball (live device driving paused).
+- **In-app What's New (`b4a8c7c`).** `WhatsNewDialog` pasted raw `whats_new.txt` into one Text (literal `*`, flat headers). Now parses the format → version subtitle, bold headers, real `•` bullets. Lint green.
+- **Verification.** `:app:testGooglePlayDebugUnitTest --tests GatewayChatClientTest` green; `compileGooglePlayDebugKotlin` + `assembleGooglePlayDebug` green; `lintGooglePlayDebug` green (hot-swap) / pending (dropdowns). On-device profile/dropdown behavior is Bailey's to confirm (live driving paused).
+
 ## 2026-06-13 — open/save attachments + cold-start connect-button gate
 
 **Why.** v1.0.0 polish, two asks: (1) let users open/save chat images and other attachments; (2) stop the chat empty-state from flashing the "Connect to Hermes" button on cold start while we're already logged in and just hydrating.
