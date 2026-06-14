@@ -98,6 +98,9 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Maintains the sideload Device Control bridge while the user has explicitly enabled agent control." />
         </service>
+
+        <!-- Note: GatewayKeepAliveService ("Keep connected in background") is
+             declared in the MAIN manifest so both flavors ship it. -->
     </application>
 
 </manifest>

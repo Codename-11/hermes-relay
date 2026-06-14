@@ -544,6 +544,36 @@ fun ChatSettingsScreen(
 
                     HorizontalDivider()
 
+                    // Keep connected in background — opt-in, both flavors.
+                    run {
+                        val gatewayKeepAlive by connectionViewModel.gatewayKeepAlive.collectAsState()
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Keep connected in background",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    text = "Hold the chat connection open while the app is in the " +
+                                        "background via a persistent notification, so replies stay " +
+                                        "instant. Uses more battery; off by default.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = gatewayKeepAlive,
+                                onCheckedChange = { connectionViewModel.setGatewayKeepAlive(it) }
+                            )
+                        }
+
+                        HorizontalDivider()
+                    }
+
                     // Limits — expandable
                     var limitsExpanded by remember { mutableStateOf(false) }
                     Row(
