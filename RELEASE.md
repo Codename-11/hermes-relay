@@ -374,7 +374,34 @@ the new app version and a higher `appVersionCode`.
   (v0.4.0 shipped with 0.1.0 content until caught post-release).
 - `docs/play-store-listing.md` — Play Store listing copy. Update
   the version reference and the "Release Notes" section that gets
-  pasted into the Play Console "What's new" field.
+  pasted into the Play Console "What's new" field. Keep the Play
+  "What's new" within **500 characters** and framed around the
+  release's themes, not a feature dump.
+
+#### Scrub for public distribution
+
+This is a **public repo** and these four files are user-facing. Before
+promoting the `[Unreleased]` block and writing the notes, scrub the
+versioned CHANGELOG block and all three release-notes artifacts for
+wording that shouldn't ship publicly. The CHANGELOG accumulates in a
+dev-log voice during the iteration phase — release-prep is where it
+becomes public copy. Check for and remove/rewrite:
+
+- **Personal names / quoted asides** — `git grep -niE "bailey|: \"" CHANGELOG.md`
+  on the new block. Attribute fixes impersonally ("a user reported"),
+  not by name. (Author identity already lives in git + the signing cert.)
+- **Private infrastructure** — server hostnames/IPs, `~/SYSTEM.md`,
+  internal deployment names, anything that should stay in the operator's
+  environment and not the repo. `grep -niE "192\.168|10\.0\.|hermes-host|SYSTEM\.md"`.
+  (Example IPs like `192.168.1.100` in install docs are fine.)
+- **Fork / branch plumbing + internal nicknames** — references to private
+  fork branches, rollout channels, or in-team incident nicknames read as
+  internal. Keep the *what changed*, drop the *where we staged it*.
+- **Personal example data** — genericize sample profile/agent names to
+  neutral placeholders so the copy doesn't expose a specific setup.
+
+The goal is that someone who has never seen the repo can read the block
+and the release notes and learn only what the software does.
 
 ### 3. Build and verify locally
 

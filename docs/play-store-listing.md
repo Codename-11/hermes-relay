@@ -64,7 +64,17 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 
 ## Release Notes
 
-Hermes-Relay 1.0 — a plain Hermes agent is now all you need: chat, Manage, and voice work with no plugin. Chat streams the agent's reasoning live, attaches images, PDFs, and files, and lets you steer a running turn or edit and resend. Manage reaches desktop-dashboard parity (models, keys, profiles, skills). New: keep-connected-in-background, turn-complete notifications, a redesigned input bar, and seamless LAN/Tailscale handoffs.
+Paste into Play Console → **What's new** (≤500 characters):
+
+```
+Hermes-Relay 1.0 — our biggest release.
+
+Standard path: chat, Manage, and voice now run on a plain Hermes agent, no plugin. The relay plugin is optional now — Advanced power tools only.
+
+Chat streams reasoning live, attaches images/PDFs/files, steers a running turn, and edits & resends. Switch agent profiles per conversation. Manage hits desktop-dashboard parity.
+
+Plus a redesigned input bar, seamless LAN/Tailscale handoffs, and a broad polish + QoL pass.
+```
 
 ## Category
 

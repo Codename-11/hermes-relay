@@ -1,6 +1,6 @@
 # Hermes-Relay-Android v1.0.0
 
-**Release Date:** June 13, 2026
+**Release Date:** June 14, 2026
 **Since v0.8.1:** The 1.0 milestone — a rechromed app, a first-class standard (no-plugin) path, live-thinking gateway chat, and a broad polish pass.
 
 v1.0.0 is the first stable release. The headline is that a **plain, unmodified Hermes agent is now enough**: chat, Manage, and voice all work against vanilla upstream with no relay plugin. The relay plugin is now purely additive (phone control, terminal, notification companion, extra voice engines).
@@ -40,6 +40,10 @@ Chat can now ride the upstream dashboard `/api/ws` gateway (the same surface the
 ### Manage parity with the desktop dashboard
 
 The Manage tab now does what the desktop dashboard does: change models from the full provider catalog, manage provider keys (write-only, masked, reveal), create/edit profiles and SOUL.md, and browse/install/update skills. Manage data is cached to disk so a cold launch renders instantly.
+
+### Per-conversation agent profiles
+
+Switch the whole agent — model, persona (SOUL), and skills — from the chat header. The selection is **ephemeral and per-conversation** (bound to the session, like the official desktop): it never changes your server's default agent for other clients. The session drawer scopes to the active profile, opening one of its chats loads that profile's history, and the right agent is restored on cold start.
 
 ### Redesigned chat input + seamless connection UX
 

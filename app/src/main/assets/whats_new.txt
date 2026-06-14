@@ -18,6 +18,11 @@ Chat
   images and other attachments.
 * Redesigned input bar: pill field, one morphing Send/Voice/Stop button.
 
+Profiles
+* Switch the whole agent — model, persona, and skills — per conversation.
+  The drawer scopes to the active profile, and switching is ephemeral: it
+  never changes your server's default agent.
+
 Manage
 * Models, provider keys, profiles + SOUL.md, and a skills hub — parity
   with the desktop dashboard. Cached for instant cold-launch.

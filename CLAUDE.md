@@ -130,6 +130,17 @@ hermes-android/
 - **DEVLOG.md** — update at end of each work session with what was done, what's next, blockers
 - **CLAUDE.md hygiene:** Key Files entries must stay one line — implementation detail belongs in the file or `docs/`. Run `/revise-claude-md` after feature-heavy sessions to trim drift.
 
+### Public-repo writing hygiene
+
+This is a **public, distributed repo** — every committed file (CHANGELOG, DEVLOG, README, docs, release notes) is public-facing. Write accordingly:
+
+- **No personal names** in prose — attribute impersonally ("a user reported", "observed"). Author identity lives in git history + the signing cert, not the changelog.
+- **No private infrastructure** — real server hostnames/IPs, internal deployment names, `~/SYSTEM.md` contents. (Generic example IPs like `192.168.1.100` in setup docs are fine.)
+- **No AI/assistant process self-narration** — no "I should have…", no course-correction confessionals. State the technical conclusion, not the path to it.
+- **No internal jargon / fork-branch plumbing** in user-facing notes — keep *what changed*, drop *where we staged it*.
+- **CHANGELOG** uses Keep-a-Changelog grouping (Added / Changed / Fixed). Detail may accumulate during iteration, but at **release-prep the version block is condensed to crisp public bullets** (1–2 lines each) — deep "how we debugged it" stays in commits/DEVLOG. See [RELEASE.md](RELEASE.md) §2 "Scrub for public distribution".
+- **DEVLOG.md** is a committed, factual engineering log — what changed, why, and verification — depersonalized and third-person, not a diary.
+
 ### Code Style — Android (Kotlin)
 - **Jetpack Compose** — no XML layouts. Material 3 / Material You.
 - **kotlinx.serialization** — not Gson. Type-safe, faster.
@@ -171,8 +182,8 @@ hermes-android/
 |------|-----|
 | `docs/spec.md` | Full specification — protocol, UI layouts, phases, dependencies |
 | `docs/decisions.md` | Architecture decisions — framework choice, channel design, auth model |
-| `AGENTS.md` | Tool usage patterns for the `android_*` toolset |
-| `docs/mcp-tooling.md` | MCP server setup — android-tools-mcp + mobile-mcp |
+| `AGENTS.md` | Universal agent entry point — points here + the non-negotiables (standard-path, commits, writing hygiene) |
+| `docs/mcp-tooling.md` | MCP server setup — android-tools-mcp + mobile-mcp; `android_*` tool usage patterns |
 | **App — Core** | |
 | `ui/RelayApp.kt` | Main scaffold — bottom nav, Compose navigation |
 | `viewmodel/ChatViewModel.kt` | Chat orchestration — send, stream, cancel, slash commands |
