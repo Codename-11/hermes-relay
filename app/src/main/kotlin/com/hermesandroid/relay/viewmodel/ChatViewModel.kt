@@ -306,37 +306,30 @@ class ChatViewModel : ViewModel() {
     }
 
     /**
-     * Hot-swap the active Hermes profile from the in-chat picker, matching the
-     * desktop's clean profile swap. On the gateway this dispatches
-     * `config.set {key:"profile"}` (the session-scoped mirror of [selectModel]),
-     * so the live session's agent — its SOUL, model, and skills — changes in
-     * place without a new session or lost context. SSE turns need nothing here:
-     * they already carry the profile per-request as `profileName`. [profile] is
-     * the new pick; a server-default / null pick reverts to `"default"`.
+     * Switch the active Hermes profile from the in-chat picker. Verified against
+     * upstream `tui_gateway`: a profile is a FULL agent (its own HERMES_HOME/db,
+     * model, SOUL, personality, skills), sessions are PROFILE-BOUND, and the
+     * agent is built once at `session.create` from the session's profile — a
+     * live session never adopts a new profile (which is why the header read
+     * "Gary" while the running agent still answered "Victor"). There is no
+     * profile-switch RPC; the desktop passes `profile` on `session.create` /
+     * `session.resume`. So: bind the new profile for the next session and start
+     * a FRESH chat — the next turn's `session.create` carries it, building the
+     * new profile's agent. SSE turns already carry the profile per-request as
+     * `profileName`. [profile] = the new pick; null = the default profile.
      */
     fun activateGatewayProfile(profile: Profile?) {
         val gateway = gatewayClient ?: return
-        val handler = chatHandler ?: return
         if (streamingEndpoint != "gateway") return
-        val requestName = AgentDisplay.profileRequestName(profile?.name)
-        val label = AgentDisplay.profileDisplayName(profile)
-            ?: requestName
-            ?: "the default profile"
+        // The selected profile is already set (the sheet calls selectProfile
+        // before this), and the gateway pulls it live via sessionProfileProvider.
+        // Drop the old session so the next turn creates a fresh one bound to the
+        // new profile — the next session.create carries it, building its agent.
+        gateway.clearSession()
+        createNewChat()
+        // The profile brings its own model — refresh the picker's "current".
         viewModelScope.launch {
-            // Warm a session so the swap is session-scoped (config.set also works
-            // sessionless, falling back to the global default).
-            gateway.prewarm(handler.currentSessionId.value)
-            gateway.setProfile(requestName ?: "default").fold(
-                onSuccess = {
-                    handler.addSystemNotice("Switched to $label.")
-                    // The profile brings its own model — refresh the picker's
-                    // "current" so the Model dropdown reflects the swap.
-                    gateway.modelOptions().onSuccess { _modelProviders.value = it.providers }
-                },
-                onFailure = { e ->
-                    handler.addSystemNotice("Couldn't switch profile: ${e.message ?: "unknown error"}")
-                },
-            )
+            gateway.modelOptions().onSuccess { _modelProviders.value = it.providers }
         }
         refreshActiveAgentName()
     }
@@ -386,6 +379,9 @@ class ChatViewModel : ViewModel() {
     fun updateGatewayClient(client: GatewayChatClient?) {
         val changed = gatewayClient !== client
         gatewayClient = client
+        // Bind each gateway session.create/resume to the currently-selected
+        // profile (pulled live) — the upstream gateway builds the agent from it.
+        client?.sessionProfileProvider = { AgentDisplay.profileRequestName(selectedProfileProvider()?.name) }
         when {
             client == null -> _serverCommands.value = emptyList()
             // Catalog fetch must never cold-open /api/ws — only fetch over an

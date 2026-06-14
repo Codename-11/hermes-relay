@@ -208,6 +208,21 @@ class GatewayChatClient(
     @Volatile
     private var storedSessionId: String? = null
 
+    /**
+     * Supplies the profile to bind each `session.create` / `session.resume` to —
+     * the upstream `tui_gateway` opens that profile's HERMES_HOME/db and builds
+     * the agent (its model, SOUL, personality, skills) from it. Sessions are
+     * profile-bound: a live session keeps its agent, so a profile switch means a
+     * NEW session created under the new profile. Pulled live so it always
+     * reflects the current pick; null/blank = the gateway's launch (default)
+     * profile. Wired by ChatViewModel from the selected-profile provider.
+     */
+    @Volatile
+    var sessionProfileProvider: () -> String? = { null }
+
+    private fun currentSessionProfile(): String? =
+        sessionProfileProvider().takeIf { !it.isNullOrBlank() }
+
     @Volatile
     private var activeTurn: GatewayTurn? = null
 
@@ -606,20 +621,6 @@ class GatewayChatClient(
             },
         )
 
-    /**
-     * Switch the active Hermes profile via the dashboard `POST /api/profiles/active`
-     * — the route Manage and the official desktop use. Unlike `model`, the
-     * gateway's `config.set` has NO `profile` key (it answers "unknown config
-     * key: profile"), so profile activation is a dashboard HTTP call, not a
-     * session-scoped RPC. Routed through this client's [dashboardClient] so it
-     * carries the connection's dashboard session; the live gateway session
-     * adopts the new active profile on its next turn (clean hot-swap, no new
-     * session). The SSE paths don't need this — they carry the profile
-     * per-request as `profileName`.
-     */
-    suspend fun setProfile(name: String): Result<JsonObject> =
-        dashboardClient.setActiveProfile(name)
-
     fun shutdown() {
         activeTurn?.cancel()
         activeTurn = null
@@ -715,6 +716,7 @@ class GatewayChatClient(
             buildJsonObject {
                 put("session_id", storedId)
                 put("cols", DEFAULT_COLS)
+                currentSessionProfile()?.let { put("profile", it) }
             },
         )
         val live = resumed.getOrNull()?.stringField("session_id")
@@ -740,6 +742,7 @@ class GatewayChatClient(
                 buildJsonObject {
                     put("session_id", requestedStoredId)
                     put("cols", DEFAULT_COLS)
+                    currentSessionProfile()?.let { put("profile", it) }
                 },
             )
             val live = resumed.getOrNull()?.stringField("session_id")
@@ -760,6 +763,7 @@ class GatewayChatClient(
             buildJsonObject {
                 put("cols", DEFAULT_COLS)
                 if (!newSessionTitle.isNullOrBlank()) put("title", newSessionTitle)
+                currentSessionProfile()?.let { put("profile", it) }
             },
         ).getOrElse { e ->
             throw GatewayPreflightException("session.create failed: ${e.message}")

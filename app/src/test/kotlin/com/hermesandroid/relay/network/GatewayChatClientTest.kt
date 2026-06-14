@@ -544,10 +544,32 @@ class GatewayChatClientTest {
         assertTrue(harness.rpcLog.none { it.first == "session.steer" })
     }
 
-    // setProfile now activates via the dashboard `POST /api/profiles/active`
-    // (the gateway's config.set has no `profile` key — "unknown config key:
-    // profile"); the wire shape of that route is covered by
-    // DashboardApiClientTest.profileActions_useActiveAndDeleteRoutes.
+    // --- Profile-bound sessions (upstream tui_gateway: session.create/resume
+    // take a `profile` arg; a session's agent is built from it) ---
+
+    @Test
+    fun `session create binds the selected profile`() {
+        val r = Recorder()
+        client.sessionProfileProvider = { "mizu" }
+        client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        val create = harness.awaitRpc("session.create")
+        assertEquals("mizu", (create["profile"] as? JsonPrimitive)?.contentOrNull)
+    }
+
+    @Test
+    fun `session create omits profile when none is selected`() {
+        val r = Recorder()
+        // Default provider returns null → no profile bound (launch profile).
+        client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        val create = harness.awaitRpc("session.create")
+        assertEquals(null, create["profile"])
+    }
 
     // --- Attachments (image / pdf / file routing) ---
 
