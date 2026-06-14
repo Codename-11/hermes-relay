@@ -2210,7 +2210,12 @@ class ChatViewModel : ViewModel() {
             val sid = handler.currentSessionId.value
             if (sid != null && (streamingEndpoint == "sessions" || streamingEndpoint == "gateway")) {
                 viewModelScope.launch {
-                    val serverMessages = client.getMessages(sid)
+                    // Profile-aware read: a gateway turn on a non-default profile
+                    // persists into THAT profile's own state.db, so the bare
+                    // api_server `/api/sessions/{id}/messages` 404s → emptyList()
+                    // → a silent wipe of the just-finished turn. loadSessionHistory
+                    // prefers the `?profile=` dashboard loader on gateway connections.
+                    val serverMessages = loadSessionHistory(sid)
                     handler.loadMessageHistory(serverMessages)
                     drainQueue()
                 }
@@ -2275,7 +2280,10 @@ class ChatViewModel : ViewModel() {
                 if (sid != null && (streamingEndpoint == "sessions" || streamingEndpoint == "gateway")) {
                     viewModelScope.launch {
                         runCatching {
-                            val serverMessages = (apiClient ?: client).getMessages(sid)
+                            // Profile-aware read — see onCompleteCb: a bare
+                            // getMessages 404s for a non-default-profile session
+                            // and silently empties the transcript.
+                            val serverMessages = loadSessionHistory(sid)
                             handler.loadMessageHistory(serverMessages)
                         }
                     }
