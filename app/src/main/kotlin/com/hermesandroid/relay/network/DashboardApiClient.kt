@@ -2,6 +2,10 @@ package com.hermesandroid.relay.network
 
 import android.content.Context
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.network.models.MessageItem
+import com.hermesandroid.relay.network.models.MessageListResponse
+import com.hermesandroid.relay.network.models.SessionItem
+import com.hermesandroid.relay.network.models.SessionListResponse
 import com.hermesandroid.relay.auth.KeystoreTokenStore
 import com.hermesandroid.relay.auth.LegacyEncryptedPrefsTokenStore
 import com.hermesandroid.relay.auth.SessionTokenStore
@@ -384,6 +388,55 @@ class DashboardApiClient(
      */
     suspend fun listProfiles(): Result<List<Profile>> =
         getJsonObject("/api/profiles").mapCatching { root -> parseProfiles(root) }
+
+    /**
+     * List a profile's chat sessions via the dashboard `GET /api/sessions?profile=`.
+     *
+     * This is the per-profile scoping the official desktop sidebar uses: upstream
+     * (`web_server.py` `_open_session_db_for_profile`) opens THAT profile's own
+     * `state.db` directly. The gateway `session.list` RPC can't do this — it reads
+     * one process-global DB bound to the launch profile, so over a single socket it
+     * always returns the launch profile's sessions regardless of the active profile.
+     *
+     * [profile] null/blank → the launch (default) profile's DB (param omitted). The
+     * returned ids are the same stored-session ids the gateway `session.resume`
+     * reads, so list-here / resume-on-gateway stays consistent. `min_messages=1`
+     * drops empty draft rows; `order=recent` keeps live conversations on top.
+     */
+    suspend fun listSessions(profile: String? = null, limit: Int = 50): Result<List<SessionItem>> =
+        withContext(Dispatchers.IO) {
+            val query = buildList {
+                add("limit=${limit.coerceIn(1, 200)}")
+                add("order=recent")
+                add("min_messages=1")
+                val name = profile?.trim().orEmpty()
+                if (name.isNotBlank()) add("profile=${pathSegment(name)}")
+            }.joinToString(prefix = "?", separator = "&")
+            getJson("/api/sessions$query").mapCatching { root ->
+                val parsed = json.decodeFromJsonElement(SessionListResponse.serializer(), root)
+                parsed.sessions ?: parsed.items ?: parsed.data ?: emptyList()
+            }
+        }
+
+    /**
+     * A session's message history, scoped to its owning profile via the dashboard
+     * `GET /api/sessions/{id}/messages?profile=`. Required twin of [listSessions]:
+     * a non-default profile's sessions live in that profile's own `state.db`, so
+     * loading their transcript through the api_server (one shared DB, no profile)
+     * returns nothing. [profile] null/blank → the launch profile's DB. Decodes the
+     * upstream `{session_id, messages:[…]}` envelope into the shared [MessageItem].
+     */
+    suspend fun getSessionMessages(
+        sessionId: String,
+        profile: String? = null,
+    ): Result<List<MessageItem>> = withContext(Dispatchers.IO) {
+        val name = profile?.trim().orEmpty()
+        val query = if (name.isNotBlank()) "?profile=${pathSegment(name)}" else ""
+        getJson("/api/sessions/${pathSegment(sessionId)}/messages$query").mapCatching { root ->
+            val parsed = json.decodeFromJsonElement(MessageListResponse.serializer(), root)
+            parsed.messages ?: parsed.data ?: parsed.items ?: emptyList()
+        }
+    }
 
     private fun parseProfiles(root: JsonObject): List<Profile> {
         fun decode(element: JsonElement, nameOverride: String?): Profile? = runCatching {

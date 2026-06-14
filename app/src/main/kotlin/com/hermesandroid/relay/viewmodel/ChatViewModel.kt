@@ -38,6 +38,8 @@ import com.hermesandroid.relay.network.SteerResult
 import com.hermesandroid.relay.network.handlers.ChatHandler
 import com.hermesandroid.relay.network.handlers.LocalDispatchResult
 import com.hermesandroid.relay.network.handlers.formatPhoneActionResult
+import com.hermesandroid.relay.network.models.MessageItem
+import com.hermesandroid.relay.network.models.SessionItem
 import com.hermesandroid.relay.network.models.SkillInfo
 import com.hermesandroid.relay.network.models.UsageInfo
 import com.hermesandroid.relay.notifications.TurnCompleteNotifier
@@ -321,12 +323,16 @@ class ChatViewModel : ViewModel() {
     fun activateGatewayProfile(profile: Profile?) {
         val gateway = gatewayClient ?: return
         if (streamingEndpoint != "gateway") return
-        // The selected profile is already set (the sheet calls selectProfile
-        // before this), and the gateway pulls it live via sessionProfileProvider.
-        // Drop the old session so the next turn creates a fresh one bound to the
-        // new profile — the next session.create carries it, building its agent.
+        // Mirror the desktop's hot-swap: switching the SELECTED profile (done by
+        // the sheet's selectProfile call just before this) already drives
+        // RelayApp's profile-context switch, which cancels any in-flight turn and
+        // resets the thread (fresh draft, or the new profile's last session). We
+        // must NOT also createNewChat() here — that second reset races the context
+        // switch (the "reply typing, then a new chat appears" jank). All we do is
+        // drop the live gateway session so the NEXT turn's session.create rebinds
+        // the agent to the new profile (pulled live via sessionProfileProvider),
+        // like the desktop spawning the profile's backend lazily on the next send.
         gateway.clearSession()
-        createNewChat()
         // The profile brings its own model — refresh the picker's "current".
         viewModelScope.launch {
             gateway.modelOptions().onSuccess { _modelProviders.value = it.providers }
@@ -507,6 +513,47 @@ class ChatViewModel : ViewModel() {
     fun setEffectiveProfileProvider(provider: () -> Profile?) {
         effectiveProfileProvider = provider
         refreshActiveAgentName()
+    }
+
+    /**
+     * Supplies the drawer's profile-scoped session list for gateway connections
+     * (dashboard `/api/sessions?profile=<active>`). Returns `null` when the
+     * connection has no dashboard session, so [refreshSessions] falls back to the
+     * shared api_server list. Wired from RelayApp to
+     * [com.hermesandroid.relay.viewmodel.ConnectionViewModel.listProfileScopedSessions].
+     */
+    private var profileSessionLister: (suspend () -> Result<List<SessionItem>>?)? = null
+
+    fun setProfileSessionLister(lister: suspend () -> Result<List<SessionItem>>?) {
+        profileSessionLister = lister
+    }
+
+    /**
+     * Loads a session's transcript scoped to the active profile (dashboard
+     * `/api/sessions/{id}/messages?profile=`). Twin of [profileSessionLister]:
+     * once the drawer lists a non-default profile's sessions, opening one must
+     * read that profile's own DB. Returns `null` off the dashboard surface.
+     */
+    private var profileMessageLoader: (suspend (String) -> Result<List<MessageItem>>?)? = null
+
+    fun setProfileMessageLoader(loader: suspend (String) -> Result<List<MessageItem>>?) {
+        profileMessageLoader = loader
+    }
+
+    /**
+     * Transcript for [sessionId], preferring the profile-scoped dashboard path on
+     * gateway connections (so non-default-profile sessions resolve against their
+     * own DB) and falling back to the shared api_server transcript otherwise or on
+     * failure.
+     */
+    private suspend fun loadSessionHistory(sessionId: String): List<MessageItem> {
+        if (streamingEndpoint == "gateway") {
+            val scoped = profileMessageLoader?.invoke(sessionId)
+            if (scoped != null) {
+                scoped.getOrNull()?.let { return it }
+            }
+        }
+        return apiClient?.getMessages(sessionId) ?: emptyList()
     }
 
     fun selectPersonality(name: String) {
@@ -792,7 +839,7 @@ class ChatViewModel : ViewModel() {
         _isLoadingHistory.value = true
         viewModelScope.launch {
             try {
-                val messages = client.getMessages(sessionId)
+                val messages = loadSessionHistory(sessionId)
                 if (
                     historyLoadGeneration.get() == loadGeneration &&
                     activeProfileContextKey == contextKey &&
@@ -825,26 +872,40 @@ class ChatViewModel : ViewModel() {
 
     // --- Session management ---
 
+    private val _isLoadingSessions = MutableStateFlow(false)
+
+    /** True while the drawer's session list is being fetched (drives the spinner). */
+    val isLoadingSessions: StateFlow<Boolean> = _isLoadingSessions.asStateFlow()
+
     fun refreshSessions() {
         val handler = chatHandler ?: return
-        // On the gateway, list the ACTIVE PROFILE's sessions via `session.list`
-        // (sessions are profile-bound, so the drawer re-scopes per profile like
-        // the desktop). The api_server `/api/sessions` reads one shared DB with
-        // no profile concept, so it's the fallback / SSE path.
-        val gateway = gatewayClient?.takeIf { streamingEndpoint == "gateway" }
         viewModelScope.launch {
-            val result = gateway?.listSessions() ?: apiClient?.listSessionsResult()
-            result?.fold(
-                onSuccess = { sessions -> handler.updateSessions(sessions) },
-                onFailure = { error ->
-                    if (gateway != null) {
-                        // Gateway list failed — fall back to the api_server list.
-                        apiClient?.listSessionsResult()?.onSuccess { handler.updateSessions(it) }
-                    } else {
-                        emitError(error, context = "load_sessions")
-                    }
-                },
-            )
+            _isLoadingSessions.value = true
+            try {
+                // On the gateway, scope the drawer to the ACTIVE PROFILE via the
+                // dashboard `/api/sessions?profile=` surface (it opens that
+                // profile's own state.db, exactly like the desktop sidebar). The
+                // gateway `session.list` RPC can't scope — it always reads the
+                // launch profile's DB — so it's deliberately not used here. The
+                // api_server `/api/sessions` (one shared DB, no profile concept)
+                // is the fallback for connections without a Manage/dashboard
+                // session.
+                val scoped = if (streamingEndpoint == "gateway") profileSessionLister?.invoke() else null
+                val result = scoped ?: apiClient?.listSessionsResult()
+                result?.fold(
+                    onSuccess = { sessions -> handler.updateSessions(sessions) },
+                    onFailure = { error ->
+                        if (scoped != null) {
+                            // Profile-scoped list failed — fall back to the shared list.
+                            apiClient?.listSessionsResult()?.onSuccess { handler.updateSessions(it) }
+                        } else {
+                            emitError(error, context = "load_sessions")
+                        }
+                    },
+                )
+            } finally {
+                _isLoadingSessions.value = false
+            }
         }
     }
 
@@ -894,7 +955,7 @@ class ChatViewModel : ViewModel() {
     }
 
     fun switchSession(sessionId: String) {
-        val client = apiClient ?: return
+        apiClient ?: return
         val handler = chatHandler ?: return
 
         // Cancel any in-flight stream
@@ -910,10 +971,11 @@ class ChatViewModel : ViewModel() {
         onSessionChanged?.invoke(sessionId)
         AppAnalytics.onSessionSwitched()
 
-        // Load message history
+        // Load message history (profile-scoped on gateway so a non-default
+        // profile's sessions resolve against their own DB).
         _isLoadingHistory.value = true
         viewModelScope.launch {
-            val messages = client.getMessages(sessionId)
+            val messages = loadSessionHistory(sessionId)
             if (
                 historyLoadGeneration.get() == loadGeneration &&
                 handler.currentSessionId.value == sessionId
@@ -1536,6 +1598,18 @@ class ChatViewModel : ViewModel() {
 
         val assistantMessageId = UUID.randomUUID().toString()
         val sessionId = handler.currentSessionId.value
+
+        // Optimistic drawer preview: a chat created via "New Chat" still reads
+        // "New Chat"/untitled in the drawer until the server auto-titles it after
+        // the turn. Stamp it with the first user message now so the row is
+        // meaningful immediately (mirrors the SSE-create path's auto-title).
+        sessionId?.takeIf { it.isNotBlank() }?.let { sid ->
+            val row = handler.sessions.value.firstOrNull { it.sessionId == sid }
+            if (row != null && (row.title.isNullOrBlank() || row.title == "New Chat")) {
+                val preview = text.trim().take(50).let { if (text.trim().length > 50) "$it…" else it }
+                if (preview.isNotBlank()) handler.renameSessionLocal(sid, preview)
+            }
+        }
 
         // runs/completions are sessionless on our side; gateway creates and
         // persists its own session via session.create (no /api/sessions

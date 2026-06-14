@@ -149,6 +149,7 @@ import com.hermesandroid.relay.ui.theme.relayGridTexture
 import com.hermesandroid.relay.ui.theme.relayMetadataStyle
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import kotlin.math.roundToInt
 import com.hermesandroid.relay.viewmodel.ChatViewModel
@@ -285,6 +286,7 @@ fun ChatScreen(
     val sessions by chatViewModel.sessions.collectAsState()
     val currentSessionId by chatViewModel.currentSessionId.collectAsState()
     val isLoadingHistory by chatViewModel.isLoadingHistory.collectAsState()
+    val isLoadingSessions by chatViewModel.isLoadingSessions.collectAsState()
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
     val personalityNames by chatViewModel.personalityNames.collectAsState()
     val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
@@ -925,6 +927,7 @@ fun ChatScreen(
                 currentSessionId = currentSessionId,
                 scopeTitle = drawerTitle,
                 scopeSubtitle = drawerSubtitle,
+                isLoading = isLoadingSessions,
                 onNewChat = {
                     chatViewModel.createNewChat()
                     scope.launch { drawerState.close() }
@@ -1301,13 +1304,32 @@ fun ChatScreen(
 
                         Text(
                             text = when (chatConnectState) {
-                                ChatConnectState.Ready -> "Start a conversation"
+                                // Name the agent when a profile is picked, so a
+                                // profile switch is legible in the thread itself
+                                // (not just the header) — the desktop's intro.
+                                ChatConnectState.Ready ->
+                                    if (selectedProfile != null) "Chat with $agentDisplayName" else "Start a conversation"
                                 ChatConnectState.Connecting -> "Connecting to Hermes…"
                                 ChatConnectState.NeedsConnection -> "Connect to Hermes"
                             },
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurface
                         )
+
+                        // The selected agent's role/description — the rest of the
+                        // fresh-session intro, shown only when a profile is active.
+                        val profileBlurb = effectiveProfile?.description
+                            ?.trim()
+                            ?.takeIf { it.isNotBlank() && !it.equals(agentDisplayName, ignoreCase = true) }
+                        if (chatConnectState == ChatConnectState.Ready && profileBlurb != null) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = profileBlurb,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                            )
+                        }
 
                         when (chatConnectState) {
                             // Hydration finished and there is genuinely nothing

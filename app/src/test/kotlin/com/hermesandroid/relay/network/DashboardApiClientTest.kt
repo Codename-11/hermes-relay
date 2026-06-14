@@ -475,4 +475,75 @@ class DashboardApiClientTest {
         assertEquals("mizu", profiles[1].name)
         assertEquals("Coder", profiles[1].description)
     }
+
+    @Test
+    fun listSessions_scopesToProfileAndParsesUpstreamEnvelope() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody(
+                    """
+                    {"sessions":[
+                      {"id":"sess-a","title":"Refactor","model":"claude-opus-4-8","message_count":4,"started_at":1234.5,"source":"tui","profile":"mizu"},
+                      {"id":"sess-b","title":"Notes","message_count":2,"started_at":1200.0,"source":"tui","profile":"mizu"}
+                    ],"total":2,"limit":50,"offset":0}
+                    """.trimIndent(),
+                ),
+        )
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        val sessions = client.listSessions(profile = "mizu").getOrThrow()
+
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        // Server-side per-profile scoping is the whole point — the request must
+        // carry profile=mizu (the desktop's `_open_session_db_for_profile` path).
+        val url = request.requestUrl!!
+        assertEquals("/api/sessions", url.encodedPath)
+        assertEquals("mizu", url.queryParameter("profile"))
+        assertEquals("1", url.queryParameter("min_messages"))
+        assertEquals(2, sessions.size)
+        assertEquals("sess-a", sessions[0].id)
+        assertEquals("Refactor", sessions[0].title)
+        assertEquals("claude-opus-4-8", sessions[0].model)
+        assertEquals(4, sessions[0].messageCount)
+    }
+
+    @Test
+    fun listSessions_omitsProfileParamForTheDefaultSelection() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"sessions":[],"total":0,"limit":50,"offset":0}"""),
+        )
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        client.listSessions(profile = null).getOrThrow()
+
+        val request = server.takeRequest()
+        // No profile → omit the param so upstream reads the launch (default) DB.
+        assertEquals(null, request.requestUrl!!.queryParameter("profile"))
+    }
+
+    @Test
+    fun getSessionMessages_scopesToProfileAndParsesUpstreamEnvelope() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody(
+                    """{"session_id":"sess-a","messages":[
+                      {"id":"m1","role":"user","content":"hi"},
+                      {"id":"m2","role":"assistant","content":"hello"}
+                    ]}""".trimIndent(),
+                ),
+        )
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        val messages = client.getSessionMessages("sess-a", profile = "mizu").getOrThrow()
+
+        val request = server.takeRequest()
+        val url = request.requestUrl!!
+        assertEquals("/api/sessions/sess-a/messages", url.encodedPath)
+        assertEquals("mizu", url.queryParameter("profile"))
+        assertEquals(2, messages.size)
+        assertEquals("user", messages[0].role)
+        assertEquals("assistant", messages[1].role)
+    }
 }

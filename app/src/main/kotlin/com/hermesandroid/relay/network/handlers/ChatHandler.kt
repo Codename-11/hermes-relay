@@ -1002,7 +1002,7 @@ class ChatHandler {
      * Update sessions list from API response.
      */
     fun updateSessions(items: List<SessionItem>) {
-        _sessions.value = items.map { item ->
+        val mapped = items.map { item ->
             // If > 1e12, already in milliseconds; otherwise convert from seconds
             val ts = item.startedAt ?: 0.0
             val timestampMs = if (ts > 1e12) ts.toLong() else (ts * 1000).toLong()
@@ -1014,6 +1014,20 @@ class ChatHandler {
                 updatedAt = timestampMs
             )
         }
+        // Preserve the active session's optimistic row when the server list
+        // doesn't include it yet: a freshly created chat has 0 messages and the
+        // drawer's `min_messages=1` query filters it out until its first turn
+        // persists. Keeping the local row (its title/preview is already set)
+        // stops a new chat from vanishing from the drawer between creation and
+        // the first message. Once it has messages the server returns it and the
+        // id-match below replaces the optimistic copy.
+        val activeId = _currentSessionId.value
+        val pending = if (activeId != null && mapped.none { it.sessionId == activeId }) {
+            _sessions.value.firstOrNull { it.sessionId == activeId }
+        } else {
+            null
+        }
+        _sessions.value = if (pending != null) listOf(pending) + mapped else mapped
     }
 
     fun clearSessions() {

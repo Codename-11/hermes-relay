@@ -591,6 +591,17 @@ fun RelayApp() {
             )
         }
 
+        // Drawer session list, scoped to the active profile on gateway
+        // connections (dashboard `/api/sessions?profile=`). Returns null off the
+        // dashboard surface so refreshSessions() falls back to the shared list.
+        chatViewModel.setProfileSessionLister {
+            connectionViewModel.listProfileScopedSessions()
+        }
+        // …and load a tapped session's transcript from that same profile's DB.
+        chatViewModel.setProfileMessageLoader { sessionId ->
+            connectionViewModel.loadProfileScopedMessages(sessionId)
+        }
+
         // Wire session persistence callback
         chatViewModel.onSessionChanged = { sessionId ->
             connectionViewModel.saveLastSessionId(sessionId)
@@ -606,6 +617,13 @@ fun RelayApp() {
     val chatClientReady = chatApiClient != null
     LaunchedEffect(chatClientReady, activeConnectionId, selectedProfile?.name, lastSessionId) {
         if (!chatClientReady) return@LaunchedEffect
+        // Coalesce the rapid lastSessionId null→value churn a profile switch
+        // produces: selectProfile() nulls lastSessionId, then the persisted
+        // per-profile session resolves a tick later. This effect re-fires on that
+        // change, cancelling the delay below before it commits — so we skip
+        // painting the intermediate empty draft and land straight on the resolved
+        // session (or a genuine fresh draft when the profile has no history).
+        delay(160)
         chatViewModel.switchProfileContext(
             contextKey = AgentDisplay.profileContextKey(
                 connectionId = activeConnectionId,

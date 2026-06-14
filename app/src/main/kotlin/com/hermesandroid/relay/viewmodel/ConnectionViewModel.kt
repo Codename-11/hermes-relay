@@ -38,6 +38,8 @@ import com.hermesandroid.relay.network.ChatMode
 import com.hermesandroid.relay.network.ConnectionManager
 import com.hermesandroid.relay.network.ConnectionState
 import com.hermesandroid.relay.network.DashboardApiClient
+import com.hermesandroid.relay.network.models.MessageItem
+import com.hermesandroid.relay.network.models.SessionItem
 import com.hermesandroid.relay.network.DashboardAuthSession
 import com.hermesandroid.relay.network.DashboardCookieStore
 import com.hermesandroid.relay.network.DashboardStatus
@@ -1004,6 +1006,51 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 _dashboardProfiles.value = profiles
             }
         }
+    }
+
+    /**
+     * The ACTIVE profile's chat sessions, scoped server-side via the dashboard
+     * `GET /api/sessions?profile=` surface — upstream opens that profile's own
+     * `state.db` directly, the same per-profile scoping the official desktop
+     * sidebar uses. Returns `null` when there's no dashboard URL (an api_server-
+     * only connection with no Manage session), so the caller falls back to the
+     * shared api_server session list.
+     *
+     * The gateway `session.list` RPC can't substitute here: it reads one process-
+     * global DB pinned to the launch profile, so it never re-scopes on a profile
+     * switch. The default/`null` selection omits the param → the launch profile's
+     * DB (the server's configured default), matching [selectProfile]'s semantics.
+     */
+    suspend fun listProfileScopedSessions(limit: Int = 50): Result<List<SessionItem>>? {
+        val connectionId = connectionStore.activeConnectionId.value ?: return null
+        val dashboardUrl = activeDashboardUrl() ?: return null
+        val profileName = AgentDisplay.profileRequestName(_selectedProfile.value?.name)
+        return DashboardApiClient(
+            baseUrl = dashboardUrl,
+            okHttpClient = DashboardApiClient.defaultClient(
+                cookieStore = dashboardCookieStoreFor(connectionId),
+            ),
+        ).listSessions(profile = profileName, limit = limit)
+    }
+
+    /**
+     * A session's transcript, scoped to the active profile via the dashboard
+     * `/api/sessions/{id}/messages?profile=`. The twin of [listProfileScopedSessions]:
+     * once the drawer lists a non-default profile's sessions, opening one must read
+     * that profile's own `state.db` (the api_server's shared DB has no such rows).
+     * Returns `null` off the dashboard surface so the caller falls back to the
+     * api_server transcript.
+     */
+    suspend fun loadProfileScopedMessages(sessionId: String): Result<List<MessageItem>>? {
+        val connectionId = connectionStore.activeConnectionId.value ?: return null
+        val dashboardUrl = activeDashboardUrl() ?: return null
+        val profileName = AgentDisplay.profileRequestName(_selectedProfile.value?.name)
+        return DashboardApiClient(
+            baseUrl = dashboardUrl,
+            okHttpClient = DashboardApiClient.defaultClient(
+                cookieStore = dashboardCookieStoreFor(connectionId),
+            ),
+        ).getSessionMessages(sessionId, profileName)
     }
 
     /**
