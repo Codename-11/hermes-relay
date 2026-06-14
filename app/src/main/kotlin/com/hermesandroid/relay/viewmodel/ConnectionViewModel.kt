@@ -119,6 +119,23 @@ enum class StandardVoiceAvailability {
     Unsupported,
 }
 
+/**
+ * Coarse connection state for the chat empty-state, derived in
+ * [ConnectionViewModel.chatConnectState]. Lets the UI hold a neutral
+ * "Connecting…" placeholder during cold-start hydration instead of flashing
+ * the "Connect to Hermes" CTA before we know whether anything is configured.
+ */
+enum class ChatConnectState {
+    /** Store not hydrated yet, or an active connection is still coming up. */
+    Connecting,
+
+    /** Chat client built and the API server is reachable. */
+    Ready,
+
+    /** Hydration complete and no connection is configured — show the CTA. */
+    NeedsConnection,
+}
+
 class ConnectionViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
@@ -675,6 +692,34 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val chatReady: StateFlow<Boolean> = combine(_chatApiClient, _apiServerReachable) { client, reachable ->
         client != null && reachable
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    /**
+     * Three-way gate for the chat empty-state, so a cold start doesn't flash
+     * the loud "Connect to Hermes" CTA while DataStore is still hydrating.
+     *
+     * - [ChatConnectState.Ready] — chat client built + server reachable.
+     * - [ChatConnectState.Connecting] — either the connection store hasn't
+     *   hydrated yet (we don't yet know if anything is configured), OR an
+     *   active connection exists but chat isn't reachable yet (cold connect /
+     *   route resolve). Show a quiet spinner, never the connect button.
+     * - [ChatConnectState.NeedsConnection] — hydration finished and there is
+     *   genuinely no connection to use. The only state that shows the CTA.
+     *
+     * Seeds [ChatConnectState.Connecting] so the very first composed frame —
+     * before any flow emits — is the neutral state, not the CTA.
+     */
+    val chatConnectState: StateFlow<ChatConnectState> = combine(
+        connectionStore.isHydrated,
+        activeConnection,
+        chatReady,
+    ) { hydrated, active, ready ->
+        when {
+            ready -> ChatConnectState.Ready
+            !hydrated -> ChatConnectState.Connecting
+            active != null -> ChatConnectState.Connecting
+            else -> ChatConnectState.NeedsConnection
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, ChatConnectState.Connecting)
     // NOTE: [relayReady] / [voiceReady] are declared below the [_relayUrl]
     // MutableStateFlow,
     // further down this file, because Kotlin class-body initializers run

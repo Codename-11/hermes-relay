@@ -25,6 +25,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -34,6 +37,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
+import com.hermesandroid.relay.util.MediaSaver
 import coil3.compose.AsyncImagePainter
 import coil3.compose.SubcomposeAsyncImage
 import coil3.compose.SubcomposeAsyncImageContent
@@ -96,6 +100,18 @@ fun ChatInlineImages(
 
 @Composable
 private fun RemoteChatImage(image: ChatInlineImage, maxWidth: Dp) {
+    var viewerOpen by remember { mutableStateOf(false) }
+    if (viewerOpen) {
+        ChatImageViewer(
+            source = ChatImageViewerSource.Coil(
+                model = image.src,
+                displayName = image.alt.ifBlank { "image" },
+                mime = "image/*",
+                bytesProvider = { MediaSaver.fetchRemoteBytes(image.src).first },
+            ),
+            onDismiss = { viewerOpen = false },
+        )
+    }
     SubcomposeAsyncImage(
         model = image.src,
         contentDescription = image.alt.ifBlank { "Generated image" },
@@ -103,7 +119,8 @@ private fun RemoteChatImage(image: ChatInlineImage, maxWidth: Dp) {
         modifier = Modifier
             .widthIn(max = maxWidth)
             .heightIn(max = 360.dp)
-            .clip(RoundedCornerShape(12.dp)),
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { viewerOpen = true },
     ) {
         val state by painter.state.collectAsState()
         when (state) {

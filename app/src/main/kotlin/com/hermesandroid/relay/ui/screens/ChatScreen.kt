@@ -153,6 +153,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import kotlin.math.roundToInt
 import com.hermesandroid.relay.viewmodel.ChatViewModel
+import com.hermesandroid.relay.viewmodel.ChatConnectState
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
 import com.hermesandroid.relay.voice.VoiceOverlayHost
@@ -271,6 +272,7 @@ fun ChatScreen(
     var voiceOutputConfig by remember { mutableStateOf<VoiceOutputConfig?>(null) }
     var realtimeAgentConfig by remember { mutableStateOf<RealtimeVoiceConfig?>(null) }
     val chatReady by connectionViewModel.chatReady.collectAsState()
+    val chatConnectState by connectionViewModel.chatConnectState.collectAsState()
     // Stable voice can use the standard Hermes dashboard audio routes or the
     // optional Relay voice routes. Gate the mic on either route being usable;
     // availability picks the actionable toast when neither is.
@@ -1316,60 +1318,95 @@ fun ChatScreen(
                         }
 
                         Text(
-                            text = if (chatReady) "Start a conversation" else "Connect to Hermes",
+                            text = when (chatConnectState) {
+                                ChatConnectState.Ready -> "Start a conversation"
+                                ChatConnectState.Connecting -> "Connecting to Hermes…"
+                                ChatConnectState.NeedsConnection -> "Connect to Hermes"
+                            },
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurface
                         )
 
-                        if (!chatReady) {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            ElevatedCard(
-                                colors = CardDefaults.elevatedCardColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.86f),
-                                ),
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(16.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                        when (chatConnectState) {
+                            // Hydration finished and there is genuinely nothing
+                            // configured — the only state that shows the CTA.
+                            ChatConnectState.NeedsConnection -> {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                ElevatedCard(
+                                    colors = CardDefaults.elevatedCardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.86f),
+                                    ),
+                                    modifier = Modifier.fillMaxWidth(),
                                 ) {
-                                    Text(
-                                        text = "Chat needs a Standard Hermes API connection.",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    Button(
-                                        onClick = onNavigateToConnect,
-                                        modifier = Modifier.fillMaxWidth(),
+                                    Column(
+                                        modifier = Modifier.padding(16.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(10.dp),
                                     ) {
-                                        Text("Connect Standard Hermes")
+                                        Text(
+                                            text = "Chat needs a Standard Hermes API connection.",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                        Button(
+                                            onClick = onNavigateToConnect,
+                                            modifier = Modifier.fillMaxWidth(),
+                                        ) {
+                                            Text("Connect Standard Hermes")
+                                        }
                                     }
                                 }
                             }
-                        } else {
-                            Spacer(modifier = Modifier.height(20.dp))
 
-                            // Suggestion chips
-                            FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                suggestions.forEach { suggestion ->
-                                    AssistChip(
-                                        onClick = { inputText = suggestion },
-                                        label = {
-                                            Text(
-                                                text = suggestion,
-                                                style = MaterialTheme.typography.bodySmall
-                                            )
-                                        },
-                                        colors = AssistChipDefaults.assistChipColors(
-                                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                                            labelColor = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                            // Cold-start hydration / an active connection still
+                            // coming up. Quiet spinner — never the connect CTA.
+                            // A low-emphasis "Manage connections" escape hatch
+                            // keeps a genuinely-stuck connection recoverable.
+                            ChatConnectState.Connecting -> {
+                                Spacer(modifier = Modifier.height(14.dp))
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
                                     )
+                                    Text(
+                                        text = "Getting things ready…",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                TextButton(onClick = onNavigateToConnections) {
+                                    Text("Manage connections")
+                                }
+                            }
+
+                            ChatConnectState.Ready -> {
+                                Spacer(modifier = Modifier.height(20.dp))
+
+                                // Suggestion chips
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    suggestions.forEach { suggestion ->
+                                        AssistChip(
+                                            onClick = { inputText = suggestion },
+                                            label = {
+                                                Text(
+                                                    text = suggestion,
+                                                    style = MaterialTheme.typography.bodySmall
+                                                )
+                                            },
+                                            colors = AssistChipDefaults.assistChipColors(
+                                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                                                labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        )
+                                    }
                                 }
                             }
                         }

@@ -101,6 +101,17 @@ class ConnectionStore private constructor(
     val activeConnectionId: StateFlow<String?> = _activeConnectionId.asStateFlow()
 
     /**
+     * Flips to `true` once the initial DataStore hydrate completes (success OR
+     * failure). Until then [connections] / [activeConnection] hold their empty
+     * seed values, which are indistinguishable from a genuinely empty store.
+     * Consumers that must not mistake "still loading" for "nothing configured"
+     * — e.g. the chat empty-state, which would otherwise flash a "Connect to
+     * Hermes" CTA on every cold start — gate on this instead of on emptiness.
+     */
+    private val _isHydrated = MutableStateFlow(false)
+    val isHydrated: StateFlow<Boolean> = _isHydrated.asStateFlow()
+
+    /**
      * Derived: the active connection, or null when the active ID is missing
      * or points to a deleted connection. Recomputes every time either
      * upstream emits — cheap list scan, no memoization needed.
@@ -144,6 +155,11 @@ class ConnectionStore private constructor(
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Initial hydrate failed: ${e.message}")
+            } finally {
+                // Mark hydration done even on failure — a failed read still
+                // means "we now know the store's state is empty", so the UI
+                // should stop showing the neutral loading gate.
+                _isHydrated.value = true
             }
         }
     }
