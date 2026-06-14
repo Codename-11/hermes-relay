@@ -14,6 +14,8 @@ Chat
   instead of a silent drop.
 * Steer a running turn, edit & resend your messages, watch subagent
   lanes, and a context-window meter — plus turn-complete notifications.
+* Tap an image to open it full-screen (pinch to zoom); save or share
+  images and other attachments.
 * Redesigned input bar: pill field, one morphing Send/Voice/Stop button.
 
 Manage
