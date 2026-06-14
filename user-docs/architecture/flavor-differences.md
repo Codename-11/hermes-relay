@@ -56,17 +56,20 @@ The `VoiceBridgeIntentHandler` interface lives in `main/`; each flavor provides 
 
 ### Main manifest
 
-The shared manifest declares only the app permissions and services needed by both tracks:
+The shared manifest declares the app permissions and services needed by both tracks:
 
 ```
-INTERNET, ACCESS_NETWORK_STATE, CAMERA, RECORD_AUDIO, MODIFY_AUDIO_SETTINGS
+INTERNET, ACCESS_NETWORK_STATE, CAMERA, RECORD_AUDIO, MODIFY_AUDIO_SETTINGS,
+POST_NOTIFICATIONS, FOREGROUND_SERVICE, FOREGROUND_SERVICE_SPECIAL_USE
 ```
 
-It also declares the optional notification companion service. It does not declare the accessibility service, Device Control foreground service, overlay permission, wake lock, MediaProjection foreground-service type, contacts, location, SMS, or call permissions.
+It also declares the optional notification companion service and the opt-in `GatewayKeepAliveService` — the "Keep connected in background" feature, a `specialUse` foreground service that is off by default and ships on **both** flavors. It does not declare the accessibility service, the Device Control bridge foreground service, overlay permission, wake lock, MediaProjection foreground-service type, contacts, location, SMS, or call permissions.
 
 ### Google Play manifest
 
-The Play manifest does not add Device Control permissions or services. The merged Play manifest should contain no `AccessibilityService`, `BIND_ACCESSIBILITY_SERVICE`, `SYSTEM_ALERT_WINDOW`, `FOREGROUND_SERVICE_SPECIAL_USE`, `WAKE_LOCK`, or `BridgeForegroundService` declaration.
+The Play manifest does not add Device Control permissions or services. The merged Play manifest should contain no `AccessibilityService`, `BIND_ACCESSIBILITY_SERVICE`, `SYSTEM_ALERT_WINDOW`, `WAKE_LOCK`, `FOREGROUND_SERVICE_MEDIA_PROJECTION`, or `BridgeForegroundService` declaration.
+
+> **Exception — `FOREGROUND_SERVICE_SPECIAL_USE` + `GatewayKeepAliveService` _are_ in the merged Play manifest.** They back the opt-in "Keep connected in background" feature (off by default), which ships on both flavors via the main manifest. This means the Play build carries one `specialUse` foreground service and therefore needs a Play Console foreground-service declaration at submission (see `docs/play-store-listing.md`). The Device Control bridge's `specialUse|mediaProjection` service stays sideload-only.
 
 ### Sideload manifest
 

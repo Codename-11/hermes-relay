@@ -43,7 +43,12 @@ import com.hermesandroid.relay.network.DashboardCookieStore
 import com.hermesandroid.relay.network.DashboardStatus
 import com.hermesandroid.relay.network.EncryptedDashboardCookieStore
 import com.hermesandroid.relay.network.EndpointResolver
+import com.hermesandroid.relay.network.GatewayAvailability
+import com.hermesandroid.relay.data.KEY_GATEWAY_KEEP_ALIVE
+import com.hermesandroid.relay.network.GatewayChatClient
+import com.hermesandroid.relay.network.GatewayKeepAliveService
 import com.hermesandroid.relay.network.HermesApiClient
+import com.hermesandroid.relay.network.resolveStreamingEndpointPreference
 import com.hermesandroid.relay.network.RouteProbeOutcome
 import com.hermesandroid.relay.network.ProfileApiUrlResolver
 import com.hermesandroid.relay.network.ServerCapabilities
@@ -114,6 +119,23 @@ enum class StandardVoiceAvailability {
     Unsupported,
 }
 
+/**
+ * Coarse connection state for the chat empty-state, derived in
+ * [ConnectionViewModel.chatConnectState]. Lets the UI hold a neutral
+ * "Connecting…" placeholder during cold-start hydration instead of flashing
+ * the "Connect to Hermes" CTA before we know whether anything is configured.
+ */
+enum class ChatConnectState {
+    /** Store not hydrated yet, or an active connection is still coming up. */
+    Connecting,
+
+    /** Chat client built and the API server is reachable. */
+    Ready,
+
+    /** Hydration complete and no connection is configured — show the CTA. */
+    NeedsConnection,
+}
+
 class ConnectionViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
@@ -173,6 +195,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
         // Chat scroll behavior
         private val KEY_SMOOTH_AUTO_SCROLL = booleanPreferencesKey("smooth_auto_scroll")
+
+        // Turn-complete notification ("Notify when Hermes finishes")
+        private val KEY_NOTIFY_TURN_COMPLETE = booleanPreferencesKey("notify_turn_complete")
+
+        // One-shot "Live voice conversation" hint on the input bar's voice slot
+        private val KEY_VOICE_HINT_SEEN = booleanPreferencesKey("voice_mode_hint_seen")
     }
 
     // --- Core networking components ---
@@ -533,6 +561,90 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     private val _standardAudioApiReachable = MutableStateFlow(false)
     val standardAudioApiReachable: StateFlow<Boolean> = _standardAudioApiReachable.asStateFlow()
 
+    /**
+     * Gateway chat transport (tui_gateway over the dashboard's `/api/ws`)
+     * availability. Piggybacks on [probeStandardVoice] — same surface, same
+     * `/api/status` + `/api/auth/me` checks — minus the audio-route HEAD:
+     * `/api/ws` ships with every embedded-chat dashboard build, so route
+     * absence is only discovered (and made sticky) at WS-upgrade time via
+     * [markGatewayUnsupported].
+     */
+    private val _gatewayAvailability = MutableStateFlow(GatewayAvailability.Unknown)
+    val gatewayAvailability: StateFlow<GatewayAvailability> = _gatewayAvailability.asStateFlow()
+
+    /**
+     * Sticky downgrade fired by [GatewayChatClient] when the WS upgrade is
+     * rejected outright (404/403 — dashboard build without `/api/ws`). Stops
+     * auto-resolution from re-picking gateway until a connection switch
+     * resets it.
+     */
+    fun markGatewayUnsupported() {
+        _gatewayAvailability.value = GatewayAvailability.Unsupported
+    }
+
+    /** Probe-driven update that respects the sticky [markGatewayUnsupported] verdict. */
+    private fun updateGatewayAvailability(probed: GatewayAvailability) {
+        val current = _gatewayAvailability.value
+        if (current == GatewayAvailability.Unsupported && probed == GatewayAvailability.Ready) return
+        _gatewayAvailability.value = probed
+    }
+
+    /** Cached gateway client, keyed by connection + resolved dashboard URL. */
+    private var gatewayClientCache: Triple<String, String, GatewayChatClient>? = null
+
+    /**
+     * Gateway chat client for the active connection — built lazily, rebuilt
+     * when the connection or its resolved dashboard URL changes (LAN ↔
+     * Tailscale handoff), sharing the Manage tab's encrypted cookie store so
+     * a dashboard sign-in there authenticates chat here.
+     */
+    @Synchronized
+    fun activeGatewayChatClient(): GatewayChatClient? {
+        val connectionId = connectionStore.activeConnectionId.value ?: return null
+        val dashboardUrl = activeDashboardUrl() ?: return null
+        gatewayClientCache?.let { (cachedConnection, cachedUrl, client) ->
+            if (cachedConnection == connectionId && cachedUrl == dashboardUrl) return client
+            // Same connection, the resolved dashboard URL moved (a LAN⇄Tailscale
+            // route change) WHILE a turn is in flight: RETARGET the live client
+            // to the new route so the turn FOLLOWS it (reconnect + keep the live
+            // session id — the session is server-side and the same shared
+            // gateway sits behind both routes), instead of tearing the client
+            // down (which would call activeTurn.cancel()) or stranding the turn
+            // on the dead route until the watchdog.
+            if (cachedConnection == connectionId && client.hasActiveTurn()) {
+                android.util.Log.i(
+                    "ConnectionViewModel",
+                    "gateway route changed mid-turn — retargeting active client to follow the route",
+                )
+                client.retarget(
+                    DashboardApiClient(
+                        baseUrl = dashboardUrl,
+                        okHttpClient = DashboardApiClient.defaultClient(
+                            cookieStore = dashboardCookieStoreFor(connectionId),
+                        ),
+                    ),
+                )
+                gatewayClientCache = Triple(connectionId, dashboardUrl, client)
+                return client
+            }
+        }
+        gatewayClientCache?.third?.shutdown()
+        val client = GatewayChatClient(
+            initialDashboardClient = DashboardApiClient(
+                baseUrl = dashboardUrl,
+                okHttpClient = DashboardApiClient.defaultClient(
+                    cookieStore = dashboardCookieStoreFor(connectionId),
+                ),
+            ),
+            onGatewayUnsupported = { markGatewayUnsupported() },
+        )
+        // Carry the current keep-alive preference onto the fresh client so a
+        // connection/route switch doesn't lose the no-background-close flag.
+        client.setKeepAliveInBackground(gatewayKeepAlive.value)
+        gatewayClientCache = Triple(connectionId, dashboardUrl, client)
+        return client
+    }
+
     /** Per-connection encrypted cookie stores, cached to avoid Keystore churn. */
     private val dashboardCookieStores =
         java.util.concurrent.ConcurrentHashMap<String, EncryptedDashboardCookieStore>()
@@ -580,6 +692,34 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val chatReady: StateFlow<Boolean> = combine(_chatApiClient, _apiServerReachable) { client, reachable ->
         client != null && reachable
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    /**
+     * Three-way gate for the chat empty-state, so a cold start doesn't flash
+     * the loud "Connect to Hermes" CTA while DataStore is still hydrating.
+     *
+     * - [ChatConnectState.Ready] — chat client built + server reachable.
+     * - [ChatConnectState.Connecting] — either the connection store hasn't
+     *   hydrated yet (we don't yet know if anything is configured), OR an
+     *   active connection exists but chat isn't reachable yet (cold connect /
+     *   route resolve). Show a quiet spinner, never the connect button.
+     * - [ChatConnectState.NeedsConnection] — hydration finished and there is
+     *   genuinely no connection to use. The only state that shows the CTA.
+     *
+     * Seeds [ChatConnectState.Connecting] so the very first composed frame —
+     * before any flow emits — is the neutral state, not the CTA.
+     */
+    val chatConnectState: StateFlow<ChatConnectState> = combine(
+        connectionStore.isHydrated,
+        activeConnection,
+        chatReady,
+    ) { hydrated, active, ready ->
+        when {
+            ready -> ChatConnectState.Ready
+            !hydrated -> ChatConnectState.Connecting
+            active != null -> ChatConnectState.Connecting
+            else -> ChatConnectState.NeedsConnection
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, ChatConnectState.Connecting)
     // NOTE: [relayReady] / [voiceReady] are declared below the [_relayUrl]
     // MutableStateFlow,
     // further down this file, because Kotlin class-body initializers run
@@ -603,6 +743,25 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     ) { savedUrl, endpoint ->
         endpoint?.api?.url ?: savedUrl
     }.stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_API_URL)
+
+    /**
+     * Whether a chat turn is currently streaming — mirrored from
+     * [com.hermesandroid.relay.viewmodel.ChatViewModel.isStreaming] by RelayApp.
+     * While true, an [effectiveApiServerUrl] route change DEFERS its chat-client
+     * rebuild: rebuilding mid-turn replaces the client and cancels the in-flight
+     * turn, whereas the gateway socket rides a transient route blip via its own
+     * reconnect (keeping the live session). The deferred rebuild applies once
+     * the turn ends.
+     */
+    private val _chatStreaming = MutableStateFlow(false)
+
+    fun setChatStreaming(streaming: Boolean) {
+        _chatStreaming.value = streaming
+    }
+
+    /** A route change arrived mid-turn and its chat-client rebuild was deferred. */
+    @Volatile
+    private var pendingApiClientRebuild = false
 
     /**
      * Runtime route for relay HTTP calls and WSS-adjacent helpers. Relay
@@ -1108,6 +1267,41 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    // --- Opt-in "keep gateway connected in background" (sideload) ---
+
+    /**
+     * Off by default. When on, the gateway socket stays open in the background
+     * (the process is held up by [GatewayKeepAliveService]) until the app is
+     * killed, so replies stay instant instead of paying a cold rejoin.
+     */
+    val gatewayKeepAlive: StateFlow<Boolean> = application.relayDataStore.data
+        .map { it[KEY_GATEWAY_KEEP_ALIVE] ?: false }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    fun setGatewayKeepAlive(enabled: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_GATEWAY_KEEP_ALIVE] = enabled
+            }
+        }
+    }
+
+    init {
+        // Drive the keep-alive: flip the active client's no-background-close
+        // flag and start/stop the foreground service. Both flavors — the
+        // GatewayKeepAliveService is declared in the main manifest (Play permits
+        // this Home-Assistant-class persistent-connection use case). Mirrors
+        // BridgeViewModel's masterToggle → BridgeForegroundService driver.
+        viewModelScope.launch {
+            gatewayKeepAlive.collect { enabled ->
+                gatewayClientCache?.third?.setKeepAliveInBackground(enabled)
+                val ctx = getApplication<Application>()
+                if (enabled) runCatching { GatewayKeepAliveService.start(ctx) }
+                else runCatching { GatewayKeepAliveService.stop(ctx) }
+            }
+        }
+    }
+
     /**
      * Resolve the user's `streamingEndpoint` preference to a concrete value
      * based on the latest capability probe. Returns a concrete endpoint
@@ -1116,10 +1310,19 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * - "sessions" / "completions" / "runs" pass through unchanged (manual override wins).
      * - "auto" → reads `serverCapabilities.value.preferredChatEndpoint()`.
      */
-    fun resolveStreamingEndpoint(preference: String): String = when (preference) {
-        "sessions", "completions", "runs" -> preference
-        else -> _serverCapabilities.value.preferredChatEndpoint()
-    }
+    fun resolveStreamingEndpoint(preference: String): String =
+        resolveStreamingEndpointPreference(
+            preference = preference,
+            gateway = _gatewayAvailability.value,
+            capabilities = _serverCapabilities.value,
+        )
+
+    /**
+     * Capability-resolved SSE endpoint, ignoring the gateway tier — wired to
+     * [ChatViewModel.sseFallbackEndpoint] for per-turn gateway fallbacks.
+     */
+    fun resolveSseStreamingEndpoint(): String =
+        _serverCapabilities.value.preferredChatEndpoint()
 
     // Parse tool annotations from text markers toggle
     val parseToolAnnotations: StateFlow<Boolean> = application.relayDataStore.data
@@ -1172,6 +1375,37 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { prefs ->
                 prefs[KEY_SMOOTH_AUTO_SCROLL] = enabled
+            }
+        }
+    }
+
+    // Turn-complete notification (default ON). RelayApp mirrors this into
+    // ChatViewModel.notifyOnTurnComplete; ChatSettingsScreen owns the toggle
+    // + the POST_NOTIFICATIONS runtime request on first enable.
+    val notifyTurnComplete: StateFlow<Boolean> = application.relayDataStore.data
+        .map { it[KEY_NOTIFY_TURN_COMPLETE] ?: true }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    fun setNotifyTurnComplete(enabled: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_NOTIFY_TURN_COMPLETE] = enabled
+            }
+        }
+    }
+
+    // One-shot voice hint on the input bar. Initial stateIn value is TRUE
+    // (treated as already-seen) so returning users never get a flash of the
+    // hint while DataStore hydrates; fresh installs flip to false once the
+    // (absent) preference loads and the hint shows exactly once.
+    val voiceHintSeen: StateFlow<Boolean> = application.relayDataStore.data
+        .map { it[KEY_VOICE_HINT_SEEN] ?: false }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    fun setVoiceHintSeen(seen: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_VOICE_HINT_SEEN] = seen
             }
         }
     }
@@ -2749,7 +2983,35 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 .drop(1)
                 .distinctUntilChanged()
                 .collect {
-                    rebuildApiClient()
+                    if (_chatStreaming.value) {
+                        // Rebuilding the chat client mid-turn replaces it and
+                        // CANCELS the in-flight turn. The gateway socket rides a
+                        // transient route blip via its own reconnect (keeping the
+                        // live session), so defer the rebuild until the turn ends.
+                        pendingApiClientRebuild = true
+                        android.util.Log.i(
+                            "ConnectionViewModel",
+                            "route changed mid-turn — deferring chat client rebuild",
+                        )
+                    } else {
+                        rebuildApiClient()
+                    }
+                }
+        }
+
+        // Apply a route change that was deferred because a turn was streaming.
+        // (StateFlow already conflates/dedups, so no distinctUntilChanged.)
+        viewModelScope.launch {
+            _chatStreaming
+                .collect { streaming ->
+                    if (!streaming && pendingApiClientRebuild) {
+                        pendingApiClientRebuild = false
+                        android.util.Log.i(
+                            "ConnectionViewModel",
+                            "turn ended — applying deferred chat client rebuild",
+                        )
+                        rebuildApiClient()
+                    }
                 }
         }
 
@@ -2802,6 +3064,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 _selectedProfile.value = null
                 _pendingSelectedProfileConnectionId.value = null
                 _pendingSelectedProfileName.value = null
+                // Gateway state is per-connection: drop the sticky
+                // Unsupported verdict and tear down the old socket so the
+                // next probe/send evaluates the new connection fresh.
+                _gatewayAvailability.value = GatewayAvailability.Unknown
+                synchronized(this@ConnectionViewModel) {
+                    gatewayClientCache?.third?.shutdown()
+                    gatewayClientCache = null
+                }
             }
         }
 
@@ -2946,6 +3216,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         if (connectionId == null || dashboardUrl.isNullOrBlank()) {
             _standardVoiceAvailability.value = StandardVoiceAvailability.Unknown
             _standardAudioApiReachable.value = false
+            updateGatewayAvailability(GatewayAvailability.Unknown)
             return
         }
         val client = DashboardApiClient(
@@ -2960,12 +3231,18 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             if (status == null) {
                 _standardVoiceAvailability.value = StandardVoiceAvailability.Unreachable
                 _standardAudioApiReachable.value = false
+                updateGatewayAvailability(GatewayAvailability.Unreachable)
                 recordDashboardStatusIfChanged(connectionId, status = null, session = null)
                 return
             }
             val session = if (status.authRequired) client.currentSession().getOrNull() else null
             val authed = !status.authRequired || session?.authenticated == true
             recordDashboardStatusIfChanged(connectionId, status, session)
+            // Gateway chat shares the voice probe's dashboard checks; it has
+            // no audio-route requirement.
+            updateGatewayAvailability(
+                if (authed) GatewayAvailability.Ready else GatewayAvailability.SignInRequired,
+            )
             val availability = when {
                 !authed -> StandardVoiceAvailability.SignInRequired
                 client.audioRoutesPresent() -> StandardVoiceAvailability.Ready

@@ -16,6 +16,7 @@ import com.hermesandroid.relay.network.models.SessionResponse
 import com.hermesandroid.relay.network.models.SkillInfo
 import com.hermesandroid.relay.network.models.SkillListResponse
 import com.hermesandroid.relay.network.models.UsageInfo
+import com.hermesandroid.relay.util.TurnLatencyTracer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
@@ -416,6 +417,32 @@ class HermesApiClient(
         emptyList()
     }
 
+    // --- Available models ---
+
+    /**
+     * Available model ids from `GET /v1/models` (OpenAI-compatible:
+     * `{"object":"list","data":[{"id":"…"}]}`). Backs the in-chat model
+     * picker. Returns ids in server order; empty on any failure (the picker
+     * then offers only "Server default").
+     */
+    suspend fun getModels(): List<String> = withContext(Dispatchers.IO) {
+        try {
+            val request = authRequest("$baseUrl/v1/models").get().build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext emptyList()
+                val body = response.body?.string() ?: return@withContext emptyList()
+                val data = (json.parseToJsonElement(body) as? JsonObject)
+                    ?.get("data") as? JsonArray ?: return@withContext emptyList()
+                data.mapNotNull {
+                    ((it as? JsonObject)?.get("id") as? JsonPrimitive)?.contentOrNull
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to fetch models: ${e.message}")
+            emptyList()
+        }
+    }
+
     // --- Server personalities ---
 
     /**
@@ -556,6 +583,8 @@ class HermesApiClient(
             .build()
 
         val completeCalled = AtomicBoolean(false)
+        // Comparable to the gateway's turn[gateway] line — see TurnLatencyTracer.
+        val tracer = TurnLatencyTracer("sessions")
 
         // Notify caller of the session ID being used
         mainHandler.post { onSessionId(sessionId) }
@@ -567,6 +596,7 @@ class HermesApiClient(
                 type: String?,
                 data: String
             ) {
+                tracer.mark("ttfe")
                 if (data == "[DONE]") {
                     if (completeCalled.compareAndSet(false, true)) {
                         mainHandler.post { onComplete() }
@@ -576,6 +606,14 @@ class HermesApiClient(
 
                 try {
                     val event = json.decodeFromString<HermesSseEvent>(data)
+
+                    // First visible streamed token (reasoning OR text) — the
+                    // metric that exposes SSE's reasoning dead-air vs gateway.
+                    if (!event.delta.isNullOrEmpty() || !event.thinkingDelta.isNullOrEmpty() ||
+                        !event.thinking.isNullOrEmpty()
+                    ) {
+                        tracer.mark("ttft")
+                    }
 
                     // Check for usage data on ANY event before type resolution
                     // (OpenAI-format chunks have no type/event field but may carry usage)
@@ -721,6 +759,7 @@ class HermesApiClient(
                 t: Throwable?,
                 response: Response?
             ) {
+                tracer.done("error")
                 if (completeCalled.compareAndSet(false, true)) {
                     val msg = when {
                         response != null && !response.isSuccessful ->
@@ -734,6 +773,7 @@ class HermesApiClient(
             }
 
             override fun onClosed(eventSource: EventSource) {
+                tracer.done()
                 if (completeCalled.compareAndSet(false, true)) {
                     mainHandler.post { onComplete() }
                 }
@@ -796,6 +836,8 @@ class HermesApiClient(
 
         val completeCalled = AtomicBoolean(false)
         val messageStarted = AtomicBoolean(false)
+        // Comparable to the gateway's turn[gateway] line — see TurnLatencyTracer.
+        val tracer = TurnLatencyTracer("completions")
 
         val listener = object : EventSourceListener() {
             override fun onEvent(
@@ -804,6 +846,7 @@ class HermesApiClient(
                 type: String?,
                 data: String
             ) {
+                tracer.mark("ttfe")
                 if (data == "[DONE]") {
                     if (completeCalled.compareAndSet(false, true)) {
                         mainHandler.post { onComplete() }
@@ -832,12 +875,14 @@ class HermesApiClient(
 
                     openAiReasoningDelta(event)?.let { reasoning ->
                         if (reasoning.isNotEmpty()) {
+                            tracer.mark("ttft")
                             mainHandler.post { onThinkingDelta(reasoning) }
                         }
                     }
 
                     openAiTextDelta(event)?.let { delta ->
                         if (delta.isNotEmpty()) {
+                            tracer.mark("ttft")
                             mainHandler.post { onTextDelta(delta) }
                         }
                     }
@@ -856,6 +901,7 @@ class HermesApiClient(
                 t: Throwable?,
                 response: Response?
             ) {
+                tracer.done("error")
                 if (completeCalled.compareAndSet(false, true)) {
                     val msg = when {
                         response != null && !response.isSuccessful ->
@@ -869,6 +915,7 @@ class HermesApiClient(
             }
 
             override fun onClosed(eventSource: EventSource) {
+                tracer.done()
                 if (completeCalled.compareAndSet(false, true)) {
                     mainHandler.post { onComplete() }
                 }
@@ -977,6 +1024,8 @@ class HermesApiClient(
             .build()
 
         val completeCalled = AtomicBoolean(false)
+        // Comparable to the gateway's turn[gateway] line — see TurnLatencyTracer.
+        val tracer = TurnLatencyTracer("runs")
 
         val listener = object : EventSourceListener() {
             override fun onEvent(
@@ -985,6 +1034,7 @@ class HermesApiClient(
                 type: String?,
                 data: String
             ) {
+                tracer.mark("ttfe")
                 if (data == "[DONE]") {
                     if (completeCalled.compareAndSet(false, true)) {
                         mainHandler.post { onComplete() }
@@ -994,6 +1044,14 @@ class HermesApiClient(
 
                 try {
                     val event = json.decodeFromString<HermesSseEvent>(data)
+
+                    // First visible streamed token (reasoning OR text) — the
+                    // metric that exposes SSE's reasoning dead-air vs gateway.
+                    if (!event.delta.isNullOrEmpty() || !event.thinkingDelta.isNullOrEmpty() ||
+                        !event.thinking.isNullOrEmpty()
+                    ) {
+                        tracer.mark("ttft")
+                    }
 
                     // Check for usage data before type resolution (catches OpenAI-format chunks)
                     if (event.usage != null && (event.usage.resolvedInputTokens != null || event.usage.resolvedOutputTokens != null)) {
@@ -1055,6 +1113,7 @@ class HermesApiClient(
                         "reasoning.available" -> {
                             val reasoningText = event.text
                             if (!reasoningText.isNullOrEmpty()) {
+                                tracer.mark("ttft")
                                 mainHandler.post { onThinkingDelta(reasoningText) }
                             }
                         }
@@ -1141,6 +1200,7 @@ class HermesApiClient(
                 t: Throwable?,
                 response: Response?
             ) {
+                tracer.done("error")
                 if (completeCalled.compareAndSet(false, true)) {
                     val msg = when {
                         response != null && !response.isSuccessful ->
@@ -1154,6 +1214,7 @@ class HermesApiClient(
             }
 
             override fun onClosed(eventSource: EventSource) {
+                tracer.done()
                 if (completeCalled.compareAndSet(false, true)) {
                     mainHandler.post { onComplete() }
                 }

@@ -1,6 +1,6 @@
 [versions]
-appVersionName = "0.8.1"
-appVersionCode = "11"
+appVersionName = "1.0.0"
+appVersionCode = "12"
 agp = "9.2.1"
 kotlin = "2.3.20"
 compose-bom = "2026.03.01"
@@ -17,6 +17,7 @@ core-ktx = "1.18.0"
 datastore = "1.1.1"
 splashscreen = "1.2.0"
 markdown-renderer = "0.30.0"
+coil = "3.4.0"
 haze = "1.7.2"
 mlkit-barcode = "17.3.0"
 camera = "1.6.0"
@@ -61,6 +62,10 @@ okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver",
 # Markdown rendering
 markdown-renderer-m3 = { group = "com.mikepenz", name = "multiplatform-markdown-renderer-m3", version.ref = "markdown-renderer" }
 markdown-renderer-code = { group = "com.mikepenz", name = "multiplatform-markdown-renderer-code", version.ref = "markdown-renderer" }
+
+# Coil 3 — async image loading (generated-image rendering in chat)
+coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
+coil-network-okhttp = { group = "io.coil-kt.coil3", name = "coil-network-okhttp", version.ref = "coil" }
 
 # Haze (glassmorphism blur)
 haze = { group = "dev.chrisbanes.haze", name = "haze", version.ref = "haze" }

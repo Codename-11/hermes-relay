@@ -362,7 +362,7 @@ script automates a quick end-to-end check of the lab routes.
 
 ## Troubleshooting
 
-**"Microphone permission is required for voice mode"** — tap the mic FAB again. If Android doesn't show a permission prompt (you denied twice), go to Android Settings → Apps → Hermes Relay → Permissions → Microphone and enable it.
+**"Microphone permission is required for voice mode"** — tap the mic FAB again. If Android doesn't show a permission prompt (you denied twice), go to Android Settings → Apps → Hermes-Relay → Permissions → Microphone and enable it.
 
 **No audio plays when the agent speaks** — check Settings → Voice → Hermes Chat + Voice Output. If the provider shows "Unknown" or the profile scope is not what you expected, the relay's `/voice/output/config` or `/voice/config` endpoint returned an error or fell back. Try Test Current Engine; the error message will tell you what's wrong.
 

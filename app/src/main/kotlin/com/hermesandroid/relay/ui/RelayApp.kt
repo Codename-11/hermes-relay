@@ -5,6 +5,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,6 +21,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.sp
@@ -64,7 +67,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.hermesandroid.relay.ui.components.MorphingSphere
-import com.hermesandroid.relay.ui.components.ConnectionStatusBanner
+import com.hermesandroid.relay.ui.components.ConnectionStatusToast
 import com.hermesandroid.relay.ui.components.ConnectionSwitcherSheet
 import com.hermesandroid.relay.ui.components.PowerFeatureGateScreen
 import com.hermesandroid.relay.ui.components.PowerFeatureGateStatus
@@ -541,46 +544,68 @@ fun RelayApp() {
             }
         }
         chatViewModel.observeConnectionSwitches(connectionViewModel.connectionSwitchEvents)
-    }
-
-    LaunchedEffect(chatApiClient) {
-        chatApiClient?.let { client ->
-            chatViewModel.initialize(client, connectionViewModel.chatHandler)
-            chatViewModel.updateApiClient(client)
-
-            // Wire inbound-media dependencies. Safe to call on every reinit —
-            // idempotent rewire of the ChatHandler callbacks.
-            chatViewModel.initializeMedia(
-                context = mediaContext,
-                relayHttpClient = connectionViewModel.relayHttpClient,
-                mediaSettingsRepo = connectionViewModel.mediaSettingsRepo,
-                mediaCacheWriter = connectionViewModel.mediaCacheWriter
-            )
-
-            // Agent-profile pick provider (Pass 2). Lambda reads the latest
-            // StateFlow value on every send, so ChatViewModel never needs a
-            // direct reference to ConnectionViewModel. Safe to rewire on
-            // every API-client swap — the lambda captures the long-lived
-            // VM, not the (per-connection) apiClient.
-            chatViewModel.setSelectedProfileProvider {
-                connectionViewModel.selectedProfile.value
-            }
-            chatViewModel.setEffectiveProfileProvider {
-                AgentDisplay.effectiveProfile(
-                    selectedProfile = connectionViewModel.selectedProfile.value,
-                    profiles = connectionViewModel.agentProfiles.value,
-                )
-            }
-
-            // Wire session persistence callback
-            chatViewModel.onSessionChanged = { sessionId ->
-                connectionViewModel.saveLastSessionId(sessionId)
-            }
+        // Mirror chat streaming state so a mid-turn route change defers its
+        // client rebuild instead of cancelling the live turn (the gateway
+        // socket rides the blip via its own reconnect).
+        launch {
+            chatViewModel.isStreaming.collect { connectionViewModel.setChatStreaming(it) }
         }
     }
 
-    LaunchedEffect(chatApiClient, activeConnectionId, selectedProfile?.name, lastSessionId) {
-        if (chatApiClient == null) return@LaunchedEffect
+    LaunchedEffect(chatApiClient) {
+        val client = chatApiClient ?: return@LaunchedEffect
+        val handler = connectionViewModel.chatHandler
+        // A route handoff / reconnect rebuilds the API client (new instance)
+        // while the chat is unchanged — the bound handler is the same. Take the
+        // cheap path: swap the client reference only, no re-init. This is what
+        // keeps the chat surface from repainting/reloading on a LAN↔Tailscale
+        // switch or a reconnect. A genuine re-bind (different handler) falls
+        // through to the full one-time wiring below.
+        if (chatViewModel.boundHandler === handler) {
+            chatViewModel.updateApiClient(client)
+            return@LaunchedEffect
+        }
+
+        chatViewModel.initialize(client, handler)
+
+        // Wire inbound-media dependencies. Idempotent rewire of the
+        // ChatHandler callbacks.
+        chatViewModel.initializeMedia(
+            context = mediaContext,
+            relayHttpClient = connectionViewModel.relayHttpClient,
+            mediaSettingsRepo = connectionViewModel.mediaSettingsRepo,
+            mediaCacheWriter = connectionViewModel.mediaCacheWriter
+        )
+
+        // Agent-profile pick provider (Pass 2). Lambda reads the latest
+        // StateFlow value on every send, so ChatViewModel never needs a
+        // direct reference to ConnectionViewModel. The lambda captures the
+        // long-lived VM, not the (per-connection) apiClient.
+        chatViewModel.setSelectedProfileProvider {
+            connectionViewModel.selectedProfile.value
+        }
+        chatViewModel.setEffectiveProfileProvider {
+            AgentDisplay.effectiveProfile(
+                selectedProfile = connectionViewModel.selectedProfile.value,
+                profiles = connectionViewModel.agentProfiles.value,
+            )
+        }
+
+        // Wire session persistence callback
+        chatViewModel.onSessionChanged = { sessionId ->
+            connectionViewModel.saveLastSessionId(sessionId)
+        }
+    }
+
+    // Reload sessions / switch profile context only on a SEMANTIC change
+    // (connection, profile, or restored session) — NOT on every API-client
+    // instance swap. Keying on a readiness flag instead of the client instance
+    // means a route handoff (which churns the client) no longer triggers a
+    // refreshSessions() that would flash/reload the chat. `switchProfileContext`
+    // already no-ops when the context key + session are unchanged.
+    val chatClientReady = chatApiClient != null
+    LaunchedEffect(chatClientReady, activeConnectionId, selectedProfile?.name, lastSessionId) {
+        if (!chatClientReady) return@LaunchedEffect
         chatViewModel.switchProfileContext(
             contextKey = AgentDisplay.profileContextKey(
                 connectionId = activeConnectionId,
@@ -620,6 +645,14 @@ fun RelayApp() {
     }
     // === END PHASE3-status ===
 
+    // Mirror the "Notify when Hermes finishes" setting into ChatViewModel —
+    // same pattern as appContextSettings; the VM reads the plain field at
+    // turn-complete time instead of holding a ConnectionViewModel reference.
+    val notifyTurnComplete by connectionViewModel.notifyTurnComplete.collectAsState()
+    LaunchedEffect(notifyTurnComplete) {
+        chatViewModel.notifyOnTurnComplete = notifyTurnComplete
+    }
+
     // Sync tool annotation parsing toggle to ChatHandler
     val parseAnnotations by connectionViewModel.parseToolAnnotations.collectAsState()
     LaunchedEffect(parseAnnotations) {
@@ -629,11 +662,24 @@ fun RelayApp() {
     // Sync streaming endpoint preference to chat. Resolves "auto" against the
     // current server capabilities so vanilla upstream + bootstrap-injected
     // sessions API picks /v1/chat/completions for portable SSE chat while
-    // still using /api/sessions/* for browse/rename/delete.
+    // still using /api/sessions/* for browse/rename/delete. Gateway
+    // availability is a key so a Manage sign-in mid-session re-resolves
+    // "auto" to the gateway transport (live thinking) without an app restart.
     val streamingEndpoint by connectionViewModel.streamingEndpoint.collectAsState()
     val serverCapabilities by connectionViewModel.serverCapabilities.collectAsState()
-    LaunchedEffect(streamingEndpoint, serverCapabilities) {
-        chatViewModel.streamingEndpoint = connectionViewModel.resolveStreamingEndpoint(streamingEndpoint)
+    val gatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
+    // The resolved API route is a key so a mid-turn route switch (LAN→Tailscale)
+    // re-runs activeGatewayChatClient(), which RETARGETS the in-flight gateway
+    // client to follow the new dashboard route instead of stranding the turn on
+    // the dead one.
+    val effectiveApiUrl by connectionViewModel.effectiveApiServerUrl.collectAsState()
+    LaunchedEffect(streamingEndpoint, serverCapabilities, gatewayAvailability, effectiveApiUrl) {
+        val resolved = connectionViewModel.resolveStreamingEndpoint(streamingEndpoint)
+        chatViewModel.streamingEndpoint = resolved
+        chatViewModel.sseFallbackEndpoint = connectionViewModel.resolveSseStreamingEndpoint()
+        chatViewModel.updateGatewayClient(
+            if (resolved == "gateway") connectionViewModel.activeGatewayChatClient() else null,
+        )
     }
 
     // What's New auto-show
@@ -1033,8 +1079,21 @@ fun RelayApp() {
             !isOnboarding &&
             !showStartupSphere &&
             !voiceUiState.voiceMode
-        val showConnectionStatusBanner =
+        // Sideload-only update availability (UpdateViewModel short-circuits on
+        // googlePlay). Hoisted to the outer scope so the update toast can render
+        // in the floating Box overlay below alongside the connection toast.
+        val updateBannerState by updateViewModel.bannerState.collectAsState()
+        val availableUpdate = (updateBannerState as? UpdateCheckResult.Available)?.update
+
+        // Content-identity key so a swipe-up dismiss sticks for THIS status but
+        // a genuinely new status (different title/tone/phase) re-shows.
+        var dismissedStatusKey by remember { mutableStateOf<String?>(null) }
+        val currentStatusKey = globalConnectionStatus?.let {
+            "${it.title}|${it.tone}|${it.active}|${it.success}|${it.route}"
+        }
+        val showConnectionStatusToast =
             globalConnectionStatus != null &&
+                currentStatusKey != dismissedStatusKey &&
                 !isOnboarding &&
                 !showStartupSphere &&
                 !voiceUiState.voiceMode
@@ -1091,36 +1150,10 @@ fun RelayApp() {
             )
         }
 
-        // Sideload-only update banner. UpdateViewModel short-circuits on
-        // googlePlay so this block is effectively dead on that flavor.
-        // bannerState hides the banner for versions the user has
-        // dismissed, re-appearing automatically on a newer release.
-        val updateBannerState by updateViewModel.bannerState.collectAsState()
-        val availableUpdate = (updateBannerState as? UpdateCheckResult.Available)?.update
-        AnimatedVisibility(
-            visible = availableUpdate != null && !isOnboarding,
-            enter = fadeIn(tween(200)),
-            exit = fadeOut(tween(200)),
-        ) {
-            availableUpdate?.let { upd ->
-                UpdateBanner(
-                    update = upd,
-                    onDismiss = { updateViewModel.dismiss(upd.latestVersion) },
-                )
-            }
-        }
-
-        AnimatedVisibility(
-            visible = showConnectionStatusBanner,
-            enter = fadeIn(tween(160)),
-            exit = fadeOut(tween(180)),
-        ) {
-            ConnectionStatusBanner(
-                status = globalConnectionStatus,
-                includeStatusBarPadding = !showUnattendedBanner && availableUpdate == null,
-                onClick = onConnectionStatusBannerClick,
-            )
-        }
+        // The update banner AND the connection-status indicator now render as
+        // floating overlay TOASTS in the Box below (see the top-overlay Column
+        // after the Scaffold), so they slide down OVER the content instead of
+        // taking layout space — no UI resize/cut on update / handoff / reconnect.
 
         // (The app-wide ConnectionChip row that used to live here has been
         // removed. Multi-connection switching is now reachable from the
@@ -1151,7 +1184,10 @@ fun RelayApp() {
                     // would otherwise double-pad and render too far down.
                     // Consume the inset here so the Scaffold tree treats
                     // the top edge as already handled.
-                    if (showUnattendedBanner || showConnectionStatusBanner || connectionChipVisible) {
+                    // The connection-status toast is now a floating overlay and
+                    // doesn't occupy space above the Scaffold, so it no longer
+                    // participates in the top-inset accounting.
+                    if (showUnattendedBanner || connectionChipVisible) {
                         Modifier.consumeWindowInsets(WindowInsets.statusBars)
                     } else {
                         Modifier
@@ -1957,6 +1993,45 @@ fun RelayApp() {
             } // end CompositionLocalProvider
         }
         } // end Column (wraps banner + Scaffold)
+
+        // Floating overlay toasts (update + connection status). Rendered in the
+        // Box, stacked top-down in one status-bar-padded Column so they slide
+        // down OVER the content without resizing it — no UI cut/resize on update
+        // / handoff / reconnect. Both gated off during onboarding / startup
+        // sphere / voice mode. The Column self-pads the status bar once; the
+        // children don't (so two stacked toasts don't double-pad).
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.statusBars),
+        ) {
+            AnimatedVisibility(
+                visible = availableUpdate != null && !isOnboarding &&
+                    !showStartupSphere && !voiceUiState.voiceMode,
+                enter = slideInVertically(tween(220)) { -it } + fadeIn(tween(180)),
+                exit = slideOutVertically(tween(200)) { -it } + fadeOut(tween(160)),
+            ) {
+                availableUpdate?.let { upd ->
+                    UpdateBanner(
+                        update = upd,
+                        onDismiss = { updateViewModel.dismiss(upd.latestVersion) },
+                    )
+                }
+            }
+            AnimatedVisibility(
+                visible = showConnectionStatusToast,
+                enter = slideInVertically(tween(220)) { -it } + fadeIn(tween(180)),
+                exit = slideOutVertically(tween(200)) { -it } + fadeOut(tween(160)),
+            ) {
+                ConnectionStatusToast(
+                    status = globalConnectionStatus,
+                    includeStatusBarPadding = false,
+                    onClick = onConnectionStatusBannerClick,
+                    onDismiss = { dismissedStatusKey = currentStatusKey },
+                )
+            }
+        }
 
         // (The ConnectionSwitcherSheet modal that used to live here was
         // driven by the removed top-bar ConnectionChip. Switching is now

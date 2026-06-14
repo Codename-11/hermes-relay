@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 // Canonical sphere algorithm — same import path as SphereMark.vue. The hero
 // demo is a code recreation of the app (not a video): DOM chat chrome over the
 // real MorphingSphereCore algorithm, driven through the actual product state
@@ -44,6 +44,16 @@ const toolState = ref<'none' | 'running' | 'done'>('none')
 const answerText = ref('')
 const answerDone = ref(false)
 const fadingOut = ref(false)
+
+// Which glyph the single trailing slot shows — mirrors ChatInputBar's
+// AnimatedContent morph (SEND / VOICE / STOP). Typing → send (indigo arrow,
+// glow); mid-stream with an empty field → stop (danger circle); at rest →
+// voice (GraphicEq waveform). The dedicated slash button is gone.
+const inputTrailing = computed<'send' | 'voice' | 'stop'>(() => {
+  if (typed.value) return 'send'
+  if (sent.value && !answerDone.value) return 'stop'
+  return 'voice'
+})
 
 const canvasEl = ref<HTMLCanvasElement | null>(null)
 const screenEl = ref<HTMLDivElement | null>(null)
@@ -393,20 +403,35 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
+          <!-- Input bar mirrors the app's ChatInputBar: a "+" (tap attaches,
+               long-press opens the command palette — no dedicated slash
+               button), a rounded pill field, then ONE trailing slot that
+               morphs send ⇄ voice ⇄ stop without ever widening the bar. -->
           <div class="had-input">
             <span class="had-input-plus">+</span>
-            <span class="had-input-slash">/</span>
             <div class="had-field" :class="{ 'had-field-busy': sent && !answerDone }">
               <template v-if="typed">{{ typed }}<span class="had-caret"></span></template>
-              <span v-else class="had-placeholder">{{ sent && !answerDone ? 'Queue a message...' : 'Message...' }}</span>
+              <span v-else class="had-placeholder">Message…</span>
             </div>
-            <!-- Mic at rest, send arrow once there's text — same swap the app does. -->
-            <span v-if="typed" class="had-send had-send-ready">➤</span>
-            <svg v-else class="had-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-              stroke-width="1.8" stroke-linecap="round">
-              <rect x="9.1" y="2.6" width="5.8" height="11.2" rx="2.9" />
-              <path d="M5.4 11.6a6.6 6.6 0 0 0 13.2 0M12 18.2v3" />
-            </svg>
+            <!-- Trailing slot — one button, three faces. -->
+            <span v-if="inputTrailing === 'send'" class="had-trailing had-trailing-send">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M5 12h14M13 6l6 6-6 6" />
+              </svg>
+            </span>
+            <span v-else-if="inputTrailing === 'stop'" class="had-trailing had-trailing-stop">
+              <span class="had-stop-square"></span>
+            </span>
+            <!-- GraphicEq waveform = "voice conversation", not "record". -->
+            <span v-else class="had-trailing had-trailing-voice">
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <rect x="3.5" y="9" width="2.6" height="6" rx="1.3" />
+                <rect x="8.0" y="5" width="2.6" height="14" rx="1.3" />
+                <rect x="12.5" y="8" width="2.6" height="8" rx="1.3" />
+                <rect x="17.0" y="3.5" width="2.6" height="17" rx="1.3" />
+              </svg>
+            </span>
           </div>
           <div class="had-status">
             <span class="had-status-ok">api online / LAN</span>
@@ -765,38 +790,59 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 2.4cqw;
-  padding: 2cqw 4.5cqw 1.6cqw;
+  padding: 2cqw 4cqw 1.6cqw;
 }
-.had-input-plus, .had-input-slash {
+.had-input-plus {
+  flex: none;
   color: rgba(247, 246, 240, 0.6);
-  font-size: 4.4cqw;
+  font-size: 5cqw;
+  line-height: 1;
+  width: 7cqw;
+  text-align: center;
 }
-.had-input-slash { font-family: var(--vp-font-family-mono); font-size: 3.6cqw; }
+/* Pill field — surfaceContainerHigh + hairline outline, like the app's
+   BasicTextField (no heavy outlined-field chrome). */
 .had-field {
   flex: 1;
-  min-height: 8.4cqw;
+  min-height: 9cqw;
   display: flex;
   align-items: center;
-  border: 1px solid #4F5BD5;
-  border-radius: 2.8cqw;
-  padding: 1.2cqw 3cqw;
+  background: rgba(247, 246, 240, 0.06);
+  border: 1px solid rgba(247, 246, 240, 0.16);
+  border-radius: 5cqw;
+  padding: 1.4cqw 3.4cqw;
   font-size: 3.3cqw;
   color: #F7F6F0;
   transition: border-color 300ms ease;
 }
-.had-field-busy { border-color: rgba(247, 246, 240, 0.2); }
+.had-field-busy { border-color: rgba(110, 124, 255, 0.4); }
 .had-placeholder { color: rgba(247, 246, 240, 0.35); }
-.had-send {
-  color: rgba(247, 246, 240, 0.35);
-  font-size: 4.2cqw;
-  transition: color 300ms ease;
-}
-.had-send-ready { color: #6E7CFF; }
-.had-mic {
-  width: 5.2cqw;
-  height: 5.2cqw;
+
+/* One trailing slot, three faces — circular tap target, never widens. */
+.had-trailing {
   flex: none;
-  color: #AEBFFF;
+  width: 8.8cqw;
+  height: 8.8cqw;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+.had-trailing svg { width: 5cqw; height: 5cqw; }
+.had-trailing-send {
+  color: #6E7CFF;
+  /* purpleGlow — the bar's one flourish, dark-only like the app */
+  box-shadow: 0 0 7cqw -1cqw rgba(110, 124, 255, 0.65);
+}
+.had-trailing-voice { color: #6E7CFF; }
+.had-trailing-stop {
+  border: 1px solid var(--hr-danger);
+}
+.had-stop-square {
+  width: 3cqw;
+  height: 3cqw;
+  border-radius: 0.8cqw;
+  background: var(--hr-danger);
 }
 
 .had-status {

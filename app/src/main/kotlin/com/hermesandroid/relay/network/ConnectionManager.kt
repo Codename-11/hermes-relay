@@ -196,6 +196,18 @@ class ConnectionManager(
     @Volatile
     private var networkResolveJob: kotlinx.coroutines.Job? = null
 
+    /** Deferred reaction to a network loss — cancelled if a network returns within the grace. */
+    private var networkLossJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * Set when a network loss outlives [NETWORK_LOSS_GRACE_MS] — only then may
+     * a re-resolve switch DOWN to a lower-priority endpoint. Prevents a
+     * transient probe miss (Wi-Fi settling) from switching routes and
+     * cancelling an in-flight turn. Cleared once a resolution is published.
+     */
+    @Volatile
+    private var sustainedLossDeclared = false
+
     init {
         // Register at construction, not on first connect(). Standard
         // (no-Relay) connections never open the WSS socket, but their HTTP
@@ -214,6 +226,15 @@ class ConnectionManager(
         // enough to coalesce the onAvailable burst of a handoff, short
         // enough that a route swap still feels immediate.
         private const val NETWORK_RESOLVE_DEBOUNCE_MS = 300L
+
+        /**
+         * Grace before reacting to a network loss. A transient blip (Wi-Fi
+         * power-save/roam, a brief drop, the OS swapping radios) recovers
+         * within this window and must NOT mark the active endpoint unreachable
+         * or switch routes — doing so rebuilds the chat client and cancels an
+         * in-flight turn. Only a loss sustained past the grace switches.
+         */
+        private const val NETWORK_LOSS_GRACE_MS = 6_000L
         // Matches plugin.relay.auth._BLOCK_SECONDS (5 min). If we see 429
         // on the WSS upgrade, we're IP-banned server-side — retrying at
         // our normal 1-30s cadence re-fills the ban bucket and keeps us
@@ -540,6 +561,23 @@ class ConnectionManager(
                 }
                 return@launch
             }
+            // Endpoint hysteresis: a transient blip can make the active
+            // (higher-priority) endpoint's health probe miss, so the resolver
+            // falls through to a LOWER-priority fallback. Switching on that
+            // transient miss rebuilds the chat client and CANCELS an in-flight
+            // turn. Don't switch DOWN in priority unless a sustained loss was
+            // actually declared (the onLost grace elapsed). Same/upgrade
+            // winners always publish.
+            val active = _activeEndpoint.value
+            if (active != null && resolved.priority > active.priority && !sustainedLossDeclared) {
+                Log.i(
+                    TAG,
+                    "re-resolve picked lower-priority ${resolved.role}(p${resolved.priority}) over " +
+                        "active ${active.role}(p${active.priority}) not confirmed dead — keeping active",
+                )
+                return@launch
+            }
+            sustainedLossDeclared = false
             _activeEndpoint.value = resolved
             if (current == null) return@launch
             // After an explicit disconnect() the route still publishes above
@@ -569,15 +607,33 @@ class ConnectionManager(
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 Log.i(TAG, "network onAvailable — re-evaluating endpoint")
+                // A network returned — cancel any pending loss reaction: the
+                // drop was transient, so don't switch routes / rebuild the chat
+                // client / cancel an in-flight turn. Re-resolve to pick the best
+                // route (usually the same one); the rebuild only fires if the
+                // URL actually moved.
+                networkLossJob?.cancel()
                 endpointResolver?.clearCache()
                 scheduleNetworkReResolve("Network change — switching endpoint")
             }
 
             override fun onLost(network: Network) {
-                Log.i(TAG, "network onLost — marking active endpoint unreachable and resolving fallback")
-                endpointResolver?.clearCache()
-                markActiveEndpointUnreachable("network lost")
-                scheduleNetworkReResolve("Network lost — switching endpoint")
+                // Defer the reaction: a transient blip recovers within the grace
+                // (onAvailable cancels this job). Reacting immediately — marking
+                // the active endpoint unreachable + re-resolving to a fallback —
+                // switches routes mid-blip, which rebuilds the chat client and
+                // CANCELS the in-flight turn. The gateway client already handles
+                // its own socket reconnect across the blip.
+                Log.i(TAG, "network onLost — deferring fallback re-resolve by ${NETWORK_LOSS_GRACE_MS}ms")
+                networkLossJob?.cancel()
+                networkLossJob = scope.launch {
+                    delay(NETWORK_LOSS_GRACE_MS)
+                    Log.i(TAG, "network loss sustained past grace — marking active endpoint unreachable and resolving fallback")
+                    sustainedLossDeclared = true
+                    endpointResolver?.clearCache()
+                    markActiveEndpointUnreachable("network lost (sustained)")
+                    scheduleNetworkReResolve("Network lost — switching endpoint")
+                }
             }
         }
         try {
@@ -594,6 +650,8 @@ class ConnectionManager(
     }
 
     private fun unregisterNetworkCallback() {
+        networkLossJob?.cancel()
+        networkLossJob = null
         val ctx = context ?: return
         val cb = networkCallback ?: return
         try {

@@ -160,9 +160,18 @@ html:not(.dark) .VPNavBar {
   line-height: 1.6;
 }
 
+/* Store badge + platform note under the hero action buttons */
+.hero-store-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 18px;
+}
+
 /* Platform-availability note under the hero action buttons */
 .hero-platform-note {
-  margin: 14px 0 0;
+  margin: 0;
   font-family: var(--vp-font-family-mono);
   font-size: 11px;
   letter-spacing: 0.06em;
@@ -170,6 +179,9 @@ html:not(.dark) .VPNavBar {
   color: var(--vp-c-text-3);
 }
 @media (max-width: 959px) {
+  .hero-store-row {
+    align-items: center;
+  }
   .hero-platform-note {
     text-align: center;
   }

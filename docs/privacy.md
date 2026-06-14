@@ -1,6 +1,6 @@
 # Privacy & Data Handling
 
-Hermes-Relay is a self-hosted AI agent companion app. It connects only to servers you configure — there are no cloud accounts, hosted backends, ads, or third-party analytics.
+Hermes-Relay is a companion app for the Hermes agent. It connects only to servers you configure — there are no cloud accounts, hosted backends, ads, or third-party analytics.
 
 ## No External Data Transmission
 

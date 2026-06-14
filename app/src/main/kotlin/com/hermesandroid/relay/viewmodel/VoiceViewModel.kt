@@ -4384,14 +4384,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     errorCode == "permission_missing_sms" -> buildString {
                         append("**Send SMS — permission needed**")
                         append('\n')
-                        append("Grant SMS permission in Settings › Apps › Hermes Relay › Permissions.")
+                        append("Grant SMS permission in Settings › Apps › Hermes-Relay › Permissions.")
                     }
                     errorCode == "permission_missing_contacts" -> buildString {
                         append("**Send SMS — permission needed**")
                         append('\n')
                         append("Grant Contacts permission to look up '")
                         append(contact ?: "?")
-                        append("' in Settings › Apps › Hermes Relay › Permissions.")
+                        append("' in Settings › Apps › Hermes-Relay › Permissions.")
                     }
                     errorCode == "service_missing" -> buildString {
                         append("**Send SMS — bridge offline**")

@@ -68,7 +68,7 @@ Multi-endpoint pairing (ADR 24) makes "same phone, different networks" a first-c
 
 See [docs/privacy.md](privacy.md) for the full privacy and data handling policy. Key points:
 
-- **No external data transmission** — the app connects only to your self-hosted Hermes servers
+- **No external data transmission** — the app connects only to the Hermes servers you configure
 - **Local-only analytics** — Stats for Nerds counters are stored in DataStore on-device, never sent externally
 - **Encrypted credential storage** — API keys and session tokens use EncryptedSharedPreferences (AES-256-GCM, hardware-backed Android Keystore)
 - **No tracking, ads, or third-party SDKs**

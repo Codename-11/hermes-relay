@@ -5,9 +5,9 @@
 <h1 align="center">Hermes-Relay</h1>
 
 <p align="center">
-  <strong>Your self-hosted Hermes agent, native on your phone.</strong><br>
-  Chat, voice, and full agent management over your own infrastructure —<br>
-  plus an experimental desktop CLI that gives the agent hands on your computer.
+  <strong>Your Hermes agent, native on your phone.</strong><br>
+  Chat, voice, and full agent management — it runs on your machine and lives on your devices —<br>
+  plus an experimental CLI that gives the agent hands on any machine you pair.
 </p>
 
 <p align="center">

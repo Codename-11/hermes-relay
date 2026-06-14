@@ -6,6 +6,19 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Turn-complete chat notification (TurnCompleteNotifier) — runtime-requested
+         on API 33+ from the Chat Settings toggle. Lives in main (not just the
+         sideload overlay) so the googlePlay flavor can notify too. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Opt-in "Keep connected in background" (GatewayKeepAliveService). In main
+         (not the sideload overlay) so the googlePlay flavor ships it too — the
+         Home-Assistant-class persistent-connection use case Play permits. The
+         specialUse type requires a one-time Play Console foreground-service
+         declaration at submission. (Also already present in the sideload overlay
+         for the device-control bridge service; the merger dedups.) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
@@ -53,6 +66,20 @@
             </intent-filter>
         </service>
         <!-- === END PHASE3-notif-listener === -->
+
+        <!-- Opt-in "Keep connected in background" — holds the gateway chat
+             socket open while backgrounded. In main so BOTH flavors ship it
+             (Home-Assistant-class persistent connection). Off by default; only
+             runs while the user has explicitly enabled the toggle. specialUse
+             needs a Play Console foreground-service declaration at submission. -->
+        <service
+            android:name=".network.GatewayKeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the user's chat connection to their Hermes agent open while the app is backgrounded, only when the user has explicitly enabled 'Keep connected in background'." />
+        </service>
 
     </application>
 

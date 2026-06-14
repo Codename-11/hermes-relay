@@ -37,6 +37,11 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.ui.input.pointer.pointerInput
 import com.hermesandroid.relay.viewmodel.ConnectionHandoffStatus
 import com.hermesandroid.relay.viewmodel.ConnectionStatusSnapshot
 import com.hermesandroid.relay.viewmodel.ConnectionStatusTone
@@ -199,6 +204,185 @@ fun ConnectionStatusBanner(
                             .heightIn(min = 2.dp, max = 2.dp),
                         color = contentColor.copy(alpha = 0.76f),
                         trackColor = contentColor.copy(alpha = 0.16f),
+                    )
+                }
+            }
+        }
+    }
+}
+
+private const val SWIPE_DISMISS_THRESHOLD_PX = 80f
+
+/**
+ * Floating, in-theme connection status **toast** for connection switches,
+ * network handoffs, and disconnects.
+ *
+ * Unlike [ConnectionStatusBanner] (edge-to-edge, takes layout space above the
+ * Scaffold and so resizes the content), this is meant to be rendered as a
+ * top-aligned overlay inside a `Box` — it slides down OVER the UI without
+ * shifting it. Pair it with `AnimatedVisibility(enter = slideInVertically{-it})`
+ * at the call site.
+ *
+ * - Spinner while [ConnectionStatusSnapshot.active] (handoff / loading).
+ * - [onClick] acts on it (reconnect / open the relevant screen).
+ * - [onDismiss] is wired to a swipe-up; the host suppresses re-show until the
+ *   status content changes.
+ */
+@Composable
+fun ConnectionStatusToast(
+    status: ConnectionStatusSnapshot?,
+    modifier: Modifier = Modifier,
+    includeStatusBarPadding: Boolean = true,
+    onClick: (() -> Unit)? = null,
+    onDismiss: (() -> Unit)? = null,
+) {
+    val current = status ?: return
+    val containerColor = when {
+        current.tone == ConnectionStatusTone.Error -> MaterialTheme.colorScheme.errorContainer
+        current.tone == ConnectionStatusTone.Warning -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.82f)
+        current.success -> MaterialTheme.colorScheme.tertiaryContainer
+        current.active -> MaterialTheme.colorScheme.secondaryContainer
+        else -> MaterialTheme.colorScheme.surfaceVariant
+    }
+    val contentColor = when {
+        current.tone == ConnectionStatusTone.Error ||
+            current.tone == ConnectionStatusTone.Warning -> MaterialTheme.colorScheme.onErrorContainer
+        current.success -> MaterialTheme.colorScheme.onTertiaryContainer
+        current.active -> MaterialTheme.colorScheme.onSecondaryContainer
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    // Reset the swipe accumulator whenever a new status arrives.
+    val dragAccum = remember(current.updatedAtMs) { mutableFloatStateOf(0f) }
+    val swipeModifier = if (onDismiss != null) {
+        Modifier.pointerInput(onDismiss) {
+            detectVerticalDragGestures(
+                onDragEnd = {
+                    if (dragAccum.floatValue < -SWIPE_DISMISS_THRESHOLD_PX) onDismiss()
+                    dragAccum.floatValue = 0f
+                },
+                onVerticalDrag = { change, dy ->
+                    if (dy < 0f) {
+                        dragAccum.floatValue += dy
+                        change.consume()
+                    }
+                },
+            )
+        }
+    } else {
+        Modifier
+    }
+
+    Surface(
+        color = containerColor,
+        contentColor = contentColor,
+        shape = RoundedCornerShape(16.dp),
+        shadowElevation = 8.dp,
+        tonalElevation = 2.dp,
+        modifier = modifier
+            .then(
+                if (includeStatusBarPadding) {
+                    Modifier.windowInsetsPadding(WindowInsets.statusBars)
+                } else {
+                    Modifier
+                }
+            )
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .fillMaxWidth()
+            .then(swipeModifier)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 40.dp)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            when {
+                current.active -> CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                    color = contentColor,
+                )
+                current.success -> Icon(
+                    imageVector = Icons.Filled.CheckCircle,
+                    contentDescription = null,
+                    tint = contentColor,
+                    modifier = Modifier.size(18.dp),
+                )
+                current.tone == ConnectionStatusTone.Warning ||
+                    current.tone == ConnectionStatusTone.Error -> Icon(
+                        imageVector = Icons.Filled.Warning,
+                        contentDescription = null,
+                        tint = contentColor,
+                        modifier = Modifier.size(18.dp),
+                    )
+                else -> Icon(
+                    imageVector = Icons.Filled.Sync,
+                    contentDescription = null,
+                    tint = contentColor,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = current.title,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = contentColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    current.route?.takeIf { it.isNotBlank() }?.let { route ->
+                        Text(
+                            text = route,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = contentColor.copy(alpha = 0.76f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                val outputLines = current.entries
+                    .takeLast(2)
+                    .mapNotNull { entry ->
+                        val label = entry.label.trim().takeIf { it.isNotBlank() }
+                        val detail = entry.detail?.trim()?.takeIf { it.isNotBlank() }
+                        when {
+                            label != null && detail != null -> "$label: $detail"
+                            label != null -> label
+                            detail != null -> detail
+                            else -> null
+                        }
+                    }
+                    .distinct()
+                outputLines.forEach { line ->
+                    Text(
+                        text = line,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = contentColor.copy(alpha = 0.72f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                current.actionLabel?.takeIf { it.isNotBlank() }?.let { label ->
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = contentColor.copy(alpha = 0.86f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }

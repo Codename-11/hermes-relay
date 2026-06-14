@@ -8,6 +8,7 @@ import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.RealtimeTurnTrace
 import com.hermesandroid.relay.data.ToolCall
 import com.hermesandroid.relay.data.VoiceIntentTrace
+import com.hermesandroid.relay.network.GatewaySubagentEvent
 import com.hermesandroid.relay.network.models.MessageItem
 import com.hermesandroid.relay.network.models.SessionItem
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,7 +34,7 @@ class ChatHandler {
         private const val TAG = "ChatHandler"
 
         /** Maximum number of messages kept in memory per session. Oldest are trimmed. */
-        private const val MAX_MESSAGES = 500
+        internal const val MAX_MESSAGES = 500
 
         // Tool annotation patterns embedded as text markers by Hermes.
         //
@@ -197,6 +198,58 @@ class ChatHandler {
     fun addUserMessage(message: ChatMessage) {
         _messages.update { list ->
             (list + message).let { if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it }
+        }
+    }
+
+    /**
+     * Append a SYSTEM-role notice bubble (e.g. a gateway interactive ask the
+     * phone can't answer). SYSTEM role keeps it out of the voice TTS observer
+     * and renders with the muted system styling in MessageBubble.
+     */
+    fun addSystemNotice(text: String) {
+        _messages.update { list ->
+            val notice = ChatMessage(
+                id = "system-notice-${java.util.UUID.randomUUID()}",
+                role = MessageRole.SYSTEM,
+                content = text,
+                timestamp = System.currentTimeMillis(),
+            )
+            (list + notice).let { if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it }
+        }
+    }
+
+    /**
+     * Append an assistant message that carries ONLY a gateway ask card
+     * (clarify / approval / sudo / secret). Local-only — the server never
+     * stores the ask as a message, so [loadMessageHistory] preserves the
+     * `ask-` id prefix the same way it preserves voice-intent traces.
+     * Idempotent on [messageId] so a re-emitted ask never duplicates.
+     */
+    fun appendAskCardMessage(messageId: String, card: HermesCard) {
+        _messages.update { list ->
+            if (list.any { it.id == messageId }) return@update list
+            val msg = ChatMessage(
+                id = messageId,
+                role = MessageRole.ASSISTANT,
+                content = "",
+                timestamp = System.currentTimeMillis(),
+                cards = listOf(card),
+                agentName = activeAgentName,
+            )
+            (list + msg).let { if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it }
+        }
+    }
+
+    /**
+     * Edit-and-regenerate local truncation: drop [messageId] and everything
+     * after it. The gateway performs the authoritative truncation via
+     * `truncate_before_user_ordinal`; this keeps the visible list consistent
+     * until the post-turn history reload reconciles any divergence.
+     */
+    fun truncateMessagesFrom(messageId: String) {
+        _messages.update { list ->
+            val idx = list.indexOfFirst { it.id == messageId }
+            if (idx < 0) list else list.take(idx)
         }
     }
 
@@ -594,6 +647,7 @@ class ChatHandler {
         activeAnnotationTools.clear()
         cardLineBuffer.clear()
         dispatchedCardMarkers.clear()
+        subagentLabels.clear()
     }
 
     /**
@@ -735,6 +789,14 @@ class ChatHandler {
                 toolCalls = toolCalls,
                 cards = extractedCards,
                 agentName = if (role == MessageRole.ASSISTANT) activeAgentName else null,
+                // Server persists per-message reasoning — restore it so the
+                // Thought-process block survives returning to the chat
+                // instead of existing only for the live turn.
+                thinkingContent = if (role == MessageRole.ASSISTANT) {
+                    item.resolvedReasoning?.trim() ?: ""
+                } else {
+                    ""
+                },
             )
         }
 
@@ -755,8 +817,15 @@ class ChatHandler {
         // sync (so these traces reach the LLM's session memory too) is
         // still a v0.4.1 follow-up, but preserving them client-side is
         // enough to fix the disappearing-scrollback bug today.
+        // Gateway-local bubbles ride the same preservation: steered text
+        // (id "steer-…") lives inside a server-side tool result, never as a
+        // user message, and ask cards (id "ask-…") are built from gateway
+        // events that have no server-side message at all — a wholesale
+        // reload would silently erase both.
         val preservedVoiceTraces = _messages.value.filter {
-            it.id.startsWith("voice-intent-")
+            it.id.startsWith("voice-intent-") ||
+                it.id.startsWith("steer-") ||
+                it.id.startsWith("ask-")
         }
         val merged = if (preservedVoiceTraces.isEmpty()) {
             loaded
@@ -1616,26 +1685,29 @@ class ChatHandler {
         }
     }
 
-    fun onToolCallStart(
-        messageId: String,
-        toolCallId: String,
-        toolName: String,
-        runId: String? = null,
-        provenance: String? = null,
-    ) {
-        _isStreaming.value = true
+    /** Monotonic suffix for synthetic generating / subagent ToolCall ids. */
+    private var syntheticToolSeq = 0
 
-        val toolCall = ToolCall(
-            id = toolCallId,
-            name = toolName,
+    /**
+     * Gateway `tool.generating` — the model is still streaming this tool's
+     * arguments. Appends a quiet "preparing" placeholder ToolCall; the
+     * matching `tool.start` (same name, FIFO — see [onToolCallStart])
+     * adopts it so the preparing card and the running card stay one entry.
+     * Nameless events get a blank-name placeholder that the next start
+     * adopts as a fallback; any never-adopted placeholders are swept in
+     * [onStreamComplete].
+     */
+    fun onToolGenerating(messageId: String, toolName: String?) {
+        _isStreaming.value = true
+        val placeholder = ToolCall(
+            id = "generating-${toolName ?: "tool"}-${syntheticToolSeq++}",
+            name = toolName ?: "",
             args = null,
             result = null,
             success = null,
             isComplete = false,
-            runId = runId,
-            provenance = provenance,
+            isGenerating = true,
         )
-
         _messages.update { messages ->
             val target = messages.findLast {
                 it.id == messageId && it.role == MessageRole.ASSISTANT
@@ -1643,7 +1715,7 @@ class ChatHandler {
             if (target != null) {
                 messages.map { msg ->
                     if (msg.id == messageId) {
-                        msg.copy(toolCalls = msg.toolCalls + toolCall)
+                        msg.copy(toolCalls = msg.toolCalls + placeholder)
                     } else {
                         msg
                     }
@@ -1655,10 +1727,211 @@ class ChatHandler {
                     content = "",
                     timestamp = System.currentTimeMillis(),
                     isStreaming = true,
-                    toolCalls = listOf(toolCall),
+                    toolCalls = listOf(placeholder),
                     agentName = activeAgentName
                 )
             }
+        }
+    }
+
+    fun onToolCallStart(
+        messageId: String,
+        toolCallId: String,
+        toolName: String,
+        runId: String? = null,
+        provenance: String? = null,
+    ) {
+        _isStreaming.value = true
+
+        _messages.update { messages ->
+            val target = messages.findLast {
+                it.id == messageId && it.role == MessageRole.ASSISTANT
+            }
+            if (target != null) {
+                // Adopt a pending "preparing" placeholder for this name
+                // (or, failing that, the oldest nameless one) so the
+                // generating card flips to running in place instead of a
+                // second card appearing.
+                val genIdx = target.toolCalls
+                    .indexOfFirst { it.isGenerating && !it.isComplete && it.name == toolName }
+                    .takeIf { it >= 0 }
+                    ?: target.toolCalls
+                        .indexOfFirst { it.isGenerating && !it.isComplete && it.name.isEmpty() }
+                        .takeIf { it >= 0 }
+                messages.map { msg ->
+                    if (msg.id != messageId) return@map msg
+                    if (genIdx != null) {
+                        val calls = msg.toolCalls.toMutableList()
+                        calls[genIdx] = calls[genIdx].copy(
+                            id = toolCallId,
+                            name = toolName,
+                            isGenerating = false,
+                            // Execution starts now — preparing time isn't runtime.
+                            startedAt = System.currentTimeMillis(),
+                            runId = runId ?: calls[genIdx].runId,
+                            provenance = provenance ?: calls[genIdx].provenance,
+                        )
+                        msg.copy(toolCalls = calls)
+                    } else {
+                        msg.copy(
+                            toolCalls = msg.toolCalls + ToolCall(
+                                id = toolCallId,
+                                name = toolName,
+                                args = null,
+                                result = null,
+                                success = null,
+                                isComplete = false,
+                                runId = runId,
+                                provenance = provenance,
+                            ),
+                        )
+                    }
+                }
+            } else {
+                messages + ChatMessage(
+                    id = messageId,
+                    role = MessageRole.ASSISTANT,
+                    content = "",
+                    timestamp = System.currentTimeMillis(),
+                    isStreaming = true,
+                    toolCalls = listOf(
+                        ToolCall(
+                            id = toolCallId,
+                            name = toolName,
+                            args = null,
+                            result = null,
+                            success = null,
+                            isComplete = false,
+                            runId = runId,
+                            provenance = provenance,
+                        ),
+                    ),
+                    agentName = activeAgentName
+                )
+            }
+        }
+    }
+
+    // --- Gateway subagent lanes ---
+
+    /**
+     * Lane labels by task index, captured from `subagent.start` (goal
+     * truncated to 60 chars) and stamped onto every child ToolCall so
+     * [com.hermesandroid.relay.ui.components.SubagentLane] can render its
+     * header without a separate registry. Per-run state — cleared on
+     * [onStreamComplete] / [clearMessages].
+     */
+    private val subagentLabels = mutableMapOf<Int, String>()
+
+    /**
+     * Apply one gateway `subagent.*` lifecycle event to the streaming
+     * message's tool calls. Mutation model mirrors the upstream child
+     * mirror: a TOOL event closes the lane's open tool then starts the new
+     * one; COMPLETE closes whatever is still open and (for a lane that
+     * never surfaced a tool) appends a single completed summary entry so
+     * the lane is visible in history. THINKING/PROGRESS carry preview text
+     * the lanes don't render — ignored.
+     */
+    fun onSubagentEvent(messageId: String, event: GatewaySubagentEvent) {
+        val label = event.goal.trim().take(60).ifBlank { null }
+        when (event.phase) {
+            GatewaySubagentEvent.Phase.START -> {
+                if (label != null) subagentLabels[event.taskIndex] = label
+            }
+
+            GatewaySubagentEvent.Phase.TOOL -> {
+                _isStreaming.value = true
+                val laneLabel = subagentLabels[event.taskIndex] ?: label
+                val newCall = ToolCall(
+                    id = "subagent-${event.taskIndex}-${syntheticToolSeq++}",
+                    name = event.toolName?.takeIf { it.isNotBlank() } ?: "tool",
+                    args = event.preview,
+                    result = null,
+                    success = null,
+                    isComplete = false,
+                    taskIndex = event.taskIndex,
+                    taskLabel = laneLabel,
+                )
+                _messages.update { messages ->
+                    val target = messages.findLast {
+                        it.id == messageId && it.role == MessageRole.ASSISTANT
+                    }
+                    if (target != null) {
+                        messages.map { msg ->
+                            if (msg.id != messageId) return@map msg
+                            val closed = msg.toolCalls.map { call ->
+                                if (call.taskIndex == event.taskIndex && !call.isComplete) {
+                                    call.copy(
+                                        success = true,
+                                        isComplete = true,
+                                        completedAt = System.currentTimeMillis(),
+                                    )
+                                } else {
+                                    call
+                                }
+                            }
+                            msg.copy(toolCalls = closed + newCall)
+                        }
+                    } else {
+                        messages + ChatMessage(
+                            id = messageId,
+                            role = MessageRole.ASSISTANT,
+                            content = "",
+                            timestamp = System.currentTimeMillis(),
+                            isStreaming = true,
+                            toolCalls = listOf(newCall),
+                            agentName = activeAgentName
+                        )
+                    }
+                }
+            }
+
+            GatewaySubagentEvent.Phase.COMPLETE -> {
+                // "interrupted" lanes never finished — not a success either.
+                val failed = event.status == "failed" || event.status == "interrupted"
+                val laneLabel = subagentLabels.remove(event.taskIndex) ?: label
+                val summaryId = "subagent-${event.taskIndex}-${syntheticToolSeq++}"
+                _messages.update { messages ->
+                    messages.map { msg ->
+                        if (msg.id != messageId || msg.role != MessageRole.ASSISTANT) return@map msg
+                        val hasLaneCalls = msg.toolCalls.any { it.taskIndex == event.taskIndex }
+                        val closed = msg.toolCalls.map { call ->
+                            if (call.taskIndex == event.taskIndex && !call.isComplete) {
+                                call.copy(
+                                    success = !failed,
+                                    isComplete = true,
+                                    result = event.summary ?: call.result,
+                                    error = if (failed) (event.summary ?: event.status) else call.error,
+                                    completedAt = System.currentTimeMillis(),
+                                )
+                            } else {
+                                call
+                            }
+                        }
+                        val withSummary = if (hasLaneCalls) {
+                            closed
+                        } else {
+                            closed + ToolCall(
+                                id = summaryId,
+                                name = laneLabel ?: "subagent",
+                                args = null,
+                                result = event.summary,
+                                success = !failed,
+                                isComplete = true,
+                                error = if (failed) (event.summary ?: event.status) else null,
+                                completedAt = System.currentTimeMillis(),
+                                taskIndex = event.taskIndex,
+                                taskLabel = laneLabel,
+                            )
+                        }
+                        msg.copy(toolCalls = withSummary)
+                    }
+                }
+            }
+
+            GatewaySubagentEvent.Phase.THINKING,
+            GatewaySubagentEvent.Phase.PROGRESS,
+            -> Unit
         }
     }
 
@@ -1818,6 +2091,19 @@ class ChatHandler {
         // Finalize media markers unconditionally
         finalizeMediaMarkers(messageId)
         finalizeCardMarkers(messageId)
+
+        // Sweep "preparing" placeholders whose tool.start never arrived —
+        // they never executed and would otherwise breathe forever.
+        _messages.update { messages ->
+            messages.map { msg ->
+                if (msg.toolCalls.none { it.isGenerating && !it.isComplete }) {
+                    msg
+                } else {
+                    msg.copy(toolCalls = msg.toolCalls.filterNot { it.isGenerating && !it.isComplete })
+                }
+            }
+        }
+        subagentLabels.clear()
     }
 
     fun onStreamError(message: String) {
@@ -1831,6 +2117,19 @@ class ChatHandler {
                 } else msg
             }
         }
+
+        // Same sweep as onStreamComplete — error/watchdog/transport-failure
+        // turns must not leave "preparing" placeholders breathing forever.
+        _messages.update { messages ->
+            messages.map { msg ->
+                if (msg.toolCalls.none { it.isGenerating && !it.isComplete }) {
+                    msg
+                } else {
+                    msg.copy(toolCalls = msg.toolCalls.filterNot { it.isGenerating && !it.isComplete })
+                }
+            }
+        }
+        subagentLabels.clear()
     }
 
     fun onThinkingDelta(messageId: String, delta: String) {
