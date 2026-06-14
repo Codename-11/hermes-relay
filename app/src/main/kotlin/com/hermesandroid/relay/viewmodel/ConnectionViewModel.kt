@@ -965,10 +965,46 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // the same reason as [authState] / [pairingCode] — after a connection
     // switch the underlying [AuthManager] instance is replaced and the
     // public flow needs to repoint at the new manager's backing state.
+    /**
+     * Host agent profiles loaded from the dashboard `GET /api/profiles` — the
+     * same profiles Manage and the official desktop expose. Populates
+     * [agentProfiles] on a dashboard-only (non-relay) connection, where the
+     * relay's `auth.ok` profile list is empty. Refreshed by
+     * [refreshDashboardProfiles] when the agent sheet opens.
+     */
+    private val _dashboardProfiles = MutableStateFlow<List<Profile>>(emptyList())
+
     @OptIn(ExperimentalCoroutinesApi::class)
-    val agentProfiles: StateFlow<List<Profile>> = _authManagerFlow
-        .flatMapLatest { it.agentProfiles }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, authManager.agentProfiles.value)
+    val agentProfiles: StateFlow<List<Profile>> = combine(
+        _authManagerFlow.flatMapLatest { it.agentProfiles },
+        _dashboardProfiles,
+    ) { relay, dashboard ->
+        // Prefer the relay's list when it has entries (richer runtime metadata);
+        // fall back to the dashboard list so a dashboard-only connection still
+        // sees its server profiles in the chat picker.
+        relay.ifEmpty { dashboard }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, authManager.agentProfiles.value)
+
+    /**
+     * Load the host's agent profiles from the dashboard `/api/profiles` into
+     * [agentProfiles] (merged in the combine above). Lets the chat agent sheet
+     * offer server profiles on a dashboard-only connection. Best-effort: leaves
+     * the current list untouched on failure (e.g. dashboard not signed in).
+     */
+    fun refreshDashboardProfiles() {
+        val connectionId = connectionStore.activeConnectionId.value ?: return
+        val dashboardUrl = activeDashboardUrl() ?: return
+        viewModelScope.launch {
+            DashboardApiClient(
+                baseUrl = dashboardUrl,
+                okHttpClient = DashboardApiClient.defaultClient(
+                    cookieStore = dashboardCookieStoreFor(connectionId),
+                ),
+            ).listProfiles().onSuccess { profiles ->
+                _dashboardProfiles.value = profiles
+            }
+        }
+    }
 
     /**
      * User's current profile pick for the chat send pipeline. `null` means

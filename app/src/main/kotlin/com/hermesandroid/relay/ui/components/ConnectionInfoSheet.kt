@@ -647,6 +647,9 @@ fun AgentInfoSheet(
     // Pull the gateway's curated provider/model list (model.options) when the
     // sheet opens — the real switchable models, grouped by provider.
     LaunchedEffect(Unit) { chatViewModel.refreshModelOptions() }
+    // Pull the host's agent profiles from the dashboard so they appear in the
+    // Profile picker even on a dashboard-only (non-relay) connection.
+    LaunchedEffect(Unit) { connectionViewModel.refreshDashboardProfiles() }
 
     // Connection summary state.
     val authState by connectionViewModel.authState.collectAsState()

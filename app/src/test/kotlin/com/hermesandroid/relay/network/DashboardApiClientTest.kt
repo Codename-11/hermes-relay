@@ -428,4 +428,51 @@ class DashboardApiClientTest {
         assertEquals("DELETE", delete.method)
         assertEquals("/api/profiles/old%20profile", delete.path)
     }
+
+    @Test
+    fun listProfiles_parsesArrayShapeIntoProfiles() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody(
+                    """
+                    {"profiles":[
+                      {"name":"default","model":"gpt-5.5","description":"Victor","gateway_running":true,"skill_count":3,"is_default":true},
+                      {"name":"mizu","model":"claude-opus-4-8","description":"Code assistant","gateway_running":false}
+                    ]}
+                    """.trimIndent(),
+                ),
+        )
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        val profiles = client.listProfiles().getOrThrow()
+
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/api/profiles", request.path)
+        assertEquals(2, profiles.size)
+        assertEquals("default", profiles[0].name)
+        assertEquals("gpt-5.5", profiles[0].model)
+        assertEquals("Victor", profiles[0].description)
+        assertTrue(profiles[0].gatewayRunning)
+        assertEquals(3, profiles[0].skillCount)
+        assertEquals("mizu", profiles[1].name)
+        assertEquals("claude-opus-4-8", profiles[1].model)
+    }
+
+    @Test
+    fun listProfiles_parsesObjectMapShapeWithInjectedName() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"profiles":{"default":{"model":"gpt-5.5"},"mizu":{"model":"claude-opus-4-8","description":"Coder"}}}"""),
+        )
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        val profiles = client.listProfiles().getOrThrow().sortedBy { it.name }
+
+        assertEquals(2, profiles.size)
+        // The map key is injected as the profile name when the object omits it.
+        assertEquals("default", profiles[0].name)
+        assertEquals("mizu", profiles[1].name)
+        assertEquals("Coder", profiles[1].description)
+    }
 }

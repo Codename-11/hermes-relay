@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.network
 
 import android.content.Context
+import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.auth.KeystoreTokenStore
 import com.hermesandroid.relay.auth.LegacyEncryptedPrefsTokenStore
 import com.hermesandroid.relay.auth.SessionTokenStore
@@ -371,6 +372,39 @@ class DashboardApiClient(
 
     suspend fun deleteProfile(name: String): Result<JsonObject> =
         deleteJsonObject("/api/profiles/${pathSegment(name)}")
+
+    /**
+     * List the host's Hermes agent profiles (`GET /api/profiles`) — the same
+     * profiles the Manage tab and the official desktop expose — mapped into the
+     * shared [Profile] type so the chat agent sheet can offer them even on a
+     * dashboard-only (non-relay) connection, where the relay's `auth.ok`
+     * profile list is empty. Tolerates the array (`{profiles:[…]}` / `{items:[…]}`)
+     * and the object-map (`{profiles:{name:{…}}}`) shapes; an item missing a
+     * required field is skipped, not fatal.
+     */
+    suspend fun listProfiles(): Result<List<Profile>> =
+        getJsonObject("/api/profiles").mapCatching { root -> parseProfiles(root) }
+
+    private fun parseProfiles(root: JsonObject): List<Profile> {
+        fun decode(element: JsonElement, nameOverride: String?): Profile? = runCatching {
+            val obj = element as? JsonObject ?: return null
+            // Profile requires name + model; inject the map key as name and an
+            // empty model when the server omits them so a sparse row still maps.
+            val patched = buildJsonObject {
+                obj.forEach { (k, v) -> put(k, v) }
+                if (obj["name"] == null && !nameOverride.isNullOrBlank()) put("name", nameOverride)
+                if (obj["model"] == null) put("model", "")
+            }
+            json.decodeFromJsonElement(Profile.serializer(), patched)
+        }.getOrNull()
+
+        (root["profiles"] as? JsonArray)?.let { arr -> return arr.mapNotNull { decode(it, null) } }
+        (root["items"] as? JsonArray)?.let { arr -> return arr.mapNotNull { decode(it, null) } }
+        (root["profiles"] as? JsonObject)?.let { map ->
+            return map.entries.mapNotNull { (name, value) -> decode(value, name) }
+        }
+        return root.entries.mapNotNull { (name, value) -> decode(value, name) }
+    }
 
     suspend fun loginPassword(
         provider: String = "basic",
