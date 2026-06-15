@@ -10,13 +10,38 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.net.ConnectException
+import java.net.NoRouteToHostException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLException
+
+/**
+ * Last observed probe result for a single [EndpointCandidate], keyed by
+ * [EndpointResolver.cacheKey] in [EndpointResolver.probeOutcomes]. Unlike the
+ * probe *cache* (a short-TTL "don't re-ask the network" optimization), this is
+ * a UI-facing record of what actually happened — it survives [EndpointResolver
+ * .clearCache] so the Routes card can keep showing the most recent
+ * reachability verdict between probes.
+ */
+data class RouteProbeOutcome(
+    val reachable: Boolean,
+    /** Short human-readable failure reason; null when [reachable]. */
+    val detail: String? = null,
+    /** Resolver-clock timestamp of when the probe finished. */
+    val atMillis: Long,
+)
 
 /**
  * Picks the highest-priority **reachable** [EndpointCandidate] from a
@@ -70,6 +95,26 @@ class EndpointResolver(
 
     private val probeCache = ConcurrentHashMap<String, CacheEntry>()
 
+    private val _probeOutcomes = MutableStateFlow<Map<String, RouteProbeOutcome>>(emptyMap())
+
+    /**
+     * Last probe verdict per candidate, keyed by [cacheKey]. Drives the
+     * per-row reachability line in the Routes card. Deliberately NOT wiped by
+     * [clearCache] — the cache controls when we re-ask the network; this
+     * records what the network last said.
+     */
+    val probeOutcomes: StateFlow<Map<String, RouteProbeOutcome>> = _probeOutcomes.asStateFlow()
+
+    private fun recordOutcome(candidate: EndpointCandidate, reachable: Boolean, detail: String?) {
+        _probeOutcomes.update { outcomes ->
+            outcomes + (cacheKey(candidate) to RouteProbeOutcome(
+                reachable = reachable,
+                detail = detail,
+                atMillis = clock(),
+            ))
+        }
+    }
+
     companion object {
         private const val TAG = "EndpointResolver"
         /**
@@ -98,6 +143,9 @@ class EndpointResolver(
          * viable fallback route suppressed through the voice resume window.
          */
         const val NEGATIVE_CACHE_TTL_MS = 2_000L
+
+        /** Shared timeout wording so HEAD-timeout and socket-timeout read the same. */
+        private const val PROBE_TIMEOUT_DETAIL = "No answer (timed out)"
 
         /**
          * Stable cache key for a candidate: `"<role>|<api.host>:<api.port>"`.
@@ -245,6 +293,7 @@ class EndpointResolver(
                     endpointRole = candidate.role,
                     url = candidate.api.url,
                 )
+                recordOutcome(candidate, reachable = false, detail = "Invalid API URL")
                 return false
             }
         val fastClient = httpClient.newBuilder()
@@ -272,6 +321,11 @@ class EndpointResolver(
                             url = candidate.api.url,
                             elapsedMs = clock() - startedAtMs,
                         )
+                        recordOutcome(
+                            candidate,
+                            reachable = ok,
+                            detail = if (ok) null else "HTTP ${resp.code} from /health",
+                        )
                         ok
                     }
                 } ?: run {
@@ -284,6 +338,7 @@ class EndpointResolver(
                         url = candidate.api.url,
                         elapsedMs = clock() - startedAtMs,
                     )
+                    recordOutcome(candidate, reachable = false, detail = PROBE_TIMEOUT_DETAIL)
                     false
                 }
             } catch (_: TimeoutCancellationException) {
@@ -296,6 +351,7 @@ class EndpointResolver(
                     url = candidate.api.url,
                     elapsedMs = clock() - startedAtMs,
                 )
+                recordOutcome(candidate, reachable = false, detail = PROBE_TIMEOUT_DETAIL)
                 false
             } catch (e: Exception) {
                 Log.d(TAG, "probe failed role=${candidate.role} " +
@@ -309,9 +365,25 @@ class EndpointResolver(
                     url = candidate.api.url,
                     elapsedMs = clock() - startedAtMs,
                 )
+                recordOutcome(candidate, reachable = false, detail = humanProbeFailure(e))
                 false
             }
         }
+    }
+
+    /**
+     * Map a probe exception to a short, actionable string for the Routes
+     * card. The TLS case is the headline: a route saved with `https://`
+     * against a plain-HTTP Hermes API server fails its handshake on every
+     * probe and previously surfaced as a silent "never switches" mystery.
+     */
+    private fun humanProbeFailure(e: Exception): String = when (e) {
+        is SSLException -> "TLS failed — server may be http://, not https://"
+        is ConnectException -> "Connection refused"
+        is UnknownHostException -> "Host not found"
+        is SocketTimeoutException -> PROBE_TIMEOUT_DETAIL
+        is NoRouteToHostException -> "No route to host"
+        else -> e.javaClass.simpleName
     }
 
     /**
@@ -329,9 +401,16 @@ class EndpointResolver(
             expiresAt = clock() + NEGATIVE_CACHE_TTL_MS,
             reachable = false,
         )
+        recordOutcome(candidate, reachable = false, detail = "Network changed — assumed offline")
     }
 
-    /** Test-only: wipe the probe cache so a fresh run starts clean. */
+    /**
+     * Wipe the probe cache so the next resolve runs fresh probes. Called on
+     * "the world changed" triggers — NetworkCallback events, manual "Probe
+     * now", and [refreshActiveEndpoint][ConnectionManager.refreshActiveEndpoint]
+     * with `clearProbeCache = true` — where a positive entry for a
+     * just-died route must not outlive the handoff.
+     */
     internal fun clearCache() {
         probeCache.clear()
     }

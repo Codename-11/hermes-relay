@@ -1,6 +1,6 @@
 # Privacy & Data Handling
 
-Hermes-Relay is a self-hosted AI agent companion app. It connects only to servers you configure — there are no cloud accounts, hosted backends, ads, or third-party analytics.
+Hermes-Relay is a companion app for the Hermes agent. It connects only to servers you configure — there are no cloud accounts, hosted backends, ads, or third-party analytics.
 
 ## No External Data Transmission
 
@@ -67,8 +67,11 @@ Notification companion is opt-in. The app only forwards notification metadata af
 
 From Settings, users can:
 
-- **Export** settings such as server URLs and preferences; secrets are excluded
-- **Import** a previously exported configuration
+- **Export** a full connection backup. The file includes server URLs,
+  preferences, API keys, relay session tokens, device IDs, and dashboard
+  cookies so restored connections can work without manual re-entry. Keep it
+  private.
+- **Import** a previously exported backup
 - **Full reset** to wipe local data including encrypted credentials
 
 ## Stats for Nerds

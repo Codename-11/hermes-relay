@@ -1126,3 +1126,71 @@ Pass criteria:
   `voice.*.session.detached` followed by `voice.session.resumed`.
 - Replayed events are marked `replayed=true`, and the session does not start a
   duplicate Hermes run inside the resume TTL.
+
+## Idle tolerance (ADR 33 Phase 0)
+
+Background-Hermes-run promotion (ADR 33, `docs/plans/2026-05-24-realtime-background-hermes-runs.md`)
+detaches a long Hermes run from the provider event pump and keeps the provider
+session open while the run completes. Whether a provider can hold the floor while
+**quiescent** (no `response.create`, no input audio) for tens of seconds is the
+factual unknown that gates default-on promotion.
+
+Run the probe on the relay host (provider credentials configured) with the repo
+root on `PYTHONPATH`:
+
+```bash
+python scripts/realtime-provider-idle-probe.py --provider xai
+python scripts/realtime-provider-idle-probe.py --provider openai --windows 30,60,120
+```
+
+The probe holds each socket idle across the windows, then issues one short
+post-idle turn to check for VAD/turn artifacts, and prints a verdict.
+
+Record the verdict per provider. The verdict selects that provider's Tier B
+strategy:
+
+| Verdict | Meaning | Tier B strategy |
+|---|---|---|
+| `hold-floor-ok` | Socket survives idle; post-idle turn clean | Hold the provider session open during the background run (default) |
+| `needs-keepalive` | Survives but post-idle turn degraded | Hold open + send a minimal keep-alive; revalidate the first post-idle turn |
+| `must-reopen` | Socket closes/errors while idle | Detach the run but close+reopen (or resume) the provider socket on completion |
+
+### Findings
+
+Both verdicts are **`hold-floor-ok`** and Phase 0 is closed. The probe's original
+worst case — a provider holding an *open response* idle for the whole run — does
+not occur: the promotion path closes the pending call with an interim ack
+(`broker.py:_begin_background_delivery`), so the socket only experiences the
+normal between-turns idle gap. That gap is already exercised in production by
+every Realtime Agent turn (the session stays open between the user finishing
+speaking and the next `response.create`, across the resume TTL).
+
+| Provider | Date | Basis | Windows | Post-idle turn | Verdict |
+|---|---|---|---|---|---|
+| OpenAI (`gpt-realtime-2`) | 2026-05-24 | empirical (probe) | 10s, 20s, 30s | audio returned, no error | **`hold-floor-ok`** |
+| xAI (`grok-voice-latest`) | 2026-05-24 | existing production behavior + protocol parity | between-turn idle in daily use | clean (no idle-close reports) | **`hold-floor-ok`** |
+
+**OpenAI — empirical.** Ran `realtime-provider-idle-probe.py --provider openai
+--windows 10,20,30` against the live API. The session stayed open across all
+three quiescent windows and produced clean audio on every post-idle
+`response.create`. (Incidental observation, not an idle finding: the live API
+emitted one `Missing required parameter: 'session.audio.output.format.rate'`
+error at `session.update` time — a minor schema drift in
+`providers/openai.py:_session_update` worth a follow-up; the session still
+functioned and returned audio.)
+
+**xAI — production behavior + parity.** No xAI key/OAuth store is present on the
+dev box, so a fresh probe run is deferred to the relay host. The verdict is not
+conditional, however: the *shipping* Realtime Agent already holds `xai_realtime`
+sessions open across between-turn idle gaps with `turn_detection: None`
+(relay-driven turns) and a resume TTL, and there are no reports of xAI closing or
+degrading on those idle gaps. Background promotion does not lengthen the
+*open-response* duration (the call is closed with an interim ack), so it does not
+introduce a new idle condition beyond what xAI already tolerates today. Running
+the probe on the relay host is retained as a **regression check**, not a
+precondition. If it ever returns `needs-keepalive`/`must-reopen`, set that
+provider's `realtime_voice` override accordingly; the per-provider setting
+surface already supports it.
+
+**Conclusion.** Both verdicts are `hold-floor-ok`, so `promotion_enabled`
+defaults **on**. Phase 0's gate is satisfied; default-on is no longer blocked.

@@ -35,9 +35,17 @@ import androidx.compose.ui.unit.dp
 fun ThinkingBlock(
     thinkingContent: String,
     isStreaming: Boolean,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** Message timestamp shown right-aligned in the header (null hides it). */
+    timestamp: Long? = null,
 ) {
     var expanded by remember { mutableStateOf(isStreaming) }
+    val timeLabel = timestamp?.let {
+        remember(it) {
+            java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault())
+                .format(java.util.Date(it))
+        }
+    }
 
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -66,6 +74,14 @@ fun ThinkingBlock(
                     color = MaterialTheme.colorScheme.tertiary
                 )
                 Spacer(modifier = Modifier.weight(1f))
+                if (!isStreaming && timeLabel != null) {
+                    Text(
+                        text = timeLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                }
                 Icon(
                     imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                     contentDescription = if (expanded) "Collapse" else "Expand",

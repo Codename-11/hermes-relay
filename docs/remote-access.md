@@ -202,7 +202,7 @@ QR still embeds all detected candidates; only the probe order changes.
 
 ```bash
 # All three modes detected, but Tailscale probed first
-hermes-pair --mode auto --public-url https://hermes.example.com/relay --prefer tailscale
+hermes pair --mode auto --public-url https://hermes.example.com/relay --prefer tailscale
 ```
 
 Result: `[(0, tailscale), (1, lan), (2, public)]` — phone tries the
@@ -216,7 +216,7 @@ order. **Role already at priority 0** → no-op.
 
 Works identically from three surfaces:
 
-- **CLI:** `hermes-pair --prefer tailscale`
+- **CLI:** `hermes pair --prefer tailscale`
 - **Skill:** `/hermes-relay-pair` documented in
   [`skills/devops/hermes-relay-pair/SKILL.md`](../skills/devops/hermes-relay-pair/SKILL.md)
 - **Dashboard:** Remote Access tab → Endpoint preview card →
@@ -294,7 +294,8 @@ that returns true (PR #9295 has landed in your hermes-agent install),
 the helper still works but the canonical path
 (`hermes gateway run --tailscale`) is preferred and the helper will
 be removed in a future release. Same retirement pattern as
-`hermes_relay_bootstrap/` after PR #8556.
+`hermes_relay_bootstrap/`: retire compatibility per surface once the
+supported upstream baseline covers it.
 
 ### Forward-auth gateways (Authelia, Cloudflare Access) in front of the API server
 

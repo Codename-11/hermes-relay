@@ -532,6 +532,64 @@ class RelayVoiceClient(
             label = "Realtime agent config update",
         )
 
+    /**
+     * PATCH the ADR 33 background-run promotion settings. Only non-null fields
+     * are sent; the relay echoes back the full [RealtimeVoiceConfig].
+     */
+    suspend fun updateRealtimeAgentPromotion(
+        promotionEnabled: Boolean? = null,
+        promoteAfterMs: Int? = null,
+        spokenHandoff: Boolean? = null,
+        resultDelivery: String? = null,
+        backgroundDefaultMode: String? = null,
+        progressSpokenAfterMs: Int? = null,
+        progressRepeatMs: Int? = null,
+        maxBackgroundRuns: Int? = null,
+    ): Result<RealtimeVoiceConfig> = withContext(Dispatchers.IO) {
+        val httpBase = resolveHttpBase()
+            ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
+        val token = resolveBearerToken()
+        if (token.isNullOrBlank()) {
+            return@withContext Result.failure(missingAuthError())
+        }
+        val payload = buildJsonObject {
+            promotionEnabled?.let { put("promotion_enabled", JsonPrimitive(it)) }
+            promoteAfterMs?.let { put("promote_after_ms", JsonPrimitive(it)) }
+            spokenHandoff?.let { put("spoken_handoff", JsonPrimitive(it)) }
+            resultDelivery?.takeIf { it.isNotBlank() }?.let {
+                put("result_delivery", JsonPrimitive(it.trim()))
+            }
+            backgroundDefaultMode?.takeIf { it.isNotBlank() }?.let {
+                put("background_default_mode", JsonPrimitive(it.trim()))
+            }
+            progressSpokenAfterMs?.let { put("progress_spoken_after_ms", JsonPrimitive(it)) }
+            progressRepeatMs?.let { put("progress_repeat_ms", JsonPrimitive(it)) }
+            maxBackgroundRuns?.let { put("max_background_runs", JsonPrimitive(it)) }
+        }
+        val request = Request.Builder()
+            .url(urlWithProfile("$httpBase/voice/realtime-agent/config"))
+            .patch(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/json")
+            .build()
+        try {
+            okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val body = response.body?.string().orEmpty()
+                    return@withContext Result.failure(
+                        IOException(describeHttpError(response.code, response.message, body))
+                    )
+                }
+                val raw = response.body?.string().orEmpty()
+                Result.success(json.decodeFromString(RealtimeVoiceConfig.serializer(), raw))
+            }
+        } catch (e: IOException) {
+            Result.failure(IOException("Realtime promotion update failed: ${e.message ?: "network error"}"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     suspend fun getVoiceOutputConfig(): Result<VoiceOutputConfig> = withContext(Dispatchers.IO) {
         val httpBase = resolveHttpBase()
             ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
@@ -1133,6 +1191,22 @@ class RelayVoiceClient(
         }
     }
 
+    /**
+     * Run a Realtime Agent voice session.
+     *
+     * **One-shot (default):** with [turnInputs] null, this opens a session, sends
+     * the single [inputPcm]/[prompt] turn, and completes + closes the socket on
+     * `voice.response.done` — the historical per-utterance behavior used by the
+     * Voice Lab and the one-shot fallback.
+     *
+     * **Persistent (ADR follow-up, see docs/plans/2026-05-24-realtime-persistent-session.md):**
+     * with [turnInputs] non-null the socket stays open across turns. The first
+     * turn is [inputPcm]/[prompt]; each subsequent [RealtimeTurnInput] read from
+     * the channel is sent on the *same* socket, so the provider keeps a live
+     * conversation. `voice.response.done` invokes [onTurnComplete] instead of
+     * closing; the call returns only when the channel closes (voice-mode exit) or
+     * a fatal socket/provider error occurs.
+     */
     suspend fun runRealtimeAgent(
         prompt: String,
         inputPcm: ByteArray,
@@ -1140,8 +1214,11 @@ class RelayVoiceClient(
         chatSessionId: String? = null,
         conversationContext: List<RealtimeConversationContextMessage> = emptyList(),
         onHandoff: (VoiceHandoffEvent) -> Unit = {},
+        turnInputs: kotlinx.coroutines.channels.ReceiveChannel<RealtimeTurnInput>? = null,
+        onTurnComplete: (RealtimeVoiceSummary) -> Unit = {},
         onEvent: (RealtimeVoiceEvent, RealtimeAgentSessionControl) -> Unit,
     ): Result<RealtimeVoiceSummary> = withContext(Dispatchers.IO) {
+        val persistent = turnInputs != null
         val httpBase = resolveHttpBase()
             ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
         val wsBase = resolveWebSocketBase()
@@ -1172,8 +1249,11 @@ class RelayVoiceClient(
         val lastAudioEventId = AtomicLong(0L)
         val lastPlayedAudioEventId = AtomicLong(0L)
         val lastInputChunkId = AtomicLong(0L)
-        val turnStartedAtMs = System.currentTimeMillis()
-        val lastEventAtMs = AtomicLong(turnStartedAtMs)
+        val turnStartedAtMs = AtomicLong(System.currentTimeMillis())
+        val lastEventAtMs = AtomicLong(turnStartedAtMs.get())
+        // True while a turn is awaiting its response. In persistent mode the idle
+        // guard only applies while a turn is active; between-turn idle is normal.
+        val activeTurn = AtomicBoolean(true)
         val inputChunks = buildList {
             var offset = 0
             var chunkId = 1L
@@ -1184,8 +1264,33 @@ class RelayVoiceClient(
                 offset = end
             }
         }
+        // Highest input chunk id sent on this session. The relay dedups by
+        // input_chunk_seq, so subsequent turns must continue past this.
+        val sessionMaxChunkId = AtomicLong(inputChunks.size.toLong())
         var audioChunks = 0
         var audioBytes = 0
+
+        // Persistent-mode: chunk + send one more utterance on the open socket.
+        fun sendTurnPcm(webSocket: WebSocket, pcm: ByteArray, sampleRate: Int) {
+            var offset = 0
+            var sentAny = false
+            while (offset < pcm.size) {
+                val end = (offset + REALTIME_INPUT_CHUNK_BYTES).coerceAtMost(pcm.size)
+                val chunkId = sessionMaxChunkId.incrementAndGet()
+                val encoded = Base64.getEncoder().encodeToString(pcm.copyOfRange(offset, end))
+                webSocket.send(
+                    """{"type":"input_audio.append","chunk_id":$chunkId,"sample_rate":$sampleRate,"audio_base64":"$encoded"}"""
+                )
+                sentAny = true
+                offset = end
+            }
+            if (sentAny) {
+                webSocket.send("""{"type":"input_audio.commit"}""")
+            }
+            turnStartedAtMs.set(System.currentTimeMillis())
+            lastEventAtMs.set(System.currentTimeMillis())
+            activeTurn.set(true)
+        }
         fun activateSocket(webSocket: WebSocket, generation: Long): Boolean {
             while (true) {
                 val activeGeneration = activeSocketGeneration.get()
@@ -1332,24 +1437,28 @@ class RelayVoiceClient(
                         inputChunkId = event.inputChunkId,
                     )
                     if (event.type == "voice.response.done") {
-                        if (completed.compareAndSet(false, true)) {
-                            finished.complete(
-                                Result.success(
-                                    RealtimeVoiceSummary(
-                                        provider = event.provider ?: session.provider,
-                                        model = event.model ?: session.model,
-                                        voice = event.voice ?: session.voice,
-                                        sampleRate = session.sampleRate,
-                                        audioChunks = audioChunks,
-                                        audioBytes = audioBytes,
-                                        firstAudioMs = event.firstAudioMs,
-                                        responseDoneMs = event.responseDoneMs,
-                                        eventLogPath = event.eventLogPath ?: session.eventLogPath,
-                                    )
-                                )
-                            )
+                        val summary = RealtimeVoiceSummary(
+                            provider = event.provider ?: session.provider,
+                            model = event.model ?: session.model,
+                            voice = event.voice ?: session.voice,
+                            sampleRate = session.sampleRate,
+                            audioChunks = audioChunks,
+                            audioBytes = audioBytes,
+                            firstAudioMs = event.firstAudioMs,
+                            responseDoneMs = event.responseDoneMs,
+                            eventLogPath = event.eventLogPath ?: session.eventLogPath,
+                        )
+                        if (persistent) {
+                            // Turn boundary, not session boundary: keep the socket
+                            // open for the next utterance.
+                            activeTurn.set(false)
+                            onTurnComplete(summary)
+                        } else {
+                            if (completed.compareAndSet(false, true)) {
+                                finished.complete(Result.success(summary))
+                            }
+                            webSocket.close(1000, "done")
                         }
-                        webSocket.close(1000, "done")
                     } else if (event.type == "voice.error" || event.type == "voice.session.resume_failed") {
                         completeFailure(event.message ?: "Realtime agent error")
                         webSocket.close(1011, "provider error")
@@ -1452,23 +1561,83 @@ class RelayVoiceClient(
         suspend fun awaitRealtimeAgentCompletion(): Result<RealtimeVoiceSummary> {
             while (true) {
                 val now = System.currentTimeMillis()
-                val turnElapsedMs = now - turnStartedAtMs
-                val idleElapsedMs = now - lastEventAtMs.get()
-                if (turnElapsedMs >= REALTIME_AGENT_MAX_TURN_MS) {
-                    throw IOException("Realtime agent exceeded the turn limit")
+                // In persistent mode the turn/idle guards only apply while a turn
+                // is actually in flight; between-turn idle is expected and must
+                // not trip the stall timeout. The session ends when the turn
+                // channel closes or a fatal error completes `finished`.
+                val guardActive = !persistent || activeTurn.get()
+                if (guardActive) {
+                    val turnElapsedMs = now - turnStartedAtMs.get()
+                    val idleElapsedMs = now - lastEventAtMs.get()
+                    if (turnElapsedMs >= REALTIME_AGENT_MAX_TURN_MS) {
+                        throw IOException("Realtime agent exceeded the turn limit")
+                    }
+                    if (idleElapsedMs >= REALTIME_AGENT_IDLE_TIMEOUT_MS) {
+                        throw IOException("Realtime agent stalled waiting for relay events")
+                    }
+                    val waitMs = minOf(
+                        REALTIME_AGENT_WAIT_SLICE_MS,
+                        REALTIME_AGENT_MAX_TURN_MS - turnElapsedMs,
+                        REALTIME_AGENT_IDLE_TIMEOUT_MS - idleElapsedMs,
+                    ).coerceAtLeast(1L)
+                    withTimeoutOrNull(waitMs) {
+                        finished.await()
+                    }?.let { return it }
+                } else {
+                    withTimeoutOrNull(REALTIME_AGENT_WAIT_SLICE_MS) {
+                        finished.await()
+                    }?.let { return it }
                 }
-                if (idleElapsedMs >= REALTIME_AGENT_IDLE_TIMEOUT_MS) {
-                    throw IOException("Realtime agent stalled waiting for relay events")
-                }
-                val waitMs = minOf(
-                    REALTIME_AGENT_WAIT_SLICE_MS,
-                    REALTIME_AGENT_MAX_TURN_MS - turnElapsedMs,
-                    REALTIME_AGENT_IDLE_TIMEOUT_MS - idleElapsedMs,
-                ).coerceAtLeast(1L)
-                withTimeoutOrNull(waitMs) {
-                    finished.await()
-                }?.let { return it }
             }
+        }
+
+        // Persistent mode: drain further utterances and feed each onto the open
+        // socket as a new turn. Closing the channel (voice-mode exit) ends the
+        // session by completing `finished`.
+        val turnReader: Job? = if (turnInputs != null) {
+            launch {
+                try {
+                    for (turn in turnInputs) {
+                        val ws = currentSocket.get() ?: continue
+                        if (turn.prompt.isNotBlank() && turn.inputPcm.isEmpty()) {
+                            ws.send(
+                                buildRealtimeResponseCreate(
+                                    text = turn.prompt,
+                                    toolScaffold = false,
+                                    renderMode = "verbatim",
+                                )
+                            )
+                            turnStartedAtMs.set(System.currentTimeMillis())
+                            lastEventAtMs.set(System.currentTimeMillis())
+                            activeTurn.set(true)
+                        } else {
+                            sendTurnPcm(ws, turn.inputPcm, turn.sampleRate)
+                        }
+                    }
+                } finally {
+                    // Channel closed -> end the persistent session cleanly.
+                    if (completed.compareAndSet(false, true)) {
+                        finished.complete(
+                            Result.success(
+                                RealtimeVoiceSummary(
+                                    provider = session.provider,
+                                    model = session.model,
+                                    voice = session.voice,
+                                    sampleRate = session.sampleRate,
+                                    audioChunks = audioChunks,
+                                    audioBytes = audioBytes,
+                                    firstAudioMs = null,
+                                    responseDoneMs = null,
+                                    eventLogPath = session.eventLogPath,
+                                )
+                            )
+                        )
+                    }
+                    currentSocket.get()?.close(1000, "session ended")
+                }
+            }
+        } else {
+            null
         }
 
         val socket = openSocket(resume = false)
@@ -1491,6 +1660,7 @@ class RelayVoiceClient(
             Result.failure(IOException(e.message ?: "Realtime agent timed out", e))
         } finally {
             routeWatcher?.cancel()
+            turnReader?.cancel()
         }
     }
 
@@ -2080,6 +2250,8 @@ class RelayVoiceClient(
                 eventLogPath = (obj["event_log_path"] as? JsonPrimitive)?.contentOrNull,
                 firstAudioMs = (metrics?.get("first_audio_ms") as? JsonPrimitive)?.doubleOrNull,
                 responseDoneMs = (metrics?.get("response_done_ms") as? JsonPrimitive)?.doubleOrNull,
+                tier = (obj["tier"] as? JsonPrimitive)?.contentOrNull,
+                floor = (obj["floor"] as? JsonPrimitive)?.contentOrNull,
                 raw = raw,
             )
         } catch (e: Exception) {
@@ -2154,6 +2326,28 @@ data class RealtimeVoiceConfig(
     val configScope: String? = null,
     @SerialName("fallback_to_global")
     val fallbackToGlobal: Boolean = false,
+    /** ADR 33 background-run promotion settings. */
+    val promotion: RealtimeVoicePromotion? = null,
+)
+
+/** Wire shape of the `promotion` block on `GET /voice/realtime-agent/config`. */
+@Serializable
+data class RealtimeVoicePromotion(
+    val enabled: Boolean = true,
+    @SerialName("promote_after_ms")
+    val promoteAfterMs: Int = 6000,
+    @SerialName("background_default_mode")
+    val backgroundDefaultMode: String = "promote",
+    @SerialName("spoken_handoff")
+    val spokenHandoff: Boolean = true,
+    @SerialName("progress_spoken_after_ms")
+    val progressSpokenAfterMs: Int = 15000,
+    @SerialName("progress_repeat_ms")
+    val progressRepeatMs: Int = 30000,
+    @SerialName("result_delivery")
+    val resultDelivery: String = "speak_when_idle",
+    @SerialName("max_background_runs")
+    val maxBackgroundRuns: Int = 1,
 )
 
 @Serializable
@@ -2392,6 +2586,9 @@ data class RealtimeVoiceEvent(
     val eventLogPath: String? = null,
     val firstAudioMs: Double? = null,
     val responseDoneMs: Double? = null,
+    // ADR 33: background-run promotion fields.
+    val tier: String? = null,
+    val floor: String? = null,
     val raw: String,
 ) {
     val isAudioDelta: Boolean
@@ -2466,6 +2663,33 @@ data class RealtimeVoiceSummary(
     val responseDoneMs: Double?,
     val eventLogPath: String?,
 )
+
+/**
+ * One utterance fed into a persistent Realtime Agent session
+ * (see [RelayVoiceClient.runRealtimeAgent] persistent mode). A blank [inputPcm]
+ * with a non-blank [prompt] sends a text turn; otherwise the PCM is chunked and
+ * committed as a spoken turn.
+ */
+data class RealtimeTurnInput(
+    val inputPcm: ByteArray,
+    val sampleRate: Int = 16_000,
+    val prompt: String = "",
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is RealtimeTurnInput) return false
+        return sampleRate == other.sampleRate &&
+            prompt == other.prompt &&
+            inputPcm.contentEquals(other.inputPcm)
+    }
+
+    override fun hashCode(): Int {
+        var result = inputPcm.contentHashCode()
+        result = 31 * result + sampleRate
+        result = 31 * result + prompt.hashCode()
+        return result
+    }
+}
 
 data class VoiceOutputSummary(
     val provider: String,

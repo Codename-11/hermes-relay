@@ -19,17 +19,35 @@ import com.hermesandroid.relay.data.RealtimeConversationContextMessage
 import com.hermesandroid.relay.data.RealtimeTurnTrace
 import com.hermesandroid.relay.data.ToolCallEvent
 import com.hermesandroid.relay.data.VoiceIntentTrace
+import com.hermesandroid.relay.data.HermesCard
+import com.hermesandroid.relay.data.HermesCardAction
+import com.hermesandroid.relay.data.HermesCardField
+import com.hermesandroid.relay.data.HermesCardInput
+import com.hermesandroid.relay.network.ActiveTurnHandle
+import com.hermesandroid.relay.network.GatewayAsk
+import com.hermesandroid.relay.network.GatewayChatClient
+import com.hermesandroid.relay.network.GatewayConnectionState
+import com.hermesandroid.relay.network.GatewayModelProvider
+import com.hermesandroid.relay.network.GatewayAttachment
+import com.hermesandroid.relay.network.GatewayRpcException
+import com.hermesandroid.relay.network.GatewayTurnCallbacks
 import com.hermesandroid.relay.network.HermesApiClient
 import com.hermesandroid.relay.network.RelayHttpClient
 import com.hermesandroid.relay.network.RealtimeVoiceEvent
+import com.hermesandroid.relay.network.SteerResult
 import com.hermesandroid.relay.network.handlers.ChatHandler
 import com.hermesandroid.relay.network.handlers.LocalDispatchResult
 import com.hermesandroid.relay.network.handlers.formatPhoneActionResult
+import com.hermesandroid.relay.network.models.MessageItem
+import com.hermesandroid.relay.network.models.SessionItem
 import com.hermesandroid.relay.network.models.SkillInfo
 import com.hermesandroid.relay.network.models.UsageInfo
+import com.hermesandroid.relay.notifications.TurnCompleteNotifier
+import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.voice.RealtimeTurnSyncBuilder
 import com.hermesandroid.relay.voice.VoiceIntentSyncBuilder
 import com.hermesandroid.relay.util.AppContextSettings
+import com.hermesandroid.relay.util.AppForegroundTracker
 import com.hermesandroid.relay.util.HumanError
 import com.hermesandroid.relay.util.MediaCacheWriter
 import com.hermesandroid.relay.util.PhoneSnapshot
@@ -59,7 +77,22 @@ class ChatViewModel : ViewModel() {
 
     private var apiClient: HermesApiClient? = null
     private var chatHandler: ChatHandler? = null
-    private var activeStream: EventSource? = null
+
+    /**
+     * The in-flight chat turn, transport-agnostic: SSE turns wrap their
+     * [EventSource], gateway turns wrap a `session.interrupt` dispatch.
+     * All cancel/teardown sites operate on this handle.
+     */
+    private var activeStream: ActiveTurnHandle? = null
+
+    /**
+     * True when [activeStream] is a GATEWAY turn (vs an SSE EventSource). A
+     * gateway turn runs on the gateway client, which survives a same-connection
+     * route blip via its own reconnect — so [updateApiClient] (a route handoff
+     * that rebuilds the HTTP API client) must NOT cancel it. An SSE turn is
+     * bound to the old HTTP client and still must be cancelled there.
+     */
+    private var activeStreamIsGateway = false
     private var intentionallyCancelled = false
     private var firstTokenNotified = false
     private var toolHistoryJob: Job? = null
@@ -178,6 +211,135 @@ class ChatViewModel : ViewModel() {
     /** Personality name → system prompt. Used to send the right prompt when switching. */
     private var personalityPrompts: Map<String, String> = emptyMap()
 
+    /** Flat model ids from `GET /v1/models` (SSE fallback source; gateway uses [modelProviders]). */
+    private val _availableModels = MutableStateFlow<List<String>>(emptyList())
+    val availableModels: StateFlow<List<String>> = _availableModels.asStateFlow()
+
+    /**
+     * Curated provider→model groups from the gateway `model.options` RPC — the
+     * SAME source the upstream desktop/TUI picker uses (grok / kimi / gpt-5.5 …
+     * grouped by authenticated provider). The api_server `/v1/models` only
+     * returns a generic agent alias, so on the gateway transport THIS is the
+     * real switchable-model list.
+     */
+    private val _modelProviders = MutableStateFlow<List<GatewayModelProvider>>(emptyList())
+    val modelProviders: StateFlow<List<GatewayModelProvider>> = _modelProviders.asStateFlow()
+
+    /**
+     * Refresh the gateway's curated provider/model list (`model.options`).
+     * Connects the gateway on demand. No-op without a gateway client.
+     */
+    fun refreshModelOptions() {
+        val gateway = gatewayClient ?: run {
+            android.util.Log.i("ChatViewModel", "refreshModelOptions: no gateway client")
+            return
+        }
+        viewModelScope.launch {
+            gateway.modelOptions().fold(
+                onSuccess = {
+                    _modelProviders.value = it.providers
+                    android.util.Log.i(
+                        "ChatViewModel",
+                        "model.options: ${it.providers.size} providers, " +
+                            "${it.providers.sumOf { p -> p.models.size }} models, current=${it.currentModel}",
+                    )
+                },
+                onFailure = {
+                    android.util.Log.w("ChatViewModel", "model.options failed: ${it.message}")
+                },
+            )
+        }
+    }
+
+    /**
+     * User's explicit model pick from the in-chat picker, or null = "use the
+     * profile's model / server default". Wins over the profile model on SSE
+     * turns; on the gateway it's applied immediately via a `/model` dispatch
+     * (the gateway carries no per-turn model field). Session-scoped, like the
+     * gateway's own `/model`.
+     */
+    private val _selectedModelOverride = MutableStateFlow<String?>(null)
+    val selectedModelOverride: StateFlow<String?> = _selectedModelOverride.asStateFlow()
+
+    fun fetchModels() {
+        val client = apiClient ?: return
+        viewModelScope.launch { _availableModels.value = client.getModels() }
+    }
+
+    /**
+     * Switch the active model from the in-chat picker. On the gateway this
+     * dispatches `/model <model> --provider <slug>` (matching the desktop
+     * picker — `--provider` selects the authenticated provider) and surfaces
+     * the model-info confirmation card; on SSE the override rides the next
+     * turn's request body. Pass null to clear back to the profile / server
+     * default.
+     */
+    fun selectModel(model: String?, provider: String? = null) {
+        _selectedModelOverride.value = model?.takeIf { it.isNotBlank() }
+        val gateway = gatewayClient
+        val handler = chatHandler
+        if (model.isNullOrBlank()) return
+        if (streamingEndpoint == "gateway" && gateway != null && handler != null) {
+            // Upstream model-switch flag string: `<model> [--provider <slug>]`.
+            val value = if (!provider.isNullOrBlank()) "$model --provider $provider" else model
+            viewModelScope.launch {
+                // Warm a session so the switch is session-scoped (config.set
+                // also works sessionless, falling back to the global default).
+                gateway.prewarm(handler.currentSessionId.value)
+                // Dispatch via config.set (the `_apply_model_switch` path) — NOT
+                // the `/model` slash path, whose command.dispatch fallback
+                // reports a spurious "not a quick/plugin/skill command" failure.
+                gateway.setModel(value).fold(
+                    onSuccess = { result ->
+                        val resolved = result.stringValue("value") ?: model
+                        val warning = result.stringValue("warning")?.takeIf { it.isNotBlank() }
+                        handler.addSystemNotice(
+                            listOfNotNull("Model switched to $resolved.", warning).joinToString("\n\n"),
+                        )
+                        gateway.modelOptions().onSuccess { _modelProviders.value = it.providers }
+                    },
+                    onFailure = { e ->
+                        handler.addSystemNotice("Couldn't switch model: ${e.message ?: "unknown error"}")
+                    },
+                )
+            }
+        }
+        refreshActiveAgentName()
+    }
+
+    /**
+     * Switch the active Hermes profile from the in-chat picker. Verified against
+     * upstream `tui_gateway`: a profile is a FULL agent (its own HERMES_HOME/db,
+     * model, SOUL, personality, skills), sessions are PROFILE-BOUND, and the
+     * agent is built once at `session.create` from the session's profile — a
+     * live session never adopts a new profile (which is why the header read
+     * "Gary" while the running agent still answered "Victor"). There is no
+     * profile-switch RPC; the desktop passes `profile` on `session.create` /
+     * `session.resume`. So: bind the new profile for the next session and start
+     * a FRESH chat — the next turn's `session.create` carries it, building the
+     * new profile's agent. SSE turns already carry the profile per-request as
+     * `profileName`. [profile] = the new pick; null = the default profile.
+     */
+    fun activateGatewayProfile(profile: Profile?) {
+        val gateway = gatewayClient ?: return
+        if (streamingEndpoint != "gateway") return
+        // Mirror the desktop's hot-swap: switching the SELECTED profile (done by
+        // the sheet's selectProfile call just before this) already drives
+        // RelayApp's profile-context switch, which cancels any in-flight turn and
+        // resets the thread (fresh draft, or the new profile's last session). We
+        // must NOT also createNewChat() here — that second reset races the context
+        // switch (the "reply typing, then a new chat appears" jank). All we do is
+        // drop the live gateway session so the NEXT turn's session.create rebinds
+        // the agent to the new profile (pulled live via sessionProfileProvider),
+        // like the desktop spawning the profile's backend lazily on the next send.
+        gateway.clearSession()
+        // The profile brings its own model — refresh the picker's "current".
+        viewModelScope.launch {
+            gateway.modelOptions().onSuccess { _modelProviders.value = it.providers }
+        }
+        refreshActiveAgentName()
+    }
+
     /** Model name from the server's /api/config response (e.g. "claude-opus-4-6") */
     private val _serverModelName = MutableStateFlow("")
     val serverModelName: StateFlow<String> = _serverModelName.asStateFlow()
@@ -205,6 +367,119 @@ class ChatViewModel : ViewModel() {
      * OpenAI chat path instead of assuming `/v1/runs` is an SSE stream.
      */
     var streamingEndpoint: String = "completions"
+
+    /**
+     * SSE endpoint used when a "gateway" turn can't run (gateway unreachable,
+     * sign-in expired, attachments present). Wired from RelayApp alongside
+     * [streamingEndpoint] as the capability-resolved SSE preference; never
+     * "auto" or "gateway".
+     */
+    var sseFallbackEndpoint: String = "completions"
+
+    /**
+     * Gateway chat transport (dashboard `/api/ws` — live thinking). Owned and
+     * rebuilt by ConnectionViewModel; this VM only dispatches turns on it.
+     */
+    private var gatewayClient: GatewayChatClient? = null
+
+    fun updateGatewayClient(client: GatewayChatClient?) {
+        val changed = gatewayClient !== client
+        gatewayClient = client
+        // Bind each gateway session.create/resume to the currently-selected
+        // profile (pulled live) — the upstream gateway builds the agent from it.
+        client?.sessionProfileProvider = { AgentDisplay.profileRequestName(selectedProfileProvider()?.name) }
+        when {
+            client == null -> _serverCommands.value = emptyList()
+            // Catalog fetch must never cold-open /api/ws — only fetch over an
+            // already-ready socket. Otherwise the first completed gateway
+            // turn populates it (see onCompleteCb in startStream).
+            client.connectionState.value == GatewayConnectionState.Ready &&
+                (changed || _serverCommands.value.isEmpty()) -> {
+                fetchServerCommands(client)
+                refreshModelOptions()
+            }
+            changed -> _serverCommands.value = emptyList()
+        }
+    }
+
+    /**
+     * Warm the gateway socket (and resume the current session) when the chat
+     * surface is visible and the gateway is the resolved transport, so the
+     * first send is warm instead of paying the cold connect + `session.resume`
+     * on the send path. No-op without a gateway client; idempotent when warm.
+     * Driven by a foreground/visibility effect in ChatScreen.
+     */
+    fun prewarmGateway() {
+        gatewayClient?.prewarm(chatHandler?.currentSessionId?.value)
+    }
+
+    // === Gateway desktop-parity state ===
+
+    /**
+     * The live server-side interactive ask (clarify/approval/sudo/secret).
+     * One at a time — the upstream agent thread blocks until the answer
+     * arrives, so a second ask can't exist while the first is pending.
+     * Cleared on answer, turn end, cancel, and connection switch.
+     */
+    private val _pendingAsk = MutableStateFlow<PendingAsk?>(null)
+    val pendingAsk: StateFlow<PendingAsk?> = _pendingAsk.asStateFlow()
+
+    /** Ask cardKeys with a respond RPC in flight — blocks double-taps until it settles. */
+    private val answeredAskIds = mutableSetOf<String>()
+
+    /**
+     * Context-window fill fraction (0..1) from gateway usage events; null
+     * when the server's context compressor is absent (no `context_max`).
+     * Session-cumulative by definition — feeds ContextMeterBar + the
+     * subtitle "NN% ctx" suffix, never per-message token displays.
+     */
+    private val _contextUsage = MutableStateFlow<Float?>(null)
+    val contextUsage: StateFlow<Float?> = _contextUsage.asStateFlow()
+
+    /** Server slash-command catalog (`commands.catalog`) — 4th allCommands source. */
+    private val _serverCommands = MutableStateFlow<List<SlashCommand>>(emptyList())
+    val serverCommands: StateFlow<List<SlashCommand>> = _serverCommands.asStateFlow()
+
+    /**
+     * True while the in-flight turn is actually running on the gateway
+     * transport (not an SSE fallback) — the only state in which
+     * `session.steer` can land. Drives the STEER trailing slot.
+     */
+    private val _steerableTurn = MutableStateFlow(false)
+    val steerableTurn: StateFlow<Boolean> = _steerableTurn.asStateFlow()
+
+    /**
+     * One-line caption feedback after a steer attempt fell back to the
+     * queue ("Queued — delivers after this turn"). Cleared at turn end.
+     */
+    private val _steerNotice = MutableStateFlow<String?>(null)
+    val steerNotice: StateFlow<String?> = _steerNotice.asStateFlow()
+
+    /**
+     * Composer prefill requests from server command dispatch
+     * (`{type:"prefill"}` — e.g. `/undo`). ChatScreen collects and sets the
+     * input text.
+     */
+    private val _composerPrefill = MutableSharedFlow<String>(
+        replay = 0,
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val composerPrefill: SharedFlow<String> = _composerPrefill.asSharedFlow()
+
+    /**
+     * "Notify when Hermes finishes" setting — mirrored from
+     * ConnectionViewModel's DataStore flow by RelayApp, same pattern as
+     * [appContextSettings]. Default ON matches the DataStore default.
+     */
+    var notifyOnTurnComplete: Boolean = true
+
+    /**
+     * Edit-and-regenerate: 0-based USER ordinal armed by
+     * [regenerateFromMessage] and consumed by the next [startStream]
+     * gateway dispatch as `truncate_before_user_ordinal`.
+     */
+    private var pendingTruncateOrdinal: Int? = null
 
     /**
      * Provider for the active agent-profile pick — wired from [RelayApp] at
@@ -240,6 +515,47 @@ class ChatViewModel : ViewModel() {
         refreshActiveAgentName()
     }
 
+    /**
+     * Supplies the drawer's profile-scoped session list for gateway connections
+     * (dashboard `/api/sessions?profile=<active>`). Returns `null` when the
+     * connection has no dashboard session, so [refreshSessions] falls back to the
+     * shared api_server list. Wired from RelayApp to
+     * [com.hermesandroid.relay.viewmodel.ConnectionViewModel.listProfileScopedSessions].
+     */
+    private var profileSessionLister: (suspend () -> Result<List<SessionItem>>?)? = null
+
+    fun setProfileSessionLister(lister: suspend () -> Result<List<SessionItem>>?) {
+        profileSessionLister = lister
+    }
+
+    /**
+     * Loads a session's transcript scoped to the active profile (dashboard
+     * `/api/sessions/{id}/messages?profile=`). Twin of [profileSessionLister]:
+     * once the drawer lists a non-default profile's sessions, opening one must
+     * read that profile's own DB. Returns `null` off the dashboard surface.
+     */
+    private var profileMessageLoader: (suspend (String) -> Result<List<MessageItem>>?)? = null
+
+    fun setProfileMessageLoader(loader: suspend (String) -> Result<List<MessageItem>>?) {
+        profileMessageLoader = loader
+    }
+
+    /**
+     * Transcript for [sessionId], preferring the profile-scoped dashboard path on
+     * gateway connections (so non-default-profile sessions resolve against their
+     * own DB) and falling back to the shared api_server transcript otherwise or on
+     * failure.
+     */
+    private suspend fun loadSessionHistory(sessionId: String): List<MessageItem> {
+        if (streamingEndpoint == "gateway") {
+            val scoped = profileMessageLoader?.invoke(sessionId)
+            if (scoped != null) {
+                scoped.getOrNull()?.let { return it }
+            }
+        }
+        return apiClient?.getMessages(sessionId) ?: emptyList()
+    }
+
     fun selectPersonality(name: String) {
         _selectedPersonality.value = name
         refreshActiveAgentName()
@@ -254,6 +570,16 @@ class ChatViewModel : ViewModel() {
 
     private val _isLoadingHistory = MutableStateFlow(false)
     val isLoadingHistory: StateFlow<Boolean> = _isLoadingHistory.asStateFlow()
+
+    /**
+     * One-way startup latch: the first profile/session context application
+     * has concluded — last session's history loaded, or there was nothing to
+     * restore, or the load failed. RelayApp's startup gate holds the sphere
+     * splash on this so the chat surface never flashes its empty "start
+     * chatting" state while the previous conversation is still inbound.
+     */
+    private val _initialChatSettled = MutableStateFlow(false)
+    val initialChatSettled: StateFlow<Boolean> = _initialChatSettled.asStateFlow()
 
     private val _availableSkills = MutableStateFlow<List<SkillInfo>>(emptyList())
     val availableSkills: StateFlow<List<SkillInfo>> = _availableSkills.asStateFlow()
@@ -322,11 +648,20 @@ class ChatViewModel : ViewModel() {
             .takeLast(maxMessages)
     }
 
+    /**
+     * The handler currently bound by [initialize]. Lets the caller tell a
+     * client-instance swap (route handoff / reconnect — same chat) apart from
+     * a genuine re-bind (new handler), so a handoff can take the cheap
+     * [updateApiClient] path and avoid re-initializing / repainting.
+     */
+    val boundHandler: ChatHandler? get() = chatHandler
+
     fun initialize(apiClient: HermesApiClient, chatHandler: ChatHandler) {
         this.apiClient = apiClient
         this.chatHandler = chatHandler
         fetchSkills()
         fetchPersonalities()
+        fetchModels()
         // Keep the tool-call history in sync with the active chat handler's
         // messages. Subscribed on every initialize() call so a replaced
         // handler (connection switch) picks up fresh events without leaking
@@ -400,11 +735,20 @@ class ChatViewModel : ViewModel() {
     }
 
     fun updateApiClient(client: HermesApiClient) {
-        activeStream?.cancel()
-        activeStream = null
+        // A route handoff / reconnect rebuilds the HTTP API client. An SSE turn
+        // is bound to the OLD client, so it must be cancelled. A GATEWAY turn
+        // is NOT — it runs on the gateway client (which survives a
+        // same-connection route blip and reconnects its own socket, keeping the
+        // live session), so cancelling here would needlessly kill a recoverable
+        // turn. Leave it running; it completes on the gateway client.
+        if (!activeStreamIsGateway) {
+            activeStream?.cancel()
+            activeStream = null
+        }
         this.apiClient = client
         fetchSkills()
         fetchPersonalities()
+        fetchModels()
     }
 
     /**
@@ -428,6 +772,11 @@ class ChatViewModel : ViewModel() {
                 activeProfileContextKey = null
                 _queuedMessages.value = emptyList()
                 _pendingAttachments.value = emptyList()
+                _steerableTurn.value = false
+                _steerNotice.value = null
+                _pendingAsk.value = null
+                _contextUsage.value = null
+                pendingTruncateOrdinal = null
                 chatHandler?.let { handler ->
                     handler.clearMessages()
                     handler.clearSessions()
@@ -449,6 +798,7 @@ class ChatViewModel : ViewModel() {
             activeProfileContextKey == contextKey &&
             handler.currentSessionId.value == sessionId
         ) {
+            _initialChatSettled.value = true
             return
         }
         if (
@@ -457,6 +807,7 @@ class ChatViewModel : ViewModel() {
             handler.currentSessionId.value == sessionId
         ) {
             activeProfileContextKey = contextKey
+            _initialChatSettled.value = true
             return
         }
 
@@ -469,6 +820,11 @@ class ChatViewModel : ViewModel() {
         activeProfileContextKey = contextKey
         _queuedMessages.value = emptyList()
         _pendingAttachments.value = emptyList()
+        _steerableTurn.value = false
+        _steerNotice.value = null
+        _pendingAsk.value = null
+        _contextUsage.value = null
+        pendingTruncateOrdinal = null
         handler.clearSessions()
         handler.setSessionId(sessionId)
         handler.clearMessages()
@@ -476,21 +832,28 @@ class ChatViewModel : ViewModel() {
 
         if (sessionId == null || client == null) {
             _isLoadingHistory.value = false
+            _initialChatSettled.value = true
             return
         }
 
         _isLoadingHistory.value = true
         viewModelScope.launch {
-            val messages = client.getMessages(sessionId)
-            if (
-                historyLoadGeneration.get() == loadGeneration &&
-                activeProfileContextKey == contextKey &&
-                handler.currentSessionId.value == sessionId
-            ) {
-                handler.loadMessageHistory(messages)
-            }
-            if (historyLoadGeneration.get() == loadGeneration) {
-                _isLoadingHistory.value = false
+            try {
+                val messages = loadSessionHistory(sessionId)
+                if (
+                    historyLoadGeneration.get() == loadGeneration &&
+                    activeProfileContextKey == contextKey &&
+                    handler.currentSessionId.value == sessionId
+                ) {
+                    handler.loadMessageHistory(messages)
+                }
+            } finally {
+                // finally (not tail code) so a throwing fetch can't strand
+                // the loading flag true or hold the startup gate hostage.
+                if (historyLoadGeneration.get() == loadGeneration) {
+                    _isLoadingHistory.value = false
+                }
+                _initialChatSettled.value = true
             }
         }
     }
@@ -509,14 +872,40 @@ class ChatViewModel : ViewModel() {
 
     // --- Session management ---
 
+    private val _isLoadingSessions = MutableStateFlow(false)
+
+    /** True while the drawer's session list is being fetched (drives the spinner). */
+    val isLoadingSessions: StateFlow<Boolean> = _isLoadingSessions.asStateFlow()
+
     fun refreshSessions() {
-        val client = apiClient ?: return
         val handler = chatHandler ?: return
         viewModelScope.launch {
-            client.listSessionsResult().fold(
-                onSuccess = { sessions -> handler.updateSessions(sessions) },
-                onFailure = { error -> emitError(error, context = "load_sessions") }
-            )
+            _isLoadingSessions.value = true
+            try {
+                // On the gateway, scope the drawer to the ACTIVE PROFILE via the
+                // dashboard `/api/sessions?profile=` surface (it opens that
+                // profile's own state.db, exactly like the desktop sidebar). The
+                // gateway `session.list` RPC can't scope — it always reads the
+                // launch profile's DB — so it's deliberately not used here. The
+                // api_server `/api/sessions` (one shared DB, no profile concept)
+                // is the fallback for connections without a Manage/dashboard
+                // session.
+                val scoped = if (streamingEndpoint == "gateway") profileSessionLister?.invoke() else null
+                val result = scoped ?: apiClient?.listSessionsResult()
+                result?.fold(
+                    onSuccess = { sessions -> handler.updateSessions(sessions) },
+                    onFailure = { error ->
+                        if (scoped != null) {
+                            // Profile-scoped list failed — fall back to the shared list.
+                            apiClient?.listSessionsResult()?.onSuccess { handler.updateSessions(it) }
+                        } else {
+                            emitError(error, context = "load_sessions")
+                        }
+                    },
+                )
+            } finally {
+                _isLoadingSessions.value = false
+            }
         }
     }
 
@@ -550,6 +939,8 @@ class ChatViewModel : ViewModel() {
                         handler.addSession(chatSession)
                         handler.setSessionId(session.id)
                         handler.clearMessages()
+                        _contextUsage.value = null
+                        _pendingAsk.value = null
                         onSessionChanged?.invoke(session.id)
                         AppAnalytics.onSessionCreated()
                     }
@@ -564,7 +955,7 @@ class ChatViewModel : ViewModel() {
     }
 
     fun switchSession(sessionId: String) {
-        val client = apiClient ?: return
+        apiClient ?: return
         val handler = chatHandler ?: return
 
         // Cancel any in-flight stream
@@ -575,13 +966,16 @@ class ChatViewModel : ViewModel() {
 
         handler.setSessionId(sessionId)
         handler.clearMessages()
+        _contextUsage.value = null
+        _pendingAsk.value = null
         onSessionChanged?.invoke(sessionId)
         AppAnalytics.onSessionSwitched()
 
-        // Load message history
+        // Load message history (profile-scoped on gateway so a non-default
+        // profile's sessions resolve against their own DB).
         _isLoadingHistory.value = true
         viewModelScope.launch {
-            val messages = client.getMessages(sessionId)
+            val messages = loadSessionHistory(sessionId)
             if (
                 historyLoadGeneration.get() == loadGeneration &&
                 handler.currentSessionId.value == sessionId
@@ -644,13 +1038,63 @@ class ChatViewModel : ViewModel() {
         val client = apiClient ?: return
         val handler = chatHandler ?: return
 
-        // If currently streaming, queue the message instead of cancelling
+        // Server slash commands (gateway transport only) execute via
+        // slash.exec / command.dispatch instead of becoming a prompt.
+        if (activeStream == null && maybeExecuteServerSlashCommand(text.trim())) return
+
+        // Mid-turn: steer on the gateway transport, queue everywhere else.
         if (activeStream != null) {
-            _queuedMessages.update { it + text.trim() }
+            if (_steerableTurn.value && streamingEndpoint == "gateway") {
+                steerActiveTurn(text.trim())
+            } else {
+                _queuedMessages.update { it + text.trim() }
+            }
             return
         }
 
         sendMessageInternal(client, handler, text)
+    }
+
+    /**
+     * Inject [text] into the in-flight gateway turn via `session.steer`.
+     * Accepted steers land in the next tool batch's last result — the
+     * server records them inside a tool result, NOT as a user message, so
+     * we add a local `steer-` bubble that [ChatHandler.loadMessageHistory]
+     * preserves. Rejected/failed steers fall back to the existing queue
+     * with a one-line caption so the send never silently vanishes.
+     */
+    private fun steerActiveTurn(text: String) {
+        val handler = chatHandler ?: return
+        val gateway = gatewayClient
+        if (gateway == null) {
+            _queuedMessages.update { it + text }
+            return
+        }
+        viewModelScope.launch {
+            when (gateway.steer(text)) {
+                SteerResult.Queued -> {
+                    handler.addUserMessage(
+                        ChatMessage(
+                            id = "steer-${UUID.randomUUID()}",
+                            role = MessageRole.USER,
+                            content = text,
+                            timestamp = System.currentTimeMillis(),
+                        )
+                    )
+                }
+                SteerResult.Rejected, SteerResult.Failed -> {
+                    if (activeStream != null) {
+                        _queuedMessages.update { it + text }
+                        _steerNotice.value = "Queued — delivers after this turn"
+                    } else {
+                        // Turn ended while the steer RPC was in flight —
+                        // send it as a normal next-turn prompt instead.
+                        val client = apiClient
+                        if (client != null) sendMessageInternal(client, handler, text)
+                    }
+                }
+            }
+        }
     }
 
     fun sendVoiceMessage(text: String, interfaceContextPrompt: String) {
@@ -740,6 +1184,13 @@ class ChatViewModel : ViewModel() {
         action: com.hermesandroid.relay.data.HermesCardAction,
     ) {
         val handler = chatHandler ?: return
+        // Ask answers route straight to the gateway respond RPCs —
+        // answerAsk records its own (sanitized) dispatch stamp, so don't
+        // double-stamp here.
+        if (action.mode == com.hermesandroid.relay.data.HermesCardAction.Modes.SUBMIT_ASK) {
+            answerAsk(messageId, cardKey, action.value)
+            return
+        }
         handler.recordCardDispatch(messageId, cardKey, action.value)
         when (action.mode) {
             com.hermesandroid.relay.data.HermesCardAction.Modes.OPEN_URL -> {
@@ -750,6 +1201,364 @@ class ChatViewModel : ViewModel() {
             }
             else -> sendMessage(action.value)
         }
+    }
+
+    // === Gateway interactive asks ===
+
+    /**
+     * Build the local ask card for a gateway interaction request and track
+     * it as the pending ask. Card id (= cardKey) is the ask's `request_id`,
+     * or `approval-<sid>-<ts>` for approvals (which correlate per-session).
+     * Secrets/passwords never touch chat content: the cards carry input
+     * slots whose submissions flow through [answerAsk] only.
+     */
+    private fun presentInteractionAsk(handler: ChatHandler, ask: GatewayAsk) {
+        val now = System.currentTimeMillis()
+        val cardKey = ask.requestId
+            ?: "approval-${handler.currentSessionId.value ?: "session"}-$now"
+        val expiresAt = ask.timeoutSeconds.takeIf { it > 0 }?.let { now + it * 1_000L }
+        val card = when (ask.kind) {
+            GatewayAsk.Kind.APPROVAL -> HermesCard(
+                type = HermesCard.BuiltInTypes.ASK_APPROVAL,
+                title = "Approval requested",
+                accent = HermesCard.Accents.WARNING,
+                fields = listOf(HermesCardField("Command", ask.text)),
+                actions = listOf(
+                    HermesCardAction(
+                        label = "Approve",
+                        value = "approve",
+                        style = HermesCardAction.Styles.PRIMARY,
+                        mode = HermesCardAction.Modes.SUBMIT_ASK,
+                    ),
+                    HermesCardAction(
+                        label = "Deny",
+                        value = "deny",
+                        style = HermesCardAction.Styles.DANGER,
+                        mode = HermesCardAction.Modes.SUBMIT_ASK,
+                    ),
+                ),
+                id = cardKey,
+            )
+
+            GatewayAsk.Kind.CLARIFY -> HermesCard(
+                type = HermesCard.BuiltInTypes.ASK_CLARIFY,
+                title = "Hermes needs clarification",
+                body = ask.text,
+                accent = HermesCard.Accents.INFO,
+                id = cardKey,
+                input = HermesCardInput(
+                    kind = if (ask.choices.isNullOrEmpty()) {
+                        HermesCardInput.Kinds.TEXT
+                    } else {
+                        HermesCardInput.Kinds.CHOICE
+                    },
+                    choices = ask.choices.orEmpty(),
+                    allowFreeText = true,
+                    expiresAtMillis = expiresAt,
+                ),
+            )
+
+            GatewayAsk.Kind.SUDO -> HermesCard(
+                type = HermesCard.BuiltInTypes.ASK_SUDO,
+                title = "Elevated permission requested",
+                body = ask.text.takeIf { it != "Elevated permissions requested" },
+                accent = HermesCard.Accents.DANGER,
+                id = cardKey,
+                input = HermesCardInput(
+                    kind = HermesCardInput.Kinds.SECRET,
+                    masked = true,
+                    holdToConfirm = true,
+                    expiresAtMillis = expiresAt,
+                ),
+                // Empty password = decline upstream — give the deny path a
+                // button (same wire shape as SECRET's Skip).
+                actions = listOf(
+                    HermesCardAction(
+                        label = "Deny",
+                        value = "",
+                        style = HermesCardAction.Styles.DANGER,
+                        mode = HermesCardAction.Modes.SUBMIT_ASK,
+                    ),
+                ),
+            )
+
+            GatewayAsk.Kind.SECRET -> HermesCard(
+                type = HermesCard.BuiltInTypes.ASK_SECRET,
+                title = "Secret requested",
+                subtitle = ask.envVar?.let { "Stored as $it" },
+                body = ask.text,
+                accent = HermesCard.Accents.WARNING,
+                id = cardKey,
+                input = HermesCardInput(
+                    kind = HermesCardInput.Kinds.SECRET,
+                    masked = true,
+                    expiresAtMillis = expiresAt,
+                ),
+                // Empty value = skip upstream — expose it as a plain action
+                // so the wire's skip path has a button.
+                actions = listOf(
+                    HermesCardAction(
+                        label = "Skip",
+                        value = "",
+                        style = HermesCardAction.Styles.SECONDARY,
+                        mode = HermesCardAction.Modes.SUBMIT_ASK,
+                    ),
+                ),
+            )
+        }
+        val messageId = "ask-$cardKey"
+        handler.appendAskCardMessage(messageId, card)
+        _pendingAsk.value = PendingAsk(ask = ask, messageId = messageId, cardKey = cardKey)
+    }
+
+    /**
+     * Answer the pending gateway ask. Routes per kind to the matching
+     * respond RPC; collapses the card via [ChatHandler.recordCardDispatch]
+     * only after the RPC succeeds — a failed respond leaves the card live
+     * for a retry. The stamp is SANITIZED: non-empty sudo/secret values are
+     * recorded as [HermesCardInput.SECRET_PROVIDED_STAMP] (never the real
+     * value), and ask dispatches are excluded from [CardDispatchSyncBuilder]
+     * entirely. Taps on a stale card (ask already resolved/expired) get a
+     * system notice instead of a dead RPC.
+     */
+    fun answerAsk(messageId: String, cardKey: String, value: String) {
+        val handler = chatHandler ?: return
+        val pending = _pendingAsk.value
+        if (pending == null || pending.cardKey != cardKey) {
+            handler.addSystemNotice("This request is no longer active.")
+            return
+        }
+        val gateway = gatewayClient
+        if (gateway == null) {
+            emitError(Exception("Gateway is not connected"), context = "send_message")
+            return
+        }
+        // In-flight guard: one respond RPC per card at a time.
+        if (!answeredAskIds.add(cardKey)) return
+        val ask = pending.ask
+        val stampValue = when (ask.kind) {
+            // Empty sudo password = decline — stamp matches the Deny action
+            // value so the collapse row shows the action label.
+            GatewayAsk.Kind.SUDO ->
+                if (value.isEmpty()) "" else HermesCardInput.SECRET_PROVIDED_STAMP
+            GatewayAsk.Kind.SECRET ->
+                if (value.isEmpty()) "" else HermesCardInput.SECRET_PROVIDED_STAMP
+            else -> value
+        }
+        viewModelScope.launch {
+            val requestId = ask.requestId
+            val result = when (ask.kind) {
+                GatewayAsk.Kind.APPROVAL -> gateway.respondApproval(choice = value)
+                GatewayAsk.Kind.CLARIFY ->
+                    requestId?.let { gateway.respondClarify(it, value) }
+                        ?: Result.failure(GatewayRpcException("ask has no request id"))
+                GatewayAsk.Kind.SUDO ->
+                    requestId?.let { gateway.respondSudo(it, value) }
+                        ?: Result.failure(GatewayRpcException("ask has no request id"))
+                GatewayAsk.Kind.SECRET ->
+                    requestId?.let { gateway.respondSecret(it, value) }
+                        ?: Result.failure(GatewayRpcException("ask has no request id"))
+            }
+            result.fold(
+                onSuccess = {
+                    // Collapse only after the server confirms — a failed RPC
+                    // must leave the card answerable for a retry.
+                    handler.recordCardDispatch(pending.messageId, cardKey, stampValue)
+                    if (_pendingAsk.value === pending) _pendingAsk.value = null
+                },
+                onFailure = { e ->
+                    answeredAskIds.remove(cardKey)
+                    emitError(e, context = "send_message")
+                },
+            )
+        }
+    }
+
+    /**
+     * Drop pending-ask UI state when the turn is torn down, stamping a
+     * still-open approval card with [approvalStamp] so its buttons don't
+     * outlive the ask — "deny" after an interrupt (`session.interrupt`
+     * force-denies server-side), "Resolved" when the turn completed without
+     * an answer. Timed asks self-collapse via their countdown.
+     */
+    private fun clearPendingAsk(approvalStamp: String) {
+        val pending = _pendingAsk.value ?: return
+        _pendingAsk.value = null
+        if (pending.ask.kind == GatewayAsk.Kind.APPROVAL) {
+            chatHandler?.recordCardDispatch(pending.messageId, pending.cardKey, approvalStamp)
+        }
+    }
+
+    // === Edit & regenerate (gateway only) ===
+
+    /**
+     * Edit-and-resend: rerun the conversation from the user message
+     * [userMessageId] with [newText]. Computes the 0-based ordinal of that
+     * message among role==USER messages (excluding phone-local traces the
+     * server never saw), truncates the local list from it, and dispatches a
+     * gateway turn carrying `truncate_before_user_ordinal`. Local/server
+     * divergence self-heals via the post-turn history reload.
+     *
+     * @return false when the edit could not be dispatched (turn in flight,
+     *   non-gateway endpoint, missing client, ordinal failure) — the caller
+     *   must keep the edit state so no text is lost.
+     */
+    fun regenerateFromMessage(userMessageId: String, newText: String): Boolean {
+        if (newText.isBlank()) return false
+        val client = apiClient ?: return false
+        val handler = chatHandler ?: return false
+        if (streamingEndpoint != "gateway" || gatewayClient == null) return false
+        if (activeStream != null) return false
+        val snapshot = handler.messages.value
+        // At the local cap the oldest messages were trimmed — the computed
+        // USER ordinal may undercount the server's and truncate wrong.
+        if (snapshot.size >= ChatHandler.MAX_MESSAGES) {
+            handler.addSystemNotice("This conversation is too long to edit safely from the phone.")
+            return false
+        }
+        val target = snapshot.firstOrNull { it.id == userMessageId } ?: return false
+        if (target.role != MessageRole.USER) return false
+        val ordinal = snapshot
+            .filter { it.role == MessageRole.USER }
+            .filterNot { it.id.startsWith("voice-intent-") || it.id.startsWith("steer-") }
+            .indexOfFirst { it.id == userMessageId }
+        if (ordinal < 0) return false
+        handler.truncateMessagesFrom(userMessageId)
+        pendingTruncateOrdinal = ordinal
+        sendMessageInternal(client, handler, newText)
+        return true
+    }
+
+    // === Server slash commands (gateway transport) ===
+
+    private fun fetchServerCommands(client: GatewayChatClient) {
+        viewModelScope.launch {
+            val catalog = client.commandsCatalog().getOrNull() ?: return@launch
+            // The client may have been swapped while the RPC was in flight.
+            if (gatewayClient !== client) return@launch
+            _serverCommands.value = parseCommandsCatalog(catalog)
+        }
+    }
+
+    /**
+     * True when [text] is a slash command the server catalog knows —
+     * in that case it's executed via slash.exec / command.dispatch and
+     * never becomes a prompt. Non-gateway transports always return false
+     * (commands stay plain text, today's behavior).
+     */
+    private fun maybeExecuteServerSlashCommand(text: String): Boolean {
+        if (!text.startsWith("/")) return false
+        if (streamingEndpoint != "gateway") return false
+        val gateway = gatewayClient ?: return false
+        val name = text.removePrefix("/").substringBefore(' ').lowercase()
+        if (name.isBlank()) return false
+        val known = _serverCommands.value.any {
+            it.command.removePrefix("/").substringBefore(' ').lowercase() == name
+        }
+        if (!known) return false
+        val handler = chatHandler ?: return false
+        viewModelScope.launch {
+            runServerSlashCommand(gateway, handler, text, depth = 0)
+        }
+        return true
+    }
+
+    /**
+     * Upstream dispatch order: `slash.exec` first; error 4018 (pending-input
+     * / skill / blocked command) falls through to `command.dispatch`, whose
+     * result union routes per type — exec/plugin/skill output becomes a
+     * system notice, `send` re-enters the normal send path (notice first),
+     * `prefill` lands in the composer, `alias` re-dispatches its target.
+     */
+    private suspend fun runServerSlashCommand(
+        gateway: GatewayChatClient,
+        handler: ChatHandler,
+        commandLine: String,
+        depth: Int,
+    ) {
+        if (depth > 2) {
+            handler.addSystemNotice("Command alias loop detected: $commandLine")
+            return
+        }
+        val name = commandLine.removePrefix("/").substringBefore(' ')
+
+        val exec = gateway.slashExec(commandLine)
+        exec.onSuccess { result ->
+            val output = result.stringValue("output") ?: "(no output)"
+            val warning = result.stringValue("warning")
+            handler.addSystemNotice(listOfNotNull(output, warning).joinToString("\n\n"))
+            return
+        }
+        val failure = exec.exceptionOrNull()
+        val code = (failure as? GatewayRpcException)?.code
+        // 4018 = "use command.dispatch"; "no live session" happens before
+        // the first gateway turn — command.dispatch works sessionless for
+        // quick/plugin commands, so fall through for that too.
+        val fallThrough = code == 4018 ||
+            failure?.message?.contains("no live session", ignoreCase = true) == true
+        if (!fallThrough) {
+            handler.addSystemNotice("/$name failed: ${failure?.message ?: "unknown error"}")
+            return
+        }
+
+        val arg = commandLine.substringAfter(' ', "").trim().takeIf { it.isNotBlank() }
+        gateway.commandDispatch(name, arg).fold(
+            onSuccess = { result ->
+                when (result.stringValue("type")) {
+                    "exec", "plugin" ->
+                        handler.addSystemNotice(result.stringValue("output") ?: "(no output)")
+                    "skill" ->
+                        handler.addSystemNotice(result.stringValue("message") ?: "(no output)")
+                    "alias" -> {
+                        val target = result.stringValue("target")
+                        if (target != null) {
+                            val line = if (target.startsWith("/")) target else "/$target"
+                            runServerSlashCommand(gateway, handler, line, depth + 1)
+                        }
+                    }
+                    "send" -> {
+                        result.stringValue("notice")?.let { handler.addSystemNotice(it) }
+                        result.stringValue("message")?.let { sendMessage(it) }
+                    }
+                    "prefill" -> {
+                        result.stringValue("notice")?.let { handler.addSystemNotice(it) }
+                        result.stringValue("message")?.let { _composerPrefill.tryEmit(it) }
+                    }
+                    else ->
+                        handler.addSystemNotice(result.stringValue("output") ?: "Command completed.")
+                }
+            },
+            onFailure = { e ->
+                handler.addSystemNotice("/$name failed: ${e.message ?: "unknown error"}")
+            },
+        )
+    }
+
+    // === Turn-complete notification ===
+
+    /**
+     * Post the one-shot "Hermes finished" notification when the turn ends
+     * while the app is backgrounded. Never fires for cancelled streams
+     * (errors don't reach this path at all — they end via onErrorCb).
+     */
+    private fun maybeNotifyTurnComplete(handler: ChatHandler, messageId: String) {
+        val ctx = appContext ?: return
+        if (!notifyOnTurnComplete) return
+        if (intentionallyCancelled) return
+        if (AppForegroundTracker.isForeground.value) return
+        val msg = handler.messages.value.lastOrNull {
+            it.id == messageId && it.role == MessageRole.ASSISTANT
+        } ?: handler.messages.value.lastOrNull { it.role == MessageRole.ASSISTANT } ?: return
+        val toolCount = msg.toolCalls.size
+        val durationSeconds = ((System.currentTimeMillis() - msg.timestamp) / 1_000L)
+            .takeIf { it > 0 }
+        TurnCompleteNotifier.notifyTurnComplete(
+            context = ctx,
+            agentName = handler.activeAgentName,
+            responseText = msg.content.trim().ifBlank { "Hermes finished responding." },
+            toolCount = toolCount,
+            durationSeconds = durationSeconds,
+        )
     }
 
     fun clearQueue() {
@@ -790,7 +1599,22 @@ class ChatViewModel : ViewModel() {
         val assistantMessageId = UUID.randomUUID().toString()
         val sessionId = handler.currentSessionId.value
 
-        if (streamingEndpoint == "runs" || streamingEndpoint == "completions") {
+        // Optimistic drawer preview: a chat created via "New Chat" still reads
+        // "New Chat"/untitled in the drawer until the server auto-titles it after
+        // the turn. Stamp it with the first user message now so the row is
+        // meaningful immediately (mirrors the SSE-create path's auto-title).
+        sessionId?.takeIf { it.isNotBlank() }?.let { sid ->
+            val row = handler.sessions.value.firstOrNull { it.sessionId == sid }
+            if (row != null && (row.title.isNullOrBlank() || row.title == "New Chat")) {
+                val preview = text.trim().take(50).let { if (text.trim().length > 50) "$it…" else it }
+                if (preview.isNotBlank()) handler.renameSessionLocal(sid, preview)
+            }
+        }
+
+        // runs/completions are sessionless on our side; gateway creates and
+        // persists its own session via session.create (no /api/sessions
+        // pre-create — the server's DB row appears on the first prompt).
+        if (streamingEndpoint == "runs" || streamingEndpoint == "completions" || streamingEndpoint == "gateway") {
             startStream(
                 client,
                 handler,
@@ -1282,6 +2106,12 @@ class ChatViewModel : ViewModel() {
         // fallback when no profile metadata is available.
         handler.activeAgentName = currentAgentDisplayName(effectiveProfile)
 
+        // A new turn is starting: clear any leftover cancellation flag so a
+        // stale `true` from a PRIOR cancelled turn (the flag is sticky — a
+        // clean gateway cancel never fires onError to consume it) can't make
+        // THIS turn's genuine transport error get silently swallowed, which
+        // would leave the composer wedged in "streaming" behind a dead Stop.
+        intentionallyCancelled = false
         firstTokenNotified = false
         var lastInputTokens: Int? = null
         var lastOutputTokens: Int? = null
@@ -1337,6 +2167,17 @@ class ChatViewModel : ViewModel() {
             handler.onStreamComplete(currentMessageId)
             AppAnalytics.onStreamComplete(lastInputTokens, lastOutputTokens)
             activeStream = null
+            _steerableTurn.value = false
+            _steerNotice.value = null
+            // Turn over — any blocked ask has been resolved server-side
+            // (answer, timeout, or interrupt). Timed cards self-collapse;
+            // an unanswered approval gets a neutral "Resolved" stamp so its
+            // buttons don't dead-end in "no longer active" notices.
+            clearPendingAsk(approvalStamp = "Resolved")
+
+            // Notify when the turn finished while the app is backgrounded —
+            // never for cancelled streams; errors end via onErrorCb instead.
+            maybeNotifyTurnComplete(handler, currentMessageId)
 
             // v0.4.1 polish: auto-return to Hermes-Relay if the bridge
             // moved the foreground app during this run. No-op when the
@@ -1346,14 +2187,43 @@ class ChatViewModel : ViewModel() {
             // KDoc for the full contract.
             com.hermesandroid.relay.bridge.BridgeRunTracker.notifyRunCompleted()
 
+            // Command catalog rides the now-live socket after the first real
+            // gateway turn — never a cold /api/ws open at composition.
+            if (streamingEndpoint == "gateway" && _serverCommands.value.isEmpty()) {
+                gatewayClient?.let { fetchServerCommands(it) }
+            }
+            // Curated provider/model list (desktop-parity picker) rides the
+            // now-live socket too — once, on the first gateway turn.
+            if (streamingEndpoint == "gateway" && _modelProviders.value.isEmpty()) {
+                refreshModelOptions()
+            }
+
             // Sessions endpoint doesn't emit structured tool events during streaming —
             // tool calls are only available as JSON on the stored messages. Reload the
             // server-authoritative history to get proper message boundaries + tool_calls.
+            // Gateway turns reconcile the same way: live tool events are gated by the
+            // server's display.tool_progress config, so a turn that ran tools silently
+            // (config off, or events lost in a mid-turn rejoin gap) still gets its tool
+            // cards + persisted reasoning right after the turn — not on the next app
+            // restart. By message.complete the server has persisted the turn, so the
+            // REST read is authoritative.
             val sid = handler.currentSessionId.value
-            if (sid != null && streamingEndpoint == "sessions") {
+            if (sid != null && (streamingEndpoint == "sessions" || streamingEndpoint == "gateway")) {
                 viewModelScope.launch {
-                    val serverMessages = client.getMessages(sid)
+                    // Profile-aware read: a gateway turn on a non-default profile
+                    // persists into THAT profile's own state.db, so the bare
+                    // api_server `/api/sessions/{id}/messages` 404s → emptyList()
+                    // → a silent wipe of the just-finished turn. loadSessionHistory
+                    // prefers the `?profile=` dashboard loader on gateway connections.
+                    val serverMessages = loadSessionHistory(sid)
                     handler.loadMessageHistory(serverMessages)
+                    // Re-sync the drawer now that the turn is persisted server-side.
+                    // The only other auto-refresh fires ~160ms after session creation
+                    // (RelayApp) — mid-stream, BEFORE the new session's first message
+                    // is persisted, so a brand-new chat would otherwise stay missing
+                    // from the drawer (carried only by the optimistic row) until a
+                    // manual reload. By message.complete the dashboard list includes it.
+                    refreshSessions()
                     drainQueue()
                 }
                 Unit
@@ -1376,12 +2246,31 @@ class ChatViewModel : ViewModel() {
                         null
                     )
                 }
+                // Context-window meter (gateway only — present when the
+                // server's context compressor is active). Session-cumulative
+                // by design; per-message token displays above stay on the
+                // same semantics they had before.
+                val ctxMax = usage.contextMax
+                if (ctxMax != null && ctxMax > 0) {
+                    val used = usage.contextUsed
+                    val percent = usage.contextPercent
+                    _contextUsage.value = when {
+                        used != null -> (used.toFloat() / ctxMax).coerceIn(0f, 1f)
+                        percent != null -> (percent / 100f).coerceIn(0f, 1f)
+                        else -> _contextUsage.value
+                    }
+                }
             }
         }
         val onErrorCb = { errorMsg: String ->
             if (intentionallyCancelled) {
                 intentionallyCancelled = false
-                // Don't surface cancellation errors
+                // Cancellation (user Stop / session switch): suppress the
+                // error banner — but STILL finalize the streaming UI so the
+                // turn can never wedge "streaming forever" behind a dead Stop
+                // button if a cancel and a transport error race.
+                handler.messages.value.findLast { it.isStreaming }
+                    ?.let { handler.onStreamComplete(it.id) }
             } else {
                 AppAnalytics.onStreamError()
                 handler.onStreamError(errorMsg)
@@ -1389,9 +2278,29 @@ class ChatViewModel : ViewModel() {
                 // snackbar — classifier wraps the string into a throwable
                 // so context-specific copy kicks in for send_message.
                 emitError(Exception(errorMsg), context = "send_message")
+                // Recover the server-authoritative transcript on a gateway/
+                // sessions error: a turn can fail on the CLIENT (mid-turn route
+                // switch, watchdog timeout) AFTER the server already finished it
+                // — reload history so the completed answer still surfaces
+                // instead of stranding the turn on its partial/errored state.
+                val sid = handler.currentSessionId.value
+                if (sid != null && (streamingEndpoint == "sessions" || streamingEndpoint == "gateway")) {
+                    viewModelScope.launch {
+                        runCatching {
+                            // Profile-aware read — see onCompleteCb: a bare
+                            // getMessages 404s for a non-default-profile session
+                            // and silently empties the transcript.
+                            val serverMessages = loadSessionHistory(sid)
+                            handler.loadMessageHistory(serverMessages)
+                        }
+                    }
+                }
             }
             activeStream = null
             _queuedMessages.value = emptyList()
+            _steerableTurn.value = false
+            _steerNotice.value = null
+            clearPendingAsk(approvalStamp = "deny")
         }
 
         // === v0.4.1 voice-intent + v0.7.x card-dispatch session sync ===
@@ -1442,12 +2351,11 @@ class ChatViewModel : ViewModel() {
         // [selectedProfile] resolved at the top of this function so a
         // rapid switch doesn't give us a systemMessage from profile A but
         // a model from profile B.
-        val modelOverride: String? = if (useIsolatedProfileApi) {
-            null
-        } else {
-            selectedProfile
-                ?.model
-                ?.takeIf { it.isNotBlank() }
+        val modelOverride: String? = when {
+            useIsolatedProfileApi -> null
+            // An explicit in-chat model pick wins over the profile's model.
+            !_selectedModelOverride.value.isNullOrBlank() -> _selectedModelOverride.value
+            else -> selectedProfile?.model?.takeIf { it.isNotBlank() }
         }
         val profileName: String? = if (useIsolatedProfileApi) {
             null
@@ -1455,7 +2363,34 @@ class ChatViewModel : ViewModel() {
             AgentDisplay.profileRequestName(selectedProfile?.name)
         }
 
-        activeStream = when (streamingEndpoint) {
+        // Surface — instead of silently dropping — attachments that the chosen
+        // SSE endpoint can't deliver to a vanilla-upstream server. Only the
+        // gateway uploads files (image.attach_bytes / pdf.attach / file.attach).
+        // The completions endpoint still carries images inline (OpenAI
+        // image_url), but no SSE path carries non-image files, and sessions/runs
+        // carry no attachments at all. Text always sends regardless.
+        fun warnIfAttachmentsDropped(endpoint: String) {
+            val dropped = attachments.orEmpty().filter { att ->
+                if (endpoint == "completions") !att.isImage else true
+            }
+            if (dropped.isEmpty()) return
+            val names = dropped.joinToString(", ") {
+                it.fileName ?: if (it.isImage) "image" else "file"
+            }
+            val noun = if (dropped.size == 1) "attachment" else "attachments"
+            handler.addSystemNotice(
+                "⚠ Couldn't send your $noun ($names) over this connection — " +
+                    "attachments are delivered over the gateway transport. " +
+                    "Your message was sent as text.",
+            )
+        }
+
+        // SSE dispatch shared by the three HTTP endpoints AND the gateway
+        // branch's per-turn fallback (gateway unreachable / not the resolved
+        // transport). Warns once per dispatch about any attachment it can't carry.
+        fun dispatchSse(endpoint: String): ActiveTurnHandle {
+            warnIfAttachmentsDropped(endpoint)
+            return when (endpoint) {
             "runs" -> client.sendRunStream(
                     message = message,
                     systemMessage = systemMsg,
@@ -1477,7 +2412,7 @@ class ChatViewModel : ViewModel() {
                     onError = onErrorCb,
                     modelOverride = modelOverride,
                     profileName = profileName,
-                )
+                ).asTurnHandle()
             "completions" -> client.sendChatCompletionsStream(
                     message = message,
                     systemMessage = systemMsg,
@@ -1496,7 +2431,7 @@ class ChatViewModel : ViewModel() {
                     onError = onErrorCb,
                     modelOverride = modelOverride,
                     profileName = profileName,
-                )
+                ).asTurnHandle()
             else -> client.sendChatStream(
                     sessionId = sessionId,
                     message = message,
@@ -1516,7 +2451,95 @@ class ChatViewModel : ViewModel() {
                     onError = onErrorCb,
                     modelOverride = modelOverride,
                     profileName = profileName,
+                ).asTurnHandle()
+            }
+        }
+
+        // Edit-and-regenerate ordinal — armed by regenerateFromMessage for
+        // exactly the next turn; consumed even when the turn lands on SSE
+        // (the post-turn reload reconciles divergence in that case).
+        val truncateOrdinal = pendingTruncateOrdinal
+        pendingTruncateOrdinal = null
+
+        val gateway = gatewayClient
+        _steerableTurn.value = false
+        // Remember whether this turn runs on the gateway client (vs an SSE
+        // EventSource) so a mid-turn route handoff doesn't cancel it — only the
+        // `else` branch below dispatches on the gateway.
+        activeStreamIsGateway = streamingEndpoint == "gateway" && gateway != null
+        activeStream = when {
+            streamingEndpoint != "gateway" -> dispatchSse(streamingEndpoint)
+
+            // Gateway turns upload ALL attachments via their typed upstream
+            // RPC (image.attach_bytes / pdf.attach / file.attach), matching the
+            // desktop client. Only a missing gateway client forces the per-turn
+            // SSE fallback (where non-image attachments are not upstream-
+            // recognized and would be dropped — graceful degradation).
+            gateway == null ->
+                dispatchSse(resolveSseFallback(handler))
+
+            else -> {
+                val isNewSession = handler.currentSessionId.value == null
+                val autoTitle = message.take(50).let { if (message.length > 50) "$it..." else it }
+                // The gateway carries NO phone-context preamble: prompt.submit
+                // is bare text with no system-message slot, so anything prepended
+                // here persists into the user turn (ugly on history reload +
+                // visible from desktop), and its only system overlay
+                // (ephemeral_system_prompt) is the personality slot. Phone
+                // context rides the SSE systemMessage (invisible) + the on-demand
+                // android_phone_status tool instead. See PhoneStatusPromptBuilder.
+                _steerableTurn.value = true
+                gateway.sendTurn(
+                    sessionId = handler.currentSessionId.value,
+                    text = message,
+                    newSessionTitle = if (isNewSession) autoTitle else null,
+                    callbacks = GatewayTurnCallbacks(
+                        onSessionId = { sid ->
+                            handler.addSession(
+                                ChatSession(sessionId = sid, title = autoTitle, model = null),
+                            )
+                            handler.setSessionId(sid)
+                            onSessionChanged?.invoke(sid)
+                        },
+                        onTextDelta = onTextDeltaCb,
+                        onThinkingDelta = onThinkingDeltaCb,
+                        onToolCallStart = onToolCallStartCb,
+                        onToolCallDone = onToolCallDoneCb,
+                        onToolCallFailed = onToolCallFailedCb,
+                        onTurnComplete = onTurnCompleteCb,
+                        onComplete = onCompleteCb,
+                        onUsage = onUsageCb,
+                        onError = onErrorCb,
+                        onToolGenerating = { name ->
+                            handler.onToolGenerating(currentMessageId, name)
+                        },
+                        onSubagentEvent = { event ->
+                            handler.onSubagentEvent(currentMessageId, event)
+                        },
+                        onInteractionRequest = { ask ->
+                            presentInteractionAsk(handler, ask)
+                        },
+                    ),
+                    attachments = attachments.orEmpty()
+                        .map { it.toGatewayAttachment() },
+                    truncateBeforeUserOrdinal = truncateOrdinal,
+                    onPreflightFailure = {
+                        _steerableTurn.value = false
+                        if (intentionallyCancelled) {
+                            // User cancelled while preflight was in flight —
+                            // don't resurrect the turn on SSE.
+                            intentionallyCancelled = false
+                            activeStream = null
+                        } else {
+                            // Nothing started server-side — rerun this turn on
+                            // the SSE fallback. Callbacks land on the main
+                            // thread, so swapping activeStream here is safe.
+                            // The fallback turn is not steerable.
+                            activeStream = dispatchSse(resolveSseFallback(handler))
+                        }
+                    },
                 )
+            }
         }
 
         // Flip syncedToServer=true on every voice-intent trace AND every
@@ -1529,12 +2552,30 @@ class ChatViewModel : ViewModel() {
         // the SSE callbacks fire asynchronously and never block this
         // point. Guarded per-stream so we only do the work when the
         // corresponding synthetic messages were actually sent.
-        if (voiceIntentMessages != null) {
+        // Gateway turns can't carry synthetic messages (prompt.submit is
+        // bare text) — leave traces unsynced so the next SSE turn sends them.
+        if (voiceIntentMessages != null && streamingEndpoint != "gateway") {
             if (hasVoiceIntents) handler.markVoiceIntentsSynced()
             if (hasCardDispatches) handler.markCardDispatchesSynced()
             if (hasRealtimeTurns) handler.markRealtimeTurnsSynced()
         }
     }
+
+    /** Adapt an SSE [EventSource] to the transport-agnostic turn handle. */
+    private fun EventSource.asTurnHandle(): ActiveTurnHandle =
+        ActiveTurnHandle { this.cancel() }
+
+    /**
+     * SSE endpoint for a turn that was meant for the gateway. The sessions
+     * endpoint needs an existing server session — without one, use the
+     * stateless completions path instead of failing the turn.
+     */
+    private fun resolveSseFallback(handler: ChatHandler): String =
+        if (sseFallbackEndpoint == "sessions" && handler.currentSessionId.value == null) {
+            "completions"
+        } else {
+            sseFallbackEndpoint
+        }
 
     private fun currentAgentDisplayName(
         effectiveProfileOverride: Profile? = null,
@@ -1568,6 +2609,11 @@ class ChatViewModel : ViewModel() {
         activeStream?.cancel()
         activeStream = null
         _queuedMessages.value = emptyList()
+        _steerableTurn.value = false
+        _steerNotice.value = null
+        // Gateway cancel issues session.interrupt, which force-denies any
+        // blocked approval server-side — stamp the card to match.
+        clearPendingAsk(approvalStamp = "deny")
         AppAnalytics.onStreamCancelled()
         chatHandler?.let { handler ->
             val streamingMsg = handler.messages.value.findLast { it.isStreaming }
@@ -2099,6 +3145,83 @@ class ChatViewModel : ViewModel() {
             }
         }
     }
+}
+
+/**
+ * One live gateway interactive ask plus where its local card lives in chat.
+ * [cardKey] is the [com.hermesandroid.relay.data.HermesCard.id] — the ask's
+ * `request_id`, or `approval-<sid>-<ts>` for approvals.
+ */
+data class PendingAsk(
+    val ask: GatewayAsk,
+    /** ChatMessage id of the local ask-card message (`ask-<cardKey>`). */
+    val messageId: String,
+    val cardKey: String,
+)
+
+/**
+ * Outbound chat [Attachment] → [GatewayAttachment]. [contentType] carries the
+ * routing decision (image → `image.attach_bytes`, pdf → `pdf.attach`, else →
+ * `file.attach`). `ext` is the bare extension without the dot, derived from the
+ * filename first and the MIME subtype second; null lets the server sniff magic
+ * bytes (image path only — pdf/file uploads ignore it).
+ */
+private fun Attachment.toGatewayAttachment(): GatewayAttachment {
+    val extFromName = fileName
+        ?.substringAfterLast('.', "")
+        ?.lowercase()
+        ?.takeIf { ext -> ext.isNotBlank() && ext.length <= 5 && ext.all { it.isLetterOrDigit() } }
+    val extFromMime = when (contentType.lowercase().substringBefore(';').trim()) {
+        "image/png" -> "png"
+        "image/jpeg", "image/jpg" -> "jpg"
+        "image/gif" -> "gif"
+        "image/webp" -> "webp"
+        "image/bmp", "image/x-ms-bmp" -> "bmp"
+        "application/pdf" -> "pdf"
+        else -> null
+    }
+    return GatewayAttachment(
+        name = fileName,
+        base64 = content,
+        ext = extFromName ?: extFromMime,
+        contentType = contentType,
+    )
+}
+
+/**
+ * `commands.catalog` result → [SlashCommand] list. Top-level `pairs` is the
+ * authoritative command set (skill commands appear ONLY there); `categories`
+ * supplies grouping where the server provides it, everything else lands in
+ * the palette's "server" bucket. Pure for unit-testability.
+ */
+internal fun parseCommandsCatalog(catalog: JsonObject): List<SlashCommand> {
+    val categoryByName = mutableMapOf<String, String>()
+    (catalog["categories"] as? JsonArray)?.forEach { element ->
+        val obj = element as? JsonObject ?: return@forEach
+        val category = obj.stringValue("name") ?: return@forEach
+        (obj["pairs"] as? JsonArray)?.forEach { pairElement ->
+            val pair = pairElement as? JsonArray ?: return@forEach
+            val name = (pair.getOrNull(0) as? JsonPrimitive)?.contentOrNull ?: return@forEach
+            categoryByName[name.lowercase()] = category
+        }
+    }
+    val seen = mutableSetOf<String>()
+    val out = mutableListOf<SlashCommand>()
+    (catalog["pairs"] as? JsonArray)?.forEach { pairElement ->
+        val pair = pairElement as? JsonArray ?: return@forEach
+        val rawName = (pair.getOrNull(0) as? JsonPrimitive)?.contentOrNull?.trim()
+        if (rawName.isNullOrBlank()) return@forEach
+        val name = if (rawName.startsWith("/")) rawName else "/$rawName"
+        if (!seen.add(name.lowercase())) return@forEach
+        val description = (pair.getOrNull(1) as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+        out += SlashCommand(
+            command = name,
+            description = description.ifBlank { "Server command" },
+            category = categoryByName[name.lowercase()] ?: SlashCommand.CATEGORY_SERVER,
+            source = SlashCommand.SOURCE_SERVER,
+        )
+    }
+    return out
 }
 
 private val compactPreviewJson = Json { ignoreUnknownKeys = true }

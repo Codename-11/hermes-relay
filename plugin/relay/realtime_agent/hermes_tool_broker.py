@@ -134,7 +134,10 @@ class HermesToolBroker:
         except Exception as exc:
             logger.debug("Hermes context fetch failed for %s: %s", session_id, exc)
             return ()
-        items = payload.get("items") or payload.get("messages") if isinstance(payload, dict) else None
+        if isinstance(payload, dict):
+            items = payload.get("data") or payload.get("items") or payload.get("messages")
+        else:
+            items = None
         if not isinstance(items, list):
             return ()
         messages: list[dict[str, str]] = []

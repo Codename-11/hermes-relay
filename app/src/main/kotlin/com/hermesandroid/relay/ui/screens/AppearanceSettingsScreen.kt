@@ -251,6 +251,18 @@ fun AppearanceSettingsScreen(
                             enabled = animEnabled
                         )
                     }
+
+                    // The ambient-mode entry is a gesture with no visible
+                    // control — this line is its discoverable documentation
+                    // (including for screen-reader users browsing settings).
+                    if (animEnabled) {
+                        Text(
+                            text = "Tip: long-press the chat background for a fullscreen " +
+                                "ambient sphere; tap anywhere to return.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         }

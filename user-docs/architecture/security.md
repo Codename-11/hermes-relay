@@ -5,7 +5,8 @@
 API keys are stored using Android's `EncryptedSharedPreferences`:
 - Encryption: AES-256-GCM
 - Key management: Android Keystore (hardware-backed when available)
-- Keys are never included in backups or exports
+- Full backups include API keys and other connection secrets. Treat exported
+  backup files like credentials and store them somewhere private.
 
 ## Network Security
 
@@ -38,7 +39,7 @@ The Hermes API bearer token is accepted only for `/voice/config`, `/voice/transc
 
 ## Relay Auth Flow
 
-1. Operator runs `/hermes-relay-pair` (from any Hermes chat surface) or `hermes-pair` (shell shim) on the Hermes host
+1. Operator runs `hermes pair` (shell), `/hermes-relay-pair` (from any Hermes chat surface), or the compatibility `hermes-pair` shim on the Hermes host
 2. The pair command probes `localhost:RELAY_PORT/health`; if the relay is up, it mints a fresh 6-char code
 3. It pre-registers the code with the relay via the loopback-only `POST /pairing/register` endpoint
 4. The relay URL + code are embedded in the QR payload alongside the API server credentials
@@ -62,7 +63,9 @@ Pairing codes use the full `A-Z / 0-9` alphabet (36 chars). The earlier "no ambi
 
 - Session tokens encrypted in EncryptedSharedPreferences
 - API keys never logged or included in error messages
-- Backup exports exclude tokens and API keys
+- Backup exports include API keys, relay session tokens, device IDs, and
+  dashboard cookies so connections can be restored. The export dialog warns
+  before writing the file.
 - DataStore preferences are app-private (standard Android sandbox)
 
 ## Bridge Security — Five-Stage Safety Gate

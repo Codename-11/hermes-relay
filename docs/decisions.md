@@ -80,15 +80,16 @@ The app supports two streaming endpoints, selectable in Settings:
 | **Sessions** (`/api/sessions/{id}/chat/stream`) | Inline text annotations (`` `💻 terminal` ``) — client parses from markdown | Hermes-native SSE (assistant.delta, tool.progress, etc.) or OpenAI-format (delta.content) |
 | **Runs** (`/v1/runs` + `/v1/runs/{run_id}/events`) | **Structured events** (tool.started, tool.completed) — real-time tool cards | Hermes lifecycle events (message.delta, tool.started, tool.completed, run.completed) |
 
-**Important upstream note:** The `/api/sessions` CRUD endpoints are moving
-toward upstream Hermes core through focused PR
-[#29302](https://github.com/NousResearch/hermes-agent/pull/29302), which covers
-session list/create/read/update/delete, messages, fork, chat, and chat stream.
-Until that reaches a released core build, `hermes_relay_bootstrap/` still ships
-with the plugin and runs at Python interpreter startup via `.pth`. The bootstrap
-now composes with partial upstream support: native routes win per method/path,
-and the relay only injects missing compatibility gaps such as config, skills, or
-memory when core does not provide them.
+**Important upstream note:** The `/api/sessions` CRUD/chat endpoints are now in
+upstream Hermes core via focused PR
+[#33134](https://github.com/NousResearch/hermes-agent/pull/33134), which
+salvaged the useful session-control portion of #29302 and covers session
+list/create/read/update/delete, messages, fork, chat, and chat stream. Read-only
+skill/toolset discovery is also native via
+[#33016](https://github.com/NousResearch/hermes-agent/pull/33016). The bootstrap
+still ships for older core builds and for surfaces that remain compatibility-only
+(config, memory, legacy skill detail/toggle, available-models, slash middleware),
+but sessions and read-only skill lists should now be upstream-first.
 
 The app's `probeCapabilities()` returns a per-endpoint snapshot, and `ConnectionViewModel.resolveStreamingEndpoint()` collapses `streamingEndpoint = "auto"` (the default for new installs) to a concrete `"sessions"` or `"runs"` choice based on what the server actually exposes.
 
@@ -132,12 +133,12 @@ Phone (WSS)      → Relay Server (:8767)          [bridge, terminal]
 
 #### 6a. QR Carries Both API and Relay Credentials (updated 2026-05-03)
 
-**Decision:** The Hermes pairing QR payload bundles the API server credentials AND the relay URL + pairing code into a single scan. The pair command (`/hermes-relay-pair` skill or `hermes-pair` shell shim, both backed by `plugin/pair.py`) runs on the Hermes host; if a relay is reachable at `localhost:RELAY_PORT`, the command mints a fresh 6-char code, pre-registers it with the relay via a new loopback-only `POST /pairing/register` endpoint, and embeds `{url, code}` under a nullable `relay` key alongside the existing `host`/`port`/`key`/`tls` fields. The dashboard pairing flow uses the relay's loopback-only `POST /pairing/mint` endpoint instead; when the dashboard omits `api_key`, the relay reads the same host-local Hermes API key config as `hermes-pair` and places it in top-level `key`.
+**Decision:** The Hermes pairing QR payload bundles the API server credentials AND the relay URL + pairing code into a single scan. The pair command (`hermes pair`, `/hermes-relay-pair`, or the compatibility `hermes-pair` shell shim, all backed by `plugin/pair.py`) runs on the Hermes host; if a relay is reachable at `localhost:RELAY_PORT`, the command mints a fresh 6-char code, pre-registers it with the relay via a new loopback-only `POST /pairing/register` endpoint, and embeds `{url, code}` under a nullable `relay` key alongside the existing `host`/`port`/`key`/`tls` fields. The dashboard pairing flow uses the relay's loopback-only `POST /pairing/mint` endpoint instead; when the dashboard omits `api_key`, the relay reads the same host-local Hermes API key config as `hermes pair` and places it in top-level `key`.
 
 **Trust anchor:** the operator with shell access on the host. Only a process running on the same machine as the relay can hit `/pairing/register` — the handler rejects any non-loopback `request.remote` with HTTP 403. A LAN attacker cannot inject codes. This matches the model we already rely on for reading `~/.hermes/.env` and `~/.hermes/config.yaml`: if you have shell access to the host, you have enough privilege to authorize a device.
 
 **Why the change was necessary:**
-- Previously the phone generated its own 6-char pairing code locally via `AuthManager.generatePairingCode()` and sent it to the relay on WSS connect. The relay had no way to know what code to accept, so relay pairing was effectively broken — only API-direct-chat pairing worked via the QR.
+- Previously the phone generated its own 6-char pairing code locally via `AuthManager.generatePairingCode()` and sent it to the relay on WSS connect. The relay had no way to know what code to accept, so relay pairing was effectively broken — only direct API chat pairing worked via the QR.
 - Pushing the code flow through the host means the operator always has the source of truth, and a single scan configures both chat and terminal/bridge with no manual steps.
 
 **Schema evolution:**
@@ -341,7 +342,7 @@ Key data classes: `MessageEvent` (inbound), `SendResult` (outbound), `SessionSou
 
 **Why the old `skills/hermes-pairing-qr/` was deleted:** It was the pre-plugin bash script era — `hermes-pair` as a shell script + a flat-file `SKILL.md`. The plugin now owns the QR generation (`plugin/pair.py`, pure Python, no `qrencode` dependency), the skill at `skills/devops/hermes-relay-pair/` owns the slash-command surface, and the shell shim at `~/.local/bin/hermes-pair` covers the script-friendly CLI entry point. Keeping the deprecated skill around would have been two sources of truth for the same operation.
 
-**Upstream CLI gap (documented for posterity):** hermes-agent v0.8.0's `PluginContext.register_cli_command()` is wired up on the plugin side, and `plugin/cli.py` calls it correctly. However, `hermes_cli/main.py:5236` only reads `plugins.memory.discover_plugin_cli_commands()` (memory-plugin-specific) and never consults the generic `_cli_commands` dict. Third-party plugin CLI commands never reach the top-level argparser. Documented in DEVLOG as an upstream fix target. Until it lands, `hermes pair` (with a space) is **not** a working entry point — docs point users at `/hermes-relay-pair` (skill-driven slash command) and `hermes-pair` (dashed shell shim) instead.
+**Plugin CLI status (updated 2026-06-07):** hermes-agent v0.8.0 had a top-level argparse gap where third-party `PluginContext.register_cli_command()` entries did not reach `hermes <subcommand>`. Current upstream now discovers plugin CLI registrations in `hermes_cli/main.py`, so `hermes pair` and `hermes relay` are the preferred shell entry points when the plugin is enabled. `/hermes-relay-pair` and the dashed `hermes-pair` shim stay as older-build and script compatibility paths until our supported baseline includes the upstream fix.
 
 **References:**
 - `install.sh` — canonical installer
@@ -453,7 +454,7 @@ The bare-path fetch is therefore safe as long as operators treat the allowed-roo
 
 - **Grants on a single token (not multiple tokens)** — one WSS connection, one auth envelope, one session lookup. Per-channel expiry is checked at channel message dispatch time via `Session.channel_is_expired(name)`. Simpler to reason about than multiple parallel tokens, and the phone only needs one storage slot.
 - **`math.inf` for never-expire** — represents "truly unbounded" in code, serializes to `null` on the wire (JSON doesn't have an infinity literal, and null maps cleanly to Kotlin's nullable `Long?`). `canonicalize()` uses `allow_nan=False` so accidentally trying to sign a payload with a raw `math.inf` crashes loudly — callers must explicitly emit `None`/`0`. Prevents silent serialization bugs.
-- **Metadata on pairing entries, host wins over phone** — when the host operator runs `hermes-pair --ttl 7d` and the phone sends `ttl_seconds=30d` in the auth envelope (because the user picked a different value on the TTL dialog), the host value wins. Operator policy is authoritative. If the host didn't specify anything, the phone's value applies.
+- **Metadata on pairing entries, host wins over phone** — when the host operator runs `hermes pair --ttl 7d` and the phone sends `ttl_seconds=30d` in the auth envelope (because the user picked a different value on the TTL dialog), the host value wins. Operator policy is authoritative. If the host didn't specify anything, the phone's value applies.
 - **Token prefix (not full token) in `/sessions` responses** — a caller already holds their own full token; they should never see another session's full token. First 8 chars are enough to identify devices in a practical deployment (one operator, 1-3 phones) and enough entropy to avoid collisions. Collisions return 409 with the match count.
 - **Always open the TTL picker (no skip)** — even when the QR carries an operator-chosen TTL, the dialog opens with that value preselected. The user is always in the loop for the trust decision. A future "don't ask again if QR specifies a TTL" toggle is a plausible refinement but not in this cut.
 
@@ -499,13 +500,17 @@ Adopting from ARC's workflow patterns:
 ### 16. Runtime API Server Patch via .pth Bootstrap (2026-04-12)
 
 **Context:** The Android app depends on API-server routes for session history,
-profile/config metadata, skills, and memory-backed UI. Upstream core is now
-moving in focused pieces rather than one large frontend API patch: PR
-[#29302](https://github.com/NousResearch/hermes-agent/pull/29302) covers the
-canonical `/api/sessions/*` surface, while config/skills/memory still remain
-compatibility routes in this repo until core exposes stable equivalents. Without
-the bootstrap, users on older vanilla upstream builds lose session browsing,
-metadata-backed settings, and history-on-restart behavior.
+profile/config metadata, skills, and memory-backed UI. Upstream core moved in
+focused pieces rather than one large frontend API patch: PR
+[#33134](https://github.com/NousResearch/hermes-agent/pull/33134) now covers the
+canonical `/api/sessions/*` surface, and PR
+[#33016](https://github.com/NousResearch/hermes-agent/pull/33016) covers
+read-only `/v1/skills` + `/v1/toolsets`. Config, memory, legacy skill
+detail/toggle, available-models, and slash-command preprocessing still remain
+compatibility routes in this repo until core exposes stable equivalents or the
+local UI no longer depends on them. Without the bootstrap, users on older
+vanilla upstream builds lose session browsing, metadata-backed settings, and
+history-on-restart behavior.
 
 We considered four options:
 - **A. Stay fork-only.** Reject vanilla upstream users until the relevant core API surfaces land. Penalises onboarding.
@@ -520,19 +525,24 @@ We considered four options:
 1. **Zero modifications to hermes-agent's filesystem.** `git pull` / `hermes update` see no local changes, so they always work cleanly. The patch lives entirely in `hermes_relay_bootstrap/` inside our own repo.
 2. **Single-file containment of all ported logic.** `_handlers.py` is 500 lines of straight-line aiohttp handler code with explicit `adapter` parameters (closures, not bound methods). Easy to audit, easy to delete.
 3. **Feature detection by method/path, not broad route family.** Native upstream
-   routes win one method/path at a time. This matters because PR #29302 can land
-   `/api/sessions/*` before core has stable config/skills/memory APIs; the
+   routes win one method/path at a time. This matters because #33134 landed
+   `/api/sessions/*` before core had stable config/memory/legacy skill APIs; the
    bootstrap must not skip those remaining compatibility routes just because a
    sessions route exists.
 4. **Trust model already established.** The user installed our plugin into their hermes-agent venv. They've already consented to having the plugin import hermes-agent internals (it does this for relay tools, voice endpoints, media registry). Monkey-patching `aiohttp.web.Application` is in the same trust bucket.
-5. **Surface-by-surface removal.** When PR #29302 or equivalent reaches a
-   released hermes-agent version, the sessions compatibility routes should go
-   quiet automatically. Config, skills, memory, and command preprocessing remain
-   until their native replacements exist. Full bootstrap deletion happens only
-   after every compatibility route group has a stable core equivalent.
-6. **`/v1/runs` is genuinely better for chat than `/api/sessions/{id}/chat/stream`.** It's standard upstream, supports `X-Hermes-Session-Id` for continuation, and emits live structured tool events. The fork's chat handler exists because upstream didn't HAVE this clean structured-event runs API at the time the fork was cut — but upstream does now.
+5. **Surface-by-surface removal.** With #33134/#33016 merged, sessions and
+   read-only skill lists should go quiet automatically on current upstream.
+   Config, memory, legacy skill detail/toggle, available-models, and command
+   preprocessing remain until their native replacements exist or the local UI
+   stops depending on them. Full bootstrap deletion happens only after every
+   compatibility route group has a stable core equivalent or a deliberate local
+   removal.
+6. **`/v1/runs` remains the fallback run-control path.** Native
+   `/api/sessions/{id}/chat/stream` is now the preferred session-persisted chat
+   path when advertised. `/v1/runs` still matters for async run lifecycle/control
+   and for older builds without native sessions chat.
 
-**The Android client adapts via `streamingEndpoint = "auto"`.** New `ServerCapabilities` data class returned by `HermesApiClient.probeCapabilities()` captures per-endpoint presence (`sessionsApi`, `sessionsChatStream`, `runs`, `portable`, `healthy`). `ConnectionViewModel.resolveStreamingEndpoint()` collapses `"auto"` to `"sessions"` (when chat-stream handler is present, i.e. fork or upstream-merged) or `"runs"` (otherwise, i.e. bootstrap-injected vanilla upstream). The setting still supports manual `"sessions"` / `"runs"` overrides for debugging.
+**The Android client adapts via `streamingEndpoint = "auto"`.** `ServerCapabilities` returned by `HermesApiClient.probeCapabilities()` captures per-endpoint presence (`sessionsApi`, `sessionsChatStream`, `runs`, `portable`, `healthy`). `ConnectionViewModel.resolveStreamingEndpoint()` collapses `"auto"` to `"sessions"` when native session chat is present, then falls back to OpenAI-compatible completions or runs according to the probe. The setting still supports manual `"sessions"` / `"completions"` / `"runs"` overrides for debugging.
 
 **Risks accepted:**
 - **Plugin load order** — verified: `.pth` files are processed by Python's `site` module BEFORE any application code runs, so our import hook is in place before hermes-agent imports `aiohttp.web`.
@@ -548,15 +558,19 @@ We considered four options:
 - `install.sh` step 2 — copies the `.pth` into the venv site-packages
 
 **Removal path** is now per surface:
-1. Sessions: after PR #29302 or equivalent ships in released core, keep the
-   bootstrap installed but verify it skips native `/api/sessions/*` routes.
-2. Config/skills/memory: remove those compatibility handlers only after stable
-   core APIs exist and Android probes prefer them.
-3. Slash middleware: remove after native API-server slash preprocessing exists.
-4. Full cleanup: delete `hermes_relay_bootstrap/`, delete
+1. Sessions: once the supported Hermes baseline includes #33134, remove the
+   sessions compatibility handlers and any docs that require bootstrap for
+   history/chat. Until then, verify native `/api/sessions/*` routes win.
+2. Read-only skills/toolsets: clients should prefer native `/v1/skills` and
+   `/v1/toolsets` from #33016. Retire `/api/skills` list dependence; keep legacy
+   detail/toggle only if the UI still needs it.
+3. Config/memory/available-models: remove those compatibility handlers only
+   after stable core APIs exist or the dependent Android surfaces are redesigned.
+4. Slash middleware: remove after native API-server slash preprocessing exists.
+5. Full cleanup: delete `hermes_relay_bootstrap/`, delete
    `hermes_relay_bootstrap.pth`, remove the `.pth` install block, and update
    local agent docs only after all compatibility groups have native replacements.
-5. The Android client `probeCapabilities()` and `streamingEndpoint = "auto"` plumbing stays — it's permanent infrastructure that handles mixed-version deployments.
+6. The Android client `probeCapabilities()` and `streamingEndpoint = "auto"` plumbing stays — it's permanent infrastructure that handles mixed-version deployments.
 
 ---
 
@@ -928,7 +942,7 @@ The plan called for adding a `// VOICE HOOK` callback to `ChatViewModel` so `Voi
 - `plugin/relay/server.py` — route registration alongside `/media/*`
 - `plugin/tests/test_voice_routes.py` — 14 unit tests, `unittest`-based (pytest conftest issue documented in `CLAUDE.md`)
 - `app/src/main/kotlin/.../audio/VoiceRecorder.kt` — MediaRecorder amplitude StateFlow
-- `app/src/main/kotlin/.../audio/VoicePlayer.kt` — MediaPlayer + Visualizer amplitude StateFlow with OEM fallback
+- `app/src/main/kotlin/.../audio/VoicePlayer.kt` — Media3 ExoPlayer (gapless TTS queue) + Visualizer amplitude StateFlow with OEM fallback; `audioSessionId` served from a thread-safe `@Volatile` cache (read off-main by barge-in)
 - `app/src/main/kotlin/.../network/RelayVoiceClient.kt` — OkHttp multipart + JSON clients
 - `app/src/main/kotlin/.../viewmodel/VoiceViewModel.kt` — turn state machine, sentence detection, TTS queue consumer, `ChatViewModel` observation pattern
 - `app/src/main/kotlin/.../ui/components/VoiceModeOverlay.kt` — full-screen overlay, VoiceState→SphereState mapping, three interaction modes
@@ -1151,9 +1165,9 @@ session-API endpoints.
   All shell out to `tailscale` CLI and return structured dicts; no new
   daemon, no new state.
 - `scripts/hermes-relay-tailscale` — shell shim mirroring `hermes-pair`
-  pattern (see `project_hermes_plugin_cli_gap.md` memory — plugin
-  `register_cli_command` doesn't reach `main.py` argparse on v0.8.0,
-  so shell shim is the working path).
+  pattern for scriptability and older Hermes builds. Current upstream supports
+  generic plugin CLI command dispatch, so native `hermes <subcommand>` should
+  be preferred when available.
 - `install.sh` gets an optional step [7/7]: detect `tailscale` binary;
   if present and the operator hasn't declined, offer to run
   `tailscale serve --bg --https=8767 http://127.0.0.1:8767`. Skipped
@@ -1525,3 +1539,179 @@ old STT -> Hermes -> TTS pipeline instead of a native realtime agent.
 - `plugin/relay/realtime_agent/broker.py`
 - `plugin/relay/realtime_agent/providers/xai.py`
 - `plugin/relay/realtime_agent/providers/openai.py`
+
+---
+
+## ADR 33 - Realtime Agent foregrounds short Hermes turns and promotes long ones to background tasks
+
+**Status:** Accepted, phased (2026-05-24). Default-on at feature GA, gated by a
+prerequisite provider-idle-tolerance spike (Phase 0). Supersedes the
+blocking-broker assumption inside ADR 32's sequence; ADR 32's preamble ->
+forced-Hermes -> provider-summary shape is preserved for the foreground tier.
+
+**Context.** Today a Realtime Agent turn runs Hermes *synchronously inside the
+provider event pump*: `_pump_provider_events` awaits `_handle_provider_tool_call`
+-> `_run_brokered_tool`, which streams the entire Hermes SSE run to completion
+before the pump consumes the next provider event (`broker.py`). This is correct
+and lowest-latency for short Q&A, but it has two costs that grow with task
+length:
+
+- The provider realtime socket sits attached-but-idle for the whole run (a live,
+  billed, audio-clocked WebSocket parked for tens of seconds during research,
+  multi-tool, or desktop/build tasks).
+- The tool surface already advertises a background vocabulary
+  (`hermes_run_task`, `hermes_get_status`, `hermes_cancel`, `hermes_confirm`)
+  and a `hermes_run_status` state machine, but `hermes_get_status` /
+  `hermes_cancel` as *provider* tool calls are unreachable mid-run because the
+  pump is parked. Only the client->relay `response.cancel` path can interrupt.
+
+The blocking `await` is also an *implicit mutex*: it serializes the three audio
+sources that can produce `voice.output_audio.delta` (see "Who speaks" below) so
+they never overlap. Removing it requires replacing that mutex with an explicit
+floor owner.
+
+**Who speaks (confirmed against both supported providers).** Up to three mouths
+exist; only one is active per phase today because of the blocking await:
+
+1. **Realtime provider** - xAI `grok-voice-latest`, OpenAI `gpt-realtime-2`.
+   Both run with `turn_detection: None` (relay owns turn boundaries; no server
+   VAD) and audio output modality. Speaks the pre-Hermes acknowledgement and the
+   final post-result summary.
+2. **Relay TTS render** - `xai_tts`/`openai_tts` via `_render_provider_audio`.
+   A separate, non-realtime synthesizer used as the forced-summary fallback and
+   the legacy render path. Emits the *same* `voice.output_audio.delta` wire event
+   as the provider, so Android cannot distinguish them.
+3. **Android local TTS** - the `should_speak` long-wait filler, driven by
+   `hermes.run.progress`. Client-side, not the provider.
+
+Because all three converge on one Android `AudioTrack`, **floor arbitration must
+happen relay-side, before bytes reach the socket.**
+
+**Decision.** Keep three turn classes; make promotion automatic and default-on,
+with the relay as the single explicit floor owner.
+
+- **Tier A - Foreground (short Q&A).** Unchanged from ADR 32: provider preamble
+  -> relay-forced Hermes (still awaited) -> provider summary. Lowest latency,
+  trivial floor. This remains the path for any turn that completes inside the
+  promotion grace window.
+- **Tier B - Promoted (long task detected late).** Start in Tier A. If the
+  Hermes run has not produced a final result within a grace window
+  (`promote_after_ms`, default ~6000ms, tunable), the relay *detaches* the run
+  from the pump: the run continues as a tracked `asyncio.Task`, the pump resumes
+  consuming provider events, and the provider speaks a short "I've started that -
+  I'll let you know" handoff. Progress continues via `hermes.run.progress`. When
+  the background run completes, the relay injects the result as a tool result and
+  requests a provider summary at the next floor-idle moment.
+- **Tier C - Explicitly durable.** `hermes_run_task(mode="background")` returns a
+  run handle immediately (no grace window). For tasks the model/profile knows up
+  front are long (research, builds via desktop tools, multi-step). Same
+  completion-injection path as Tier B.
+
+Promotion is the default behavior, not a flag. Grace-period promotion preserves
+Tier A latency for the common case and only forks when a run actually proves
+long, so the user never has to pick a mode.
+
+**The relay is the single floor owner.** A per-session floor state
+(`idle | provider_speaking | hermes_filler | result_pending`) gates every audio
+source:
+
+- Only one mouth may hold the floor. The provider holds it by default.
+- A completed background result does **not** barge in. It is queued as
+  `result_pending` and spoken only when the floor returns to `idle` (provider
+  finished, user not mid-utterance). Provider VAD being off means the relay
+  controls `response.create`, so it can withhold the summary until the floor is
+  clear.
+- Android local filler (`should_speak`) is suppressed whenever the provider holds
+  the floor; it is a Tier B/C long-wait affordance only.
+- Relay TTS render (mouth 2) may only fire when it owns the floor and the
+  provider has drained, exactly as the forced-summary fallback does today.
+
+**Settings (ample, per ADR intent).** Surface in Voice Settings -> Realtime
+Agent, with relay-side `realtime_voice` config as source of truth and per-profile
+override:
+
+- `promotion_enabled` (default true) - master switch; false pins Tier A blocking.
+- `promote_after_ms` (default ~6000) - grace window before Tier B handoff.
+- `background_default_mode` - whether ambiguous long turns prefer promote vs.
+  stay-foreground.
+- `spoken_handoff` (default true) - speak the "I've started that" line on
+  promotion vs. silent + visual only.
+- `progress_spoken_after_ms` / `progress_repeat_ms` - reuse existing
+  `_HERMES_SPOKEN_PROGRESS_*` knobs, now configurable.
+- `result_delivery` - `speak_when_idle` (default) vs. `notify_then_speak`
+  (chime/visual, speak on user re-engage) vs. `visual_only`.
+- `max_background_runs` - concurrent background runs per session (default 1 for
+  the MVP; the existing single-`hermes_task` field assumes 1).
+
+**Protocol additions (relay <-> Android, additive).**
+
+- `hermes.run.promoted` - run moved to background; carries `run_id`,
+  `promote_after_ms`, `spoken_handoff`.
+- `hermes.run.background_completed` - background run finished; precedes the
+  provider/relay summary.
+- Extend `hermes.run.progress` with `tier` and `floor` so the client can render
+  background state distinctly (e.g. a persistent "working on: ..." chip).
+- `hermes_get_status` / `hermes_cancel` become genuinely reachable as provider
+  tool calls in Tier B/C because the pump is no longer parked; no schema change.
+
+**Prerequisite (Phase 0 spike) — RESOLVED 2026-05-24.** The spike asked how xAI
+and OpenAI realtime sessions behave when held open and idle. Verdicts (see
+`docs/realtime-voice-poc.md`): **OpenAI `hold-floor-ok` (empirical** — survived
+10/20/30s idle with clean post-idle audio); **xAI `hold-floor-ok`** (shipping
+Realtime Agent already holds `xai_realtime` sessions open across between-turn
+idle with `turn_detection: None` + resume TTL; relay-host probe retained as a
+regression check, not a precondition). The premise was also superseded in
+implementation: Tier B closes the pending provider call with an interim ack
+rather than holding an open response, so the socket only sees the normal
+between-turns idle gap — no provider needs the `must-reopen` fallback today, and
+default-on is unblocked.
+
+**Rules.**
+
+- Hermes remains the only path for tools, memory, current data, research, side
+  effects, durable context, and confirmations (unchanged from ADR 29/32).
+- Exactly one audio source may hold the floor at a time; the relay enforces this
+  before audio reaches Android. Background results never barge in.
+- Android must not read raw Hermes output aloud; spoken output is always a
+  provider (or relay-fallback) summary of the compact Hermes result.
+- Promotion must be cancel-safe: a promoted/background run is cancelable via both
+  the provider `hermes_cancel` tool and the client `response.cancel` path, reusing
+  `_cancel_active_hermes`.
+- A turn must never strand: if a background run completes while the WS is
+  detached, the result is replayed through the existing event-ring/resume path on
+  reattach.
+
+**Open questions / risks.**
+
+- Floor arbitration is the hard part and the existing `native_forced_*` /
+  `_should_forward_provider_response_event` suppression machinery is already the
+  most fragile code in `broker.py`. Concurrency stresses it most; the floor-owner
+  state machine should *replace* ad-hoc suppression, not stack on top of it.
+- Concurrent background runs (`max_background_runs > 1`) are out of scope for the
+  MVP; the session model assumes a single `hermes_task`.
+- "Notify then speak" result delivery needs an Android affordance (chime +
+  chip + tap-to-hear) that does not yet exist.
+
+**Phased rollout.**
+
+1. **Phase 0** - provider-idle-tolerance spike (above). Gate for default-on.
+2. **Phase 1** - introduce the relay floor-owner state machine under the current
+   blocking behavior (no functional change), with tests that prove single-floor
+   invariants.
+3. **Phase 2** - Tier B grace-period promotion behind `promotion_enabled`,
+   default **off**, validated on long-task transcripts.
+4. **Phase 3** - flip `promotion_enabled` default **on**; add Tier C
+   `mode="background"`; ship the Voice Settings surface.
+
+**Key Files:**
+- `docs/decisions.md` (this ADR; supersedes ADR 32's blocking assumption)
+- `docs/plans/2026-05-24-realtime-background-hermes-runs.md` (companion plan)
+- `plugin/relay/realtime_agent/broker.py`
+- `plugin/relay/realtime_agent/hermes_tool_broker.py`
+- `plugin/relay/realtime_agent/models.py`
+- `plugin/relay/realtime_agent/providers/xai.py`
+- `plugin/relay/realtime_agent/providers/openai.py`
+- `plugin/relay/profile_voice.py`
+- `docs/relay-protocol.md`
+- `app/src/main/kotlin/com/hermesandroid/relay/viewmodel/VoiceViewModel.kt`
+- `app/src/main/kotlin/com/hermesandroid/relay/ui/screens/VoiceSettingsScreen.kt`
