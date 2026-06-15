@@ -66,12 +66,34 @@ GET /v1/models
 -> { "object": "list", "data": [{ "id": "claude-opus-4-6", "object": "model" }, ...] }
 ```
 
+### Capabilities
+```
+GET /v1/capabilities
+-> {
+  "features": {
+    "session_resources": true,
+    "session_chat_streaming": true,
+    "skills_api": true
+  },
+  "endpoints": {
+    "sessions": {"method": "GET", "path": "/api/sessions"},
+    "session_chat_stream": {"method": "POST", "path": "/api/sessions/{session_id}/chat/stream"},
+    "skills": {"method": "GET", "path": "/v1/skills"},
+    "toolsets": {"method": "GET", "path": "/v1/toolsets"}
+  }
+}
+```
+
+Use this before assuming optional API-server surfaces exist. Older builds may
+not have `/v1/capabilities`; in that case Hermes-Relay falls back to targeted
+route probes.
+
 ### Sessions
 
 ```
 # List sessions
 GET /api/sessions?limit=50&offset=0
--> { "items": [...], "total": N }
+-> { "object": "list", "data": [...], "total": N }
 
 # Create session
 POST /api/sessions
@@ -92,7 +114,7 @@ DELETE /api/sessions/{session_id}
 
 # Get messages
 GET /api/sessions/{session_id}/messages
--> { "items": [...], "total": N }
+-> { "object": "list", "data": [...], "total": N }
 
 # Search sessions
 GET /api/sessions/search?q=keyword&limit=20
@@ -102,6 +124,10 @@ GET /api/sessions/search?q=keyword&limit=20
 POST /api/sessions/{session_id}/fork
 -> { "session": { ... }, "forked_from": "..." }
 ```
+
+The native upstream list envelope is `{"object":"list","data":[...]}`.
+Older fork/bootstrap builds may return `items`, `sessions`, or `messages`;
+clients should continue accepting those as compatibility shapes.
 
 ### Chat (Non-Streaming)
 ```
@@ -259,7 +285,9 @@ GET /api/memory?target=memory    // or target=user
 
 ### Skills
 ```
-GET /api/skills          # optional ?category= filter
+GET /v1/skills           # native upstream read-only list
+GET /v1/toolsets         # native upstream toolset inventory
+GET /api/skills          # legacy compatibility list, optional ?category= filter
 GET /api/skills/{name}
 ```
 > `/api/skills/categories` was removed from upstream as dead code (commit 8d023e43) and is not re-injected by the bootstrap.
@@ -270,14 +298,17 @@ Probe endpoints to detect what's available:
 
 ```
 GET /health              -> basic connectivity
-GET /api/sessions        -> enhanced Hermes session API
+GET /v1/capabilities     -> native feature and endpoint map
+GET /api/sessions        -> session API fallback probe
 GET /v1/models           -> model listing (OpenAI-compatible)
-GET /api/skills          -> skills support
+GET /v1/skills           -> native read-only skills support
+GET /v1/toolsets         -> native read-only toolsets support
+GET /api/skills          -> legacy skills compatibility
 GET /api/memory          -> memory support
 GET /api/config          -> config API
 
 Chat modes:
-  "enhanced-hermes" -> sessions API available (use /api/sessions/*/chat/stream)
+  "enhanced-hermes" -> sessions API available (prefer /api/sessions/*/chat/stream)
   "portable"        -> only /v1/chat/completions available (OpenAI-compatible)
   "disconnected"    -> nothing works
 ```
@@ -292,4 +323,4 @@ Chat modes:
 | Streaming format | OpenAI delta format | Custom SSE events (see above) |
 | Tool visibility | Hidden | Exposed via events (pending/started/completed/failed) |
 | Thinking/Reasoning | Not exposed | Exposed via `tool.progress` events |
-| Memory/Skills | Not applicable | Full API access |
+| Memory/Skills | Not applicable | Native read-only skills/toolsets; memory and skill detail/toggle remain compatibility surfaces |

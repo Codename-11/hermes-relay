@@ -117,6 +117,11 @@ def _check_requirements() -> bool:
         )
         if r.status_code == 200:
             data = r.json()
+            bridge = data.get("bridge") if isinstance(data, dict) else None
+            if isinstance(bridge, dict):
+                supported = bridge.get("device_control_supported")
+                if supported is False:
+                    return False
             return bool(data.get("phone_connected", False))
     except Exception:
         pass

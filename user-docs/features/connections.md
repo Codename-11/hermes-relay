@@ -6,8 +6,10 @@ A **connection** in Hermes-Relay is a saved link to a Hermes server. Add multipl
 
 Each connection stores everything needed to talk to one Hermes install:
 
-- API server URL (`http(s)://host:8642`) and auto-derived relay URL (`ws(s)://host:8767`), unless you set a manual relay override
-- Its own pairing record — session token, device ID, optional API key
+- API server URL (`http(s)://host:8642`) and API key for Chat/session API calls
+- Auto-derived dashboard URL (`http(s)://host:9119`) and dashboard cookies for Manage
+- Auto-derived relay URL (`ws(s)://host:8767`), unless you set a manual relay override
+- Its own Relay pairing record — session token and device ID for Terminal, Bridge, and relay-only power tools
 - Its own sessions, memory, personalities, and skill list (fetched from that server)
 - Last-active session ID and explicit profile pick, so switching back takes you where you left off
 
@@ -36,7 +38,21 @@ Open **Settings → Connections**. Each card shows the connection's label, hostn
 - **Revoke** — server-side logout. The token is invalidated on the server; the connection stays in the app but is marked unpaired.
 - **Remove** — deletes the connection and its stored auth material. The TOFU cert pin for the server's host survives, so if you re-add the same server later, it's still trusted without a re-verify.
 
-Tap **Add connection** to create a new one. This launches the standard QR pairing flow (same as first-time setup). After pairing, the connection is saved with the server's hostname as its default label.
+Tap **Add connection** to create a new one. This launches the same connection wizard used during first-time setup. Choose **Standard Hermes** for the normal API/dashboard path, or scan a QR when your host already printed one. Relay pairing is optional and can be added later from the connection card.
+
+## Live status and diagnostics
+
+Pairing and live reachability are shown separately. A connection can still be
+**paired** while the relay socket or HTTP health check is down; in that case the
+Relay row shows **Relay unreachable - tap to reconnect** rather than treating
+the saved session as proof of a live server.
+
+Tap the API Server, Relay, or Session rows on the active connection card to open
+detail sheets with a compact **Recent activity** tail. The tail shows sanitized
+API, route, relay, session, and voice events such as health timeouts, selected
+routes, reconnect attempts, and voice relay checks. Raw payloads, query strings,
+and token-like values are hidden. The same consolidated log is available from
+**Settings -> Diagnostics**, where you can clear the in-app buffer.
 
 ## Multi-Endpoint Pairing: One QR for Every Network
 
@@ -51,7 +67,7 @@ For Tailscale, run this on the host before pairing:
 
 ```bash
 hermes-relay-tailscale enable
-hermes-pair --mode auto --prefer tailscale
+hermes pair --mode auto --prefer tailscale
 ```
 
 The helper publishes relay `:8767` and API `:8642`; both must be reachable for the full app to work away from LAN. The route menu in Settings lets you prefer a route for the current session without changing the stored connection.

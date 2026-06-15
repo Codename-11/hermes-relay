@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.bridge
 
+import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -300,6 +301,16 @@ class BridgeForegroundService : Service() {
         super.onDestroy()
     }
 
+    // ForegroundServiceType: lint requires the manifest `<service>` to declare
+    // `foregroundServiceType` for targetSdk >= 34. The SIDELOAD manifest does
+    // (specialUse|mediaProjection) + declares the matching FOREGROUND_SERVICE_*
+    // permissions. The GOOGLEPLAY flavor deliberately omits this service AND
+    // those permissions (no device-control capability for Play-Store
+    // compliance), so this code is unreachable there — the service can't be
+    // started without a manifest declaration. Lint analyzes the merged
+    // googlePlay manifest and can't see the sideload guarantee, so suppress
+    // here rather than weaken googlePlay by granting it specialUse.
+    @SuppressLint("ForegroundServiceType")
     private fun startForegroundNotification() {
         ensureChannel()
         val notification = buildNotification()

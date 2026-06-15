@@ -27,3 +27,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "hermes-relay"
 include(":app")
+include(":relay-core")
+include(":relay-ui")
+includeBuild("quest")

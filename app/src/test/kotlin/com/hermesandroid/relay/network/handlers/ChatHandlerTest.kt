@@ -492,6 +492,40 @@ class ChatHandlerTest {
     }
 
     @Test
+    fun loadMessageHistory_preservesActiveAgentNameOnAssistantMessages() {
+        handler.activeAgentName = "Mizuki"
+        val items = listOf(
+            MessageItem(id = "1", role = "user", content = JsonPrimitive("Hello")),
+            MessageItem(id = "2", role = "assistant", content = JsonPrimitive("Hi there")),
+        )
+
+        handler.loadMessageHistory(items)
+
+        assertNull(handler.messages.value[0].agentName)
+        assertEquals("Mizuki", handler.messages.value[1].agentName)
+    }
+
+    @Test
+    fun relabelGenericAssistantMessages_replacesHermesButPreservesActionLabels() {
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(id = "1", role = "assistant", content = JsonPrimitive("Hi")),
+                MessageItem(id = "2", role = "assistant", content = JsonPrimitive("Custom")),
+            ),
+        )
+        handler.activeAgentName = "Hermes"
+        handler.relabelGenericAssistantMessages("Hermes")
+        handler.appendLocalVoiceIntentResult("Opened Chrome")
+
+        handler.relabelGenericAssistantMessages("Victor")
+
+        val messages = handler.messages.value
+        assertEquals("Victor", messages[0].agentName)
+        assertEquals("Victor", messages[1].agentName)
+        assertEquals("Voice action", messages.last().agentName)
+    }
+
+    @Test
     fun loadMessageHistory_convertsSystemMessages() {
         val items = listOf(
             MessageItem(id = "1", role = "system", content = JsonPrimitive("You are helpful"))

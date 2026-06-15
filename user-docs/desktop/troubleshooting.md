@@ -1,6 +1,6 @@
 # Troubleshooting <ExperimentalBadge />
 
-Common errors in the desktop CLI, indexed by exact message. If your problem isn't here, [open an issue](https://github.com/Codename-11/hermes-relay/issues/new).
+Common errors in the CLI, indexed by exact message. If your problem isn't here, [open an issue](https://github.com/Codename-11/hermes-relay/issues/new).
 
 ## `hermes-relay: command not found` / `is not recognized`
 
@@ -50,7 +50,7 @@ rm ~/.hermes/remote-sessions.json      # or delete just this URL's entry
 hermes-relay pair --remote ws://<host>:8767
 ```
 
-Mint a fresh code on the server first: `hermes-pair --ttl 600`.
+Mint a fresh code on the server first: `hermes pair --ttl 600`.
 
 ## `disconnected before auth`
 
@@ -137,7 +137,7 @@ Fixed in alpha.12. Pre-alpha.12 `install.sh` and `install.ps1` printed lines lik
 
 ## `timed out after 30ms` (or any millisecond-range timeout on a desktop tool)
 
-You're running a pre-fix desktop CLI build. The Python side sends `timeout` in seconds; early Node builds treated it as milliseconds — `30` seconds became 30 ms, and every shell command SIGKILL'd instantly.
+You're running a pre-fix CLI build. The Python side sends `timeout` in seconds; early Node builds treated it as milliseconds — `30` seconds became 30 ms, and every shell command SIGKILL'd instantly.
 
 Fixed in releases after 2026-04-23. Upgrade:
 
@@ -166,7 +166,7 @@ Two layers — check them in order:
 curl -s "http://127.0.0.1:8767/desktop/_ping?tool=desktop_terminal"
 ```
 
-**If `connected: false`**: no desktop CLI is attached. Run `hermes-relay` (bare = shell/TUI mode by default) or `hermes-relay chat`; make sure you didn't pass `--no-tools`; make sure you consented on the first-run prompt.
+**If `connected: false`**: no CLI client is attached. Run `hermes-relay` (bare = shell/TUI mode by default) or `hermes-relay chat`; make sure you didn't pass `--no-tools`; make sure you consented on the first-run prompt.
 
 **If `connected: true`** but Hermes still can't see the tools: the plugin isn't loaded by the gateway, or the `desktop` toolset isn't enabled for your session.
 

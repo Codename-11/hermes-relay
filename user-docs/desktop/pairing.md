@@ -7,7 +7,7 @@ Pairing exchanges a one-time 6-character code for a long-lived session token, st
 SSH into your Hermes host (or use any terminal already on it):
 
 ```bash
-hermes-pair --ttl 600
+hermes pair --ttl 600
 ```
 
 Output:
@@ -38,7 +38,7 @@ The CLI prompts:
 
 ```
 Relay: ws://<host>:8767
-Need a pairing code — run `/hermes-relay-pair` (or `hermes-pair`) on the relay host.
+Need a pairing code — run `hermes pair` (or `/hermes-relay-pair`) on the relay host.
 (Paste works; cleaned code shown before submit.)
 
 Pairing code (6 chars): _
@@ -75,12 +75,12 @@ On the server:
 
 ```bash
 # All three routes
-hermes-pair --mode auto --public-url https://hermes.example.com
+hermes pair --mode auto --public-url https://hermes.example.com
 
 # Or specific:
-hermes-pair --mode lan
-hermes-pair --mode tailscale
-hermes-pair --mode public --public-url https://hermes.example.com
+hermes pair --mode lan
+hermes pair --mode tailscale
+hermes pair --mode public --public-url https://hermes.example.com
 ```
 
 The output is a JSON blob (printed alongside the QR). Copy it verbatim and paste to the CLI:

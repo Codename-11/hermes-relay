@@ -47,13 +47,30 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
 /**
- * A slash command entry — built-in, personality, or server skill.
+ * A slash command entry — built-in, personality, server skill, or (on the
+ * gateway transport) a server-catalog command from `commands.catalog`.
  */
 data class SlashCommand(
     val command: String,
     val description: String,
-    val category: String = "built-in"
-)
+    val category: String = "built-in",
+    /**
+     * Where the entry came from — [SOURCE_SERVER] for gateway
+     * `commands.catalog` entries, null for client-defined sources.
+     * Used by the merge in ChatScreen's `allCommands` to dedupe by name
+     * with the server description winning, and by the send path to route
+     * server-only commands through `slash.exec` / `command.dispatch`
+     * instead of plain text.
+     */
+    val source: String? = null,
+) {
+    companion object {
+        const val SOURCE_SERVER = "server"
+
+        /** Palette category for server-catalog commands without one. */
+        const val CATEGORY_SERVER = "server"
+    }
+}
 
 /**
  * Full-screen command palette as a bottom sheet.
@@ -73,7 +90,10 @@ fun CommandPalette(
 
     // Get unique categories in a logical order
     val categories = remember(commands) {
-        val priorityOrder = listOf("session", "configuration", "info", "personality")
+        val priorityOrder = listOf(
+            "session", "configuration", "info", "personality",
+            SlashCommand.CATEGORY_SERVER,
+        )
         commands.map { it.category }.distinct().sortedWith(
             compareBy<String> {
                 val idx = priorityOrder.indexOf(it)

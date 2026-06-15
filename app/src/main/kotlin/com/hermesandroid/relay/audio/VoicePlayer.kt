@@ -9,6 +9,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -83,9 +84,33 @@ class VoicePlayer(
     private var visualizer: Visualizer? = null
     private var visualizerAttached = false
 
+    // Thread-safe mirror of [ExoPlayer.getAudioSessionId]. ExoPlayer is
+    // thread-confined — every accessor (the audioSessionId getter included)
+    // calls verifyApplicationThread() and throws "Player is accessed on the
+    // wrong thread" if touched off the player's construction thread. The
+    // barge-in pipeline reads [audioSessionId] from BargeInListener's
+    // Dispatchers.IO reader coroutine to attach AcousticEchoCanceler, so we
+    // can't expose the raw getter. Instead we cache the id from the
+    // main-thread Media3 callbacks below and serve the getter from this
+    // @Volatile field. (Fixes the legacy-TTS + barge-in crash where the
+    // first sentence played for ~2 syllables before the IO read threw.)
+    @Volatile private var cachedAudioSessionId: Int = 0
+
     private val exoPlayer: ExoPlayer = exoPlayerFactory(context.applicationContext)
 
     init {
+        // AnalyticsListener callbacks are delivered on the player's
+        // application (main) thread, so caching the id here is the
+        // authoritative, thread-correct way to track it as Media3 allocates
+        // and reallocates the underlying AudioTrack.
+        exoPlayer.addAnalyticsListener(object : AnalyticsListener {
+            override fun onAudioSessionIdChanged(
+                eventTime: AnalyticsListener.EventTime,
+                audioSessionId: Int,
+            ) {
+                cachedAudioSessionId = audioSessionId
+            }
+        })
         exoPlayer.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _isPlaying.value = isPlaying
@@ -94,8 +119,16 @@ class VoicePlayer(
                 // actually begins — the audio session id is stable from
                 // player construction on Media3 1.x but some OEM pipelines
                 // don't allocate the track until playback starts.
-                if (isPlaying && !visualizerAttached) {
-                    attachVisualizer(exoPlayer.audioSessionId)
+                if (isPlaying) {
+                    // Belt-and-braces with the analytics listener above: this
+                    // runs on the main thread too, so reading the getter here
+                    // is safe and guarantees the cache is warm by the time
+                    // playback is audible (and thus by the time barge-in
+                    // starts its IO reader).
+                    cachedAudioSessionId = exoPlayer.audioSessionId
+                    if (!visualizerAttached) {
+                        attachVisualizer(cachedAudioSessionId)
+                    }
                 }
             }
 
@@ -211,13 +244,20 @@ class VoicePlayer(
      * poll this property briefly rather than assume it's hot-ready at
      * [VoicePlayer] construction time.
      *
-     * Exposed read-only. Internally the same id drives the Visualizer
-     * attach logic in [attachVisualizer]; B4 reads it via a provider
-     * lambda so the listener can re-check across the 1 s poll window
-     * without holding a stale reference.
+     * **Thread-safe.** Backed by [cachedAudioSessionId] rather than the raw
+     * `ExoPlayer.getAudioSessionId()` getter, because ExoPlayer is
+     * thread-confined and [BargeInListener] reads this from its
+     * `Dispatchers.IO` reader coroutine. Reading the raw getter off-main
+     * throws `IllegalStateException: Player is accessed on the wrong thread`.
+     * The cache is populated from main-thread Media3 callbacks (the
+     * [AnalyticsListener.onAudioSessionIdChanged] hook and `onIsPlayingChanged`).
+     *
+     * Exposed read-only. B4 reads it via a provider lambda so the listener
+     * can re-check across the 1 s poll window without holding a stale
+     * reference.
      */
     val audioSessionId: Int
-        get() = exoPlayer.audioSessionId
+        get() = cachedAudioSessionId
 
     /**
      * Set the playback volume of the underlying ExoPlayer.

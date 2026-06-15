@@ -1,0 +1,128 @@
+# Hermes-Relay — Python Server CI Pipeline
+#
+# Runs on pushes to main/dev and on PRs targeting main/dev, scoped to
+# server-affecting paths so Android-only changes don't spin up the
+# Python toolchain.
+#
+# Pipeline: syntax-check -> focused server tests
+
+name: CI — Server
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "plugin/__init__.py"
+      - "plugin/android_tool.py"
+      - "plugin/cli.py"
+      - "plugin/pair.py"
+      - "plugin/plugin.yaml"
+      - "plugin/dashboard/manifest.json"
+      - "plugin/dashboard/package.json"
+      - "plugin/dashboard/package-lock.json"
+      - "plugin/relay/**"
+      - "plugin/tools/**"
+      - "plugin/tests/**"
+      - "relay_server/**"
+      - "hermes_relay_bootstrap/**"
+      - "pyproject.toml"
+      - "scripts/check-server-version-sync.py"
+      - "scripts/bump-server-version.sh"
+      - ".github/workflows/ci-server.yml"
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - "plugin/__init__.py"
+      - "plugin/android_tool.py"
+      - "plugin/cli.py"
+      - "plugin/pair.py"
+      - "plugin/plugin.yaml"
+      - "plugin/dashboard/manifest.json"
+      - "plugin/dashboard/package.json"
+      - "plugin/dashboard/package-lock.json"
+      - "plugin/relay/**"
+      - "plugin/tools/**"
+      - "plugin/tests/**"
+      - "relay_server/**"
+      - "hermes_relay_bootstrap/**"
+      - "pyproject.toml"
+      - "scripts/check-server-version-sync.py"
+      - "scripts/bump-server-version.sh"
+      - ".github/workflows/ci-server.yml"
+
+# Cancel in-progress runs for the same branch/PR, but let main and dev finish
+concurrency:
+  group: ci-server-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
+
+jobs:
+  # ──────────────────────────────────────────────
+  # Python Server — py_compile syntax sanity
+  # ──────────────────────────────────────────────
+  syntax-check:
+    name: Syntax check (Python)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r relay_server/requirements.txt
+
+      - name: Syntax check (server/plugin.relay — canonical location)
+        run: |
+          python -m py_compile plugin/relay/server.py
+          python -m py_compile plugin/relay/channels/terminal.py
+          python -m py_compile plugin/relay/channels/chat.py
+          python -m py_compile plugin/relay/channels/bridge.py
+          python -m py_compile plugin/relay/voice.py
+          python -m py_compile plugin/relay/upstream_voice.py
+
+      - name: Syntax check (relay_server shim)
+        run: python -m py_compile relay_server/__init__.py relay_server/__main__.py
+
+      - name: Validate Server version metadata
+        run: python scripts/check-server-version-sync.py
+
+  # ──────────────────────────────────────────────
+  # Python Server — focused route/auth/session tests
+  #
+  # Tests are ADVISORY on dev (push or PR) so WIP commits don't block the
+  # merge queue. Strict on main — the dev → main release-merge PR surfaces
+  # any real failures before release.
+  # ──────────────────────────────────────────────
+  unit-tests:
+    name: Focused Server tests (Python)
+    needs: syntax-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Advisory on dev, strict on main. Evaluates to false (= strict) for
+    # pushes to main and PRs whose base branch is main; true (= advisory)
+    # for everything else (dev pushes, dev-targeted PRs, feature branches).
+    continue-on-error: ${{ github.ref != 'refs/heads/main' && github.base_ref != 'main' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r relay_server/requirements.txt
+          pip install pytest responses
+
+      - name: Run focused Server tests
+        run: |
+          python -m pytest \
+            plugin/tests/test_relay_security.py \
+            plugin/tests/test_voice_routes.py \
+            plugin/tests/test_session_grants.py

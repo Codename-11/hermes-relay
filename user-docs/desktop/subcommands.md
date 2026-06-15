@@ -8,6 +8,8 @@ Full reference for every `hermes-relay` verb. Flags map one-to-one with env vars
 | `shell` (default) | Pipe the full Hermes Ink TUI through a PTY in tmux on the host. The killer chord set lives here. |
 | `pair` | First-time / re-pair handshake. Stores a session token. |
 | `paste` | One-shot stage clipboard image to the server inbox for `/paste`. |
+| `plugins` | List, install, update, launch, or resume desktop surface plugins such as Herm. |
+| `sessions` | List, resume, create, or kill server-side tmux TUI sessions. |
 | `status` | Local view of stored sessions. Default-redacts tokens. |
 | `tools` | Server-side tool inventory (`tools.list` RPC). |
 | `devices` | Server-side paired-device management — list / revoke / extend. |
@@ -24,7 +26,7 @@ hermes-relay                       # interactive shell (full Hermes TUI over PTY
 hermes-relay "what time is it?"    # one-shot chat (structured events)
 ```
 
-Bare invocation opens `shell` mode if no positional arg is given, `chat` mode if a positional is provided. Matches user expectation — "I want to talk to Hermes" drops into the rich interactive experience by default.
+Bare invocation opens `shell` mode if no positional arg is given, `chat` mode if a positional is provided. The default shell attaches to the active tmux session recorded in `~/.hermes/desktop-sessions.json`, then falls back to `default`. Matches user expectation — "I want to talk to Hermes" drops into the rich interactive experience by default.
 
 ## `hermes-relay shell`
 
@@ -40,13 +42,15 @@ hermes-relay shell --new                       # force a fresh hermes conversati
 hermes-relay shell --watch-editor              # poll tmux/$VSCODE for active-editor hints (ships every 5s)
 ```
 
-**Conversation picker on attach.** Without `--conversation` or `--new`, the client calls `session.list` on the relay's `tui` channel and renders a numbered list of recent server-side hermes sessions with first-prompt previews and ages. Pick one to resume; pick `new` for a fresh conversation. Servers that don't expose `session.list` fall through to "new" silently.
+**Conversation picker on first/fresh attach.** When no active tmux session is saved for the relay and you did not pass `--conversation` or `--new`, the client calls `session.list` on the relay's `tui` channel and renders a numbered list of recent server-side hermes sessions with first-prompt previews and ages. Pick one to resume; pick `new` for a fresh conversation. Existing saved tmux sessions skip the picker and resume the terminal directly. Servers that don't expose `session.list` fall through to "new" silently.
+
+**Tmux continuity.** The first bare `hermes-relay` attach uses the `default` tmux session unless a previous attach saved another active session for that relay. Reattaches replay recent tmux scrollback before live output, so a reopened terminal has context immediately. `--new` creates a new tmux session and stores it as the active session; `--session <name>` overrides the tmux session name for that run.
 
 **In-shell chord set.** `Ctrl+A` is the prefix for client-side actions. Everything else passes straight through.
 
 | Chord | Action |
 |-------|--------|
-| `Ctrl+A .` | Detach. tmux session persists on the server; next `hermes-relay shell` re-attaches with full state. |
+| `Ctrl+A .` | Detach. tmux session persists on the server; next bare `hermes-relay` re-attaches with full state. |
 | `Ctrl+A k` | Destroy the tmux session. Fresh hermes on next run. |
 | `Ctrl+A v` | Read your local clipboard, ship the image to the server's inbox via `/clipboard/inbox`, then auto-type `/paste\r` into the PTY so the upstream Hermes TUI consumes it in the same flow you would have typed by hand. Status line goes to **stderr** so it doesn't pollute the PTY: `[shell] pasted 1920×1080 (245 KB) → /paste`. Reentrancy guard prevents double-stage on a fast double-press. |
 | `Ctrl+A ?` (or `Ctrl+A h`) | Re-print the chord-help banner — the attach-time banner scrolls off as soon as anything writes, so this is the way back. |
@@ -70,6 +74,8 @@ hermes-relay chat --no-tools                       # skip desktop tool handlers 
 ```
 
 **Ctrl+C** during a turn fires `session.interrupt` on the relay — the in-flight turn is cancelled, the REPL prompt returns. Ctrl+C at the empty prompt exits.
+
+The tray **Chat** tab uses this relay-backed JSON path when a paired relay is available. For unpaired chat-only setups, the tray uses an internal `chat-worker api` sidecar path that streams directly from the Hermes WebAPI (`/api/sessions/{id}/chat/stream`, then `/v1/runs` fallback). That worker is intentionally not part of the public CLI help; use the tray route selector for direct gateway mode.
 
 ### REPL slash commands
 
@@ -109,6 +115,22 @@ hermes-relay paste                          # one-shot stage current clipboard i
 hermes-relay paste --remote ws://<host>:8767
 ```
 
+## `hermes-relay plugins`
+
+Desktop surface plugin manager. It exposes installable terminal dashboard surfaces to the CLI and tray app without making them part of the core relay protocol. The first built-in plugin is [Herm](https://github.com/liftaris/herm), packaged as `herm-tui`.
+
+```bash
+hermes-relay plugins                         # list registered plugins
+hermes-relay plugins status herm             # status for one plugin
+hermes-relay plugins status herm --json      # machine-readable status
+hermes-relay plugins install herm            # bun add -g herm-tui, or npm install -g herm-tui
+hermes-relay plugins update herm             # re-run the package-manager install
+hermes-relay plugins launch herm             # herm, or bunx/npx fallback
+hermes-relay plugins resume herm             # herm -c, or fallback with -c
+```
+
+The status output reports package name, source URL, install state, launch command, fallback command, tabs, and session actions. If `herm` is already on PATH, launch uses the installed binary. Otherwise the CLI and tray try `bunx herm-tui`, then `npx --yes herm-tui` when those runtimes are available.
+
 ## `hermes-relay status`
 
 Local inventory — no network. Reads `~/.hermes/remote-sessions.json`.
@@ -133,6 +155,20 @@ ws://172.16.24.250:8767
 
 `--json` redacts tokens by default; pass `--reveal-tokens` to opt in to full-token output for scripted re-auth.
 
+## `hermes-relay sessions`
+
+Server-side TUI session continuity. Talks to the relay's `terminal` channel and lists every background tmux session whose server-side name starts with `hermes-`, not just sessions owned by the current WebSocket.
+
+```bash
+hermes-relay sessions list                 # human-readable inventory
+hermes-relay sessions list --json          # { url, active, sessions }
+hermes-relay sessions resume default       # attach named tmux session
+hermes-relay sessions new                  # create and attach a new tmux session
+hermes-relay sessions kill default         # destroy named tmux session
+```
+
+Bare `hermes-relay` remains the normal resume path. Use `sessions list` when you want to see what is already alive on the server, `sessions resume <name>` for a specific tmux session, and `sessions kill <name>` when you intentionally want to destroy server-side state.
+
 ## `hermes-relay tools`
 
 Ask the server what tool access the agent will have on this connection. Hits `tools.list` RPC, prints the toolset taxonomy.
@@ -147,7 +183,7 @@ hermes-relay tools --remote <url> --json                # machine-readable
 
 ## `hermes-relay devices`
 
-Server-side paired-device management (the relay's `GET/DELETE/PATCH /sessions` HTTP API). Shows all paired devices across all your clients — Android phones, desktop CLIs, Ink TUIs — and lets you revoke or extend them.
+Server-side paired-device management (the relay's `GET/DELETE/PATCH /sessions` HTTP API). Shows all paired devices across all your clients — Android phones, CLI clients, Ink TUIs — and lets you revoke or extend them.
 
 ```bash
 hermes-relay devices                               # list (defaults to the one stored relay)
@@ -245,7 +281,7 @@ Available on every subcommand.
 | `--no-tools` | — | Don't wire desktop tool handlers for this invocation |
 | `--log-human` / `--log-json` | — | `daemon` only: force log format |
 | `--allow-tools` | — | `daemon` only: skip stored-consent gate (use only with `--token`; implies trust) |
-| `--json` | — | `chat` / `status` / `tools` / `devices` / `doctor` / `workspace` / `update`: JSON output |
+| `--json` | — | `chat` / `sessions` / `status` / `tools` / `devices` / `doctor` / `workspace` / `update`: JSON output |
 | `--verbose` | — | `chat` / `tools`: include thinking/reasoning + transport stderr |
 | `--quiet`, `-q` | — | Suppress status lines + tool decorations |
 | `--no-color` | `NO_COLOR` | Disable ANSI colors |
@@ -285,6 +321,7 @@ Available on every subcommand.
 | Path | Purpose |
 |------|---------|
 | `~/.hermes/remote-sessions.json` | Session tokens, grants, TTLs, cert pins, tool consent (mode 0600, atomic tempfile+rename) |
+| `~/.hermes/desktop-sessions.json` | Active TUI tmux session metadata per relay URL |
 | `~/.hermes/bin/hermes-relay` (`.exe` on Windows) | Installed binary path |
 | `~/.hermes/bin/hermes` (or `hermes.cmd` on Windows) | Short alias — created at install time, collision-safe |
 | `~/.hermes/bin/hermes-relay.new.exe` (Windows only, transient) | Pending self-update; renamed into place on next invocation |

@@ -200,6 +200,51 @@ class ProfileTest {
     }
 
     @Test
+    fun deserializesProfileApiMetadata() {
+        val payload = """
+            {
+                "name": "mizu",
+                "model": "xai/grok",
+                "description": "",
+                "api_server_enabled": true,
+                "api_server_url": "https://hermes.example.test:8643",
+                "api_server_host": "0.0.0.0",
+                "api_server_port": 8643,
+                "api_server_key_present": true
+            }
+        """.trimIndent()
+
+        val profile = json.decodeFromString(Profile.serializer(), payload)
+
+        assertTrue(profile.apiServerEnabled)
+        assertEquals("https://hermes.example.test:8643", profile.apiServerUrl)
+        assertEquals("0.0.0.0", profile.apiServerHost)
+        assertEquals(8643, profile.apiServerPort)
+        assertTrue(profile.apiServerKeyPresent)
+        assertTrue(profile.hasIsolatedApi)
+    }
+
+    @Test
+    fun profileApiMetadataDefaultsWhenKeysMissing() {
+        val payload = """
+            {
+                "name": "legacy",
+                "model": "m1",
+                "description": ""
+            }
+        """.trimIndent()
+
+        val profile = json.decodeFromString(Profile.serializer(), payload)
+
+        assertFalse(profile.apiServerEnabled)
+        assertNull(profile.apiServerUrl)
+        assertNull(profile.apiServerHost)
+        assertNull(profile.apiServerPort)
+        assertFalse(profile.apiServerKeyPresent)
+        assertFalse(profile.hasIsolatedApi)
+    }
+
+    @Test
     fun ignoresUnknownServerSideFields() {
         // Upstream might add fields (temperature, tools, …) without a
         // phone update — the parser must not choke on them.

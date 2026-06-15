@@ -146,6 +146,10 @@ function retargetTo(state: string, nowSec: number) {
 }
 
 function onPointerMove(e: PointerEvent) {
+  // Mouse pointers only. Touch "moves" end when the finger lifts — a lifted
+  // touch isn't a hover, and its last position would park a phantom cursor
+  // the eye stares at forever. Touch users get the scroll-gaze baseline.
+  if (e.pointerType !== 'mouse') return
   mouse.x = e.clientX
   mouse.y = e.clientY
   mouse.valid = true
@@ -226,6 +230,12 @@ function render() {
   // already looking straight down at it. Anchors the animation to the reader's
   // semantic focus, not to viewport geometry.
   const viewportH = window.innerHeight
+  // Re-query if the cached node was replaced (Vue HMR, route round-trips) —
+  // a detached element's getBoundingClientRect() is all zeros, which reads as
+  // installGap = -viewportH and locks the eye staring straight down forever.
+  if (installEl && !installEl.isConnected) {
+    installEl = null
+  }
   if (!installEl) {
     installEl = document.querySelector<HTMLElement>(INSTALL_SELECTOR)
   }
@@ -303,11 +313,15 @@ function render() {
   const lookVx = smoothLookVx
   const lookVy = smoothLookVy
 
-  // Ambient wander — tiny fbm offset so the eye has a little breathing motion
-  // when neither scroll nor cursor is moving. Small enough it can't compete
-  // with the coherent target, big enough you feel the sphere's alive.
-  const wanderX = (fbm(nowSec * 0.05 + 2.1, 7.7, 2) * 2 - 1) * 0.07
-  const wanderY = (fbm(3.3, nowSec * 0.06 + 11.1, 2) * 2 - 1) * 0.07
+  // Ambient wander — fbm offset so the eye has breathing motion when neither
+  // scroll nor cursor is moving. With lightAngleBlend pinned at 1 (below),
+  // this wander IS the light's ambient life — the core's natural orbit no
+  // longer contributes. Amplitude eases down as the cursor engages, so hover
+  // reads as locked attention and idle reads as alive.
+  const engagement = Math.min(1, Math.max(0, (proximity - 0.75) * 4))
+  const wanderAmp = 0.12 - 0.07 * engagement
+  const wanderX = (fbm(nowSec * 0.05 + 2.1, 7.7, 2) * 2 - 1) * wanderAmp
+  const wanderY = (fbm(3.3, nowSec * 0.06 + 11.1, 2) * 2 - 1) * wanderAmp
 
   // Convert to light angles. The algorithm uses:
   //   lx = sin(lightAngle1) * 0.65   ly = cos(lightAngle2) * 0.65
@@ -321,10 +335,19 @@ function render() {
   const gazeAngleX = Math.asin(tvx)
   const gazeAngleY = Math.acos(tvy)
 
-  // How hard to lock the light to the bias. proximity is in [0.75, 1.0] now
-  // (scroll-baseline → cursor-lock), so gazeBlend lives in [0.76, 0.90] —
-  // always locked to the target. Reduced motion zeroes it.
-  const gazeBlend = reduceMotion ? 0 : 0.35 + 0.55 * proximity
+  // Blend MUST be exactly 1 (or 0): the core mixes angles linearly —
+  //   lightAngle = naturalAngle * (1 - blend) + bias * blend
+  // and naturalAngle = time * lightSpeed grows WITHOUT BOUND. Any partial
+  // blend leaks (1 - blend) * ω·t into the gaze: a slow continuous orbit
+  // that drags the eye off the cursor over minutes, plus a visible snap
+  // whenever proximity moved the blend (two different fractions of a huge
+  // angle). That was the "tracking gets confused over time / when switching
+  // between scroll and cursor" bug. At blend 1 the asin/acos mapping also
+  // collapses to exactly linear (sin(asin(x)) = x), so gaze is
+  // pixel-faithful; the proximity feel lives in the wander amplitude above
+  // instead. Reduced motion zeroes the blend (time is frozen there, so the
+  // natural angle is static anyway).
+  const gazeBlend = reduceMotion ? 0 : 1
 
   // Intensity + state respond to cursor engagement specifically, not to the
   // scroll-watching baseline. Use cursorWeight (raw, not smoothed) so the
@@ -444,12 +467,35 @@ onBeforeUnmount(() => {
   margin-top: -32px;
 }
 .sphere-mark {
-  /* Floor at 240px (down from 280px) so mobile — where clamp() lands on the
-     floor because viewport width × 45vw is below it — gets a smaller canvas
-     and therefore a smaller vertical footprint. Desktop caps at 380px. */
-  width: clamp(240px, 45vw, 380px);
+  /* Mobile fills ~78% of the viewport width (floor 280px on very narrow
+     phones); desktop caps at 380px as before — the wider vw share only
+     changes what phones and small tablets see. */
+  width: clamp(280px, 82vw, 380px);
   aspect-ratio: 1 / 1;
   display: block;
+}
+/* Tighten the vertical envelope on phones — the canvas carries its own dark
+   margin (the lit body sits inside the 0.60 baseRadius envelope), so the
+   wrap can tuck well into the hero above and the How-it-works strip below
+   without anything visually touching. */
+@media (max-width: 640px) {
+  .sphere-mark-wrap {
+    margin-top: -64px;
+    margin-bottom: -28px;
+  }
+}
+/* Occlusion halo — the home surface carries the cockpit dot-grid texture,
+   which visually competes with the sphere's own cell lattice. Paint the page
+   background back over it: solid behind the sphere body, dimming through the
+   ring, transparent past the rim. Dark mode only (light has no texture). */
+.dark .sphere-mark {
+  background: radial-gradient(
+    circle closest-side,
+    #08090D 0%,
+    #08090D 52%,
+    rgba(8, 9, 13, 0.82) 72%,
+    rgba(8, 9, 13, 0) 100%
+  );
 }
 .sphere-mark-canvas {
   display: block;

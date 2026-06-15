@@ -28,7 +28,7 @@ import com.hermesandroid.relay.viewmodel.BridgeStatus
  * Phase 3 Wave 1 — bridge-ui (`bridge-screen-ui`). Kept distinct from
  * [BridgeMasterToggle] so that Agent safety-rails in Wave 2 can relocate the master
  * toggle without losing the status surface (and so we can reuse this card
- * in the Settings → Connection section later if desired).
+ * in the Settings → Connections section later if desired).
  */
 @Composable
 fun BridgeStatusCard(

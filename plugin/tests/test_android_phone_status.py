@@ -52,6 +52,7 @@ def _sample_status() -> dict:
             "current_app": "com.android.chrome",
         },
         "bridge": {
+            "device_control_supported": True,
             "master_enabled": True,
             "accessibility_granted": True,
             "screen_capture_granted": True,
@@ -326,7 +327,24 @@ class TestStatusCliFetch(unittest.TestCase):
         self.assertIn("Blocklist", text)
         self.assertIn("30 packages", text)
         self.assertIn("Destructive verbs", text)
+        self.assertIn("Device control", text)
         self.assertIn("Accessibility", text)
+
+    def test_render_status_block_marks_bridge_core_as_no_device_control(self) -> None:
+        sample = _sample_status()
+        sample["bridge"] = {
+            "device_control_supported": False,
+            "master_enabled": False,
+            "accessibility_granted": False,
+            "screen_capture_granted": False,
+            "overlay_granted": False,
+            "notification_listener_granted": True,
+        }
+        palette = status_cli._Palette(enabled=False)
+        text = status_cli.render_status_block(sample, palette)
+        self.assertIn("Google Play Bridge Core", text)
+        self.assertNotIn("Accessibility", text)
+        self.assertIn("Notifications", text)
 
     def test_render_status_block_disconnected_short_circuits(self) -> None:
         palette = status_cli._Palette(enabled=False)

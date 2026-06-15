@@ -1,9 +1,8 @@
 """Voice endpoints — relay-side TTS / STT bridge for the Android voice mode.
 
-The hermes-agent venv ships ``tools.tts_tool.text_to_speech_tool`` and
-``tools.transcription_tools.transcribe_audio`` — the relay plugin is
-editable-installed into that same venv, so we import them directly. Both
-upstream functions are *synchronous*, so every call is wrapped in
+The hermes-agent venv ships upstream STT/TTS helpers. The relay imports those
+through ``plugin.relay.upstream_voice`` so upstream voice API drift has one
+patch point. Upstream functions are synchronous, so every call is wrapped in
 ``asyncio.to_thread`` to keep the aiohttp event loop free.
 
 Routes (bearer-auth'd via relay sessions or narrow Hermes API tokens):
@@ -23,10 +22,14 @@ import json
 import logging
 import os
 import tempfile
+from pathlib import Path
 from typing import Any
 
 from aiohttp import web
+import yaml
 
+from . import upstream_voice
+from .profile_voice import request_profile, resolve_profile_voice_scope
 from .voice_auth import require_voice_auth
 
 logger = logging.getLogger("hermes_relay.voice")
@@ -90,6 +93,7 @@ class VoiceHandler:
         the temp file in ``finally``.
         """
         await require_voice_auth(request, "voice:stt")
+        profile = request_profile(None, request.query)
 
         temp_path: str | None = None
         try:
@@ -160,12 +164,10 @@ class VoiceHandler:
                     status=400,
                 )
 
-            # Imported lazily so tests can monkey-patch the attribute on
-            # ``tools.transcription_tools`` after the relay is already up,
-            # and so a missing hermes-agent venv doesn't blow up import.
-            from tools.transcription_tools import transcribe_audio  # type: ignore
-
-            result = await asyncio.to_thread(transcribe_audio, temp_path)
+            result = await asyncio.to_thread(
+                upstream_voice.transcribe_audio_file,
+                temp_path,
+            )
 
             if not isinstance(result, dict):
                 logger.warning(
@@ -194,6 +196,7 @@ class VoiceHandler:
                     "success": True,
                     "text": result.get("transcript", ""),
                     "provider": result.get("provider"),
+                    "profile": profile,
                 }
             )
         except web.HTTPException:
@@ -280,9 +283,10 @@ class VoiceHandler:
         text = sanitized
 
         try:
-            from tools.tts_tool import text_to_speech_tool  # type: ignore
-
-            raw = await asyncio.to_thread(text_to_speech_tool, text)
+            raw = await asyncio.to_thread(
+                upstream_voice.synthesize_text_to_speech,
+                text,
+            )
         except Exception as exc:
             logger.exception("Voice synthesize: TTS call failed: %s", exc)
             return web.json_response(
@@ -348,18 +352,15 @@ class VoiceHandler:
           * ``_load_tts_config()`` / ``_load_stt_config()`` — current
             provider / model / voice selections from ``~/.hermes/config.yaml``.
 
-        NOTE: ``_load_tts_config`` and ``_load_stt_config`` are *private*
-        upstream helpers — they're not part of hermes-agent's public API.
-        We use them here because there is no public alternative at V1 and
-        the config shape is stable across recent versions. If upstream
-        refactors, this handler is the only thing that needs patching.
+        NOTE: voice config still depends on private upstream helpers. The
+        imports are isolated in ``plugin.relay.upstream_voice`` until Hermes
+        exposes a public voice config API.
         """
         await require_voice_auth(request, "voice:config")
+        profile = request_profile(None, request.query)
 
         try:
-            from tools.voice_mode import check_voice_requirements  # type: ignore
-            from tools.tts_tool import _load_tts_config  # type: ignore  # private
-            from tools.transcription_tools import _load_stt_config  # type: ignore  # private
+            helpers = upstream_voice.load_voice_config_helpers()
         except Exception as exc:
             logger.warning("Voice config: imports failed: %s", exc)
             return web.json_response(
@@ -371,37 +372,136 @@ class VoiceHandler:
             )
 
         try:
-            requirements = check_voice_requirements()
+            requirements = helpers.check_voice_requirements()
         except Exception as exc:
             logger.warning("check_voice_requirements failed: %s", exc)
             requirements = {"error": str(exc)}
 
         try:
-            tts_cfg = _load_tts_config() or {}
+            tts_cfg = helpers.load_tts_config() or {}
         except Exception as exc:
             logger.warning("_load_tts_config failed: %s", exc)
             tts_cfg = {"error": str(exc)}
 
         try:
-            stt_cfg = _load_stt_config() or {}
+            stt_cfg = helpers.load_stt_config() or {}
         except Exception as exc:
             logger.warning("_load_stt_config failed: %s", exc)
             stt_cfg = {"error": str(exc)}
 
+        scope = resolve_profile_voice_scope(self.config, profile)
+        hermes_voice_config = scope.data
+        profile_selected = bool(scope.requested_profile)
+        has_voice_section = isinstance(hermes_voice_config.get("tts"), dict) or isinstance(
+            hermes_voice_config.get("stt"),
+            dict,
+        )
+        response_scope = scope.scope
+        response_fallback = scope.fallback_to_global
+        if profile_selected and scope.scope == "profile" and not has_voice_section:
+            response_scope = "global"
+            response_fallback = True
+        tts_cfg = _merge_selected_provider_config(
+            tts_cfg,
+            hermes_voice_config,
+            "tts",
+            prefer_loaded=not profile_selected,
+        )
+        stt_cfg = _merge_selected_provider_config(
+            stt_cfg,
+            hermes_voice_config,
+            "stt",
+            prefer_loaded=not profile_selected,
+        )
+
         return web.json_response(
             {
                 "success": True,
+                "profile": scope.requested_profile,
+                "config_scope": response_scope,
+                "config_path": (
+                    str(scope.config_path)
+                    if scope.config_path and response_scope != "global"
+                    else None
+                ),
+                "fallback_to_global": response_fallback,
                 "tts": {
                     "provider": tts_cfg.get("provider"),
                     "voice_id": tts_cfg.get("voice_id"),
+                    "voice": tts_cfg.get("voice"),
                     "model": tts_cfg.get("model"),
-                    "enabled": bool(tts_cfg.get("provider")),
+                    "enabled": _provider_enabled(tts_cfg),
                 },
                 "stt": {
                     "provider": stt_cfg.get("provider"),
                     "model": stt_cfg.get("model"),
-                    "enabled": bool(stt_cfg.get("provider")),
+                    "enabled": _provider_enabled(stt_cfg),
                 },
                 "requirements": requirements,
             }
         )
+
+
+def _load_hermes_voice_config(config: Any) -> dict[str, Any]:
+    path = Path(getattr(config, "hermes_config_path", "~/.hermes/config.yaml")).expanduser()
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        logger.debug("Voice config: could not read Hermes config details: %s", exc)
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _merge_selected_provider_config(
+    loaded: dict[str, Any],
+    hermes_config: dict[str, Any],
+    section_name: str,
+    *,
+    prefer_loaded: bool = True,
+) -> dict[str, Any]:
+    section = hermes_config.get(section_name)
+    if not isinstance(section, dict):
+        return loaded
+
+    provider = (
+        _clean_string(loaded.get("provider")) or _clean_string(section.get("provider"))
+        if prefer_loaded
+        else _clean_string(section.get("provider")) or _clean_string(loaded.get("provider"))
+    )
+    if not provider:
+        return loaded
+
+    selected = section.get(provider)
+    merged: dict[str, Any] = {}
+    if isinstance(selected, dict):
+        merged.update(selected)
+    merged["provider"] = provider
+    if prefer_loaded:
+        merged.update(_present_values(loaded))
+    return merged
+
+
+def _present_values(values: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in values.items()
+        if value is not None and value != ""
+    }
+
+
+def _provider_enabled(config: dict[str, Any]) -> bool:
+    if not config.get("provider"):
+        return False
+    enabled = config.get("enabled")
+    if isinstance(enabled, bool):
+        return enabled
+    if enabled is None:
+        return True
+    return str(enabled).strip().lower() not in ("0", "false", "no", "off")
+
+
+def _clean_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
