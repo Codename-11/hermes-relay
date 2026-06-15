@@ -134,8 +134,8 @@ hermes-relay insecure-api-key [status|on|off]
 | `/ws`, `/` | GET (upgrade) | WebSocket endpoint — phone connects here |
 | `/health` | GET | `{status, version, clients, sessions}` JSON |
 | `/pairing` | POST | Generate a new relay-side pairing code |
-| `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code so it can be embedded in a QR payload. Optional body fields `ttl_seconds` / `grants` / `transport_hint` attach pairing metadata that applies to the session when the phone consumes the code — operator policy wins over phone-sent values. Also **clears all rate-limit blocks on success** so legitimate re-pair after a relay restart works immediately. Used by `/hermes-relay-pair` / `hermes-pair` on the same host. Rejects non-loopback peers with HTTP 403. |
-| `/pairing/mint` | POST | **Loopback only.** Mint a fresh pairing code and return the signed QR payload plus `pairing_url` (`hermes-relay://pair?payload=...`) used by dashboard, desktop GUI, and CLI pair/repair flows. Reads the API key from the same host-local config chain as `hermes-pair` when not supplied explicitly. |
+| `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code so it can be embedded in a QR payload. Optional body fields `ttl_seconds` / `grants` / `transport_hint` attach pairing metadata that applies to the session when the phone consumes the code — operator policy wins over phone-sent values. Also **clears all rate-limit blocks on success** so legitimate re-pair after a relay restart works immediately. Used by `hermes pair` / `/hermes-relay-pair` on the same host; `hermes-pair` remains a compatibility shim. Rejects non-loopback peers with HTTP 403. |
+| `/pairing/mint` | POST | **Loopback only.** Mint a fresh pairing code and return the signed QR payload plus `pairing_url` (`hermes-relay://pair?payload=...`) used by dashboard, desktop GUI, and CLI pair/repair flows. Reads the API key from the same host-local config chain as `hermes pair` when not supplied explicitly. |
 | `/pairing/approve` | POST | **Loopback only, reserved for future use.** Same wire shape as `/pairing/register`. Placeholder for a future phone-generates-code / host-approves flow that would complement the existing QR pairing direction. |
 | `/sessions` | GET | Bearer-auth'd (same token the WSS channel uses). Returns all active paired devices with metadata — device name, token prefix (first 8 chars, full token never exposed), created/last-seen timestamps, session expiry, per-channel grants, transport hint, and `is_current` for the device matching the bearer. `math.inf` expiries serialize as `null` (never expire). |
 | `/sessions/{token_prefix}` | DELETE | Bearer-auth'd. Revoke a paired device by token-prefix (≥ 4 chars). 200 on exact match, 404 on zero, 409 on ambiguous matches. Self-revoke is allowed and flagged via `revoked_self: true`. |
@@ -167,9 +167,12 @@ hermes-relay insecure-api-key [status|on|off]
 
 ## Bridge HTTP Routes
 
-The bridge channel (v0.3+) publishes an HTTP surface on the unified relay for the Hermes `android_*` plugin tools. Every route is proxied over the phone's WSS connection to the in-app `BridgeCommandHandler` and runs through the Tier 5 safety pipeline (blocklist → destructive-verb confirmation → auto-disable reschedule) before any gesture fires. A 30-second per-command timeout and fail-fast-on-phone-disconnect semantics keep callers from wedging.
+The bridge channel has two scopes:
 
-As of v0.4 the bridge surface is **34 routes** (33 excluding the legacy `/apps` alias) covering gestures, accessibility-tree reads, clipboard, media control, raw intents, an event stream, a sideload-only phone-utility tier (send_sms, call, search_contacts, location, share_media, send_mms), and a self-foreground route (`/return_to_hermes`). On the **googlePlay** flavor, only read-only routes pass the BridgeCommandHandler whitelist — action routes return 403 `sideload_only`. See the v0.3 release notes and v0.4 changelog for the feature story behind each group.
+- **Bridge Core** is available on Google Play and sideload builds. It covers relay pairing/status plus non-device-control channels such as terminal/TUI relay, voice, media handoff, sessions, and notification companion.
+- **Device Control** is sideload-only. It publishes the HTTP surface below for Hermes `android_*` plugin tools. Every route is proxied over the phone's WSS connection to the in-app `BridgeCommandHandler` and runs through the safety pipeline (blocklist → destructive-verb confirmation → auto-disable reschedule) before any gesture fires.
+
+As of v0.4 the Device Control surface is **34 routes** (33 excluding the legacy `/apps` alias) covering gestures, accessibility-tree reads, clipboard, media control, raw intents, an event stream, a phone-utility tier (send_sms, call, search_contacts, location, share_media, send_mms), and a self-foreground route (`/return_to_hermes`). Google Play Bridge Core phones report `bridge.device_control_supported=false`; the plugin hides the `android_*` Device Control tools, and direct command probes fail closed with `403` / `error_code: device_control_sideload_only`.
 
 | Route | Method | Group | Purpose |
 |-------|--------|-------|---------|
@@ -207,11 +210,11 @@ As of v0.4 the bridge surface is **34 routes** (33 excluding the legacy `/apps` 
 | `/share_media` | POST | sideload-only | Share text/files/relay media through Android's native share UI using `FileProvider` `content://` grants |
 | `/send_mms` | POST | sideload-only | Open a user-mediated MMS compose/share handoff with recipient, text, and attachments |
 
-**Gating.** Every route except `/ping`, `/current_app`, and `/return_to_hermes` is refused with 403 when the in-app master toggle is off. Sideload-only routes fail closed with `403` / `error_code: sideload_only` on Google Play builds. Blocklisted target packages return 403 `{"error": "blocked package <name>"}`; denied destructive-verb confirmations return 403 `{"error": "user denied destructive action", "reason": "confirmation_denied_or_timeout"}`.
+**Gating.** Device Control routes require a sideload phone reporting `bridge.device_control_supported=true`. On the Google Play build, `/ping`, `/events`, and `/setup` can answer harmless probes, while Device Control commands fail closed before any AccessibilityService-dependent code runs. On sideload, every route except `/ping`, `/current_app`, and `/return_to_hermes` is refused with 403 when the in-app master toggle is off. Blocklisted target packages return 403 `{"error": "blocked package <name>"}`; denied destructive-verb confirmations return 403 `{"error": "user denied destructive action", "reason": "confirmation_denied_or_timeout"}`.
 
 ## Pairing Model
 
-The phone does **not** enter a pairing code by hand. Instead, the pair command (the `/hermes-relay-pair` slash command or the `hermes-pair` shell shim, both running on the Hermes host) drives the whole handshake:
+The phone does **not** enter a pairing code by hand. Instead, the pair command (`hermes pair`, the `/hermes-relay-pair` slash command, or the compatibility `hermes-pair` shell shim, all running on the Hermes host) drives the whole handshake:
 
 1. The pair command mints a fresh 6-character code from `A-Z / 0-9`
 2. It POSTs the code to `/pairing/register` on the local relay (blocked for any caller outside `127.0.0.1` / `::1`)
@@ -232,8 +235,8 @@ curl http://localhost:8767/health
 - **Connection refused** — Is the relay running? `systemctl --user status hermes-relay` (installed via `install.sh`) or `docker logs hermes-relay` (container) or `pgrep -af "python -m plugin.relay"` (manual launch).
 - **Voice endpoints 500 with "no API key available"** — The relay process doesn't have the right keys. The Python bootstrap loads `~/.hermes/.env` automatically, so this almost always means the key just isn't in `.env` yet. Double-check with `grep VOICE_TOOLS_OPENAI_KEY ~/.hermes/.env` (for STT) or `grep ELEVENLABS_API_KEY ~/.hermes/.env` (for TTS). If you just edited `.env`, restart the service so Python re-imports: `systemctl --user restart hermes-relay`.
 - **Service starts but port bind fails** — Check for an orphan manual launch: `pgrep -f "python -m plugin.relay"`. Kill it with `pkill -f "python -m plugin.relay"` then `systemctl --user restart hermes-relay`.
-- **Auth failure** — Pairing codes expire 10 minutes after registration and are one-shot. Re-run `hermes-pair` (or `/hermes-relay-pair`) to mint a fresh code and get a new QR.
-- **QR has no relay block** — the pair command only embeds relay details if it can reach `localhost:RELAY_PORT/health` when it runs. Start the relay first, then re-run `hermes-pair`.
+- **Auth failure** — Pairing codes expire 10 minutes after registration and are one-shot. Re-run `hermes pair` (or `/hermes-relay-pair`) to mint a fresh code and get a new QR.
+- **QR has no relay block** — the pair command only embeds relay details if it can reach `localhost:RELAY_PORT/health` when it runs. Start the relay first, then re-run `hermes pair`.
 - **TLS errors** — Use `--no-ssl` for local dev. Ensure cert paths are correct for production.
 - **Phone can't reach relay** — Check firewall rules for port 8767. Verify with `curl http://server-ip:8767/health` from another machine.
 - **Remote chat or API-key voice fails but relay pairs** — Verify the Hermes API route too: `curl http://server-ip:8642/health`, or `https://<tailnet-host>.ts.net:8642/health` when using Tailscale. Pairing can succeed through `:8767` while chat and API-key voice fail if `:8642` is not published.

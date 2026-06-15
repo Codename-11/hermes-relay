@@ -41,6 +41,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,10 +57,13 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.hermesandroid.relay.audio.RealtimePcmPlayer
 import com.hermesandroid.relay.audio.RealtimePcmRecorder
+import com.hermesandroid.relay.network.RealtimeAgentSessionControl
 import com.hermesandroid.relay.network.RealtimeVoiceConfig
 import com.hermesandroid.relay.network.RealtimeVoiceEvent
 import com.hermesandroid.relay.network.RealtimeVoiceSummary
 import com.hermesandroid.relay.network.RelayVoiceClient
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Base64
 
@@ -75,7 +79,7 @@ fun RealtimeVoiceTestScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
-    val player = remember { RealtimePcmPlayer() }
+    val player = remember { RealtimePcmPlayer(context) }
     val recorder = remember { RealtimePcmRecorder() }
     val waveform = remember { mutableStateListOf<Float>() }
     val events = remember { mutableStateListOf<String>() }
@@ -87,28 +91,49 @@ fun RealtimeVoiceTestScreen(
     var status by remember { mutableStateOf("Idle") }
     var summary by remember { mutableStateOf<RealtimeVoiceSummary?>(null) }
     var running by remember { mutableStateOf(false) }
+    var recording by remember { mutableStateOf(false) }
+    var micLevel by remember { mutableFloatStateOf(0f) }
+    var transcript by remember { mutableStateOf("") }
+
+    // Mic demo state machine: tap to start recording, tap again to stop & send.
+    // The captured speech runs through the agent path (STT + Hermes + speech).
+    val startMicDemo: () -> Unit = {
+        transcript = ""
+        waveform.clear()
+        recording = true
+        status = "Recording — tap Stop & send"
+        scope.launch {
+            val pcm = try {
+                recorder.captureUntilStopped(onLevel = { micLevel = it })
+            } catch (e: Exception) {
+                status = "Mic capture failed: ${e.message}"
+                ByteArray(0)
+            }
+            recording = false
+            micLevel = 0f
+            if (pcm.size < 3_200) { // < ~100ms @ 16kHz → nothing useful captured
+                status = "Recording too short"
+                return@launch
+            }
+            runRealtimeAgentMic(
+                voiceClient = voiceClient,
+                player = player,
+                pcm = pcm,
+                mainHandler = mainHandler,
+                events = events,
+                scope = scope,
+                onStatus = { status = it },
+                onTranscript = { transcript = it },
+                onSummary = { summary = it },
+                onRunning = { running = it },
+            )
+        }
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) {
-            scope.launch {
-                runRealtimeDemo(
-                    voiceClient = voiceClient,
-                    recorder = recorder,
-                    player = player,
-                    prompt = prompt,
-                    mainHandler = mainHandler,
-                    waveform = waveform,
-                    events = events,
-                    onStatus = { status = it },
-                    onSummary = { summary = it },
-                    onRunning = { running = it },
-                )
-            }
-        } else {
-            status = "Microphone permission denied"
-        }
+        if (granted) startMicDemo() else status = "Microphone permission denied"
     }
 
     LaunchedEffect(voiceClient) {
@@ -119,6 +144,29 @@ fun RealtimeVoiceTestScreen(
             status = if (config?.enabled == true) "Ready" else "Realtime route disabled"
         } else {
             status = result.exceptionOrNull()?.message ?: "Realtime config failed"
+        }
+    }
+
+    // Drive the waveform from the playback cursor (~30Hz) so each bar reflects
+    // the audio at the hardware head right now — matching what is audible — and
+    // continues through the post-stream drain. This replaces the old arrival-time
+    // RMS feed, which led the audio by the prebuffer + AudioTrack buffer depth
+    // and looked laggy.
+    LaunchedEffect(Unit) {
+        while (true) {
+            when {
+                // While recording, show the live mic input level.
+                recording -> {
+                    waveform.add(micLevel)
+                    while (waveform.size > 64) waveform.removeAt(0)
+                }
+                // During playback, show the audio at the hardware cursor.
+                player.isActive -> {
+                    waveform.add(player.playbackAmplitude())
+                    while (waveform.size > 64) waveform.removeAt(0)
+                }
+            }
+            delay(33)
         }
     }
 
@@ -182,7 +230,16 @@ fun RealtimeVoiceTestScreen(
                     onValueChange = { prompt = it },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 3,
-                    label = { Text("Test prompt") },
+                    label = { Text("Text demo prompt (spoken back via provider)") },
+                    enabled = !running && !recording,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Mic demo speaks to the agent: it transcribes what you say, " +
+                        "Hermes responds, and the reply is spoken back. Text demo just " +
+                        "synthesizes the prompt above (no mic, no agent).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(8.dp))
                 Row(
@@ -191,27 +248,18 @@ fun RealtimeVoiceTestScreen(
                 ) {
                     FilledTonalButton(
                         onClick = {
-                            val granted = ContextCompat.checkSelfPermission(
-                                context,
-                                Manifest.permission.RECORD_AUDIO,
-                            ) == PackageManager.PERMISSION_GRANTED
-                            if (granted) {
-                                scope.launch {
-                                    runRealtimeDemo(
-                                        voiceClient = voiceClient,
-                                        recorder = recorder,
-                                        player = player,
-                                        prompt = prompt,
-                                        mainHandler = mainHandler,
-                                        waveform = waveform,
-                                        events = events,
-                                        onStatus = { status = it },
-                                        onSummary = { summary = it },
-                                        onRunning = { running = it },
-                                    )
-                                }
+                            if (recording) {
+                                recorder.requestStop()
                             } else {
-                                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                val granted = ContextCompat.checkSelfPermission(
+                                    context,
+                                    Manifest.permission.RECORD_AUDIO,
+                                ) == PackageManager.PERMISSION_GRANTED
+                                if (granted) {
+                                    startMicDemo()
+                                } else {
+                                    permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                }
                             }
                         },
                         enabled = !running && voiceClient != null,
@@ -219,32 +267,42 @@ fun RealtimeVoiceTestScreen(
                     ) {
                         Icon(Icons.Filled.Mic, contentDescription = null)
                         Spacer(Modifier.size(8.dp))
-                        Text("Mic demo")
+                        Text(if (recording) "Stop & send" else "Mic demo")
                     }
                     FilledTonalButton(
                         onClick = {
+                            transcript = ""
+                            waveform.clear()
                             scope.launch {
                                 runRealtimeDemo(
                                     voiceClient = voiceClient,
-                                    recorder = null,
                                     player = player,
                                     prompt = prompt,
                                     mainHandler = mainHandler,
-                                    waveform = waveform,
                                     events = events,
                                     onStatus = { status = it },
+                                    onTranscript = { transcript = it },
                                     onSummary = { summary = it },
                                     onRunning = { running = it },
                                 )
                             }
                         },
-                        enabled = !running && voiceClient != null,
+                        enabled = !running && !recording && voiceClient != null,
                         modifier = Modifier.weight(1f),
                     ) {
                         Icon(Icons.Filled.PlayArrow, contentDescription = null)
                         Spacer(Modifier.size(8.dp))
                         Text("Text demo")
                     }
+                }
+            }
+
+            if (transcript.isNotBlank()) {
+                SectionCard(title = "Transcript") {
+                    Text(
+                        text = transcript,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
                 }
             }
 
@@ -281,35 +339,65 @@ fun RealtimeVoiceTestScreen(
     }
 }
 
+// Audio for both demos arrives as voice.audio.delta (provider) or
+// voice.output_audio.delta (agent); isAudioDelta covers both. The waveform is
+// NOT fed here — a ticker in the composable samples the playback cursor so it
+// tracks what is audible, not what just arrived over the socket.
+private fun writeEventAudio(event: RealtimeVoiceEvent, player: RealtimePcmPlayer) {
+    if (!event.isAudioDelta) return
+    val audio = event.audioBase64?.let {
+        runCatching { Base64.getDecoder().decode(it) }.getOrNull()
+    } ?: return
+    if (audio.isNotEmpty()) {
+        player.write(audio, event.sampleRate ?: 24_000)
+    }
+}
+
+private fun logLabEvent(
+    event: RealtimeVoiceEvent,
+    mainHandler: Handler,
+    events: MutableList<String>,
+) {
+    mainHandler.post {
+        val suffix = when {
+            event.byteCount != null -> " ${event.byteCount}b"
+            event.message != null -> " ${event.message}"
+            else -> ""
+        }
+        events.add("${event.type}$suffix")
+        while (events.size > 64) events.removeAt(0)
+    }
+}
+
+/**
+ * Text demo — raw provider TTS. Sends the typed prompt to /voice/realtime/ and
+ * plays the synthesized speech. No mic, no STT: this exercises the provider's
+ * audio-output path in isolation.
+ */
 private suspend fun runRealtimeDemo(
     voiceClient: RelayVoiceClient?,
-    recorder: RealtimePcmRecorder?,
     player: RealtimePcmPlayer,
     prompt: String,
     mainHandler: Handler,
-    waveform: MutableList<Float>,
     events: MutableList<String>,
     onStatus: (String) -> Unit,
+    onTranscript: (String) -> Unit,
     onSummary: (RealtimeVoiceSummary?) -> Unit,
     onRunning: (Boolean) -> Unit,
 ) {
     val client = voiceClient ?: return
     onRunning(true)
     onSummary(null)
-    waveform.clear()
     events.clear()
-    onStatus(if (recorder == null) "Opening websocket" else "Capturing mic")
-    val pcm = try {
-        recorder?.capture() ?: ByteArray(320)
-    } catch (e: Exception) {
-        onStatus("Mic capture failed: ${e.message}")
-        onRunning(false)
-        return
-    }
     onStatus("Streaming")
-    val result = client.runRealtimeDemo(prompt, pcm) { event ->
-        handleRealtimeEvent(event, player, mainHandler, waveform, events)
+    val result = client.runRealtimeDemo(prompt, ByteArray(0)) { event ->
+        writeEventAudio(event, player)
+        logLabEvent(event, mainHandler, events)
+        if (event.type == "voice.transcript.final") {
+            event.text?.let { t -> mainHandler.post { onTranscript("Spoken: $t") } }
+        }
     }
+    player.flushBufferedPlayback()
     if (result.isSuccess) {
         onSummary(result.getOrNull())
         onStatus("Complete")
@@ -319,34 +407,72 @@ private suspend fun runRealtimeDemo(
     onRunning(false)
 }
 
-private fun handleRealtimeEvent(
-    event: RealtimeVoiceEvent,
+/**
+ * Mic demo — full agent path. Sends the captured speech to /voice/realtime-agent/,
+ * which transcribes it (surfaced as voice.input_transcript.*), lets Hermes respond,
+ * and streams the spoken reply back. This is the genuinely conversational test:
+ * what you say drives the response, and the transcript shows what was heard.
+ */
+private suspend fun runRealtimeAgentMic(
+    voiceClient: RelayVoiceClient?,
     player: RealtimePcmPlayer,
+    pcm: ByteArray,
     mainHandler: Handler,
-    waveform: MutableList<Float>,
     events: MutableList<String>,
+    scope: CoroutineScope,
+    onStatus: (String) -> Unit,
+    onTranscript: (String) -> Unit,
+    onSummary: (RealtimeVoiceSummary?) -> Unit,
+    onRunning: (Boolean) -> Unit,
 ) {
-    if (event.type == "voice.audio.delta") {
-        val audio = event.audioBase64?.let {
-            runCatching { Base64.getDecoder().decode(it) }.getOrNull()
-        }
-        if (audio != null) {
-            player.write(audio, event.sampleRate ?: 24_000)
+    val client = voiceClient ?: return
+    onRunning(true)
+    onSummary(null)
+    events.clear()
+    onStatus("Transcribing + thinking")
+    val heard = StringBuilder()
+    val result = client.runRealtimeAgent(
+        prompt = "",
+        inputPcm = pcm,
+        inputSampleRate = 16_000,
+    ) { event, control ->
+        writeEventAudio(event, player)
+        logLabEvent(event, mainHandler, events)
+        when (event.type) {
+            "voice.input_transcript.delta" -> {
+                event.delta?.let { heard.append(it) }
+                val text = heard.toString()
+                mainHandler.post { onTranscript("You said: $text") }
+            }
+            "voice.input_transcript.final" -> {
+                val text = event.text ?: heard.toString()
+                mainHandler.post {
+                    onTranscript("You said: $text")
+                    onStatus("Speaking")
+                }
+            }
+            "voice.playback_drain.requested" -> {
+                // The agent gates tool follow-ups on playback draining; ack it so
+                // the turn doesn't stall waiting on us.
+                val drainMs = player.flushBufferedPlayback()
+                scope.launch {
+                    if (drainMs > 0) delay(drainMs.coerceAtMost(2_000))
+                    control.sendPlaybackDrained(
+                        callId = event.toolCallId,
+                        playedAudioEventId = null,
+                    )
+                }
+            }
         }
     }
-    mainHandler.post {
-        if (event.rmsLevel != null) {
-            waveform.add(event.rmsLevel)
-            while (waveform.size > 64) waveform.removeAt(0)
-        }
-        val suffix = when {
-            event.byteCount != null -> " ${event.byteCount}b"
-            event.message != null -> " ${event.message}"
-            else -> ""
-        }
-        events.add("${event.type}$suffix")
-        while (events.size > 64) events.removeAt(0)
+    player.flushBufferedPlayback()
+    if (result.isSuccess) {
+        onSummary(result.getOrNull())
+        onStatus("Complete")
+    } else {
+        onStatus(result.exceptionOrNull()?.message ?: "Realtime agent failed")
     }
+    onRunning(false)
 }
 
 @Composable

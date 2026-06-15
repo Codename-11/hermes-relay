@@ -135,12 +135,31 @@ class SessionModelsTest {
     }
 
     @Test
+    fun sessionListResponse_withUpstreamDataField() {
+        val jsonStr = """
+            {
+                "object": "list",
+                "data": [
+                    {"id": "s1", "title": "Session 1"}
+                ]
+            }
+        """.trimIndent()
+
+        val response = json.decodeFromString<SessionListResponse>(jsonStr)
+
+        assertNotNull(response.data)
+        assertEquals(1, response.data!!.size)
+        assertEquals("s1", response.data!![0].id)
+    }
+
+    @Test
     fun sessionListResponse_bothFieldsNull_whenEmpty() {
         val jsonStr = """{}"""
         val response = json.decodeFromString<SessionListResponse>(jsonStr)
 
         assertNull(response.items)
         assertNull(response.sessions)
+        assertNull(response.data)
     }
 
     // --- SessionResponse ---
@@ -277,6 +296,25 @@ class SessionModelsTest {
         assertNull(response.items)
         assertNotNull(response.messages)
         assertEquals(1, response.messages!!.size)
+    }
+
+    @Test
+    fun messageListResponse_withUpstreamDataField() {
+        val jsonStr = """
+            {
+                "object": "list",
+                "session_id": "s1",
+                "data": [
+                    {"role": "user", "content": "Test"}
+                ]
+            }
+        """.trimIndent()
+
+        val response = json.decodeFromString<MessageListResponse>(jsonStr)
+
+        assertNotNull(response.data)
+        assertEquals(1, response.data!!.size)
+        assertEquals("Test", response.data!![0].contentText)
     }
 
     // --- HermesSseEvent ---

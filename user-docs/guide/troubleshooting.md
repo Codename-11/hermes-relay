@@ -9,6 +9,27 @@
 - Check firewall rules on the server
 - Try the URL in a browser: `http://your-server:8642/health`
 
+## Android Studio can't see a phone over Tailscale ADB
+
+Use Android's **Wireless debugging** flow, but route it through the phone's
+Tailscale IP (`100.x.y.z`) instead of the LAN IP. The pairing-code dialog and
+the main Wireless debugging screen usually show different ports:
+
+```bash
+adb pair 100.x.y.z:<pairing-port> <pairing-code>
+adb connect 100.x.y.z:<wireless-debugging-port>
+adb devices -l
+```
+
+Use the port from **Pair device with pairing code** only for `adb pair`. For
+`adb connect`, use the **IP address & port** shown on the main Wireless
+debugging screen. Once `adb devices -l` lists the phone, Android Studio uses
+that same ADB transport for Run, Logcat, and Device Explorer.
+
+If `adb connect` is refused, the pairing succeeded but the wrong port was used,
+or Wireless debugging rotated ports. Reopen **Developer options -> Wireless
+debugging** on the phone and copy the current main port.
+
 ## Messages not streaming
 
 - Check your API key is correct

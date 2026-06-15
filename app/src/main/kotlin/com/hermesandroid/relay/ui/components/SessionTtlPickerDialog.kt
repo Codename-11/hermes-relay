@@ -209,7 +209,7 @@ private fun defaultOptionIndex(options: List<TtlOption>): Int =
 
 /**
  * Compute the default TTL for a new pair based on:
- *  - QR payload's `ttlSeconds` (operator intent via `hermes-pair --ttl`)
+ *  - QR payload's `ttlSeconds` (operator intent via `hermes pair --ttl`)
  *  - Transport hint (`"wss"` → 30d, `"ws"` → 7d)
  *  - Tailscale detected → 30d
  *  - Fallback → 30d

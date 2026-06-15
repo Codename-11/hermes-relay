@@ -19,6 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -70,7 +71,9 @@ private val TerminalBackground = Color(0xFF1A1A2E)
 @Composable
 fun TerminalScreen(
     terminalViewModel: TerminalViewModel,
-    connectionViewModel: ConnectionViewModel
+    connectionViewModel: ConnectionViewModel,
+    /** Header back affordance — Terminal is a pushed destination, not a tab. */
+    onBack: (() -> Unit)? = null,
 ) {
     val connectionState by connectionViewModel.relayConnectionState.collectAsState()
     val tabs by terminalViewModel.tabs.collectAsState()
@@ -115,6 +118,16 @@ fun TerminalScreen(
             .background(TerminalBackground)
     ) {
         TopAppBar(
+            navigationIcon = {
+                if (onBack != null) {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                        )
+                    }
+                }
+            },
             title = {
                 // Title is wrapped in a Row + .clickable so the entire title
                 // area opens the session info sheet — same UX as Chat's

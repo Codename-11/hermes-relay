@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 import json
 import os
 import tempfile
@@ -237,6 +238,9 @@ class VoiceOutputRoutesTests(AioHTTPTestCase):
         body = await resp.json()
         self.assertTrue(body["success"])
         self.assertEqual(body["protocol"], "hermes.voice.output.v0")
+        self.assertIsInstance(body["resume_token"], str)
+        self.assertTrue(body["resume_supported"])
+        self.assertGreaterEqual(body["resume_ttl_ms"], 1000)
 
         ws = await self.client.ws_connect(
             body["websocket_path"],
@@ -245,6 +249,8 @@ class VoiceOutputRoutesTests(AioHTTPTestCase):
         try:
             ready = await self._next_ws_event(ws)
             self.assertEqual(ready["type"], "voice.session.ready")
+            self.assertGreater(ready["event_id"], 0)
+            self.assertTrue(ready["resume_supported"])
             self.assertEqual(ready["output_mode"], "streaming_tts_renderer")
 
             await ws.send_json(
@@ -269,6 +275,7 @@ class VoiceOutputRoutesTests(AioHTTPTestCase):
             self.assertIn("voice.response.done", event_types)
 
             first_audio = next(event for event in events if event["type"] == "voice.audio.delta")
+            self.assertGreater(first_audio["audio_event_id"], 0)
             self.assertGreater(len(base64.b64decode(first_audio["audio_base64"])), 0)
             done = next(event for event in events if event["type"] == "voice.response.done")
             self.assertEqual(done["provider"], "stub")
@@ -278,6 +285,80 @@ class VoiceOutputRoutesTests(AioHTTPTestCase):
             self.assertTrue(os.path.isfile(done["event_log_path"]))
         finally:
             await ws.close()
+
+    async def test_voice_output_session_resume_replays_missed_audio(self) -> None:
+        token = await self._make_session()
+        resp = await self.client.post(
+            "/voice/output/session",
+            json={"provider": "stub", "model": "local-tone", "voice": "sine"},
+            headers=self._bearer(token),
+        )
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        resume_token = body["resume_token"]
+
+        ws1 = await self.client.ws_connect(
+            body["websocket_path"],
+            headers=self._bearer(token),
+        )
+        ready = await self._next_ws_event(ws1)
+        self.assertEqual(ready["type"], "voice.session.ready")
+        await ws1.send_json(
+            {
+                "type": "response.create",
+                "text": "Testing resumable provider neutral output.",
+                "render_mode": "verbatim",
+            }
+        )
+        started = await self._next_ws_event(ws1)
+        self.assertEqual(started["type"], "voice.response.started")
+        await ws1.close(code=1001, message=b"network changed")
+
+        session = self._server().voice_output.sessions[body["session_id"]]
+        for _ in range(80):
+            if session.detached_at is not None and session.response_task is not None and session.response_task.done():
+                break
+            await asyncio.sleep(0.025)
+        self.assertIsNotNone(session.detached_at)
+        self.assertIsNotNone(session.response_task)
+        assert session.response_task is not None
+        self.assertTrue(session.response_task.done())
+
+        ws2 = await self.client.ws_connect(
+            body["websocket_path"],
+            headers=self._bearer(token),
+        )
+        try:
+            await ws2.send_json(
+                {
+                    "type": "session.resume",
+                    "resume_token": resume_token,
+                    "last_event_id": started["event_id"],
+                    "last_audio_event_id": 0,
+                    "last_played_audio_event_id": 0,
+                }
+            )
+            events: list[dict] = []
+            for _ in range(24):
+                event = await self._next_ws_event(ws2)
+                events.append(event)
+                if event["type"] == "voice.replay.done":
+                    break
+
+            event_types = [event["type"] for event in events]
+            self.assertIn("voice.session.resumed", event_types)
+            self.assertIn("voice.replay.started", event_types)
+            self.assertIn("voice.session.detached", event_types)
+            self.assertIn("voice.audio.delta", event_types)
+            self.assertIn("voice.audio.done", event_types)
+            self.assertIn("voice.response.done", event_types)
+            self.assertIn("voice.replay.done", event_types)
+            audio = next(event for event in events if event["type"] == "voice.audio.delta")
+            self.assertTrue(audio["replayed"])
+            self.assertEqual(audio["audio_event_id"], 1)
+            self.assertIsNone(session.detached_at)
+        finally:
+            await ws2.close()
 
     async def test_voice_output_rejects_expired_tts_grant(self) -> None:
         token = await self._make_session()

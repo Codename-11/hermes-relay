@@ -15,7 +15,6 @@ import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -38,7 +37,6 @@ import java.util.Collections
  * rather than `N * (synth + playback)`.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
-@Ignore("Tracked in GitHub issue #32 — voice test suite validation deferred")
 class VoiceViewModelPipelineTest {
 
     @get:Rule

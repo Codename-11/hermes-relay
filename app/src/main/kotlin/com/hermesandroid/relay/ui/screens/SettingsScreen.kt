@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -19,6 +20,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Analytics
@@ -33,17 +35,21 @@ import androidx.compose.material.icons.filled.Security
 // === END PHASE3-safety-rails ===
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -58,8 +64,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.data.AgentDisplay
+import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
+import com.hermesandroid.relay.ui.components.DiagnosticsLogPanel
 import com.hermesandroid.relay.ui.components.ProfileInspectorCard
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.viewmodel.ChatViewModel
@@ -83,6 +91,8 @@ import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 @Composable
 fun SettingsScreen(
     connectionViewModel: ConnectionViewModel,
+    /** Header back affordance — Settings is a pushed destination, not a tab. */
+    onBack: (() -> Unit)? = null,
     // Needed by the Active Agent summary card at the top of the screen — it
     // reads the current personality pick so the subtitle can render
     // `connection · model · personality` without re-reading ChatViewModel
@@ -104,7 +114,10 @@ fun SettingsScreen(
     // + manual URL + insecure toggle + manual pairing code surface via
     // expandable sections, so there's nothing left to link to twice.
     onNavigateToConnections: () -> Unit,
+    onNavigateToManage: () -> Unit,
     onNavigateToChatSettings: () -> Unit,
+    onNavigateToTerminal: () -> Unit,
+    onNavigateToBridge: () -> Unit,
     onNavigateToMediaSettings: () -> Unit,
     onNavigateToAppearanceSettings: () -> Unit,
     onNavigateToAnalytics: () -> Unit,
@@ -155,10 +168,22 @@ fun SettingsScreen(
     // the sheet renders inline over Settings so closing drops the user
     // back where they started.
     var showAgentSheet by remember { mutableStateOf(false) }
+    var showDiagnosticsSheet by remember { mutableStateOf(false) }
+    val diagnosticsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     Scaffold(
         topBar = {
             TopAppBar(
+                navigationIcon = {
+                    if (onBack != null) {
+                        IconButton(onClick = onBack) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back",
+                            )
+                        }
+                    }
+                },
                 title = { Text("Settings") },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface
@@ -249,6 +274,14 @@ fun SettingsScreen(
             )
 
             SettingsCategoryRow(
+                icon = Icons.Filled.Link,
+                title = "Hermes management",
+                subtitle = "Skills, cron, MCP, profiles, models, config",
+                onClick = onNavigateToManage,
+                isDarkTheme = isDarkTheme,
+            )
+
+            SettingsCategoryRow(
                 icon = Icons.AutoMirrored.Filled.Chat,
                 title = "Chat",
                 subtitle = "Reasoning, tool display, endpoints, message length",
@@ -274,16 +307,6 @@ fun SettingsScreen(
             )
             // === END PHASE3-notif-listener-followup ===
 
-            // === PHASE3-safety-rails: bridge safety entry-point ===
-            SettingsCategoryRow(
-                icon = Icons.Filled.Security,
-                title = "Bridge safety",
-                subtitle = "Blocklist, destructive-verb confirmation, auto-disable",
-                onClick = onNavigateToBridgeSafety,
-                isDarkTheme = isDarkTheme,
-            )
-            // === END PHASE3-safety-rails ===
-
             SettingsCategoryRow(
                 icon = Icons.Filled.Image,
                 title = "Media",
@@ -300,6 +323,24 @@ fun SettingsScreen(
                 isDarkTheme = isDarkTheme,
             )
 
+            SettingsSectionHeader("Power tools")
+
+            SettingsCategoryRow(
+                icon = Icons.Filled.Code,
+                title = "Terminal",
+                subtitle = "Server shell access through a paired relay session",
+                onClick = onNavigateToTerminal,
+                isDarkTheme = isDarkTheme,
+            )
+
+            SettingsCategoryRow(
+                icon = Icons.Filled.PhoneAndroid,
+                title = "Bridge",
+                subtitle = "Relay-granted phone bridge controls",
+                onClick = onNavigateToBridge,
+                isDarkTheme = isDarkTheme,
+            )
+
             SettingsCategoryRow(
                 icon = Icons.Filled.Devices,
                 title = "Relay sessions",
@@ -308,11 +349,31 @@ fun SettingsScreen(
                 isDarkTheme = isDarkTheme,
             )
 
+            if (BuildFlavor.isSideload) {
+                // === PHASE3-safety-rails: bridge safety entry-point ===
+                SettingsCategoryRow(
+                    icon = Icons.Filled.Security,
+                    title = "Bridge safety",
+                    subtitle = "Blocklist, destructive-verb confirmation, auto-disable",
+                    onClick = onNavigateToBridgeSafety,
+                    isDarkTheme = isDarkTheme,
+                )
+                // === END PHASE3-safety-rails ===
+            }
+
             SettingsCategoryRow(
                 icon = Icons.Filled.Analytics,
                 title = "Analytics",
                 subtitle = "Stats for nerds — TTFT, tokens, health",
                 onClick = onNavigateToAnalytics,
+                isDarkTheme = isDarkTheme,
+            )
+
+            SettingsCategoryRow(
+                icon = Icons.Filled.Info,
+                title = "Diagnostics",
+                subtitle = "Recent API, relay, session, and voice activity",
+                onClick = { showDiagnosticsSheet = true },
                 isDarkTheme = isDarkTheme,
             )
 
@@ -349,7 +410,38 @@ fun SettingsScreen(
             chatViewModel = chatViewModel,
             onDismiss = { showAgentSheet = false },
             onNavigateToConnections = onNavigateToConnections,
+            onNavigateToProfileInspector = onNavigateToProfileInspector,
         )
+    }
+
+    if (showDiagnosticsSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showDiagnosticsSheet = false },
+            sheetState = diagnosticsSheetState,
+        ) {
+            Column(
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp, vertical = 16.dp)
+                    .navigationBarsPadding(),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    text = "Diagnostics",
+                    style = MaterialTheme.typography.titleLarge,
+                )
+                Text(
+                    text = "Recent app-level connection and voice events. Secrets and raw payloads are hidden.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                DiagnosticsLogPanel(
+                    limit = 80,
+                    showCategory = true,
+                    showClear = true,
+                )
+            }
+        }
     }
 }
 
@@ -454,6 +546,18 @@ private fun ActiveAgentCard(
             )
         }
     }
+}
+
+@Composable
+private fun SettingsSectionHeader(label: String) {
+    Text(
+        text = label,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp, bottom = 2.dp),
+    )
 }
 
 /**

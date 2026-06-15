@@ -16,6 +16,7 @@ import com.hermesandroid.relay.network.models.SessionResponse
 import com.hermesandroid.relay.network.models.SkillInfo
 import com.hermesandroid.relay.network.models.SkillListResponse
 import com.hermesandroid.relay.network.models.UsageInfo
+import com.hermesandroid.relay.util.TurnLatencyTracer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
@@ -23,6 +24,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
 import okhttp3.MediaType.Companion.toMediaType
@@ -62,9 +64,9 @@ enum class ChatMode {
  * returns an SSE stream, while `/v1/runs` may be an async JSON run-start API.
  */
 data class ServerCapabilities(
-    /** `/api/sessions` (CRUD) — true on fork, upstream-merged, OR bootstrap-injected. */
+    /** `/api/sessions` (CRUD) — true on native upstream, fork, OR bootstrap-injected older builds. */
     val sessionsApi: Boolean,
-    /** `/api/sessions/{id}/chat/stream` (SSE) — true ONLY on fork or upstream-merged. */
+    /** `/api/sessions/{id}/chat/stream` (SSE) — true on native upstream or legacy fork builds. */
     val sessionsChatStream: Boolean,
     /** `/v1/runs` (structured-event SSE) — true only when explicitly advertised as SSE-compatible. */
     val runs: Boolean,
@@ -96,6 +98,62 @@ data class ServerCapabilities(
             portable = false,
             healthy = false,
         )
+    }
+}
+
+private fun JsonObject.childObject(key: String): JsonObject? = this[key] as? JsonObject
+
+private fun JsonObject.booleanFlag(key: String): Boolean =
+    (this[key] as? JsonPrimitive)?.booleanOrNull == true
+
+private fun JsonObject.hasEndpoint(key: String): Boolean {
+    val path = ((this[key] as? JsonObject)?.get("path") as? JsonPrimitive)?.contentOrNull
+    return !path.isNullOrBlank()
+}
+
+internal fun parseCapabilitiesBody(json: Json, body: String): ServerCapabilities? {
+    val root = try {
+        json.decodeFromString<JsonObject>(body)
+    } catch (_: Exception) {
+        return null
+    }
+
+    val features = root.childObject("features")
+    val endpoints = root.childObject("endpoints")
+    if (features == null && endpoints == null) return null
+
+    fun feature(name: String): Boolean = features?.booleanFlag(name) == true
+    fun endpoint(name: String): Boolean = endpoints?.hasEndpoint(name) == true
+
+    return ServerCapabilities(
+        sessionsApi = feature("session_resources") ||
+            endpoint("sessions") ||
+            endpoint("session_create"),
+        sessionsChatStream = feature("session_chat_streaming") ||
+            endpoint("session_chat_stream"),
+        runs = feature("run_events_sse") || endpoint("run_events"),
+        portable = feature("chat_completions_streaming") ||
+            feature("chat_completions") ||
+            endpoint("chat_completions"),
+        healthy = true,
+    )
+}
+
+internal val HERMES_SKILL_ENDPOINTS = listOf("/v1/skills", "/api/skills")
+
+internal fun parseSkillListBody(json: Json, body: String): List<SkillInfo>? {
+    try {
+        val parsed = json.decodeFromString<SkillListResponse>(body)
+        val skills = parsed.skills ?: parsed.items ?: parsed.data
+        if (skills != null) return skills
+    } catch (_: Exception) {
+        // Fall through to direct-array compatibility below.
+    }
+
+    try {
+        return json.decodeFromString<List<SkillInfo>>(body)
+    } catch (_: Exception) {
+        return null
     }
 }
 
@@ -242,7 +300,7 @@ class HermesApiClient(
                     return@withContext Result.failure(IOException("List sessions returned an empty response"))
                 }
                 val parsed = json.decodeFromString<SessionListResponse>(body)
-                Result.success(parsed.items ?: parsed.sessions ?: emptyList())
+                Result.success(parsed.data ?: parsed.items ?: parsed.sessions ?: emptyList())
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to list sessions: ${e.message}")
@@ -331,7 +389,7 @@ class HermesApiClient(
                 if (!response.isSuccessful) return@withContext emptyList()
                 val body = response.body?.string() ?: return@withContext emptyList()
                 val parsed = json.decodeFromString<MessageListResponse>(body)
-                parsed.items ?: parsed.messages ?: emptyList()
+                parsed.data ?: parsed.items ?: parsed.messages ?: emptyList()
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to get messages: ${e.message}")
@@ -342,25 +400,45 @@ class HermesApiClient(
     // --- Skills ---
 
     suspend fun getSkills(): List<SkillInfo> = withContext(Dispatchers.IO) {
+        for (endpoint in HERMES_SKILL_ENDPOINTS) {
+            try {
+                val request = authRequest("$baseUrl$endpoint").get().build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@use
+                    val body = response.body?.string() ?: return@use
+                    val skills = parseSkillListBody(json, body)
+                    if (skills != null) return@withContext skills
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to fetch skills from $endpoint: ${e.message}")
+            }
+        }
+
+        emptyList()
+    }
+
+    // --- Available models ---
+
+    /**
+     * Available model ids from `GET /v1/models` (OpenAI-compatible:
+     * `{"object":"list","data":[{"id":"…"}]}`). Backs the in-chat model
+     * picker. Returns ids in server order; empty on any failure (the picker
+     * then offers only "Server default").
+     */
+    suspend fun getModels(): List<String> = withContext(Dispatchers.IO) {
         try {
-            val request = authRequest("$baseUrl/api/skills").get().build()
+            val request = authRequest("$baseUrl/v1/models").get().build()
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@withContext emptyList()
                 val body = response.body?.string() ?: return@withContext emptyList()
-                // Try structured response: { "skills": [...] } or { "items": [...] }
-                try {
-                    val parsed = json.decodeFromString<SkillListResponse>(body)
-                    val skills = parsed.skills ?: parsed.items
-                    if (skills != null) return@withContext skills
-                } catch (_: Exception) { /* fall through */ }
-                // Try direct array: [...]
-                try {
-                    return@withContext json.decodeFromString<List<SkillInfo>>(body)
-                } catch (_: Exception) { /* fall through */ }
-                emptyList()
+                val data = (json.parseToJsonElement(body) as? JsonObject)
+                    ?.get("data") as? JsonArray ?: return@withContext emptyList()
+                data.mapNotNull {
+                    ((it as? JsonObject)?.get("id") as? JsonPrimitive)?.contentOrNull
+                }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to fetch skills: ${e.message}")
+            Log.w(TAG, "Failed to fetch models: ${e.message}")
             emptyList()
         }
     }
@@ -505,6 +583,8 @@ class HermesApiClient(
             .build()
 
         val completeCalled = AtomicBoolean(false)
+        // Comparable to the gateway's turn[gateway] line — see TurnLatencyTracer.
+        val tracer = TurnLatencyTracer("sessions")
 
         // Notify caller of the session ID being used
         mainHandler.post { onSessionId(sessionId) }
@@ -516,6 +596,7 @@ class HermesApiClient(
                 type: String?,
                 data: String
             ) {
+                tracer.mark("ttfe")
                 if (data == "[DONE]") {
                     if (completeCalled.compareAndSet(false, true)) {
                         mainHandler.post { onComplete() }
@@ -525,6 +606,14 @@ class HermesApiClient(
 
                 try {
                     val event = json.decodeFromString<HermesSseEvent>(data)
+
+                    // First visible streamed token (reasoning OR text) — the
+                    // metric that exposes SSE's reasoning dead-air vs gateway.
+                    if (!event.delta.isNullOrEmpty() || !event.thinkingDelta.isNullOrEmpty() ||
+                        !event.thinking.isNullOrEmpty()
+                    ) {
+                        tracer.mark("ttft")
+                    }
 
                     // Check for usage data on ANY event before type resolution
                     // (OpenAI-format chunks have no type/event field but may carry usage)
@@ -670,6 +759,7 @@ class HermesApiClient(
                 t: Throwable?,
                 response: Response?
             ) {
+                tracer.done("error")
                 if (completeCalled.compareAndSet(false, true)) {
                     val msg = when {
                         response != null && !response.isSuccessful ->
@@ -683,6 +773,7 @@ class HermesApiClient(
             }
 
             override fun onClosed(eventSource: EventSource) {
+                tracer.done()
                 if (completeCalled.compareAndSet(false, true)) {
                     mainHandler.post { onComplete() }
                 }
@@ -745,6 +836,8 @@ class HermesApiClient(
 
         val completeCalled = AtomicBoolean(false)
         val messageStarted = AtomicBoolean(false)
+        // Comparable to the gateway's turn[gateway] line — see TurnLatencyTracer.
+        val tracer = TurnLatencyTracer("completions")
 
         val listener = object : EventSourceListener() {
             override fun onEvent(
@@ -753,6 +846,7 @@ class HermesApiClient(
                 type: String?,
                 data: String
             ) {
+                tracer.mark("ttfe")
                 if (data == "[DONE]") {
                     if (completeCalled.compareAndSet(false, true)) {
                         mainHandler.post { onComplete() }
@@ -781,12 +875,14 @@ class HermesApiClient(
 
                     openAiReasoningDelta(event)?.let { reasoning ->
                         if (reasoning.isNotEmpty()) {
+                            tracer.mark("ttft")
                             mainHandler.post { onThinkingDelta(reasoning) }
                         }
                     }
 
                     openAiTextDelta(event)?.let { delta ->
                         if (delta.isNotEmpty()) {
+                            tracer.mark("ttft")
                             mainHandler.post { onTextDelta(delta) }
                         }
                     }
@@ -805,6 +901,7 @@ class HermesApiClient(
                 t: Throwable?,
                 response: Response?
             ) {
+                tracer.done("error")
                 if (completeCalled.compareAndSet(false, true)) {
                     val msg = when {
                         response != null && !response.isSuccessful ->
@@ -818,6 +915,7 @@ class HermesApiClient(
             }
 
             override fun onClosed(eventSource: EventSource) {
+                tracer.done()
                 if (completeCalled.compareAndSet(false, true)) {
                     mainHandler.post { onComplete() }
                 }
@@ -926,6 +1024,8 @@ class HermesApiClient(
             .build()
 
         val completeCalled = AtomicBoolean(false)
+        // Comparable to the gateway's turn[gateway] line — see TurnLatencyTracer.
+        val tracer = TurnLatencyTracer("runs")
 
         val listener = object : EventSourceListener() {
             override fun onEvent(
@@ -934,6 +1034,7 @@ class HermesApiClient(
                 type: String?,
                 data: String
             ) {
+                tracer.mark("ttfe")
                 if (data == "[DONE]") {
                     if (completeCalled.compareAndSet(false, true)) {
                         mainHandler.post { onComplete() }
@@ -943,6 +1044,14 @@ class HermesApiClient(
 
                 try {
                     val event = json.decodeFromString<HermesSseEvent>(data)
+
+                    // First visible streamed token (reasoning OR text) — the
+                    // metric that exposes SSE's reasoning dead-air vs gateway.
+                    if (!event.delta.isNullOrEmpty() || !event.thinkingDelta.isNullOrEmpty() ||
+                        !event.thinking.isNullOrEmpty()
+                    ) {
+                        tracer.mark("ttft")
+                    }
 
                     // Check for usage data before type resolution (catches OpenAI-format chunks)
                     if (event.usage != null && (event.usage.resolvedInputTokens != null || event.usage.resolvedOutputTokens != null)) {
@@ -1004,6 +1113,7 @@ class HermesApiClient(
                         "reasoning.available" -> {
                             val reasoningText = event.text
                             if (!reasoningText.isNullOrEmpty()) {
+                                tracer.mark("ttft")
                                 mainHandler.post { onThinkingDelta(reasoningText) }
                             }
                         }
@@ -1090,6 +1200,7 @@ class HermesApiClient(
                 t: Throwable?,
                 response: Response?
             ) {
+                tracer.done("error")
                 if (completeCalled.compareAndSet(false, true)) {
                     val msg = when {
                         response != null && !response.isSuccessful ->
@@ -1103,6 +1214,7 @@ class HermesApiClient(
             }
 
             override fun onClosed(eventSource: EventSource) {
+                tracer.done()
                 if (completeCalled.compareAndSet(false, true)) {
                     mainHandler.post { onComplete() }
                 }
@@ -1129,14 +1241,15 @@ class HermesApiClient(
      *
      * Probe order:
      *   1. `/health` — if this fails, everything else is moot.
-     *   2. `HEAD /api/sessions?limit=1` — sessions CRUD (true on fork OR
-     *      bootstrap-injected upstream).
-     *   3. `HEAD /api/sessions/probe/chat/stream` — chat-stream handler
+     *   2. `GET /v1/capabilities` — native upstream feature + endpoint map.
+     *   3. `HEAD /api/sessions?limit=1` — sessions CRUD (true on fork,
+     *      native upstream, OR bootstrap-injected older upstream).
+     *   4. `HEAD /api/sessions/probe/chat/stream` — chat-stream handler
      *      presence. The handler only accepts POST, so HEAD returns 405
      *      (Method Not Allowed) when the route is registered. 404 means
      *      the route doesn't exist at all.
-     *   4. `HEAD /v1/chat/completions` — OpenAI-compatible SSE fallback.
-     *   5. `HEAD /v1/runs` with `Accept: text/event-stream` — accepted only
+     *   5. `HEAD /v1/chat/completions` — OpenAI-compatible SSE fallback.
+     *   6. `HEAD /v1/runs` with `Accept: text/event-stream` — accepted only
      *      when the response explicitly advertises event-stream compatibility.
      *
      * **Why HEAD instead of OPTIONS:** The hermes-agent gateway runs CORS
@@ -1167,6 +1280,20 @@ class HermesApiClient(
             false
         }
         if (!healthy) return@withContext ServerCapabilities.DISCONNECTED
+
+        val advertisedCapabilities = try {
+            val req = authRequest("$baseUrl/v1/capabilities").get().build()
+            client.newCall(req).execute().use { response ->
+                if (!response.isSuccessful) {
+                    null
+                } else {
+                    parseCapabilitiesBody(json, response.body.string())
+                }
+            }
+        } catch (_: Exception) {
+            null
+        }
+        if (advertisedCapabilities != null) return@withContext advertisedCapabilities
 
         // Reusable HEAD probe — returns true if the route is registered
         // (any status except 404 + network errors). Already inside the
