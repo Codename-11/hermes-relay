@@ -4,7 +4,7 @@
 
 You don't need to. Native local-Hermes already has the same `/paste`, `/image <path>`, drag-drop a file from Explorer, and `Alt+V` paths — they ship in upstream hermes-agent and the Ink TUI directly. Hermes-Relay is specifically for the **remote-server** case: when you want to use a Hermes that lives somewhere else (a home server, a GPU box, a cloud VM) from your laptop, with the same UX as a local install. If everything's already on the same machine, run `hermes` directly and skip the relay.
 
-The two paths are complements, not alternatives. You'd use Hermes-Relay's desktop CLI when:
+The two paths are complements, not alternatives. You'd use the Hermes-Relay CLI when:
 - The agent's compute, models, or secrets need to live somewhere other than your daily-driver laptop.
 - You want the same agent / sessions / memory accessible from multiple devices.
 - You're sharing a GPU or model API key across machines.
@@ -26,7 +26,7 @@ You'd use SSH *instead* of this if you want to type commands yourself. You'd use
 
 ## Can I use it offline?
 
-No. The whole point is the agent lives on a server reachable over the network. If your laptop is offline, you can't reach the Hermes host. (You can of course run Hermes itself on your laptop and skip the relay — but then the desktop CLI is redundant.)
+No. The whole point is the agent lives on a server reachable over the network. If your laptop is offline, you can't reach the Hermes host. (You can of course run Hermes itself on your laptop and skip the relay — but then the CLI is redundant.)
 
 ## How do I revoke access from one of my machines?
 
@@ -125,7 +125,7 @@ v1.0. Tracked in [ROADMAP.md](https://github.com/Codename-11/hermes-relay/blob/m
 
 Until then: keep a `hermes-relay` session open in a spare terminal tab for the agent to dispatch tool calls into.
 
-## Can multiple people use the same Hermes host from different desktop CLIs?
+## Can multiple people use the same Hermes host from different CLI clients?
 
 Right now the server tracks a single "active" desktop client per relay — if you pair from two machines, the most recently connected wins routing. v1.0 adds per-session-token routing (each hermes session binds to a specific desktop client) so multi-client is clean.
 
@@ -133,7 +133,7 @@ For now: one desktop attached at a time. Or two if you pair them with different 
 
 ## Is there voice mode?
 
-Not in the desktop CLI. The Android client has voice mode. The CLI is text-first.
+Not in the CLI. The Android client has voice mode. The CLI is text-first.
 
 ## Is there a Windows-on-ARM build?
 

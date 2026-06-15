@@ -14,7 +14,7 @@ confirmations, and transcript persistence.
 Current status: standalone CLI lab, stable relay-owned Voice Output, legacy
 realtime provider lab routes, and experimental `/voice/realtime-agent/*` broker
 routes. Android Voice Settings labels only Realtime Agent and Barge-in as
-Experimental; the stable voice engine remains `Hermes chat + voice output`.
+Experimental; the stable voice engine remains `Hermes Chat + Voice Output`.
 
 - Existing `/voice/config`, `/voice/transcribe`, and `/voice/synthesize` remain
   available as the basic fallback and utility surface.
@@ -29,10 +29,10 @@ Experimental; the stable voice engine remains `Hermes chat + voice output`.
 - Grok streaming TTS is available as `xai_tts`, followed by OpenAI TTS via
   `openai_tts` and existing Hermes-compatible fallback providers.
 - Tool execution remains in the Hermes chat/relay loop. Android voice mode
-  observes Hermes tool-start events and brokers short spoken status lines such
-  as "I'll search that now" while Hermes runs the actual tool and approval
-  flow. Those status lines should go through the selected speech renderer, not
-  through provider-owned Android tool calls.
+  observes Hermes tool-start events and brokers compact status lines while
+  Hermes runs the actual tool and approval flow. In provider-native Realtime
+  Agent mode those status lines stay UI-only so they do not create a competing
+  `/voice/output` stream beside provider audio.
 - The experimental `/voice/realtime-agent/*` surface binds a provider render
   session to a Hermes chat session/profile. It mirrors input transcripts,
   Hermes tool state, confirmation prompts, assistant deltas, final responses,
@@ -127,13 +127,87 @@ text/audio rendering context. Hermes remains first-class for profile/session
 binding, memory, transcript writes, tools, Android bridge safety, confirmations,
 and cancellation.
 
+Realtime Agent sessions now advertise a relay-generated `resume_token`,
+`resume_supported=true`, and a 30 second default resume TTL from
+`/voice/realtime-agent/session`. Every relay-to-Android event carries
+`event_id`; PCM deltas also carry `audio_event_id`; Android sends compact
+`client.ack` messages and can reconnect with `session.resume` after Wi-Fi,
+cellular, LAN, or Tailscale route changes. Android watches the same
+`effectiveRelayUrl` flow used by chat/relay HTTP, so a `ConnectivityManager` or
+endpoint resolver route change can proactively open the resumed voice websocket
+before the stale OkHttp websocket reports failure. During the resume window the
+relay keeps the server-side provider socket and Hermes broker state alive,
+buffers a bounded event/audio ring, then replays missed events without changing
+provider adapters or endpoint-selection logic.
+
+The stable `/voice/output/*` renderer session now uses the same detach/resume
+contract for PCM playback. Session creation returns `resume_token`,
+`resume_supported`, and `resume_ttl_ms`; renderer events carry `event_id`, audio
+deltas carry `audio_event_id`, and Android acknowledges/reconnects through the
+current `effectiveRelayUrl`. The Android client watches that route flow during
+active renderer sessions and can resume immediately on route change. If the
+phone drops Wi-Fi mid-speech, the relay continues the render task for the resume
+TTL and replays missed audio instead of forcing a new TTS render or falling back
+to legacy synth.
+
+Realtime Agent tool status is brokered from Hermes, not invented by the
+provider. The relay forwards Hermes tool-start/delta/completed/failed events
+when the upstream stream exposes them and synthesizes a compact
+`hermes.tool.started` if a stream only reports late completion metadata. While a
+Hermes run is active, the relay emits periodic `hermes.run.progress` events with
+actual active/latest tool fields plus a stable `status_key`. After a longer
+pause, `should_speak=true` lets Android surface a restrained local status line
+such as "Running command." or "Searching desktop." as UI state. Android does not
+play that line through `/voice/output` during a provider-native realtime turn.
+Raw tool output stays in relay run logs; the realtime provider receives the
+compact Hermes function result and speaks the natural post-tool summary.
+
+Provider-native Realtime Agent turns must preserve the live speech loop around
+Hermes, not collapse back into local TTS. The correct forced-Hermes sequence is:
+
+1. The realtime provider owns speech recognition and produces the final user
+   transcript.
+2. If the transcript requires Hermes for tools, memory, current data,
+   confirmations, side effects, or durable context, the relay first asks the
+   active realtime provider to speak one short acknowledgement such as "I'll
+   check Hermes." The provider must not call tools or add content during this
+   preamble.
+3. After that provider audio drains, the relay starts the Hermes tool/session
+   run and mirrors clean Hermes status events into the voice UI.
+4. Hermes returns a compact authoritative function result to the provider.
+5. The same realtime provider speaks the final natural summary. Android must not
+   read raw Hermes tool output aloud.
+
+Local spoken status lines are fallback and long-wait affordances only. They are
+valid when the provider preamble fails, when Hermes has been running long enough
+to need restrained progress feedback, or when stable `Hermes Chat + Voice
+Output` is the selected engine. They should not replace provider-native
+pre-Hermes acknowledgement in a healthy Realtime Agent turn.
+
+Provider-native instructions treat Hermes as durable memory. Follow-up
+references such as "this", "that", "it", or "that integration" should first use
+the seeded recent chat/voice context when it is sufficient. If that context is
+missing, stale, tool-derived, or needs verification, the provider calls
+`hermes_run_task` before answering. `hermes_run_task` results include an
+authoritative `answer`/`summary` payload so the provider has context for the
+spoken reply and should not say it has no context after Hermes returns.
+
+Android opens each Realtime Agent session with compact recent timeline context
+from the same chat view used by normal Hermes Chat + Voice Output. If the phone
+does not have local context but passes a `chat_session_id`, the relay attempts a
+short Hermes messages fetch and seeds that history instead. Provider-only
+realtime answers are marked as unsynced local turns; the next normal Hermes
+chat/run request splices them in as user/assistant messages before the live user
+message, then marks them synced. Hermes-backed tool turns are not duplicated
+because Hermes already owns those canonical turns.
+
 Limitations in the first Android-integrated slice:
 
 - Client STT still produces the committed transcript before the broker runs the
   Hermes turn.
 - Provider audio starts after Hermes has enough final assistant text to render.
 - If provider audio fails or disconnects, switch Voice engine back to stable
-  `Hermes chat + voice output`.
+  `Hermes Chat + Voice Output`.
 - Provider-native function-call loops are allowed only through the brokered
   Hermes tool surface and remain experimental.
 
@@ -855,14 +929,16 @@ the relay-owned runtime auth path when needed:
 .\scripts\voice-relay-dev.ps1 -Provider grok
 ```
 
-Android `Settings > Voice` displays all three config surfaces: editable voice
-output from `/voice/output/config`, fallback STT/TTS from `/voice/config`, and
-editable experimental Realtime Agent defaults from `/voice/realtime-agent/config`
-when that engine is selected or Developer options are unlocked. Android can
-update safe profile-scoped or relay-owned voice defaults, but it does not own
-provider secrets. The **Test Voice** button plays the currently saved profile
-voice-output path, while normal assistant speech prefers `/voice/output/*`
-streaming PCM when available.
+Android `Settings > Voice` displays global controls for both engines, then shows
+the selected engine's card: editable voice output from `/voice/output/config` or
+editable experimental Realtime Agent defaults from `/voice/realtime-agent/config`.
+Global fallback TTS stays visible with the global controls, and STT from
+`/voice/config` remains visible below the selected engine. Android can update
+safe profile-scoped or relay-owned voice defaults, but it does not own provider
+secrets. **Test Current Engine** plays the currently saved profile voice-output
+path for stable mode and opens a provider-native `/voice/realtime-agent/*` text
+test session for Realtime Agent mode, while normal assistant speech prefers
+`/voice/output/*` streaming PCM when available.
 
 ## Definition Of Done For The Standalone POC
 
@@ -1003,8 +1079,9 @@ adb logcat -c
 On the phone:
 
 1. Unlock the device.
-2. Open Hermes Relay sideload build `0.6.1-sideload`.
-3. Confirm it reconnects to `ws://172.16.24.250:8767/ws`.
+2. Open Hermes Relay sideload build `0.8.0-sideload`.
+3. Confirm it reconnects to the active relay route, for example
+   `ws://172.16.24.250:8767/ws` or the configured Tailscale route.
 4. Start tap-to-talk and say: `check the relay status`.
 5. Wait for the spoken status/tool narration and assistant reply.
 6. Interrupt while it is speaking to verify barge-in cancellation/resume.
@@ -1016,12 +1093,19 @@ Capture the evidence:
 # voice-lab-runs/phone-smoke/<timestamp>/ directory.
 .\scripts\voice-phone-smoke.ps1
 
+# For Wi-Fi/cellular, LAN, or Tailscale route handoff validation:
+.\scripts\voice-phone-smoke.ps1 -Handoff
+
+# Non-interactive capture from an agent session: waits for unlock, leaves a
+# fixed manual window for the phone actions, then captures artifacts.
+.\scripts\voice-phone-smoke.ps1 -Handoff -WaitForUnlockSeconds 180 -ManualSeconds 180
+
 # Or capture the same evidence manually:
 adb logcat -d -v time |
-  Select-String -Pattern "VoiceViewModel|RelayVoiceClient|voice/output|voice.response|voice.audio|RealtimePcmPlayer|BargeIn|transcribe|synthesize|auth.ok|sendMessage|tool|ConnectionManager" |
-  Select-Object -Last 220
+  Select-String -Pattern "VoiceViewModel|RelayVoiceClient|voice/output|voice.response|voice.audio|voice.session|voice.replay|session.resume|replayed|RealtimePcmPlayer|BargeIn|transcribe|synthesize|auth.ok|sendMessage|tool|ConnectionManager|endpoint fallback|probeAndReconnect" |
+  Select-Object -Last 260
 
-ssh bailey@172.16.24.250 'journalctl --user -u hermes-relay.service --since "10 minutes ago" --no-pager | grep -E "Client connected|Client disconnected|voice.output|voice/output|voice/realtime|voice/config|voice/transcribe|voice/synthesize|ERROR|Traceback" | tail -120'
+ssh bailey@docker-server.local 'journalctl --user -u hermes-relay.service --since "10 minutes ago" --no-pager | grep -E "Client connected|Client disconnected|voice.output|voice/output|voice/realtime|voice.session|voice.replay|session.resume|detached|resumed|resume_failed|voice/config|voice/transcribe|voice/synthesize|ERROR|Traceback" | tail -160'
 ```
 
 Pass criteria:
@@ -1029,11 +1113,84 @@ Pass criteria:
 - Android logs show `auth.ok` and a live relay connection.
 - STT route is called and produces a non-empty transcript.
 - Hermes chat/tool loop receives the transcript and returns the assistant turn.
-- If a tool starts, the app enqueues a short spoken status line before the
-  longer final answer.
+- If a tool starts, the app shows a compact status line before the longer final
+  answer without opening a second speech stream.
 - Assistant speech uses `/voice/output/*` and receives `voice.audio.delta`
   followed by `voice.response.done`.
 - Barge-in logs show user speech interrupting active playback, without losing
   the new turn.
 - If `/voice/output/*` fails before audio starts, Android falls back to
   `/voice/synthesize` and logs the fallback path.
+- Handoff logs show the current voice websocket fails or closes, Android sends
+  `session.resume` through the current relay route, and the relay records
+  `voice.*.session.detached` followed by `voice.session.resumed`.
+- Replayed events are marked `replayed=true`, and the session does not start a
+  duplicate Hermes run inside the resume TTL.
+
+## Idle tolerance (ADR 33 Phase 0)
+
+Background-Hermes-run promotion (ADR 33, `docs/plans/2026-05-24-realtime-background-hermes-runs.md`)
+detaches a long Hermes run from the provider event pump and keeps the provider
+session open while the run completes. Whether a provider can hold the floor while
+**quiescent** (no `response.create`, no input audio) for tens of seconds is the
+factual unknown that gates default-on promotion.
+
+Run the probe on the relay host (provider credentials configured) with the repo
+root on `PYTHONPATH`:
+
+```bash
+python scripts/realtime-provider-idle-probe.py --provider xai
+python scripts/realtime-provider-idle-probe.py --provider openai --windows 30,60,120
+```
+
+The probe holds each socket idle across the windows, then issues one short
+post-idle turn to check for VAD/turn artifacts, and prints a verdict.
+
+Record the verdict per provider. The verdict selects that provider's Tier B
+strategy:
+
+| Verdict | Meaning | Tier B strategy |
+|---|---|---|
+| `hold-floor-ok` | Socket survives idle; post-idle turn clean | Hold the provider session open during the background run (default) |
+| `needs-keepalive` | Survives but post-idle turn degraded | Hold open + send a minimal keep-alive; revalidate the first post-idle turn |
+| `must-reopen` | Socket closes/errors while idle | Detach the run but close+reopen (or resume) the provider socket on completion |
+
+### Findings
+
+Both verdicts are **`hold-floor-ok`** and Phase 0 is closed. The probe's original
+worst case — a provider holding an *open response* idle for the whole run — does
+not occur: the promotion path closes the pending call with an interim ack
+(`broker.py:_begin_background_delivery`), so the socket only experiences the
+normal between-turns idle gap. That gap is already exercised in production by
+every Realtime Agent turn (the session stays open between the user finishing
+speaking and the next `response.create`, across the resume TTL).
+
+| Provider | Date | Basis | Windows | Post-idle turn | Verdict |
+|---|---|---|---|---|---|
+| OpenAI (`gpt-realtime-2`) | 2026-05-24 | empirical (probe) | 10s, 20s, 30s | audio returned, no error | **`hold-floor-ok`** |
+| xAI (`grok-voice-latest`) | 2026-05-24 | existing production behavior + protocol parity | between-turn idle in daily use | clean (no idle-close reports) | **`hold-floor-ok`** |
+
+**OpenAI — empirical.** Ran `realtime-provider-idle-probe.py --provider openai
+--windows 10,20,30` against the live API. The session stayed open across all
+three quiescent windows and produced clean audio on every post-idle
+`response.create`. (Incidental observation, not an idle finding: the live API
+emitted one `Missing required parameter: 'session.audio.output.format.rate'`
+error at `session.update` time — a minor schema drift in
+`providers/openai.py:_session_update` worth a follow-up; the session still
+functioned and returned audio.)
+
+**xAI — production behavior + parity.** No xAI key/OAuth store is present on the
+dev box, so a fresh probe run is deferred to the relay host. The verdict is not
+conditional, however: the *shipping* Realtime Agent already holds `xai_realtime`
+sessions open across between-turn idle gaps with `turn_detection: None`
+(relay-driven turns) and a resume TTL, and there are no reports of xAI closing or
+degrading on those idle gaps. Background promotion does not lengthen the
+*open-response* duration (the call is closed with an interim ack), so it does not
+introduce a new idle condition beyond what xAI already tolerates today. Running
+the probe on the relay host is retained as a **regression check**, not a
+precondition. If it ever returns `needs-keepalive`/`must-reopen`, set that
+provider's `realtime_voice` override accordingly; the per-provider setting
+surface already supports it.
+
+**Conclusion.** Both verdicts are `hold-floor-ok`, so `promotion_enabled`
+defaults **on**. Phase 0's gate is satisfied; default-on is no longer blocked.

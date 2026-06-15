@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from .base import RealtimeAgentProviderAdapter
-from .openai import OpenAIRealtimeAgentAdapter
-from .xai import XAIRealtimeAgentAdapter
+from .openai import OpenAIRealtimeAgentAdapter, OpenAIRealtimeAgentProvider
+from .xai import XAIRealtimeAgentAdapter, XAIRealtimeAgentProvider
 
 
 def adapter_for(provider_id: str) -> RealtimeAgentProviderAdapter:
@@ -17,7 +17,9 @@ def adapter_for(provider_id: str) -> RealtimeAgentProviderAdapter:
 
 __all__ = [
     "OpenAIRealtimeAgentAdapter",
+    "OpenAIRealtimeAgentProvider",
     "RealtimeAgentProviderAdapter",
     "XAIRealtimeAgentAdapter",
+    "XAIRealtimeAgentProvider",
     "adapter_for",
 ]

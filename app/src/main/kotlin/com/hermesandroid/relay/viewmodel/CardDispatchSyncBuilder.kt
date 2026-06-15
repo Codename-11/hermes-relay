@@ -73,6 +73,17 @@ object CardDispatchSyncBuilder {
     /** Prefix for synthetic tool-call IDs. Stable so tests can match. */
     internal const val CALL_ID_PREFIX = "call_carddispatch_"
 
+    /**
+     * Gateway ask cards (clarify/approval/sudo/secret) are EXCLUDED from
+     * sync entirely: the server already absorbed the answer through the
+     * blocking ask RPC, and for secrets the value (even its sanitized
+     * stamp) must not be replayed into session memory. Ask cards live only
+     * on locally-built messages with this id prefix (see
+     * ChatViewModel.presentInteractionAsk), and carry `ask.*` card types.
+     */
+    internal const val ASK_MESSAGE_ID_PREFIX = "ask-"
+    private const val ASK_CARD_TYPE_PREFIX = "ask."
+
     /** Synthetic tool name. Intentionally namespaced so the upstream tool
      *  dispatcher has no chance of mistaking it for a real executor. */
     internal const val TOOL_NAME = "hermes_card_action"
@@ -82,7 +93,15 @@ object CardDispatchSyncBuilder {
         idGenerator: () -> String = { java.util.UUID.randomUUID().toString() },
     ): JsonArray = buildJsonArray {
         for (msg in history) {
-            if (msg.cards.isEmpty() || msg.cardDispatches.isEmpty()) continue
+            // Only the dispatch list gates emission. A message whose cards
+            // were trimmed from the rolling buffer (cards empty, dispatches
+            // present) MUST still sync its dispatches as bare envelopes —
+            // see the class docstring + the card==null fallback below. The
+            // old `msg.cards.isEmpty()` short-circuit silently dropped those
+            // audit records (regression caught by
+            // CardDispatchSyncBuilderTest.buildSyntheticMessages_unknownCardKey_stillEmitsBareEnvelope).
+            if (msg.cardDispatches.isEmpty()) continue
+            if (msg.id.startsWith(ASK_MESSAGE_ID_PREFIX)) continue
 
             // Index cards by their resolved cardKey so the dispatch
             // lookup is O(1). Mirrors the key formula in MessageBubble.kt
@@ -94,6 +113,8 @@ object CardDispatchSyncBuilder {
                 if (dispatch.syncedToServer) continue
 
                 val card = cardByKey[dispatch.cardKey]
+                // Belt for ask cards that somehow live on a non-ask message.
+                if (card?.type?.startsWith(ASK_CARD_TYPE_PREFIX) == true) continue
                 // Dispatches whose card is gone from the message (trimmed
                 // by the rolling MAX_MESSAGES buffer, for instance) still
                 // get synced, just with less context — the key + value
@@ -136,7 +157,8 @@ object CardDispatchSyncBuilder {
 
     fun hasUnsynced(history: List<ChatMessage>): Boolean =
         history.any { msg ->
-            msg.cardDispatches.any { !it.syncedToServer }
+            !msg.id.startsWith(ASK_MESSAGE_ID_PREFIX) &&
+                msg.cardDispatches.any { !it.syncedToServer }
         }
 
     // === helpers ===

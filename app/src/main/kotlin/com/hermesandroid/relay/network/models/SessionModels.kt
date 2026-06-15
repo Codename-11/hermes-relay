@@ -81,6 +81,7 @@ object FlexibleIdNonNullSerializer : KSerializer<String> {
 data class SessionListResponse(
     val items: List<SessionItem>? = null,
     val sessions: List<SessionItem>? = null, // alternate key
+    val data: List<SessionItem>? = null, // upstream /api/sessions list envelope
     val total: Int? = null
 )
 
@@ -127,6 +128,7 @@ data class RenameSessionRequest(
 data class MessageListResponse(
     val items: List<MessageItem>? = null,
     val messages: List<MessageItem>? = null, // alternate key
+    val data: List<MessageItem>? = null, // upstream /api/sessions/{id}/messages list envelope
     val total: Int? = null
 )
 
@@ -145,8 +147,19 @@ data class MessageItem(
     @Serializable(with = FlexibleIdSerializer::class)
     val toolCallId: String? = null,
     val timestamp: Double? = null,
-    @SerialName("finish_reason") val finishReason: String? = null
+    @SerialName("finish_reason") val finishReason: String? = null,
+    // Reasoning persisted with the assistant message (upstream serializes
+    // both names; reasoning is the canonical one). Restored into
+    // ChatMessage.thinkingContent so the Thought-process block survives a
+    // return to the chat instead of existing only for the live turn.
+    val reasoning: String? = null,
+    @SerialName("reasoning_content") val reasoningContent: String? = null,
 ) {
+    /** Reasoning text under whichever field name the server used. */
+    val resolvedReasoning: String?
+        get() = reasoning?.takeIf { it.isNotBlank() }
+            ?: reasoningContent?.takeIf { it.isNotBlank() }
+
     /** Extract content as plain text string. Handles both string and array-of-parts formats. */
     val contentText: String?
         get() = when (content) {
@@ -274,7 +287,13 @@ data class UsageInfo(
     @SerialName("completion_tokens") val completionTokens: Int? = null,
     // Cache tokens
     @SerialName("cache_creation_input_tokens") val cacheCreationInputTokens: Int? = null,
-    @SerialName("cache_read_input_tokens") val cacheReadInputTokens: Int? = null
+    @SerialName("cache_read_input_tokens") val cacheReadInputTokens: Int? = null,
+    // Gateway context-window block (session-cumulative; present only when the
+    // server's context compressor is active — upstream _get_usage()). Render
+    // context UI only when contextMax is non-null.
+    @SerialName("context_used") val contextUsed: Int? = null,
+    @SerialName("context_max") val contextMax: Int? = null,
+    @SerialName("context_percent") val contextPercent: Int? = null
 ) {
     /** Resolved input tokens — prefers Hermes naming, falls back to OpenAI. */
     val resolvedInputTokens: Int? get() = inputTokens ?: promptTokens
@@ -300,5 +319,6 @@ data class SkillInfo(
 @Serializable
 data class SkillListResponse(
     val skills: List<SkillInfo>? = null,
-    val items: List<SkillInfo>? = null
+    val items: List<SkillInfo>? = null,
+    val data: List<SkillInfo>? = null
 )

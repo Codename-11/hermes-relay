@@ -2,6 +2,7 @@ package com.hermesandroid.relay.ui.components
 
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.viewmodel.InteractionMode
 import com.hermesandroid.relay.viewmodel.VoiceState
 import com.hermesandroid.relay.viewmodel.VoiceUiState
 import org.junit.Assert.assertEquals
@@ -107,5 +108,60 @@ class VoiceModeOverlayStateTest {
         )
 
         assertNull(text)
+    }
+
+    @Test
+    fun micTap_interruptsBusyNonContinuousTurns() {
+        val calls = mutableListOf<String>()
+
+        dispatchVoiceMicTap(
+            uiState = VoiceUiState(
+                state = VoiceState.Thinking,
+                interactionMode = InteractionMode.TapToTalk,
+            ),
+            onStartListening = { calls += "start" },
+            onStopListening = { calls += "stop" },
+            onInterrupt = { calls += "interrupt" },
+            onPauseAutoMode = { calls += "pause" },
+        )
+
+        assertEquals(listOf("interrupt"), calls)
+    }
+
+    @Test
+    fun micTap_pausesContinuousBusyTurns() {
+        val calls = mutableListOf<String>()
+
+        dispatchVoiceMicTap(
+            uiState = VoiceUiState(
+                state = VoiceState.Thinking,
+                interactionMode = InteractionMode.Continuous,
+            ),
+            onStartListening = { calls += "start" },
+            onStopListening = { calls += "stop" },
+            onInterrupt = { calls += "interrupt" },
+            onPauseAutoMode = { calls += "pause" },
+        )
+
+        assertEquals(listOf("pause"), calls)
+    }
+
+    @Test
+    fun holdPress_bargesInFromSpeaking() {
+        val calls = mutableListOf<String>()
+
+        dispatchVoiceMicHoldPress(
+            uiState = VoiceUiState(
+                state = VoiceState.Speaking,
+                interactionMode = InteractionMode.HoldToTalk,
+            ),
+            onStartListening = { calls += "start" },
+            onInterruptAndStart = {
+                calls += "interrupt"
+                calls += "start"
+            },
+        )
+
+        assertEquals(listOf("interrupt", "start"), calls)
     }
 }

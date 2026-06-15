@@ -5,8 +5,8 @@
 #   gradle/libs.versions.toml::appVersionName
 #   gradle/libs.versions.toml::appVersionCode
 #
-# Relay/Python releases are intentionally split; use
-# scripts/bump-relay-version.sh for relay-owned plugin/package metadata.
+# Server/Python releases are intentionally split; use
+# scripts/bump-server-version.sh for server-owned plugin/package metadata.
 
 set -euo pipefail
 
@@ -69,7 +69,7 @@ echo "  Next steps:"
 echo "    1. Update CHANGELOG.md, RELEASE_NOTES.md, and app/src/main/assets/whats_new.txt"
 echo "    2. Commit on dev:"
 echo "         git add $LIBS CHANGELOG.md RELEASE_NOTES.md app/src/main/assets/whats_new.txt"
-echo "         git commit -m \"release: v$NEW_VERSION\""
+echo "         git commit -m \"release(android): android-v$NEW_VERSION\""
 echo "    3. Merge dev -> main, then tag main:"
-echo "         git tag v$NEW_VERSION"
-echo "         git push origin v$NEW_VERSION"
+echo "         git tag android-v$NEW_VERSION"
+echo "         git push origin android-v$NEW_VERSION"

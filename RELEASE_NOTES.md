@@ -1,76 +1,66 @@
-# Hermes-Relay v0.7.0
+# Hermes-Relay-Android v1.0.0
 
-**Release Date:** May 19, 2026
-**Since v0.6.1:** profile-aware chat/voice state, relay-owned voice provider settings, realtime voice lab/testbench routes, Android voice overlay polish, and Relay package voice-provider support.
+**Release Date:** June 14, 2026
+**Since v0.8.1:** The 1.0 milestone — a rechromed app, a first-class standard (no-plugin) path, live-thinking gateway chat, and a broad polish pass.
 
-v0.7.0 is a minor release for the profile and voice workstream. The stable Android path is still Hermes chat streaming plus relay-managed voice output, while realtime provider work remains isolated as a lab/testbench and planned experimental mode.
+v1.0.0 is the first stable release. The headline is that a **plain, unmodified Hermes agent is now enough**: chat, Manage, and voice all work against vanilla upstream with no relay plugin. The relay plugin is now purely additive (phone control, terminal, notification companion, extra voice engines).
 
 ---
 
 ## Download
 
-v0.7.0 ships in two Android build flavors. APK and AAB filenames are version-tagged:
+v1.0.0 ships in two Android build flavors. APK and AAB filenames are version-tagged:
 
 | Flavor | File | Who it's for |
 |---|---|---|
-| sideload | `hermes-relay-0.7.0-sideload-release.apk` | Recommended for full bridge/device-control features, voice overlay testing, and profile-aware relay features. Installs as `com.axiomlabs.hermesrelay.sideload`. |
-| Google Play | `hermes-relay-0.7.0-googlePlay-release.aab` | Conservative Play-track build for chat, profiles, and voice without sideload-only bridge-control surfaces. |
-| googlePlay APK | `hermes-relay-0.7.0-googlePlay-release.apk` | Parity/testing artifact. |
-| sideload AAB | `hermes-relay-0.7.0-sideload-release.aab` | Parity/testing artifact. |
+| Google Play | `hermes-relay-1.0.0-googlePlay-release.aab` | Upload this Android App Bundle to Play Console. It has no AccessibilityService, screen reading, screenshots, gestures, SMS/calls, contacts/location, overlays, or unattended phone control. |
+| sideload | `hermes-relay-1.0.0-sideload-release.apk` | Direct-install APK for full Device Control. Installs as `com.axiomlabs.hermesrelay.sideload`. |
+| googlePlay APK | `hermes-relay-1.0.0-googlePlay-release.apk` | Parity/testing artifact. |
+| sideload AAB | `hermes-relay-1.0.0-sideload-release.aab` | Parity/testing artifact. |
 
-Verify integrity with `SHA256SUMS.txt` from the same release. See the [Sideload guide](https://codename-11.github.io/hermes-relay/guide/getting-started.html#sideload-apk) for install steps.
+Verify integrity with `SHA256SUMS.txt` from the same release. See the [Sideload guide](https://codename-11.github.io/hermes-relay/guide/getting-started.html#sideload-apk) for APK install steps.
 
 ---
 
 ## Highlights
 
-### Profile-aware Hermes use
+### Standard path is first-class — no plugin required
 
-- Profile selection now resolves against the active server and keeps profile-specific chat sessions separate.
-- Default/Victor display is normalized so the selected profile name stays visible through streamed and finalized messages.
-- Session drawer and voice settings can reflect the active profile instead of treating every connection as one shared default context.
-- Profile API URL resolution handles per-profile Hermes API servers and avoids phone-side `localhost` fallbacks when a remote profile is selected.
+Chat, Manage, and voice now work against an unmodified upstream Hermes agent. Chat streams over the API server; Manage and voice use the Hermes dashboard with a single sign-in. The relay plugin stays optional and only adds power tools.
 
-### Voice settings and output quality
+### Gateway chat transport with live thinking
 
-- Relay now owns profile voice configuration endpoints instead of depending on Hermes config edits for realtime voice settings.
-- Android can fetch provider/model/voice option metadata, save per-profile voice choices, and fall back to advanced manual entry when a provider cannot expose a complete option list.
-- Voice output uses balanced coalescing: assistant speech is grouped into natural chunks, while tool/status speech remains immediate.
-- Waveform and playback state are better aligned to real audio output, reducing premature mic return and output-state jitter.
-- Barge-in remains explicitly experimental, with known self-capture limitations documented in settings.
+Chat can now ride the upstream dashboard `/api/ws` gateway (the same surface the official hermes-desktop client speaks). It's the only vanilla-upstream path that streams reasoning **live**, so the Thinking block and sphere light up *during* generation instead of after. "Auto" prefers the gateway when the dashboard is reachable and Manage is signed in, and falls back to the SSE endpoints per turn on any failure.
 
-### Realtime provider lab and Relay package
+- **Warm-start + keep-alive.** The app pre-warms the gateway on foreground so the first token lands fast (the cold session-setup cost moves off the send path). An opt-in **Keep connected in background** toggle (both flavors) holds the connection open via a foreground service so a long-backgrounded conversation resumes instantly.
+- **Attachments at desktop parity.** Images, PDFs, and any other file upload natively over the gateway (`image.attach_bytes` / `pdf.attach` / `file.attach`). Turns that fall back to an endpoint that can't carry a file now post a visible notice instead of dropping it silently.
+- **Steering, edit & resend, subagent lanes.** Send mid-turn to inject guidance into the running turn; edit your own messages to rewind and regenerate; watch per-task subagent lanes stream under the bubble; a context-window meter warns as the window fills.
+- **Turn-complete notifications** when the app is backgrounded.
 
-- Added standalone voice lab CLI/TUI tooling, provider adapters, waveform/playback support, evaluation helpers, and generated WAV/JSONL artifact ignores for OpenAI, xAI, ElevenLabs, and stub testing.
-- Added relay routes for streaming voice output, realtime playground calls, provider options, and profile voice config.
-- Added a plan for the next experimental Realtime Hermes Voice Agent mode, where providers handle speech but Hermes remains the authority for profiles, sessions, memory, tools, confirmations, and transcript history.
+### Manage parity with the desktop dashboard
 
-### Android voice UI polish
+The Manage tab now does what the desktop dashboard does: change models from the full provider catalog, manage provider keys (write-only, masked, reveal), create/edit profiles and SOUL.md, and browse/install/update skills. Manage data is cached to disk so a cold launch renders instantly.
 
-- Voice mode includes better tap-to-talk, continuous-mode, overlay, compact-mode, and state-display behavior.
-- Continuous mode no longer starts a session solely because the preference is enabled; voice sessions start and stop through explicit controls.
-- Voice overlay state is closer to chat state, including live transcript/tool timeline surfaces without forcing an exit and reload.
+### Per-conversation agent profiles
 
-### Included groundwork
+Switch the whole agent — model, persona (SOUL), and skills — from the chat header. The selection is **ephemeral and per-conversation** (bound to the session, like the official desktop): it never changes your server's default agent for other clients. The session drawer scopes to the active profile, opening one of its chats loads that profile's history, and the right agent is restored on cold start.
 
-- Desktop tray pairing and consent-flow improvements are included from the dev branch.
-- Experimental shared `relay-core`, `relay-ui`, and Quest prototype modules are included for future shared pairing/terminal/voice work. They do not change the Android phone app's default flow.
+### Redesigned chat input + seamless connection UX
+
+A cleaner Telegram-style input bar (pill field, one morphing Send/Voice/Stop/Steer/Queue button, no slash button). Network route handoffs (LAN↔Tailscale) and reconnects no longer repaint or reload the chat, and connection/update status now slide down as in-theme toasts over the content instead of pushing the UI around.
+
+### Voice
+
+The provider-native Realtime Agent keeps one session open across turns (follow-ups retain context), and long Hermes runs are promoted to tracked background tasks so the conversation stays responsive and the answer is spoken when it's ready.
+
+### Docs + branding
+
+The documentation site was rechromed to the app's cockpit theme and repositioned around the two-path story (just connect → give it hands), with a reworked Android getting-started funnel and a Google Play badge.
 
 ---
 
-## Verification
+## Upgrade notes
 
-- Relay version metadata: `python scripts/check-relay-version-sync.py --expect 0.7.0` passed.
-- Android version metadata: `scripts\dev.bat version` reported `Hermes-Relay v0.7.0 (versionCode 9)`.
-- Relay route/auth/session/provider slice: 99 pytest tests passed.
-- Voice lab provider/tooling slice: 31 pytest tests passed.
-- Android sideload and Google Play Kotlin compile passed.
-- Focused Android voice/profile unit slice and release-CI unit slice passed.
-
-## Post-install smoke
-
-- Install the sideload APK over the existing sideload app with `adb install -r`.
-- Existing pairing should survive a same-flavor update. Re-pair only if you uninstall app data, switch flavor/applicationId, revoke the device, or intentionally clear the server session store.
-- Confirm the profile selector shows the expected server default and named profiles, then create/switch a chat while watching that the agent name remains stable.
-- In Voice settings, confirm the selected profile's provider/model/voice options load, save a per-profile voice, and run a short voice test.
-- In Voice mode, test tap-to-talk first, then continuous mode. Leave barge-in off unless you are explicitly testing the experimental self-capture path.
+- **Google Play submission:** the opt-in keep-alive feature adds a `FOREGROUND_SERVICE_SPECIAL_USE` service. Complete the Play Console **Foreground service permissions** declaration for `specialUse` at submission (see `docs/play-store-listing.md`).
+- **PDF attachments** over the gateway require `poppler-utils` (`pdftoppm`) on the Hermes host; without it, PDF attach reports an error and the message still sends as text.
+- `appVersionCode` is **12**.

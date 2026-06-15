@@ -94,30 +94,21 @@ import kotlinx.coroutines.launch
  */
 
 /**
- * Three tappable status rows (API / Relay / Session), always visible on
- * the active card. Replaces the old "Active Connection" quick-look card
- * that used to live at the top of `SettingsScreen` — same information
- * density, same tap-for-info-sheet behavior.
- *
- * Tap on the Relay row while it's [RelayUiState.Stale] fires an immediate
- * reconnect + toast; every other row falls through to the info sheet
- * target via [onOpenApiInfo] / [onOpenRelayInfo] / [onOpenSessionInfo].
+ * Standard Hermes status rows (API / Dashboard). Dashboard auth is surfaced
+ * here so users do not have to open Manage just to discover sign-in is needed.
  */
 @Composable
-fun ActiveCardStatusSection(
+fun ActiveCardStandardStatusSection(
     connectionViewModel: ConnectionViewModel,
-    relayEnabled: Boolean,
     onOpenApiInfo: () -> Unit,
-    onOpenRelayInfo: () -> Unit,
-    onOpenSessionInfo: () -> Unit,
+    onOpenDashboard: () -> Unit,
 ) {
-    val context = LocalContext.current
-
     val apiReachable by connectionViewModel.apiServerReachable.collectAsState()
     val apiHealth by connectionViewModel.apiServerHealth.collectAsState()
-    val authState by connectionViewModel.authState.collectAsState()
-    val relayUiState by connectionViewModel.relayUiState.collectAsState()
-    val relayRowState by connectionViewModel.relayRowState.collectAsState()
+    val activeConnection by connectionViewModel.activeConnection.collectAsState()
+    val dashboardStatus = activeConnection?.dashboardLastStatus
+    val dashboardSignInRequired =
+        dashboardStatus?.authRequired == true && dashboardStatus.authenticated != true
 
     ConnectionStatusRow(
         label = "API Server",
@@ -132,44 +123,74 @@ fun ActiveCardStatusSection(
         modifier = Modifier.fillMaxWidth(),
     )
 
-    if (relayEnabled) {
-        // ADR 24: relayRowState carries both the phase and the active
-        // endpoint role. statusText appends " · <Role>" when the
-        // resolver has picked one, so the chip reads "Connected · LAN"
-        // etc. without any extra wiring here.
-        ConnectionStatusRow(
-            label = "Relay",
-            state = relayRowState.asBadgeState(),
-            statusText = relayRowState.statusText(connectedLabel = "Connected"),
-            onClick = {
-                if (relayUiState == RelayUiState.Stale) {
-                    connectionViewModel.connectRelay()
-                    Toast.makeText(
-                        context,
-                        "Reconnecting to relay…",
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                } else {
-                    onOpenRelayInfo()
-                }
-            },
-            modifier = Modifier.fillMaxWidth(),
-        )
+    ConnectionStatusRow(
+        label = "Dashboard",
+        isConnected = dashboardStatus?.reachable == true && !dashboardSignInRequired,
+        statusText = when {
+            activeConnection?.resolvedDashboardUrl.isNullOrBlank() -> "Not configured"
+            dashboardStatus == null -> "Not checked"
+            !dashboardStatus.reachable -> "Unreachable"
+            dashboardSignInRequired -> "Sign-in required"
+            dashboardStatus.authenticated == true -> "Signed in"
+            dashboardStatus.authRequired == false -> "Available"
+            else -> "Available"
+        },
+        onClick = onOpenDashboard,
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
 
-        ConnectionStatusRow(
-            label = "Session",
-            isConnected = authState is AuthState.Paired,
-            isConnecting = authState is AuthState.Pairing,
-            statusText = when (authState) {
-                is AuthState.Paired -> "Paired"
-                is AuthState.Pairing -> "Pairing..."
-                is AuthState.Unpaired -> "Unpaired"
-                is AuthState.Failed -> "Failed: ${(authState as AuthState.Failed).reason}"
-            },
-            onClick = onOpenSessionInfo,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
+/**
+ * Optional Relay status rows (transport / paired session). Kept separate from
+ * [ActiveCardStandardStatusSection] so API/dashboard setup does not visually
+ * read as incomplete when Relay is not paired.
+ */
+@Composable
+fun ActiveCardRelayStatusSection(
+    connectionViewModel: ConnectionViewModel,
+    onOpenRelayInfo: () -> Unit,
+    onOpenSessionInfo: () -> Unit,
+) {
+    val context = LocalContext.current
+
+    val authState by connectionViewModel.authState.collectAsState()
+    val relayUiState by connectionViewModel.relayUiState.collectAsState()
+    val relayRowState by connectionViewModel.relayRowState.collectAsState()
+
+    // ADR 24: relayRowState carries both the phase and the active endpoint
+    // role. statusText appends " · <Role>" when the resolver has picked one.
+    ConnectionStatusRow(
+        label = "Relay",
+        state = relayRowState.asBadgeState(),
+        statusText = relayRowState.statusText(connectedLabel = "Connected"),
+        onClick = {
+            if (relayUiState == RelayUiState.Stale) {
+                connectionViewModel.connectRelay()
+                Toast.makeText(
+                    context,
+                    "Reconnecting to relay…",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            } else {
+                onOpenRelayInfo()
+            }
+        },
+        modifier = Modifier.fillMaxWidth(),
+    )
+
+    ConnectionStatusRow(
+        label = "Session",
+        isConnected = authState is AuthState.Paired,
+        isConnecting = authState is AuthState.Pairing,
+        statusText = when (authState) {
+            is AuthState.Paired -> "Paired"
+            is AuthState.Pairing -> "Pairing..."
+            is AuthState.Unpaired -> "Unpaired"
+            is AuthState.Failed -> "Failed: ${(authState as AuthState.Failed).reason}"
+        },
+        onClick = onOpenSessionInfo,
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
 
 /**
@@ -326,7 +347,7 @@ private fun ManualUrlSubsection(
                 ) { result ->
                     isTestingApi = false
                     apiVoiceSetupResult = result
-                    if (!result.voiceConfigReachable && result.relayAutoDerived) {
+                    if (!result.voiceConfigReachable && result.voiceRoute == "relay" && result.relayAutoDerived) {
                         relayOverrideVisible = true
                         result.relayUrl?.let { relayUrlInput = it }
                     }
@@ -334,9 +355,13 @@ private fun ManualUrlSubsection(
                         context,
                         when {
                             result.apiReachable && result.voiceConfigReachable ->
-                                "API and voice relay reachable"
+                                if (result.voiceRoute == "standard") {
+                                    "API and standard voice reachable"
+                                } else {
+                                    "API and relay voice reachable"
+                                }
                             result.apiReachable ->
-                                "API reachable; relay URL needs review"
+                                "API reachable; voice route needs review"
                             else -> "Cannot reach API server"
                         },
                         Toast.LENGTH_SHORT,
@@ -373,7 +398,7 @@ private fun ManualUrlSubsection(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                text = "Voice uses the relay's /voice routes. The app derives this from the API host unless a custom route is needed.",
+                text = "Relay is optional for voice. Standard voice uses the Hermes API; Relay voice uses this route when selected or needed.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -403,7 +428,7 @@ private fun ManualUrlSubsection(
                 placeholder = { Text("wss://your-server:8767") },
                 singleLine = true,
                 supportingText = {
-                    Text("Only needed when Auto cannot reach /voice/config")
+                    Text("Only needed when the optional Relay route cannot be auto-derived")
                 },
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -417,9 +442,13 @@ private fun ManualUrlSubsection(
             }
             Text(
                 text = if (result.voiceConfigReachable) {
-                    "Voice ready via ${result.relayUrl ?: "relay"}"
+                    if (result.voiceRoute == "standard") {
+                        "Voice ready via standard Hermes API"
+                    } else {
+                        "Voice ready via ${result.relayUrl ?: "relay"}"
+                    }
                 } else {
-                    "Relay URL required: ${result.voiceConfigError ?: "voice config probe failed"}"
+                    "Voice route needs review: ${result.voiceConfigError ?: "voice config probe failed"}"
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = color,
@@ -574,7 +603,7 @@ private fun InsecureToggleSubsection(
  * the QR scanner isn't usable (no camera, headless host, bad lighting).
  *
  *  1. Copy the phone-generated code (with Refresh to regenerate)
- *  2. Run `hermes-pair --register-code <code>` on the host
+ *  2. Run `hermes pair --register-code <code>` on the host
  *  3. Tap Connect — with a 15s auth watcher that surfaces success /
  *     failure through the global snackbar host
  *
@@ -696,7 +725,7 @@ private fun ManualPairingCodeSubsection(
                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
             ) {
                 Text(
-                    text = "hermes-pair --register-code $pairingCode",
+                    text = "hermes pair --register-code $pairingCode",
                     style = MaterialTheme.typography.bodySmall.copy(
                         fontFamily = FontFamily.Monospace,
                     ),
@@ -705,10 +734,10 @@ private fun ManualPairingCodeSubsection(
                 )
                 IconButton(
                     onClick = {
-                        val cmd = "hermes-pair --register-code $pairingCode"
+                        val cmd = "hermes pair --register-code $pairingCode"
                         scope.launch {
                             clipboard.setClipEntry(
-                                ClipEntry(ClipData.newPlainText("hermes-pair command", cmd)),
+                                ClipEntry(ClipData.newPlainText("hermes pair command", cmd)),
                             )
                             snackbarHost.showSnackbar("Command copied")
                         }
@@ -717,7 +746,7 @@ private fun ManualPairingCodeSubsection(
                 ) {
                     Icon(
                         imageVector = Icons.Filled.ContentCopy,
-                        contentDescription = "Copy hermes-pair command",
+                        contentDescription = "Copy hermes pair command",
                         modifier = Modifier.size(16.dp),
                     )
                 }
@@ -783,9 +812,9 @@ private fun ManualPairingCodeSubsection(
             text = "This is a fallback for when you can't scan the pairing QR " +
                 "— for example, no camera, the host can't render a QR, or you " +
                 "only have SSH access from a single device. The canonical flow " +
-                "is the QR scan from `/hermes-relay-pair` or `hermes-pair`.\n\n" +
+                "is the QR scan from `/hermes-relay-pair` or `hermes pair`.\n\n" +
                 "How it works: the phone generates a 6-character code locally. " +
-                "You paste that code into the host's `hermes-pair --register-code` " +
+                "You paste that code into the host's `hermes pair --register-code` " +
                 "command, which pre-registers it with the relay. When you tap " +
                 "Connect here, the phone presents the same code to the relay " +
                 "and gets a long-lived session token in return.\n\n" +

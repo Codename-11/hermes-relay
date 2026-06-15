@@ -11,17 +11,26 @@ package com.hermesandroid.relay.data
 object AgentDisplay {
     const val SERVER_DEFAULT_PROFILE_KEY: String = "__server_default__"
 
+    // Only an EXPLICIT pick drives the effective profile. We deliberately do
+    // NOT fall back to the advertised "default" profile: a dashboard profile's
+    // description is a verbose SOUL summary ("Builds and maintains…"), and
+    // resolving it here replaced the clean agent name (the personality, e.g.
+    // "Victor") with that summary in the header. With no explicit pick, the
+    // name comes from the personality. ([profiles] kept for call-site symmetry.)
+    @Suppress("UNUSED_PARAMETER")
     fun effectiveProfile(
         selectedProfile: Profile?,
         profiles: List<Profile>,
     ): Profile? = selectedProfile
-        ?: profiles.firstOrNull { it.name.equals("default", ignoreCase = true) }
 
+    // The NAME goes in the name slot. A profile's description is a SOUL summary
+    // ("Builds and maintains…"), far too verbose for the agent-name label, so
+    // the profile name wins; description is only a last resort when name is blank.
     fun profileDisplayName(profile: Profile?): String? {
         if (profile == null) return null
         return when {
-            profile.description.isNotBlank() -> profile.description.trim()
             profile.name.isNotBlank() -> titleCase(profile.name.trim())
+            profile.description.isNotBlank() -> profile.description.trim()
             else -> null
         }
     }

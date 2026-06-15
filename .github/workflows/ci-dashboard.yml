@@ -5,13 +5,13 @@ on:
     branches: [main, dev]
     paths:
       - "plugin/dashboard/**"
-      - "scripts/check-relay-version-sync.py"
+      - "scripts/check-server-version-sync.py"
       - ".github/workflows/ci-dashboard.yml"
   pull_request:
     branches: [main, dev]
     paths:
       - "plugin/dashboard/**"
-      - "scripts/check-relay-version-sync.py"
+      - "scripts/check-server-version-sync.py"
       - ".github/workflows/ci-dashboard.yml"
 
 permissions:
@@ -49,8 +49,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Verify relay-owned version metadata
-        run: python scripts/check-relay-version-sync.py
+      - name: Verify server-owned version metadata
+        run: python scripts/check-server-version-sync.py
 
       - name: Install dashboard API test deps
         run: pip install -r relay_server/requirements.txt fastapi httpx pytest requests

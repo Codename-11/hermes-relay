@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
@@ -39,6 +40,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -58,18 +60,19 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.AppAnalytics
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.network.ChatMode
 import com.hermesandroid.relay.network.ConnectionState
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.launch
 
 // ---------------------------------------------------------------------------
@@ -218,6 +221,7 @@ fun SessionInfoSheet(
     ) {
         Column(
             modifier = Modifier
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 16.dp)
                 .navigationBarsPadding(),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -349,6 +353,17 @@ fun SessionInfoSheet(
                     Text("Regenerate Code")
                 }
             }
+
+            HorizontalDivider()
+            DiagnosticsLogPanel(
+                categories = setOf(
+                    DiagnosticCategory.Session,
+                    DiagnosticCategory.Auth,
+                    DiagnosticCategory.Relay,
+                ),
+                limit = 6,
+                showCategory = true,
+            )
         }
     }
 }
@@ -383,6 +398,7 @@ fun ApiServerInfoSheet(
     ) {
         Column(
             modifier = Modifier
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 16.dp)
                 .navigationBarsPadding(),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -455,6 +471,17 @@ fun ApiServerInfoSheet(
             ) {
                 Text(if (testing) "Testing\u2026" else "Test connection")
             }
+
+            HorizontalDivider()
+            DiagnosticsLogPanel(
+                categories = setOf(
+                    DiagnosticCategory.Api,
+                    DiagnosticCategory.Auth,
+                    DiagnosticCategory.Endpoint,
+                ),
+                limit = 6,
+                showCategory = true,
+            )
         }
     }
 }
@@ -485,6 +512,7 @@ fun RelayInfoSheet(
     ) {
         Column(
             modifier = Modifier
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 16.dp)
                 .navigationBarsPadding(),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -563,6 +591,18 @@ fun RelayInfoSheet(
                     Text("Disconnect")
                 }
             }
+
+            HorizontalDivider()
+            DiagnosticsLogPanel(
+                categories = setOf(
+                    DiagnosticCategory.Relay,
+                    DiagnosticCategory.Endpoint,
+                    DiagnosticCategory.Session,
+                    DiagnosticCategory.Voice,
+                ),
+                limit = 8,
+                showCategory = true,
+            )
         }
     }
 }
@@ -590,6 +630,7 @@ fun AgentInfoSheet(
     chatViewModel: ChatViewModel,
     onDismiss: () -> Unit,
     onNavigateToConnections: () -> Unit,
+    onNavigateToProfileInspector: (String) -> Unit = {},
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -599,6 +640,16 @@ fun AgentInfoSheet(
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
     val personalityNames by chatViewModel.personalityNames.collectAsState()
     val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
+    val availableModels by chatViewModel.availableModels.collectAsState()
+    val selectedModelOverride by chatViewModel.selectedModelOverride.collectAsState()
+    val modelProviders by chatViewModel.modelProviders.collectAsState()
+
+    // Pull the gateway's curated provider/model list (model.options) when the
+    // sheet opens — the real switchable models, grouped by provider.
+    LaunchedEffect(Unit) { chatViewModel.refreshModelOptions() }
+    // Pull the host's agent profiles from the dashboard so they appear in the
+    // Profile picker even on a dashboard-only (non-relay) connection.
+    LaunchedEffect(Unit) { connectionViewModel.refreshDashboardProfiles() }
 
     // Connection summary state.
     val authState by connectionViewModel.authState.collectAsState()
@@ -701,11 +752,11 @@ fun AgentInfoSheet(
                 val apparentActiveProfile = agentProfiles
                     .firstOrNull { it.gatewayRunning }
 
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    SectionLabel(
-                        title = "Profile",
-                        hint = "Overlay an agent's model + SOUL",
-                    )
+                CollapsiblePickerSection(
+                    title = "Profile",
+                    hint = "Host-side Hermes contexts",
+                    currentValue = AgentDisplay.profileDisplayName(selectedProfile) ?: "Server default",
+                ) {
 
                     val defaultDotColor = serverDefaultProfile?.let { profile ->
                         if (profile.gatewayRunning) {
@@ -773,6 +824,9 @@ fun AgentInfoSheet(
                         onSelect = {
                             if (selectedProfile != null) {
                                 connectionViewModel.selectProfile(null)
+                                // Gateway turns carry no per-request profile —
+                                // hot-swap the live session server-side too.
+                                chatViewModel.activateGatewayProfile(null)
                                 toast("Using Server default")
                             }
                         },
@@ -811,42 +865,50 @@ fun AgentInfoSheet(
                         // to the capitalised profile name when description
                         // is blank.
                         val hasDescription = profile.description.isNotBlank()
-                        val primaryLabel = if (hasDescription) {
-                            profile.description
-                        } else {
-                            profile.name.replaceFirstChar { it.uppercase() }
-                        }
+                        // Headline is the profile NAME (easy to scan); the
+                        // description + model ride one subtitle line.
+                        val primaryLabel = profile.name.replaceFirstChar { it.uppercase() }
                         // Secondary line: `modelname • Running` / `• Idle`.
                         // The dot itself carries the same information via
                         // colour; the text label is the a11y-visible
                         // complement so a screen reader user also gets
                         // the status without relying on colour.
-                        val secondaryLine = profile.model + runningLabel
+                        val secondaryLine = listOfNotNull(
+                            profile.description.takeIf { hasDescription },
+                            profile.model.takeIf { it.isNotBlank() },
+                        ).joinToString(" · ").takeIf { it.isNotBlank() }
                         // Tertiary caption: the profile identifier (when
                         // we promoted the description to primary) plus an
                         // "active on server" hint when this row matches
                         // the apparent default.
-                        val tertiaryLine = buildString {
-                            if (hasDescription) {
-                                append("profile: ")
-                                append(profile.name)
-                            }
-                            if (isApparentActive && selectedProfile == null) {
-                                if (isNotEmpty()) append(" \u2022 ")
-                                append("This is the server's active profile")
-                            }
-                        }.takeIf { it.isNotBlank() }
+                        val tertiaryLine: String? = null
                         ProfileRadioRow(
                             primary = primaryLabel,
                             secondary = secondaryLine,
-                            tertiary = tertiaryLine,
+                            // Cleaner card: drop the verbose "profile: … ·
+                            // compatibility overlay · active" caption now that
+                            // the name is the headline.
+                            tertiary = null,
                             selected = selectedProfile?.name == profile.name,
                             enabled = !isStreaming,
                             contentAlpha = 1f,
                             leadingDotColor = dotColor,
                             leadingDotContentDescription = dotA11y,
-                            secondaryTrailing = if (profile.hasSoul || profile.skillCount > 0) {
+                            secondaryTrailing = if (
+                                profile.gatewayRunning || profile.hasSoul || profile.skillCount > 0
+                            ) {
                                 {
+                                    // Prominent status chip — the running/active
+                                    // profile, so the dropped "· Running" text
+                                    // doesn't cost status visibility (the green
+                                    // leading dot still reinforces it).
+                                    if (profile.gatewayRunning) {
+                                        ProfileMetadataBadge(
+                                            text = "Active",
+                                            background = MaterialTheme.colorScheme.primary,
+                                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                                        )
+                                    }
                                     if (profile.skillCount > 0) {
                                         ProfileMetadataBadge(
                                             text = "${profile.skillCount} skills",
@@ -866,8 +928,14 @@ fun AgentInfoSheet(
                             onSelect = {
                                 if (selectedProfile?.name != profile.name) {
                                     connectionViewModel.selectProfile(profile)
+                                    // Gateway turns carry no per-request profile;
+                                    // hot-swap the live session server-side so the
+                                    // agent (SOUL+model+skills) changes in place.
+                                    chatViewModel.activateGatewayProfile(profile)
                                     val display = primaryLabel
-                                    val suffix = if (profile.systemMessage?.isNotBlank() == true) {
+                                    val suffix = if (profile.hasIsolatedApi) {
+                                        " — profile API active"
+                                    } else if (profile.systemMessage?.isNotBlank() == true) {
                                         " — model + SOUL applied"
                                     } else {
                                         " — model applied"
@@ -876,6 +944,21 @@ fun AgentInfoSheet(
                                 }
                             },
                         )
+                    }
+
+                    val inspectorTarget = selectedProfile
+                        ?: serverDefaultProfile
+                        ?: selectableProfiles.firstOrNull()
+                    inspectorTarget?.let { profile ->
+                        TextButton(
+                            onClick = {
+                                onDismiss()
+                                onNavigateToProfileInspector(profile.name)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Inspect ${AgentDisplay.profileDisplayName(profile) ?: profile.name}")
+                        }
                     }
 
                     if (profileOverridesPersonality) {
@@ -896,14 +979,12 @@ fun AgentInfoSheet(
             // row is still tappable because the user may want to queue the
             // choice for after they clear the profile. No alpha on the entire
             // Column because the section header would look broken.
-            Column(
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+            CollapsiblePickerSection(
+                title = "Personality",
+                hint = "System-prompt preset on this agent",
+                currentValue = AgentDisplay.personalityLabel(selectedPersonality, defaultPersonality),
                 modifier = Modifier.alpha(if (profileOverridesPersonality) 0.55f else 1f),
             ) {
-                SectionLabel(
-                    title = "Personality",
-                    hint = "System-prompt preset on this agent",
-                )
 
                 // Default row — maps to selectedPersonality == "default" which
                 // the VM resolves to whatever server-side personality is
@@ -960,6 +1041,88 @@ fun AgentInfoSheet(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 4.dp, start = 4.dp),
                     )
+                }
+            }
+
+            // ---- Model section (host-side provider model) ----
+            // Switches the model for THIS session. On the gateway this fires a
+            // `/model` dispatch (the rich model-info card lands in chat); on SSE
+            // the pick rides the next request body. Hidden when the server
+            // advertises no models. Locked mid-turn — the gateway rejects a
+            // switch while a turn runs, and SSE would race the in-flight request.
+            // SSE fallback model list — /v1/models plus the configured profiles'
+            // models (used only when the gateway model.options groups aren't
+            // available, e.g. on an SSE transport).
+            val sseModelOptions = remember(availableModels, agentProfiles, selectedModelOverride) {
+                (availableModels +
+                    agentProfiles.mapNotNull { it.model?.takeIf { m -> m.isNotBlank() } } +
+                    listOfNotNull(selectedModelOverride))
+                    .distinct()
+            }
+            if (modelProviders.isNotEmpty() || sseModelOptions.isNotEmpty()) {
+                HorizontalDivider()
+                CollapsiblePickerSection(
+                    title = "Model",
+                    hint = "Provider model for this session",
+                    currentValue = selectedModelOverride ?: "Server default",
+                ) {
+                    ProfileRadioRow(
+                        primary = "Server default",
+                        secondary = serverModelName.takeIf { it.isNotBlank() },
+                        selected = selectedModelOverride == null,
+                        enabled = !isStreaming,
+                        onSelect = {
+                            if (selectedModelOverride != null) {
+                                chatViewModel.selectModel(null)
+                                toast("Using server default model")
+                            }
+                        },
+                    )
+                    if (modelProviders.isNotEmpty()) {
+                        // Gateway: the curated provider→model groups the desktop
+                        // picker uses (grok / kimi / gpt-5.5 …). Each provider's
+                        // models are grouped under its name; the switch carries
+                        // `--provider <slug>`.
+                        modelProviders.forEach { provider ->
+                            if (provider.models.isNotEmpty()) {
+                                Text(
+                                    text = provider.name,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(top = 8.dp, start = 4.dp),
+                                )
+                                provider.models.forEach { model ->
+                                    ProfileRadioRow(
+                                        primary = model,
+                                        secondary = null,
+                                        selected = selectedModelOverride == model,
+                                        enabled = !isStreaming,
+                                        onSelect = {
+                                            if (selectedModelOverride != model) {
+                                                chatViewModel.selectModel(model, provider.slug)
+                                                toast("Model: $model")
+                                            }
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        sseModelOptions.forEach { model ->
+                            ProfileRadioRow(
+                                primary = model,
+                                secondary = null,
+                                selected = selectedModelOverride == model,
+                                enabled = !isStreaming,
+                                onSelect = {
+                                    if (selectedModelOverride != model) {
+                                        chatViewModel.selectModel(model)
+                                        toast("Model: $model")
+                                    }
+                                },
+                            )
+                        }
+                    }
                 }
             }
 
@@ -1028,7 +1191,7 @@ fun AgentInfoSheet(
                             val hostname = com.hermesandroid.relay.data.Connection
                                 .extractDefaultLabel(connection.apiServerUrl)
                             val statusLine = when {
-                                connection.pairedAt == null -> "$hostname • Not paired"
+                                connection.pairedAt == null -> "$hostname • Standard"
                                 else -> "$hostname • Paired"
                             }
                             ProfileRadioRow(
@@ -1180,6 +1343,62 @@ private fun SectionLabel(title: String, hint: String?) {
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+/**
+ * A space-saving picker section: a tappable header (the [SectionLabel] plus the
+ * current value and a chevron) that collapses its option rows by default and
+ * expands them on tap — a dropdown for the agent sheet's Profile / Personality
+ * / Model lists so the sheet doesn't render every option at once. Selecting an
+ * option (inside [content]) updates [currentValue] in the header; callers may
+ * collapse on select by toggling their own state if desired, but leaving it
+ * open lets the user see the new selection land.
+ */
+@Composable
+private fun CollapsiblePickerSection(
+    title: String,
+    hint: String?,
+    currentValue: String,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .clickable { expanded = !expanded }
+                .padding(vertical = 6.dp),
+        ) {
+            Box(modifier = Modifier.weight(1f)) {
+                SectionLabel(title = title, hint = hint)
+            }
+            if (!expanded && currentValue.isNotBlank()) {
+                Text(
+                    text = currentValue,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .widthIn(max = 150.dp)
+                        .padding(end = 8.dp),
+                )
+            }
+            Icon(
+                imageVector = if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                contentDescription = if (expanded) "Collapse $title" else "Expand $title",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (expanded) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                content()
+            }
         }
     }
 }

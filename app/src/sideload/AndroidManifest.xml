@@ -5,21 +5,14 @@
     Merged on top of `app/src/main/AndroidManifest.xml` for the `sideloadDebug`
     / `sideloadRelease` variants. This track is NOT shipped through Google Play.
 
-    The AccessibilityService is declared exactly once in `app/src/main/AndroidManifest.xml`.
-    The flavor distinction is purely at the resource layer: this flavor's
-    `res/xml/accessibility_service_config.xml` carries the full agent-control
-    config (`canPerformGestures="true"`, `flagRetrieveInteractiveWindows`, etc.)
-    and `res/values/strings.xml` carries the matching description string.
-    Gradle's resource merger picks the right files at build time, so we don't
-    need to redeclare the <service> here.
+    For the Play-safe Bridge Core split, this sideload manifest owns the
+    AccessibilityService and device-control foreground service declarations.
+    The googlePlay flavor does not merge either service.
 
-    This file is intentionally kept as an empty overlay so future flavor-specific
-    permissions / activities have an obvious home. Mirror structural additions
-    in `app/src/googlePlay/AndroidManifest.xml` unless the change is intentionally
-    track-specific.
+    Future Device Control permissions / activities belong here unless they are
+    intentionally safe for the Google Play Bridge Core build.
 -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!--
         Tier C (C1-C4) sideload-only permissions.
@@ -35,7 +28,8 @@
         `ActionExecutor` and returns a helpful error if the user hasn't granted
         it in system Settings. The tools themselves are additionally flavor-
         gated in `BridgeCommandHandler` so the googlePlay build returns
-        `sideload-only` 403s instead of crashing on a missing permission.
+        `device_control_sideload_only` 403s instead of crashing on a missing
+        permission.
 
         Source: docs/plans/2026-04-13-bridge-feature-expansion.md § Tier C.
     -->
@@ -44,11 +38,27 @@
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-feature
+        android:name="android.hardware.telephony"
+        android:required="false" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <!-- Screen recording — sideload only. googlePlay doesn't declare
          /screenshot or the MEDIA_PROJECTION FGS type. See the main
          manifest's comment on why the permission was moved here. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+
+    <!-- Package visibility for Device Control app enumeration / launch routes. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
 
     <!-- v0.4.1 unattended-access mode: DISABLE_KEYGUARD lets the app
          call KeyguardManager.requestDismissKeyguard for None / Swipe
@@ -59,27 +69,38 @@
          dismiss path work for users who set their lock screen to None
          or Swipe specifically to use unattended access.
 
-         WAKE_LOCK is already declared in the main manifest (the bridge
-         WakeLockManager uses PARTIAL_WAKE_LOCK for gesture dispatch on
-         both flavors), so unattended access reuses that declaration
-         and adds SCREEN_BRIGHT to the lock-flag bitmask at acquire
-         time. No additional permission needed for the screen-bright
-         flag — WAKE_LOCK covers both. -->
+         WAKE_LOCK is declared above because only the sideload Device Control
+         track uses WakeLockManager for gesture dispatch. Unattended access
+         adds SCREEN_BRIGHT to the lock-flag bitmask at acquire time. No
+         additional permission is needed for the screen-bright flag —
+         WAKE_LOCK covers both lock levels. -->
     <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
 
-    <!--
-        Override the BridgeForegroundService's foregroundServiceType to
-        ADD mediaProjection on the sideload track. The main manifest
-        declares specialUse only (so googlePlay lint passes without the
-        MEDIA_PROJECTION permission); sideload upgrades to both types
-        since it ships FOREGROUND_SERVICE_MEDIA_PROJECTION and the
-        /screenshot route.
-    -->
     <application>
         <service
+            android:name=".accessibility.HermesAccessibilityService"
+            android:exported="true"
+            android:label="@string/a11y_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+
+        <service
             android:name=".bridge.BridgeForegroundService"
-            android:foregroundServiceType="specialUse|mediaProjection"
-            tools:replace="android:foregroundServiceType" />
+            android:exported="false"
+            android:foregroundServiceType="specialUse|mediaProjection">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Maintains the sideload Device Control bridge while the user has explicitly enabled agent control." />
+        </service>
+
+        <!-- Note: GatewayKeepAliveService ("Keep connected in background") is
+             declared in the MAIN manifest so both flavors ship it. -->
     </application>
 
 </manifest>

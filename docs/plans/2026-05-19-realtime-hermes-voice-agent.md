@@ -101,14 +101,20 @@ Relay to client:
 - `voice.response.delta`
 - `voice.response.done`
 - `hermes.run.started`
+- `hermes.run.progress`
 - `hermes.tool.started`
 - `hermes.tool.delta`
 - `hermes.tool.completed`
+- `hermes.tool.failed`
 - `hermes.confirmation.requested`
 - `hermes.run.completed`
 - `voice.error`
 
 Android should render these through the same chat/timeline components used by stable voice mode where possible.
+`hermes.run.progress` carries compact Hermes status plus active/latest tool
+fields and a `should_speak` hint for restrained local voice filler during long
+runs. Tool output remains visual/debug trace by default; the provider speaks the
+post-Hermes summary from the brokered function result.
 
 ## Session and Auth Binding
 

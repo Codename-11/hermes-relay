@@ -87,6 +87,12 @@ class ProfileSelectionStore(
             prefs.remove(keyFor(connectionId))
         }
     }
+
+    suspend fun clearAll() {
+        dataStore.edit { prefs ->
+            prefs.clear()
+        }
+    }
 }
 
 /**
