@@ -37,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -49,7 +50,6 @@ import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.ui.theme.leftEdgeGlow
 import java.text.SimpleDateFormat
 import java.util.Date
-import java.util.Locale
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -150,7 +150,8 @@ fun MessageBubble(
     }
 
     val alignment = if (isUser) Alignment.End else Alignment.Start
-    val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
+    val locale = LocalLocale.current.platformLocale
+    val timeFormat = remember(locale) { SimpleDateFormat("h:mm a", locale) }
     val a11yDescription = "${message.role.name.lowercase()} message: ${message.content.take(100)}"
     val isDarkTheme = isSystemInDarkTheme()
 
