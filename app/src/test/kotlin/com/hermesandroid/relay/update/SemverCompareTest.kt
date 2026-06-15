@@ -8,6 +8,7 @@ class SemverCompareTest {
     @Test fun `equal versions compare equal`() {
         assertEquals(0, compareVersions("0.5.0", "0.5.0"))
         assertEquals(0, compareVersions("v0.5.0", "0.5.0"))
+        assertEquals(0, compareVersions("android-v0.5.0", "0.5.0"))
         assertEquals(0, compareVersions("0.5", "0.5.0"))
     }
 
@@ -16,6 +17,7 @@ class SemverCompareTest {
         assertTrue(compareVersions("0.5.9", "0.6.0") < 0)
         assertTrue(compareVersions("0.9.0", "1.0.0") < 0)
         assertTrue(compareVersions("v0.4.1", "v0.5.0") < 0)
+        assertTrue(compareVersions("0.7.0", "android-v0.7.1") < 0)
     }
 
     @Test fun `newer current returns positive`() {

@@ -6,10 +6,11 @@ that waits for `aiohttp.web` to be imported, then replaces `web.Application`
 with a thin subclass that detects when hermes-agent's `APIServerAdapter`
 attaches itself to a fresh app and:
 
-1. **Injects extra routes** — `/api/sessions/*`, `/api/memory`, `/api/skills`,
-   `/api/config`, and `/api/available-models` — so a vanilla upstream
-   hermes-agent install serves the management endpoints the Hermes-Relay
-   Android app expects.
+1. **Injects missing compatibility routes** — older hermes-agent builds may
+   lack `/api/sessions/*`, `/api/memory`, `/api/skills`, `/api/config`, and
+   `/api/available-models`. Current upstream already has the session API and
+   read-only `/v1/skills` + `/v1/toolsets`, so native routes win per method/path
+   and the bootstrap only fills gaps.
 
 2. **Installs slash-command middleware** — an aiohttp middleware that intercepts
    `/v1/chat/completions` and `/v1/runs` to handle gateway slash commands
@@ -18,14 +19,16 @@ attaches itself to a fresh app and:
    LLM from hallucinating responses for them. This mirrors the upstream
    Stage 1 preprocessor from `gateway/platforms/api_server_slash.py`.
 
-Chat streaming continues to use upstream's standard `/v1/runs` endpoint, which
-already emits structured tool events.
+Chat streaming prefers upstream's native
+`/api/sessions/{session_id}/chat/stream` endpoint when it is advertised. Older
+builds that only get bootstrap-provided session CRUD fall back to standard
+`/v1/chat/completions` or `/v1/runs` paths.
 
-This module is removed in its entirety once upstream PR
-https://github.com/NousResearch/hermes-agent/pull/8556 lands and reaches a
-released hermes-agent version. The bootstrap feature-detects on route paths
-and module presence and silently no-ops when the upstream-merged or fork-built
-endpoints are already present, so it stays harmless during the rollout window.
+This module retires per surface, not as one broad PR cleanup. Sessions can go
+once the supported hermes-agent baseline includes PR #33134, read-only skills
+should use PR #33016's `/v1/skills`, and the remaining config/memory/legacy
+skill/available-model/slash-command surfaces need stable replacements or local
+UX removal before the package and `.pth` hook can disappear.
 """
 
 from __future__ import annotations

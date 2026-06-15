@@ -137,6 +137,15 @@ fun buildPromptBlock(settings: AppContextSettings, snapshot: PhoneSnapshot): Str
     return lines.joinToString("\n\n")
 }
 
+// Note: the gateway path intentionally carries NO phone-context preamble.
+// `prompt.submit` is bare text with no system-message slot, and prepending
+// the preamble to the user's text persists it into the session transcript
+// (ugly on history reload + visible from desktop). The gateway's only
+// call-time system overlay (`ephemeral_system_prompt`) is the personality
+// slot, so it can't carry phone context without clobbering the user's persona.
+// Phone context therefore rides ONLY the SSE `systemMessage` (invisible) and
+// the on-demand `android_phone_status` tool.
+
 /**
  * Bridge-channel summary. Always emitted when `bridgeState` is on, even if
  * the bridge isn't bound — "Phone bridge: not installed" is itself useful

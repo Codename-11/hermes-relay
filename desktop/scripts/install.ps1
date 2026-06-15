@@ -1,16 +1,22 @@
-# hermes-relay desktop CLI installer — Windows (PowerShell 5.1+).
+# hermes-relay desktop installer - Windows (PowerShell 5.1+).
 #
 #   irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex
 #
-# Downloads a prebuilt binary from GitHub Releases — no Node.js required.
+# Downloads the tray app installer from GitHub Releases by default - no Node.js required.
+# Install only the CLI binary instead:
+#   $env:HERMES_RELAY_INSTALL_SURFACE='cli'; irm ... | iex
 # Pin a specific release:
 #   $env:HERMES_RELAY_VERSION='desktop-v0.3.0-alpha.1'; irm ... | iex
-# Override install dir:
+# Override CLI install dir:
 #   $env:HERMES_RELAY_INSTALL_DIR='C:\tools\hermes\bin'; irm ... | iex
+# Optional `hermes` alias for Orca/upstream-style workflows:
+#   $env:HERMES_RELAY_HERMES_ALIAS='enable'; $env:HERMES_RELAY_INSTALL_SURFACE='cli'; irm ... | iex
+# Disable an existing hermes-relay-owned alias without reinstalling:
+#   $env:HERMES_RELAY_HERMES_ALIAS='disable'; irm .../hermes-alias.ps1 | iex
 #
-# **Experimental phase** — binaries are unsigned. Windows SmartScreen may
-# warn on first launch. This script documents the `Unblock-File` escape
-# hatch on completion.
+# **Experimental phase** - assets are unsigned. Windows SmartScreen may warn
+# on first launch. The CLI branch documents the `Unblock-File` escape hatch on
+# completion; the tray branch runs the downloaded NSIS installer.
 
 #Requires -Version 5.1
 $ErrorActionPreference = 'Stop'
@@ -18,6 +24,8 @@ $ErrorActionPreference = 'Stop'
 $repo    = if ($env:HERMES_RELAY_REPO)    { $env:HERMES_RELAY_REPO }    else { 'Codename-11/hermes-relay' }
 $version = if ($env:HERMES_RELAY_VERSION) { $env:HERMES_RELAY_VERSION } else { 'latest' }
 $dir     = if ($env:HERMES_RELAY_INSTALL_DIR) { $env:HERMES_RELAY_INSTALL_DIR } else { Join-Path $HOME '.hermes\bin' }
+$surface = if ($env:HERMES_RELAY_INSTALL_SURFACE) { $env:HERMES_RELAY_INSTALL_SURFACE.ToLowerInvariant() } else { 'tray' }
+$aliasMode = if ($env:HERMES_RELAY_HERMES_ALIAS) { $env:HERMES_RELAY_HERMES_ALIAS.ToLowerInvariant() } else { 'skip' }
 
 function Say($msg)  { Write-Host "  $msg" }
 function Die($msg)  { Write-Host "install.ps1: $msg" -ForegroundColor Red; exit 1 }
@@ -69,12 +77,35 @@ foreach ($cmd in 'Invoke-WebRequest','Get-FileHash') {
   }
 }
 
+function Is-RelayShim {
+  param([string]$Path)
+  if (-not (Test-Path -LiteralPath $Path)) { return $false }
+  $content = Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue
+  return $content -match 'hermes-relay\.exe'
+}
+
+function Alias-Enabled {
+  param([string]$Mode)
+  return $Mode -in @('enable', 'on', 'true', 'yes', '1')
+}
+
+function Alias-Disabled {
+  param([string]$Mode)
+  return $Mode -in @('disable', 'off', 'false', 'no', '0', 'remove')
+}
+if ($surface -ne 'tray' -and $surface -ne 'cli') {
+  Die "HERMES_RELAY_INSTALL_SURFACE must be 'tray' or 'cli'"
+}
+if ($aliasMode -notin @('skip', '', 'enable', 'on', 'true', 'yes', '1', 'disable', 'off', 'false', 'no', '0', 'remove')) {
+  Die "HERMES_RELAY_HERMES_ALIAS must be 'enable', 'disable', or unset"
+}
+
 if (-not [Environment]::Is64BitOperatingSystem) {
   Die "32-bit Windows is not supported"
 }
 
 $arch  = 'x64'  # No ARM64 build yet; add hermes-relay-win-arm64 when cross-compile target lands.
-$asset = "hermes-relay-win-$arch.exe"
+$asset = if ($surface -eq 'tray') { "hermes-relay-desktop-windows-$arch-setup.exe" } else { "hermes-relay-win-$arch.exe" }
 
 # Resolve "latest" to a concrete tag. GitHub's /releases/latest/download/ URL
 # always skips prereleases, which breaks install during any all-alpha window.
@@ -125,12 +156,63 @@ if ($version -eq 'latest') {
 }
 $base = "https://github.com/$repo/releases/download/$resolvedVersion"
 
-Say "Hermes-Relay desktop CLI installer"
+Say "Hermes-Relay desktop installer"
+Say "  surface  : $surface"
 Say "  platform : win-$arch"
 Say "  asset    : $asset"
 Say "  version  : $resolvedVersion"
-Say "  install  : $dir"
+if ($surface -eq 'cli') { Say "  install  : $dir" }
 Say ""
+
+if ($surface -eq 'tray') {
+  $tmp = New-Item -ItemType Directory -Path (Join-Path $env:TEMP ("hermes-relay-" + [Guid]::NewGuid()))
+  try {
+    Say '-> downloading tray installer...'
+    $installer = Join-Path $tmp $asset
+    try {
+      Invoke-WebRequest -UseBasicParsing "$base/$asset" -OutFile $installer
+    } catch {
+      Die "download failed: $base/$asset (maybe no Windows tray installer for this version yet?)"
+    }
+
+    Say '-> downloading checksums...'
+    try {
+      Invoke-WebRequest -UseBasicParsing "$base/SHA256SUMS.txt" -OutFile (Join-Path $tmp 'SHA256SUMS.txt')
+    } catch {
+      Die "could not fetch SHA256SUMS.txt (release incomplete?)"
+    }
+
+    Say '-> verifying SHA256...'
+    $expectedLine = (Select-String -Path (Join-Path $tmp 'SHA256SUMS.txt') -Pattern " $asset$").Line
+    if (-not $expectedLine) { Die "SHA256SUMS.txt has no entry for $asset" }
+    $expected = $expectedLine.Split(' ')[0].ToLower()
+    $actual   = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLower()
+    if ($expected -ne $actual) { Die "checksum mismatch (expected $expected, got $actual) - refusing to install" }
+    Say '   ok'
+
+    if (Get-Command Unblock-File -ErrorAction SilentlyContinue) {
+      Unblock-File $installer -ErrorAction SilentlyContinue
+    }
+
+    $installerArgs = @()
+    if ($env:HERMES_RELAY_TRAY_SILENT -eq '1') {
+      $installerArgs += '/S'
+    }
+    Say '-> launching installer...'
+    $proc = Start-Process -FilePath $installer -ArgumentList $installerArgs -Wait -PassThru
+    if ($proc.ExitCode -ne 0) {
+      Die "tray installer exited with code $($proc.ExitCode)"
+    }
+  } finally {
+    Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+  }
+
+  Say ''
+  Say 'Installed Hermes Relay Desktop. Launch it from the Start menu to pair, manage devices, view the task log, pause, or emergency-stop the daemon.'
+  Say 'For CLI-only installs, rerun with:'
+  Say "  `$env:HERMES_RELAY_INSTALL_SURFACE='cli'; irm https://raw.githubusercontent.com/$repo/main/desktop/scripts/install.ps1 | iex"
+  return
+}
 
 $tmp = New-Item -ItemType Directory -Path (Join-Path $env:TEMP ("hermes-relay-" + [Guid]::NewGuid()))
 try {
@@ -185,28 +267,36 @@ try {
   New-Item -ItemType Directory -Force -Path $dir | Out-Null
   Copy-Item -Force (Join-Path $tmp $asset) $target
 
-  # Create a `hermes.cmd` alias so muscle memory from the upstream hermes-agent
-  # CLI (also called `hermes`) just works. Using a .cmd shim (not a symlink)
-  # because Windows symlinks require admin or Developer Mode. .cmd also works
-  # from any shell — cmd.exe, PowerShell, Git Bash, WSL interop — whereas a
-  # .ps1 shim would only fire from PowerShell.
+  # Optional `hermes.cmd` alias for Orca/upstream-style workflows. It is not
+  # created by default because it can shadow a real local hermes-agent install.
   $hermesShim = Join-Path $dir 'hermes.cmd'
-  $existingShim = $null
-  if (Test-Path $hermesShim) {
-    $existingShim = Get-Content $hermesShim -Raw -ErrorAction SilentlyContinue
-  }
-  if (-not (Test-Path $hermesShim) -or ($existingShim -match 'hermes-relay\.exe')) {
-    # NB: the closing '@ of a PowerShell here-string MUST sit at column 0.
-    # Indenting it is a parse error, so we pull the here-string flush-left
-    # and scope-hide it in a subexpression.
+  if (Alias-Enabled $aliasMode) {
+    if ((Test-Path -LiteralPath $hermesShim) -and -not (Is-RelayShim $hermesShim)) {
+      Say "-> hermes.cmd already exists at $hermesShim (left untouched)"
+    } else {
+      # NB: the closing '@ of a PowerShell here-string MUST sit at column 0.
+      # Indenting it is a parse error, so we pull the here-string flush-left
+      # and scope-hide it in a subexpression.
 $shimBody = @'
 @echo off
 "%~dp0hermes-relay.exe" %*
 '@
-    Set-Content -Path $hermesShim -Value $shimBody -Encoding ASCII -Force
-    Say "-> created hermes.cmd -> hermes-relay.exe alias"
+      Set-Content -Path $hermesShim -Value $shimBody -Encoding ASCII -Force
+      Say "-> created hermes.cmd -> hermes-relay.exe alias"
+    }
+  } elseif (Alias-Disabled $aliasMode) {
+    if ((Test-Path -LiteralPath $hermesShim) -and (Is-RelayShim $hermesShim)) {
+      Remove-Item -LiteralPath $hermesShim -Force
+      Say "-> removed hermes.cmd alias"
+    } elseif (Test-Path -LiteralPath $hermesShim) {
+      Say "-> hermes.cmd exists but is not managed by hermes-relay (left untouched)"
+    } else {
+      Say "-> hermes.cmd alias already disabled"
+    }
+  } elseif ((Test-Path -LiteralPath $hermesShim) -and (Is-RelayShim $hermesShim)) {
+    Say "-> existing hermes.cmd alias left enabled (disable with HERMES_RELAY_HERMES_ALIAS='disable' and hermes-alias.ps1)"
   } else {
-    Say "-> hermes.cmd already exists at $hermesShim (skipped alias creation)"
+    Say "-> skipped optional hermes.cmd alias (enable with HERMES_RELAY_HERMES_ALIAS='enable')"
   }
 
   # Post-install: confirm the NEW binary reports a sensible version. Don't
@@ -250,6 +340,10 @@ if ($installedVersion) {
 } else {
   Say 'Installed. Try:'
 }
-Say '  hermes-relay --help       # (or the short alias: hermes --help)'
+Say '  hermes-relay --help'
 Say '  hermes-relay pair --remote ws://<host>:8767'
+Say ''
+Say 'Optional Orca/upstream-style alias:'
+Say "  `$env:HERMES_RELAY_HERMES_ALIAS='enable'; irm https://raw.githubusercontent.com/$repo/main/desktop/scripts/hermes-alias.ps1 | iex"
+Say "  `$env:HERMES_RELAY_HERMES_ALIAS='disable'; irm https://raw.githubusercontent.com/$repo/main/desktop/scripts/hermes-alias.ps1 | iex"
 Say ''

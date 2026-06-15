@@ -70,8 +70,10 @@ class AutoDisableWorker(private val context: Context) {
     // call is also wrapped in runCatching to swallow SecurityException as
     // a belt-and-braces. Suppress here rather than inlining the check —
     // the helper exists so the same gate can grow more conditions later
-    // without each call site re-implementing it.
-    @SuppressLint("MissingPermission")
+    // without each call site re-implementing it. Both IDs are needed:
+    // `NotificationPermission` is the notify()-specific check (POST_NOTIFICATIONS
+    // on API 33+); `MissingPermission` is the generic fallback.
+    @SuppressLint("MissingPermission", "NotificationPermission")
     private fun postNotification() {
         ensureChannel()
         if (!hasPostNotificationsPermission()) {

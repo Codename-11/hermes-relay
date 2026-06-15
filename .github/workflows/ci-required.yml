@@ -2,7 +2,7 @@
 # branch protection on `main` has a check name it can rely on, regardless
 # of which paths the PR touches.
 #
-# Why this exists. The other CI workflows (`ci-android.yml`, `ci-relay.yml`,
+# Why this exists. The other CI workflows (`ci-android.yml`, `ci-server.yml`,
 # `ci-desktop.yml`) are scoped via `paths:` filters so a docs-only or
 # desktop-only PR doesn't spin up the Android toolchain. Branch protection's
 # "required status checks" treat a check that doesn't run as failing — so

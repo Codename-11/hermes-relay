@@ -72,8 +72,17 @@ class ProfileDiscoveryTests(unittest.TestCase):
             (pdir / "SOUL.md").write_text(soul, encoding="utf-8")
         return pdir
 
-    def _load(self, *, enabled: bool = True) -> list[dict]:
-        return _load_profiles(str(self.root_config), enabled=enabled)
+    def _load(
+        self,
+        *,
+        enabled: bool = True,
+        base_api_url: str | None = None,
+    ) -> list[dict]:
+        return _load_profiles(
+            str(self.root_config),
+            enabled=enabled,
+            base_api_url=base_api_url,
+        )
 
     # ── cases ───────────────────────────────────────────────────────────
 
@@ -252,6 +261,26 @@ class ProfileDiscoveryTests(unittest.TestCase):
         entry = next(p for p in out if p["name"] == "no-pid")
         self.assertFalse(entry["gateway_running"])
 
+    def test_gateway_running_true_when_api_server_port_is_reachable_without_pid(
+        self,
+    ) -> None:
+        self._write_root_config()
+        pdir = self._write_profile(
+            "api-live",
+            config_body="model:\n  default: x\n",
+            soul=None,
+        )
+        (pdir / ".env").write_text(
+            "API_SERVER_PORT=8666\nAPI_SERVER_KEY=secret-never-exposed\n",
+            encoding="utf-8",
+        )
+
+        with patch("plugin.relay.config._probe_api_server_running", return_value=True):
+            out = self._load(base_api_url="http://hermes.example.test:8642")
+
+        entry = next(p for p in out if p["name"] == "api-live")
+        self.assertTrue(entry["gateway_running"])
+
     def test_gateway_running_parses_upstream_json_pid_file(self) -> None:
         """Upstream Hermes writes ``gateway.pid`` as JSON
         (``{"pid": N, "kind": "hermes-gateway", ...}``). The probe must
@@ -429,6 +458,111 @@ class ProfileDiscoveryTests(unittest.TestCase):
         out = self._load()
         entry = next(p for p in out if p["name"] == "skillless")
         self.assertEqual(entry["skill_count"], 0)
+
+    # ── enrichment: profile API server metadata ────────────────────────
+
+    def test_profile_api_server_metadata_from_dotenv_uses_base_api_host(
+        self,
+    ) -> None:
+        self._write_root_config()
+        pdir = self._write_profile(
+            "mizu",
+            config_body="model:\n  default: xai/grok\n",
+            soul=None,
+        )
+        (pdir / ".env").write_text(
+            textwrap.dedent(
+                """\
+                API_SERVER_ENABLED=true
+                API_SERVER_HOST=0.0.0.0
+                API_SERVER_PORT=8643
+                API_SERVER_KEY=secret-never-exposed
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        out = self._load(base_api_url="https://hermes.example.test:8642")
+        mizu = next(p for p in out if p["name"] == "mizu")
+
+        self.assertTrue(mizu["api_server_enabled"])
+        self.assertEqual(
+            mizu["api_server_url"],
+            "https://hermes.example.test:8643",
+        )
+        self.assertEqual(mizu["api_server_host"], "0.0.0.0")
+        self.assertEqual(mizu["api_server_port"], 8643)
+        self.assertTrue(mizu["api_server_key_present"])
+
+    def test_profile_api_server_metadata_defaults_to_disabled(self) -> None:
+        self._write_root_config()
+        self._write_profile(
+            "plain",
+            config_body="model:\n  default: m/x\n",
+            soul=None,
+        )
+
+        out = self._load(base_api_url="https://hermes.example.test:8642")
+        plain = next(p for p in out if p["name"] == "plain")
+
+        self.assertFalse(plain["api_server_enabled"])
+        self.assertIsNone(plain["api_server_url"])
+        self.assertIsNone(plain["api_server_host"])
+        self.assertIsNone(plain["api_server_port"])
+        self.assertFalse(plain["api_server_key_present"])
+
+    def test_profile_api_server_metadata_from_platform_extra(self) -> None:
+        self._write_root_config()
+        self._write_profile(
+            "remote",
+            config_body=textwrap.dedent(
+                """\
+                model:
+                  default: x
+                platforms:
+                  api_server:
+                    enabled: true
+                    extra:
+                      host: 192.168.1.10
+                      port: 8655
+                      key: abc
+                """
+            ),
+            soul=None,
+        )
+
+        out = self._load(base_api_url="https://hermes.example.test:8642")
+        remote = next(p for p in out if p["name"] == "remote")
+
+        self.assertTrue(remote["api_server_enabled"])
+        self.assertEqual(remote["api_server_url"], "http://192.168.1.10:8655")
+        self.assertEqual(remote["api_server_host"], "192.168.1.10")
+        self.assertEqual(remote["api_server_port"], 8655)
+        self.assertTrue(remote["api_server_key_present"])
+
+    def test_profile_api_server_key_alone_marks_enabled_like_hermes(
+        self,
+    ) -> None:
+        self._write_root_config()
+        pdir = self._write_profile(
+            "key-only",
+            config_body="model:\n  default: x\n",
+            soul=None,
+        )
+        (pdir / ".env").write_text(
+            "API_SERVER_PORT=8660\nAPI_SERVER_KEY=secret-never-exposed\n",
+            encoding="utf-8",
+        )
+
+        out = self._load(base_api_url="https://hermes.example.test:8642")
+        entry = next(p for p in out if p["name"] == "key-only")
+
+        self.assertTrue(entry["api_server_enabled"])
+        self.assertEqual(
+            entry["api_server_url"],
+            "https://hermes.example.test:8660",
+        )
+        self.assertTrue(entry["api_server_key_present"])
 
 
 if __name__ == "__main__":

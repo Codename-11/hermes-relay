@@ -219,4 +219,34 @@ class AuthManagerTest {
         state = AuthState.Failed("Code expired")
         assertTrue(state is AuthState.Failed)
     }
+
+    @Test
+    fun transientAuthTimeout_preservesPairedSession() {
+        assertTrue(
+            AuthManager.shouldPreservePairedSessionOnAuthFail(
+                AuthState.Paired("session-token-abc"),
+                "Authentication timeout"
+            )
+        )
+    }
+
+    @Test
+    fun transientAuthTimeout_doesNotPreservePairingAttempt() {
+        assertFalse(
+            AuthManager.shouldPreservePairedSessionOnAuthFail(
+                AuthState.Pairing,
+                "Authentication timeout"
+            )
+        )
+    }
+
+    @Test
+    fun rejectedSessionToken_doesNotPreservePairedSession() {
+        assertFalse(
+            AuthManager.shouldPreservePairedSessionOnAuthFail(
+                AuthState.Paired("session-token-abc"),
+                "Invalid session token"
+            )
+        )
+    }
 }

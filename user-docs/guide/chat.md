@@ -1,65 +1,91 @@
 # Chat
 
-## Sending Messages
+## The input bar
 
-Type your message in the input field and tap the send button (or press Enter on a hardware keyboard). Messages stream in real-time via Server-Sent Events. There is a 4096 character limit with a counter shown near the limit. Haptic feedback fires on send.
+The chat bar is deliberately minimal — three elements, and one button that
+changes its job instead of cluttering the bar:
 
-## Voice Mode
+- **`+`** — tap to attach a file or image. **Long-press** it to open the full
+  **command palette**. (There's no separate slash button anymore.)
+- **The pill field** — type here. It grows up to five lines, then scrolls.
+- **One trailing button** — it morphs to match what you can do right now:
 
-Tap the microphone FAB in the bottom-right corner to switch into voice mode. The sphere expands to fill the screen, listens while you speak, and performs the agent's response as it streams back. Three interaction modes (tap, hold, continuous) are in **Settings → Voice**. Transcribed utterances appear in your chat history as normal user messages. Full details and troubleshooting: [Voice Mode](/features/voice).
+| The button shows | When | What it does |
+|---|---|---|
+| **Send** (arrow) | You've typed something | Sends your message |
+| **Voice** (waveform) | The field is empty | Starts a voice conversation |
+| **Stop** (square) | A reply is streaming and the field is empty | Cancels the current reply |
+| **Steer** (cyan arrow) | You type while a reply is streaming | Nudges the live reply — see [Steering](#steering) |
+| **Queue** (arrow + clock) | You type mid-reply and it can't be steered yet | Holds your message for the next turn |
 
-## Empty State
+The bar never widens as it morphs — the trailing slot just cross-fades. A tiny
+character counter appears as an overline above the bar only as you approach the
+4096-character limit (amber, then red at the limit). Haptic feedback fires on
+send and when a reply finishes.
 
-When no messages exist, the chat shows a logo with "Start a conversation" and suggestion chips. Tapping a chip populates the input field.
+## Sending messages
 
-## Streaming
+Type and tap **Send** (or press Enter on a hardware keyboard). Replies stream in
+real time. When the assistant is thinking, animated dots pulse **inside** the
+reply bubble until the first words arrive.
 
-While the assistant is responding, animated pulsing dots indicate active streaming. A stop button appears next to the input field — tap it to cancel the current stream. Haptic feedback fires when the stream completes.
+## Steering
 
-## Smooth Auto-Scroll
+You don't have to wait for a reply to finish to redirect it. Start typing while
+a reply is streaming and the Send button turns into a cyan **Steer** button:
 
-While the assistant is responding, the chat list smoothly follows new tokens, reasoning deltas, and tool cards as they stream in. The behavior is designed to feel like a live transcript:
+- If the agent is between tool calls, your text is **injected into the running
+  turn** — it adjusts course without starting over. A small `↳ steered` note
+  marks where you stepped in.
+- If the agent is mid-reasoning and can't accept a steer yet, your message is
+  **queued** for the next turn instead (the button shows a clock badge, and a
+  caption above the bar tells you which happened).
 
-- **At the bottom?** New content scrolls into view automatically. The viewport stays pinned to the latest token, even while the message bubble grows tall with reasoning blocks and tool execution cards.
-- **Scrolled up to read history?** Auto-follow pauses. You won't be yanked back while you're reading.
-- **Want to resume?** Either scroll back to the bottom manually or tap the floating arrow button that appears when there's new content below. Both restore live-follow immediately.
+Steering is available on the [Gateway transport](/guide/getting-started#_3-connect-chat)
+(the live path used when you're signed in to Manage).
 
-You can disable this behavior under **Settings > Chat > Smooth auto-scroll** if you'd rather scroll manually. It's enabled by default.
+## Voice mode
 
-## Markdown
+When the field is empty, the trailing button is a **waveform** — tap it to start
+a hands-free voice conversation. The sphere expands to fill the screen, listens
+while you speak, and performs the reply as it streams back. Transcribed
+utterances appear in your chat history as normal messages.
 
-Assistant responses render with full markdown support:
-- **Bold** and *italic* text
-- `inline code` and fenced code blocks with syntax highlighting
-- Links, lists, blockquotes
-- Tables and horizontal rules
+If voice needs setup on your connection, the button shows a small **amber dot**
+(it still works — tapping explains what's needed) rather than looking disabled.
+Interaction modes (tap, hold, continuous) live in **Settings → Voice**. Full
+details and troubleshooting: [Voice Mode](/features/voice).
 
-## Copying Messages
+## Edit & resend
 
-Long-press any message bubble to copy its text to your clipboard. Haptic feedback confirms the copy.
+Made a typo, or want to take the conversation a different direction? **Long-press
+one of your own messages** and choose **Edit** — the conversation rewinds to that
+point and re-runs from your edited text. Available on the Gateway transport when
+no reply is currently streaming.
 
-## Slash Commands
+## Slash commands
 
-Two ways to discover and use commands:
+Two ways to discover and run commands:
 
-### Inline Autocomplete
-Type `/` in the input field to see a filtered autocomplete popup. It narrows as you type and shows up to 8 matches with descriptions.
+- **Inline autocomplete** — type `/` in the field for a filtered popup that
+  narrows as you type, showing up to eight matches with descriptions.
+- **Command palette** — **long-press the `+`** for a full searchable palette.
+  Browse by category, search by name or description, and tap to insert.
 
-### Command Palette
-Tap the **`/`** button next to the input field to open a full searchable command palette. Browse by category, search by name or description, and tap to insert.
+Commands are fetched dynamically from your server wherever possible:
 
-### Command Sources
-All commands are fetched dynamically from the server where possible:
+- **Session commands** — `/new`, `/retry`, `/undo`, `/branch`, `/compress`,
+  `/resume`, etc. (Hermes gateway built-ins, pulled from the server's catalog)
+- **Configuration** — `/model`, `/personality`, `/reasoning`, `/yolo`,
+  `/verbose`, `/voice`
+- **Info** — `/help`, `/status`, `/usage`, `/insights`, `/commands`
+- **Personalities** — generated from server config (`config.agent.personalities`)
+- **Skills** — fetched from `GET /api/skills`, grouped by category
 
-- **Session commands**: `/new`, `/retry`, `/undo`, `/branch`, `/compress`, `/resume`, etc. — hermes gateway built-ins
-- **Configuration**: `/model`, `/personality`, `/reasoning`, `/yolo`, `/verbose`, `/voice`
-- **Info**: `/help`, `/status`, `/usage`, `/insights`, `/commands`
-- **Personalities**: generated from server config (`config.agent.personalities`) — `/personality victor`, `/personality creative`, etc.
-- **Skills**: dynamically fetched from `GET /api/skills` — 90+ server skills grouped by category (creative, devops, research, etc.)
+## Tool execution
 
-## Tool Execution
-
-When the agent uses tools (terminal commands, web search, file operations), tool calls are displayed based on your display mode setting (**Settings > Chat > Tool call display**):
+When the agent uses tools (terminal commands, web search, file operations), tool
+calls render based on **Settings → Chat → Tool call display**:
 
 | Mode | Behavior |
 |------|----------|
@@ -67,34 +93,140 @@ When the agent uses tools (terminal commands, web search, file operations), tool
 | **Compact** | Inline one-line display with tool name and status |
 | **Detailed** | Full progress cards with icons, arguments, duration, results |
 
-In Detailed mode, tool cards auto-expand while the tool is running and auto-collapse when complete. Tap to expand/collapse manually.
+In Detailed mode, a card first shows a quiet **"preparing…"** state while the
+model writes the tool's arguments, then fills in live as the tool runs and
+auto-collapses when it completes. Each card carries a right-aligned timestamp and
+duration (e.g. `3.1s · 5:32 PM`). Tap to expand/collapse manually.
 
-Alongside tool-progress cards, assistant messages can also render **rich cards** — structured Material cards for approval prompts, link previews, calendar entries, weather, and other skill output. Tap a card action (Allow / Deny / Open, etc.) to respond; the button row collapses into a confirmation once chosen, and your interaction is synced into the agent's session memory so follow-up turns can reference it. See [Markdown Rendering → Rich Cards](/features/markdown#rich-cards) for the full visual vocabulary.
+### Subagent lanes
 
-## Agent Sheet — Profile + Personality
+When the agent delegates work to subagents, each one renders as its own
+collapsible **lane** beneath the reply — a guide rail with that subagent's
+thinking and tool rows, so a complex multi-agent turn stays readable instead of
+interleaving into one stream. Lanes auto-collapse as each subagent finishes.
 
-Tap the agent name in the middle of the Chat top bar to open the **agent sheet** — a scrollable bottom sheet that holds Profile selection, Personality selection, and session info + analytics for the current conversation (message count, tokens in/out, avg TTFT).
+### Rich cards & interactive prompts
 
-- **Profile** — [upstream Hermes agent directories](/features/profiles) auto-discovered on the server. Selecting one overlays its model + SOUL for subsequent chat turns.
-- **Personality** — system-prompt presets from the server's `config.agent.personalities`. The server default is shown first, followed by all configured alternatives.
+Alongside tool-progress cards, replies can render **rich cards** — structured
+Material cards for link previews, calendar entries, weather, and other skill
+output.
 
-Switching either Profile or Personality shows a toast confirming the change. The active personality name appears above assistant message bubbles. You can also switch personalities via `/personality <name>` slash commands in the chat input.
+Some cards are **interactive prompts** the agent is waiting on: an approval,
+a clarifying question, a `sudo` password, or a secret. Answer right in the card —
+the button row collapses into a confirmation once you choose, and your response
+is synced into the agent's session memory so later turns can reference it.
+Sensitive prompts (sudo, secrets) are masked and hold-to-confirm. See
+[Markdown Rendering → Rich Cards](/features/markdown#rich-cards) for the full
+visual vocabulary.
 
-## Connection Chip
+## Context meter
 
-If you've paired with more than one Hermes server, a **Connection chip** appears on the left of the top bar. Tap it to open a switcher sheet listing all your connections with a health indicator — tap one to switch targets. With a single connection, the chip is hidden. See [Connections](/features/connections) for the full model.
+A thin strip under the chat header tracks how full the conversation's context
+window is. It stays invisible until you're about halfway, then turns **amber**
+around 75% and **red** near 90%, with a `· NN% ctx` readout in the header
+subtitle as you get close to the limit — a quiet heads-up to wrap up or
+`/compress` before the model starts dropping the earliest messages.
 
-## Reasoning Display
+## Turn-complete notifications
 
-When the agent uses extended thinking (Claude, o1), a collapsible "Thinking" block appears above the response. Toggle this in **Settings > Chat > Show reasoning**.
+Long task running while you switch away? If you leave the app mid-reply,
+Hermes-Relay posts a **"Hermes replies"** notification when the turn finishes, so
+you can jump back in. Toggle it under **Settings → Chat → Notify when Hermes
+finishes** (it asks for notification permission the first time).
 
-## Token Tracking
+## Smooth auto-scroll
+
+While a reply streams, the list follows new tokens, reasoning, and tool cards
+like a live transcript:
+
+- **At the bottom?** New content scrolls into view automatically and stays
+  pinned to the latest token, even as the bubble grows with reasoning and tool
+  cards.
+- **Scrolled up to read history?** Auto-follow pauses — you won't be yanked back.
+- **Want to resume?** Scroll back to the bottom, or tap the floating arrow that
+  appears when there's new content below.
+
+Disable it under **Settings → Chat → Smooth auto-scroll** if you'd rather scroll
+manually. It's on by default.
+
+## Markdown
+
+Replies render with full markdown support:
+
+- **Bold** and *italic* text
+- `inline code` and fenced code blocks with syntax highlighting
+- Links, lists, blockquotes
+- Tables and horizontal rules
+
+## Reasoning display
+
+When the agent uses extended thinking, a collapsible **Thinking** block appears
+above the reply and streams live as the model reasons. Toggle it under
+**Settings → Chat → Show reasoning**.
+
+## Copying messages
+
+Long-press any message bubble to copy its text. Haptic feedback confirms the copy.
+(For your own messages, long-press also offers [Edit & resend](#edit-resend).)
+
+## Empty state
+
+With no messages, the chat shows a logo, "Start a conversation," and suggestion
+chips. Tapping a chip populates the input field.
+
+## Agent sheet — profile + personality
+
+Tap the agent name in the middle of the top bar to open the **agent sheet** — a
+scrollable bottom sheet for Profile selection, Personality selection, and session
+info + analytics for the current conversation (message count, tokens in/out, avg
+TTFT).
+
+- **Profile** — [upstream Hermes agent directories](/features/profiles)
+  auto-discovered on the server. Selecting one overlays its model + SOUL for
+  subsequent turns.
+- **Personality** — system-prompt presets from `config.agent.personalities`. The
+  server default is shown first, then all configured alternatives.
+
+Switching either shows a toast. The active personality name appears above
+assistant bubbles. You can also switch via `/personality <name>`.
+
+## Connection chip
+
+If you've paired more than one Hermes server, a **Connection chip** appears on
+the left of the top bar. Tap it to open a switcher listing all your connections
+with a health indicator. With a single connection, the chip is hidden. See
+[Connections](/features/connections).
+
+## Token tracking
 
 Each assistant message shows token usage below the timestamp:
+
 - Input tokens sent
 - Output tokens received
 - Estimated cost
 
-## App Context Prompt
+## App context prompt
 
-When enabled (**Settings > Chat > App context prompt**), a system message is sent with each request telling the agent the user is on mobile. This helps the agent tailor responses for a mobile interface. Enabled by default.
+When enabled (**Settings → Chat → App context prompt**, on by default),
+Hermes-Relay tells the agent it's talking to a phone so replies stay
+mobile-friendly and concise, and can attach optional bridge/permission and
+safety-rail summaries. On the standard (API-server) connection this rides an
+invisible system message. The Gateway connection carries no app-context preamble
+— its protocol has no hidden per-turn slot, and adding one would leave the text
+in your saved chat history — so there the agent reads phone state on demand via
+the `android_phone_status` tool. Privacy-sensitive fields (foreground app,
+battery) default off and are only added when you opt in.
+
+## Keep connected in background
+
+By default the chat connection is held open while Hermes-Relay is on screen and
+for a couple of minutes after you switch away, so a quick return is instant; on
+a longer absence it reconnects when you reopen the chat. Returning to a chat the
+app pre-warms the connection in the background so your first message is fast.
+
+If you want the connection to stay fully open even when the app is in the
+background, turn on **Settings → Chat → Keep connected in background** (off by
+default). It shows an ongoing notification — tap **Disconnect** on it, or flip
+the toggle, to stop. This uses more battery; swiping the app away from recents
+also ends it. It's the same approach apps like Home Assistant use to stay
+connected.

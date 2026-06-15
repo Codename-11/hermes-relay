@@ -9,9 +9,11 @@ The subclass overrides `__setitem__` so we can detect the moment hermes-agent's
 single line in the upstream `connect()` method that gives us a reference to
 the adapter while the app is still being built (router not yet frozen).
 
-At that point, we feature-detect by route path and call `_register_routes()`
-to bind our handlers to the same router the gateway is in the middle of
-populating. We also install the slash-command middleware that intercepts
+At that point, we call `_register_routes()` to bind any missing compatibility
+handlers to the same router the gateway is in the middle of populating. Route
+registration is granular: native upstream routes win per method/path, and the
+bootstrap only fills gaps that still do not exist. We also install the
+slash-command middleware that intercepts
 ``/v1/chat/completions`` and ``/v1/runs`` to handle gateway commands like
 ``/help``, ``/commands``, ``/profile``, and ``/provider`` without forwarding
 them to the LLM.  The gateway then continues with its own route registrations
@@ -31,10 +33,10 @@ import sys
 
 logger = logging.getLogger(__name__)
 
-# Routes we inject. The keys MUST match the path strings registered by
-# `_register_routes()` in `_handlers.py`. The values are unused — only the
-# set of paths matters for feature detection.
-_INJECTED_PATHS: frozenset[str] = frozenset({
+# Compatibility paths that `_handlers.register_routes()` can fill when native
+# upstream support is absent. Registration is method-aware in `_handlers.py`;
+# this set is only used for logging/cheap diagnostics in the import hook.
+_COMPATIBILITY_PATHS: frozenset[str] = frozenset({
     "/api/sessions",
     "/api/sessions/search",
     "/api/sessions/{session_id}",
@@ -163,12 +165,12 @@ def _apply_patch(web_module) -> None:
 
 
 def _maybe_register_routes(app, adapter) -> None:
-    """Feature-detect on route paths and register if absent.
+    """Register missing compatibility routes without shadowing upstream.
 
-    The fork's PR #8556 head branch (`feat/session-api`) and the
-    upstream-merged version (post-PR-#8556) both register the same paths. If
-    any of our injected paths are already on the router, we no-op so we don't
-    double-register.
+    Current Hermes core work is split across focused upstream PRs rather than
+    one broad session-management branch. For example, native `/api/sessions/*`
+    may exist while `/api/config`, `/api/skills`, or `/api/memory` still need
+    the relay bootstrap. Do not use all-or-nothing route detection here.
     """
     existing_paths: set[str] = set()
     try:
@@ -186,12 +188,11 @@ def _maybe_register_routes(app, adapter) -> None:
         )
         return
 
-    if existing_paths & _INJECTED_PATHS:
+    if existing_paths & _COMPATIBILITY_PATHS:
         logger.info(
-            "hermes_relay_bootstrap: detected existing /api/* routes "
-            "(fork or upstream-merged); skipping injection."
+            "hermes_relay_bootstrap: detected native /api/* routes; "
+            "will inject only missing compatibility routes."
         )
-        return
 
     # Defer the heavy import until we're actually going to register. This
     # keeps the bootstrap cheap for `python -c "1+1"` style invocations
@@ -207,20 +208,26 @@ def _maybe_register_routes(app, adapter) -> None:
         return
 
     try:
-        _handlers.register_routes(app, adapter)
+        injected = _handlers.register_routes(app, adapter)
     except Exception as exc:
         logger.warning(
             "hermes_relay_bootstrap: register_routes raised %s; "
-            "the gateway will run without injected sessions API.",
+            "the gateway will run without injected compatibility API.",
             exc,
         )
         return
 
-    logger.info(
-        "hermes_relay_bootstrap: injected %d /api/* routes onto upstream "
-        "hermes-agent gateway",
-        len(_INJECTED_PATHS),
-    )
+    if injected:
+        logger.info(
+            "hermes_relay_bootstrap: injected %d missing /api/* "
+            "compatibility routes onto upstream hermes-agent gateway",
+            injected,
+        )
+    else:
+        logger.info(
+            "hermes_relay_bootstrap: all compatibility /api/* routes are "
+            "already native; no route injection needed."
+        )
 
 
 def _maybe_install_command_middleware(app, adapter) -> None:

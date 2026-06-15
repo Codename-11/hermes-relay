@@ -135,7 +135,7 @@ If the command is not found:
 
 ### C. Pair
 
-On the **relay host**, mint a fresh 6-character pairing code:
+On the **relay host**, mint a fresh pairing invite:
 
 ```bash
 # On the host (SSH in first if remote)
@@ -144,20 +144,29 @@ hermes-pair --ttl 600
 
 Or, from any Hermes chat session on the host: `/hermes-relay-pair`.
 
-You'll get a line like `Code: F3W7EY (valid 10 min)`.
+You'll get a `Copy/paste pairing invite` section with a URL shaped like
+`hermes-relay://pair?payload=...`. That invite carries the relay URL,
+one-shot relay code, API host, and endpoint candidates.
 
-On **this machine** (your laptop):
+On **this machine** (your laptop), either paste that URL into
+**Hermes Relay Desktop → Pair → Paste invite**, or run:
+
+```bash
+hermes-relay pair --pair-qr 'hermes-relay://pair?payload=...' --grant-tools
+```
+
+The CLI probes the invite endpoints, picks the highest-priority reachable
+route, exchanges the embedded `relay.code` for a session token, stores it in
+`~/.hermes/remote-sessions.json`, and prompts for desktop-tool consent when
+`--grant-tools` is present.
+
+Manual code pairing is still available when you only have a code:
 
 ```bash
 hermes-relay pair --remote ws://<host>:8767
 ```
 
-The CLI prompts:
-```
-Pairing code (6 chars): _
-```
-
-Type or paste `F3W7EY`. The CLI will:
+The CLI prompts for the 6-character code and will:
 1. Disable bracketed-paste mode during the prompt (so pasted codes aren't wrapped in `\x1b[200~...`).
 2. Strip ANSI + control chars defensively, clean to `A-Z0-9`, clamp to 6 chars.
 3. Echo `→ using code: F3W7EY` as a sanity check.

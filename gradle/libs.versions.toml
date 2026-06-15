@@ -1,7 +1,7 @@
 [versions]
-appVersionName = "0.6.1"
-appVersionCode = "8"
-agp = "8.13.2"
+appVersionName = "1.0.0"
+appVersionCode = "12"
+agp = "9.2.1"
 kotlin = "2.3.20"
 compose-bom = "2026.03.01"
 navigation-compose = "2.9.7"
@@ -9,6 +9,7 @@ okhttp = "5.3.2"
 kotlinx-serialization = "1.11.0"
 kotlinx-coroutines = "1.10.2"
 mockk = "1.14.9"
+robolectric = "4.14.1"
 security-crypto = "1.1.0"
 lifecycle = "2.10.0"
 activity-compose = "1.13.0"
@@ -16,6 +17,7 @@ core-ktx = "1.18.0"
 datastore = "1.1.1"
 splashscreen = "1.2.0"
 markdown-renderer = "0.30.0"
+coil = "3.4.0"
 haze = "1.7.2"
 mlkit-barcode = "17.3.0"
 camera = "1.6.0"
@@ -60,6 +62,10 @@ okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver",
 # Markdown rendering
 markdown-renderer-m3 = { group = "com.mikepenz", name = "multiplatform-markdown-renderer-m3", version.ref = "markdown-renderer" }
 markdown-renderer-code = { group = "com.mikepenz", name = "multiplatform-markdown-renderer-code", version.ref = "markdown-renderer" }
+
+# Coil 3 — async image loading (generated-image rendering in chat)
+coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
+coil-network-okhttp = { group = "io.coil-kt.coil3", name = "coil-network-okhttp", version.ref = "coil" }
 
 # Haze (glassmorphism blur)
 haze = { group = "dev.chrisbanes.haze", name = "haze", version.ref = "haze" }
@@ -109,13 +115,13 @@ splashscreen = { group = "androidx.core", name = "core-splashscreen", version.re
 # Testing
 junit = { group = "junit", name = "junit", version = "4.13.2" }
 mockk = { group = "io.mockk", name = "mockk", version.ref = "mockk" }
+robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
 compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
 compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 play-publisher = { id = "com.github.triplet.play", version.ref = "play-publisher" }

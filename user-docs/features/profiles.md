@@ -40,21 +40,11 @@ The phone doesn't create profiles — you do that on the server. The phone just 
 
 ## What "switching profile" does on the phone
 
-On chat send with a profile selected, the phone:
+When a profile is selected, the phone first checks whether the relay advertised that profile's own Hermes API server.
 
-1. Replaces the request's `model` field with the profile's `model.default`.
-2. Replaces the request's `system_message` with the profile's `SOUL.md` content (if the profile has a SOUL — some don't).
-
-So you get the profile's **model + persona** applied to the turn. The response comes back from the same gateway you're paired with, using whatever Victor-or-whoever's default provider keys are configured.
-
-## What switching profile DOES NOT do
-
-This is important and subtle.
-
-- **No memory isolation.** The profile's memory DB isn't loaded — the Connection's default memory is used.
-- **No session isolation.** Sessions you see in the sessions list are the Connection's sessions, not the profile's.
-- **No separate API keys.** The profile's `.env` is ignored by this overlay — the Connection's `.env` provides keys.
-- **No separate skills / cron jobs.** Those are instance-scoped and need the profile's own gateway to be active.
+- **With a profile API server:** chat, session browsing, memory, tools, model, and SOUL come from that profile's routed API. The chat session drawer clears and refetches through that profile route, so you see that profile's sessions instead of the default agent's sessions.
+- **Without a profile API server:** the app falls back to the compatibility overlay. It sends the profile `model.default` and `SOUL.md` on each chat turn, but memory, sessions, tools, and provider auth still come from the active Connection.
+- **Voice:** relay-owned voice routes receive the selected profile too. Voice Settings shows whether TTS/STT, streaming voice output, or realtime voice came from profile config or fell back to relay/global defaults. Saving voice output or experimental realtime settings while a named profile is active writes that profile's `voice_output:` / `realtime_voice:` section, so profiles like `mizuki` and `victor` can keep different voices.
 
 **If you want true profile isolation,** run that profile's gateway as its own service on its own port:
 
@@ -62,7 +52,7 @@ This is important and subtle.
 hermes -p mizu platform start api --port 8643
 ```
 
-Then add that gateway as a separate **Connection** on the phone (pair with it like a new server). Each Connection has its own sessions, memory, and state — because each Connection *is* a distinct gateway.
+Then make sure the relay advertises that API server in the profile metadata, or add that gateway as a separate **Connection** on the phone. Each routed profile API has its own sessions, memory, and state because it is a distinct gateway.
 
 ## Picker behaviour
 

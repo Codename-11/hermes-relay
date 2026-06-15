@@ -8,6 +8,8 @@
 #   HERMES_RELAY_VERSION=desktop-v0.3.0-alpha.1 curl -fsSL ... | sh
 # Override install dir:
 #   HERMES_RELAY_INSTALL_DIR=/opt/hermes curl -fsSL ... | sh
+# Optional `hermes` alias for Orca/upstream-style workflows:
+#   HERMES_RELAY_HERMES_ALIAS=enable curl -fsSL ... | sh
 #
 # **Experimental phase** — binaries are unsigned. macOS will quarantine;
 # a `xattr -dr com.apple.quarantine <path>` one-liner is the escape hatch
@@ -18,6 +20,7 @@ set -eu
 REPO="${HERMES_RELAY_REPO:-Codename-11/hermes-relay}"
 VERSION="${HERMES_RELAY_VERSION:-latest}"
 INSTALL_DIR="${HERMES_RELAY_INSTALL_DIR:-$HOME/.hermes/bin}"
+HERMES_ALIAS_MODE="$(printf '%s' "${HERMES_RELAY_HERMES_ALIAS:-skip}" | tr '[:upper:]' '[:lower:]')"
 
 say() { printf '  %s\n' "$*"; }
 die() { printf 'install.sh: %s\n' "$*" >&2; exit 1; }
@@ -63,6 +66,11 @@ normalize_pinned_version() {
 have curl || die "curl is required"
 have uname || die "uname is required"
 have install || die "install(1) is required"
+
+case "$HERMES_ALIAS_MODE" in
+  skip|''|enable|on|true|yes|1|disable|off|false|no|0|remove) ;;
+  *) die "HERMES_RELAY_HERMES_ALIAS must be 'enable', 'disable', or unset" ;;
+esac
 
 # sha256sum on Linux, shasum on macOS — provide a shim.
 if have sha256sum; then
@@ -168,21 +176,38 @@ say "   ok"
 mkdir -p "$INSTALL_DIR"
 install -m 0755 "$asset" "$target"
 
-# Create a `hermes` alias next to `hermes-relay` so muscle memory from the
-# upstream hermes-agent CLI (also called `hermes`) just works. Don't clobber
-# a local hermes install: only create the symlink if nothing is there yet,
-# or if an existing symlink already points at our binary. `-e` returns false
-# for dangling symlinks — we want to overwrite those, so the `[ ! -e ]`
-# branch will recreate when readlink resolves to a missing target.
+# Optional `hermes` alias for Orca/upstream-style workflows. It is not created
+# by default because it can shadow a real local hermes-agent install.
 hermes_target="$INSTALL_DIR/hermes"
-if [ ! -e "$hermes_target" ]; then
-  ln -sf "$(basename "$target")" "$hermes_target"
-  say "-> created hermes -> hermes-relay alias"
-elif [ -L "$hermes_target" ] && [ "$(readlink "$hermes_target")" = "hermes-relay" ]; then
-  : # already points at us, no-op
-else
-  say "-> hermes already exists at $hermes_target (skipped alias creation)"
-fi
+case "$HERMES_ALIAS_MODE" in
+  enable|on|true|yes|1)
+    if [ ! -e "$hermes_target" ] && [ ! -L "$hermes_target" ]; then
+      ln -sf "hermes-relay" "$hermes_target"
+      say "-> created hermes -> hermes-relay alias"
+    elif [ -L "$hermes_target" ] && [ "$(readlink "$hermes_target")" = "hermes-relay" ]; then
+      say "-> hermes alias already points at hermes-relay"
+    else
+      say "-> hermes already exists at $hermes_target (left untouched)"
+    fi
+    ;;
+  disable|off|false|no|0|remove)
+    if [ -L "$hermes_target" ] && [ "$(readlink "$hermes_target")" = "hermes-relay" ]; then
+      rm -f "$hermes_target"
+      say "-> removed hermes alias"
+    elif [ -e "$hermes_target" ] || [ -L "$hermes_target" ]; then
+      say "-> hermes exists but is not managed by hermes-relay (left untouched)"
+    else
+      say "-> hermes alias already disabled"
+    fi
+    ;;
+  *)
+    if [ -L "$hermes_target" ] && [ "$(readlink "$hermes_target")" = "hermes-relay" ]; then
+      say "-> existing hermes alias left enabled (disable with HERMES_RELAY_HERMES_ALIAS=disable and hermes-alias.sh)"
+    else
+      say "-> skipped optional hermes alias (enable with HERMES_RELAY_HERMES_ALIAS=enable)"
+    fi
+    ;;
+esac
 
 # Post-install: confirm the NEW binary reports a sensible version. Don't
 # fail the install on mismatch — the user may have pinned to a pre-release
@@ -236,6 +261,10 @@ if [ -n "$installed_version" ]; then
 else
   say "Installed. Try:"
 fi
-say "  hermes-relay --help       # (or the short alias: hermes --help)"
+say "  hermes-relay --help"
 say "  hermes-relay pair --remote ws://<host>:8767"
+say ""
+say "Optional Orca/upstream-style alias:"
+say "  HERMES_RELAY_HERMES_ALIAS=enable curl -fsSL https://raw.githubusercontent.com/$REPO/main/desktop/scripts/hermes-alias.sh | sh"
+say "  HERMES_RELAY_HERMES_ALIAS=disable curl -fsSL https://raw.githubusercontent.com/$REPO/main/desktop/scripts/hermes-alias.sh | sh"
 say ""

@@ -29,4 +29,39 @@ class RelayErrorClassifierTest {
         assertEquals("Session expired", err.title)
         assertTrue(err.body.contains("re-pair", ignoreCase = true))
     }
+
+    @Test
+    fun realtimeHermesBrokerUnauthorizedDoesNotBlameSavedPhoneKey() {
+        val err = classifyError(
+            IOException("Hermes broker auth failed (401): relay-side Hermes credential was rejected."),
+            context = "voice_config",
+        )
+
+        assertEquals("Relay Hermes auth failed", err.title)
+        assertTrue(err.body.contains("server-side Hermes credential"))
+        assertFalse(err.body.contains("saved API key", ignoreCase = true))
+    }
+
+    @Test
+    fun xaiRealtimeAuthMissingDoesNotBlameHermesApiKey() {
+        val err = classifyError(
+            IOException("xAI Realtime auth is not configured. Configure relay-side xAI realtime provider credentials."),
+            context = "voice_config",
+        )
+
+        assertEquals("Realtime provider auth unavailable", err.title)
+        assertTrue(err.body.contains("provider auth", ignoreCase = true))
+        assertFalse(err.body.contains("saved API key", ignoreCase = true))
+    }
+
+    @Test
+    fun realtimeProviderAuthRejectedDoesNotUseGenericForbiddenCopy() {
+        val err = classifyError(
+            IOException("xAI Realtime rejected the relay auth (403; source: Hermes auth providers.xai-oauth). Refresh xAI OAuth."),
+            context = "voice_config",
+        )
+
+        assertEquals("Realtime provider auth unavailable", err.title)
+        assertFalse(err.body.contains("server refused", ignoreCase = true))
+    }
 }

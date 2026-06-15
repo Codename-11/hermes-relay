@@ -42,15 +42,15 @@ const ariaLabel = computed(() => `${label.value} feature`)
   box-shadow: 0 0 0 2px rgba(180, 83, 9, 0.18);
 }
 
-/* Dark theme — VitePress sets `.dark` on <html>. Use a slightly brighter
- * amber so the badge stays legible against the dark surface. */
+/* Dark theme — VitePress sets `.dark` on <html>. RelayRefresh.Amber so the
+ * badge matches the app's status palette against the navy surface. */
 .dark .experimental-badge {
-  background: rgba(251, 191, 36, 0.10);
-  color: #fbbf24;
-  border-color: rgba(251, 191, 36, 0.30);
+  background: rgba(242, 177, 75, 0.10);
+  color: #F2B14B;
+  border-color: rgba(242, 177, 75, 0.30);
 }
 .dark .experimental-badge .dot {
-  background: #fbbf24;
-  box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.18);
+  background: #F2B14B;
+  box-shadow: 0 0 0 2px rgba(242, 177, 75, 0.18);
 }
 </style>
