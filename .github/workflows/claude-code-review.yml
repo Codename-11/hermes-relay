@@ -25,7 +25,11 @@ jobs:
       issues: read
       id-token: write
     env:
-      IS_RELEASE_PR: ${{ github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.ref == 'dev' && startsWith(github.event.pull_request.title, 'release:') }}
+      # Any dev -> main PR is, by the branching model, the aggregate release PR
+      # (main only ever receives release merges from dev). Detect it by base+head
+      # alone — a title-format match (e.g. "release:") is fragile and silently
+      # let a "Release v1.0.0 …"-titled PR run the full review and time out.
+      IS_RELEASE_PR: ${{ github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.ref == 'dev' }}
 
     steps:
       - name: Skip aggregate release PR review
