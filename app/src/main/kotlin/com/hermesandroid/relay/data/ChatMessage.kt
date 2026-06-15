@@ -238,7 +238,27 @@ data class ToolCall(
     val provenance: String? = null,
     // Duration tracking
     val startedAt: Long = System.currentTimeMillis(),
-    val completedAt: Long? = null
+    val completedAt: Long? = null,
+    /**
+     * Gateway `tool.generating` pre-start phase — the model is still
+     * streaming this tool's arguments. Cleared (flipped false) when the
+     * matching `tool.start` arrives and the call begins executing. Renders
+     * as the quiet "preparing" state in ToolProgressCard / CompactToolCall
+     * rather than the active running spinner.
+     */
+    val isGenerating: Boolean = false,
+    /**
+     * Subagent lane index from gateway `subagent.*` events (`task_index`).
+     * Null = top-level tool call, rendered exactly as before. Non-null
+     * calls are grouped per index into a SubagentLane under the bubble.
+     */
+    val taskIndex: Int? = null,
+    /**
+     * Human label for the owning subagent lane — the `subagent.start`
+     * goal truncated to 60 chars. Carried on each child call so the lane
+     * header can render without a separate lane registry.
+     */
+    val taskLabel: String? = null
 )
 
 enum class MessageRole {

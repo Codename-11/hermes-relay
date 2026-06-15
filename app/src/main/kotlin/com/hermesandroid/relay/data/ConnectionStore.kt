@@ -101,6 +101,17 @@ class ConnectionStore private constructor(
     val activeConnectionId: StateFlow<String?> = _activeConnectionId.asStateFlow()
 
     /**
+     * Flips to `true` once the initial DataStore hydrate completes (success OR
+     * failure). Until then [connections] / [activeConnection] hold their empty
+     * seed values, which are indistinguishable from a genuinely empty store.
+     * Consumers that must not mistake "still loading" for "nothing configured"
+     * — e.g. the chat empty-state, which would otherwise flash a "Connect to
+     * Hermes" CTA on every cold start — gate on this instead of on emptiness.
+     */
+    private val _isHydrated = MutableStateFlow(false)
+    val isHydrated: StateFlow<Boolean> = _isHydrated.asStateFlow()
+
+    /**
      * Derived: the active connection, or null when the active ID is missing
      * or points to a deleted connection. Recomputes every time either
      * upstream emits — cheap list scan, no memoization needed.
@@ -144,6 +155,11 @@ class ConnectionStore private constructor(
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Initial hydrate failed: ${e.message}")
+            } finally {
+                // Mark hydration done even on failure — a failed read still
+                // means "we now know the store's state is empty", so the UI
+                // should stop showing the neutral loading gate.
+                _isHydrated.value = true
             }
         }
     }
@@ -158,7 +174,8 @@ class ConnectionStore private constructor(
                 // callers shouldn't rely on insertion order of a duplicate
                 // add, and the alternative (throwing) makes migration code
                 // more brittle than it needs to be.
-                val next = current.filterNot { it.id == connection.id } + connection
+                val normalized = connection.withDashboardDefaults()
+                val next = current.filterNot { it.id == connection.id } + normalized
                 prefs[KEY_CONNECTIONS] = encodeConnections(next)
                 _connections.value = next
             }
@@ -177,7 +194,8 @@ class ConnectionStore private constructor(
                     Log.w(TAG, "updateConnection: no connection with id=${connection.id} — ignored")
                     return@edit
                 }
-                val next = current.map { if (it.id == connection.id) connection else it }
+                val normalized = connection.withDashboardDefaults()
+                val next = current.map { if (it.id == connection.id) normalized else it }
                 prefs[KEY_CONNECTIONS] = encodeConnections(next)
                 _connections.value = next
             }
@@ -212,27 +230,83 @@ class ConnectionStore private constructor(
                     _activeConnectionId.value = null
                 }
             }
-            removed?.let { connection ->
-                context?.let { ctx ->
-                    val storeKeys = buildSet {
-                        add(connection.tokenStoreKey)
-                        if (connection.tokenStoreKey == Connection.LEGACY_TOKEN_STORE_KEY) {
-                            // Pre-StrongBox fallback path used this file. If
-                            // connection 0 is removed, scrub it alongside the
-                            // hardware-backed legacy filename.
-                            add("hermes_companion_auth")
-                        }
-                    }
-                    for (storeKey in storeKeys) {
-                        try {
-                            ctx.deleteSharedPreferences(storeKey)
-                        } catch (e: Exception) {
-                            Log.w(
-                                TAG,
-                                "deleteSharedPreferences($storeKey) failed: ${e.message}",
-                            )
-                        }
-                    }
+            removed?.let { deleteTokenStoresFor(it) }
+        }
+    }
+
+    /**
+     * Factory-reset helper: clear the persisted connection list, active
+     * pointer, legacy profile aliases, and every known per-connection auth
+     * store. Unlike removing one connection, this intentionally does not pick
+     * a successor; callers are resetting the app back to "no connection".
+     */
+    suspend fun clearAllConnections() {
+        writeMutex.withLock {
+            var removed: List<Connection> = emptyList()
+            dataStore.edit { prefs ->
+                removed = decodeConnections(prefs[KEY_CONNECTIONS])
+                prefs.remove(KEY_CONNECTIONS)
+                prefs.remove(KEY_ACTIVE_CONNECTION_ID)
+                prefs.remove(KEY_LEGACY_PROFILES)
+                prefs.remove(KEY_LEGACY_ACTIVE_PROFILE_ID)
+                _connections.value = emptyList()
+                _activeConnectionId.value = null
+            }
+            removed.forEach { deleteTokenStoresFor(it) }
+        }
+    }
+
+    suspend fun replaceConnections(
+        connections: List<Connection>,
+        activeConnectionId: String? = null,
+    ) {
+        writeMutex.withLock {
+            var removed: List<Connection> = emptyList()
+            val normalizedConnections = connections.map { it.withDashboardDefaults() }
+            val normalizedActiveId = activeConnectionId
+                ?.takeIf { id -> normalizedConnections.any { it.id == id } }
+                ?: normalizedConnections.firstOrNull()?.id
+
+            dataStore.edit { prefs ->
+                removed = decodeConnections(prefs[KEY_CONNECTIONS])
+                if (normalizedConnections.isEmpty()) {
+                    prefs.remove(KEY_CONNECTIONS)
+                } else {
+                    prefs[KEY_CONNECTIONS] = encodeConnections(normalizedConnections)
+                }
+                if (normalizedActiveId == null) {
+                    prefs.remove(KEY_ACTIVE_CONNECTION_ID)
+                } else {
+                    prefs[KEY_ACTIVE_CONNECTION_ID] = normalizedActiveId
+                }
+                prefs.remove(KEY_LEGACY_PROFILES)
+                prefs.remove(KEY_LEGACY_ACTIVE_PROFILE_ID)
+                _connections.value = normalizedConnections
+                _activeConnectionId.value = normalizedActiveId
+            }
+            removed.forEach { deleteTokenStoresFor(it) }
+        }
+    }
+
+    private fun deleteTokenStoresFor(connection: Connection) {
+        context?.let { ctx ->
+            val storeKeys = buildSet {
+                add(connection.tokenStoreKey)
+                if (connection.tokenStoreKey == Connection.LEGACY_TOKEN_STORE_KEY) {
+                    // Pre-StrongBox fallback path used this file. If
+                    // connection 0 is removed, scrub it alongside the
+                    // hardware-backed legacy filename.
+                    add("hermes_companion_auth")
+                }
+            }
+            for (storeKey in storeKeys) {
+                try {
+                    ctx.deleteSharedPreferences(storeKey)
+                } catch (e: Exception) {
+                    Log.w(
+                        TAG,
+                        "deleteSharedPreferences($storeKey) failed: ${e.message}",
+                    )
                 }
             }
         }
@@ -294,6 +368,8 @@ class ConnectionStore private constructor(
                             pairedAt = pairedAtMillis,
                             transportHint = transportHint,
                             expiresAt = expiresAtMillis,
+                            dashboardUrl = target.dashboardUrl
+                                ?: Connection.deriveDefaultDashboardUrl(target.apiServerUrl),
                         )
                     } else {
                         it
@@ -340,6 +416,8 @@ class ConnectionStore private constructor(
                     apiServerUrl = apiUrl,
                     relayUrl = relayUrl,
                     tokenStoreKey = Connection.LEGACY_TOKEN_STORE_KEY,
+                    dashboardUrl = Connection.deriveDefaultDashboardUrl(apiUrl),
+                    routeCandidates = Connection.buildRouteCandidates(apiUrl, relayUrl),
                     pairedAt = null,
                     lastActiveSessionId = legacyLastSessionId,
                     transportHint = null,
@@ -355,6 +433,33 @@ class ConnectionStore private constructor(
         }
     }
 
+    suspend fun setDashboardStatus(
+        connectionId: String,
+        status: DashboardConnectionStatus,
+    ) {
+        writeMutex.withLock {
+            dataStore.edit { prefs ->
+                val current = decodeConnections(prefs[KEY_CONNECTIONS])
+                val target = current.firstOrNull { it.id == connectionId } ?: return@edit
+                val next = current.map {
+                    if (it.id == connectionId) {
+                        target.copy(
+                            dashboardUrl = target.dashboardUrl
+                                ?: Connection.deriveDefaultDashboardUrl(target.apiServerUrl),
+                            dashboardAuthRequired = status.authRequired,
+                            dashboardAuthProviders = status.authProviders,
+                            dashboardLastStatus = status,
+                        )
+                    } else {
+                        it
+                    }
+                }
+                prefs[KEY_CONNECTIONS] = encodeConnections(next)
+                _connections.value = next
+            }
+        }
+    }
+
     // --- Encoding helpers ---------------------------------------------------
 
     private fun encodeConnections(list: List<Connection>): String =
@@ -364,9 +469,33 @@ class ConnectionStore private constructor(
         if (raw.isNullOrBlank()) return emptyList()
         return try {
             json.decodeFromString(connectionListSerializer, raw)
+                .map { it.withDashboardDefaults() }
         } catch (e: Exception) {
             Log.w(TAG, "decodeConnections failed, returning empty list: ${e.message}")
             emptyList()
+        }
+    }
+
+    private fun Connection.withDashboardDefaults(): Connection {
+        val derivedDashboardUrl = Connection.deriveDefaultDashboardUrl(apiServerUrl)
+        val normalizedRoutes = routeCandidates.ifEmpty {
+            Connection.buildRouteCandidates(apiServerUrl, relayUrl)
+        }
+        val normalizedPreferredRouteRole = preferredRouteRole?.takeIf { preferred ->
+            normalizedRoutes.any { it.role.equals(preferred, ignoreCase = true) }
+        }
+        return if (
+            (dashboardUrl.isNullOrBlank() && derivedDashboardUrl != null) ||
+            normalizedRoutes != routeCandidates ||
+            normalizedPreferredRouteRole != preferredRouteRole
+        ) {
+            copy(
+                dashboardUrl = dashboardUrl?.takeIf { it.isNotBlank() } ?: derivedDashboardUrl,
+                routeCandidates = normalizedRoutes,
+                preferredRouteRole = normalizedPreferredRouteRole,
+            )
+        } else {
+            this
         }
     }
 

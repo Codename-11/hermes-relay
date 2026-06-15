@@ -1,7 +1,36 @@
-v0.8.1 - Voice mode crash fix
+v1.0.0 - The 1.0 release
+
+Standard path
+* Chat, Manage, and voice now work on a plain Hermes agent — no relay
+  plugin required. The plugin is optional and only adds power tools.
+
+Chat
+* New gateway transport streams the agent's reasoning live, so the
+  Thinking block fills in during generation instead of after.
+* Warm-start + opt-in "Keep connected in background" make returning to a
+  conversation fast.
+* Attachments at desktop parity: images, PDFs, and files upload over the
+  gateway. If a connection can't carry a file, you'll see a notice
+  instead of a silent drop.
+* Steer a running turn, edit & resend your messages, watch subagent
+  lanes, and a context-window meter — plus turn-complete notifications.
+* Tap an image to open it full-screen (pinch to zoom); save or share
+  images and other attachments.
+* Redesigned input bar: pill field, one morphing Send/Voice/Stop button.
+
+Profiles
+* Switch the whole agent — model, persona, and skills — per conversation.
+  The drawer scopes to the active profile, and switching is ephemeral: it
+  never changes your server's default agent.
+
+Manage
+* Models, provider keys, profiles + SOUL.md, and a skills hub — parity
+  with the desktop dashboard. Cached for instant cold-launch.
 
 Voice
-* Fixed a crash that could hit voice mode when barge-in was enabled on the
-  legacy text-to-speech path — the agent's first words no longer cut off
-  into a crash. Barge-in is opt-in; the Realtime Agent and Voice Output
-  paths were never affected.
+* Realtime Agent keeps one session across turns; long runs continue in
+  the background and are spoken when ready.
+
+Polish
+* Seamless LAN/Tailscale handoffs (no chat reload), slide-down status
+  toasts, and a broad round of fixes.

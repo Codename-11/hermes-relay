@@ -27,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
@@ -40,6 +41,7 @@ fun OnboardingPage(
     title: String,
     description: String,
     modifier: Modifier = Modifier,
+    transparentHero: Boolean = false,
     heroContent: @Composable BoxScope.() -> Unit = {
         FeatureHero(
             icon = icon,
@@ -82,14 +84,14 @@ fun OnboardingPage(
                 .gradientBorder(shape = heroShape, isDarkTheme = isDarkTheme),
             shape = heroShape,
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainer
+                containerColor = if (transparentHero) Color.Transparent else MaterialTheme.colorScheme.surfaceContainer
             )
         ) {
+            val heroModifier = Modifier
+                .fillMaxWidth()
+                .height(232.dp)
             Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(232.dp)
-                    .background(heroBrush),
+                modifier = if (transparentHero) heroModifier else heroModifier.background(heroBrush),
                 contentAlignment = Alignment.Center
             ) {
                 heroContent()

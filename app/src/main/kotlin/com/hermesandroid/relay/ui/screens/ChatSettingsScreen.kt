@@ -1,5 +1,8 @@
 package com.hermesandroid.relay.ui.screens
 
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -42,7 +45,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.network.GatewayAvailability
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 
@@ -160,6 +165,52 @@ fun ChatSettingsScreen(
                         Switch(
                             checked = smoothAutoScroll,
                             onCheckedChange = { connectionViewModel.setSmoothAutoScroll(it) }
+                        )
+                    }
+
+                    HorizontalDivider()
+
+                    // Turn-complete notification toggle. First enable on
+                    // API 33+ runs the POST_NOTIFICATIONS request (the
+                    // BridgeScreen master-toggle precedent); if the user
+                    // denies, the notifier silently no-ops at post time.
+                    val notifyTurnComplete by connectionViewModel.notifyTurnComplete.collectAsState()
+                    val settingsContext = LocalContext.current
+                    val notifyPermissionLauncher = rememberLauncherForActivityResult(
+                        ActivityResultContracts.RequestPermission()
+                    ) { /* Notifier re-checks the grant at post time. */ }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Notify when Hermes finishes",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = "Post a notification when a reply completes while the app is in the background",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = notifyTurnComplete,
+                            onCheckedChange = { enabled ->
+                                connectionViewModel.setNotifyTurnComplete(enabled)
+                                if (enabled &&
+                                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                    androidx.core.content.ContextCompat.checkSelfPermission(
+                                        settingsContext,
+                                        android.Manifest.permission.POST_NOTIFICATIONS,
+                                    ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                                ) {
+                                    notifyPermissionLauncher.launch(
+                                        android.Manifest.permission.POST_NOTIFICATIONS
+                                    )
+                                }
+                            }
                         )
                     }
 
@@ -373,11 +424,9 @@ fun ChatSettingsScreen(
                     HorizontalDivider()
 
                     val serverCaps by connectionViewModel.serverCapabilities.collectAsState()
-                    val resolvedStreamingEndpoint = if (streamingEndpoint == "auto") {
-                        serverCaps.preferredChatEndpoint()
-                    } else {
-                        streamingEndpoint
-                    }
+                    val gatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
+                    val resolvedStreamingEndpoint =
+                        connectionViewModel.resolveStreamingEndpoint(streamingEndpoint)
 
                     // Parse tool annotations toggle (text-stream endpoints only)
                     val isTextAnnotationMode = resolvedStreamingEndpoint == "sessions" ||
@@ -440,6 +489,8 @@ fun ChatSettingsScreen(
                                 "Auto: picks the best path based on what your server exposes. " +
                                         "Currently using: $resolvedStreamingEndpoint" +
                                         when {
+                                            resolvedStreamingEndpoint == "gateway" ->
+                                                " (live thinking via the dashboard WebSocket)"
                                             !serverCaps.sessionsChatStream && serverCaps.portable ->
                                                 " (chat via /v1/chat/completions)"
                                             !serverCaps.sessionsChatStream && serverCaps.runs ->
@@ -447,6 +498,9 @@ fun ChatSettingsScreen(
                                             else -> ""
                                         }
                             }
+                            "gateway" -> "Gateway: live thinking + rich tool events over the " +
+                                "dashboard WebSocket (/api/ws) — what the desktop app uses. " +
+                                "Requires Manage sign-in; falls back to SSE per turn when unavailable."
                             "sessions" -> "Sessions: Hermes-native /api/sessions/{id}/chat/stream."
                             "completions" -> "Chat: OpenAI-compatible SSE via /v1/chat/completions."
                             "runs" -> "Runs: use only when your server streams /v1/runs directly."
@@ -457,9 +511,19 @@ fun ChatSettingsScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        if (gatewayAvailability == GatewayAvailability.SignInRequired &&
+                            (streamingEndpoint == "gateway" || streamingEndpoint == "auto")
+                        ) {
+                            Text(
+                                text = "Sign in via the Manage tab to enable Gateway streaming " +
+                                    "(live thinking).",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.tertiary
+                            )
+                        }
 
-                        val endpointOptions = listOf("auto", "sessions", "completions", "runs")
-                        val endpointLabels = listOf("Auto", "Sessions", "Chat", "Runs")
+                        val endpointOptions = listOf("auto", "gateway", "sessions", "completions", "runs")
+                        val endpointLabels = listOf("Auto", "Gateway", "Sessions", "Chat", "Runs")
                         val selectedEndpointIndex = endpointOptions.indexOf(streamingEndpoint).coerceAtLeast(0)
 
                         SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
@@ -479,6 +543,36 @@ fun ChatSettingsScreen(
                     }
 
                     HorizontalDivider()
+
+                    // Keep connected in background — opt-in, both flavors.
+                    run {
+                        val gatewayKeepAlive by connectionViewModel.gatewayKeepAlive.collectAsState()
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Keep connected in background",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    text = "Hold the chat connection open while the app is in the " +
+                                        "background via a persistent notification, so replies stay " +
+                                        "instant. Uses more battery; off by default.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = gatewayKeepAlive,
+                                onCheckedChange = { connectionViewModel.setGatewayKeepAlive(it) }
+                            )
+                        }
+
+                        HorizontalDivider()
+                    }
 
                     // Limits — expandable
                     var limitsExpanded by remember { mutableStateOf(false) }

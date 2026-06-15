@@ -161,12 +161,12 @@ Phone control — mirrors upstream relay protocol.
 
 ### 3.3 Auth Flow
 
-Pairing is QR-driven. The operator runs the pair command on the host — either `/hermes-relay-pair` from any Hermes chat surface (backed by the `devops/hermes-relay-pair` skill) or the `hermes-pair` shell shim (a thin wrapper around `python -m plugin.pair`). Both share the same implementation in `plugin/pair.py`. The command probes for a running relay, generates a fresh 6-char code, pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint, then embeds the relay URL + code + **chosen TTL + per-channel grants + HMAC signature** (and the API server credentials) in a single QR payload. The phone scans once, **confirms the TTL and grants via a picker dialog**, and is configured for both chat AND terminal/bridge.
+Pairing is QR-driven. The operator runs the pair command on the host — `hermes pair`, `/hermes-relay-pair` from any Hermes chat surface, or the compatibility `hermes-pair` shell shim. All share the same implementation in `plugin/pair.py`. The command probes for a running relay, generates a fresh 6-char code, pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint, then embeds the relay URL + code + **chosen TTL + per-channel grants + HMAC signature** (and the API server credentials) in a single QR payload. The phone scans once, **confirms the TTL and grants via a picker dialog**, and is configured for both chat AND terminal/bridge.
 
 As of **v3 (ADR 24)**, the QR can also carry an ordered list of **endpoint candidates** (`lan` / `tailscale` / `public` / operator-defined roles). A single pairing covers every network the phone might be on — the phone picks the highest-priority reachable candidate at connect time and re-probes on network change. The single-URL top-level fields still appear in v3 QRs for backward compatibility; old phones ignore `endpoints` via `ignoreUnknownKeys = true`, new phones prefer `endpoints` and fall back to the top-level URL when the array is absent. See [`docs/remote-access.md`](remote-access.md) for the operator-facing setup per mode.
 
 ```
-1. Operator runs /hermes-relay-pair (or hermes-pair) on the Hermes host,
+1. Operator runs `hermes pair` (or `/hermes-relay-pair`) on the Hermes host,
    optionally with --ttl <duration>, --grants terminal=7d,bridge=1d,
    --mode {auto,lan,tailscale,public} (default auto), --public-url <url>.
 2. The pair command reads the API server config (host/port/key) from
@@ -259,7 +259,7 @@ Biometric gate on the app side for terminal access (fingerprint/face) remains pl
 
 - `hermes` — payload version. `1` is the legacy shape (no new fields); `2` is set when any v2-only field (`ttl_seconds`, `grants`, `transport_hint`) is present in the `relay` block; `3` is set when `endpoints` is present (ADR 24). All three versions parse on the current Android client.
 - `endpoints` — **optional** ordered list of endpoint candidates. When present, the phone uses these in strict-priority order (0 = highest) and re-probes reachability on network change. When absent, the phone synthesizes a single priority-0 candidate from the top-level `host`/`port`/`tls` + `relay.url`/`transport_hint` fields. `role` is an open string (known values `lan` / `tailscale` / `public` get styled UI; anything else renders as "Custom VPN (<role>)"). Per-endpoint entries intentionally carry **only** `api` + `relay` — the pairing code, TTL, and grants stay at the top level because they're per-pair artifacts, not per-endpoint. Full schema in ADR 24.
-- Top-level fields (`host`/`port`/`key`/`tls`) configure the direct-chat Hermes API Server. Unchanged since v1.
+- Top-level fields (`host`/`port`/`key`/`tls`) configure the direct Hermes API Server. Unchanged since v1.
 - `relay` — **optional** and nullable. Present only when the pair command found a running relay and successfully pre-registered a pairing code with it.
 - `relay.url` — full WebSocket URL (`ws://` for dev, `wss://` for production).
 - `relay.code` — 6-char one-shot pairing code from `A-Z / 0-9`. Expires 10 minutes after registration.
@@ -287,7 +287,7 @@ Implementation references:
 | Transport (default) | WSS / TLS 1.3 (**preferred**) |
 | Transport (opt-in) | Plain `ws://` — gated on `InsecureConnectionAckDialog` consent + reason picker (LAN-only / Tailscale or VPN / Local dev). Reason is displayed, not enforced — operator intent is the trust model. |
 | Transport indicator | `TransportSecurityBadge` in Settings + Session sheet + Paired Devices card. Three states: 🔒 secure / 🔓 insecure with reason / 🔓 insecure unknown. |
-| Pairing (host → phone) | `hermes-pair` / `/hermes-relay-pair` → `POST /pairing/register` (loopback-only) → QR embedded in operator's terminal or chat. |
+| Pairing (host → phone) | `hermes pair` / `/hermes-relay-pair` → `POST /pairing/register` (loopback-only) → QR embedded in operator's terminal or chat. |
 | Pairing (phone → host, Phase 3) | Stubbed at `POST /pairing/approve` — same wire shape, same loopback gate. Real UX pending bridge work. |
 | Session lifetime | User-selected at pair: 1d / 7d / 30d / 90d / 1y / **never**. Never is always selectable; operator intent is the trust model. |
 | Per-channel grants | One session token carries per-channel expiries for `chat`, `terminal`, `bridge`, `tui`, and split voice grants (`voice:config`, `voice:stt`, `voice:tts`). Grants are clamped to session lifetime. |
@@ -431,7 +431,7 @@ HTTP routes registered by `create_app()` in `plugin/relay/server.py`:
 | `/ws`, `/` | GET (upgrade) | WebSocket handler — main multiplexed channel |
 | `/health` | GET | Health check — returns `{status, version, clients, sessions}` |
 | `/pairing` | POST | Generate a new relay-side pairing code |
-| `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code. Used by the pair command (`/hermes-relay-pair` skill or `hermes-pair` shim) to inject codes that will appear in QR payloads. Request: `{"code": "ABCD12"}`. Rejects non-loopback peers with HTTP 403. |
+| `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code. Used by the pair command (`hermes pair`, `/hermes-relay-pair`, or compatibility `hermes-pair`) to inject codes that will appear in QR payloads. Request: `{"code": "ABCD12"}`. Rejects non-loopback peers with HTTP 403. |
 | `/pairing/mint` | POST | **Loopback only.** Mint a fresh pairing code and signed QR payload plus `pairing_url` (`hermes-relay://pair?payload=...`) for dashboard, desktop GUI, and CLI pair/repair flows. |
 | `/api/profiles/{name}/config` | GET | Profile-scoped read-only config. Returns `{profile, path, config, readonly: true}` — `config` is the parsed `config.yaml` for `~/.hermes/` (when `name == "default"`) or `~/.hermes/profiles/<name>/`. Loopback callers skip bearer; remote callers require the relay session bearer. 404 on missing profile / missing config.yaml; 500 on yaml parse error. See §22 in decisions.md. |
 | `/api/profiles/{name}/skills` | GET | Profile-scoped skill enumeration. Walks `<profile>/skills/<category>/<skill>/SKILL.md` recursively; returns `{profile, skills: [{name, category, description, path, enabled: true}], total}`. Same auth model as `/config`. `name`/`description` come from YAML frontmatter when present, else directory basename. All skills report `enabled: true` today — see §22 for the toggle stub. |

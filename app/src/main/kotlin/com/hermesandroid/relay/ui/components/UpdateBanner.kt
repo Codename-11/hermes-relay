@@ -7,6 +7,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.SystemUpdate
@@ -21,7 +24,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
@@ -48,14 +51,22 @@ fun UpdateBanner(
     update: AvailableUpdate,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    includeStatusBarPadding: Boolean = false,
 ) {
     val context = LocalContext.current
     Row(
         modifier = modifier
+            .then(
+                if (includeStatusBarPadding) {
+                    Modifier.windowInsetsPadding(WindowInsets.statusBars)
+                } else {
+                    Modifier
+                }
+            )
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 8.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(MaterialTheme.colorScheme.primaryContainer)
+            .shadow(8.dp, RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(14.dp))
             .padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),

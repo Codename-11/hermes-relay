@@ -119,7 +119,7 @@ private fun ConnectionRow(
 ) {
     val hostname = Connection.extractDefaultLabel(connection.apiServerUrl)
     val statusLine = if (connection.pairedAt == null) {
-        "$hostname • Not paired"
+        "$hostname • Standard"
     } else {
         "$hostname • Paired"
     }

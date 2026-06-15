@@ -5,12 +5,10 @@ pluginManagement {
         gradlePluginPortal()
     }
     plugins {
-        id("com.android.application") version "8.9.1"
-        id("com.android.library") version "8.9.1"
-        id("org.jetbrains.kotlin.android") version "2.0.20"
+        id("com.android.application") version "9.2.1"
+        id("com.android.library") version "9.2.1"
         id("org.jetbrains.kotlin.plugin.compose") version "2.0.20"
         id("org.jetbrains.kotlin.plugin.serialization") version "2.0.20"
-        id("com.meta.spatial.plugin") version "0.12.0"
     }
 }
 
@@ -29,9 +27,3 @@ include(":relay-ui")
 
 project(":relay-core").projectDir = file("../relay-core")
 project(":relay-ui").projectDir = file("../relay-ui")
-
-gradle.beforeProject {
-    plugins.withId("com.android.library") {
-        pluginManager.apply("org.jetbrains.kotlin.android")
-    }
-}

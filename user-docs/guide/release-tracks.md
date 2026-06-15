@@ -45,7 +45,7 @@ One tap from the Play Store listing. Updates arrive automatically.
 
 ### Sideload
 
-Download the file ending in `-sideload-release.apk` from the latest GitHub Release (for example, `hermes-relay-0.8.0-sideload-release.apk`), allow installs from your browser, and tap the file. Full step-by-step instructions (including how to verify the APK signature) live in [Installation & Setup → Sideload APK](/guide/getting-started#sideload-apk).
+Download the file ending in `-sideload-release.apk` from the latest GitHub Release (for example, `hermes-relay-1.0.0-sideload-release.apk`), allow installs from your browser, and tap the file. Full step-by-step instructions (including how to verify the APK signature) live in [Installation & Setup → Sideload APK](/guide/getting-started#sideload-apk).
 
 [GitHub Android Releases →](https://github.com/Codename-11/hermes-relay/releases)
 

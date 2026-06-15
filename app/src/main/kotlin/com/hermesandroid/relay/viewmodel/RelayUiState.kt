@@ -111,6 +111,7 @@ enum class ConnectionStatusTone {
 data class ConnectionStatusSnapshot(
     val title: String,
     val route: String? = null,
+    val actionLabel: String? = null,
     val active: Boolean = false,
     val success: Boolean = false,
     val tone: ConnectionStatusTone = ConnectionStatusTone.Info,
@@ -122,6 +123,7 @@ fun ConnectionHandoffStatus.asConnectionStatusSnapshot(): ConnectionStatusSnapsh
     ConnectionStatusSnapshot(
         title = title,
         route = route,
+        actionLabel = null,
         active = active,
         success = success,
         tone = when {

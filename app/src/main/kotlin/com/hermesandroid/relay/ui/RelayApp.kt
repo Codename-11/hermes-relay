@@ -1,14 +1,17 @@
 package com.hermesandroid.relay.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
@@ -18,6 +21,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.sp
@@ -26,11 +30,7 @@ import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -44,6 +44,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -51,14 +52,13 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import com.hermesandroid.relay.ui.theme.purpleGlow
 import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -67,8 +67,11 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.hermesandroid.relay.ui.components.MorphingSphere
-import com.hermesandroid.relay.ui.components.ConnectionStatusBanner
+import com.hermesandroid.relay.ui.components.ConnectionStatusToast
 import com.hermesandroid.relay.ui.components.ConnectionSwitcherSheet
+import com.hermesandroid.relay.ui.components.PowerFeatureGateScreen
+import com.hermesandroid.relay.ui.components.PowerFeatureGateStatus
+import com.hermesandroid.relay.ui.components.RelayStatusStrip
 import com.hermesandroid.relay.ui.components.UnattendedGlobalBanner
 import com.hermesandroid.relay.ui.components.UpdateBanner
 import com.hermesandroid.relay.update.UpdateCheckResult
@@ -78,6 +81,10 @@ import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BridgePreferencesRepository
 import com.hermesandroid.relay.data.BridgeSafetyPreferencesRepository
 import com.hermesandroid.relay.data.BuildFlavor
+import com.hermesandroid.relay.data.VoiceAudioRoute
+import com.hermesandroid.relay.data.VoicePreferencesRepository
+import com.hermesandroid.relay.data.VoiceSettings
+import com.hermesandroid.relay.data.displayLabel
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
@@ -94,6 +101,7 @@ import com.hermesandroid.relay.ui.screens.BridgeSafetySettingsScreen
 // === END PHASE3-safety-rails ===
 import com.hermesandroid.relay.ui.screens.ChatScreen
 import com.hermesandroid.relay.ui.screens.ChatSettingsScreen
+import com.hermesandroid.relay.ui.screens.DashboardManagementScreen
 import com.hermesandroid.relay.ui.screens.DeveloperSettingsScreen
 import com.hermesandroid.relay.ui.screens.MediaSettingsScreen
 import com.hermesandroid.relay.ui.screens.PairedDevicesScreen
@@ -104,8 +112,17 @@ import com.hermesandroid.relay.ui.screens.SettingsScreen
 import com.hermesandroid.relay.ui.screens.TerminalScreen
 import com.hermesandroid.relay.ui.screens.NotificationCompanionSettingsScreen
 import com.hermesandroid.relay.ui.screens.VoiceSettingsScreen
+import com.hermesandroid.relay.ui.screens.prewarmDashboardManage
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
+import com.hermesandroid.relay.ui.theme.RelayRefresh
+import com.hermesandroid.relay.ui.theme.relayGridTexture
+import com.hermesandroid.relay.diagnostics.DiagnosticCategory
+import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
+import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.network.RelayProfileInspectorClient
+import com.hermesandroid.relay.network.AutoVoiceAudioClient
+import com.hermesandroid.relay.network.DynamicDashboardCookieJar
+import com.hermesandroid.relay.network.RelayVoiceAudioClientAdapter
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.ProfileInspectorViewModel
@@ -116,6 +133,7 @@ import com.hermesandroid.relay.audio.VoiceRecorder
 import com.hermesandroid.relay.audio.VoiceSfxPlayer
 import com.hermesandroid.relay.audio.RealtimePcmPlayer
 import com.hermesandroid.relay.network.RelayVoiceClient
+import com.hermesandroid.relay.network.StandardHermesVoiceClient
 import com.hermesandroid.relay.auth.AuthState
 import androidx.lifecycle.viewModelScope
 
@@ -166,6 +184,7 @@ sealed class Screen(
     }
     data object Terminal : Screen("terminal", "Terminal", Icons.Filled.Code)
     data object Bridge : Screen("bridge", "Bridge", Icons.Filled.PhoneAndroid)
+    data object Manage : Screen("manage", "Manage", Icons.Filled.Settings)
     data object Settings : Screen("settings", "Settings", Icons.Filled.Settings)
 
     // Non-bottom-nav destinations — reached by explicit navigation, not the
@@ -183,11 +202,11 @@ sealed class Screen(
     // the ConnectionsSettings "Re-pair" button targets a specific
     // connection. The "Add connection" path pre-creates a placeholder
     // via `ConnectionViewModel.beginAddConnection()` and routes here
-    // with that id, so the wizard's applyPairingPayload lands in the
+    // with that id, so the wizard's standard connect / applyPairingPayload lands in the
     // new connection's auth store instead of the outgoing one's.
     data object Pair : Screen(
         "pair?connectionId={connectionId}&autoStart={autoStart}",
-        "Pair",
+        "Connect",
         Icons.Filled.Settings,
     ) {
         const val ARG_CONNECTION_ID: String = "connectionId"
@@ -196,8 +215,8 @@ sealed class Screen(
          * Currently only `"scan"` is recognised — the "Add connection" FAB
          * on the Connections screen passes it so the camera opens
          * immediately instead of forcing the user through the Method step.
-         * Re-pair flows intentionally leave this null so the full chooser
-         * (Scan / Enter code / Show code) remains available.
+         * Standard add/re-pair flows leave this null so the full chooser
+         * remains available.
          */
         const val ARG_AUTO_START: String = "autoStart"
         fun route(connectionId: String? = null, autoStart: String? = null): String {
@@ -278,13 +297,6 @@ sealed class Screen(
     }
 }
 
-private val bottomNavScreens = listOf(
-    Screen.Chat,
-    Screen.Terminal,
-    Screen.Bridge,
-    Screen.Settings
-)
-
 @Composable
 fun RelayApp() {
     val connectionViewModel: ConnectionViewModel = viewModel()
@@ -364,6 +376,15 @@ fun RelayApp() {
     val activeConnectionId by connectionViewModel.activeConnectionId.collectAsState()
 
     val mediaContext = androidx.compose.ui.platform.LocalContext.current
+    val voicePreferences = remember(mediaContext) { VoicePreferencesRepository(mediaContext) }
+    val voiceSettings by voicePreferences.settings.collectAsState(initial = VoiceSettings())
+    val selectedAudioRoute = VoiceAudioRoute.fromStorage(voiceSettings.audioRoute)
+    val selectedAudioRouteState = rememberUpdatedState(selectedAudioRoute)
+    val standardVoiceReady by connectionViewModel.standardVoiceReady.collectAsState()
+    val standardVoiceAvailability by connectionViewModel.standardVoiceAvailability.collectAsState()
+    val relayVoiceReady by connectionViewModel.relayVoiceReady.collectAsState()
+    val standardVoiceReadyState = rememberUpdatedState(standardVoiceReady)
+    val relayVoiceReadyState = rememberUpdatedState(relayVoiceReady)
 
     // Voice pipeline wiring — mirrors ChatViewModel.initializeMedia (above).
     // We build a dedicated OkHttpClient so voice requests don't contend with
@@ -390,6 +411,35 @@ fun RelayApp() {
             apiBearerTokenProvider = {
                 connectionViewModel.getApiKey()
             },
+        )
+    }
+    // Standard voice talks to the dashboard web server (hermes-desktop's
+    // /api/audio/* contract) and authenticates with the same per-connection
+    // cookie session Manage signs in with. Dashboard URLs are connection-level
+    // (no per-profile dashboard exists), so unlike chat this client does not
+    // route through ProfileApiUrlResolver.
+    val standardVoiceClient = remember {
+        StandardHermesVoiceClient(
+            context = mediaContext,
+            okHttpClient = okhttp3.OkHttpClient.Builder()
+                .cookieJar(
+                    DynamicDashboardCookieJar {
+                        connectionViewModel.activeDashboardCookieStore()
+                    },
+                )
+                .readTimeout(2, java.util.concurrent.TimeUnit.MINUTES)
+                .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                .build(),
+            dashboardUrlProvider = { connectionViewModel.activeDashboardUrl() },
+        )
+    }
+    val voiceAudioClient = remember {
+        AutoVoiceAudioClient(
+            standardClient = standardVoiceClient,
+            relayClient = RelayVoiceAudioClientAdapter(voiceClient),
+            routeProvider = { selectedAudioRouteState.value },
+            standardReadyProvider = { standardVoiceReadyState.value },
+            relayReadyProvider = { relayVoiceReadyState.value },
         )
     }
 
@@ -419,6 +469,7 @@ fun RelayApp() {
         val player = VoicePlayer(mediaContext)
         voiceViewModel.initialize(
             voiceClient = voiceClient,
+            voiceAudioClient = voiceAudioClient,
             chatViewModel = chatViewModel,
             recorder = recorder,
             player = player,
@@ -451,7 +502,7 @@ fun RelayApp() {
             // 2026-04-17: persist the interaction-mode preference across
             // app restarts. VoicePreferencesRepository is the same repo
             // VoiceSettingsScreen reads/writes.
-            voicePreferences = com.hermesandroid.relay.data.VoicePreferencesRepository(mediaContext),
+            voicePreferences = voicePreferences,
             voiceRelayPreflight = { connectionViewModel.verifyRelayForVoice() },
             voiceHandoffReporter = { connectionViewModel.recordVoiceHandoff(it) },
             bargeInPreferences = com.hermesandroid.relay.data.BargeInPreferencesRepository(mediaContext),
@@ -493,46 +544,86 @@ fun RelayApp() {
             }
         }
         chatViewModel.observeConnectionSwitches(connectionViewModel.connectionSwitchEvents)
-    }
-
-    LaunchedEffect(chatApiClient) {
-        chatApiClient?.let { client ->
-            chatViewModel.initialize(client, connectionViewModel.chatHandler)
-            chatViewModel.updateApiClient(client)
-
-            // Wire inbound-media dependencies. Safe to call on every reinit —
-            // idempotent rewire of the ChatHandler callbacks.
-            chatViewModel.initializeMedia(
-                context = mediaContext,
-                relayHttpClient = connectionViewModel.relayHttpClient,
-                mediaSettingsRepo = connectionViewModel.mediaSettingsRepo,
-                mediaCacheWriter = connectionViewModel.mediaCacheWriter
-            )
-
-            // Agent-profile pick provider (Pass 2). Lambda reads the latest
-            // StateFlow value on every send, so ChatViewModel never needs a
-            // direct reference to ConnectionViewModel. Safe to rewire on
-            // every API-client swap — the lambda captures the long-lived
-            // VM, not the (per-connection) apiClient.
-            chatViewModel.setSelectedProfileProvider {
-                connectionViewModel.selectedProfile.value
-            }
-            chatViewModel.setEffectiveProfileProvider {
-                AgentDisplay.effectiveProfile(
-                    selectedProfile = connectionViewModel.selectedProfile.value,
-                    profiles = connectionViewModel.agentProfiles.value,
-                )
-            }
-
-            // Wire session persistence callback
-            chatViewModel.onSessionChanged = { sessionId ->
-                connectionViewModel.saveLastSessionId(sessionId)
-            }
+        // Mirror chat streaming state so a mid-turn route change defers its
+        // client rebuild instead of cancelling the live turn (the gateway
+        // socket rides the blip via its own reconnect).
+        launch {
+            chatViewModel.isStreaming.collect { connectionViewModel.setChatStreaming(it) }
         }
     }
 
-    LaunchedEffect(chatApiClient, activeConnectionId, selectedProfile?.name, lastSessionId) {
-        if (chatApiClient == null) return@LaunchedEffect
+    LaunchedEffect(chatApiClient) {
+        val client = chatApiClient ?: return@LaunchedEffect
+        val handler = connectionViewModel.chatHandler
+        // A route handoff / reconnect rebuilds the API client (new instance)
+        // while the chat is unchanged — the bound handler is the same. Take the
+        // cheap path: swap the client reference only, no re-init. This is what
+        // keeps the chat surface from repainting/reloading on a LAN↔Tailscale
+        // switch or a reconnect. A genuine re-bind (different handler) falls
+        // through to the full one-time wiring below.
+        if (chatViewModel.boundHandler === handler) {
+            chatViewModel.updateApiClient(client)
+            return@LaunchedEffect
+        }
+
+        chatViewModel.initialize(client, handler)
+
+        // Wire inbound-media dependencies. Idempotent rewire of the
+        // ChatHandler callbacks.
+        chatViewModel.initializeMedia(
+            context = mediaContext,
+            relayHttpClient = connectionViewModel.relayHttpClient,
+            mediaSettingsRepo = connectionViewModel.mediaSettingsRepo,
+            mediaCacheWriter = connectionViewModel.mediaCacheWriter
+        )
+
+        // Agent-profile pick provider (Pass 2). Lambda reads the latest
+        // StateFlow value on every send, so ChatViewModel never needs a
+        // direct reference to ConnectionViewModel. The lambda captures the
+        // long-lived VM, not the (per-connection) apiClient.
+        chatViewModel.setSelectedProfileProvider {
+            connectionViewModel.selectedProfile.value
+        }
+        chatViewModel.setEffectiveProfileProvider {
+            AgentDisplay.effectiveProfile(
+                selectedProfile = connectionViewModel.selectedProfile.value,
+                profiles = connectionViewModel.agentProfiles.value,
+            )
+        }
+
+        // Drawer session list, scoped to the active profile on gateway
+        // connections (dashboard `/api/sessions?profile=`). Returns null off the
+        // dashboard surface so refreshSessions() falls back to the shared list.
+        chatViewModel.setProfileSessionLister {
+            connectionViewModel.listProfileScopedSessions()
+        }
+        // …and load a tapped session's transcript from that same profile's DB.
+        chatViewModel.setProfileMessageLoader { sessionId ->
+            connectionViewModel.loadProfileScopedMessages(sessionId)
+        }
+
+        // Wire session persistence callback
+        chatViewModel.onSessionChanged = { sessionId ->
+            connectionViewModel.saveLastSessionId(sessionId)
+        }
+    }
+
+    // Reload sessions / switch profile context only on a SEMANTIC change
+    // (connection, profile, or restored session) — NOT on every API-client
+    // instance swap. Keying on a readiness flag instead of the client instance
+    // means a route handoff (which churns the client) no longer triggers a
+    // refreshSessions() that would flash/reload the chat. `switchProfileContext`
+    // already no-ops when the context key + session are unchanged.
+    val chatClientReady = chatApiClient != null
+    LaunchedEffect(chatClientReady, activeConnectionId, selectedProfile?.name, lastSessionId) {
+        if (!chatClientReady) return@LaunchedEffect
+        // Coalesce the rapid lastSessionId null→value churn a profile switch
+        // produces: selectProfile() nulls lastSessionId, then the persisted
+        // per-profile session resolves a tick later. This effect re-fires on that
+        // change, cancelling the delay below before it commits — so we skip
+        // painting the intermediate empty draft and land straight on the resolved
+        // session (or a genuine fresh draft when the profile has no history).
+        delay(160)
         chatViewModel.switchProfileContext(
             contextKey = AgentDisplay.profileContextKey(
                 connectionId = activeConnectionId,
@@ -572,6 +663,14 @@ fun RelayApp() {
     }
     // === END PHASE3-status ===
 
+    // Mirror the "Notify when Hermes finishes" setting into ChatViewModel —
+    // same pattern as appContextSettings; the VM reads the plain field at
+    // turn-complete time instead of holding a ConnectionViewModel reference.
+    val notifyTurnComplete by connectionViewModel.notifyTurnComplete.collectAsState()
+    LaunchedEffect(notifyTurnComplete) {
+        chatViewModel.notifyOnTurnComplete = notifyTurnComplete
+    }
+
     // Sync tool annotation parsing toggle to ChatHandler
     val parseAnnotations by connectionViewModel.parseToolAnnotations.collectAsState()
     LaunchedEffect(parseAnnotations) {
@@ -581,11 +680,24 @@ fun RelayApp() {
     // Sync streaming endpoint preference to chat. Resolves "auto" against the
     // current server capabilities so vanilla upstream + bootstrap-injected
     // sessions API picks /v1/chat/completions for portable SSE chat while
-    // still using /api/sessions/* for browse/rename/delete.
+    // still using /api/sessions/* for browse/rename/delete. Gateway
+    // availability is a key so a Manage sign-in mid-session re-resolves
+    // "auto" to the gateway transport (live thinking) without an app restart.
     val streamingEndpoint by connectionViewModel.streamingEndpoint.collectAsState()
     val serverCapabilities by connectionViewModel.serverCapabilities.collectAsState()
-    LaunchedEffect(streamingEndpoint, serverCapabilities) {
-        chatViewModel.streamingEndpoint = connectionViewModel.resolveStreamingEndpoint(streamingEndpoint)
+    val gatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
+    // The resolved API route is a key so a mid-turn route switch (LAN→Tailscale)
+    // re-runs activeGatewayChatClient(), which RETARGETS the in-flight gateway
+    // client to follow the new dashboard route instead of stranding the turn on
+    // the dead one.
+    val effectiveApiUrl by connectionViewModel.effectiveApiServerUrl.collectAsState()
+    LaunchedEffect(streamingEndpoint, serverCapabilities, gatewayAvailability, effectiveApiUrl) {
+        val resolved = connectionViewModel.resolveStreamingEndpoint(streamingEndpoint)
+        chatViewModel.streamingEndpoint = resolved
+        chatViewModel.sseFallbackEndpoint = connectionViewModel.resolveSseStreamingEndpoint()
+        chatViewModel.updateGatewayClient(
+            if (resolved == "gateway") connectionViewModel.activeGatewayChatClient() else null,
+        )
     }
 
     // What's New auto-show
@@ -608,14 +720,8 @@ fun RelayApp() {
     val fontScale by connectionViewModel.fontScale.collectAsState()
 
     HermesRelayTheme(themePreference = themePreference, fontScale = fontScale) {
-        // Brief sphere intro after system splash fades
-        var introComplete by remember { mutableStateOf(false) }
-        LaunchedEffect(Unit) {
-            delay(3000L) // show sphere intro for 3s
-            introComplete = true
-        }
-
         val navController = rememberNavController()
+        var postOnboardingRoute by remember { mutableStateOf<String?>(null) }
 
         // === PHASE3-safety-rails-followup: cross-layer deep-link nav ===
         // Collect navigation requests posted by external launchers (e.g., the
@@ -633,14 +739,67 @@ fun RelayApp() {
         }
         // === END PHASE3-safety-rails-followup ===
 
+        LaunchedEffect(onboardingCompleted, postOnboardingRoute) {
+            val route = postOnboardingRoute
+            if (onboardingCompleted && route != null) {
+                postOnboardingRoute = null
+                navController.navigate(route) {
+                    popUpTo(Screen.Onboarding.route) { inclusive = true }
+                    launchSingleTop = true
+                }
+            }
+        }
+
         // startDestination uses the route TEMPLATE so it matches the
         // composable registered below; optional args default to null/false.
         val startDestination = if (onboardingCompleted) Screen.Chat.route else Screen.Onboarding.route
 
         val navBackStackEntry by navController.currentBackStackEntryAsState()
-        val isOnboarding = navBackStackEntry?.destination?.route == Screen.Onboarding.route
+        val currentRoute = navBackStackEntry?.destination?.route
+        val isOnboarding = currentRoute == Screen.Onboarding.route
+        var bridgePrimaryReturnRoute by remember { mutableStateOf<String?>(null) }
+        var bridgePrimaryReturnLabel by remember { mutableStateOf<String?>(null) }
 
-        val isDarkTheme = isSystemInDarkTheme()
+        fun rememberBridgeReturn(route: String, label: String) {
+            bridgePrimaryReturnRoute = route
+            bridgePrimaryReturnLabel = label
+        }
+
+        fun clearBridgeReturn() {
+            bridgePrimaryReturnRoute = null
+            bridgePrimaryReturnLabel = null
+        }
+
+        val bridgeReturnTitle = bridgePrimaryReturnLabel?.let { "Return to $it" }
+        val bridgeReturnSubtitle = when (bridgePrimaryReturnLabel) {
+            "Chat" -> "Back to conversation"
+            "Manage" -> "Back to management"
+            else -> "Back to previous tab"
+        }
+        val bridgeReturnAction: (() -> Unit)? = bridgePrimaryReturnRoute?.let { route ->
+            {
+                clearBridgeReturn()
+                navController.navigate(route) {
+                    popUpTo(navController.graph.findStartDestination().id) {
+                        saveState = true
+                    }
+                    launchSingleTop = true
+                    restoreState = true
+                }
+            }
+        }
+
+        LaunchedEffect(currentRoute) {
+            if (
+                currentRoute == Screen.Chat.route ||
+                currentRoute == Screen.Manage.route ||
+                currentRoute == Screen.Settings.route ||
+                currentRoute == Screen.Onboarding.route
+            ) {
+                clearBridgeReturn()
+            }
+        }
+
         val density = LocalDensity.current
         val imeBottom = WindowInsets.ime.getBottom(density)
         val isKeyboardVisible = imeBottom > 0
@@ -650,6 +809,237 @@ fun RelayApp() {
         // without the Chat/Terminal/Bridge/Settings tabs peeking through below.
         val voiceUiState by voiceViewModel.uiState.collectAsState()
         val globalConnectionStatus by connectionViewModel.globalConnectionStatus.collectAsState()
+        val apiReachable by connectionViewModel.apiServerReachable.collectAsState()
+        val apiHealth by connectionViewModel.apiServerHealth.collectAsState()
+        val relayReady by connectionViewModel.relayReady.collectAsState()
+        val activeConnection by connectionViewModel.activeConnection.collectAsState()
+        val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
+        val serverModelName by chatViewModel.serverModelName.collectAsState()
+        val appReady by connectionViewModel.isReady.collectAsState()
+        val initialChatSettled by chatViewModel.initialChatSettled.collectAsState()
+        // The SAME readiness signal ChatScreen renders its "Connect Standard
+        // Hermes" CTA from (chat client exists + reachable verdict). The gate
+        // must release on this — releasing on the resolver's earlier
+        // evidence alone left a window where the reveal showed the CTA for
+        // the few hundred ms until the client-based health verdict landed.
+        val chatReady by connectionViewModel.chatReady.collectAsState()
+        var startupGateMinElapsed by remember { mutableStateOf(false) }
+        var startupGateTimedOut by remember { mutableStateOf(false) }
+        var startupGateReleased by remember { mutableStateOf(false) }
+        var startupUnreachableSettled by remember { mutableStateOf(false) }
+
+        LaunchedEffect(Unit) {
+            delay(650L)
+            startupGateMinElapsed = true
+        }
+        // Backstop only. The old 5.5s value force-hid the sphere
+        // (showStartupSphere checked !timedOut) while startup was genuinely
+        // still working, dumping users into half-hydrated UI — a "connect"
+        // CTA they were never meant to see, then the connected state, then
+        // the conversation, one reveal at a time. Now the timeout RELEASES
+        // the gate like any other condition and the sphere narrates
+        // progress, so a longer ceiling is watchable instead of broken.
+        LaunchedEffect(Unit) {
+            delay(12_000L)
+            startupGateTimedOut = true
+        }
+
+        val hasStartupConnection = activeConnection?.apiServerUrl?.isNotBlank() == true
+        // A published activeEndpoint counts as "hermes online": the route
+        // resolver only publishes a winner after a successful HEAD /health
+        // probe against that route's API URL. At cold start this evidence
+        // lands within ~1s — long before the client-based health probe,
+        // which can't run until the API client exists (the client build
+        // used to queue behind the Keystore decrypt; see
+        // apiKeyForClientBuild in ConnectionViewModel).
+        val startupApiUp = apiReachable ||
+            apiHealth == ConnectionViewModel.HealthStatus.Reachable ||
+            activeEndpoint != null
+
+        // An Unreachable verdict only counts after it SURVIVES a settle
+        // window: the first health probe often runs against the persisted
+        // (e.g. LAN) URL moments before the route resolver lands on
+        // Tailscale and the client is rebuilt. Releasing the gate on that
+        // first verdict was what flashed the disconnected chat UI at users
+        // who were connected-just-waiting. The keyed effect restarts on
+        // every health flip, cancelling a pending settle.
+        LaunchedEffect(apiHealth, startupGateReleased) {
+            if (startupGateReleased) return@LaunchedEffect
+            if (apiHealth == ConnectionViewModel.HealthStatus.Unreachable) {
+                delay(3_000L)
+                startupUnreachableSettled = true
+            } else {
+                startupUnreachableSettled = false
+            }
+        }
+
+        // ---- Startup narration: real states the checklist verifies ----
+        val startupEndpoint = activeEndpoint
+        val startupCheckTargets = if (!hasStartupConnection) {
+            emptyList()
+        } else {
+            listOf(
+                if (appReady) {
+                    StartupCheck(StartupCheckState.Done, "state restored")
+                } else {
+                    StartupCheck(StartupCheckState.Active, "restoring state")
+                },
+                when {
+                    startupEndpoint != null -> StartupCheck(
+                        StartupCheckState.Done,
+                        "route · ${startupEndpoint.displayLabel()}",
+                    )
+                    startupApiUp ->
+                        StartupCheck(StartupCheckState.Done, "route · direct")
+                    appReady ->
+                        StartupCheck(StartupCheckState.Active, "resolving route")
+                    else -> StartupCheck(StartupCheckState.Pending, "route")
+                },
+                when {
+                    startupApiUp ->
+                        StartupCheck(StartupCheckState.Done, "hermes online")
+                    apiHealth == ConnectionViewModel.HealthStatus.Unreachable ->
+                        StartupCheck(StartupCheckState.Failed, "hermes unreachable")
+                    appReady ->
+                        StartupCheck(StartupCheckState.Active, "contacting hermes")
+                    else -> StartupCheck(StartupCheckState.Pending, "hermes")
+                },
+                // Done is keyed on chatReady — the signal ChatScreen itself
+                // renders from — so this row can never tick while the chat
+                // surface would still show its connect CTA.
+                when {
+                    chatReady && initialChatSettled ->
+                        StartupCheck(StartupCheckState.Done, "conversation ready")
+                    startupApiUp ->
+                        StartupCheck(StartupCheckState.Active, "loading conversation")
+                    else -> StartupCheck(StartupCheckState.Pending, "conversation")
+                },
+            )
+        }
+
+        // ---- Narration choreography ----
+        // With the key-less fast path every readiness signal can be
+        // satisfied before the sphere finishes fading in — an all-✓-at-once
+        // reveal reads as "nothing was actually checked". So rows resolve
+        // strictly top-to-bottom and each one holds a spinner beat before
+        // its verdict lands, even when the underlying state was already
+        // true. The gate's happy path waits for the narration to finish;
+        // error and timeout releases don't.
+        var startupNarrationStage by remember { mutableStateOf(0) }
+        LaunchedEffect(startupCheckTargets, startupNarrationStage, startupGateReleased) {
+            if (startupGateReleased) return@LaunchedEffect
+            if (startupNarrationStage >= startupCheckTargets.size) return@LaunchedEffect
+            val target = startupCheckTargets[startupNarrationStage].state
+            if (target == StartupCheckState.Done || target == StartupCheckState.Failed) {
+                delay(350L)
+                startupNarrationStage += 1
+            }
+        }
+        val startupNarrationComplete =
+            startupNarrationStage >= startupCheckTargets.size
+
+        val startupConnectionResolved = appReady && (
+            !hasStartupConnection ||
+                // Happy path: the chat surface's OWN readiness signal is
+                // true (client built + reachable verdict — what its connect
+                // CTA renders from), the last conversation has been restored
+                // (or there was none), and the checklist has visibly
+                // finished ticking. Anything weaker (e.g. the resolver's
+                // earlier health evidence) reveals a chat screen that still
+                // shows "Connect Standard Hermes" for the few hundred ms
+                // until the client-based verdict catches up.
+                (chatReady && initialChatSettled && startupNarrationComplete) ||
+                // Error path: a settled unreachable reveals the normal UI,
+                // which owns offline presentation (status pill, retry).
+                startupUnreachableSettled ||
+                startupGateTimedOut
+            )
+        LaunchedEffect(
+            onboardingCompleted,
+            startupGateMinElapsed,
+            startupConnectionResolved,
+        ) {
+            if (
+                onboardingCompleted &&
+                !startupGateReleased &&
+                startupGateMinElapsed &&
+                startupConnectionResolved
+            ) {
+                // When the 12s backstop (not readiness, not a settled error)
+                // is what opened the gate, leave a diagnostic naming the
+                // conditions still unmet — the demo-video session measured
+                // 6–28s launch variance against the same LAN server and had
+                // no way to see why from the device.
+                val happyPathReady =
+                    chatReady && initialChatSettled && startupNarrationComplete
+                if (
+                    hasStartupConnection &&
+                    !happyPathReady &&
+                    !startupUnreachableSettled &&
+                    startupGateTimedOut
+                ) {
+                    DiagnosticsLog.record(
+                        category = DiagnosticCategory.Api,
+                        severity = DiagnosticSeverity.Warning,
+                        title = "Startup gate released by timeout",
+                        detail = "chatReady=$chatReady " +
+                            "historySettled=$initialChatSettled " +
+                            "narration=$startupNarrationStage/${startupCheckTargets.size} " +
+                            "health=$apiHealth " +
+                            "route=${activeEndpoint?.role ?: "unresolved"}",
+                    )
+                }
+                startupGateReleased = true
+            }
+        }
+        val showStartupSphere =
+            onboardingCompleted &&
+                !startupGateReleased &&
+                !voiceUiState.voiceMode
+
+        // Hydrate the Manage payload cache from its plain-JSON disk mirror
+        // as early as possible — independent of connectivity or auth, so a
+        // cold process renders last-seen dashboard data instantly. Entries
+        // keep their original fetch timestamps, making them stale by
+        // definition: the pre-warm below and the screen's
+        // stale-while-revalidate path refresh them quietly.
+        val hydrateContext =
+            androidx.compose.ui.platform.LocalContext.current.applicationContext
+        LaunchedEffect(Unit) {
+            com.hermesandroid.relay.ui.screens.hydrateDashboardManageCache(
+                hydrateContext.cacheDir,
+            )
+        }
+
+        // Pre-warm the Manage tab's payload cache when the persisted
+        // dashboard snapshot says this connection was reachable and signed
+        // in (or auth-free) — a cold app start then lands on populated
+        // Manage data instead of skeletons. Keyed on the effective URL so a
+        // LAN↔Tailscale handoff re-warms the new host's cache; the delay
+        // debounces resolver flaps during startup (each key change cancels
+        // the previous run). The pre-warm fills cold keys and refreshes
+        // stale (disk-hydrated) ones, then mirrors results back to disk.
+        val effectiveDashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
+        LaunchedEffect(activeConnection?.id, effectiveDashboardUrl) {
+            val connection = activeConnection ?: return@LaunchedEffect
+            if (effectiveDashboardUrl.isBlank()) return@LaunchedEffect
+            val snapshot = connection.dashboardLastStatus ?: return@LaunchedEffect
+            val dashboardUsable = snapshot.reachable &&
+                (snapshot.authRequired == false || snapshot.authenticated == true)
+            if (!dashboardUsable) return@LaunchedEffect
+            delay(1_500L)
+            // The VM's cached per-connection store — the prewarm must NOT
+            // construct its own (each instance lazily pays a multi-second
+            // Keystore keyset build under a process-global Tink lock).
+            val cookieStore = connectionViewModel.activeDashboardCookieStore()
+                ?: return@LaunchedEffect
+            prewarmDashboardManage(
+                cookieStore = cookieStore,
+                connectionId = connection.id,
+                dashboardUrl = effectiveDashboardUrl,
+                cacheDir = hydrateContext.cacheDir,
+            )
+        }
 
         // Single snackbar host for the whole app — exposed via LocalSnackbarHost
         // so voice/chat/settings screens can call showHumanError from their
@@ -705,11 +1095,37 @@ fun RelayApp() {
             masterEnabled &&
             unattendedEnabled &&
             !isOnboarding &&
+            !showStartupSphere &&
             !voiceUiState.voiceMode
-        val showConnectionStatusBanner =
+        // Sideload-only update availability (UpdateViewModel short-circuits on
+        // googlePlay). Hoisted to the outer scope so the update toast can render
+        // in the floating Box overlay below alongside the connection toast.
+        val updateBannerState by updateViewModel.bannerState.collectAsState()
+        val availableUpdate = (updateBannerState as? UpdateCheckResult.Available)?.update
+
+        // Content-identity key so a swipe-up dismiss sticks for THIS status but
+        // a genuinely new status (different title/tone/phase) re-shows.
+        var dismissedStatusKey by remember { mutableStateOf<String?>(null) }
+        val currentStatusKey = globalConnectionStatus?.let {
+            "${it.title}|${it.tone}|${it.active}|${it.success}|${it.route}"
+        }
+        val showConnectionStatusToast =
             globalConnectionStatus != null &&
+                currentStatusKey != dismissedStatusKey &&
                 !isOnboarding &&
+                !showStartupSphere &&
                 !voiceUiState.voiceMode
+        val onConnectionStatusBannerClick: () -> Unit = {
+            val title = globalConnectionStatus?.title.orEmpty()
+            val destination = when {
+                title.contains("No Hermes connection", ignoreCase = true) -> Screen.Pair.route()
+                title.contains("dashboard", ignoreCase = true) -> Screen.Manage.route
+                else -> Screen.ConnectionsSettings.route
+            }
+            navController.navigate(destination) {
+                launchSingleTop = true
+            }
+        }
         // === END v0.4.1 polish ===
 
         // Multi-connection switcher has moved into the AgentInfoSheet's
@@ -752,35 +1168,10 @@ fun RelayApp() {
             )
         }
 
-        // Sideload-only update banner. UpdateViewModel short-circuits on
-        // googlePlay so this block is effectively dead on that flavor.
-        // bannerState hides the banner for versions the user has
-        // dismissed, re-appearing automatically on a newer release.
-        val updateBannerState by updateViewModel.bannerState.collectAsState()
-        val availableUpdate = (updateBannerState as? UpdateCheckResult.Available)?.update
-        AnimatedVisibility(
-            visible = availableUpdate != null && !isOnboarding,
-            enter = fadeIn(tween(200)),
-            exit = fadeOut(tween(200)),
-        ) {
-            availableUpdate?.let { upd ->
-                UpdateBanner(
-                    update = upd,
-                    onDismiss = { updateViewModel.dismiss(upd.latestVersion) },
-                )
-            }
-        }
-
-        AnimatedVisibility(
-            visible = showConnectionStatusBanner,
-            enter = fadeIn(tween(160)),
-            exit = fadeOut(tween(180)),
-        ) {
-            ConnectionStatusBanner(
-                status = globalConnectionStatus,
-                includeStatusBarPadding = !showUnattendedBanner && availableUpdate == null,
-            )
-        }
+        // The update banner AND the connection-status indicator now render as
+        // floating overlay TOASTS in the Box below (see the top-overlay Column
+        // after the Scaffold), so they slide down OVER the content instead of
+        // taking layout space — no UI resize/cut on update / handoff / reconnect.
 
         // (The app-wide ConnectionChip row that used to live here has been
         // removed. Multi-connection switching is now reachable from the
@@ -811,7 +1202,10 @@ fun RelayApp() {
                     // would otherwise double-pad and render too far down.
                     // Consume the inset here so the Scaffold tree treats
                     // the top edge as already handled.
-                    if (showUnattendedBanner || showConnectionStatusBanner || connectionChipVisible) {
+                    // The connection-status toast is now a floating overlay and
+                    // doesn't occupy space above the Scaffold, so it no longer
+                    // participates in the top-inset accounting.
+                    if (showUnattendedBanner || connectionChipVisible) {
                         Modifier.consumeWindowInsets(WindowInsets.statusBars)
                     } else {
                         Modifier
@@ -820,83 +1214,48 @@ fun RelayApp() {
             contentWindowInsets = WindowInsets(0),
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
-                if (!isOnboarding && !isKeyboardVisible && !voiceUiState.voiceMode) {
-                    NavigationBar(
-                        containerColor = if (isDarkTheme) {
-                            Color(0xFF1A1A2E).copy(alpha = 0.9f)
-                        } else {
-                            MaterialTheme.colorScheme.surface
-                        }
-                    ) {
-                        val currentDestination = navBackStackEntry?.destination
-
-                        bottomNavScreens.forEach { screen ->
-                            val isSelected = currentDestination?.hierarchy?.any {
-                                it.route == screen.route
-                            } == true
-
-                            NavigationBarItem(
-                                icon = {
-                                    Box(
-                                        modifier = if (isSelected && isDarkTheme) {
-                                            Modifier.purpleGlow(
-                                                radius = 18.dp,
-                                                alpha = 0.4f,
-                                                isDarkTheme = true
-                                            )
-                                        } else Modifier
-                                    ) {
-                                        Icon(
-                                            imageVector = screen.icon,
-                                            contentDescription = screen.label
-                                        )
-                                    }
-                                },
-                                label = { Text(screen.label) },
-                                selected = isSelected,
-                                colors = if (isDarkTheme) {
-                                    NavigationBarItemDefaults.colors(
-                                        selectedIconColor = MaterialTheme.colorScheme.primary,
-                                        selectedTextColor = MaterialTheme.colorScheme.primary,
-                                        indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                } else {
-                                    NavigationBarItemDefaults.colors()
-                                },
-                                onClick = {
-                                    // Chat's route is a template with an
-                                    // optional `?openAgentSheet` arg — always
-                                    // navigate to the concrete bare-"chat"
-                                    // URI from bottom nav so we don't leak
-                                    // the `{openAgentSheet}` placeholder into
-                                    // the destination and so tab-switching
-                                    // never re-opens the AgentInfoSheet.
-                                    val target = when (screen) {
-                                        is Screen.Chat -> Screen.Chat.route(openAgentSheet = false)
-                                        else -> screen.route
-                                    }
-                                    navController.navigate(target) {
-                                        popUpTo(navController.graph.findStartDestination().id) {
-                                            saveState = true
-                                        }
-                                        launchSingleTop = true
-                                        restoreState = true
-                                    }
-                                }
-                            )
-                        }
+                if (!isOnboarding && !isKeyboardVisible && !showStartupSphere && !voiceUiState.voiceMode) {
+                    val leading = when {
+                        apiReachable -> "api online"
+                        relayReady -> "relay connected"
+                        else -> "offline"
                     }
+                    val leadingColor = when {
+                        apiReachable -> RelayRefresh.Green
+                        relayReady -> RelayRefresh.Relay
+                        else -> RelayRefresh.Danger
+                    }
+                    val routeLabel = activeEndpoint?.displayLabel()
+                        ?: activeConnection?.label
+                        ?: "no route"
+                    val profileLabel = selectedProfile?.name?.takeIf { it.isNotBlank() } ?: "default"
+                    val modelLabel = serverModelName.takeIf { it.isNotBlank() } ?: "model pending"
+                    val safetyLabel = if (BuildFlavor.isSideload && masterEnabled) {
+                        "safety: ${if (unattendedEnabled) "unattended" else "on"}"
+                    } else {
+                        "profile: $profileLabel"
+                    }
+                    RelayStatusStrip(
+                        leading = "$leading / $routeLabel",
+                        trailing = "$modelLabel / $safetyLabel",
+                        leadingColor = leadingColor,
+                    )
                 }
             }
         ) { innerPadding ->
             CompositionLocalProvider(LocalSnackbarHost provides snackbarHostState) {
-            NavHost(
-                navController = navController,
-                startDestination = startDestination,
-                modifier = Modifier.padding(innerPadding)
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding),
             ) {
+                NavHost(
+                    navController = navController,
+                    startDestination = startDestination,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                ) {
                 composable(Screen.Onboarding.route) {
                     // The wizard inside OnboardingScreen now owns credential
                     // application via ConnectionViewModel.applyPairingPayload,
@@ -924,6 +1283,10 @@ fun RelayApp() {
                             navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
                                 popUpTo(Screen.Onboarding.route) { inclusive = true }
                             }
+                        },
+                        onManageSignIn = {
+                            postOnboardingRoute = Screen.Manage.route
+                            connectionViewModel.completeOnboarding()
                         }
                     )
                 }
@@ -973,56 +1336,222 @@ fun RelayApp() {
                         onNavigateToConnections = {
                             navController.navigate(Screen.ConnectionsSettings.route)
                         },
+                        onNavigateToConnect = {
+                            navController.navigate(Screen.Pair.route()) {
+                                launchSingleTop = true
+                            }
+                        },
+                        onNavigateToManage = {
+                            navController.navigate(Screen.Manage.route) {
+                                popUpTo(navController.graph.findStartDestination().id) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        },
+                        onNavigateToBridge = {
+                            rememberBridgeReturn(
+                                route = Screen.Chat.route(openAgentSheet = false),
+                                label = "Chat",
+                            )
+                            navController.navigate(Screen.Bridge.route) {
+                                popUpTo(navController.graph.findStartDestination().id) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        },
+                        onNavigateToTerminal = {
+                            navController.navigate(Screen.Terminal.route) {
+                                launchSingleTop = true
+                            }
+                        },
+                        onNavigateToSettings = {
+                            navController.navigate(Screen.Settings.route) {
+                                launchSingleTop = true
+                            }
+                        },
+                        onNavigateToProfileInspector = { profileName ->
+                            navController.navigate(Screen.ProfileInspector.route(profileName)) {
+                                launchSingleTop = true
+                            }
+                        },
+                    )
+                }
+                composable(Screen.Manage.route) {
+                    DashboardManagementScreen(
+                        connectionViewModel = connectionViewModel,
+                        onNavigateToConnections = {
+                            navController.navigate(Screen.ConnectionsSettings.route)
+                        },
+                        onNavigateToChat = {
+                            navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                                popUpTo(navController.graph.findStartDestination().id) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        },
+                        onNavigateToBridge = {
+                            rememberBridgeReturn(
+                                route = Screen.Manage.route,
+                                label = "Manage",
+                            )
+                            navController.navigate(Screen.Bridge.route) {
+                                popUpTo(navController.graph.findStartDestination().id) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        },
+                        onNavigateToTerminal = {
+                            navController.navigate(Screen.Terminal.route) {
+                                launchSingleTop = true
+                            }
+                        },
+                        onNavigateToSettings = {
+                            navController.navigate(Screen.Settings.route) {
+                                launchSingleTop = true
+                            }
+                        },
                     )
                 }
                 composable(Screen.Terminal.route) {
-                    TerminalScreen(
-                        terminalViewModel = terminalViewModel,
-                        connectionViewModel = connectionViewModel
-                    )
-                }
-                composable(Screen.Bridge.route) {
-                    if (BuildFlavor.isSideload) {
-                        BridgeScreen(
+                    if (coldStartAuthState is AuthState.Paired) {
+                        TerminalScreen(
+                            terminalViewModel = terminalViewModel,
                             connectionViewModel = connectionViewModel,
-                            onNavigateToBridgeSafety = {
-                                navController.navigate(Screen.BridgeSafetySettings.route)
-                            },
+                            onBack = { navController.popBackStack() },
                         )
                     } else {
-                        BridgeCoreScreen(
-                            connectionViewModel = connectionViewModel,
-                            onNavigateToConnections = {
-                                navController.navigate(Screen.ConnectionsSettings.route)
+                        PowerFeatureGateScreen(
+                            title = "Terminal",
+                            summary = "Open a server shell through your paired relay session.",
+                            status = PowerFeatureGateStatus.fromRelayAuth(coldStartAuthState),
+                            onPrimaryAction = {
+                                navController.navigate(Screen.Pair.route())
                             },
-                            onNavigateToTerminal = {
-                                navController.navigate(Screen.Terminal.route) {
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
-                                    }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            },
-                            onNavigateToVoiceSettings = {
-                                navController.navigate(Screen.VoiceSettings.route)
-                            },
-                            onNavigateToNotificationCompanion = {
-                                navController.navigate(Screen.NotificationCompanionSettings.route)
-                            },
-                            onNavigateToMediaSettings = {
-                                navController.navigate(Screen.MediaSettings.route)
-                            },
-                            onNavigateToRelaySessions = {
-                                navController.navigate(Screen.PairedDevices.route)
-                            },
+                            onBack = { navController.popBackStack() },
                         )
+                    }
+                }
+                composable(Screen.Bridge.route) {
+                    if (coldStartAuthState !is AuthState.Paired) {
+                        PowerFeatureGateScreen(
+                            title = "Bridge",
+                            summary = "Let Hermes send approved bridge commands to this phone.",
+                            status = PowerFeatureGateStatus.fromRelayAuth(coldStartAuthState),
+                            onPrimaryAction = {
+                                navController.navigate(Screen.Pair.route())
+                            },
+                            onBack = bridgeReturnAction,
+                        )
+                    } else {
+                        if (BuildFlavor.isSideload) {
+                            BridgeScreen(
+                                connectionViewModel = connectionViewModel,
+                                returnTitle = bridgeReturnTitle,
+                                returnSubtitle = bridgeReturnSubtitle,
+                                returnLabel = bridgePrimaryReturnLabel ?: "Back",
+                                onReturn = bridgeReturnAction,
+                                onNavigateToBridgeSafety = {
+                                    navController.navigate(Screen.BridgeSafetySettings.route)
+                                },
+                                onNavigateToChat = {
+                                    clearBridgeReturn()
+                                    navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                                        popUpTo(navController.graph.findStartDestination().id) {
+                                            saveState = true
+                                        }
+                                        launchSingleTop = true
+                                        restoreState = true
+                                    }
+                                },
+                                onNavigateToManage = {
+                                    clearBridgeReturn()
+                                    navController.navigate(Screen.Manage.route) {
+                                        popUpTo(navController.graph.findStartDestination().id) {
+                                            saveState = true
+                                        }
+                                        launchSingleTop = true
+                                        restoreState = true
+                                    }
+                                },
+                                onNavigateToSettings = {
+                                    navController.navigate(Screen.Settings.route) {
+                                        launchSingleTop = true
+                                    }
+                                },
+                            )
+                        } else {
+                            BridgeCoreScreen(
+                                connectionViewModel = connectionViewModel,
+                                returnTitle = bridgeReturnTitle,
+                                returnSubtitle = bridgeReturnSubtitle,
+                                returnLabel = bridgePrimaryReturnLabel ?: "Back",
+                                onReturn = bridgeReturnAction,
+                                onNavigateToConnections = {
+                                    navController.navigate(Screen.ConnectionsSettings.route)
+                                },
+                                onNavigateToChat = {
+                                    clearBridgeReturn()
+                                    navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                                        popUpTo(navController.graph.findStartDestination().id) {
+                                            saveState = true
+                                        }
+                                        launchSingleTop = true
+                                        restoreState = true
+                                    }
+                                },
+                                onNavigateToManage = {
+                                    clearBridgeReturn()
+                                    navController.navigate(Screen.Manage.route) {
+                                        popUpTo(navController.graph.findStartDestination().id) {
+                                            saveState = true
+                                        }
+                                        launchSingleTop = true
+                                        restoreState = true
+                                    }
+                                },
+                                onNavigateToTerminal = {
+                                    navController.navigate(Screen.Terminal.route) {
+                                        popUpTo(navController.graph.findStartDestination().id) {
+                                            saveState = true
+                                        }
+                                        launchSingleTop = true
+                                        restoreState = true
+                                    }
+                                },
+                                onNavigateToVoiceSettings = {
+                                    navController.navigate(Screen.VoiceSettings.route)
+                                },
+                                onNavigateToNotificationCompanion = {
+                                    navController.navigate(Screen.NotificationCompanionSettings.route)
+                                },
+                                onNavigateToMediaSettings = {
+                                    navController.navigate(Screen.MediaSettings.route)
+                                },
+                                onNavigateToRelaySessions = {
+                                    navController.navigate(Screen.PairedDevices.route)
+                                },
+                                onNavigateToSettings = {
+                                    navController.navigate(Screen.Settings.route) {
+                                        launchSingleTop = true
+                                    }
+                                },
+                            )
+                        }
                     }
                 }
                 composable(Screen.Settings.route) {
                     SettingsScreen(
                         connectionViewModel = connectionViewModel,
                         chatViewModel = chatViewModel,
+                        onBack = { navController.popBackStack() },
                         // (The `onNavigateToChatWithAgentSheet` callback that
                         // used to live here was removed 2026-04-21. Tapping
                         // the Active Agent card on Settings now opens the
@@ -1032,8 +1561,18 @@ fun RelayApp() {
                         onNavigateToConnections = {
                             navController.navigate(Screen.ConnectionsSettings.route)
                         },
+                        onNavigateToManage = {
+                            navController.navigate(Screen.Manage.route)
+                        },
                         onNavigateToChatSettings = {
                             navController.navigate(Screen.ChatSettings.route)
+                        },
+                        onNavigateToTerminal = {
+                            navController.navigate(Screen.Terminal.route)
+                        },
+                        onNavigateToBridge = {
+                            clearBridgeReturn()
+                            navController.navigate(Screen.Bridge.route)
                         },
                         onNavigateToMediaSettings = {
                             navController.navigate(Screen.MediaSettings.route)
@@ -1072,10 +1611,24 @@ fun RelayApp() {
                     )
                 }
                 composable(Screen.VoiceSettings.route) {
+                    val standardVoiceSignInRouteHint by
+                        connectionViewModel.standardVoiceSignInRouteHint.collectAsState()
                     VoiceSettingsScreen(
                         voiceViewModel = voiceViewModel,
                         voiceClient = voiceClient,
                         selectedProfile = selectedProfile,
+                        standardVoiceAvailability = standardVoiceAvailability,
+                        standardVoiceSignInRouteHint = standardVoiceSignInRouteHint,
+                        relayVoiceReady = relayVoiceReady,
+                        onOpenManage = {
+                            navController.navigate(Screen.Manage.route) {
+                                popUpTo(navController.graph.findStartDestination().id) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        },
                         onBack = { navController.popBackStack() }
                     )
                 }
@@ -1098,6 +1651,24 @@ fun RelayApp() {
                             onNavigateToConnections = {
                                 navController.navigate(Screen.ConnectionsSettings.route)
                             },
+                            onNavigateToChat = {
+                                navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                                    popUpTo(navController.graph.findStartDestination().id) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
+                            onNavigateToManage = {
+                                navController.navigate(Screen.Manage.route) {
+                                    popUpTo(navController.graph.findStartDestination().id) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
                             onNavigateToTerminal = {
                                 navController.navigate(Screen.Terminal.route)
                             },
@@ -1113,21 +1684,35 @@ fun RelayApp() {
                             onNavigateToRelaySessions = {
                                 navController.navigate(Screen.PairedDevices.route)
                             },
+                            onNavigateToSettings = {
+                                navController.navigate(Screen.Settings.route) {
+                                    launchSingleTop = true
+                                }
+                            },
                         )
                     }
                 }
                 // === END PHASE3-safety-rails ===
                 composable(Screen.PairedDevices.route) {
-                    PairedDevicesScreen(
-                        connectionViewModel = connectionViewModel,
-                        onBack = { navController.popBackStack() },
-                        onRequestRepair = {
-                            // Pop back to Settings so the user lands on the
-                            // "Scan Pairing QR" button rather than getting
-                            // stranded on an empty devices list.
-                            navController.popBackStack(Screen.Settings.route, inclusive = false)
-                        }
-                    )
+                    if (coldStartAuthState is AuthState.Paired) {
+                        PairedDevicesScreen(
+                            connectionViewModel = connectionViewModel,
+                            onBack = { navController.popBackStack() },
+                            onRequestRepair = {
+                                navController.navigate(Screen.Pair.route())
+                            }
+                        )
+                    } else {
+                        PowerFeatureGateScreen(
+                            title = "Relay sessions",
+                            summary = "Review and revoke devices paired with this relay.",
+                            status = PowerFeatureGateStatus.fromRelayAuth(coldStartAuthState),
+                            onPrimaryAction = {
+                                navController.navigate(Screen.Pair.route())
+                            },
+                            onBack = { navController.popBackStack() },
+                        )
+                    }
                 }
                 // (The `composable(Screen.ConnectionSettings.route)` block
                 // that used to live here — hosting the singular, legacy
@@ -1202,18 +1787,23 @@ fun RelayApp() {
                         onAddConnection = {
                             connectionSwitchScope.launch {
                                 // Create and switch to the placeholder before
-                                // opening the camera. Otherwise a fast scan can
-                                // save the session token into the outgoing
+                                // opening the wizard. Otherwise a fast scan or
+                                // standard save can write into the outgoing
                                 // connection's auth store.
                                 val id = connectionViewModel.beginAddConnection(
                                     preAllocatedId = java.util.UUID.randomUUID().toString(),
                                 )
                                 navController.navigate(
-                                    Screen.Pair.route(connectionId = id, autoStart = "scan")
+                                    Screen.Pair.route(connectionId = id)
                                 )
                             }
                         },
                         onBack = { navController.popBackStack() },
+                        onNavigateToManage = {
+                            navController.navigate(Screen.Manage.route) {
+                                launchSingleTop = true
+                            }
+                        },
                         onNavigateToPairedDevices = {
                             navController.navigate(Screen.PairedDevices.route)
                         },
@@ -1259,6 +1849,12 @@ fun RelayApp() {
                             // auth store. Nothing extra to do on success
                             // beyond popping the backstack.
                             navController.popBackStack()
+                        },
+                        onManageSignIn = {
+                            navController.popBackStack()
+                            navController.navigate(Screen.Manage.route) {
+                                launchSingleTop = true
+                            }
                         },
                         onCancel = {
                             // If the user bailed out before completing a
@@ -1355,6 +1951,18 @@ fun RelayApp() {
                     val sectionArg = backStackEntry.arguments
                         ?.getString(Screen.ProfileInspector.ARG_SECTION)
                         ?: Screen.ProfileInspector.SECTION_CONFIG
+                    if (coldStartAuthState !is AuthState.Paired) {
+                        PowerFeatureGateScreen(
+                            title = "Profile Inspector",
+                            summary = "Inspect relay-backed profile config, SOUL, memory files, and skills.",
+                            status = PowerFeatureGateStatus.fromRelayAuth(coldStartAuthState),
+                            onPrimaryAction = {
+                                navController.navigate(Screen.Pair.route())
+                            },
+                            onBack = { navController.popBackStack() },
+                        )
+                        return@composable
+                    }
                     val inspectorViewModel: ProfileInspectorViewModel = viewModel(
                         viewModelStoreOwner = backStackEntry,
                         key = "profile-inspector-$profileNameArg",
@@ -1399,9 +2007,49 @@ fun RelayApp() {
                     )
                 }
             }
+            } // end bridge-return wrapper column
             } // end CompositionLocalProvider
         }
         } // end Column (wraps banner + Scaffold)
+
+        // Floating overlay toasts (update + connection status). Rendered in the
+        // Box, stacked top-down in one status-bar-padded Column so they slide
+        // down OVER the content without resizing it — no UI cut/resize on update
+        // / handoff / reconnect. Both gated off during onboarding / startup
+        // sphere / voice mode. The Column self-pads the status bar once; the
+        // children don't (so two stacked toasts don't double-pad).
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.statusBars),
+        ) {
+            AnimatedVisibility(
+                visible = availableUpdate != null && !isOnboarding &&
+                    !showStartupSphere && !voiceUiState.voiceMode,
+                enter = slideInVertically(tween(220)) { -it } + fadeIn(tween(180)),
+                exit = slideOutVertically(tween(200)) { -it } + fadeOut(tween(160)),
+            ) {
+                availableUpdate?.let { upd ->
+                    UpdateBanner(
+                        update = upd,
+                        onDismiss = { updateViewModel.dismiss(upd.latestVersion) },
+                    )
+                }
+            }
+            AnimatedVisibility(
+                visible = showConnectionStatusToast,
+                enter = slideInVertically(tween(220)) { -it } + fadeIn(tween(180)),
+                exit = slideOutVertically(tween(200)) { -it } + fadeOut(tween(160)),
+            ) {
+                ConnectionStatusToast(
+                    status = globalConnectionStatus,
+                    includeStatusBarPadding = false,
+                    onClick = onConnectionStatusBannerClick,
+                    onDismiss = { dismissedStatusKey = currentStatusKey },
+                )
+            }
+        }
 
         // (The ConnectionSwitcherSheet modal that used to live here was
         // driven by the removed top-bar ConnectionChip. Switching is now
@@ -1410,16 +2058,21 @@ fun RelayApp() {
         // ConnectionSwitcherSheet.kt itself is kept so any future programmatic
         // callers (deep links, automation) can still invoke it if needed.)
 
-        // Sphere intro overlay — fades out after 1.5s to reveal main UI
+        // Startup connection gate. The sphere is the loading screen: it
+        // holds until the app is actually presentable (connected + last
+        // conversation restored, or a settled error, or the backstop
+        // timeout) and narrates progress as terminal-style check lines so
+        // a longer wait reads as work, not a hang.
         AnimatedVisibility(
-            visible = !introComplete && onboardingCompleted,
+            visible = showStartupSphere,
             enter = fadeIn(tween(300)),
             exit = fadeOut(tween(600))
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xFF1A1A2E)),
+                    .background(RelayRefresh.Background)
+                    .relayGridTexture(alpha = 0.14f),
                 contentAlignment = Alignment.Center
             ) {
                 // Sphere fills background
@@ -1435,18 +2088,127 @@ fun RelayApp() {
                     Text(
                         text = "Hermes-Relay",
                         style = MaterialTheme.typography.headlineMedium,
-                        color = Color.White.copy(alpha = 0.9f)
+                        color = RelayRefresh.Paper.copy(alpha = 0.92f)
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = "agent interface",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = 0.5f),
+                        color = RelayRefresh.Muted.copy(alpha = 0.72f),
                         letterSpacing = 2.sp
                     )
+                }
+
+                // Startup checks — all rows are always laid out (pending
+                // ones dimmed) so the column never reflows and the branding
+                // above never shifts. What renders is the CHOREOGRAPHED view
+                // of startupCheckTargets: rows above the narration stage show
+                // their real verdict, the stage row spins (unless it already
+                // failed), rows below sit dimmed with their short labels.
+                if (startupCheckTargets.isNotEmpty()) {
+                    val pendingLabels = listOf("state", "route", "hermes", "conversation")
+                    val displayedChecks = startupCheckTargets.mapIndexed { index, check ->
+                        when {
+                            index < startupNarrationStage -> check
+                            index == startupNarrationStage ->
+                                if (check.state == StartupCheckState.Failed) {
+                                    check
+                                } else {
+                                    check.copy(state = StartupCheckState.Active)
+                                }
+                            else -> StartupCheck(
+                                StartupCheckState.Pending,
+                                pendingLabels.getOrElse(index) { check.label },
+                            )
+                        }
+                    }
+                    Column(
+                        horizontalAlignment = Alignment.Start,
+                        verticalArrangement = Arrangement.spacedBy(3.dp),
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 32.dp)
+                    ) {
+                        displayedChecks.forEach { check -> StartupCheckRow(check) }
+                    }
                 }
             }
         }
         } // end Box
+    }
+}
+
+/** One line of the startup sphere's progress narration. */
+private data class StartupCheck(
+    val state: StartupCheckState,
+    val label: String,
+)
+
+private val STARTUP_SPINNER_FRAMES = listOf("|", "/", "-", "\\")
+
+private enum class StartupCheckState { Pending, Active, Done, Failed }
+
+/**
+ * Terminal-style check line for the startup sphere: monospace glyph + label,
+ * dimmed while pending and fading up as the underlying state lands. Failed
+ * is visible only briefly — a settled failure releases the gate and the
+ * normal UI takes over error presentation.
+ */
+@Composable
+private fun StartupCheckRow(check: StartupCheck) {
+    val targetAlpha = when (check.state) {
+        StartupCheckState.Pending -> 0.28f
+        StartupCheckState.Active -> 0.85f
+        else -> 0.95f
+    }
+    val alpha by animateFloatAsState(
+        targetValue = targetAlpha,
+        animationSpec = tween(400),
+        label = "startup-check-alpha",
+    )
+    // Classic ASCII spinner for the active row — guaranteed glyphs in the
+    // platform monospace font (fancier braille spinners render as tofu on
+    // some devices) and on-theme for terminal-style narration.
+    var spinnerFrame by remember { mutableStateOf(0) }
+    if (check.state == StartupCheckState.Active) {
+        LaunchedEffect(Unit) {
+            while (true) {
+                delay(120L)
+                spinnerFrame = (spinnerFrame + 1) % STARTUP_SPINNER_FRAMES.size
+            }
+        }
+    }
+    val glyph = when (check.state) {
+        StartupCheckState.Pending -> "·"
+        StartupCheckState.Active -> STARTUP_SPINNER_FRAMES[spinnerFrame]
+        StartupCheckState.Done -> "✓"
+        StartupCheckState.Failed -> "✕"
+    }
+    val glyphColor = when (check.state) {
+        StartupCheckState.Done -> RelayRefresh.Green
+        StartupCheckState.Failed -> RelayRefresh.Danger
+        else -> RelayRefresh.Muted
+    }
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.alpha(alpha),
+    ) {
+        Text(
+            text = glyph,
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = FontFamily.Monospace,
+            color = glyphColor,
+        )
+        Text(
+            text = check.label,
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = FontFamily.Monospace,
+            color = if (check.state == StartupCheckState.Active) {
+                RelayRefresh.Paper.copy(alpha = 0.9f)
+            } else {
+                RelayRefresh.Muted
+            },
+        )
     }
 }

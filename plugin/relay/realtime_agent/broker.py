@@ -50,6 +50,7 @@ from ..provider_options import (
 )
 from ..realtime_voice import _read_relay_xai_oauth_token, _websocket_url_from_base
 from ..voice_auth import AuthPrincipal, require_voice_auth
+from .floor import FloorMouth, RealtimeFloor
 from .hermes_tool_broker import HermesTaskRequest, HermesToolBroker
 from .models import (
     CLIENT_MSG_HERMES_CONFIRM,
@@ -80,6 +81,8 @@ from .models import (
     SERVER_EVT_RESPONSE_DONE,
     SERVER_EVT_RESPONSE_STARTED,
     SERVER_EVT_HERMES_RUN_PROGRESS,
+    SERVER_EVT_HERMES_RUN_PROMOTED,
+    SERVER_EVT_HERMES_RUN_BACKGROUND_COMPLETED,
     SERVER_EVT_SESSION_DETACHED,
     SERVER_EVT_SESSION_READY,
     SERVER_EVT_SESSION_RESUMED,
@@ -102,6 +105,9 @@ _HERMES_PROGRESS_INTERVAL_SECONDS = 5.0
 _HERMES_SPOKEN_PROGRESS_AFTER_SECONDS = 15.0
 _HERMES_SPOKEN_PROGRESS_REPEAT_SECONDS = 30.0
 _RESUME_TTL_SECONDS = 30.0
+# Max time a completed background result waits for the floor to clear before it
+# is spoken anyway (ADR 33 Tier B result delivery).
+_BACKGROUND_FLOOR_WAIT_SECONDS = 12.0
 _EVENT_RING_LIMIT = 256
 _AUDIO_RING_LIMIT = 96
 _PROFILE_SOUL_PROMPT_MAX_CHARS = 6000
@@ -170,10 +176,18 @@ class RealtimeAgentSession:
     native_hermes_required_reason: str | None = None
     hermes_run_id: str | None = None
     hermes_run_status: str = "idle"
+    hermes_run_tier: str = "foreground"
     hermes_answer_started: bool = False
     pending_confirmation_id: str | None = None
     cancel_requested: bool = False
     hermes_task: asyncio.Task[dict[str, Any]] | None = None
+    # ADR 33 promotion state (populated from realtime_voice settings at create).
+    promotion_enabled: bool = False
+    promote_after_ms: int = 6000
+    spoken_handoff: bool = True
+    result_delivery: str = "speak_when_idle"
+    promoted_transcript: str | None = None
+    background_delivery_task: asyncio.Task[None] | None = None
     response_ids_awaiting_tool_followup: set[str] = field(default_factory=set)
     response_ids_started: set[str] = field(default_factory=set)
     provider_response_audio_seen: set[str] = field(default_factory=set)
@@ -187,6 +201,7 @@ class RealtimeAgentSession:
     hermes_last_spoken_progress_at: float = 0.0
     hermes_last_spoken_progress_key: str | None = None
     profile_prompt_context: dict[str, Any] = field(default_factory=dict)
+    floor: RealtimeFloor = field(default_factory=RealtimeFloor)
 
 
 class RealtimeAgentHandler:
@@ -329,6 +344,10 @@ class RealtimeAgentHandler:
                 self.config,
                 str(settings.get("profile") or profile or "default"),
             ),
+            promotion_enabled=bool(settings.get("promotion_enabled", False)),
+            promote_after_ms=int(settings.get("promote_after_ms", 6000)),
+            spoken_handoff=bool(settings.get("spoken_handoff", True)),
+            result_delivery=str(settings.get("result_delivery", "speak_when_idle")),
         )
         self.sessions[session_id] = session
         self._log(session, "voice.realtime_agent.session.created")
@@ -740,6 +759,10 @@ class RealtimeAgentHandler:
         provider_task = session.native_provider_task
         if provider_task is not None and not provider_task.done():
             provider_task.cancel()
+        delivery_task = session.background_delivery_task
+        if delivery_task is not None and not delivery_task.done():
+            delivery_task.cancel()
+        session.background_delivery_task = None
         connection = session.native_connection
         if connection is not None:
             await connection.close()
@@ -1278,6 +1301,9 @@ class RealtimeAgentHandler:
                     },
                 )
             elif event.kind == ProviderEventKind.AUDIO_DELTA:
+                # The provider is producing audio for this response; take the
+                # floor so filler/relay-TTS can't overlap (ADR 33).
+                session.floor.acquire(FloorMouth.PROVIDER)
                 if session.native_forced_preamble_active:
                     if not self._should_forward_forced_preamble_event(session, event):
                         continue
@@ -1297,6 +1323,9 @@ class RealtimeAgentHandler:
                     continue
                 await self._send_provider_audio_delta(ws, session, event)
             elif event.kind == ProviderEventKind.AUDIO_DONE:
+                # Provider finished emitting audio for this response; release the
+                # floor so a pending background result / filler can proceed.
+                session.floor.release(FloorMouth.PROVIDER)
                 if session.native_forced_preamble_active:
                     if not self._should_forward_forced_preamble_event(session, event):
                         continue
@@ -1383,6 +1412,8 @@ class RealtimeAgentHandler:
                     event,
                 )
             elif event.kind == ProviderEventKind.RESPONSE_DONE:
+                # Safety net: a response may end without a clean AUDIO_DONE.
+                session.floor.release(FloorMouth.PROVIDER)
                 if session.native_forced_preamble_active:
                     if not self._should_forward_forced_preamble_event(session, event):
                         continue
@@ -1667,6 +1698,16 @@ class RealtimeAgentHandler:
                 should_speak=False,
             )
         result = await self._run_brokered_tool(ws, session, call)
+        if result.get("promoted"):
+            await self._begin_background_delivery(
+                ws,
+                session,
+                connection,
+                origin="provider_tool_call",
+                call_id=call.call_id,
+                transcript=str(call.arguments.get("text") or ""),
+            )
+            return
         delivered = await self._send_provider_tool_result(
             ws,
             session,
@@ -1848,6 +1889,16 @@ class RealtimeAgentHandler:
                     },
                 ),
             )
+            if result.get("promoted"):
+                await self._begin_background_delivery(
+                    ws,
+                    session,
+                    connection,
+                    origin="forced",
+                    call_id=None,
+                    transcript=transcript,
+                )
+                return
             if result.get("cancelled"):
                 return
             if result.get("ok") is False:
@@ -1938,8 +1989,39 @@ class RealtimeAgentHandler:
 
         task = asyncio.create_task(self._execute_brokered_tool(ws, session, call))
         session.hermes_task = task
+        # Tier C: an explicit mode="background" request detaches immediately,
+        # even when grace-period promotion is otherwise off.
+        force_background = str(call.arguments.get("mode") or "").strip().lower() == "background"
+        promote_after = 0.0 if force_background else self._promote_after_seconds(session)
         try:
-            return await task
+            if promote_after is None:
+                return await task
+            try:
+                # Shield so a promotion timeout cancels only the wait, not the run.
+                return await asyncio.wait_for(asyncio.shield(task), timeout=promote_after)
+            except asyncio.TimeoutError:
+                # Tier B/C: detach the run to the background and hand control back
+                # to the pump (ADR 33). The task keeps running;
+                # _deliver_background_result awaits and delivers it.
+                session.hermes_run_tier = "durable" if force_background else "promoted"
+                session.promoted_transcript = str(call.arguments.get("text") or "").strip()
+                self._log(
+                    session,
+                    "voice.hermes_run.promoted",
+                    {
+                        "type": "voice.hermes_run.promoted",
+                        "run_id": session.hermes_run_id,
+                        "promote_after_ms": session.promote_after_ms,
+                        "call_id": call.call_id,
+                    },
+                )
+                return {
+                    "ok": True,
+                    "promoted": True,
+                    "run_id": session.hermes_run_id,
+                    "session_id": session.chat_session_id,
+                    "interface": _interface_context(session),
+                }
         except asyncio.CancelledError:
             session.hermes_run_status = "cancelled"
             return {
@@ -1950,8 +2032,236 @@ class RealtimeAgentHandler:
                 "interface": _interface_context(session),
             }
         finally:
+            # A promoted task is still running; keep it referenced for delivery.
+            if session.hermes_task is task and task.done():
+                session.hermes_task = None
+
+    def _promote_after_seconds(self, session: RealtimeAgentSession) -> float | None:
+        """Grace window before a run is promoted, or None when promotion is off."""
+        if not session.promotion_enabled:
+            return None
+        return max(0.0, session.promote_after_ms / 1000.0)
+
+    async def _begin_background_delivery(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        connection: RealtimeAgentConnection,
+        *,
+        origin: str,
+        call_id: str | None,
+        transcript: str,
+    ) -> None:
+        """Hand a promoted run off to the background and notify the client.
+
+        The Hermes task keeps running (it is still referenced by
+        ``session.hermes_task``); ``_deliver_background_result`` awaits it and
+        speaks the result when the floor is clear.
+        """
+        session.promoted_transcript = transcript or session.promoted_transcript
+        await self._send(
+            ws,
+            session,
+            {
+                "type": SERVER_EVT_HERMES_RUN_PROMOTED,
+                "source": "hermes",
+                "session_id": session.chat_session_id,
+                "chat_session_id": session.chat_session_id,
+                "run_id": session.hermes_run_id,
+                "tier": session.hermes_run_tier if session.hermes_run_tier in ("promoted", "durable") else "promoted",
+                "promote_after_ms": session.promote_after_ms,
+                "spoken_handoff": session.spoken_handoff,
+                "result_delivery": session.result_delivery,
+                "call_id": call_id,
+            },
+        )
+        speak = session.spoken_handoff and session.result_delivery != "visual_only"
+        if origin == "provider_tool_call" and call_id:
+            # Close the pending provider function call so the socket is not left
+            # awaiting tool output for the whole background run.
+            interim = {
+                "ok": True,
+                "status": "running_in_background",
+                "run_id": session.hermes_run_id,
+                "instruction": (
+                    "The task is running in the background. Briefly acknowledge "
+                    "that you've started and will report back; do not answer yet."
+                ),
+                "interface": _interface_context(session),
+            }
+            if await self._send_provider_tool_result(ws, session, connection, call_id, interim):
+                if speak:
+                    await self._request_provider_response(ws, session, connection, call_id)
+        elif origin == "forced" and speak:
+            with contextlib.suppress(Exception):
+                await connection.send_text(_background_handoff_prompt(transcript))
+
+        if (
+            session.background_delivery_task is not None
+            and not session.background_delivery_task.done()
+        ):
+            session.background_delivery_task.cancel()
+        session.background_delivery_task = asyncio.create_task(
+            self._deliver_background_result(ws, session, connection)
+        )
+
+    async def _deliver_background_result(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        connection: RealtimeAgentConnection,
+    ) -> None:
+        task = session.hermes_task
+        if task is None:
+            return
+        try:
+            result = await task
+        except asyncio.CancelledError:
+            session.hermes_run_status = "cancelled"
+            await self._send(
+                ws,
+                session,
+                {
+                    "type": "hermes.run.cancelled",
+                    "session_id": session.chat_session_id,
+                    "run_id": session.hermes_run_id,
+                },
+            )
+            session.hermes_run_tier = "foreground"
+            return
+        except Exception as exc:  # noqa: BLE001 - surface as a voice error
+            await self._send_error(
+                ws,
+                session,
+                f"background Hermes run failed: {exc.__class__.__name__}: {exc}",
+                provider=session.provider,
+            )
+            session.hermes_run_tier = "foreground"
+            return
+        finally:
             if session.hermes_task is task:
                 session.hermes_task = None
+
+        await self._send(
+            ws,
+            session,
+            {
+                "type": SERVER_EVT_HERMES_RUN_BACKGROUND_COMPLETED,
+                "source": "hermes",
+                "session_id": session.chat_session_id,
+                "chat_session_id": session.chat_session_id,
+                "run_id": session.hermes_run_id,
+                "ok": bool(result.get("ok", True)),
+                "tool_count": result.get("tool_count", session.hermes_completed_tool_count),
+            },
+        )
+
+        if result.get("cancelled"):
+            session.hermes_run_tier = "foreground"
+            return
+        if result.get("ok") is False:
+            await self._send_error(
+                ws,
+                session,
+                str(result.get("error") or "Hermes failed"),
+                provider=session.provider,
+            )
+            session.hermes_run_tier = "foreground"
+            return
+
+        if session.result_delivery == "visual_only":
+            await self._emit_background_text_only(ws, session, result)
+            session.hermes_run_tier = "foreground"
+            return
+
+        # speak_when_idle / notify_then_speak: wait for the floor to clear, then
+        # have the provider speak a natural summary via the forced-summary path.
+        session.floor.note_result_ready()
+        await self._await_floor_idle_for_result(session)
+        await self._inject_background_summary(ws, session, connection, result)
+        session.hermes_run_tier = "foreground"
+
+    async def _await_floor_idle_for_result(
+        self,
+        session: RealtimeAgentSession,
+        *,
+        timeout: float = _BACKGROUND_FLOOR_WAIT_SECONDS,
+    ) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if session.floor.consume_result_if_idle():
+                return True
+            await asyncio.sleep(0.05)
+        # Timed out waiting for the floor; deliver anyway.
+        session.floor.clear_result()
+        return False
+
+    async def _inject_background_summary(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        connection: RealtimeAgentConnection,
+        result: dict[str, Any],
+    ) -> None:
+        transcript = session.promoted_transcript or ""
+        session.native_forced_summary_active = True
+        session.native_forced_summary_done = False
+        session.native_forced_summary_response_id = None
+        session.native_forced_summary_result = dict(result)
+        session.native_forced_summary_buffer.clear()
+        session.native_forced_summary_text_parts.clear()
+        with contextlib.suppress(Exception):
+            await connection.cancel_response()
+        await connection.send_text(_forced_hermes_summary_prompt(transcript, result))
+
+    async def _emit_background_text_only(
+        self,
+        ws: web.WebSocketResponse,
+        session: RealtimeAgentSession,
+        result: dict[str, Any],
+    ) -> None:
+        text = str(result.get("text") or result.get("answer") or result.get("summary") or "").strip()
+        response_id = f"background-visual-{session.event_seq + 1}"
+        await self._send(
+            ws,
+            session,
+            {
+                "type": SERVER_EVT_RESPONSE_STARTED,
+                "provider": session.provider,
+                "model": session.model,
+                "voice": session.voice,
+                "session_id": session.session_id,
+                "chat_session_id": session.chat_session_id,
+                "response_id": response_id,
+                "source": "hermes",
+                "delivery": "visual_only",
+            },
+        )
+        if text:
+            await self._send(
+                ws,
+                session,
+                {
+                    "type": SERVER_EVT_RESPONSE_DELTA,
+                    "source": "hermes",
+                    "delta": text,
+                    "response_id": response_id,
+                },
+            )
+        await self._send(
+            ws,
+            session,
+            {
+                "type": SERVER_EVT_RESPONSE_DONE,
+                "provider": session.provider,
+                "model": session.model,
+                "voice": session.voice,
+                "event_log_path": str(session.event_log_path),
+                "chat_session_id": session.chat_session_id,
+                "response_id": response_id,
+                "delivery": "visual_only",
+            },
+        )
 
     async def _execute_brokered_tool(
         self,
@@ -2263,6 +2573,7 @@ class RealtimeAgentHandler:
             should_speak = (
                 speakable_progress
                 and elapsed_seconds >= _HERMES_SPOKEN_PROGRESS_AFTER_SECONDS
+                and session.floor.can_speak(FloorMouth.ANDROID_FILLER)
                 and (
                     session.hermes_last_spoken_progress_key != status_key
                     or now - session.hermes_last_spoken_progress_at
@@ -2285,6 +2596,8 @@ class RealtimeAgentHandler:
                     "message": message,
                     "status_key": status_key,
                     "should_speak": should_speak,
+                    "floor": session.floor.state_label(),
+                    "tier": session.hermes_run_tier,
                     "active_tool_name": session.hermes_active_tool_name,
                     "last_tool_name": session.hermes_last_tool_name,
                     "completed_tool_count": session.hermes_completed_tool_count,
@@ -2336,6 +2649,16 @@ class RealtimeAgentHandler:
             "config_scope": settings["config_scope"],
             "fallback_to_global": settings["fallback_to_global"],
             "tool_surface": list(_TOOL_SURFACE),
+            "promotion": {
+                "enabled": bool(settings["promotion_enabled"]),
+                "promote_after_ms": int(settings["promote_after_ms"]),
+                "background_default_mode": settings["background_default_mode"],
+                "spoken_handoff": bool(settings["spoken_handoff"]),
+                "progress_spoken_after_ms": int(settings["progress_spoken_after_ms"]),
+                "progress_repeat_ms": int(settings["progress_repeat_ms"]),
+                "result_delivery": settings["result_delivery"],
+                "max_background_runs": int(settings["max_background_runs"]),
+            },
             "limits": [
                 "Hermes owns tools, confirmations, memory, and transcript state.",
                 "Native realtime providers receive relay-brokered mic PCM and only the approved Hermes function surface.",
@@ -2519,6 +2842,9 @@ class RealtimeAgentHandler:
         loop = asyncio.get_running_loop()
         output_path = session.event_log_path.with_suffix(".wav")
         provider_options = self._provider_options(session, payload)
+        # Relay TTS is a primary mouth; take the floor for the whole render so it
+        # cannot overlap provider audio or filler (ADR 33).
+        session.floor.acquire(FloorMouth.RELAY_TTS)
 
         def audio_sink(chunk: bytes, meta: dict[str, Any]) -> None:
             peak, rms = _pcm_levels(chunk)
@@ -2565,9 +2891,11 @@ class RealtimeAgentHandler:
                 await self._send(ws, session, event)
             response = await task
         except (ProviderUnavailable, ProviderRunError) as exc:
+            session.floor.release(FloorMouth.RELAY_TTS)
             await self._send_error(ws, session, str(exc), provider=session.provider)
             return
         except Exception as exc:
+            session.floor.release(FloorMouth.RELAY_TTS)
             await self._send_error(
                 ws,
                 session,
@@ -2601,6 +2929,7 @@ class RealtimeAgentHandler:
                 "metadata": _safe_metadata(response.metadata),
             },
         )
+        session.floor.release(FloorMouth.RELAY_TTS)
 
     def _provider_options(
         self,
@@ -2647,7 +2976,22 @@ class RealtimeAgentHandler:
 
     def _validate_config_updates(self, payload: dict[str, Any]) -> dict[str, Any]:
         updates: dict[str, Any] = {}
-        allowed = {"enabled", "provider", "model", "voice", "sample_rate"}
+        allowed = {
+            "enabled",
+            "provider",
+            "model",
+            "voice",
+            "sample_rate",
+            # ADR 33 promotion fields.
+            "promotion_enabled",
+            "promote_after_ms",
+            "background_default_mode",
+            "spoken_handoff",
+            "progress_spoken_after_ms",
+            "progress_repeat_ms",
+            "result_delivery",
+            "max_background_runs",
+        }
         unsupported = sorted(set(payload) - allowed)
         if unsupported:
             raise web.HTTPBadRequest(
@@ -2671,6 +3015,43 @@ class RealtimeAgentHandler:
             if sample_rate is None or sample_rate < 8_000 or sample_rate > 96_000:
                 raise web.HTTPBadRequest(text="sample_rate must be between 8000 and 96000")
             updates["sample_rate"] = sample_rate
+        if "promotion_enabled" in payload:
+            value = _bool_value(payload["promotion_enabled"])
+            if value is None:
+                raise web.HTTPBadRequest(text="promotion_enabled must be a boolean")
+            updates["promotion_enabled"] = value
+        if "spoken_handoff" in payload:
+            value = _bool_value(payload["spoken_handoff"])
+            if value is None:
+                raise web.HTTPBadRequest(text="spoken_handoff must be a boolean")
+            updates["spoken_handoff"] = value
+        for ms_field, lo, hi in (
+            ("promote_after_ms", 0, 120_000),
+            ("progress_spoken_after_ms", 0, 600_000),
+            ("progress_repeat_ms", 0, 600_000),
+        ):
+            if ms_field in payload:
+                value = _int_value(payload[ms_field])
+                if value is None or value < lo or value > hi:
+                    raise web.HTTPBadRequest(text=f"{ms_field} must be between {lo} and {hi}")
+                updates[ms_field] = value
+        if "max_background_runs" in payload:
+            value = _int_value(payload["max_background_runs"])
+            if value is None or value < 1 or value > 4:
+                raise web.HTTPBadRequest(text="max_background_runs must be between 1 and 4")
+            updates["max_background_runs"] = value
+        if "background_default_mode" in payload:
+            mode = _bounded_string(payload["background_default_mode"], "background_default_mode", max_len=20)
+            if mode not in ("promote", "foreground"):
+                raise web.HTTPBadRequest(text="background_default_mode must be 'promote' or 'foreground'")
+            updates["background_default_mode"] = mode
+        if "result_delivery" in payload:
+            delivery = _bounded_string(payload["result_delivery"], "result_delivery", max_len=24)
+            if delivery not in ("speak_when_idle", "notify_then_speak", "visual_only"):
+                raise web.HTTPBadRequest(
+                    text="result_delivery must be speak_when_idle, notify_then_speak, or visual_only"
+                )
+            updates["result_delivery"] = delivery
         if not updates:
             raise web.HTTPBadRequest(text="no realtime agent config fields supplied")
         return updates
@@ -3265,6 +3646,17 @@ def _forced_hermes_preamble_prompt(transcript: str) -> str:
         "This is a pre-Hermes acknowledgement turn for the user's voice request. "
         "Speak exactly: I'll check Hermes. Do not call tools. Do not add any "
         "other words. After this acknowledgement the relay will run Hermes.\n\n"
+        f"User request: {transcript.strip()[:1000]}"
+    )
+
+
+def _background_handoff_prompt(transcript: str) -> str:
+    return (
+        "The user's request is now running in the background and may take a "
+        "little while. Speak one short, natural acknowledgement that you've "
+        "started on it and will report back, for example: 'I'm on it — I'll let "
+        "you know.' Do not call tools, do not answer the request yet, and do not "
+        "ask for a run id.\n\n"
         f"User request: {transcript.strip()[:1000]}"
     )
 

@@ -301,6 +301,28 @@ fun VoiceModeOverlay(
                     )
                 }
 
+                AnimatedVisibility(
+                    visible = uiState.backgroundRun != null,
+                    enter = fadeIn(tween(140)),
+                    exit = fadeOut(tween(180)),
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp, vertical = 4.dp),
+                    ) {
+                        Text(
+                            text = uiState.backgroundRun?.message
+                                ?: "Working on it in the background…",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                        )
+                    }
+                }
+
                 Spacer(Modifier.height(8.dp))
 
                 DestructiveCountdownRow(
@@ -1112,6 +1134,7 @@ private fun CompactTranscriptRow(
             ThinkingBlock(
                 thinkingContent = message.thinkingContent,
                 isStreaming = message.isThinkingStreaming,
+                timestamp = message.timestamp,
                 modifier = Modifier.padding(bottom = 6.dp),
             )
         }

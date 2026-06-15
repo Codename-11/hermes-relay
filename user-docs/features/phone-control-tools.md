@@ -34,7 +34,7 @@ This is a single gate, not a cascading permission check. Downstream layers handl
 | `android_send_mms` | Phone utility | Yes | Open MMS compose/share handoff with attachments |
 | `android_call` | Phone utility | Yes | Dial a phone number |
 | `android_location` | Phone utility | Yes | Last-known GPS location |
-| `android_return_to_hermes` | Navigation | | Bring Hermes Relay back to foreground |
+| `android_return_to_hermes` | Navigation | | Bring Hermes-Relay back to foreground |
 
 Additional tools are registered in `plugin/tools/android_tool.py` for advanced use cases: `android_find_nodes`, `android_long_press`, `android_drag`, `android_describe_node`, `android_macro`, `android_clipboard_read`, `android_clipboard_write`, `android_media`, `android_screen_hash`, `android_diff_screen`, `android_send_intent`, `android_broadcast`, `android_events`, `android_event_stream`. The `android_navigate` tool (vision-driven navigation) is registered separately in `plugin/tools/android_navigate.py`.
 
@@ -44,7 +44,7 @@ Five phone-utility tools bypass generic UI automation. Instead of driving the Me
 
 - **`android_send_sms`** -- Sends text-only SMS via `SmsManager` with send-result confirmation. Schema is exactly `{ "to": "<phone>", "body": "<message>" }`. Never leaves the current foreground app. Requires a phone number as the `to` argument -- if the user gave a contact name, the agent should call `android_search_contacts` first to resolve it.
 - **`android_share_media`** -- Shares text, host-local files, relay `MEDIA:` markers, or raw media tokens through Android's native share UI. Host paths are registered with the relay first, then the phone fetches bytes through its paired session and grants target apps `content://` access through `FileProvider`.
-- **`android_send_mms`** -- Opens a user-mediated MMS compose/share handoff with recipient, optional body, and attachments. Android does not allow Hermes Relay to silently send MMS unless it is the default SMS app, so this intentionally opens the native composer after confirmation.
+- **`android_send_mms`** -- Opens a user-mediated MMS compose/share handoff with recipient, optional body, and attachments. Android does not allow Hermes-Relay to silently send MMS unless it is the default SMS app, so this intentionally opens the native composer after confirmation.
 - **`android_call`** -- Places a call directly. Brings the Phone app to foreground in dialer mode. The agent should call `android_return_to_hermes` after placing the call.
 - **`android_search_contacts`** -- Queries the device contact database by name. Returns structured results with phone numbers sorted by preference.
 
@@ -79,7 +79,7 @@ Supported attachment inputs are `path`, `paths`, `media`, `media_token`, `media_
 
 ## `android_return_to_hermes`
 
-Brings the Hermes Relay app back to the foreground. The agent should call this as the final step of any multi-app task (sending a text, opening Maps, taking a screenshot from another app) so the user sees the agent's reply in-context without manually switching back.
+Brings the Hermes-Relay app back to the foreground. The agent should call this as the final step of any multi-app task (sending a text, opening Maps, taking a screenshot from another app) so the user sees the agent's reply in-context without manually switching back.
 
 Key behaviors:
 

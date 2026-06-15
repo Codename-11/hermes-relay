@@ -6,6 +6,10 @@ import android.util.Log
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import com.hermesandroid.relay.auth.AuthManager
+import com.hermesandroid.relay.auth.ConnectionAuthSecrets
+import com.hermesandroid.relay.network.EncryptedDashboardCookieStore
+import com.hermesandroid.relay.network.StoredDashboardCookie
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -20,8 +24,8 @@ import java.io.File
 /**
  * Manages app data: backup, restore, and reset.
  *
- * Backup format is a JSON file containing settings and connection info.
- * Tokens are NOT included in backups for security.
+ * Backup format is a JSON file containing full connection metadata and
+ * credentials. Treat exported files as sensitive secrets.
  */
 class DataManager(
     private val context: Context,
@@ -51,8 +55,7 @@ class DataManager(
     }
 
     /**
-     * Backup data model -- only non-sensitive settings.
-     * Tokens and device IDs are never included.
+     * Backup data model.
      *
      * **Schema history:**
      *  - v1: `serverUrl` only (single endpoint, pre-API-split).
@@ -66,22 +69,50 @@ class DataManager(
      *    re-mapped to `connections` (see [importSettings]). v1/v2 imports
      *    get `connections = emptyList()` since the old string list was not
      *    structurally compatible.
+     *  - v5 (2026-06-08): full connection backups. Adds active connection id
+     *    and `connectionSecrets`, including API keys, relay tokens, device id,
+     *    paired metadata, and dashboard cookies.
      */
     @Serializable
     data class AppBackup(
-        val version: Int = 4,
+        val version: Int = 5,
         val serverUrl: String? = null, // legacy (v1 compat)
         val apiServerUrl: String? = null,
         val relayUrl: String? = null,
         val theme: String = "auto",
         val onboardingCompleted: Boolean = false,
         val connections: List<Connection> = emptyList(),
-        val exportedAt: Long = System.currentTimeMillis()
+        val activeConnectionId: String? = null,
+        val containsSensitiveData: Boolean = true,
+        val connectionSecrets: List<ConnectionSecretBackup> = emptyList(),
+        val exportedAt: Long = System.currentTimeMillis(),
+    )
+
+    @Serializable
+    data class ConnectionSecretBackup(
+        val connectionId: String,
+        val tokenStoreKey: String,
+        val auth: ConnectionAuthSecrets = ConnectionAuthSecrets(),
+        val dashboardCookies: List<DashboardCookieBackup> = emptyList(),
+    )
+
+    @Serializable
+    data class DashboardCookieBackup(
+        val name: String,
+        val value: String,
+        val expiresAt: Long,
+        val domain: String,
+        val path: String,
+        val secure: Boolean,
+        val httpOnly: Boolean,
+        val hostOnly: Boolean,
+        val persistent: Boolean,
     )
 
     /**
      * Export app settings to a JSON string.
-     * Does NOT include session tokens or device IDs (security).
+     * Includes connection credentials. The export UI must warn the user that
+     * the resulting JSON file is sensitive.
      *
      * The `sessionLabels` parameter is a legacy dead parameter — it was
      * previously sourced from `AuthManager.sessionLabels`, a field removed
@@ -100,7 +131,7 @@ class DataManager(
         apiServerUrl: String? = null,
         relayUrl: String? = null
     ): String {
-        val connectionsSnapshot = connectionStore?.connections?.value
+        val connectionsSnapshot = connectionStore?.connections?.value.orEmpty()
         if (connectionStore == null) {
             Log.w(
                 TAG,
@@ -108,17 +139,54 @@ class DataManager(
                     "(caller constructed DataManager without the multi-connection ctor arg)",
             )
         }
+        val connectionSecrets = connectionsSnapshot.map { connection ->
+            ConnectionSecretBackup(
+                connectionId = connection.id,
+                tokenStoreKey = connection.tokenStoreKey,
+                auth = AuthManager.exportStoredSecrets(context, connection.tokenStoreKey),
+                dashboardCookies = EncryptedDashboardCookieStore(
+                    context = context,
+                    connectionId = connection.id,
+                ).load().map { it.toBackup() },
+            )
+        }
         val backup = AppBackup(
-            version = 4,
+            version = 5,
             serverUrl = serverUrl, // legacy compat
             apiServerUrl = apiServerUrl,
             relayUrl = relayUrl,
             theme = theme,
             onboardingCompleted = onboardingCompleted,
-            connections = connectionsSnapshot ?: emptyList(),
-            exportedAt = System.currentTimeMillis()
+            connections = connectionsSnapshot,
+            activeConnectionId = connectionStore?.activeConnectionId?.value,
+            containsSensitiveData = true,
+            connectionSecrets = connectionSecrets,
+            exportedAt = System.currentTimeMillis(),
         )
         return json.encodeToString(backup)
+    }
+
+    suspend fun restoreConnectionBackup(backup: AppBackup) {
+        val store = connectionStore ?: return
+        deleteSensitivePreferenceFiles()
+        store.replaceConnections(
+            connections = backup.connections,
+            activeConnectionId = backup.activeConnectionId,
+        )
+
+        val connectionsById = backup.connections.associateBy { it.id }
+        backup.connectionSecrets.forEach { secret ->
+            val connection = connectionsById[secret.connectionId] ?: return@forEach
+            AuthManager.importStoredSecrets(
+                context = context,
+                tokenStoreKey = connection.tokenStoreKey,
+                secrets = secret.auth,
+            )
+            EncryptedDashboardCookieStore(
+                context = context,
+                connectionId = connection.id,
+            ).save(secret.dashboardCookies.map { it.toStoredCookie() })
+        }
     }
 
     /**
@@ -221,6 +289,11 @@ class DataManager(
             // Preserve onboarding state before clearing
             val onboarding = isOnboardingCompleted()
 
+            // Multi-connection reset: clear the hot ConnectionStore state and
+            // delete every per-connection token store before the global
+            // DataStore is wiped.
+            connectionStore?.clearAllConnections()
+
             // Clear all DataStore preferences
             context.relayDataStore.edit { it.clear() }
 
@@ -231,15 +304,7 @@ class DataManager(
                 }
             }
 
-            // Delete the EncryptedSharedPreferences file for auth tokens
-            withContext(Dispatchers.IO) {
-                val prefsDir = File(context.filesDir.parent, "shared_prefs")
-                val authFile = File(prefsDir, "$AUTH_PREFS_NAME.xml")
-                if (authFile.exists()) {
-                    authFile.delete()
-                    Log.d(TAG, "Deleted auth preferences file")
-                }
-            }
+            deleteSensitivePreferenceFiles()
 
             // Clear cache directory
             withContext(Dispatchers.IO) {
@@ -253,6 +318,61 @@ class DataManager(
             Log.e(TAG, "Failed to reset app data", e)
         }
     }
+
+    private suspend fun deleteSensitivePreferenceFiles() {
+        withContext(Dispatchers.IO) {
+            val prefsDir = File(context.filesDir.parent, "shared_prefs")
+            val stores = buildSet {
+                add(AUTH_PREFS_NAME)
+                add(Connection.LEGACY_TOKEN_STORE_KEY)
+                prefsDir.listFiles()?.forEach { file ->
+                    if (file.extension == "xml") {
+                        val name = file.nameWithoutExtension
+                        if (
+                            name.startsWith("hermes_auth_") ||
+                            name.startsWith("hermes_dashboard_")
+                        ) {
+                            add(name)
+                        }
+                    }
+                }
+            }
+            stores.forEach { storeName ->
+                try {
+                    context.deleteSharedPreferences(storeName)
+                    Log.d(TAG, "Deleted auth preferences file: $storeName")
+                } catch (e: Exception) {
+                    Log.w(TAG, "deleteSharedPreferences($storeName) failed: ${e.message}")
+                }
+            }
+        }
+    }
+
+    private fun StoredDashboardCookie.toBackup(): DashboardCookieBackup =
+        DashboardCookieBackup(
+            name = name,
+            value = value,
+            expiresAt = expiresAt,
+            domain = domain,
+            path = path,
+            secure = secure,
+            httpOnly = httpOnly,
+            hostOnly = hostOnly,
+            persistent = persistent,
+        )
+
+    private fun DashboardCookieBackup.toStoredCookie(): StoredDashboardCookie =
+        StoredDashboardCookie(
+            name = name,
+            value = value,
+            expiresAt = expiresAt,
+            domain = domain,
+            path = path,
+            secure = secure,
+            httpOnly = httpOnly,
+            hostOnly = hostOnly,
+            persistent = persistent,
+        )
 
     /**
      * Reset only the onboarding completion flag.

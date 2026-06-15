@@ -4,12 +4,29 @@ import android.app.Application
 import android.os.Build
 import androidx.compose.ui.ComposeUiFlags
 import androidx.compose.ui.ExperimentalComposeUiApi
+import coil3.ImageLoader
+import coil3.PlatformContext
+import coil3.SingletonImageLoader
+import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import coil3.request.crossfade
 import com.hermesandroid.relay.bridge.UnattendedAccessManager
 import com.hermesandroid.relay.data.AppAnalytics
 import com.hermesandroid.relay.power.WakeLockManager
 import com.hermesandroid.relay.util.AppForegroundTracker
 
-class HermesRelayApp : Application() {
+class HermesRelayApp : Application(), SingletonImageLoader.Factory {
+
+    /**
+     * Coil's singleton image loader for the whole app. Registering the OkHttp
+     * network fetcher EXPLICITLY guarantees `http(s)` image URLs (e.g. a
+     * generated-image link in a chat reply) load, rather than relying on
+     * artifact auto-registration. Crossfade for a clean fade-in.
+     */
+    override fun newImageLoader(context: PlatformContext): ImageLoader =
+        ImageLoader.Builder(context)
+            .components { add(OkHttpNetworkFetcherFactory()) }
+            .crossfade(true)
+            .build()
 
     @OptIn(ExperimentalComposeUiApi::class)
     override fun attachBaseContext(base: android.content.Context?) {

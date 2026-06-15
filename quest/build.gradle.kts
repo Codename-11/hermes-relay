@@ -1,10 +1,28 @@
+import com.meta.spatial.plugin.SpatialAppExtension
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+    dependencies {
+        // Meta Spatial 0.12.0 ships older AGP/Kotlin compiler artifacts on its
+        // plugin classpath; AGP 9.2 provides the Android/Kotlin tooling here.
+        classpath("com.meta.spatial:spatial-gradle-plugin-impl:0.12.0") {
+            exclude(group = "com.android.tools.build", module = "gradle")
+            exclude(group = "org.jetbrains.kotlin", module = "kotlin-compiler-embeddable")
+        }
+    }
+}
+
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
-    id("com.meta.spatial.plugin")
 }
+
+apply(plugin = "com.meta.spatial.plugin")
 
 android {
     namespace = "com.axiomlabs.hermesquest"
@@ -101,7 +119,7 @@ val exportSpatialScenes = providers.gradleProperty("quest.exportScenes")
     .map(String::toBoolean)
     .orElse(false)
 
-spatial {
+extensions.configure<SpatialAppExtension>("spatial") {
     allowUsageDataCollection.set(false)
     if (exportSpatialScenes.get()) {
         scenes {

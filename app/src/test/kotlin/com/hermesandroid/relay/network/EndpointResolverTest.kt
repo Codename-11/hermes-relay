@@ -276,6 +276,79 @@ class EndpointResolverTest {
     }
 
     // ---------------------------------------------------------------
+    // Test 8 — probeOutcomes records UI-facing verdicts per candidate
+    // ---------------------------------------------------------------
+
+    @Test
+    fun probeOutcomes_recordsReachableAndUnreachableVerdicts() = runTest {
+        val resolver = EndpointResolver(fastClient, clock = { clockMillis.get() })
+        val lan = candidate("lan", priority = 0, server = reachableServer)
+
+        reachableServer.dispatcher = healthDispatcher(statusCode = 200)
+        resolver.resolve(listOf(lan))
+        val reachableOutcome = resolver.probeOutcomes.value[EndpointResolver.cacheKey(lan)]
+        assertNotNull("successful probe must record an outcome", reachableOutcome)
+        assertTrue(reachableOutcome!!.reachable)
+        assertNull("reachable outcomes carry no failure detail", reachableOutcome.detail)
+
+        // Flip to 500 past the positive TTL so a real probe fires again.
+        reachableServer.dispatcher = healthDispatcher(statusCode = 500)
+        clockMillis.set(EndpointResolver.CACHE_TTL_MS + 1_000L)
+        resolver.resolve(listOf(lan))
+        val failedOutcome = resolver.probeOutcomes.value[EndpointResolver.cacheKey(lan)]
+        assertNotNull(failedOutcome)
+        assertTrue("failed probe must flip the outcome", !failedOutcome!!.reachable)
+        assertEquals("HTTP 500 from /health", failedOutcome.detail)
+    }
+
+    @Test
+    fun probeOutcomes_recordsConnectionFailureDetail() = runTest {
+        val dead = MockWebServer().apply { start() }
+        val deadHost = dead.hostName
+        val deadPort = dead.port
+        dead.shutdown()
+
+        val resolver = EndpointResolver(fastClient, clock = { clockMillis.get() })
+        val deadCandidate = EndpointCandidate(
+            role = "tailscale", priority = 0,
+            api = ApiEndpoint(deadHost, deadPort, tls = false),
+            relay = RelayEndpoint("ws://$deadHost:$deadPort", transportHint = "ws"),
+        )
+        resolver.resolve(listOf(deadCandidate))
+        val outcome = resolver.probeOutcomes.value[EndpointResolver.cacheKey(deadCandidate)]
+        assertNotNull("dead-port probe must record an outcome", outcome)
+        assertTrue(!outcome!!.reachable)
+        assertNotNull("failure outcomes must carry a human detail", outcome.detail)
+    }
+
+    @Test
+    fun probeOutcomes_surviveClearCache() = runTest {
+        val resolver = EndpointResolver(fastClient, clock = { clockMillis.get() })
+        val lan = candidate("lan", priority = 0, server = reachableServer)
+        resolver.resolve(listOf(lan))
+        assertNotNull(resolver.probeOutcomes.value[EndpointResolver.cacheKey(lan)])
+
+        resolver.clearCache()
+
+        assertNotNull(
+            "clearCache resets probe *caching*, not the UI-facing verdict history",
+            resolver.probeOutcomes.value[EndpointResolver.cacheKey(lan)],
+        )
+    }
+
+    @Test
+    fun markUnreachable_recordsOutcome() = runTest {
+        val resolver = EndpointResolver(fastClient, clock = { clockMillis.get() })
+        val lan = candidate("lan", priority = 0, server = reachableServer)
+
+        resolver.markUnreachable(lan)
+
+        val outcome = resolver.probeOutcomes.value[EndpointResolver.cacheKey(lan)]
+        assertNotNull(outcome)
+        assertTrue(!outcome!!.reachable)
+    }
+
+    // ---------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------
 
